@@ -76,8 +76,8 @@ pub struct Appearance {
     current: Mutex<Option<Arc<Mutex<Owner>>>>,
 }
 fn refresh<R: Runtime>(window: &WebviewWindow<R>, owner: &Arc<Mutex<Owner>>) -> AppearanceSnapshot {
-    let state = window.state::<super::runtime::DesktopRuntime>();
-    let Ok(current) = state.appearance.current.lock() else {
+    let state = window.state::<Appearance>();
+    let Ok(current) = state.current.lock() else {
         return AppearanceSnapshot::default();
     };
     if !current
@@ -101,16 +101,16 @@ fn refresh<R: Runtime>(window: &WebviewWindow<R>, owner: &Arc<Mutex<Owner>>) -> 
 }
 pub fn bind<R: Runtime>(window: &WebviewWindow<R>) {
     let owner = Arc::new(Mutex::new(Owner::default()));
-    let state = window.state::<super::runtime::DesktopRuntime>();
-    if let Ok(mut current) = state.appearance.current.lock() {
+    let state = window.state::<Appearance>();
+    if let Ok(mut current) = state.current.lock() {
         *current = Some(owner.clone());
     }
     refresh(window, &owner);
     let bound = window.clone();
     window.on_window_event(move |event| {
         if matches!(event, tauri::WindowEvent::Destroyed) {
-            let state = bound.state::<super::runtime::DesktopRuntime>();
-            if let Ok(mut current) = state.appearance.current.lock() {
+            let state = bound.state::<Appearance>();
+            if let Ok(mut current) = state.current.lock() {
                 if current
                     .as_ref()
                     .is_some_and(|value| Arc::ptr_eq(value, &owner))
@@ -134,8 +134,7 @@ pub async fn snapshot<R: Runtime>(
     window: WebviewWindow<R>,
 ) -> crate::self_service::Result<AppearanceSnapshot> {
     let owner = window
-        .state::<super::runtime::DesktopRuntime>()
-        .appearance
+        .state::<Appearance>()
         .current
         .lock()
         .ok()

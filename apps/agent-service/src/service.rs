@@ -32,7 +32,7 @@ pub struct ExecutionConfig {
 /// Administrator-pinned helpers; these select OS mechanisms, not enterprise authorization.
 #[derive(Clone)]
 pub struct UserResources {
-    pub image: local_service::Artifact,
+    pub image: installation_security::Artifact,
     pub work_roots: std::collections::BTreeMap<String, PathBuf>,
 }
 impl UserResources {
@@ -792,6 +792,16 @@ impl Core {
         }
         let reply = (|| -> Result<Reply, Error> {
             match command.request {
+                LocalRequest::Operation(Request::ServiceStatus {}) => {
+                    let readiness = if self.host.revoked.load(Ordering::Acquire) {
+                        execution_runner::host::Readiness::NotReady
+                    } else {
+                        execution_runner::host::Readiness::Ready
+                    };
+                    Ok(Reply::ServiceStatus {
+                        value: execution_runner::host::ServiceStatus::new(readiness),
+                    })
+                }
                 LocalRequest::Stop => {
                     self.stopping = true;
                     Ok(Reply::Unavailable)

@@ -1,7 +1,7 @@
 use crate::host::*;
 use execution_app::*;
 #[test]
-fn only_v5_envelope_calls_the_handler() {
+fn only_current_envelope_calls_the_handler() {
     struct Spy(usize);
     impl Handler for Spy {
         fn handle(&mut self, _: &Peer, _: Request) -> Reply {
@@ -22,21 +22,25 @@ fn only_v5_envelope_calls_the_handler() {
         session: 1,
         native: 0,
     };
-    for version in [1, 2, 3, 4] {
+    for version in [1, 2, 3, 4, 5] {
         let bytes = serde_json::to_vec(
             &serde_json::json!({"version":version,"request":{"method":"status","request":"r"}}),
         )
         .unwrap();
-        assert_eq!(dispatch(&mut spy, &peer, &bytes), br#"{"kind":"rejected"}"#);
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&dispatch(&mut spy, &peer, &bytes))
+                .unwrap(),
+            serde_json::json!({"version":6,"reply":{"kind":"rejected"}})
+        );
         assert_eq!(spy.0, 0);
     }
     assert_eq!(
         dispatch(
             &mut spy,
             &peer,
-            br#"{"version":5,"request":{"method":"status","request":"r"}}"#
+            br#"{"version":6,"request":{"method":"status","request":"r"}}"#
         ),
-        br#"{"kind":"unavailable"}"#
+        br#"{"version":6,"reply":{"kind":"unavailable"}}"#
     );
     assert_eq!(spy.0, 1);
 }

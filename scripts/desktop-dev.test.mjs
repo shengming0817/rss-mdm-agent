@@ -228,7 +228,7 @@ test("invalid override fails before Tauri starts with actionable stage diagnosti
   );
   write(
     "scripts/desktop-dev-process.mjs",
-    "export function runDesktop() { throw Error('must not launch'); }",
+    "export function runDesktop() { throw Error('must not launch'); } export const runPreparation = runDesktop;",
   );
   const result = spawnSync(
     process.execPath,
@@ -572,12 +572,14 @@ test(
       return '/runtime';
     }
     export const verifyDevelopmentRuntime = ensureDevelopmentRuntime;
+    if (process.argv[2] === "--prepare") ensureDevelopmentRuntime(process.argv[3]);
   `,
     );
     write(
       "scripts/desktop-dev-process.mjs",
       `
     import { writeFileSync } from 'node:fs';
+    export { runPreparation } from ${JSON.stringify(fileURLToPath(new URL("desktop-dev-process.mjs", import.meta.url)))};
     export async function runDesktop(root) { writeFileSync(root + '/launched', 'unexpected'); return 0; }
   `,
     );

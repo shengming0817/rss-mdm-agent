@@ -562,10 +562,7 @@ mod tests {
         assert_eq!(reopened.label, "Example");
         assert_eq!(reopened.origin, "https://example.com");
         assert_eq!(reopened.tenant_id, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
-        for bytes in [
-            b"{not-json".to_vec(),
-            vec![b' '; 65537],
-        ] {
+        for bytes in [b"{not-json".to_vec(), vec![b' '; 65537]] {
             std::fs::write(root.join("organizations.json"), bytes).unwrap();
             assert!(Organizations::open(&root, None).is_err());
         }

@@ -1,0 +1,34 @@
+{
+  "configurationRequired": { "phase": "configurationRequired" },
+  "disconnected": { "phase": "unavailable" },
+  "mismatch": { "phase": "mismatch" },
+  "notInstalled": { "phase": "notInstalled" },
+  "notReady": {
+    "phase": "connected",
+    "status": {
+      "build": "0.1.0",
+      "platform": "macos",
+      "protocol": 6,
+      "readiness": { "phase": "notReady" }
+    }
+  },
+  "ready": {
+    "phase": "connected",
+    "status": {
+      "build": "0.1.0",
+      "platform": "macos",
+      "protocol": 6,
+      "readiness": { "phase": "ready" }
+    }
+  },
+  "registrationRequired": {
+    "phase": "connected",
+    "status": {
+      "build": "0.1.0",
+      "platform": "macos",
+      "protocol": 6,
+      "readiness": { "phase": "registrationRequired" }
+    }
+  },
+  "serviceRejected": { "phase": "rejected" }
+}

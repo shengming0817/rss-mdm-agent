@@ -1,6 +1,111 @@
 //! One bounded IPC owner driving the existing application. Peer identity is never a wire field.
 use execution_contract::{Digest, Id, RequestId, VersionedRef};
 use serde::{Deserialize, Serialize};
+/// Current desktop/system IPC. No negotiation or legacy parser exists.
+pub const IPC_VERSION: u8 = 6;
+/// Current protected installation document format.
+pub const DEPLOYMENT_VERSION: u32 = 2;
+
+/// Safe readiness facts; connecting never grants execution authority.
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema, PartialEq, Eq)]
+#[serde(tag = "phase", rename_all = "camelCase", deny_unknown_fields)]
+pub enum Readiness {
+    /// Existing device owner is open and driving recovery/work.
+    Ready,
+    /// A trusted installation is provably never initialized.
+    RegistrationRequired,
+    /// Existing state must be inspected; it must not be reset or re-registered.
+    NotReady,
+}
+/// Safe statement from the authenticated production owner.
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ServiceStatus {
+    /// Actual binary build version.
+    pub build: String,
+    /// Actual local IPC version.
+    pub protocol: u8,
+    /// Native service platform.
+    pub platform: String,
+    /// Independent readiness, not authorization or an effect receipt.
+    pub readiness: Readiness,
+}
+impl ServiceStatus {
+    /// Construct a diagnostic without sensitive device/storage fields.
+    pub fn new(readiness: Readiness) -> Self {
+        Self {
+            build: env!("CARGO_PKG_VERSION").into(),
+            protocol: IPC_VERSION,
+            platform: std::env::consts::OS.into(),
+            readiness,
+        }
+    }
+}
+/// Closed presentation combining local installation checks and authenticated service facts.
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema, PartialEq, Eq)]
+#[serde(tag = "phase", rename_all = "camelCase", deny_unknown_fields)]
+pub enum ServiceView {
+    /// Configuration and OS registration are both absent.
+    NotInstalled,
+    /// OS registration exists without the required deployment.
+    ConfigurationRequired,
+    /// Installation or peer identity is rejected.
+    Rejected,
+    /// Connection/registration inspection could not be established.
+    Unavailable,
+    /// Current deployment or response does not match this client's contract.
+    Mismatch,
+    /// Authenticated statement, independent of execution permissions.
+    Connected {
+        /// Safe system owner facts.
+        status: ServiceStatus,
+    },
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Response {
+    version: u8,
+    reply: Reply,
+}
+/// Serialize the single current response envelope for native transport and operator probes.
+pub fn encode_reply(reply: Reply) -> Vec<u8> {
+    serde_json::to_vec(&Response {
+        version: IPC_VERSION,
+        reply,
+    })
+    .expect("closed service reply serialization")
+}
+fn decode_reply(bytes: &[u8]) -> Result<Reply, execution_app::Error> {
+    let response: Response =
+        serde_json::from_slice(bytes).map_err(|_| execution_app::Error::InvalidInput)?;
+    if response.version != IPC_VERSION {
+        return Err(execution_app::Error::Unsupported);
+    }
+    Ok(response.reply)
+}
+fn registration_present() -> Result<bool, execution_app::Error> {
+    #[cfg(target_os = "macos")]
+    {
+        let output = std::process::Command::new("/bin/launchctl")
+            .args(["print", "system/com.rss-mdm.agent.execution"])
+            .output()
+            .map_err(|_| execution_app::Error::Unavailable)?;
+        match output.status.code() {
+            Some(0) => Ok(true),
+            Some(113) => Ok(false),
+            _ => Err(execution_app::Error::Unavailable),
+        }
+    }
+    #[cfg(windows)]
+    {
+        crate::windows_service::registration_present()
+    }
+    #[cfg(not(any(target_os = "macos", windows)))]
+    {
+        Err(execution_app::Error::Unsupported)
+    }
+}
 #[cfg(target_os = "macos")]
 use std::sync::atomic::AtomicBool;
 
@@ -231,7 +336,7 @@ impl Peer {
 #[serde(deny_unknown_fields)]
 pub struct PeerPolicy {
     /// Allowed installed image identities.
-    pub images: Vec<local_service::Artifact>,
+    pub images: Vec<installation_security::Artifact>,
     /// Exact allowed OS subjects; these are not enterprise principals.
     pub subjects: Vec<String>,
     /// Require a non-system interactive session.
@@ -292,7 +397,7 @@ pub enum ClientOrigin {
         tool_call: Id,
     },
 }
-/// Local IPC V5 carries backend task references, never executable plans or authority claims.
+/// Local IPC V6 carries backend task references, never executable plans or authority claims.
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(
     tag = "method",
@@ -301,6 +406,8 @@ pub enum ClientOrigin {
     deny_unknown_fields
 )]
 pub enum Request {
+    /// Read safe installation and execution readiness; never execution permission.
+    ServiceStatus {},
     /// List authorized local projections and the current offered task.
     Tasks {
         /// Exclusive journal page cursor.
@@ -350,6 +457,11 @@ struct Envelope {
     rename_all_fields = "camelCase"
 )]
 pub enum Reply {
+    /// Safe readiness projection from the authenticated system owner.
+    ServiceStatus {
+        /// Closed service diagnostic.
+        value: ServiceStatus,
+    },
     /// Existing journal state.
     Status {
         /// Authorized projection.
@@ -393,7 +505,7 @@ pub enum Reply {
 /// Encode the current protocol only; no legacy plan endpoint or compatibility negotiation.
 pub fn encode(request: Request) -> Result<Vec<u8>, execution_app::Error> {
     serde_json::to_vec(&Envelope {
-        version: 5,
+        version: IPC_VERSION,
         request,
     })
     .map_err(|_| execution_app::Error::InvalidInput)
@@ -410,19 +522,16 @@ impl ServiceClient {
         #[derive(Deserialize)]
         struct Pin {
             version: u32,
-            service: local_service::Artifact,
+            ipc_version: u8,
+            service: installation_security::Artifact,
         }
-        let base = local_service::policy_path().map_err(|_| execution_app::Error::Configuration)?;
-        let path = base
-            .parent()
-            .and_then(std::path::Path::parent)
-            .ok_or(execution_app::Error::Configuration)?
-            .join("execution.json");
-        let bytes =
-            local_service::read_protected(&path).map_err(|_| execution_app::Error::Unavailable)?;
+        let path = installation_security::deployment_path()
+            .map_err(|_| execution_app::Error::Configuration)?;
+        let bytes = installation_security::read_protected(&path)
+            .map_err(|_| execution_app::Error::Unavailable)?;
         let pin: Pin =
             serde_json::from_slice(&bytes).map_err(|_| execution_app::Error::Configuration)?;
-        if pin.version != 1 {
+        if pin.version != DEPLOYMENT_VERSION || pin.ipc_version != IPC_VERSION {
             return Err(execution_app::Error::Configuration);
         }
         pin.service
@@ -434,6 +543,45 @@ impl ServiceClient {
             interactive: false,
         })
     }
+    /// Inspect installation and the same authenticated service without opening device storage.
+    pub fn inspect() -> ServiceView {
+        let Ok(path) = installation_security::deployment_path() else {
+            return ServiceView::Unavailable;
+        };
+        match std::fs::symlink_metadata(&path) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return match registration_present() {
+                    Ok(false) => ServiceView::NotInstalled,
+                    Ok(true) => ServiceView::ConfigurationRequired,
+                    Err(_) => ServiceView::Unavailable,
+                }
+            }
+            Err(_) => return ServiceView::Rejected,
+            Ok(_) => (),
+        }
+        if installation_security::read_protected(&path).is_err() {
+            return ServiceView::Rejected;
+        }
+        let client = match Self::installed() {
+            Ok(v) => v,
+            Err(execution_app::Error::Configuration | execution_app::Error::InvalidInput) => {
+                return ServiceView::Mismatch
+            }
+            Err(execution_app::Error::Denied) => return ServiceView::Rejected,
+            Err(_) => return ServiceView::Unavailable,
+        };
+        match client.request(Request::ServiceStatus {}) {
+            Ok(Reply::ServiceStatus { value }) if value.protocol == IPC_VERSION => {
+                ServiceView::Connected { status: value }
+            }
+            Ok(Reply::Rejected) | Err(execution_app::Error::Denied) => ServiceView::Rejected,
+            Err(execution_app::Error::Unsupported | execution_app::Error::InvalidInput) => {
+                ServiceView::Mismatch
+            }
+            Ok(Reply::ServiceStatus { .. }) => ServiceView::Mismatch,
+            _ => ServiceView::Unavailable,
+        }
+    }
     /// Bind only to the installed system-service identity from protected deployment data.
     pub fn new(server: PeerPolicy) -> Result<Self, execution_app::Error> {
         server.validate()?;
@@ -443,7 +591,7 @@ impl ServiceClient {
         }
         Ok(Self { server })
     }
-    /// Send a bounded V5 request over a mutually authenticated native connection.
+    /// Send a bounded V6 request over a mutually authenticated native connection.
     /// Transport failure does not mean a submitted selection or cancellation failed.
     pub fn request(&self, request: Request) -> Result<Reply, execution_app::Error> {
         let bytes = encode(request)?;
@@ -456,7 +604,7 @@ impl ServiceClient {
             let _ = bytes;
             return Err(execution_app::Error::Unsupported);
         };
-        serde_json::from_slice(&response).map_err(|_| execution_app::Error::InvalidInput)
+        decode_reply(&response)
     }
 }
 /// The native OS service owns one handler; ticks and calls are serialized by the owner loop.
@@ -476,17 +624,17 @@ pub trait Handler: Send {
     /// Process one bounded request serially; a lost reply does not prove no mutation.
     fn handle(&mut self, peer: &Peer, request: Request) -> Reply;
     /// Native framing seam for the separately authenticated helper protocol. The system
-    /// service uses this default, which accepts only task-reference IPC V5.
+    /// service uses this default, which accepts only task-reference IPC V6.
     fn handle_wire(&mut self, peer: &Peer, bytes: &[u8]) -> Vec<u8> {
         let reply = if bytes.len() > 65536 {
             Reply::Rejected
         } else {
             match serde_json::from_slice::<Envelope>(bytes) {
-                Ok(e) if e.version == 5 => self.handle(peer, e.request),
+                Ok(e) if e.version == IPC_VERSION => self.handle(peer, e.request),
                 _ => Reply::Rejected,
             }
         };
-        serde_json::to_vec(&reply).unwrap_or_else(|_| b"{\"kind\":\"unavailable\"}".to_vec())
+        encode_reply(reply)
     }
     /// Reconcile existing attempts without obtaining replacement dispatch authority.
     fn tick(&mut self) -> Result<(), execution_app::Error>;
@@ -514,11 +662,11 @@ impl Handler for Unbound {
 /// Decode only bounded, current envelopes; malformed input never invokes a handler.
 pub fn dispatch(handler: &mut dyn Handler, peer: &Peer, bytes: &[u8]) -> Vec<u8> {
     if bytes.len() > FRAME_LIMIT {
-        return b"{\"kind\":\"rejected\"}".to_vec();
+        return encode_reply(Reply::Rejected);
     }
     let reply = handler.handle_wire(peer, bytes);
     if reply.len() > FRAME_LIMIT {
-        b"{\"kind\":\"unavailable\"}".to_vec()
+        encode_reply(Reply::Unavailable)
     } else {
         reply
     }
@@ -538,6 +686,24 @@ pub fn run(
 mod tests {
     use super::*;
     #[test]
+    fn client_never_decodes_legacy_or_wrong_version_replies() {
+        for bytes in [
+            br#"{"kind":"unavailable"}"#.as_slice(),
+            br#"{"version":5,"reply":{"kind":"unavailable"}}"#,
+            br#"{"version":6,"reply":{"kind":"unavailable"},"authority":"fake"}"#,
+        ] {
+            assert!(decode_reply(bytes).is_err());
+        }
+        assert!(matches!(
+            decode_reply(&encode_reply(Reply::Unavailable)),
+            Ok(Reply::Unavailable)
+        ));
+        assert!(matches!(
+            decode_reply(&encode_reply(Reply::Rejected)),
+            Ok(Reply::Rejected)
+        ));
+    }
+    #[test]
     fn malformed_versions_and_unbound_calls_never_execute() {
         let peer = Peer {
             pid: 1,
@@ -553,7 +719,7 @@ mod tests {
         ] {
             assert_eq!(
                 dispatch(&mut handler, &peer, bytes),
-                br#"{"kind":"rejected"}"#
+                encode_reply(Reply::Rejected)
             )
         }
     }

@@ -9,11 +9,12 @@
 ```sh
 pnpm install --frozen-lockfile
 cp env.example .env      # 填写实际服务地址、租户 UUID 和组织名称
+pnpm dev --fixture       # 持续运行的真实原生 fixture；无需生产服务、组织配置或模型
 pnpm dev                 # 自动准备/复用开发 AI Host 后启动桌面
 pnpm desktop:build       # 自动打包 Node/依赖、stage、构建 .app
 ```
 
-开发与打包都要求仓库根 `.env`，无论命令从哪里运行；缺失或字段为空时立即停止。`RSS_MDM_ORIGIN` 填写真实 HTTPS origin，`RSS_MDM_TENANT_ID` 填写管理员提供的非零 UUID，`RSS_MDM_ORGANIZATION_LABEL` 填写组织名称。模板的 `https://mdm.example` 为占位地址，构建和手动组织保存都会在网络请求前拒绝 `.example` 域名。实际 `.env` 被 Git 忽略；不在其中配置账号密码、token 或设备注册秘密。
+真实模式开发与打包都要求仓库根 `.env`，无论命令从哪里运行；缺失或字段为空时立即停止。`RSS_MDM_ORIGIN` 填写真实 HTTPS origin，`RSS_MDM_TENANT_ID` 填写管理员提供的非零 UUID，`RSS_MDM_ORGANIZATION_LABEL` 填写组织名称。模板的 `https://mdm.example` 为占位地址，构建和手动组织保存都会在网络请求前拒绝 `.example` 域名。实际 `.env` 被 Git 忽略；不在其中配置账号密码、token 或设备注册秘密。
 
 这三个字段在构建时校验并编译进桌面原生程序，开发与发布使用同一条路径。修改 `.env` 后重新运行 `pnpm dev` 或 `pnpm desktop:build`；地址变化不重建 AI Host runtime。发布应用从 Finder 或开始菜单启动时不读取外部 env、工作目录配置或运行时环境变量；普通 Cargo 编译和单元测试可以没有部署配置，实际应用启动要求有效内置连接。原始 `.env` 不进入应用资源或前端 bundle。
 
@@ -85,7 +86,7 @@ macOS 的正式 `make ci` / `make ci-full` 对整个 Node 与 Rust 检查过程�
 
 该路径限定 macOS arm64，需要已解锁桌面及 System Events 辅助功能权限；环境不满足直接失败。检查浅深主题、1100×760 / 1440×960 / 480×400、会话与资源布局、任务抽屉/并排、原生键盘与焦点、关闭重开。存在已启用的中文拼音输入源时，用物理键验证候选确认不发送及显式发送，并恢复原输入源；系统主题同样在结束后恢复。无实际入口或环境的缩放、其它显示比例及 Windows 项目明确标记未验证。
 
-脚本仍保留默认执行旅程，但它在生产执行服务接入后依赖已移除的桌面 S1 journal，尚不能作为通过的原生执行验收；迁移到独立受保护服务由 #2593 跟踪。原生视觉通过不替代该项。调试构建使用独立 macOS 文件钥匙串，退出后删除并核对默认钥匙串与搜索列表未改变；不访问个人登录钥匙串的应用主密钥。正式签名应用的钥匙串授权另行验收。
+真实执行旅程需要显式 `--controlled-service`，使用受保护固定候选、真实认证 IPC 和服务 journal；普通开发启动不会自动安装服务。调试构建的真实 AI 路径使用隔离 macOS 文件钥匙串，退出后删除并核对默认钥匙串与搜索列表未改变；fixture 路径不创建钥匙串。正式签名应用的钥匙串授权另行验收。
 
 驱动使用固定 `webdriverio@9.32.0` 与 `tauri-plugin-wdio-webdriver@1.4.0` 的标准 WebDriver 接口。`native-e2e` 只允许调试构建，并要求显式 nonce、动态 loopback 端口和隔离 `--test-data-dir`；release 携带该 feature 会编译失败。脚本核对主进程与监听端口归属；固定的 [本地上游补丁](../../vendor/tauri-plugin-wdio-webdriver/NOTICE.md) 对每个请求校验运行凭据，缺失或错误凭据一律拒绝，启动日志仅记录凭据摘要。脚本不调用 WebView 内部 IPC、不替换业务回复。视觉模式的关闭/重开通过 WebDriver 原生 `window.close()` 与应用“显示窗口”菜单验证；开发窗口的标题栏关闭按钮未向 AX 暴露，物理按钮点击单独标为未验证。Tab、Shift+Tab、Escape 和应用菜单操作由 macOS System Events 发出；WebDriver 键盘事件不能替代这些证据。不要在验收期间修改源码或并发启动同一 worktree 的开发服务。
 
@@ -150,3 +151,11 @@ AI 文本不能覆盖设备任务事实；执行详情来自 Rust 的授权读�
 外观使用同一启用与实色回退策略：macOS 采用 Sidebar 原生材质，Windows 11 build 22621 及以上采用公开 DWM Mica，其余宿主实色。正文、输入和模态抽屉始终实色；减少透明度、减少动态、高对比、系统设置读取失败或材质调用失败均回退实色。窗口创建、获得焦点及系统主题变化立即核对，窗口存活期间每两秒刷新；材质失败不会阻止工作区使用。
 
 macOS 透明 WebView 启用了 Tauri 的 `macos-private-api`，该路径影响 Mac App Store 接受；当前企业桌面候选不承诺商店发布、签名或公证。`pnpm check:desktop-native` 仍限定 macOS arm64，分别记录真实 WebView 与模型/执行 fixture 的证据。Windows 交叉 `cargo check` 仅证明类型与编译接缝；真实材质、辅助设置、DPI、拖拽和最大化必须由 Windows 原生环境验证，未运行时不得标记通过。
+
+## 显式 fixture 装配
+
+`pnpm dev --fixture` 打开真正的 Tauri main/WKWebView 并保持运行，支持产品前端热更新和主动退出。窗口中的“开发 fixture · 无真实设备执行”区域可选择连接诊断、待确认、拒绝、运行、取消中、Unknown 和完成场景；所有交互只影响隔离样本。确认引用同一个请求及 revision，取消意图与终止/效果分开展示。
+
+此模式复用浏览器 `pnpm dev:assistant-fixture` 的数据/服务 owner，不读取生产账户、凭据、服务或执行 journal，不准备独立 AI Host，也不要求自动视觉验收的 WebDriver/System Events 权限。正式构建不能启用 fixture，真实服务异常不会切换为样本。
+
+`pnpm check:desktop-native --visual` 自动使用同一 fixture 装配；`pnpm check:desktop-native --controlled-service` 明确请求固定候选的真实服务旅程与受控安装。两者回执分别记录 fixture 和真实执行事实。真实模式的候选、注册、可信配置和协议必须匹配；部署/刷新及管理员操作见[服务指南](local-service-lab.md#显式开发刷新)。

@@ -4,11 +4,13 @@
 compile_error!("native-e2e must never be included in a release build");
 #[cfg(feature = "native-e2e")]
 mod native_e2e;
+#[cfg(all(feature = "dev-fixture", not(debug_assertions)))]
+compile_error!("dev-fixture must never be included in a release build");
 mod navigation;
 mod startup;
-use rss_mdm_desktop::composition::{
-    appearance, ipc, lifecycle::Lifecycle, runtime::DesktopRuntime,
-};
+#[cfg(not(feature = "dev-fixture"))]
+use rss_mdm_desktop::composition::runtime::DesktopRuntime;
+use rss_mdm_desktop::composition::{appearance, ipc, lifecycle::Lifecycle};
 use tauri::Manager;
 
 fn window(app: &tauri::AppHandle) -> tauri::Result<()> {
@@ -24,18 +26,31 @@ fn window(app: &tauri::AppHandle) -> tauri::Result<()> {
     }
     Ok(())
 }
-fn run(data_root: Option<std::path::PathBuf>) -> Result<(), Box<dyn std::error::Error>> {
+fn run(_data_root: Option<std::path::PathBuf>) -> Result<(), Box<dyn std::error::Error>> {
+    #[cfg(not(feature = "dev-fixture"))]
     let default = rss_mdm_desktop::composition::account::bundled_organization()?.ok_or(
         rss_mdm_desktop::organization_config::ConfigurationError(
             "the backend connection before startup",
         ),
     )?;
+    if (std::env::var("RSS_DESKTOP_ASSEMBLY").as_deref() == Ok("fixture"))
+        != cfg!(feature = "dev-fixture")
+    {
+        return Err("desktop fixture feature and startup mode must match".into());
+    }
+    #[cfg(not(feature = "dev-fixture"))]
     let builder = ipc::register(tauri::Builder::default());
+    #[cfg(feature = "dev-fixture")]
+    let builder = ipc::register_fixture(tauri::Builder::default());
     #[cfg(feature = "native-e2e")]
-    let builder = native_e2e::configure(builder, data_root.as_deref())?;
+    let builder = native_e2e::configure(builder, _data_root.as_deref())?;
     let app = builder
         .setup(move |app| {
-            let root = match &data_root {
+            app.manage(appearance::Appearance::default());
+            eprintln!("RSS_DESKTOP_ASSEMBLY {}", serde_json::json!({"mode": if cfg!(feature = "dev-fixture") { "fixture" } else { "production" }, "productionIPC": !cfg!(feature = "dev-fixture")}));
+            #[cfg(not(feature = "dev-fixture"))]
+            {
+            let root = match &_data_root {
                 Some(root) => root.clone(),
                 None => app.path().app_data_dir()?.join("desktop"),
             };
@@ -83,6 +98,7 @@ fn run(data_root: Option<std::path::PathBuf>) -> Result<(), Box<dyn std::error::
                     let _ = runtime.verify_account().await;
                 }
             });
+            }
             use tauri::menu::{Menu, MenuItem, Submenu};
             let show = MenuItem::with_id(app, "show", "显示窗口", true, None::<&str>)?;
             let quit =
@@ -106,13 +122,17 @@ fn run(data_root: Option<std::path::PathBuf>) -> Result<(), Box<dyn std::error::
 }
 fn main() -> std::process::ExitCode {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
+    #[cfg(not(feature = "dev-fixture"))]
     if args.len() == 1 && args[0] == "--service-probe" {
-        let status = local_service::inspect();
+        let status = execution_runner::host::ServiceClient::inspect();
         println!(
             "{}",
             serde_json::to_string(&status).expect("closed service projection")
         );
-        return if matches!(status, local_service::ServiceView::Connected { .. }) {
+        return if matches!(
+            status,
+            execution_runner::host::ServiceView::Connected { .. }
+        ) {
             std::process::ExitCode::SUCCESS
         } else {
             std::process::ExitCode::FAILURE

@@ -27,7 +27,7 @@ if (process.argv.includes("--check")) {
 
 const service = spawnSync(
   "cargo",
-  ["run", "--quiet", "-p", "local-service", "--example", "schema"],
+  ["run", "--quiet", "-p", "execution-runner", "--example", "service-schema"],
   { encoding: "utf8" },
 );
 if (service.status !== 0) throw new Error(service.stderr);
@@ -35,7 +35,7 @@ const servicePath = "apps/desktop/src/settings/service-contract.ts";
 const serviceText = await format(
   await compile(JSON.parse(service.stdout), "ServiceView", {
     bannerComment:
-      "// @generated from local-service::ServiceView. Do not edit.",
+      "// @generated from execution-runner::host::ServiceView. Do not edit.",
   }),
   { parser: "typescript" },
 );
@@ -43,3 +43,27 @@ if (process.argv.includes("--check")) {
   if (readFileSync(servicePath, "utf8") !== serviceText)
     throw new Error("service contract drift");
 } else writeFileSync(servicePath, serviceText);
+
+const fixtureResult = spawnSync(
+  "cargo",
+  [
+    "run",
+    "--quiet",
+    "--locked",
+    "-p",
+    "execution-runner",
+    "--example",
+    "service-fixtures",
+  ],
+  { encoding: "utf8" },
+);
+if (fixtureResult.status !== 0) throw new Error(fixtureResult.stderr);
+const fixtureText = await format(
+  JSON.stringify(JSON.parse(fixtureResult.stdout)),
+  { parser: "json" },
+);
+const fixturePath = "tests/assistant/service-fixtures.json";
+if (process.argv.includes("--check")) {
+  if (readFileSync(fixturePath, "utf8") !== fixtureText)
+    throw new Error("service fixture drift");
+} else writeFileSync(fixturePath, fixtureText);

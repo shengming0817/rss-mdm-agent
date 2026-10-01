@@ -21,7 +21,7 @@ async fn signed_start_compiles_exactly_and_never_creates_a_local_enterprise_appr
         plan::context(server.url.as_str(), server.config().tenant, &receipt).unwrap();
     let interpreters = [Interpreter {
         profile: wire::ExecutorProfile::PosixSh,
-        image: local_service::Artifact {
+        image: installation_security::Artifact {
             path: "/bin/sh".into(),
             sha256: format!("{:x}", Sha256::digest(std::fs::read("/bin/sh").unwrap())),
             cdhash: None,
@@ -138,7 +138,7 @@ async fn osquery_compiler_revalidates_the_signed_query_and_uses_only_literal_arg
         let executable = std::path::PathBuf::from("/bin/sh");
         let interpreters = [Interpreter {
             profile: wire::ExecutorProfile::Osquery,
-            image: local_service::Artifact {
+            image: installation_security::Artifact {
                 sha256: format!("{:x}", Sha256::digest(std::fs::read(&executable).unwrap())),
                 path: executable,
                 cdhash: None,
@@ -212,7 +212,7 @@ async fn current_software_steps_compile_from_exact_prefixed_artifacts() {
         let materials = client.prepare(&offer).await.unwrap();
         let (binding, actor) =
             plan::context(server.url.as_str(), server.config().tenant, &receipt).unwrap();
-        let executable = local_service::Artifact {
+        let executable = installation_security::Artifact {
             path: "/bin/sh".into(),
             sha256: format!("{:x}", Sha256::digest(std::fs::read("/bin/sh").unwrap())),
             cdhash: None,

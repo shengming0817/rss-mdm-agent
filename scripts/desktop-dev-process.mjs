@@ -10,12 +10,25 @@ export function runDesktop(
   args = [],
   environment = process.env,
 ) {
+  const env = { ...environment };
+  if (directory === undefined) delete env.RSS_AI_HOST_RUNTIME;
+  else env.RSS_AI_HOST_RUNTIME = directory;
+  return runPreparation(
+    "pnpm",
+    ["exec", "tauri", "dev", ...args],
+    join(root, "apps/desktop"),
+    env,
+  );
+}
+
+// Preparation shares the existing owned process-group lifecycle and live output.
+export function runPreparation(command, args, cwd, environment = process.env) {
   return new Promise((resolve, reject) => {
-    const child = spawn("pnpm", ["exec", "tauri", "dev", ...args], {
-      cwd: join(root, "apps/desktop"),
+    const child = spawn(command, args, {
+      cwd,
       stdio: "inherit",
       detached: true,
-      env: { ...environment, RSS_AI_HOST_RUNTIME: directory },
+      env: environment,
     });
     let exitCode, timer, deadline;
     const alive = () => {

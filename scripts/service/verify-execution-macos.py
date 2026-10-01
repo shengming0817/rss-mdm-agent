@@ -19,6 +19,7 @@ import subprocess
 import threading
 import time
 import uuid
+import sys
 
 
 def run(*args, **kwargs):
@@ -54,6 +55,7 @@ def main():
     parser.add_argument('--binary', type=Path, required=True)
     parser.add_argument('--backend', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--desktop', type=Path)
     args = parser.parse_args()
     if os.uname().sysname != 'Darwin' or os.geteuid() == 0:
         raise RuntimeError('run this harness from the actual macOS user login')
@@ -61,6 +63,9 @@ def main():
         result = subprocess.run(['/bin/launchctl', 'print', domain], capture_output=True)
         if result.returncode != 113:
             raise RuntimeError('existing or unqueryable execution registration; refusing replacement')
+    default_config = Path('/Library/Application Support/RSS MDM Agent/execution.json')
+    if args.desktop and (default_config.exists() or default_config.is_symlink()):
+        raise RuntimeError('default deployment exists; refusing to replace another installation')
     args.output.mkdir(mode=0o700, parents=True, exist_ok=False)
     lab = args.output.resolve()
     backend = subprocess.Popen([str(args.backend.resolve())], stdin=subprocess.PIPE,
@@ -109,7 +114,7 @@ def main():
     helper_root = lab / 'helper'
     helper_root.mkdir(mode=0o700)
     installer = Path(__file__).with_name('execution-macos.py').resolve()
-    deployment = dict(version=1, origin=f'https://localhost:{proxy.server_port}/', tenant=info['tenant'],
+    deployment = dict(version=2, ipc_version=6, origin=f'https://localhost:{proxy.server_port}/', tenant=info['tenant'],
                       signing_keys={'test': info['key']}, ca_file=str(protected / 'ca.pem'),
                       enrollment=str(uuid.uuid4()), registration_operation=str(uuid.uuid4()),
                       state_root=str(protected / 'state'),
@@ -138,23 +143,84 @@ path=root/'execution.json';path.write_text(json.dumps(config));os.chmod(path,0o6
 subprocess.run([str(binary),'--config',str(path),'--initialize'],input='AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',text=True,check=True)
 subprocess.run(['/usr/bin/python3',%r,'install','--scope','system','--binary',str(binary),'--config',str(path)],check=True)
 ''' % (str(protected), str(args.binary.resolve()), deployment, str(os.geteuid()), str(lab / 'tls.pem'), str(installer)))
+    if args.desktop:
+        # Extend this same installation owner, retaining its protected binary/config checks.
+        contents = setup.read_text()
+        insertion = """desktop=root/'rss-mdm-desktop'
+shutil.copyfile(%r,desktop); os.chmod(desktop,0o755)
+subprocess.run(['/usr/bin/codesign','--force','--sign','-','--options','runtime',str(desktop)],check=True)
+config['clients']['images'].append(artifact(desktop))
+""" % str(args.desktop.resolve())
+        contents = contents.replace("path=root/'execution.json'", insertion + "path=root/'execution.json'")
+        # Default pin creation is exclusive. The desktop never selects an arbitrary config.
+        contents += """default=Path(%r)
+fd=os.open(default,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o644)
+with os.fdopen(fd,'w') as stream: json.dump(config,stream); stream.flush(); os.fsync(stream.fileno())
+""" % str(default_config)
+        initializer = "subprocess.run([str(binary),'--config',str(path),'--initialize'],input='AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',text=True,check=True)\n"
+        contents = contents.replace(initializer, '')
+        setup.write_text(contents)
     cleanup = lab / 'remove.py'
     cleanup.write_text('import subprocess\nsubprocess.run(%r,check=True)\n' %
                        ['/usr/bin/python3', str(installer), 'remove', '--scope', 'system', '--binary', str(binary), '--config', str(config)])
+    cleanup.write_text("""import json,sqlite3,subprocess
+from pathlib import Path
+config=Path(%r)
+expected=%r
+plist=Path('/Library/LaunchDaemons/com.rss-mdm.agent.execution.plist')
+if plist.exists(): subprocess.run(expected,check=True)
+journal=Path(%r)
+if journal.exists():
+    db=sqlite3.connect('file:'+str(journal)+'?mode=ro',uri=True)
+    rows=[{'request':row[0],'snapshot':json.loads(row[1])} for row in db.execute('SELECT request_id,snapshot FROM executions')]
+    db.close()
+    print(json.dumps({'journal':str(journal),'records':rows}))
+""" % (str(config), ['/usr/bin/python3', str(installer), 'remove', '--scope', 'system', '--binary', str(binary), '--config', str(config)], str(protected / 'state/execution.sqlite')))
+    if args.desktop:
+        cleanup.write_text(cleanup.read_text() + """default=Path(%r)
+if default.exists():
+    actual=json.loads(default.read_text())
+    assert actual['service']['path']==%r and actual['state_root']==%r, 'refusing to remove another deployment pin'
+    default.unlink()
+""" % (str(default_config), str(binary), str(protected / 'state')))
     receipt = dict(platform=os.uname().sysname, architecture=os.uname().machine,
                    journal=str(protected / 'state/execution.sqlite'), scenarios={})
     installed = helper = False
     try:
-        first = command('script', body='printf \'{"fixture":"system"}\\n\'\n')
-        command('result_failure')
+        first = None if args.desktop else command('script', body='printf \'{"fixture":"system"}\\n\'\n')
+        if not args.desktop: command('result_failure')
         administrator(setup)
         installed = True
         receipt['artifact'] = json.loads(config.read_text())['service']
+        if args.desktop:
+            deadline = time.monotonic() + 15
+            while True:
+                probe = subprocess.run([str(binary), '--config', str(config), '--service-status'], capture_output=True, text=True)
+                if probe.returncode == 0: break
+                if time.monotonic() >= deadline: raise RuntimeError('unregistered service diagnostic deadline exceeded')
+                time.sleep(.2)
+            status = json.loads(probe.stdout)
+            assert status['reply']['value']['readiness']['phase'] == 'registrationRequired'
+            denied = json.loads(run(str(binary), '--config', str(config), '--query').stdout)
+            assert denied['reply']['kind'] == 'rejected'
+            assert not (protected / 'state').exists(), 'diagnostic startup created device state'
+            receipt['scenarios']['unregistered_status_without_authority'] = status
+            initialize = lab / 'initialize.py'
+            initialize.write_text("""import plistlib,subprocess
+from pathlib import Path
+p=plistlib.loads(Path('/Library/LaunchDaemons/com.rss-mdm.agent.execution.plist').read_bytes())
+assert p['ProgramArguments']==%r, 'initialization registration owner mismatch'
+subprocess.run(%r,input='AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',text=True,check=True)
+subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.execution'],check=True)
+""" % ([str(binary),'--config',str(config)], [str(binary),'--config',str(config),'--initialize']))
+            administrator(initialize)
+
         receipt['sourceHead'] = run('/usr/bin/git', 'rev-parse', 'HEAD').stdout.strip()
+        helper = True
         run('/usr/bin/python3', str(installer), 'install', '--scope', 'user', '--binary', str(binary), '--config', str(config))
         helper = True
         def query():
-            reply = json.loads(run(str(binary), '--config', str(config), '--query').stdout)
+            reply = json.loads(run(str(binary), '--config', str(config), '--query').stdout)['reply']
             assert reply['kind'] == 'tasks' and isinstance(reply['value']['items'], list)
             return reply
         def completed(task, seconds=30):
@@ -165,6 +231,33 @@ subprocess.run(['/usr/bin/python3',%r,'install','--scope','system','--binary',st
                     return status
                 time.sleep(.2)
             raise RuntimeError('backend result deadline exceeded')
+        if args.desktop:
+            payload = lab / 'payload'; payload.mkdir()
+            (payload / 'fixed.txt').write_text('controlled package payload\n')
+            pkg = lab / 'fixed.pkg'
+            package_receipt = 'org.rss.verification.' + tag
+            run('/usr/bin/pkgbuild', '--root', str(payload), '--identifier', package_receipt,
+                '--version', '1.0', '--install-location', str(protected / 'package-payload'), str(pkg))
+            offered = command('package', path=str(pkg), receipt=package_receipt, user=True)
+            print(json.dumps({'kind': 'desktopService', 'desktop': str(protected / 'rss-mdm-desktop'),
+                'service': receipt['artifact'], 'config': str(default_config), 'task': offered, 'journalOwner': 'agent-service'}), flush=True)
+            for line in sys.stdin:
+                request = json.loads(line)
+                method = request['method']
+                if method == 'query': value = query()
+                elif method == 'status': value = command('status')
+                elif method == 'effect':
+                    detected = subprocess.run(['/usr/sbin/pkgutil', '--pkg-info-plist', package_receipt], capture_output=True, text=True)
+                    target_file = protected / 'package-payload/fixed.txt'
+                    value = {'receiptPresent': detected.returncode == 0, 'payloadPresent': target_file.exists(),
+                        'payloadMatches': target_file.exists() and target_file.read_text() == 'controlled package payload\n'}
+                elif method == 'shutdown': break
+                else: raise RuntimeError('unknown native harness control')
+                print(json.dumps({'id': request['id'], 'value': value}), flush=True)
+            receipt['scenarios']['native_final'] = query()
+            receipt['scenarios']['backend_final'] = command('status')
+            receipt['status'] = 'passed'
+            return
         receipt['scenarios']['authenticated_ipc'] = query()
         system = completed(first['attempt'])
         validate_script(acknowledged_result(system, first['attempt']), 'system')
@@ -259,6 +352,7 @@ subprocess.run(['/usr/bin/python3',%r,'install','--scope','system','--binary',st
             (lab / 'command-error.txt').write_text((error.stdout or '') + (error.stderr or ''))
         raise
     finally:
+        if protected.exists(): installed = True
         cleanup_errors = []
         if helper:
             try:
@@ -267,7 +361,8 @@ subprocess.run(['/usr/bin/python3',%r,'install','--scope','system','--binary',st
                 cleanup_errors.append(str(error))
         if installed:
             try:
-                administrator(cleanup)
+                proof = administrator(cleanup)
+                if proof.stdout.strip(): receipt['journalProof'] = json.loads(proof.stdout)
             except BaseException as error:
                 cleanup_errors.append(str(error))
         proxy.shutdown()

@@ -2,10 +2,13 @@
 import { computed, nextTick, ref } from "vue";
 import type { AssistantController } from "../assistant/controller";
 import LocalService from "./LocalService.vue";
+import type { ServicePort } from "./native";
 import ConnectionSettings from "./ConnectionSettings.vue";
 import { diagnosticMessage, type HostSettings } from "./controller";
 const props = defineProps<{
   host: HostSettings;
+  servicePort?: ServicePort;
+  fixture?: boolean;
   active?: boolean;
   assistant?: AssistantController;
 }>();
@@ -73,7 +76,7 @@ function keys(event: KeyboardEvent) {
 <template>
   <section class="settings" aria-label="设置">
     <div :inert="confirming ? true : undefined">
-      <LocalService />
+      <LocalService :port="servicePort" :fixture="fixture" />
       <section class="settings-card">
         <h2>账户入口</h2>
         <p>选择企业登录、测试用户或不登录使用。各入口的数据独立保存。</p>

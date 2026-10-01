@@ -26,7 +26,7 @@ const options = {
   config: { id: "config", revision: "1" },
   profile: "conversation",
 };
-export async function startFixture() {
+export async function createFixture() {
   const host = new FakeHost(
     undefined,
     { now: Date.now },
@@ -73,7 +73,87 @@ export async function startFixture() {
   const execution = JSON.parse(
     readFileSync(new URL("./execution-fixtures.json", import.meta.url), "utf8"),
   );
-  let executionState = "running";
+  const serviceViews = JSON.parse(
+    readFileSync(new URL("./service-fixtures.json", import.meta.url), "utf8"),
+  );
+  let executionState = "running",
+    scenario = "running";
+  const scenarios = [
+    ...Object.keys(serviceViews),
+    "proposed",
+    "denied",
+    "running",
+    "software",
+    "cancelling",
+    "outcomeUnknown",
+    "verified",
+    "cancelled",
+  ];
+  function selectScenario(value) {
+    if (!scenarios.includes(value)) throw new Error("unknown fixture scenario");
+    scenario = value;
+    if (execution[value]?.status) executionState = value;
+  }
+  function serviceView() {
+    return structuredClone(serviceViews[scenario] ?? serviceViews.ready);
+  }
+  function available() {
+    const view = serviceView();
+    if (view.phase !== "connected" || view.status.readiness.phase !== "ready")
+      throw new Error("fixture service unavailable");
+  }
+  function details(request) {
+    available();
+    if (request !== execution.offer.request)
+      throw new Error("fixture request mismatch");
+    return ["proposed", "denied"].includes(scenario)
+      ? { kind: "pending", value: structuredClone(execution[scenario]) }
+      : {
+          kind: "execution",
+          value: structuredClone(execution[executionState]),
+        };
+  }
+  function snapshot(input = {}) {
+    available();
+    return {
+      available: [structuredClone(execution.offer)],
+      preparations: ["proposed", "denied"].includes(scenario)
+        ? [structuredClone(execution[scenario])]
+        : [],
+      selected: input.selected ? details(input.selected) : null,
+      requests: ["proposed", "denied", "ready"].includes(scenario)
+        ? []
+        : [structuredClone(execution[executionState])],
+      next: null,
+    };
+  }
+  function execute(input) {
+    available();
+    const offer = execution.offer;
+    if (
+      !["request", "task", "attempt", "revision"].every(
+        (key) => input?.[key] === offer[key],
+      )
+    )
+      throw new Error("fixture selection mismatch");
+    if (scenario === "denied") throw new Error("fixture request denied");
+    if (["proposed", "ready"].includes(scenario)) {
+      scenario = "running";
+      executionState = "running";
+    }
+    return { request: offer.request, confirmationRequired: false };
+  }
+  function cancel(input) {
+    available();
+    if (input?.requestId !== execution.offer.request)
+      throw new Error("fixture request mismatch");
+    if (!["cancelled", "outcomeUnknown", "verified"].includes(scenario)) {
+      scenario = "cancelling";
+      executionState = "cancelling";
+    }
+    return details(input.requestId);
+  }
+
   const handle = async (req, res, next) => {
     if (!req.url?.startsWith("/__fixture/")) {
       next();
@@ -103,6 +183,62 @@ export async function startFixture() {
         );
         peers.set(id, state);
         res.end(id);
+      } else if (
+        [
+          "/__fixture/state",
+          "/__fixture/scenario",
+          "/__fixture/snapshot",
+          "/__fixture/execute",
+          "/__fixture/cancel",
+        ].includes(url.pathname)
+      ) {
+        let input = {};
+        if (req.method === "POST") {
+          let raw = "";
+          for await (const chunk of req) {
+            raw += chunk;
+            if (raw.length > 65536) throw new Error("fixture budget");
+          }
+          input = JSON.parse(raw || "{}");
+        }
+        let value;
+        switch (url.pathname) {
+          case "/__fixture/state":
+            value = { scenario, scenarios, service: serviceView() };
+            break;
+          case "/__fixture/scenario":
+            selectScenario(input.scenario);
+            value = {};
+            break;
+          case "/__fixture/snapshot":
+            value = snapshot(input);
+            break;
+          case "/__fixture/execute":
+            value = execute(input);
+            break;
+          case "/__fixture/cancel":
+            value = cancel(input);
+            break;
+        }
+        res.end(JSON.stringify(value));
+      } else if (
+        url.pathname === "/__fixture/visual-delivery" &&
+        req.method === "POST"
+      ) {
+        const sessions = unwrap(
+          await host.store.listSessions(fixtureCaller, { limit: 50 }),
+        );
+        const sessionId = sessions.items.find((row) =>
+          row.title.startsWith("原生视觉验收"),
+        ).namespace.sessionId;
+        const command = await fixture.command(sessionId);
+        await fixture.executionDelivery(sessionId, command.commandId);
+        unwrap(
+          await host.advance(fixtureCaller, sessionId, command.commandId, [
+            { type: "terminal", outcome: "completed" },
+          ]),
+        );
+        res.end("{}");
       } else if (url.pathname === "/__fixture/details") {
         if (
           url.searchParams.get("request") !==
@@ -112,7 +248,7 @@ export async function startFixture() {
           res.end("{}");
           return;
         }
-        res.end(JSON.stringify(execution[executionState]));
+        res.end(JSON.stringify(details(url.searchParams.get("request"))));
       } else if (!peer || peer.closed) {
         res.statusCode = 410;
         res.end("{}");
@@ -133,34 +269,30 @@ export async function startFixture() {
     } catch (error) {
       res.statusCode = 500;
       res.end("{}");
-      console.error(error);
+      console.error(`fixture request failed: ${error.message}`);
     }
   };
-  const server = await createServer({
-    configFile: false,
-    root,
-    plugins: [
-      {
-        name: "fixture-api",
-        configureServer(server) {
-          server.middlewares.use(handle);
-        },
-      },
-      vue(),
-    ],
-    server: { host: "127.0.0.1", port: 0 },
-    logLevel: "error",
-  });
-  await server.listen();
+  const plugin = {
+    name: "fixture-api",
+    configureServer(server) {
+      server.middlewares.use(handle);
+    },
+  };
   const budget = () => ({
     timeoutMs: 5000,
     signal: new AbortController().signal,
   });
-  return {
+  const fixture = {
+    plugin,
+    snapshot,
+    execute,
+    cancel,
+    details,
+    serviceView,
+    selectScenario,
     host,
     service,
     caller: fixtureCaller,
-    url: `http://127.0.0.1:${server.httpServer.address().port}/tests/assistant/`,
     execution,
     async seed(count = 23) {
       for (let i = 0; i < count; i++)
@@ -176,6 +308,7 @@ export async function startFixture() {
     setExecution(value) {
       if (!execution[value]) throw new Error("scenario");
       executionState = value;
+      scenario = value;
     },
     // Test-only association: phase/effect facts remain the generated Rust fixture.
     async executionDelivery(
@@ -237,7 +370,7 @@ export async function startFixture() {
         deliveries: [row],
       };
       unwrap(await host.store.commit(commit));
-      for (const value of Object.values(execution))
+      for (const value of Object.values(execution).filter((row) => row.action))
         value.action.initiator = {
           kind: "ai",
           provider: "test-fixture",
@@ -345,6 +478,25 @@ export async function startFixture() {
       for (const p of permissions) p.abort();
       await service.close();
       await host.close(budget());
+    },
+  };
+  return fixture;
+}
+export async function startFixture() {
+  const fixture = await createFixture();
+  const server = await createServer({
+    configFile: false,
+    root,
+    plugins: [fixture.plugin, vue()],
+    server: { host: "127.0.0.1", port: 0 },
+    logLevel: "error",
+  });
+  await server.listen();
+  return {
+    ...fixture,
+    url: `http://127.0.0.1:${server.httpServer.address().port}/tests/assistant/`,
+    async close() {
+      await fixture.close();
       await server.close();
     },
   };

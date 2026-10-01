@@ -22,7 +22,7 @@ execution-lifecycle = { path = "../../crates/execution-lifecycle" }
 execution-sqlite = { path = "../../crates/execution-sqlite" }
 execution-runner = { path = "../../crates/execution-runner" }
 native-process = { path = "../../crates/native-process" }
-local-service = { path = "../../crates/local-service" }
+installation-security = { path = "../../crates/installation-security" }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

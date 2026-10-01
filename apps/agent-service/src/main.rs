@@ -1,7 +1,7 @@
 //! The sole production execution service. Initialization is explicit and never a startup fallback.
 use agent_client::{wire, Error};
 use agent_service::deployment::Deployment;
-use execution_runner::host::{ClientOrigin, Request};
+use execution_runner::host::Request;
 use std::{io::Read, path::PathBuf, sync::atomic::AtomicBool};
 static STOP: AtomicBool = AtomicBool::new(false);
 #[cfg(target_os = "macos")]
@@ -21,6 +21,17 @@ fn run() -> Result<(), Error> {
         Deployment::default_path()?
     };
     let deployment = Deployment::load(&path)?;
+    if args.len() == 1 && args[0] == "--validate-installation" {
+        deployment
+            .service
+            .verify(&std::env::current_exe()?)
+            .map_err(|_| Error::Identity)?;
+        println!(
+            "{}",
+            serde_json::to_string(&deployment).map_err(|_| Error::Protocol)?
+        );
+        return Ok(());
+    }
     if args.len() == 1 && args[0] == "--user-helper" {
         return serve(Box::new(deployment.user_helper()?), false);
     }
@@ -41,23 +52,7 @@ fn run() -> Result<(), Error> {
     }
     let request = match args.as_slice() {
         [arg] if arg == "--query" => Some(Request::Tasks { after: None }),
-        [arg, request, task, attempt, revision] if arg == "--start-task" => {
-            Some(Request::StartTask {
-                request: execution_contract::RequestId::new(
-                    request.to_str().ok_or(Error::Protocol)?,
-                )
-                .map_err(|_| Error::Protocol)?,
-                task: execution_contract::Id::new(task.to_str().ok_or(Error::Protocol)?)
-                    .map_err(|_| Error::Protocol)?,
-                attempt: execution_contract::Id::new(attempt.to_str().ok_or(Error::Protocol)?)
-                    .map_err(|_| Error::Protocol)?,
-                revision: execution_contract::Digest::new(
-                    revision.to_str().ok_or(Error::Protocol)?,
-                )
-                .map_err(|_| Error::Protocol)?,
-                origin: ClientOrigin::Desktop {},
-            })
-        }
+        [arg] if arg == "--service-status" => Some(Request::ServiceStatus {}),
         [] => None,
         _ => return Err(Error::Configuration),
     };
@@ -66,22 +61,13 @@ fn run() -> Result<(), Error> {
             .request(request)?;
         println!(
             "{}",
-            serde_json::to_string(&reply).map_err(|_| Error::Protocol)?
+            std::str::from_utf8(&execution_runner::host::encode_reply(reply))
+                .map_err(|_| Error::Protocol)?
         );
         return Ok(());
     }
-    let service = deployment.open()?;
-    let helper_policy = if deployment.helper_work_roots.is_empty() {
-        None
-    } else {
-        Some(execution_runner::host::PeerPolicy {
-            images: vec![deployment.service.clone()],
-            subjects: deployment.helper_work_roots.keys().cloned().collect(),
-            interactive: true,
-        })
-    };
-    let handler = service.spawn(deployment.clients, helper_policy)?;
-    serve(Box::new(handler), true)
+    let handler = deployment.assemble()?;
+    serve(handler, true)
 }
 fn serve(handler: Box<dyn execution_runner::host::Handler>, system: bool) -> Result<(), Error> {
     #[cfg(target_os = "macos")]

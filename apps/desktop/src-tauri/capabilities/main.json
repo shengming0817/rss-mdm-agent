@@ -19,13 +19,14 @@
     "allow-test-users",
     "allow-select-test-user",
     "allow-save-connection",
-    "allow-local-service-status",
+    "allow-execution-service-status",
     "allow-select-guest",
     "allow-account-logout",
     "allow-account-status",
     "allow-account-organizations",
     "allow-account-save-organization",
     "allow-account-login",
-    "allow-appearance-snapshot"
+    "allow-appearance-snapshot",
+    "allow-development-assembly"
   ]
 }

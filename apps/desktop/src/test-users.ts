@@ -16,7 +16,8 @@ import {
 } from "@rss-mdm-agent/ai-contract";
 export const currentUser = shallowRef<UserContext>();
 export const accountNotice = shallowRef("");
-export const nativeTestMode = isTauri();
+import { fixtureSelected } from "./assembly";
+export const nativeTestMode = isTauri() && !fixtureSelected;
 function parsed<
   T extends
     | "testUserPage"

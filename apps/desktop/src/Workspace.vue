@@ -34,6 +34,7 @@ import { createController } from "./self-service/controller";
 import { nativePort } from "./self-service/native";
 import preview from "./self-service/preview";
 import Settings from "./settings/Settings.vue";
+import type { ServicePort } from "./settings/native";
 import type { HostSettings } from "./settings/controller";
 import "./self-service/style.css";
 import "./assistant/style.css";
@@ -44,6 +45,8 @@ const props = defineProps<{
   selfServicePort?: SelfServicePort;
   page: string;
   host: HostSettings;
+  servicePort?: ServicePort;
+  fixture?: boolean;
 }>();
 const emit = defineEmits<{
   navigate: [id: string];
@@ -406,6 +409,8 @@ onBeforeUnmount(() => {
       <Settings
         v-show="!ready || page === 'settings'"
         :host="host"
+        :service-port="servicePort"
+        :fixture="fixture"
         :active="!ready || page === 'settings'"
         :assistant="assistant"
         @assistant="emit('navigate', 'assistant')"

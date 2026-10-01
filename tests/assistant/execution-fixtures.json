@@ -164,6 +164,128 @@
       "stopOutcome": "acknowledged"
     }
   },
+  "cancelling": {
+    "action": {
+      "access": {
+        "allowChildProcesses": false,
+        "kind": "restricted",
+        "networkDenied": true,
+        "networkDestinationCount": 0,
+        "readPathCount": 1,
+        "requireSandbox": true,
+        "writePathCount": 0
+      },
+      "actor": "actor-1",
+      "artifact": {
+        "resource": { "id": "script-1", "revision": "1" },
+        "sha256": "1212121212121212121212121212121212121212121212121212121212121212"
+      },
+      "authority": { "id": "test-authority", "kind": "test" },
+      "budget": {
+        "maxAttempts": 1,
+        "totalOutputBytes": 4096,
+        "totalTimeoutMs": 1000
+      },
+      "contentDigest": "1cc9a573957f1dd48c38d98970a64c4486fde6e4f9c647c884b631e10a07d7ad",
+      "execution": { "kind": "process" },
+      "initiator": {
+        "kind": "policy",
+        "policy": { "id": "policy-1", "revision": "1" }
+      },
+      "interpreter": {
+        "artifact": {
+          "resource": { "id": "test-interpreter", "revision": "1" },
+          "sha256": "1212121212121212121212121212121212121212121212121212121212121212"
+        },
+        "profile": { "id": "test-file", "revision": "1" }
+      },
+      "operation": {
+        "action": "diagnose",
+        "resource": { "id": "network-tool", "revision": "1" }
+      },
+      "policy": { "id": "policy-1", "revision": "1" },
+      "requestId": "request-1",
+      "runAs": {
+        "account": { "platform": "linux", "subject": "uid:1000" },
+        "kind": "user"
+      },
+      "schemaVersion": 5,
+      "sessionRequirement": { "kind": "notRequired" },
+      "target": {
+        "device": "device-1",
+        "platform": "linux",
+        "scope": {
+          "account": { "platform": "linux", "subject": "uid:1000" },
+          "kind": "user"
+        }
+      },
+      "validity": { "expiresAtUnixMs": 2000, "notBeforeUnixMs": 1000 }
+    },
+    "status": {
+      "admission": "admitted",
+      "assessment": null,
+      "attemptId": "app-fd5e6aca451fdab554517dcc42aea4609d7c916efc7f7f5102c14914556715fa",
+      "attempts": 1,
+      "cancelRequested": true,
+      "contentDigest": "1cc9a573957f1dd48c38d98970a64c4486fde6e4f9c647c884b631e10a07d7ad",
+      "dispatchCause": null,
+      "evidence": [],
+      "mode": "test",
+      "operationRequestId": "request-1",
+      "phase": "running",
+      "process": null,
+      "software": null,
+      "stopOutcome": null
+    }
+  },
+  "denied": {
+    "failure": "revoked",
+    "offer": {
+      "attempt": "backend-attempt",
+      "expiresAt": 9999999999,
+      "request": "request-1",
+      "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "summary": {
+        "intent": "install",
+        "kind": "software",
+        "steps": [
+          { "identity": "system", "package": "办公套件", "version": "1.0" }
+        ]
+      },
+      "task": "backend-task",
+      "title": "办公套件",
+      "userInitiated": true
+    },
+    "revision": 1,
+    "state": "failed",
+    "trigger": {
+      "config": { "id": "fixture-config", "revision": "1" },
+      "conversation": "fixture-conversation",
+      "kind": "ai",
+      "osSession": {
+        "account": { "platform": "macos", "subject": "fixture-user" },
+        "device": "fixture-device",
+        "session": "fixture-login"
+      },
+      "toolCall": "fixture-tool"
+    }
+  },
+  "offer": {
+    "attempt": "backend-attempt",
+    "expiresAt": 9999999999,
+    "request": "request-1",
+    "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "summary": {
+      "intent": "install",
+      "kind": "software",
+      "steps": [
+        { "identity": "system", "package": "办公套件", "version": "1.0" }
+      ]
+    },
+    "task": "backend-task",
+    "title": "办公套件",
+    "userInitiated": true
+  },
   "outcomeUnknown": {
     "action": {
       "access": {
@@ -236,6 +358,38 @@
       "process": null,
       "software": null,
       "stopOutcome": null
+    }
+  },
+  "proposed": {
+    "failure": null,
+    "offer": {
+      "attempt": "backend-attempt",
+      "expiresAt": 9999999999,
+      "request": "request-1",
+      "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "summary": {
+        "intent": "install",
+        "kind": "software",
+        "steps": [
+          { "identity": "system", "package": "办公套件", "version": "1.0" }
+        ]
+      },
+      "task": "backend-task",
+      "title": "办公套件",
+      "userInitiated": true
+    },
+    "revision": 1,
+    "state": "proposed",
+    "trigger": {
+      "config": { "id": "fixture-config", "revision": "1" },
+      "conversation": "fixture-conversation",
+      "kind": "ai",
+      "osSession": {
+        "account": { "platform": "macos", "subject": "fixture-user" },
+        "device": "fixture-device",
+        "session": "fixture-login"
+      },
+      "toolCall": "fixture-tool"
     }
   },
   "running": {

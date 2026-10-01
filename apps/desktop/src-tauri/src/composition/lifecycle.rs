@@ -1,10 +1,12 @@
 //! Production window/process lifetime, shared by the native acceptance carrier.
 // ref: Tauri crates/tauri/src/app.rs@tauri-v2.11.2 (RunEvent / ExitRequestApi).
+#[cfg(not(feature = "dev-fixture"))]
 use super::runtime::DesktopRuntime;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
 };
+#[cfg(not(feature = "dev-fixture"))]
 use tauri::Manager;
 
 #[derive(Default)]
@@ -57,7 +59,10 @@ impl Lifecycle {
                 self.closing_view = true;
                 let app = app.clone();
                 tauri::async_runtime::spawn(async move {
+                    #[cfg(not(feature = "dev-fixture"))]
                     app.state::<DesktopRuntime>().detach_views().await;
+                    #[cfg(feature = "dev-fixture")]
+                    let _ = app;
                 });
             }
             tauri::RunEvent::ExitRequested { api, code, .. } => match self.exit_requested(code) {
@@ -68,6 +73,7 @@ impl Lifecycle {
                     let app = app.clone();
                     let completed = self.shutdown_complete.clone();
                     tauri::async_runtime::spawn(async move {
+                        #[cfg(not(feature = "dev-fixture"))]
                         app.state::<DesktopRuntime>().shutdown().await;
                         completed.store(true, Ordering::Release);
                         app.exit(code);

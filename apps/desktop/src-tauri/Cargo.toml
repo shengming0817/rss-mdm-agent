@@ -19,7 +19,7 @@ zeroize = "=1.8.2"
 reqwest = { version = "=0.13.5", default-features = false, features = ["json", "native-tls"] }
 url.workspace = true
 native-process = { path = "../../../crates/native-process" }
-local-service = { path = "../../../crates/local-service" }
+installation-security = { path = "../../../crates/installation-security" }
 ai-session-contract = { path = "../../../crates/ai-session-contract" }
 unicode-normalization = "=0.1.25"
 uuid = { version = "=1.26.0", features = ["v4"] }
@@ -50,6 +50,7 @@ objc2-foundation = { version = "=0.3.2", default-features = false, features = ["
 
 [features]
 default = ["custom-protocol"]
+dev-fixture = []
 native-e2e = ["dep:tauri-plugin-wdio-webdriver"]
 custom-protocol = ["tauri/custom-protocol"]
 

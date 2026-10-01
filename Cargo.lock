@@ -91,8 +91,8 @@ dependencies = [
  "execution-lifecycle",
  "execution-runner",
  "execution-sqlite",
+ "installation-security",
  "libc",
- "local-service",
  "native-process",
  "ring",
  "rusqlite",
@@ -1189,12 +1189,13 @@ dependencies = [
  "execution-contract",
  "execution-lifecycle",
  "execution-sqlite",
+ "installation-security",
  "libc",
- "local-service",
  "native-process",
  "plist",
  "rss-mdm-resource",
  "rusqlite",
+ "schemars 1.2.2",
  "script-plan",
  "serde",
  "serde_json",
@@ -2224,6 +2225,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "installation-security"
+version = "0.1.0"
+dependencies = [
+ "cc",
+ "libc",
+ "serde",
+ "sha2",
+ "thiserror 2.0.20",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "ipnet"
 version = "2.12.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2551,21 +2564,6 @@ name = "litemap"
 version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "47d9d19d1d6efa0109d2f65ff4c85cddd50bd572e5a00127ab10987290bcefae"
-
-[[package]]
-name = "local-service"
-version = "0.1.0"
-dependencies = [
- "cc",
- "libc",
- "schemars 1.2.2",
- "serde",
- "serde_json",
- "sha2",
- "thiserror 2.0.20",
- "tokio",
- "windows-sys 0.61.2",
-]
 
 [[package]]
 name = "lock_api"
@@ -3777,8 +3775,8 @@ dependencies = [
  "execution-runner",
  "execution-sqlite",
  "futures-util",
+ "installation-security",
  "libc",
- "local-service",
  "native-process",
  "objc2",
  "objc2-app-kit",

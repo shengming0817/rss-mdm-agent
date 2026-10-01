@@ -19,6 +19,27 @@ use windows_sys::Win32::{
     System::{Console::*, Pipes::*, Services::*},
 };
 const NAME: &str = "RssExecution";
+/// Inspect only the actual current SCM registration; access errors are not absence.
+pub fn registration_present() -> Result<bool, Error> {
+    unsafe {
+        let manager = OpenSCManagerW(null(), null(), SC_MANAGER_CONNECT);
+        if manager.is_null() {
+            return Err(Error::Unavailable);
+        }
+        let service = OpenServiceW(manager, wide(NAME).as_ptr(), SERVICE_QUERY_STATUS);
+        let error = GetLastError();
+        CloseServiceHandle(manager);
+        if !service.is_null() {
+            CloseServiceHandle(service);
+            return Ok(true);
+        }
+        if error == ERROR_SERVICE_DOES_NOT_EXIST {
+            Ok(false)
+        } else {
+            Err(Error::Unavailable)
+        }
+    }
+}
 static STOP: OnceLock<&'static AtomicBool> = OnceLock::new();
 static HANDLER: Mutex<Option<Box<dyn Handler>>> = Mutex::new(None);
 static STATUS: AtomicPtr<c_void> = AtomicPtr::new(null_mut());
@@ -600,7 +621,7 @@ mod tests {
         let size = client.read_u32_le().await.unwrap();
         let mut reply = vec![0; size as usize];
         client.read_exact(&mut reply).await.unwrap();
-        assert_eq!(reply, br#"{"kind":"rejected"}"#);
+        assert_eq!(reply, br#"{"version":6,"reply":{"kind":"rejected"}}"#);
         client.write_u32_le(65537).await.unwrap();
         assert!(matches!(
             call(&mut pipe, &owner).await,

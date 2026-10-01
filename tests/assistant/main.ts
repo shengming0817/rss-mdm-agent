@@ -1,5 +1,5 @@
 // Test-only assembly of the product App. No alternate page or production transport fallback.
-import { createApp } from "vue";
+import { createApp, h, ref, onMounted } from "vue";
 import {
   RuntimeClient,
   ClientError,
@@ -54,23 +54,86 @@ const services: AssistantServices = {
       { signal },
     );
     if (!response.ok) throw new Error("fixture read denied");
-    return { kind: "execution", value: await response.json() };
+    return response.json();
   },
 };
-import { resourceOffer, snapshot } from "../self-service/support";
 import type { SelfServicePort } from "../../apps/desktop/src/self-service/types";
+async function rpc<T>(method: string, input?: unknown): Promise<T> {
+  const response = await fetch(
+    `/__fixture/${method}`,
+    input === undefined
+      ? undefined
+      : {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(input),
+        },
+  );
+  if (!response.ok) throw new Error("fixture service unavailable");
+  return response.json();
+}
 const selfServicePort: SelfServicePort = {
-  async snapshot() {
-    return { ...snapshot(), available: [resourceOffer()] };
-  },
-  async execute() {
-    throw new Error("browser fixture does not execute device operations");
-  },
-  async cancel() {
-    throw new Error("browser fixture does not cancel device operations");
-  },
+  snapshot: (input) => rpc("snapshot", input),
+  execute: (input) => rpc("execute", input),
+  cancel: (input) => rpc("cancel", input),
 };
-createApp(App, { assistantServices: services, selfServicePort }).mount("#app");
+export function mountFixture() {
+  createApp({
+    setup() {
+      const state = ref<{ scenario: string; scenarios: string[] }>({
+        scenario: "running",
+        scenarios: [],
+      });
+      onMounted(async () => {
+        state.value = await rpc("state");
+      });
+      async function select(event: Event) {
+        const scenario = (event.target as HTMLSelectElement).value;
+        await rpc("scenario", { scenario });
+        state.value = await rpc("state");
+      }
+      return () =>
+        h(
+          App,
+          {
+            assistantServices: services,
+            selfServicePort,
+            environment: {
+              kind: "fixture",
+              host: undefined,
+              service: {
+                async read() {
+                  return (
+                    await rpc<{
+                      service: import("../../apps/desktop/src/settings/service-contract").ServiceView;
+                    }>("state")
+                  ).service;
+                },
+              },
+            },
+          },
+          {
+            "fixture-controls": () =>
+              h("label", [
+                " 场景 ",
+                h(
+                  "select",
+                  {
+                    value: state.value.scenario,
+                    onChange: select,
+                    "aria-label": "fixture 场景",
+                  },
+                  state.value.scenarios.map((value) =>
+                    h("option", { value }, value),
+                  ),
+                ),
+              ]),
+          },
+        );
+    },
+  }).mount("#app");
+}
+if (location.pathname.startsWith("/tests/assistant/")) mountFixture();
 
 // Browser-only component stimuli share the product test page and workspace modules.
 import {

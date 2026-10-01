@@ -19,20 +19,36 @@ import {
 import type { TestUser } from "@rss-mdm-agent/ai-contract";
 import TestUsers from "./settings/TestUsers.vue";
 import Account from "./settings/Account.vue";
-import { nativeHost } from "./settings/native";
+import { nativeHost, type ServicePort } from "./settings/native";
 import { createHostSettings } from "./settings/controller";
 import type { SelfServicePort } from "./self-service/types";
-defineProps<{
+const props = defineProps<{
   assistantServices?: AssistantServices;
   selfServicePort?: SelfServicePort;
+  environment?: {
+    kind: "fixture";
+    service: ServicePort;
+    host: ReturnType<typeof nativeHost>;
+  };
 }>();
 const users = ref<TestUser[]>([]),
-  loading = ref(nativeTestMode),
+  loading = ref(!props.environment && nativeTestMode),
   message = ref(""),
   accountMessage = ref("");
-const page = ref(nativeTestMode ? "settings" : "assistant");
+const page = ref(
+  !props.environment && nativeTestMode ? "settings" : "assistant",
+);
 const content = ref<HTMLElement>();
-const host = createHostSettings(nativeHost());
+if (
+  props.environment &&
+  (!props.assistantServices ||
+    !props.selfServicePort ||
+    !props.environment.service)
+)
+  throw new Error("incomplete fixture assembly");
+const host = createHostSettings(
+  props.environment ? props.environment.host : nativeHost(),
+);
 const appearance = createAppearance();
 let polling: ReturnType<typeof setInterval> | undefined;
 async function refresh() {
@@ -101,7 +117,7 @@ watch(currentUser, (next, previous) => {
   }
 });
 onMounted(() => {
-  if (nativeTestMode) void refresh();
+  if (!props.environment && nativeTestMode) void refresh();
   if (host.available) {
     void host.refresh();
   }
@@ -109,7 +125,11 @@ onMounted(() => {
   polling = setInterval(() => {
     void appearance.refresh();
     if (host.available) void host.refresh();
-    if (!loading.value && currentUser.value?.identity?.mode === "enterprise")
+    if (
+      !props.environment &&
+      !loading.value &&
+      currentUser.value?.identity?.mode === "enterprise"
+    )
       void refreshAccount();
   }, 2000);
 });
@@ -138,6 +158,8 @@ onBeforeUnmount(() => {
       :self-service-port="selfServicePort"
       :page="page"
       :host="host"
+      :service-port="environment?.service"
+      :fixture="!!environment"
       @navigate="navigate"
     >
       <template #account-summary>
@@ -153,26 +175,33 @@ onBeforeUnmount(() => {
         }}</small>
       </template>
       <template #user>
-        <TestUsers
-          :users="users"
-          :current="currentUser?.identity ? undefined : currentUser"
-          :native="nativeTestMode"
-          :loading="loading"
-          :message="message"
-          @select="select"
-        />
-        <Account
-          :loading="loading"
-          :message="accountMessage || accountNotice"
-          @guest="accountAction(enterGuest)"
-          @logout="accountAction(logoutAccount)"
-          @login="
-            (org, login) => accountAction(() => loginEnterprise(org, login))
-          "
-        />
+        <p v-if="environment">开发 fixture 身份，不访问生产账户。</p>
+        <template v-else>
+          <TestUsers
+            :users="users"
+            :current="currentUser?.identity ? undefined : currentUser"
+            :native="nativeTestMode"
+            :loading="loading"
+            :message="message"
+            @select="select"
+          />
+          <Account
+            :loading="loading"
+            :message="accountMessage || accountNotice"
+            @guest="accountAction(enterGuest)"
+            @logout="accountAction(logoutAccount)"
+            @login="
+              (org, login) => accountAction(() => loginEnterprise(org, login))
+            "
+          />
+        </template>
       </template>
     </Workspace>
   </div>
+  <aside v-if="environment" class="fixture-controls" aria-label="开发 fixture">
+    <strong>开发 fixture · 无真实设备执行</strong
+    ><slot name="fixture-controls" />
+  </aside>
   <p v-if="loading" class="account-progress" role="status">
     正在读取或切换账户…
   </p>
@@ -187,6 +216,17 @@ onBeforeUnmount(() => {
   margin-top: 3px;
   color: var(--rss-color-text-muted);
   font-size: var(--rss-font-size-xs);
+}
+.fixture-controls {
+  position: fixed;
+  top: 4px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 150;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font: 11px var(--rss-font-sans);
+  background: var(--rss-color-bg);
 }
 .account-progress {
   position: fixed;

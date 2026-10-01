@@ -1,10 +1,12 @@
 # Install the sole production service and its per-login physical helper.
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory)][ValidateSet('Install','Remove','Status')][string]$Action,
+    [Parameter(Mandatory)][ValidateSet('Install','Refresh','Remove','Status')][string]$Action,
     [Parameter(Mandatory)][ValidateSet('System','User')][string]$Scope,
     [string]$Binary,
-    [string]$Config
+    [string]$Config,
+    [string]$CandidateBinary,
+    [string]$CandidateConfig
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -37,6 +39,20 @@ function Assert-Binary {
     }
     return $Item.FullName
 }
+function Assert-Refresh {
+    $OriginalBinary=$Binary
+    try { $null=Assert-Binary; $Binary=$CandidateBinary; $null=Assert-Binary } finally { $Binary=$OriginalBinary }
+    if (!$Config -or !$CandidateConfig -or !$CandidateBinary) { throw 'Refresh requires current and candidate binary/config' }
+    $Old = (& $Binary --config $Config --validate-installation | ConvertFrom-Json)
+    if ($LASTEXITCODE -ne 0) { throw 'Current candidate failed native validation' }
+    $New = (& $CandidateBinary --config $CandidateConfig --validate-installation | ConvertFrom-Json)
+    if ($LASTEXITCODE -ne 0) { throw 'New candidate failed native validation' }
+    if ($Old.version -ne 2 -or $New.version -ne 2 -or $Old.ipc_version -ne 6 -or $New.ipc_version -ne 6 -or $Old.service.path -cne $Binary -or $New.service.path -cne $CandidateBinary) { throw 'Current-format candidate/protocol required' }
+    foreach ($Field in @('origin','tenant','enrollment','registration_operation','state_root','helper_work_roots')) {
+        if (($Old.$Field | ConvertTo-Json -Depth 20 -Compress) -cne ($New.$Field | ConvertTo-Json -Depth 20 -Compress)) { throw 'Refresh cannot replace identity or persistent state' }
+    }
+    foreach ($Field in @('work_root','material_root')) { if ($Old.execution.$Field -cne $New.execution.$Field) { throw 'Refresh cannot replace unresolved task resources' } }
+}
 if ($Scope -eq 'System') {
     $Service = Get-CimInstance Win32_Service -Filter "Name='$Name'"
     if ($Action -eq 'Status') { $Service | Select-Object Name,State,StartName,PathName; return }
@@ -46,6 +62,17 @@ if ($Scope -eq 'System') {
         Stop-Service -Name $Name -ErrorAction Stop
         & sc.exe delete $Name
         if ($LASTEXITCODE -ne 0) { throw 'SCM deletion failed' }
+        return
+    }
+    if ($Action -eq 'Refresh') {
+        if (!$Service -or $Service.PathName -cne ('"' + $Binary + '"' + $ConfigArgs) -or $Service.StartName -ne 'LocalSystem') { throw 'Refusing to refresh an unrelated service' }
+        Assert-Refresh
+        Stop-Service -Name $Name -ErrorAction Stop
+        (Get-Service -Name $Name).WaitForStatus('Stopped', [TimeSpan]::FromSeconds(10))
+        & sc.exe config $Name binPath= ('"' + $CandidateBinary + '" --config "' + $CandidateConfig + '"')
+        if ($LASTEXITCODE -ne 0) { throw 'SCM refresh failed; registration retained' }
+        Start-Service -Name $Name
+        Write-Output 'Registered current candidate; authenticated user readiness check required'
         return
     }
     if ($Service) { throw 'Service already exists; no overwrite or upgrade path' }
@@ -69,6 +96,21 @@ if ($Scope -eq 'System') {
         if (!$Binary -or $Task.Actions.Count -ne 1 -or $Task.Actions[0].Execute -cne $Binary -or $Task.Actions[0].Arguments -cne $HelperArgs -or $Task.Principal.UserId -ne $Sid) { throw 'Refusing to remove an unrelated task; supply its exact original binary path' }
         Stop-ScheduledTask -TaskName $TaskName
         Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
+        return
+    }
+    if ($Action -eq 'Refresh') {
+        if (!$Task -or $Task.Actions.Count -ne 1 -or $Task.Actions[0].Execute -cne $Binary -or $Task.Actions[0].Arguments -cne $HelperArgs -or $Task.Principal.UserId -ne $Sid) { throw 'Refusing to refresh an unrelated helper' }
+        Assert-Refresh
+        Stop-ScheduledTask -TaskName $TaskName
+        $Deadline = [DateTime]::UtcNow.AddSeconds(10)
+        while ((Get-ScheduledTask -TaskName $TaskName).State -eq 'Running') {
+            if ([DateTime]::UtcNow -ge $Deadline) { throw 'Helper stop unconfirmed; registration retained' }
+            Start-Sleep -Milliseconds 100
+        }
+        $NextAction = New-ScheduledTaskAction -Execute $CandidateBinary -Argument ('--config "' + $CandidateConfig + '" --user-helper')
+        Set-ScheduledTask -TaskName $TaskName -Action $NextAction | Out-Null
+        Start-ScheduledTask -TaskName $TaskName
+        Write-Output 'Registered current helper candidate; authenticated service check required'
         return
     }
     if ($Task) { throw 'User helper already exists; no overwrite or upgrade path' }

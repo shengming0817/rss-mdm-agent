@@ -161,6 +161,7 @@ export async function startModelFixture() {
         if (!output("tasks")) return call("tasks", "execution_tasks", {});
         const task = taskFrom(output("tasks").output);
         assert.ok(task, "verified backend task unavailable");
+        if (scenario === "INSTALL") facts.request = task.request;
         if (!output("execute")) {
           const { request, attempt, revision } = task;
           return call("execute", "execution_execute", {
@@ -173,14 +174,14 @@ export async function startModelFixture() {
       }
       if (scenario.startsWith("CANCEL") && !output("cancel"))
         return call("cancel", "execution_cancel", {
-          operationRequestId: "native-golden-install",
+          operationRequestId: facts.request,
         });
       if (scenario === "READ") {
         if (!output("capabilities"))
           return call("capabilities", "execution_capabilities", {});
         if (!output("status"))
           return call("status", "execution_status", {
-            operationRequestId: "native-golden-install",
+            operationRequestId: facts.request,
           });
       }
       facts.completions.push(scenario);

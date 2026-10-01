@@ -12,7 +12,7 @@ use std::{
 #[serde(deny_unknown_fields)]
 pub struct Interpreter {
     pub profile: wire::ExecutorProfile,
-    pub image: local_service::Artifact,
+    pub image: installation_security::Artifact,
 }
 /// Locally implemented native managers, independent of the server's software wire schema.
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -28,7 +28,7 @@ pub enum SoftwareManagerKind {
 #[serde(deny_unknown_fields)]
 pub struct SoftwareManager {
     pub executor: SoftwareManagerKind,
-    pub image: local_service::Artifact,
+    pub image: installation_security::Artifact,
 }
 pub(crate) fn id(value: impl Into<String>) -> Result<Id, Error> {
     Id::new(value).map_err(|_| Error::Protocol)

@@ -95,6 +95,46 @@ class Installation(unittest.TestCase):
                 self.invoke(home,['remove','--scope','user','--binary','/missing/service'],lambda *args,**kwargs:SimpleNamespace(returncode=5))
             self.assertTrue(plist.exists())
 
+    def test_refresh_preserves_state_and_rejects_unknown_or_changed_identity(self):
+        for failure in [None, 'identity', 'stop', 'restart', 'owner']:
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory:
+                home=Path(directory); folder=home/'Library/LaunchAgents'; folder.mkdir(parents=True)
+                label='com.rss-mdm.agent.execution.user'; plist=folder/(label+'.plist')
+                program=['/old/service','--config','/old/config','--user-helper']
+                with plist.open('wb') as stream: plistlib.dump({'Label':label, 'ProgramArguments':program, 'MachServices':{label:True}},stream)
+                plist.chmod(0o600)
+                journal=home/'execution.sqlite'; journal.write_bytes(b'unresolved journal')
+                secret=home/'credential'; secret.write_bytes(b'credential marker')
+                old={'origin':'https://same.test','tenant':'tenant','enrollment':'enrollment','registration_operation':'operation','state_root':'/same/state','helper_work_roots':{},'execution':{'work_root':'/same/work','material_root':'/same/material'}}
+                import copy
+                new=copy.deepcopy(old)
+                if failure == 'identity': new['state_root']='/replacement/state'
+                if failure == 'owner': program[0]='/another/service'
+                calls=[]; loaded=True
+                def run(args, **kwargs):
+                    nonlocal loaded
+                    calls.append(args)
+                    if args[1]=='print': return SimpleNamespace(returncode=0 if loaded else 113)
+                    if args[1]=='bootout':
+                        if failure=='stop': raise module.subprocess.CalledProcessError(5,args)
+                        loaded=False
+                    if args[1]=='bootstrap':
+                        if failure=='restart': raise module.subprocess.CalledProcessError(5,args)
+                        loaded=True
+                    return SimpleNamespace(returncode=0)
+                with patch.object(module,'candidate',side_effect=[old,new]), patch.object(module,'verify_registered'):
+                    with patch.object(module.subprocess,'run',side_effect=run):
+                        call=lambda: module.refresh(plist,label,f'gui/{os.geteuid()}',f'gui/{os.geteuid()}/{label}',program,Path('/old/config'),Path('/new/service'),Path('/new/config'))
+                        if failure:
+                            with self.assertRaises((RuntimeError,module.subprocess.CalledProcessError)): call()
+                        else: call()
+                self.assertEqual(journal.read_bytes(),b'unresolved journal')
+                self.assertEqual(secret.read_bytes(),b'credential marker')
+                self.assertTrue(plist.exists())
+                if failure in ['identity','owner','stop']: self.assertFalse(any(cmd[1]=='bootstrap' for cmd in calls))
+                if failure=='restart':
+                    self.assertEqual(plistlib.loads(plist.read_bytes())['ProgramArguments'],['/new/service','--config','/new/config','--user-helper'])
+
     def test_status_does_not_require_binary(self):
         with tempfile.TemporaryDirectory() as directory:
             def run(args, **kwargs):
