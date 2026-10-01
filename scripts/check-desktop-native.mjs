@@ -184,7 +184,13 @@ const key = (code, shift = false) => {
 };
 const menu = (label) =>
   native(
-    `click menu item "${label}" of menu 1 of menu bar item "RSS MDM Agent" of menu bar 1`,
+    `repeat with candidate in menu bar items of menu bar 1
+      if exists menu item "${label}" of menu 1 of candidate then
+        click menu item "${label}" of menu 1 of candidate
+        return
+      end if
+    end repeat
+    error "Owned application menu item missing: ${label}"`,
   );
 const click = async (name, scope = "") => {
   const el = await wait(async () => {
@@ -1219,12 +1225,16 @@ try {
     const sidebar = await browser.execute(() => {
       const el = document.querySelector(".shell aside");
       const style = getComputedStyle(el);
+      const solid = document.createElement("span");
+      solid.style.backgroundColor = "var(--rss-color-navigation)";
+      el.append(solid);
+      const solidBackground = getComputedStyle(solid).backgroundColor;
+      solid.remove();
       return {
         width: el.getBoundingClientRect().width,
         padding: style.padding,
         background: style.backgroundColor,
-        solidBackground: getComputedStyle(document.querySelector(".shell main"))
-          .backgroundColor,
+        solidBackground,
       };
     });
     await click("开始对话");
@@ -2026,11 +2036,12 @@ try {
           ? "cancelled"
           : "failed";
       if (result.serviceReceipt?.error)
-        result.failure = {
+        result.serviceFailure = {
           stage,
           code: "native_service_journey_incomplete",
           detail: result.serviceReceipt.error,
         };
+      result.failure ??= result.serviceFailure;
       process.exitCode = 1;
     } else {
       if (!visualOnly && result.status === "passed") {

@@ -1478,6 +1478,28 @@ async fn acknowledged_v5_result_is_not_replaced_by_later_local_facts() {
 }
 
 #[tokio::test]
+async fn controlled_backend_issues_only_explicit_offers_bound_to_the_actual_claim_context() {
+    let server = Server::new().await;
+    server.data.lock().unwrap().explicit_offers = true;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    assert!(client.claim().await.unwrap().offer.is_none());
+    let mut context = client.execution_context().unwrap();
+    context.os_version = [26, 4, 0, 0];
+    client.set_execution_context(context).unwrap();
+    server.data.lock().unwrap().software(1, true);
+    let offered = client.claim().await.unwrap().offer.unwrap();
+    let TaskPayload::Software(spec) = offered.payload() else {
+        panic!("software")
+    };
+    assert_eq!(spec.execution_context, client.execution_context().unwrap());
+    server.time.set(spec.expires_at);
+    assert!(client.claim().await.unwrap().offer.is_none());
+    assert!(server.data.lock().unwrap().start_ops.is_empty());
+}
+
+#[tokio::test]
 async fn claim_retry_freezes_executor_profiles_and_context_across_restart() {
     let server = Server::new().await;
     let root = Root::new();

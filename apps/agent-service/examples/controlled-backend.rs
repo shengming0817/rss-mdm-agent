@@ -11,7 +11,8 @@ use std::io::{BufRead, Write};
 async fn main() {
     let server = protocol::Server::new().await;
     {
-        let data = server.data.lock().unwrap();
+        let mut data = server.data.lock().unwrap();
+        data.explicit_offers = true;
         println!(
             "{}",
             serde_json::json!({"origin": server.url.as_str(), "tenant":data.tenant,"key":base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(data.signer.public_key().as_ref())})
