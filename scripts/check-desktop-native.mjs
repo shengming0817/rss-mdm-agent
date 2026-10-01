@@ -967,9 +967,20 @@ try {
 
       result.windowsAppearance = "unverified; no Windows host";
       await browser.setWindowSize(1100, 760);
-      native(
-        'perform action "AXPress" of (first button of window 1 whose subrole is "AXCloseButton")',
-      );
+      mark("native visual close and reopen main window");
+      const closed = native(`
+        set mainWindow to first window whose name is "RSS MDM Agent"
+        repeat with control in entire contents of mainWindow
+          try
+            if subrole of control is "AXCloseButton" then
+              perform action "AXPress" of control
+              return "pressed-main-close-control"
+            end if
+          end try
+        end repeat
+        error "main native close control is unavailable"
+      `);
+      assert.equal(closed, "pressed-main-close-control");
       await wait(async () => (await browser.getWindowHandles()).length === 0);
       menu("显示窗口");
       await wait(async () => (await browser.getWindowHandles()).length === 1);
