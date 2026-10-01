@@ -202,7 +202,10 @@ def main():
             pass
     run('/usr/bin/openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1',
         '-subj', '/CN=localhost', '-keyout', str(lab / 'tls.key'), '-out', str(lab / 'tls.pem'),
-        '-addext', 'subjectAltName=DNS:localhost,IP:127.0.0.1')
+        '-addext', 'subjectAltName=DNS:localhost,IP:127.0.0.1',
+        '-addext', 'extendedKeyUsage=serverAuth',
+        '-addext', 'basicConstraints=critical,CA:FALSE',
+        '-addext', 'keyUsage=critical,digitalSignature,keyEncipherment')
     os.chmod(lab / 'tls.key', 0o600)
     proxy = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Proxy)
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
