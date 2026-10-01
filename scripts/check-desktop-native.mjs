@@ -756,6 +756,7 @@ try {
             if (width < 1440) {
               key(53);
             } else await click("关闭资源上下文 AI");
+            mark(`native context close focus ${theme} ${width}`);
             await wait(() =>
               browser.execute(
                 () =>
@@ -763,6 +764,7 @@ try {
                   "ask-ai",
               ),
             );
+            mark(`native context return to main ${theme} ${width}`);
             await navigate("AI 助手");
             assert.equal(
               await browser.$(".composer textarea").getValue(),
@@ -1680,6 +1682,27 @@ try {
   result.modelFacts = fixture?.facts;
   if (browser) {
     try {
+      result.uiFailure = await browser.execute(() => ({
+        focusedTag: document.activeElement?.tagName,
+        focusedAction: document.activeElement?.getAttribute("data-action"),
+        focusedLabel: document.activeElement?.getAttribute("aria-label"),
+        focusedClass: document.activeElement?.className,
+        dialogLabels: [...document.querySelectorAll("dialog[open]")].map((el) =>
+          el.getAttribute("aria-label"),
+        ),
+        navigation: [
+          ...document.querySelectorAll(".navigation-primary button"),
+        ].map((el) => ({
+          text: el.textContent,
+          visible: !!el.getClientRects().length,
+          inert: !!el.closest("[inert]"),
+          disabled: el.disabled,
+        })),
+        viewport: { width: innerWidth, height: innerHeight },
+        compactTriggerPresent: !!document.querySelector(
+          '[aria-label="打开主导航"]',
+        ),
+      }));
       result.transportFailure = await browser.execute(() => {
         const c =
           document.querySelector(".assistant")?.__vueParentComponent?.props
