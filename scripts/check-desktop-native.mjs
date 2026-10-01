@@ -970,10 +970,10 @@ try {
       mark("native visual close and reopen main window");
       const closed = native(`
         set mainWindow to first window whose name is "RSS MDM Agent"
-        repeat with control in entire contents of mainWindow
+        repeat with closeNode in entire contents of mainWindow
           try
-            if subrole of control is "AXCloseButton" then
-              perform action "AXPress" of control
+            if subrole of closeNode is "AXCloseButton" then
+              perform action "AXPress" of closeNode
               return "pressed-main-close-control"
             end if
           end try
