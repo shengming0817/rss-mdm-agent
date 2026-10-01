@@ -83,7 +83,9 @@ def authorized_steps(programs, endpoint, expected_pid, expected_uid):
     connection = socket.socket(socket.AF_UNIX)
     cleaned = False
     started = False
+    output = io.StringIO()
     def perform(operation):
+        nonlocal output
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
             exec(compile(programs[operation], '<fixed acceptance operation>', 'exec'), {'__name__':'__main__'})
@@ -96,7 +98,9 @@ def authorized_steps(programs, endpoint, expected_pid, expected_uid):
             value = perform(operation)
             response = {'id':identity, 'ok':True, 'value':value}
         except BaseException as error:
-            response = {'id':identity, 'ok':False, 'error':type(error).__name__}
+            raw = output.getvalue().strip()
+            diagnostic = json.loads(raw) if raw.startswith('{') else None
+            response = {'id':identity, 'ok':False, 'error':type(error).__name__, 'value':diagnostic}
         connection.sendall((json.dumps(response)+'\n').encode())
         return response['ok']
     try:
@@ -134,6 +138,7 @@ class AdministratorSession:
         self.listener.bind(str(self.endpoint)); self.listener.listen(1); self.listener.settimeout(1)
         self.connection = self.reader = self.process = None
         self.sequence = 0
+        self.lab = lab
         programs = {'setup':setup.read_text(),'initialize':initialize.read_text(),'restart':restart.read_text(),'cleanup':cleanup.read_text()}
         source = 'import socket,ctypes,struct,io,contextlib,json\n' + inspect.getsource(peer_identity) + inspect.getsource(authorized_steps)
         source += 'authorized_steps('+repr(programs)+','+repr(str(self.endpoint))+','+str(os.getpid())+','+str(os.geteuid())+')\n'
@@ -157,6 +162,8 @@ class AdministratorSession:
     def receive(self, identity):
         message=json.loads(self.reader.readline(8*1024*1024+1))
         if message.get('id')!=identity or message.get('ok') is not True:
+            if message.get('value'):
+                (self.lab/'administrator-operation-diagnostic.json').write_text(json.dumps(message['value'],indent=2))
             raise RuntimeError('fixed administrator operation failed: '+str(message.get('error','invalid acknowledgement')))
         return message['value']
     def command(self, operation):
@@ -395,13 +402,29 @@ if default.exists():
     default.unlink()
 """ % (str(default_config), str(binary), str(protected / 'state')))
     initialize = lab/'initialize.py'
-    initialize.write_text("""import plistlib,subprocess
+    initialize.write_text("""import json,plistlib,sqlite3,subprocess
 from pathlib import Path
 p=plistlib.loads(Path('/Library/LaunchDaemons/com.rss-mdm.agent.execution.plist').read_bytes())
 assert p['ProgramArguments']==%r, 'initialization registration owner mismatch'
-subprocess.run(%r,input='AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',text=True,check=True)
+try:
+    subprocess.run(%r,input='AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',text=True,check=True,capture_output=True)
+except subprocess.CalledProcessError as error:
+    root=Path(%r); diagnostic={'phase':'initialize','error':error.stderr.strip(),'entries':[],'databases':{}}
+    for leaf in ['','identity-binding','execution-initialized','communication','communication/communication.sqlite','execution.sqlite','secrets']:
+        path=root/leaf
+        try:
+            metadata=path.stat();diagnostic['entries'].append({'leaf':leaf,'uid':metadata.st_uid,'mode':oct(metadata.st_mode & 0o777),'directory':path.is_dir()})
+        except FileNotFoundError: pass
+    for leaf in ['communication/communication.sqlite','execution.sqlite']:
+        path=root/leaf
+        if path.exists():
+            db=sqlite3.connect('file:'+str(path)+'?mode=ro',uri=True)
+            diagnostic['databases'][leaf]={'version':db.execute('PRAGMA user_version').fetchone()[0],'tables':[row[0] for row in db.execute("SELECT name FROM sqlite_schema WHERE type='table'")]}
+            if leaf.startswith('communication'): diagnostic['databases'][leaf]['stateKeys']=[row[0] for row in db.execute('SELECT key FROM state')]
+            db.close()
+    print(json.dumps(diagnostic));raise
 subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.execution'],check=True)
-""" % ([str(binary),'--config',str(config)],[str(binary),'--config',str(config),'--initialize']))
+""" % ([str(binary),'--config',str(config)],[str(binary),'--config',str(config),'--initialize'],str(protected/'state')))
     restart = lab/'restart.py'
     restart.write_text("""import os,plistlib,subprocess
 from pathlib import Path
