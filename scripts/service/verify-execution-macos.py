@@ -42,11 +42,25 @@ def frozen_installer(source, arguments):
     return ['/usr/bin/python3', '-I', '-c', source, *arguments]
 
 
+class AuthorizationCancelled(RuntimeError):
+    pass
+
+
 def administrator(script):
     # Freeze source in the Apple event before authorization; root never reads Documents.
     command = 'cd /private/tmp && /usr/bin/python3 -I -c ' + shlex.quote(script.read_text())
-    return run('/usr/bin/osascript', '-e',
-               'do shell script ' + json.dumps(command) + ' with administrator privileges', timeout=120)
+    try:
+        return run('/usr/bin/osascript', '-e',
+                   'do shell script ' + json.dumps(command) + ' with administrator privileges', timeout=120)
+    except subprocess.CalledProcessError as error:
+        detail = (error.stderr or '')
+        script.with_name('command-error.txt').write_text(detail[:2048])
+        if '(-128)' in detail:
+            raise AuthorizationCancelled('native administrator authorization cancelled') from None
+        raise RuntimeError('native administrator operation failed; see private command-error.txt') from None
+    except subprocess.TimeoutExpired:
+        script.with_name('command-error.txt').write_text('native administrator authorization deadline exceeded')
+        raise RuntimeError('native administrator authorization deadline exceeded') from None
 
 
 def acknowledged_result(status, attempt):
@@ -267,7 +281,7 @@ if default.exists():
     default.unlink()
 """ % (str(default_config), str(binary), str(protected / 'state')))
     receipt = dict(platform=os.uname().sysname, architecture=os.uname().machine,
-                   journal=str(protected / 'state/execution.sqlite'), scenarios={})
+                   journal=str(protected / 'state/execution.sqlite'), scenarios={}, sourceHead=run('/usr/bin/git', 'rev-parse', 'HEAD').stdout.strip())
     installed = helper = False
     try:
         first = None if args.desktop else command('script', body='printf \'{"fixture":"system"}\\n\'\n')
@@ -300,7 +314,6 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
 """ % ([str(binary),'--config',str(config)], [str(binary),'--config',str(config),'--initialize']))
             administrator(initialize)
 
-        receipt['sourceHead'] = run('/usr/bin/git', 'rev-parse', 'HEAD').stdout.strip()
         helper = True
         run('/usr/bin/python3', str(installer), 'install', '--scope', 'user', '--binary', str(binary), '--config', str(config))
         helper = True
@@ -451,7 +464,7 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
 
         receipt['status'] = 'passed'
     except BaseException as error:
-        receipt['status'] = 'failed'
+        receipt['status'] = 'cancelled' if isinstance(error, AuthorizationCancelled) else 'failed'
         receipt['error'] = str(error)
         if isinstance(error, subprocess.CalledProcessError):
             (lab / 'command-error.txt').write_text((error.stdout or '') + (error.stderr or ''))
@@ -481,6 +494,8 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
         if cleanup_errors:
             receipt['status'] = 'failed'
             receipt['cleanupErrors'] = cleanup_errors
+        receipt['installationCreated'] = installed
+        receipt['cleanup'] = 'incomplete' if cleanup_errors else 'complete'
         receipt['inputStaging'] = str(receipt_inputs)
         (lab / 'receipt.json').write_text(json.dumps(receipt, indent=2))
         if not cleanup_errors:

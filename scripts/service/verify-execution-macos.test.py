@@ -83,6 +83,16 @@ class EvidenceTests(unittest.TestCase):
             with self.assertRaises(AssertionError): acceptance.validate_desktop_finish(finish, None)
         acceptance.validate_desktop_finish({'status':'passed','request':'r'}, {'request':'r'})
 
+    def test_native_authorization_cancel_has_closed_diagnostic_without_frozen_command(self):
+        with tempfile.TemporaryDirectory() as directory:
+            script=Path(directory)/'install.py'; script.write_text('sensitive implementation payload')
+            error=acceptance.subprocess.CalledProcessError(1, ['sensitive command'],stderr='execution error: User canceled. (-128)')
+            with patch.object(acceptance,'run',side_effect=error):
+                with self.assertRaisesRegex(acceptance.AuthorizationCancelled,'native administrator authorization cancelled') as caught:
+                    acceptance.administrator(script)
+            self.assertNotIn('sensitive',str(caught.exception))
+            self.assertIn('User canceled', (script.parent/'command-error.txt').read_text())
+
     def test_http_failure_is_not_acknowledgement(self):
         status = {'results': {'op': {'attemptId': 'a', 'event': {'kind': 'result'}}}, 'acknowledged': []}
         self.assertIsNone(acceptance.acknowledged_result(status, 'a'))

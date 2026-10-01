@@ -462,6 +462,7 @@ try {
       reports,
       `native-service-${nonce.slice(0, 8)}`,
     );
+    result.serviceEvidence = serviceEvidence;
     serviceWorker = spawn(
       "/usr/bin/python3",
       [
@@ -515,7 +516,6 @@ try {
       assert.equal(serviceWorker.exitCode, null, logs.slice(-3000));
       return serviceReady;
     }, 180000);
-    result.serviceEvidence = serviceEvidence;
     result.serviceArtifact = serviceReady.service;
     const probe = JSON.parse(
       execFileSync(serviceReady.desktop, ["--service-probe"], {
@@ -2009,16 +2009,29 @@ try {
       Date.now() < deadline
     )
       await delay(250);
+    const serviceReceipt =
+      result.serviceEvidence && join(result.serviceEvidence, "receipt.json");
+    if (serviceReceipt && existsSync(serviceReceipt))
+      result.serviceReceipt = JSON.parse(readFileSync(serviceReceipt, "utf8"));
+    result.serviceCleanup =
+      result.serviceReceipt?.cleanup === "complete"
+        ? result.serviceReceipt.installationCreated
+          ? "owned registration and default pin removed; persistent service state retained"
+          : "no owned system registration created; preparation resources cleaned"
+        : "unconfirmed; retained installation evidence";
     if (serviceWorker.exitCode !== 0) {
-      result.status = "failed";
-      result.serviceCleanup = "unconfirmed; retained installation evidence";
+      result.status =
+        result.serviceReceipt?.status === "cancelled" || cancelled
+          ? "cancelled"
+          : "failed";
+      if (result.serviceReceipt?.error)
+        result.failure = {
+          stage,
+          code: "native_service_journey_incomplete",
+          detail: result.serviceReceipt.error,
+        };
       process.exitCode = 1;
     } else {
-      result.serviceCleanup =
-        "owned registration and default pin removed; persistent service state retained";
-      result.serviceReceipt = JSON.parse(
-        readFileSync(join(result.serviceEvidence, "receipt.json"), "utf8"),
-      );
       if (!visualOnly && result.status === "passed") {
         const records = result.serviceReceipt.journalProof.records.filter(
           (row) => row.request === fixture.facts.request,
