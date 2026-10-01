@@ -2043,6 +2043,10 @@ try {
           records[0].process.attemptId,
           result.completion.record.status.attemptId,
         );
+        assert.equal(
+          records[0].process.exitCode,
+          result.completion.record.status.process.exitCode,
+        );
         assert.equal(result.serviceReceipt.status, "passed");
       }
     }

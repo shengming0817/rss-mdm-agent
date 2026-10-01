@@ -208,7 +208,7 @@ pub(crate) fn open_protected(
             return Err(Rejected);
         }
         let metadata = file.metadata().map_err(|_| Rejected)?;
-        if (index == 0 && !metadata.is_file()) || (index != 0 && !metadata.is_dir()) {
+        if !super::policy::path_type_allowed(index == 0, read, metadata.file_type()) {
             return Err(Rejected);
         }
         handles.push(file);

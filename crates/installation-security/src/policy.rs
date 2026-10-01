@@ -139,3 +139,34 @@ fn read_installation(path: &Path) -> Result<(PathBuf, Vec<u8>), Rejected> {
 pub fn read_protected(path: &Path) -> Result<Vec<u8>, Rejected> {
     read_installation(path).map(|(_, bytes)| bytes)
 }
+
+// ref: rust-lang/rust library/std/src/sys/fs/windows.rs (FileType::is_dir/is_file).
+#[cfg(any(windows, test))]
+pub(crate) fn path_type_allowed(leaf: bool, read: bool, kind: std::fs::FileType) -> bool {
+    if leaf {
+        kind.is_file() || (!read && kind.is_dir())
+    } else {
+        kind.is_dir()
+    }
+}
+
+#[cfg(test)]
+mod path_type_tests {
+    use super::*;
+    #[test]
+    fn protected_directory_is_not_a_readable_file_and_ancestors_must_be_directories() {
+        let root = std::env::temp_dir().join(format!("installation-leaf-{}", std::process::id()));
+        std::fs::create_dir(&root).unwrap();
+        let file = root.join("execution.json");
+        std::fs::write(&file, b"{}").unwrap();
+        let directory_type = root.metadata().unwrap().file_type();
+        let file_type = file.metadata().unwrap().file_type();
+        assert!(path_type_allowed(true, false, directory_type));
+        assert!(!path_type_allowed(true, true, directory_type));
+        assert!(path_type_allowed(true, true, file_type));
+        assert!(path_type_allowed(true, false, file_type));
+        assert!(path_type_allowed(false, true, directory_type));
+        assert!(!path_type_allowed(false, false, file_type));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+}

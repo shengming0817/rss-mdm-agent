@@ -72,9 +72,17 @@ class EvidenceTests(unittest.TestCase):
             db.execute('INSERT INTO process_evidence VALUES(?,?)',('local-attempt',json.dumps(capture)))
             db.commit(); db.close()
             proof=acceptance.journal_proof(path)
-            completion={'request':'request','record':{'status':{'attemptId':'local-attempt','process':{'end':'exited'}}}}
+            completion={'request':'request','record':{'status':{'attemptId':'local-attempt','process':{'end':'exited','exitCode':0}}}}
             acceptance.validate_journal_completion(proof,completion)
             self.assertNotIn('stdout',proof['records'][0]['process'])
+            for bad_code in [1, None]:
+                proof['records'][0]['process']['exitCode']=bad_code
+                with self.assertRaises(AssertionError): acceptance.validate_journal_completion(proof,completion)
+            proof['records'][0]['process']['exitCode']=None
+            completion['record']['status']['process']['exitCode']=None
+            proof['records'][0]['process']['end']='cancelled'
+            completion['record']['status']['process']['end']='cancelled'
+            acceptance.validate_journal_completion(proof,completion)
             proof['records'][0]['process']=None
             with self.assertRaises(AssertionError): acceptance.validate_journal_completion(proof,completion)
 

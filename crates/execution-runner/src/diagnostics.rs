@@ -11,6 +11,11 @@ pub(crate) enum Stage {
 pub(crate) fn record(stage: Stage, error: Error) {
     emit(stage, crate::runner::classify(error));
 }
+/// Record a composition startup failure through the existing native OS sink.
+/// Only a closed, value-free category is accepted; this grants no execution authority.
+pub fn record_startup_failure(kind: ProcessFailureKind) {
+    emit(Stage::Startup, kind);
+}
 fn line(stage: Stage, kind: ProcessFailureKind, mode: &str) -> String {
     format!("rss-execution stage={stage:?} failure={kind:?} mode={mode}")
 }
@@ -75,6 +80,14 @@ fn emit(stage: Stage, kind: ProcessFailureKind) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn startup_record_uses_the_same_closed_platform_sink() {
+        record_startup_failure(ProcessFailureKind::Unavailable);
+        assert_eq!(
+            line(Stage::Startup, ProcessFailureKind::Unavailable, "system"),
+            "rss-execution stage=Startup failure=Unavailable mode=system"
+        );
+    }
     #[test]
     fn platform_record_contains_only_closed_categories() {
         assert_eq!(

@@ -133,6 +133,7 @@ def validate_journal_completion(proof, completion):
     assert process and process['finished'], 'final journal lacks terminal process proof'
     assert process['attemptId']==completion['record']['status']['attemptId'], 'journal attempt changed'
     assert process['end']==completion['record']['status']['process']['end'], 'journal process result changed'
+    assert process['exitCode']==completion['record']['status']['process']['exitCode'], 'journal exit result changed'
 
 
 def validate_desktop_finish(finish, evidence):

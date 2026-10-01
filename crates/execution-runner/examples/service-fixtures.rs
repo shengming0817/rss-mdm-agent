@@ -1,4 +1,12 @@
 use execution_runner::host::*;
+fn sample(readiness: Readiness) -> ServiceStatus {
+    ServiceStatus {
+        build: env!("CARGO_PKG_VERSION").into(),
+        protocol: IPC_VERSION,
+        platform: "macos".into(),
+        readiness,
+    }
+}
 fn main() {
     let mut rows = serde_json::Map::new();
     for (name, view) in [
@@ -10,19 +18,19 @@ fn main() {
         (
             "registrationRequired",
             ServiceView::Connected {
-                status: ServiceStatus::new(Readiness::RegistrationRequired),
+                status: sample(Readiness::RegistrationRequired),
             },
         ),
         (
             "notReady",
             ServiceView::Connected {
-                status: ServiceStatus::new(Readiness::NotReady),
+                status: sample(Readiness::NotReady),
             },
         ),
         (
             "ready",
             ServiceView::Connected {
-                status: ServiceStatus::new(Readiness::Ready),
+                status: sample(Readiness::Ready),
             },
         ),
     ] {

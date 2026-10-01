@@ -37,7 +37,7 @@ impl Deployment {
         let never_initialized = match never_initialized(&self.state_root) {
             Ok(value) => value,
             Err(error) => {
-                eprintln!("agent_service storage not ready: {error}");
+                execution_runner::record_startup_failure(startup_failure(error));
                 return Ok(Box::new(Diagnostic {
                     policy: self.clients,
                     readiness: Readiness::NotReady,
@@ -61,7 +61,7 @@ impl Deployment {
                     return Ok(Box::new(service.spawn(self.clients, helper_policy)?));
                 }
                 Err(error) => {
-                    eprintln!("agent_service startup not ready: {error}");
+                    execution_runner::record_startup_failure(startup_failure(error));
                     Readiness::NotReady
                 }
             }
@@ -408,6 +408,19 @@ impl Deployment {
     }
 }
 
+fn startup_failure(error: Error) -> execution_contract::ProcessFailureKind {
+    use execution_contract::ProcessFailureKind as K;
+    match error {
+        Error::Identity => K::Unbound,
+        Error::Denied | Error::Untrusted => K::Denied,
+        Error::Protocol | Error::Configuration => K::InvalidInput,
+        Error::Schema | Error::Unsupported => K::Unsupported,
+        Error::Capacity => K::Capacity,
+        Error::Conflict => K::Conflict,
+        Error::Storage | Error::Unavailable | Error::Clock | Error::Expired => K::Unavailable,
+    }
+}
+
 fn validate_markers(root: &Path, namespace: &str) -> Result<(), Error> {
     for name in ["identity-binding", "execution-initialized"] {
         if native_process::private_storage::read(&root.join(name), 128)? != namespace.as_bytes() {
@@ -467,6 +480,15 @@ impl execution_runner::host::Handler for Diagnostic {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn startup_failure_mapping_is_closed_and_retains_identity_schema_storage_distinctions() {
+        use execution_contract::ProcessFailureKind as K;
+        assert_eq!(startup_failure(Error::Identity), K::Unbound);
+        assert_eq!(startup_failure(Error::Schema), K::Unsupported);
+        assert_eq!(startup_failure(Error::Storage), K::Unavailable);
+        assert_eq!(startup_failure(Error::Configuration), K::InvalidInput);
+        assert_eq!(startup_failure(Error::Untrusted), K::Denied);
+    }
     #[test]
     fn refresh_requires_both_original_markers_without_initializing_missing_state() {
         let root = std::env::temp_dir()
