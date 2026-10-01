@@ -22,6 +22,7 @@ import uuid
 import sys
 import shutil
 import tempfile
+import select
 
 
 def run(*args, **kwargs):
@@ -30,7 +31,7 @@ def run(*args, **kwargs):
 
 def administrator(script):
     # Freeze source in the Apple event before authorization; root never reads Documents.
-    command = '/usr/bin/python3 -c ' + shlex.quote(script.read_text())
+    command = 'cd /private/tmp && /usr/bin/python3 -I -c ' + shlex.quote(script.read_text())
     return run('/usr/bin/osascript', '-e',
                'do shell script ' + json.dumps(command) + ' with administrator privileges')
 
@@ -209,6 +210,8 @@ if default.exists():
         if not args.desktop: command('result_failure')
         administrator(setup)
         installed = True
+        if args.desktop and select.select([sys.stdin], [], [], 0)[0]:
+            raise RuntimeError('native acceptance parent ended before readiness; refusing initialization')
         receipt['artifact'] = json.loads(config.read_text())['service']
         if args.desktop:
             deadline = time.monotonic() + 15
@@ -394,7 +397,10 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
             receipt['cleanupErrors'] = cleanup_errors
         receipt['inputStaging'] = str(receipt_inputs)
         (lab / 'receipt.json').write_text(json.dumps(receipt, indent=2))
-        if not cleanup_errors: shutil.rmtree(inputs)
+        if not cleanup_errors:
+            # The original helper work root can hold unresolved recovery evidence.
+            for leaf in ['rss-execution-service','rss-mdm-desktop','execution-macos.py','tls.pem']:
+                (inputs / leaf).unlink(missing_ok=True)
         if cleanup_errors:
             raise RuntimeError('acceptance cleanup incomplete')
 
