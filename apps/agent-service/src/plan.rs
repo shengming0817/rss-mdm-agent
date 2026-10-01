@@ -80,7 +80,7 @@ pub fn storage_limits() -> execution_sqlite::Limits {
         },
         interaction: execution_interaction_limits(),
         max_approvals: 1,
-        max_record_bytes: 64 * 1024 * 1024,
+        max_record_bytes: 8 * 1024 * 1024,
         max_receipts: 100_000,
         max_database_pages: 262144,
         max_consumers: 4,

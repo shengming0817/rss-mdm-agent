@@ -166,3 +166,15 @@ async fn osquery_compiler_revalidates_the_signed_query_and_uses_only_literal_arg
         }
     }
 }
+
+#[test]
+fn production_storage_budgets_open_with_large_output_capture_limits() {
+    let root = protocol::Root::new();
+    let authority = Authority::Test {
+        id: Id::new("collection-storage").unwrap(),
+    };
+    let limits = plan::storage_limits();
+    assert_eq!(limits.input.max_output_bytes, 16_777_216);
+    execution_sqlite::Store::initialize_test(&root.path.join("budget.sqlite"), authority, limits)
+        .unwrap();
+}
