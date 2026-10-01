@@ -57,6 +57,8 @@ const uiDependencies = {
 const uiImports = {
   "packages/ui/src/index.ts": ["@lucide/vue", "reka-ui"],
   "packages/ui/src/components/AppShell.vue": ["@lucide/vue"],
+  "packages/ui/src/components/NavigationList.vue": ["@lucide/vue"],
+  "packages/ui/src/components/MessageComposer.vue": ["@lucide/vue"],
   "packages/ui/src/components/ModalDrawer.vue": ["@lucide/vue"],
   "packages/ui/src/internal/markdown.ts": ["markdown-it"],
 };
@@ -246,12 +248,7 @@ export function checkSource(file, source) {
       globals.add("Error");
     const assistantGlobals = {
       "apps/desktop/src/App.vue": ["setInterval", "clearInterval"],
-      "apps/desktop/src/Workspace.vue": [
-        "window",
-        "document",
-        "HTMLElement",
-        "ResizeObserver",
-      ],
+      "apps/desktop/src/Workspace.vue": ["HTMLElement", "ResizeObserver"],
       "apps/desktop/src/assistant/resource-context.ts": ["JSON"],
       "apps/desktop/src/appearance.ts": [
         "Promise",
@@ -272,7 +269,7 @@ export function checkSource(file, source) {
         "setInterval",
         "clearInterval",
       ],
-      "apps/desktop/src/assistant/Assistant.vue": ["JSON"],
+      "apps/desktop/src/assistant/Assistant.vue": ["JSON", "ResizeObserver"],
       "apps/desktop/src/assistant/ExecutionDetails.vue": ["JSON"],
       "apps/desktop/src/assistant/ExecutionActivity.vue": ["AbortController"],
       "apps/desktop/src/assistant/QuestionCard.vue": ["JSON"],
@@ -331,6 +328,8 @@ export function checkSource(file, source) {
         !(
           (file === "apps/desktop/src/assistant/ExecutionDetails.vue" &&
             name === "../self-service/RequestOrigin.vue") ||
+          (file === "apps/desktop/src/self-service/SelfService.vue" &&
+            name === "../assistant/resource-context") ||
           (file === "apps/desktop/src/self-service/TaskDetail.vue" &&
             name === "../assistant/ExecutionDetails.vue")
         ) &&

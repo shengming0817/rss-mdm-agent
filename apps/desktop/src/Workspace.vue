@@ -12,6 +12,7 @@ import {
   AppShell,
   NavigationList,
   Sparkles,
+  UserRound,
   ModalDrawer,
 } from "@rss-mdm-agent/ui";
 import ConversationList from "./assistant/ConversationList.vue";
@@ -68,6 +69,8 @@ const contextOpen = ref(false),
 const candidate = shallowRef<ResourceContext>(),
   target = shallowRef<HTMLElement>();
 const panelHost = ref<HTMLElement>();
+const headerHost = ref<HTMLElement>();
+const contextSelection = ref("");
 const panelError = ref(""),
   panelNotice = ref("");
 let transition = 0;
@@ -101,6 +104,7 @@ async function askAi(item: BackendTask, source: HTMLElement) {
   trigger = source;
   await relocate(() => {
     candidate.value = value;
+    contextSelection.value = "";
     chosen.value = false;
     panelError.value = "";
     panelNotice.value = "";
@@ -192,11 +196,11 @@ onMounted(() => {
   void assistant?.connect();
   if (workspaceRoot.value) {
     const resize = () => {
-      const next = window.innerWidth >= 1440;
-      if (wide.value !== next)
-        void relocate(() => {
-          wide.value = next;
-        });
+      const next = workspaceRoot.value!.getBoundingClientRect().width >= 1200;
+      if (wide.value !== next) {
+        wide.value = next;
+        if (contextOpen.value && chosen.value) void relocate(() => {});
+      }
     };
     resize();
     sizing = new ResizeObserver(resize);
@@ -213,30 +217,60 @@ onBeforeUnmount(() => {
   <AppShell
     :navigation-enabled="ready"
     :navigation-key="page"
-    :content-mode="
-      ready && (page === 'assistant' || (contextOpen && wide))
-        ? 'conversation'
-        : 'page'
-    "
+    :content-mode="ready && page !== 'settings' ? 'conversation' : 'page'"
   >
-    <template #header
-      ><div class="workspace-brand">
-        <Sparkles :size="22" aria-hidden="true" /><strong>RSS 工作区</strong
-        ><span class="workspace-mode">{{ mode }}</span>
-      </div></template
-    >
+    <template #navigation-brand>
+      <div class="workspace-brand">
+        <span class="brand-mark"
+          ><Sparkles :size="20" aria-hidden="true" /></span
+        ><strong>RSS</strong>
+      </div>
+      <p class="workspace-description">你的 AI 与设备工作区</p>
+      <p class="workspace-mode">{{ mode }}</p>
+    </template>
+    <template #header>
+      <div class="workspace-page-header">
+        <div
+          ref="headerHost"
+          class="assistant-header-host"
+          :hidden="page !== 'assistant'"
+        />
+        <h1 v-if="page !== 'assistant'" tabindex="-1">
+          {{
+            !ready || page === "settings"
+              ? "设置"
+              : page === "tasks"
+                ? "请求与任务"
+                : page === "software"
+                  ? "软件中心"
+                  : page === "tools"
+                    ? "工具中心"
+                    : page === "help"
+                      ? "设备与帮助"
+                      : "首页"
+          }}
+        </h1>
+      </div>
+    </template>
     <template #navigation="{ navigate }"
       ><NavigationList
         :items="[
           {
             id: 'assistant',
-            label: attention ? `AI 助手（待回应 ${attention}）` : 'AI 助手',
+            label: 'AI 助手',
+            icon: 'assistant',
+            badge: attention,
           },
-          { id: 'home', label: '首页' },
-          { id: 'software', label: '软件中心' },
-          { id: 'tools', label: '工具中心' },
-          { id: 'tasks', label: '请求与任务' },
-          { id: 'help', label: '设备与帮助' },
+          { id: 'home', icon: 'home', label: '首页' },
+          { id: 'software', icon: 'software', label: '软件中心' },
+          { id: 'tools', icon: 'tools', label: '工具中心' },
+          { id: 'tasks', icon: 'tasks', label: '请求与任务' },
+          {
+            id: 'help',
+            icon: 'device',
+            label: '设备与帮助 · 未接线',
+            disabled: true,
+          },
         ]"
         :active-id="page"
         @select="
@@ -257,7 +291,7 @@ onBeforeUnmount(() => {
     /></template>
     <template #navigation-footer="{ navigate }"
       ><NavigationList
-        :items="[{ id: 'settings', label: '设置' }]"
+        :items="[{ id: 'settings', icon: 'settings', label: '设置' }]"
         :active-id="page"
         @select="
           (id) => {
@@ -265,12 +299,25 @@ onBeforeUnmount(() => {
             navigate();
           }
         "
-    /></template>
+      />
+      <button
+        class="workspace-account"
+        type="button"
+        @click="
+          emit('navigate', 'settings');
+          navigate();
+        "
+      >
+        <span class="account-avatar"
+          ><UserRound :size="18" aria-hidden="true"
+        /></span>
+        <span><slot name="account-summary">账户与连接</slot></span>
+      </button>
+    </template>
     <div
       ref="workspaceRoot"
       class="workspace-content"
       :class="{
-        'conversation-content': ready && page === 'assistant',
         'context-layout': contextOpen && wide,
       }"
       :inert="busy ? true : undefined"
@@ -284,16 +331,25 @@ onBeforeUnmount(() => {
           v-if="controller"
           v-show="page !== 'assistant' && page !== 'settings'"
           :controller="controller"
+          :context-key="candidate?.key ?? assistant?.context.value?.key"
+          :source="
+            assistant?.state.mode === 's1'
+              ? 's1'
+              : controller.interactive
+                ? 'live'
+                : 'preview'
+          "
           @ask-ai="askAi"
         />
       </div>
       <Teleport :to="target ?? 'body'" :disabled="!target"
         ><Assistant
           v-if="assistant"
-          v-show="assistantVisible"
           :visible="assistantVisible"
           :controller="assistant"
-          :portal-target="target"
+          :presentation="contextOpen && chosen ? 'context' : 'main'"
+          :header-target="headerHost"
+          :portal-target="target ?? headerHost"
           @settings="emit('navigate', 'settings')"
           @tasks="emit('navigate', 'tasks')"
       /></Teleport>
@@ -305,6 +361,7 @@ onBeforeUnmount(() => {
         @close="closeContext"
       >
         <ContextPanel
+          v-model:selection="contextSelection"
           :wide="false"
           :candidate="candidate"
           :controller="assistant"
@@ -328,6 +385,7 @@ onBeforeUnmount(() => {
         aria-label="资源上下文 AI"
       >
         <ContextPanel
+          v-model:selection="contextSelection"
           :wide="true"
           :candidate="candidate"
           :controller="assistant"
@@ -356,7 +414,9 @@ onBeforeUnmount(() => {
     </div>
     <template #status
       ><span v-if="busy" role="status">正在读取或切换账户…</span
-      ><span v-else>后台授权任务 · 状态与效果分别核实</span></template
+      ><span v-else
+        >会话保存在本机 · 模型请求发送至所选服务 · 设备状态独立核实</span
+      ></template
     >
   </AppShell>
 </template>
@@ -365,49 +425,97 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 10px;
-  min-width: 0;
-  flex: 1;
 }
 .workspace-brand strong {
-  white-space: nowrap;
-  font-size: 15px;
+  font-size: 22px;
+  letter-spacing: -0.5px;
 }
-.workspace-mode {
-  margin-left: auto;
+.brand-mark {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  background: var(--rss-color-text);
+  color: var(--rss-color-bg);
+}
+.workspace-description {
+  margin: 10px 0 0;
   color: var(--rss-color-text-muted);
   font-size: var(--rss-font-size-xs);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
-.workspace-content.conversation-content {
-  height: 100%;
-  min-height: 0;
+.workspace-mode {
+  margin: 8px 0 0;
+  font-size: var(--rss-font-size-xs);
+  color: var(--rss-color-text-muted);
+  line-height: 1.5;
 }
-</style>
-
-<style scoped>
-.context-layout {
+.workspace-page-header {
   display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+}
+.assistant-header-host {
+  flex: 1;
+  min-width: 0;
+}
+.assistant-header-host[hidden] {
+  display: none;
+}
+.workspace-page-header h1 {
+  margin: 0;
+  font-size: var(--rss-font-size-md);
+  font-weight: 500;
+}
+.workspace-account {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  text-align: left;
+  border: 0;
+  background: transparent;
+}
+.workspace-account > span:last-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.account-avatar {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--rss-color-accent-bg);
+  color: var(--rss-color-accent);
+}
+.workspace-content {
   height: 100%;
   min-height: 0;
 }
-.context-layout > .resource-content {
-  flex: 1;
+.resource-content {
+  height: 100%;
   min-width: 0;
   overflow: auto;
   padding: 24px;
+}
+.context-layout {
+  display: flex;
+}
+.context-layout > .resource-content {
+  flex: 1;
 }
 .assistant-panel-host {
   height: 100%;
   min-height: 0;
 }
-</style>
-
-<style scoped>
 .resource-context-drawer {
-  --rss-drawer-width: 600px;
-  --rss-drawer-padding: 12px;
+  --rss-drawer-width: 520px;
+  --rss-drawer-padding: 16px;
 }
 .resource-context-drawer[open] {
   display: flex;
@@ -418,7 +526,13 @@ onBeforeUnmount(() => {
   min-height: 0;
 }
 .resource-context-aside {
-  flex: 0 0 560px;
+  min-width: 0;
+  flex: 0 0 var(--rss-inspector-width);
   min-height: 0;
+}
+@media (max-width: 640px) {
+  .resource-content {
+    padding: 16px;
+  }
 }
 </style>

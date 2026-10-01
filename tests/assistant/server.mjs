@@ -11,8 +11,14 @@ import {
   fixtures,
   surfaceCommit,
   readSnapshot,
+  emptyCommit,
+  fixtureLimits,
   unwrap,
 } from "../../packages/ai-contract/dist/testing/index.js";
+import {
+  activeStage,
+  deliveryFingerprint,
+} from "../../packages/ai-contract/dist/index.js";
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const options = {
   provider: "fake",
@@ -170,6 +176,91 @@ export async function startFixture() {
     setExecution(value) {
       if (!execution[value]) throw new Error("scenario");
       executionState = value;
+    },
+    // Test-only association: phase/effect facts remain the generated Rust fixture.
+    async executionDelivery(
+      sessionId,
+      commandId,
+      operationId = "visual-execution",
+    ) {
+      await this.host.advance(fixtureCaller, sessionId, commandId, []);
+      const namespace = { ...fixtureCaller, sessionId };
+      const session = unwrap(await host.store.session(namespace));
+      const event = {
+        schemaVersion: 7,
+        kind: "event",
+        namespace,
+        eventId: `visual-${operationId}`,
+        sequence: session.lastSequence + 1,
+        generation: activeStage(session).binding.generation,
+        commandId,
+        body: {
+          type: "delivery_requested",
+          operationId,
+          target: "rust-execution",
+          proposal: {
+            name: "execution_execute",
+            arguments: {
+              request: execution.running.status.operationRequestId,
+              task: "visual-task",
+              attempt: "visual-attempt",
+              revision: "a".repeat(64),
+            },
+          },
+        },
+      };
+      const row = {
+        schemaVersion: 7,
+        kind: "delivery",
+        namespace,
+        operationId,
+        eventId: event.eventId,
+        target: event.body.target,
+        contentHash: deliveryFingerprint(
+          event,
+          event.body.target,
+          fixtureLimits,
+        ),
+        retry: "receiver_idempotent",
+        status: "pending",
+        attempts: 0,
+        nextAttemptAtMs: 0,
+      };
+      const commit = {
+        ...emptyCommit(session),
+        session: {
+          ...session,
+          revision: session.revision + 1,
+          lastSequence: event.sequence,
+        },
+        events: [event],
+        deliveries: [row],
+      };
+      unwrap(await host.store.commit(commit));
+      for (const value of Object.values(execution))
+        value.action.initiator = {
+          kind: "ai",
+          provider: "test-fixture",
+          config: { id: "fixture", revision: "1" },
+          conversation: sessionId,
+          toolCall: operationId,
+          osSession: {
+            device: "fixture-device",
+            session: "fixture-os-session",
+            account: { platform: "linux", subject: "fixture-account" },
+          },
+        };
+      // Wake the existing subscription after the host-owned commit.
+      unwrap(
+        await host.advance(fixtureCaller, sessionId, commandId, [
+          {
+            type: "text",
+            messageId: "visual-execution-note",
+            text: "设备状态由独立执行记录呈现。S1 测试投影不代表设备变更。",
+          },
+        ]),
+      );
+      return operationId;
     },
     async command(sessionId) {
       const s = unwrap(

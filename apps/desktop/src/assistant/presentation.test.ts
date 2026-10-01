@@ -25,7 +25,9 @@ it("renders permission scope from kind even when provider names contradict it", 
       ],
     },
   });
-  const wrapper = mount(Assistant, { props: { controller: c, visible: true } });
+  const wrapper = mount(Assistant, {
+    props: { controller: c, visible: true, presentation: "main" },
+  });
   const buttons = wrapper.findAll(".permission-card button");
   expect(buttons.slice(0, 4).map((b) => b.find("strong").text())).toEqual([
     "允许一次",
@@ -177,7 +179,7 @@ it.each(["prompt", "cancel", "respond"] as const)(
     };
     c.state.views.set(session.namespace.sessionId, v);
     const wrapper = mount(Assistant, {
-      props: { controller: c, visible: true },
+      props: { controller: c, visible: true, presentation: "main" },
     });
     expect(wrapper.text()).not.toContain("unavailable");
     await wrapper.get(".conversation-menu").trigger("click");
@@ -316,7 +318,9 @@ it("starts with an editable composer, readable history and one live conversation
     title: "检查网络连接",
     lastActivityAtMs: 1,
   });
-  const wrapper = mount(Assistant, { props: { controller: c, visible: true } });
+  const wrapper = mount(Assistant, {
+    props: { controller: c, visible: true, presentation: "main" },
+  });
   expect(wrapper.get("textarea").attributes("disabled")).toBeUndefined();
   expect(wrapper.get("h1").text()).toBe("新对话");
   expect(wrapper.text()).not.toContain(session.namespace.sessionId);
@@ -340,7 +344,7 @@ it.each([
     c.state.selected = "session-1";
     c.state.errors.set("session-1", code);
     const wrapper = mount(Assistant, {
-      props: { controller: c, visible: true },
+      props: { controller: c, visible: true, presentation: "main" },
     });
     const notice = wrapper.get(".conversation-notice");
     expect(notice.text()).toContain(action);
@@ -357,7 +361,9 @@ it.each([
 it("keeps the specific connection failure actionable", () => {
   const c = createAssistant(undefined, () => "id");
   c.state.error = "authentication_required";
-  const wrapper = mount(Assistant, { props: { controller: c, visible: true } });
+  const wrapper = mount(Assistant, {
+    props: { controller: c, visible: true, presentation: "main" },
+  });
   expect(wrapper.get(".conversation-notice").text()).toContain("认证不可用");
   expect(wrapper.get(".conversation-notice button").text()).toBe(
     "前往连接设置",
@@ -368,7 +374,9 @@ it("keeps the specific connection failure actionable", () => {
 it("follows newly requested permission only when already following the conversation", async () => {
   const c = createAssistant(undefined, () => "id");
   c.state.selected = "session-1";
-  const wrapper = mount(Assistant, { props: { controller: c, visible: true } });
+  const wrapper = mount(Assistant, {
+    props: { controller: c, visible: true, presentation: "main" },
+  });
   const timeline = wrapper.get(".assistant-timeline");
   Object.defineProperty(timeline.element, "scrollHeight", { value: 1000 });
   Object.defineProperty(timeline.element, "clientHeight", { value: 200 });

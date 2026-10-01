@@ -47,7 +47,7 @@ withDefaults(
   margin-top: var(--rss-space-4);
   display: flex;
   flex-direction: column;
-  gap: var(--rss-space-4);
+  gap: var(--rss-space-8);
 }
 .text {
   margin: 0;
@@ -77,10 +77,9 @@ withDefaults(
 }
 .user-bubble {
   max-width: 80%;
-  padding: var(--rss-space-2) var(--rss-space-4);
-  border-radius: var(--rss-space-3);
+  padding: var(--rss-space-6) var(--rss-space-8);
+  border-radius: var(--rss-radius-lg);
   background: var(--rss-color-neutral-bg);
-  border: 1px solid var(--rss-color-border-strong);
 }
 .user-label {
   display: block;

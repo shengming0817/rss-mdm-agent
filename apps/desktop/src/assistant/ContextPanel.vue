@@ -1,23 +1,29 @@
 <script setup lang="ts">
-import { ref, useId } from "vue";
+import { useId } from "vue";
+import { Sparkles } from "@rss-mdm-agent/ui";
 import type { ResourceContext } from "./resource-context";
 import type { AssistantController } from "./controller";
 defineProps<{
   wide: boolean;
+  selection: string;
   candidate: ResourceContext;
   controller: AssistantController;
   chosen: boolean;
   error: string;
   notice: string;
 }>();
-const emit = defineEmits<{ close: []; choose: [target: string]; main: [] }>();
-const target = ref("");
+const emit = defineEmits<{
+  close: [];
+  choose: [target: string];
+  main: [];
+  "update:selection": [target: string];
+}>();
 const selectId = useId();
 </script>
 <template>
   <div class="context-panel" :class="{ 'context-aside': wide }">
     <header v-if="wide" class="context-heading">
-      <h2>资源上下文 AI</h2>
+      <h2><Sparkles :size="18" aria-hidden="true" />资源上下文 AI</h2>
       <button
         type="button"
         aria-label="关闭资源上下文 AI"
@@ -26,18 +32,28 @@ const selectId = useId();
         关闭
       </button>
     </header>
+    <p class="resource-path">{{ candidate.path.join(" → ") }}</p>
     <form
       v-if="!chosen"
       class="context-selection"
-      @submit.prevent="target && emit('choose', target)"
+      @submit.prevent="selection && emit('choose', selection)"
     >
-      <p class="resource-path">{{ candidate.path.join(" → ") }}</p>
+      <div class="context-intro">
+        <h3>{{ candidate.path[2] }}</h3>
+        <p>解释用途、核对版本与要求。选择会话后可检查本次发送的资源信息。</p>
+      </div>
       <details>
         <summary>核对资源信息</summary>
         <pre>{{ candidate.text }}</pre>
       </details>
       <label :for="selectId">选择目标会话</label>
-      <select :id="selectId" v-model="target">
+      <select
+        :id="selectId"
+        :value="selection"
+        @change="
+          emit('update:selection', ($event.target as HTMLSelectElement).value)
+        "
+      >
         <option value="">请选择会话</option>
         <option value="new">新建会话（首次发送时创建）</option>
         <option
@@ -74,13 +90,17 @@ const selectId = useId();
       <button
         type="submit"
         data-action="choose-conversation"
-        :disabled="!target || candidate.stale"
+        :disabled="!selection || candidate.stale"
       >
         继续到所选会话
       </button>
     </form>
     <div v-else class="context-heading">
-      <span>正在使用工作区同一会话</span
+      <span>{{
+        controller.context.value
+          ? "资源附件待确认发送"
+          : "资源附件已移除，按普通提问发送"
+      }}</span
       ><button type="button" @click="emit('main')">在 AI 页面继续</button>
     </div>
     <p v-if="notice" role="status">{{ notice }}</p>
@@ -90,23 +110,17 @@ const selectId = useId();
 </template>
 <style scoped>
 .context-panel {
+  min-width: 0;
   height: 100%;
-  --rss-drawer-width: 600px;
-  --rss-drawer-padding: 12px;
-  background: var(--rss-color-bg);
-  color: var(--rss-color-text);
-}
-.context-panel,
-.context-aside {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  background: var(--rss-color-navigation);
+  color: var(--rss-color-text);
 }
 .context-aside {
-  flex: 1;
   border-left: 1px solid var(--rss-color-border);
-  padding: 12px;
-  box-sizing: border-box;
+  padding: 16px;
 }
 .context-heading {
   display: flex;
@@ -114,34 +128,79 @@ const selectId = useId();
   justify-content: space-between;
   gap: 8px;
   flex: none;
+  font-size: var(--rss-font-size-xs);
 }
-h2 {
-  font-size: 16px;
+.context-heading h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   margin: 0;
-}
-.context-selection {
-  overflow: auto;
+  font-size: var(--rss-font-size-md);
 }
 .resource-path {
+  flex: none;
+  margin: 12px 0;
+  padding: 8px 10px;
+  border-radius: var(--rss-radius-sm);
+  font-size: var(--rss-font-size-xs);
+  color: var(--rss-color-text-muted);
+  background: var(--rss-color-neutral-bg);
   overflow-wrap: anywhere;
 }
-select {
-  display: block;
-  width: 100%;
-  margin: 8px 0;
+.context-intro h3 {
+  font-size: 22px;
+  margin: 24px 0 12px;
 }
-pre {
-  font-size: 12px;
+.context-intro p {
+  color: var(--rss-color-text-muted);
+  font-size: var(--rss-font-size-sm);
+  line-height: 1.7;
+}
+.context-selection {
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+  padding: 0 4px 16px;
+}
+.context-selection label {
+  font-size: var(--rss-font-size-sm);
+  font-weight: 600;
+}
+.context-selection p {
+  margin: 0;
+  font-size: var(--rss-font-size-sm);
+}
+.context-selection pre {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  max-height: 180px;
+  max-height: 160px;
   overflow: auto;
+  font-size: var(--rss-font-size-xs);
+}
+.context-selection select {
+  width: 100%;
 }
 .context-host {
-  min-height: 0;
   flex: 1;
+  min-height: 0;
 }
-.context-host :deep(.assistant) {
-  height: 100%;
+.context-panel > [role] {
+  flex: none;
+  font-size: var(--rss-font-size-sm);
+}
+@media (max-height: 520px) {
+  .resource-path {
+    margin: 4px 0;
+    padding: 4px 8px;
+  }
+  .context-heading button {
+    min-height: 28px;
+    padding: 4px 8px;
+  }
+  .context-intro h3 {
+    margin: 8px 0;
+  }
 }
 </style>

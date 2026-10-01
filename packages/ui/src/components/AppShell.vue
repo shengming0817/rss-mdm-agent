@@ -7,8 +7,7 @@ const props = defineProps<{
   contentMode: "conversation" | "page";
   navigationKey: string;
 }>();
-const root = ref<HTMLElement>(),
-  main = ref<HTMLElement>();
+const root = ref<HTMLElement>();
 const compact = ref(false),
   navigationOpen = ref(false);
 const navigationId = useId();
@@ -17,7 +16,7 @@ async function navigate() {
   navigationOpen.value = false;
   await nextTick();
   const heading = [
-    ...(main.value?.querySelectorAll<HTMLElement>("h1") ?? []),
+    ...(root.value?.querySelectorAll<HTMLElement>("h1") ?? []),
   ].find((el) => el.getClientRects().length > 0);
   if (heading) {
     heading.tabIndex = -1;
@@ -40,36 +39,38 @@ onBeforeUnmount(() => observer?.disconnect());
 </script>
 <template>
   <div ref="root" class="rss-ui shell" :class="{ compact }">
-    <header class="shell-header">
-      <button
-        v-if="navigationEnabled && compact"
-        class="navigation-trigger icon-button"
-        aria-label="打开主导航"
-        :aria-expanded="navigationOpen"
-        :aria-controls="navigationId"
-        @click="navigationOpen = true"
-      >
-        <PanelLeft :size="20" aria-hidden="true" />
-      </button>
-      <slot name="header" />
-    </header>
-    <div class="shell-body">
-      <aside
-        v-if="navigationEnabled && !compact"
-        class="navigation-panel"
-        aria-label="工作区导航"
-      >
-        <div class="navigation-scroll">
-          <div class="navigation-primary">
-            <slot name="navigation" :navigate="navigate" />
-          </div>
-          <slot name="conversations" :navigate="navigate" />
+    <aside
+      v-if="navigationEnabled && !compact"
+      class="navigation-panel"
+      aria-label="工作区导航"
+    >
+      <div class="navigation-brand"><slot name="navigation-brand" /></div>
+      <div class="navigation-scroll">
+        <div class="navigation-primary">
+          <slot name="navigation" :navigate="navigate" />
         </div>
-        <div class="navigation-footer">
-          <slot name="navigation-footer" :navigate="navigate" />
-        </div>
-      </aside>
-      <main ref="main" :class="contentMode"><slot /></main>
+        <slot name="conversations" :navigate="navigate" />
+      </div>
+      <div class="navigation-footer">
+        <slot name="navigation-footer" :navigate="navigate" />
+      </div>
+    </aside>
+    <div class="shell-content">
+      <header class="shell-header">
+        <button
+          v-if="navigationEnabled && compact"
+          class="navigation-trigger icon-button"
+          aria-label="打开主导航"
+          :aria-expanded="navigationOpen"
+          :aria-controls="navigationId"
+          @click="navigationOpen = true"
+        >
+          <PanelLeft :size="20" aria-hidden="true" />
+        </button>
+        <slot name="header" />
+      </header>
+      <main :class="contentMode"><slot /></main>
+      <footer class="shell-status"><slot name="status" /></footer>
     </div>
     <ModalDrawer
       v-if="navigationEnabled && compact && navigationOpen"
@@ -79,6 +80,7 @@ onBeforeUnmount(() => observer?.disconnect());
       side="left"
       @close="navigationOpen = false"
     >
+      <div class="navigation-brand"><slot name="navigation-brand" /></div>
       <div class="navigation-scroll">
         <div class="navigation-primary">
           <slot name="navigation" :navigate="navigate" />
@@ -89,40 +91,44 @@ onBeforeUnmount(() => observer?.disconnect());
         <slot name="navigation-footer" :navigate="navigate" />
       </div>
     </ModalDrawer>
-    <footer class="shell-status"><slot name="status" /></footer>
   </div>
 </template>
 <style scoped>
 .shell {
   display: flex;
-  flex-direction: column;
   height: 100%;
   min-height: 0;
   background: var(--rss-color-bg);
 }
+.shell-content {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
 .shell-header {
   display: flex;
   align-items: center;
-  gap: 12px;
-  min-height: 48px;
+  gap: 8px;
+  min-height: 52px;
   flex: none;
-  padding: 6px 20px;
-  background: var(--rss-color-surface);
-  border-bottom: 1px solid var(--rss-color-border);
-}
-.shell-body {
-  display: flex;
-  flex: 1;
-  min-height: 0;
+  padding: 8px 24px;
+  background: var(--rss-color-bg);
 }
 .navigation-panel {
   flex: 0 0 var(--rss-navigation-width);
+  min-width: 0;
   display: flex;
   flex-direction: column;
   min-height: 0;
-  padding: 16px 12px;
+  padding: 24px 12px 12px;
   border-right: 1px solid var(--rss-color-border);
-  background: var(--rss-color-bg);
+  background: var(--rss-color-navigation);
+}
+.navigation-brand {
+  flex: none;
+  padding: 0 12px 24px;
 }
 .navigation-primary,
 .navigation-footer {
@@ -139,18 +145,19 @@ onBeforeUnmount(() => observer?.disconnect());
 .navigation-drawer {
   --rss-drawer-width: 280px;
   --rss-drawer-padding: 16px;
+  background: var(--rss-color-navigation);
 }
 .navigation-drawer[open] {
   display: flex;
   flex-direction: column;
 }
 main {
-  background: var(--rss-color-bg);
   flex: 1;
   min-width: 0;
   min-height: 0;
   overflow: auto;
   padding: 24px;
+  background: var(--rss-color-bg);
 }
 main.conversation {
   padding: 0;
@@ -158,11 +165,10 @@ main.conversation {
 }
 .shell-status {
   flex: none;
-  padding: 5px 16px;
+  padding: 6px 24px;
   min-height: 26px;
   font-size: var(--rss-font-size-xs);
   color: var(--rss-color-text-muted);
-  border-top: 1px solid var(--rss-color-border);
 }
 .compact .shell-header {
   padding: 6px 12px;
@@ -170,9 +176,6 @@ main.conversation {
 .compact main.page {
   padding: 16px;
 }
-</style>
-
-<style scoped>
 :global(.native-material) .shell {
   background: transparent;
 }

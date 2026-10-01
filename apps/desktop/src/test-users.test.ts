@@ -322,7 +322,9 @@ it("focuses the default AI page after the selected workspace is replaced", async
     ).focus();
     await wrapper.findAll("form")[0]!.trigger("submit");
     await flushPromises();
-    expect(document.activeElement).toBe(wrapper.get(".assistant h1").element);
+    expect(document.activeElement).toBe(
+      wrapper.get(".shell-header h1").element,
+    );
   } finally {
     wrapper.unmount();
   }

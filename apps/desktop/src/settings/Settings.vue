@@ -72,7 +72,6 @@ function keys(event: KeyboardEvent) {
 </script>
 <template>
   <section class="settings" aria-label="设置">
-    <h1 tabindex="-1">设置</h1>
     <div :inert="confirming ? true : undefined">
       <LocalService />
       <section class="settings-card">

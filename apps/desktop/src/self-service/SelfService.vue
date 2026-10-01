@@ -1,14 +1,63 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted } from "vue";
+import { computed, nextTick, ref, onMounted, onUnmounted } from "vue";
 import type { Controller } from "./controller";
 import type { BackendTask } from "./types";
 import TaskDetail from "./TaskDetail.vue";
-const props = defineProps<{ controller: Controller }>();
+import { Package, Terminal, Sparkles } from "@rss-mdm-agent/ui";
+import { resourceKey } from "../assistant/resource-context";
+const props = defineProps<{
+  controller: Controller;
+  contextKey?: string;
+  source: "s1" | "live" | "preview";
+}>();
 const emit = defineEmits<{
   askAi: [item: BackendTask, trigger: HTMLElement];
 }>();
 const c = props.controller;
 const s = c.state;
+const selectedKey = ref("");
+const resourceHeading = ref<HTMLElement>();
+let resourceTrigger: HTMLElement | undefined;
+async function openResource(item: BackendTask, trigger: HTMLElement) {
+  resourceTrigger = trigger;
+  selectedKey.value = resourceKey(item);
+  await nextTick();
+  resourceHeading.value?.focus({ preventScroll: true });
+  resourceHeading.value?.scrollIntoView({ block: "start" });
+}
+async function closeResource() {
+  selectedKey.value = "";
+  await nextTick();
+  if (resourceTrigger?.isConnected) resourceTrigger.focus();
+}
+const resource = computed(() =>
+  s.snapshot?.available.find((item) => resourceKey(item) === selectedKey.value),
+);
+const groups = computed(() =>
+  [
+    {
+      kind: "software",
+      label: "软件",
+      items:
+        s.snapshot?.available.filter(
+          (item) => item.summary.kind === "software",
+        ) ?? [],
+    },
+    {
+      kind: "script",
+      label: "工具与脚本",
+      items:
+        s.snapshot?.available.filter(
+          (item) => item.summary.kind === "script",
+        ) ?? [],
+    },
+  ].filter(
+    (group) =>
+      (s.page !== "software" && s.page !== "tools") ||
+      group.kind === (s.page === "software" ? "software" : "script"),
+  ),
+);
+
 const task = computed(() =>
   s.snapshot?.selected?.kind === "execution"
     ? s.snapshot.selected.value
@@ -71,44 +120,136 @@ function failureLabel(value: string) {
 </script>
 <template>
   <div class="self-service">
-    <h1>{{ s.page === "tasks" ? "设备任务" : "可用软件与任务" }}</h1>
-    <p v-if="!c.interactive">请在桌面应用中连接本机执行服务。</p>
+    <div class="catalog-heading">
+      <div>
+        <h2>{{ s.page === "tasks" ? "执行服务记录" : "可用软件与工具" }}</h2>
+        <p>浏览当前已加载目录，直接操作或向 AI 提问。</p>
+      </div>
+      <button :disabled="s.loading" @click="c.refresh">
+        {{ s.loading ? "正在读取…" : "刷新" }}
+      </button>
+    </div>
+    <p class="catalog-provenance" v-if="source === 's1'">
+      S1 测试目录 · 样本资源 · 不代表真实安装或企业接线。
+    </p>
+    <p class="catalog-provenance" v-else-if="source === 'preview'">
+      只读预览 · 请在桌面应用中连接执行服务。
+    </p>
+    <p class="catalog-provenance" v-else>
+      当前执行服务返回的资源 · 不代表完整企业目录或已安装清单。
+    </p>
     <p v-if="s.error" class="error" role="alert">{{ s.error }}</p>
-    <button :disabled="s.loading" @click="c.refresh">刷新</button>
     <section v-if="s.snapshot" aria-label="后台任务">
-      <p v-if="!s.snapshot.available.length">当前没有等待操作的后台任务。</p>
-      <article
-        v-for="offer in s.snapshot.available"
-        class="resource-card"
-        :key="offer.task + offer.attempt"
+      <section
+        v-for="group in groups"
+        :key="group.kind"
+        class="resource-group"
+        :aria-label="group.label"
       >
-        <h2>{{ offer.title }}</h2>
-        <details>
-          <summary>查看资源信息</summary>
-          <ol v-if="offer.summary.kind === 'software'">
-            <li v-for="(step, index) in offer.summary.steps" :key="index">
-              {{ step.package }} · {{ step.version }}
-            </li>
-          </ol>
-          <p v-else>后台脚本；分类和说明未提供。</p>
+        <div class="section-heading">
+          <h3>{{ group.label }}</h3>
+          <span>{{ group.items.length }} 项 · 当前加载</span>
+        </div>
+        <p v-if="!group.items.length">当前加载目录没有此类资源。</p>
+        <div class="catalog-grid">
+          <article
+            v-for="offer in group.items"
+            class="resource-card"
+            :class="{
+              selected: resourceKey(offer) === (contextKey ?? selectedKey),
+            }"
+            :key="resourceKey(offer)"
+          >
+            <button
+              type="button"
+              data-action="resource-details"
+              class="resource-title"
+              :aria-pressed="resourceKey(offer) === selectedKey"
+              @click="openResource(offer, $event.currentTarget as HTMLElement)"
+            >
+              <span class="resource-icon"
+                ><Package
+                  v-if="offer.summary.kind === 'software'"
+                  :size="22"
+                  aria-hidden="true" /><Terminal
+                  v-else
+                  :size="22"
+                  aria-hidden="true"
+              /></span>
+              <span
+                ><strong>{{ offer.title }}</strong
+                ><small>{{
+                  offer.summary.kind === "software"
+                    ? "软件资源"
+                    : "后台固定脚本"
+                }}</small></span
+              >
+            </button>
+            <p>分类与说明未提供</p>
+            <span class="status-badge">{{
+              source === "s1"
+                ? "S1 样本"
+                : source === "preview"
+                  ? "预览"
+                  : "执行服务目录"
+            }}</span>
+            <button
+              type="button"
+              class="resource-link"
+              @click="openResource(offer, $event.currentTarget as HTMLElement)"
+            >
+              查看资源信息
+            </button>
+          </article>
+        </div>
+      </section>
+      <section v-if="resource" class="resource-details" aria-label="资源详情">
+        <div class="section-heading">
+          <h3 ref="resourceHeading" tabindex="-1">{{ resource.title }}</h3>
+          <button type="button" @click="closeResource">关闭详情</button>
+        </div>
+        <p>
+          {{ resource.summary.kind === "software" ? "软件详情" : "脚本详情" }} ·
+          未提供分类 · 后台未提供资源说明
+        </p>
+        <ol v-if="resource.summary.kind === 'software'">
+          <li v-for="(step, index) in resource.summary.steps" :key="index">
+            {{ step.package }} · {{ step.version }} ·
+            {{ step.identity === "system" ? "系统账号" : "当前用户" }}
+          </li>
+        </ol>
+        <p v-else>
+          运行身份：{{
+            resource.summary.identity === "system" ? "系统账号" : "当前用户"
+          }}
+        </p>
+        <p>
+          有效期：{{ new Date(resource.expiresAt * 1000).toLocaleString() }}
+        </p>
+        <p>
+          列表可见不代表已安装或获准执行；后台未提供完整能力判定，实际操作由执行服务裁决。
+        </p>
+        <div class="resource-actions">
           <button
             type="button"
             data-action="ask-ai"
-            @click="emit('askAi', offer, $event.currentTarget as HTMLElement)"
+            @click="
+              emit('askAi', resource, $event.currentTarget as HTMLElement)
+            "
           >
-            询问 AI
+            <Sparkles :size="16" aria-hidden="true" />询问 AI
           </button>
-        </details>
-        <p>有效期：{{ new Date(offer.expiresAt * 1000).toLocaleString() }}</p>
-        <button
-          v-if="offer.userInitiated"
-          :disabled="s.busy || s.uncertain"
-          @click="c.select(offer)"
-        >
-          查看并确认
-        </button>
-        <p v-else>由后台派发，执行服务处理。</p>
-      </article>
+          <button
+            v-if="resource.userInitiated"
+            class="primary-button"
+            :disabled="s.busy || s.uncertain"
+            @click="c.select(resource)"
+          >
+            查看并确认
+          </button>
+          <span v-else>由后台派发，执行服务处理。</span>
+        </div>
+      </section>
       <section v-if="s.item" aria-label="操作确认">
         <h2>确认执行 {{ s.item.title }}</h2>
         <template v-if="s.item.summary.kind === 'software'">
@@ -129,7 +270,8 @@ function failureLabel(value: string) {
         </button>
         <button :disabled="s.busy" @click="s.item = null">返回</button>
       </section>
-      <section aria-label="准备中的请求">
+      <section class="preparation-list" aria-label="准备中的请求">
+        <h3 v-if="s.snapshot.preparations.length">准备中的请求</h3>
         <article
           v-for="pending in s.snapshot.preparations"
           :key="pending.offer.request"
@@ -157,7 +299,8 @@ function failureLabel(value: string) {
           </button>
         </article>
       </section>
-      <section aria-label="执行记录">
+      <section class="execution-records" aria-label="执行记录">
+        <h3 v-if="s.snapshot.requests.length">执行记录</h3>
         <button
           v-for="record in s.snapshot.requests"
           :key="record.action.requestId"

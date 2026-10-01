@@ -1,9 +1,12 @@
 .assistant {
+  min-width: 0;
+  display: flex;
   height: 100%;
   min-height: 0;
   color: var(--rss-color-text);
 }
 .assistant-conversation {
+  flex: 1;
   height: 100%;
   min-width: 0;
   min-height: 0;
@@ -15,13 +18,14 @@
   align-items: center;
   gap: 12px;
   flex: none;
-  padding: 12px 24px;
-  border-bottom: 1px solid var(--rss-color-border);
+  padding: 0;
+  width: 100%;
 }
 .conversation-header h1 {
   flex: 1;
   min-width: 0;
-  font-size: 18px;
+  font-size: var(--rss-font-size-md);
+  font-weight: 500;
   margin: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -44,25 +48,16 @@
   flex: 1;
   min-height: 0;
   overflow: auto;
-  padding: 12px max(24px, calc((100% - 760px) / 2));
+  padding: 12px max(24px, calc((100% - var(--rss-reading-width)) / 2));
   overflow-wrap: anywhere;
 }
 .assistant-timeline > article {
   margin: 24px 0;
   min-width: 0;
 }
-.empty-state {
-  padding: 40px 0;
-  text-align: center;
-  color: var(--rss-color-text-muted);
-}
-.empty-state h2 {
-  color: var(--rss-color-text);
-  font-size: 24px;
-}
 .conversation-input {
   flex: none;
-  padding: 8px max(24px, calc((100% - 760px) / 2)) 16px;
+  padding: 8px max(24px, calc((100% - var(--rss-reading-width)) / 2)) 16px;
 }
 .conversation-notice {
   display: flex;
@@ -158,7 +153,6 @@
 }
 @media (max-width: 640px) {
   .conversation-header {
-    padding: 8px 12px;
     gap: 8px;
   }
   .conversation-header h1 {
@@ -172,24 +166,10 @@
   }
 }
 @media (max-height: 520px) {
-  .conversation-header {
-    padding-top: 4px;
-    padding-bottom: 4px;
-  }
   .conversation-notice {
     font-size: var(--rss-font-size-xs);
     max-height: 56px;
     overflow: auto;
-  }
-  .empty-state {
-    padding: 8px 0;
-  }
-  .empty-state h2 {
-    font-size: 20px;
-    margin: 8px 0;
-  }
-  .empty-state p {
-    margin: 6px 0;
   }
 }
 
@@ -223,4 +203,249 @@
 .resource-context pre {
   max-height: 120px;
   overflow: auto;
+}
+
+.assistant-start {
+  overflow: auto;
+}
+.assistant-welcome {
+  flex: none;
+  text-align: center;
+  padding: 0 24px;
+  margin: auto auto 24px;
+  width: 100%;
+  max-width: 800px;
+}
+.welcome-mark {
+  display: grid;
+  place-items: center;
+  margin: 40px auto 24px;
+  width: 56px;
+  height: 56px;
+  border-radius: 17px;
+  background: var(--rss-color-accent-bg);
+  color: var(--rss-color-accent);
+}
+.assistant-welcome h2 {
+  font-size: var(--rss-font-size-title);
+  font-weight: 600;
+  letter-spacing: -0.8px;
+  margin: 0 0 16px;
+}
+.assistant-welcome p {
+  color: var(--rss-color-text-muted);
+  font-size: var(--rss-font-size-md);
+  line-height: 1.7;
+  margin: 0;
+}
+.assistant-start .conversation-input {
+  padding-left: max(24px, calc((100% - var(--rss-hero-width)) / 2));
+  padding-right: max(24px, calc((100% - var(--rss-hero-width)) / 2));
+  padding-bottom: 0;
+}
+.assistant-start .composer textarea {
+  min-height: 80px;
+}
+.assistant-start-followup {
+  flex: none;
+  padding: 20px max(24px, calc((100% - var(--rss-hero-width)) / 2)) 24px;
+  margin-bottom: auto;
+}
+.start-suggestions {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.start-suggestions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: var(--rss-color-bg);
+  font-size: var(--rss-font-size-sm);
+}
+.suggestion-note {
+  text-align: center;
+  font-size: var(--rss-font-size-xs);
+  color: var(--rss-color-text-muted);
+  margin: 12px 0 0;
+}
+.assistant .resume-conversation {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
+  margin-top: 32px;
+  padding: 16px 0;
+  border: 0;
+  border-top: 1px solid var(--rss-color-border);
+  background: transparent;
+  text-align: left;
+}
+.resume-conversation strong {
+  display: block;
+  font-size: var(--rss-font-size-sm);
+  margin-top: 10px;
+}
+.context-session {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--rss-font-size-sm);
+}
+.assistant-context .conversation-header {
+  padding: 8px 0;
+}
+.assistant-context .assistant-welcome {
+  text-align: left;
+  margin: 16px 0;
+  padding: 0;
+}
+.assistant-context .welcome-mark {
+  display: none;
+}
+.assistant-context .assistant-welcome h2 {
+  font-size: 22px;
+  letter-spacing: -0.3px;
+  margin-bottom: 12px;
+}
+.assistant-context .assistant-welcome p {
+  font-size: var(--rss-font-size-sm);
+}
+.assistant-context .assistant-timeline {
+  padding: 4px;
+}
+.assistant-context .conversation-input {
+  padding: 8px 0;
+  order: 2;
+  margin-top: auto;
+}
+.assistant-context .composer textarea {
+  min-height: 56px;
+}
+.assistant-context .assistant-start-followup {
+  padding: 8px 0 16px;
+  order: 1;
+  margin-bottom: 0;
+}
+.assistant-context .start-suggestions {
+  flex-direction: column;
+  gap: 8px;
+}
+.assistant-context .start-suggestions button {
+  justify-content: start;
+}
+.assistant-context .resource-context {
+  max-height: 20vh;
+}
+.assistant-context .conversation-notice {
+  max-height: 60px;
+  overflow: auto;
+}
+.execution-inspector {
+  min-width: 0;
+  flex: 0 0 var(--rss-inspector-width);
+  min-height: 0;
+  overflow: auto;
+  padding: 20px;
+  border-left: 1px solid var(--rss-color-border);
+  background: var(--rss-color-navigation);
+}
+.execution-inspector > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.execution-inspector h2 {
+  font-size: var(--rss-font-size-md);
+  margin: 0;
+}
+.execution-summary {
+  padding: 16px;
+  border-radius: var(--rss-radius-md);
+  background: var(--rss-color-neutral-bg);
+  margin: 16px 0;
+}
+.execution-summary h3 {
+  margin: 16px 0 8px;
+  font-size: 20px;
+  overflow-wrap: anywhere;
+}
+.execution-phase {
+  font-weight: 600;
+  line-height: 1.7;
+}
+.execution-source,
+.execution-assessment,
+.plan-validity {
+  font-size: var(--rss-font-size-xs);
+  color: var(--rss-color-text-muted);
+  line-height: 1.7;
+}
+.execution-facts > summary {
+  font-size: var(--rss-font-size-sm);
+  font-weight: 500;
+  padding: 8px 0;
+}
+.execution-details :is(dd, pre) {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  font-size: var(--rss-font-size-sm);
+}
+.execution-details dt {
+  font-size: var(--rss-font-size-sm);
+  font-weight: 600;
+  margin-top: 12px;
+}
+@media (max-height: 520px) {
+  .assistant-welcome {
+    margin: 8px auto;
+  }
+  .welcome-mark {
+    display: none;
+  }
+  .assistant-welcome h2 {
+    font-size: 22px;
+    margin-bottom: 4px;
+  }
+  .assistant-welcome p {
+    font-size: var(--rss-font-size-xs);
+  }
+  .assistant-start .composer textarea {
+    min-height: 44px;
+  }
+  .assistant-start-followup {
+    padding-top: 8px;
+    padding-bottom: 8px;
+  }
+  .assistant .resume-conversation {
+    margin-top: 12px;
+  }
+  .assistant-context .assistant-welcome {
+    margin: 8px 0;
+  }
+  .assistant-context .assistant-welcome h2 {
+    font-size: 18px;
+    margin-bottom: 4px;
+  }
+  .assistant-context .assistant-welcome p {
+    display: none;
+  }
+  .assistant-context .resource-context {
+    max-height: 15vh;
+    padding: 4px 8px;
+  }
+  .assistant-context .assistant-start-followup {
+    max-height: 44px;
+    overflow: auto;
+    padding: 4px 0;
+  }
+  .assistant-context .composer textarea {
+    min-height: 44px;
+  }
 }

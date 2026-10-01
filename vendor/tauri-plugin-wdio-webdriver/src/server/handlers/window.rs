@@ -84,10 +84,10 @@ pub async fn close_window<R: Runtime>(
         let current_window = session.current_window.clone();
         drop(sessions);
 
-        // Close the current window
+        // Preserve the native CloseRequested lifecycle used by the real window control.
         if let Some(window) = state.app.webview_windows().get(&current_window).cloned() {
             window
-                .destroy()
+                .close()
                 .map_err(|e| WebDriverErrorResponse::unknown_error(&e.to_string()))?;
 
             // Return remaining window handles
@@ -118,6 +118,14 @@ pub async fn switch_to_window<R: Runtime>(
         WebDriverErrorResponse::unknown_error("Browsing context generation overflowed")
     })?;
 
+    let window = state
+        .app
+        .get_webview_window(&session.current_window)
+        .ok_or_else(WebDriverErrorResponse::no_such_window)?;
+    drop(sessions);
+    window
+        .set_focus()
+        .map_err(|error| WebDriverErrorResponse::unknown_error(&error.to_string()))?;
     Ok(WebDriverResponse::null())
 }
 

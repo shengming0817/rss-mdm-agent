@@ -208,31 +208,45 @@ const text = (value: unknown) => JSON.stringify(value, null, 2);
 </script>
 <template>
   <section class="execution-details" aria-label="可信执行详情">
-    <h3>
-      执行服务 ·
-      {{ details.status.mode === "test" ? "S1 测试执行器" : "真实执行器" }}
-    </h3>
-    <p class="execution-phase">{{ executionPhase(details.status.phase) }}</p>
-    <p v-if="details.status.software" class="software-diagnostic">
-      {{ softwareStatus(details.status.software) }}
-    </p>
-    <div v-if="details.status.process" class="process-facts">
-      <p>
-        根进程：{{
-          details.status.process.finished ? "已结束采集" : "运行或准备中"
-        }}；退出码：{{ details.status.process.exitCode ?? "未知" }}
+    <div class="execution-summary">
+      <span class="status-badge">独立执行记录 · 模型不能改写</span>
+      <h3>{{ details.action.operation.resource.id }}</h3>
+      <p class="execution-source">
+        执行服务 ·
+        {{ details.status.mode === "test" ? "S1 测试执行器" : "真实执行器" }}
       </p>
-      <p>
-        执行范围静止：{{
-          details.status.process.quiescent ? "已确认" : "未确认"
-        }}；输出质量：{{ qualities(details.status.process.quality) }}
+      <p class="execution-phase">{{ executionPhase(details.status.phase) }}</p>
+      <p v-if="details.status.software" class="software-diagnostic">
+        {{ softwareStatus(details.status.software) }}
       </p>
-      <p>结束原因：{{ ends(details.status.process.end) }}</p>
-      <p>机制诊断：{{ failures(details.status.process.failureKind) }}</p>
-      <p v-if="details.status.process.failureKind !== 'none'">
-        请核对原请求与宿主诊断；不要因未收到完整结果而重复派发。
+      <p class="execution-assessment">
+        效果核实：{{
+          details.status.assessment === null
+            ? "尚未验证"
+            : assessments(details.status.assessment)
+        }}
       </p>
     </div>
+    <details v-if="details.status.process" class="execution-facts">
+      <summary>过程与停止事实</summary>
+      <div class="process-facts">
+        <p>
+          根进程：{{
+            details.status.process.finished ? "已结束采集" : "运行或准备中"
+          }}；退出码：{{ details.status.process.exitCode ?? "未知" }}
+        </p>
+        <p>
+          执行范围静止：{{
+            details.status.process.quiescent ? "已确认" : "未确认"
+          }}；输出质量：{{ qualities(details.status.process.quality) }}
+        </p>
+        <p>结束原因：{{ ends(details.status.process.end) }}</p>
+        <p>机制诊断：{{ failures(details.status.process.failureKind) }}</p>
+        <p v-if="details.status.process.failureKind !== 'none'">
+          请核对原请求与宿主诊断；不要因未收到完整结果而重复派发。
+        </p>
+      </div>
+    </details>
     <p class="plan-validity">
       {{ validity }}（按本机时间判断；实际准入由执行服务核验）。
     </p>

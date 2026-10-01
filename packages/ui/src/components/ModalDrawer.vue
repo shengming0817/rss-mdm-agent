@@ -84,7 +84,7 @@ onBeforeUnmount(() => {
   overflow: auto;
   border: 0;
   border-left: 1px solid var(--rss-color-border);
-  background: var(--rss-color-bg);
+  background: var(--rss-color-surface);
   color: var(--rss-color-text);
 }
 .drawer.left {

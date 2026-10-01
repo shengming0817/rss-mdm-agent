@@ -540,10 +540,11 @@ test(
       "scripts/desktop-dev-runtime.mjs",
       `
     import { spawnSync } from 'node:child_process';
-    import { writeFileSync } from 'node:fs';
     export function ensureDevelopmentRuntime(root) {
-      writeFileSync(root + '/preparing', 'ready');
-      const result = spawnSync(process.execPath, ['-e', 'setInterval(()=>{},1000)']);
+      // Signal only after the preparation descendant belongs to the process group.
+      const result = spawnSync(process.execPath, ['-e',
+        'require("node:fs").writeFileSync(process.argv[1], "ready");setInterval(()=>{},1000)',
+        root + '/preparing']);
       if (result.status !== 0) throw Error('preparation stopped');
       return '/runtime';
     }

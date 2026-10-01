@@ -135,6 +135,10 @@ describe("assistant application ownership", () => {
     const wrapper = mount(ContextPanel, {
       props: {
         wide: false,
+        selection: "",
+        "onUpdate:selection": (value: string) => {
+          void wrapper.setProps({ selection: value });
+        },
         candidate,
         controller: t.c,
         chosen: false,
@@ -205,7 +209,7 @@ describe("assistant application ownership", () => {
     await t.c.select("session-1");
     await flushPromises();
     const wrapper = mount(Assistant, {
-      props: { controller: t.c, visible: true },
+      props: { controller: t.c, visible: true, presentation: "main" },
     });
     const notice = () => wrapper.get(".conversation-notice");
     expect(notice().text()).toContain("重试保存当前选择");
@@ -712,7 +716,7 @@ it("connection panel sends exactly the confirmed preview once and never includes
   t.view.selectedConnectionId = "config-1";
   t.emit();
   const wrapper = mount(SessionConnection, {
-    props: { controller: t.c, visible: true },
+    props: { controller: t.c, visible: true, presentation: "main" },
   });
   try {
     await flushPromises();
@@ -767,7 +771,7 @@ it("drops a history preview that completes after the selected session changed", 
   t.view.selectedConnectionId = "config-1";
   t.emit();
   const wrapper = mount(SessionConnection, {
-    props: { controller: t.c, visible: true },
+    props: { controller: t.c, visible: true, presentation: "main" },
   });
   await flushPromises();
   const history = wrapper
@@ -814,7 +818,7 @@ it("deleting the selected connection preserves history and immediately disables 
   const deleteConnection = vi.fn().mockResolvedValue({});
   Object.assign(t.client, { deleteConnection });
   const wrapper = mount(ConnectionSettings, {
-    props: { controller: t.c, visible: true },
+    props: { controller: t.c, visible: true, presentation: "main" },
     attachTo: document.body,
   });
   try {
@@ -874,7 +878,7 @@ it("connection revision conflicts invalidate stale edit and delete actions", asy
     .mockRejectedValue(new ClientError("revision_conflict"));
   Object.assign(t.client, { saveConnection, deleteConnection: saveConnection });
   const wrapper = mount(ConnectionSettings, {
-    props: { controller: t.c, visible: true },
+    props: { controller: t.c, visible: true, presentation: "main" },
   });
   try {
     await flushPromises();
@@ -901,7 +905,7 @@ it("existing configuration cannot become a custom API key and Claude supports co
   const t = setup();
   await t.c.connect();
   const wrapper = mount(ConnectionSettings, {
-    props: { controller: t.c, visible: true },
+    props: { controller: t.c, visible: true, presentation: "main" },
   });
   try {
     await flushPromises();
