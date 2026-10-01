@@ -189,6 +189,12 @@ try {
     ),
   );
   await page.getByText("模型正在处理", { exact: true }).waitFor();
+  await fixture.executionDelivery(
+    sessionId,
+    command.commandId,
+    "browser-execution",
+  );
+  await page.locator(".execution-activity").waitFor({ timeout: 5000 });
   const liveSession = unwrap(
     await fixture.host.store.session({ ...fixture.caller, sessionId }),
   );
@@ -674,6 +680,7 @@ try {
     .fill(fixture.execution.running.status.operationRequestId);
   await page.getByRole("button", { name: "读取执行详情" }).click();
   await page
+    .getByRole("dialog", { name: "会话详情与诊断", exact: true })
     .getByText("执行器已接收，设备效果尚未确认", { exact: true })
     .waitFor();
   // Cross the 64-event snapshot page boundary without overflowing the fixture channel.

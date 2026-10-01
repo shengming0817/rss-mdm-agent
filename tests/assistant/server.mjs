@@ -197,7 +197,7 @@ export async function startFixture() {
         body: {
           type: "delivery_requested",
           operationId,
-          target: "test-execution-service",
+          target: "rust-execution",
           proposal: {
             name: "execution_execute",
             arguments: {

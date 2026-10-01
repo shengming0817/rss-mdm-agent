@@ -726,8 +726,33 @@ try {
               .$(".composer textarea")
               .setValue(`保留原生草稿 ${theme} ${width}`);
             await capture("context", theme, width);
+            const beforeTab = await browser.execute(
+              () =>
+                document.activeElement ===
+                document.querySelector(".composer textarea"),
+            );
+            assert.equal(
+              beforeTab,
+              true,
+              "context composer owns focus before Tab",
+            );
             key(48);
+            await wait(() =>
+              browser.execute(
+                () =>
+                  document.activeElement !==
+                    document.querySelector(".composer textarea") &&
+                  !!document.activeElement?.closest(".context-panel"),
+              ),
+            );
             key(48, true);
+            await wait(() =>
+              browser.execute(
+                () =>
+                  document.activeElement ===
+                  document.querySelector(".composer textarea"),
+              ),
+            );
             if (width < 1440) {
               key(53);
             } else await click("关闭资源上下文 AI");
