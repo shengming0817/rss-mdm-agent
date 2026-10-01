@@ -7,7 +7,7 @@ license.workspace = true
 publish = false
 
 [dependencies]
-rss-mdm-resource = { git = "https://dev.azure.com/shengming0923/rss/_git/rss-mdm", rev = "df28684d5661b957c4e81c9cc7a4e64b940c4b7e", version = "=0.1.0" }
+rss-mdm-resource = { git = "https://dev.azure.com/shengming0923/rss/_git/rss-mdm", rev = "0da73220c4e51741ee9d1eaf124e073e5f8b855c", version = "=0.1.0" }
 zip = { version = "=8.6.0", default-features = false, features = ["deflate"] }
 zeroize = "=1.8.2"
 execution-contract = { path = "../execution-contract" }

@@ -74,6 +74,7 @@ struct Enrollment {
     credential: String,
     capabilities: Vec<wire::Capability>,
     fingerprint: String,
+    execution_context: wire::SoftwareExecutionContext,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -81,6 +82,7 @@ struct ClaimState {
     operation: Uuid,
     profiles: Vec<wire::ExecutorProfile>,
     recover_until: i64,
+    execution_context: wire::SoftwareExecutionContext,
 }
 /// Fully recovered protocol wrappers; the offer is historical and never grants launch.
 pub struct ResumedStart {
@@ -103,9 +105,27 @@ pub struct Client<S, C> {
 impl<S: SecretProvider, C: Clock> Client<S, C> {
     /// Set current configured executors for future polls; a pending retry retains its exact input.
     pub fn set_profiles(&mut self, profiles: Vec<wire::ExecutorProfile>) -> Result<(), Error> {
-        wire::TaskClaimRequest::new(Uuid::new_v4(), profiles.clone())?;
+        wire::TaskClaimRequest::new(Uuid::new_v4(), profiles.clone(), self.execution_context()?)?;
         self.profiles = profiles;
         Ok(())
+    }
+    /// Current persisted context, independent of frozen pending operations.
+    pub fn execution_context(&self) -> Result<wire::SoftwareExecutionContext, Error> {
+        self.store.get("execution_context")?.ok_or(Error::Storage)
+    }
+    /// Publish a new observed context generation; exact pending HTTP requests remain immutable.
+    pub fn set_execution_context(
+        &mut self,
+        mut context: wire::SoftwareExecutionContext,
+    ) -> Result<(), Error> {
+        context.validate_for(self.store.cfg.platform)?;
+        let old = self.execution_context()?;
+        context.revision = old.revision;
+        if context != old {
+            context.revision = old.revision.checked_add(1).ok_or(Error::Capacity)?;
+        }
+        context.validate()?;
+        self.store.put("execution_context", &context)
     }
     /// Independently supplied deployment configuration, excluding credentials.
     pub fn configuration(&self) -> &Config {
@@ -280,6 +300,11 @@ impl<S: SecretProvider, C: Clock> Client<S, C> {
         {
             return Err(Error::Configuration);
         }
+        let context = self
+            .store
+            .get::<Enrollment>("enrollment")?
+            .map(|v| v.execution_context)
+            .unwrap_or(self.execution_context()?);
         let request = wire::RegistrationRequest::new(
             operation,
             enrollment,
@@ -288,6 +313,7 @@ impl<S: SecretProvider, C: Clock> Client<S, C> {
             capabilities.clone(),
             self.store.cfg.platform,
             self.store.cfg.architecture,
+            context.clone(),
         )?;
         let body = encode(&request)?;
         let record = Enrollment {
@@ -297,6 +323,7 @@ impl<S: SecretProvider, C: Clock> Client<S, C> {
             credential: credential_reference.into(),
             capabilities: capabilities.clone(),
             fingerprint: hash(&body),
+            execution_context: context,
         };
         if let Some(old) = self.store.get::<Enrollment>("enrollment")? {
             if old != record {
@@ -467,6 +494,7 @@ impl<S: SecretProvider, C: Clock> Client<S, C> {
                 let state = ClaimState {
                     operation: Uuid::new_v4(),
                     profiles: self.profiles.clone(),
+                    execution_context: self.execution_context()?,
                     recover_until: now.checked_add(grace).ok_or(Error::Clock)?,
                 };
                 self.store.put("claim", &state)?;
@@ -477,6 +505,7 @@ impl<S: SecretProvider, C: Clock> Client<S, C> {
         let body = encode(&wire::TaskClaimRequest::new(
             operation,
             state.profiles.clone(),
+            state.execution_context.clone(),
         )?)?;
         let result: wire::TaskClaimResponse = self
             .json(Method::POST, "tasks/claim", Some(&body), true)
@@ -518,7 +547,7 @@ impl<S: SecretProvider, C: Clock> Client<S, C> {
             )?;
             tx.execute(
                 "INSERT INTO state VALUES('claim',?1) ON CONFLICT(key) DO UPDATE SET body=excluded.body",
-                [encode(&ClaimState { operation, profiles: state.profiles, recover_until: signed.payload.expires_at() })?],
+                [encode(&ClaimState { operation, profiles: state.profiles, execution_context: state.execution_context, recover_until: signed.payload.expires_at() })?],
             )?;
             tx.commit()?;
             Some(Offer { signed })
@@ -593,7 +622,8 @@ impl<S: SecretProvider, C: Clock> Client<S, C> {
         if count >= self.store.cfg.limits.pending_tasks as u64 * 70 {
             return Err(Error::Capacity);
         }
-        let request = wire::TaskEventRequest::new(Uuid::new_v4(), attempt, event)?;
+        let request =
+            wire::TaskEventRequest::new(Uuid::new_v4(), attempt, event, self.execution_context()?)?;
         self.store.conn.execute(
             "INSERT INTO requests(key,task,source,body) VALUES(?1,?2,?3,?4)",
             params![key, task.to_string(), source, encode(&request)?],

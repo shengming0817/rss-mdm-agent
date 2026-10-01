@@ -3746,7 +3746,7 @@ source = "git+https://dev.azure.com/shengming0923/rss/_git/rss?rev=7c1ece8ce104f
 [[package]]
 name = "rss-mdm-agent-wire"
 version = "5.0.0"
-source = "git+https://dev.azure.com/shengming0923/rss/_git/rss-mdm?rev=df28684d5661b957c4e81c9cc7a4e64b940c4b7e#df28684d5661b957c4e81c9cc7a4e64b940c4b7e"
+source = "git+https://dev.azure.com/shengming0923/rss/_git/rss-mdm?rev=0da73220c4e51741ee9d1eaf124e073e5f8b855c#0da73220c4e51741ee9d1eaf124e073e5f8b855c"
 dependencies = [
  "base64 0.22.1",
  "ring",
@@ -3810,7 +3810,7 @@ dependencies = [
 [[package]]
 name = "rss-mdm-inventory"
 version = "0.1.0"
-source = "git+https://dev.azure.com/shengming0923/rss/_git/rss-mdm?rev=df28684d5661b957c4e81c9cc7a4e64b940c4b7e#df28684d5661b957c4e81c9cc7a4e64b940c4b7e"
+source = "git+https://dev.azure.com/shengming0923/rss/_git/rss-mdm?rev=0da73220c4e51741ee9d1eaf124e073e5f8b855c#0da73220c4e51741ee9d1eaf124e073e5f8b855c"
 dependencies = [
  "ordered-float",
  "rss-contract",
@@ -3823,7 +3823,7 @@ dependencies = [
 [[package]]
 name = "rss-mdm-resource"
 version = "0.1.0"
-source = "git+https://dev.azure.com/shengming0923/rss/_git/rss-mdm?rev=df28684d5661b957c4e81c9cc7a4e64b940c4b7e#df28684d5661b957c4e81c9cc7a4e64b940c4b7e"
+source = "git+https://dev.azure.com/shengming0923/rss/_git/rss-mdm?rev=0da73220c4e51741ee9d1eaf124e073e5f8b855c#0da73220c4e51741ee9d1eaf124e073e5f8b855c"
 dependencies = [
  "jsonschema",
  "rss-contract",

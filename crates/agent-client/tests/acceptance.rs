@@ -890,27 +890,38 @@ fn unsupported_database_and_changed_namespace_are_preserved() {
     let root = Root::new();
     drop(server.client(&root, OpenMode::Create));
     let path = root.path.join("communication.sqlite");
-    let db = rusqlite::Connection::open(&path).unwrap();
-    db.pragma_update(None, "user_version", 1).unwrap();
-    drop(db);
-    let before = std::fs::read(&path).unwrap();
-    assert!(matches!(
-        Client::open(
-            &root.path,
-            server.config(),
-            OpenMode::Existing,
-            server.secrets.clone(),
-            server.time.clone()
-        ),
-        Err(Error::Schema)
-    ));
-    assert_eq!(before, std::fs::read(path).unwrap());
+    for version in [1, 2] {
+        let db = rusqlite::Connection::open(&path).unwrap();
+        db.pragma_update(None, "user_version", version).unwrap();
+        drop(db);
+        let before = std::fs::read(&path).unwrap();
+        assert!(matches!(
+            Client::open(
+                &root.path,
+                server.config(),
+                OpenMode::Existing,
+                server.secrets.clone(),
+                server.time.clone()
+            ),
+            Err(Error::Schema)
+        ));
+        assert_eq!(before, std::fs::read(&path).unwrap());
+    }
 }
 
 use rss_mdm_agent_wire::{TaskArchitecture, TaskPlatform};
 #[test]
 fn configuration_rejects_untrusted_network_and_unbounded_budgets() {
     let mut cfg = Config {
+        execution_context: agent_client::wire::SoftwareExecutionContext {
+            revision: 1,
+            os_version: [14, 0, 0, 0],
+            system_broker: true,
+            interactive_user: None,
+            source_credentials: vec![],
+            msix_sideload: false,
+            msix_unsigned: false,
+        },
         origin: Url::parse("http://example.com").unwrap(),
         tenant: Uuid::new_v4(),
         platform: TaskPlatform::Macos,
@@ -950,8 +961,10 @@ fn assert_bridge_result(server: &Server, offer: &agent_client::Offer, software: 
     assert!(!result.to_string().contains("secret-canary"));
     if software {
         assert_eq!(result["event"]["kind"], "software_result");
-        assert_eq!(result["event"]["detection"], "present");
-        assert_eq!(result["event"]["observedVersion"], "1.0");
+        assert_eq!(result["event"]["steps"][0]["after"]["state"], "present");
+        assert_eq!(result["event"]["steps"][0]["after"]["version"], "1.0");
+        assert_eq!(result["event"]["steps"][0]["before"]["state"], "present");
+        assert_eq!(result["event"]["steps"][0]["process"]["kind"], "not_run");
         let TaskPayload::Software(spec) = offer.payload() else {
             panic!()
         };
@@ -1437,7 +1450,7 @@ async fn acknowledged_v5_result_is_not_replaced_by_later_local_facts() {
 }
 
 #[tokio::test]
-async fn claim_retry_freezes_executor_profiles_across_restart() {
+async fn claim_retry_freezes_executor_profiles_and_context_across_restart() {
     let server = Server::new().await;
     let root = Root::new();
     let mut client = server.client(&root, OpenMode::Create);
@@ -1450,6 +1463,10 @@ async fn claim_retry_freezes_executor_profiles_across_restart() {
     drop(client);
     let mut client = server.client(&root, OpenMode::Existing);
     client.set_profiles(vec![]).unwrap();
+    let mut context = client.execution_context().unwrap();
+    context.os_version = [15, 1, 0, 0];
+    client.set_execution_context(context).unwrap();
+    assert_eq!(client.execution_context().unwrap().revision, 2);
     client.claim().await.unwrap();
     let inputs = server.data.lock().unwrap().claim_inputs.clone();
     assert_eq!(inputs.len(), 2);
@@ -1457,5 +1474,37 @@ async fn claim_retry_freezes_executor_profiles_across_restart() {
     assert_eq!(
         inputs[0]["profiles"],
         serde_json::json!(["posix_sh", "osquery"])
+    );
+}
+
+#[tokio::test]
+async fn review_regression_registration_context_survives_restart_before_first_poll() {
+    let server = Server::new().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    drop(client);
+    let mut config = server.config();
+    config.execution_context.os_version = [15, 1, 0, 0];
+    let observed = config.execution_context.clone();
+    let mut client = Client::open(
+        &root.path,
+        config,
+        OpenMode::Existing,
+        server.secrets.clone(),
+        server.time.clone(),
+    )
+    .unwrap();
+    assert_eq!(
+        client.execution_context().unwrap().os_version,
+        [14, 0, 0, 0]
+    );
+    client.set_execution_context(observed).unwrap();
+    client.claim().await.unwrap();
+    let inputs = server.data.lock().unwrap().claim_inputs.clone();
+    assert_eq!(inputs[0]["executionContext"]["revision"], 2);
+    assert_eq!(
+        inputs[0]["executionContext"]["osVersion"],
+        serde_json::json!([15, 1, 0, 0])
     );
 }

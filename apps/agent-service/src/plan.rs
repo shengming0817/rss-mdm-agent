@@ -14,11 +14,20 @@ pub struct Interpreter {
     pub profile: wire::ExecutorProfile,
     pub image: local_service::Artifact,
 }
+/// Locally implemented native managers, independent of the server's software wire schema.
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SoftwareManagerKind {
+    Msi,
+    PackageInstaller,
+    Winget,
+    Brew,
+}
 /// Protected native package-manager binary selected by a closed V5 executor.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SoftwareManager {
-    pub executor: wire::SoftwareTaskExecutor,
+    pub executor: SoftwareManagerKind,
     pub image: local_service::Artifact,
 }
 pub(crate) fn id(value: impl Into<String>) -> Result<Id, Error> {

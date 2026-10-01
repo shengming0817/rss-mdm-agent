@@ -9,7 +9,7 @@ mod software;
 pub use agent_client::wire;
 use agent_client::{Clock, Error, SecretProvider};
 use base64::Engine;
-pub use plan::{Interpreter, SoftwareManager};
+pub use plan::{Interpreter, SoftwareManager, SoftwareManagerKind};
 pub use service::{DeviceService, ExecutionConfig, UserResources};
 use std::{
     path::Path,

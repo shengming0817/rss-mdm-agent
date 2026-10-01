@@ -60,6 +60,8 @@ pub struct Config {
     pub tenant: Uuid,
     /// Actual OS.
     pub platform: wire::TaskPlatform,
+    /// Current locally observed execution context; never supplied by the remote server.
+    pub execution_context: wire::SoftwareExecutionContext,
     /// Actual architecture.
     pub architecture: wire::TaskArchitecture,
     /// Trusted Ed25519 public keys.
@@ -74,6 +76,7 @@ pub struct Config {
 impl Config {
     /// Validate before storage or I/O.
     pub fn validate(&self) -> Result<(), Error> {
+        self.execution_context.validate_for(self.platform)?;
         let o = &self.origin;
         let l = self.limits;
         let network = match self.transport {

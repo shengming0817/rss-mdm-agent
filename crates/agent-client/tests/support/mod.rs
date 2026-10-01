@@ -162,42 +162,50 @@ impl Data {
         self.offer = Some(self.signed(TaskPayload::Script(spec)));
     }
     pub fn software(&mut self, steps: usize, user: bool) {
-        let command = SoftwareTaskCommand {
-            executor: SoftwareTaskExecutor::PackageInstaller,
-            entry: None,
+        let command = SoftwareTaskInvocation {
             run_as: ExecutionIdentity::System,
             arguments: vec![],
             environment: BTreeMap::new(),
             timeout_seconds: 30,
             output_bytes: 65536,
+            exit_codes: SoftwareTaskExitCodes {
+                success: [0].into(),
+                reboot: Default::default(),
+            },
         };
         let steps: Vec<_> = (0..steps)
             .map(|i| SoftwareTaskStep {
                 action: SoftwareTaskAction {
                     package: format!("fixture-{i}"),
                     version: "1.0".into(),
-                    format: SoftwareTaskFormat::Pkg,
-                    primary: "package".into(),
-                    install: command.clone(),
-                    uninstall: None,
-                    detect: SoftwareTaskDetection::PkgReceipt {
-                        receipt: format!("fixture-{i}"),
-                        version: "1.0".into(),
-                    },
+                    behavior: SoftwareTaskBehavior::Pkg(SoftwareTaskNative {
+                        installer: "package".into(),
+                        scope: SoftwareTaskScope::System,
+                        install: command.clone(),
+                        upgrade_invocation: command.clone(),
+                        upgrade: SoftwareTaskUpgrade::InPlace,
+                        uninstall: None,
+                        detect: SoftwareTaskDetection::PkgReceipt {
+                            receipt: format!("fixture-{i}"),
+                            version: "1.0".into(),
+                        },
+                    }),
+                    signatures: vec![],
                     reboot: SoftwareTaskReboot::Report,
                     downgrade: SoftwareTaskDowngrade::Deny,
                     ownership: SoftwareTaskOwnership::ManagedOnly,
-                    bundle: None,
                 },
                 artifacts: vec![SoftwareTaskArtifact {
                     key: format!("{i}/package"),
                     length: self.bytes.len() as u64,
                     sha256: Sha256::digest(&self.bytes).into(),
                 }],
-                export_identity: None,
+                export: SoftwareTaskExport::Direct,
+                target: SoftwareExecutionTarget::Device,
             })
             .collect();
         let spec = SoftwareTaskSpec {
+            execution_context: execution_context(),
             wire_version: 5,
             tenant_id: self.tenant,
             device_id: "device-1".into(),
@@ -293,6 +301,7 @@ impl Server {
     pub fn config(&self) -> Config {
         let data = self.data.lock().unwrap();
         Config {
+            execution_context: execution_context(),
             origin: self.url.clone(),
             tenant: data.tenant,
             platform: TaskPlatform::Macos,
@@ -325,7 +334,7 @@ impl Server {
                 vec![
                     Capability::InventoryCollectionV5,
                     Capability::TaskExecuteV5,
-                    Capability::SoftwareExecuteV5,
+                    Capability::SoftwarePkgSystemV5,
                 ],
             )
             .await
@@ -560,4 +569,16 @@ pub fn collections() -> Vec<agent_client::wire::CollectionDefinition> {
         json!({"dataset":"inventory","version":"1","source":"agent.builtin","fields":fields}),
     )
     .unwrap()]
+}
+
+pub fn execution_context() -> SoftwareExecutionContext {
+    SoftwareExecutionContext {
+        revision: 1,
+        os_version: [14, 0, 0, 0],
+        system_broker: true,
+        interactive_user: None,
+        source_credentials: vec![],
+        msix_sideload: false,
+        msix_unsigned: false,
+    }
 }

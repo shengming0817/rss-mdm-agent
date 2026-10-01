@@ -93,3 +93,6 @@ mod chunk_recovery;
 #[cfg(test)]
 #[path = "../tests/support/mod.rs"]
 mod test_support;
+
+mod software;
+pub use software::{software_commands, SoftwareCommands};

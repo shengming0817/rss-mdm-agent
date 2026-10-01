@@ -178,3 +178,78 @@ fn production_storage_budgets_open_with_large_output_capture_limits() {
     execution_sqlite::Store::initialize_test(&root.path.join("budget.sqlite"), authority, limits)
         .unwrap();
 }
+
+#[tokio::test]
+#[ignore = "native System/root material staging; run in the platform T3 service environment"]
+async fn current_software_steps_compile_from_exact_prefixed_artifacts() {
+    for supported_codes in [true, false] {
+        let server = protocol::Server::new().await;
+        {
+            let mut data = server.data.lock().unwrap();
+            data.software(2, false);
+            if !supported_codes {
+                let wire::TaskPayload::Software(mut spec) =
+                    data.offer.as_ref().unwrap().payload.clone()
+                else {
+                    panic!("software")
+                };
+                for step in &mut spec.steps {
+                    let wire::SoftwareTaskBehavior::Pkg(n) = &mut step.action.behavior else {
+                        panic!("pkg")
+                    };
+                    n.install.exit_codes.success = [7].into();
+                    n.upgrade_invocation = n.install.clone();
+                }
+                spec.definition_digest =
+                    Sha256::digest(serde_json::to_vec(&spec.steps).unwrap()).into();
+                data.offer = Some(data.signed(wire::TaskPayload::Software(spec)));
+            }
+        }
+        let root = protocol::Root::new();
+        let mut client = server.client(&root, OpenMode::Create);
+        let receipt = server.register(&mut client).await;
+        let offer = client.claim().await.unwrap().offer.unwrap();
+        let materials = client.prepare(&offer).await.unwrap();
+        let (binding, actor) =
+            plan::context(server.url.as_str(), server.config().tenant, &receipt).unwrap();
+        let executable = local_service::Artifact {
+            path: "/bin/sh".into(),
+            sha256: format!("{:x}", Sha256::digest(std::fs::read("/bin/sh").unwrap())),
+            cdhash: None,
+        };
+        let material_root = root.path.join("materials");
+        execution_runner::staging::initialize(&material_root).unwrap();
+        let config = ExecutionConfig {
+            work_root: root.path.clone(),
+            material_root,
+            interpreters: vec![Interpreter {
+                profile: wire::ExecutorProfile::PosixSh,
+                image: executable.clone(),
+            }],
+            managers: vec![SoftwareManager {
+                executor: SoftwareManagerKind::PackageInstaller,
+                image: executable,
+            }],
+            processes: 1,
+        };
+        let wire::TaskPayload::Software(spec) = offer.payload() else {
+            panic!("software")
+        };
+        // Pins and compiles actual material; it does not pretend /bin/sh is a real installer.
+        let compiled = software::compile(&offer, &materials, spec, &binding, &actor, &config, None);
+        if supported_codes {
+            let (plan, _) = compiled.unwrap();
+            assert_eq!(
+                plan.spec()
+                    .execution
+                    .software_program()
+                    .unwrap()
+                    .steps
+                    .len(),
+                2
+            );
+        } else {
+            assert!(matches!(compiled, Err(Error::Unsupported)));
+        }
+    }
+}

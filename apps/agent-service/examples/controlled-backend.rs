@@ -55,7 +55,9 @@ async fn main() {
                         data.bytes = std::fs::read(command["path"].as_str().unwrap()).unwrap();
                         data.software(1, false);
                         let wire::TaskPayload::Software(mut payload) = data.offer.as_ref().unwrap().payload.clone() else { unreachable!() };
-                        if let wire::SoftwareTaskDetection::PkgReceipt { receipt, .. } = &mut payload.steps[0].action.detect { *receipt = command["receipt"].as_str().unwrap().into(); }
+                        if let wire::SoftwareTaskBehavior::Pkg(native) = &mut payload.steps[0].action.behavior {
+                            if let wire::SoftwareTaskDetection::PkgReceipt { receipt, .. } = &mut native.detect { *receipt = command["receipt"].as_str().unwrap().into(); }
+                        }
                         use sha2::{Digest, Sha256};
                         payload.definition_digest = Sha256::digest(serde_json::to_vec(&payload.steps).unwrap()).into();
                         data.offer = Some(data.signed(wire::TaskPayload::Software(payload)));

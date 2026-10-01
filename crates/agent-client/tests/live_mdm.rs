@@ -98,7 +98,12 @@ impl Admin {
         let result: Value = if bytes.is_empty() {
             Value::Null
         } else {
-            serde_json::from_slice(&bytes).expect("live JSON response")
+            serde_json::from_slice(&bytes).unwrap_or_else(|_| {
+                panic!(
+                    "live {path}: status={status}, response={}",
+                    String::from_utf8_lossy(&bytes)
+                )
+            })
         };
         assert!(
             status.is_success(),
@@ -131,18 +136,18 @@ impl Admin {
         let declaration = if software {
             let source = Uuid::new_v4().to_string();
             let source_path = format!("/api/v3/software/sources/{source}/revisions/1");
-            let created=self.write(&source_path,0,json!({"action":"register","definition":{"id":source,"revision":"1","kind":"private","location":null,"publishers":[]}})).await;
+            let created=self.write(&source_path,0,json!({"action":"register","definition":{"id":source,"revision":"1","protocol":{"kind":"private"}}})).await;
             self.write(
                 &source_path,
                 1,
                 json!({"action":"approve","evidence":["controlled-protocol-test"]}),
             )
             .await;
-            json!({"kind":"software","definition":{"source":created["snapshot"],"package":"Agent.LiveFixture","version":"1.0","format":"pkg","primary":"package",
+            let invocation = json!({"runAs":"system","arguments":[],"environment":{},"timeoutSeconds":60,"outputBytes":4096,"exitCodes":{"success":[0],"reboot":[]}});
+            json!({"kind":"software","definition":{"source":created["snapshot"],"package":"Agent.LiveFixture","version":"1.0",
                 "artifacts":{"package":{"reference":"installer","length":bytes.len(),"sha256":digest}},
-                "install":{"executor":"package_installer","entry":null,"runAs":"system","arguments":[],"environment":{},"timeoutSeconds":60,"outputBytes":4096},
-                "uninstall":null,"detect":{"kind":"pkg_receipt","receipt":"com.rss.livefixture","version":"1.0"},
-                "reboot":"report","downgrade":"deny","ownership":"managed_only","dependencies":[],"bundle":null}})
+                "behavior":{"kind":"pkg","installer":"package","scope":"system","install":invocation,"upgradeInvocation":invocation,"upgrade":"in_place","uninstall":null,"detect":{"kind":"pkg_receipt","receipt":"Agent.LiveFixture","version":"1.0"}},
+                "signatures":[],"reboot":"report","downgrade":"deny","ownership":"managed_only","dependencies":[],"provenance":{"kind":"private"},"export":{"kind":"disabled"}}})
         } else {
             json!({"kind":"script","artifact":{"reference":"fixture-script","length":bytes.len(),"sha256":digest},
                 "definition":{"profile":"posix_sh","runAs":"system","encoding":"utf8",
@@ -187,6 +192,15 @@ async fn real_https_registration_reports_script_software_and_journal_results() {
     .unwrap();
     let ca = std::fs::read(&fixture.ca_file).unwrap();
     let config = Config {
+        execution_context: wire::SoftwareExecutionContext {
+            revision: 1,
+            os_version: [14, 0, 0, 0],
+            system_broker: true,
+            interactive_user: None,
+            source_credentials: vec![],
+            msix_sideload: false,
+            msix_unsigned: false,
+        },
         origin: fixture.origin.clone(),
         tenant: fixture.tenant,
         platform: TaskPlatform::Macos,
@@ -279,7 +293,7 @@ async fn real_https_registration_reports_script_software_and_journal_results() {
             vec![
                 Capability::InventoryCollectionV5,
                 Capability::TaskExecuteV5,
-                Capability::SoftwareExecuteV5,
+                Capability::SoftwarePkgSystemV5,
             ],
         )
         .await
@@ -324,7 +338,7 @@ async fn real_https_registration_reports_script_software_and_journal_results() {
     for software in [false, true] {
         let (resource, admission) = admin.resource(software).await;
         let action = if software {
-            json!({"kind":"software","resource":{"kind":"software","id":resource,"version":"v1","variants":{"macos_aarch64":"default"}},"intent":"required_install","admissionOperation":admission.unwrap(),"runLifetimeSeconds":600,"rollout":{"stages":[{"scope":scope,"opensAt":0}]}})
+            json!({"kind":"software","resource":{"kind":"software","id":resource,"version":"v1","variants":{"macos_aarch64":"default"}},"intent":"required_install","delivery":{"kind":"direct"},"admissionOperation":admission.unwrap(),"runLifetimeSeconds":600,"rollout":{"stages":[{"scope":scope,"opensAt":0}]}})
         } else {
             json!({"kind":"execution","resource":{"id":resource,"version":"v1","platform":"macos","architecture":"aarch64","variant":"default"},"parameters":{},"runLifetimeSeconds":300})
         };
