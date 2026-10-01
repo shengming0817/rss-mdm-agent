@@ -1103,6 +1103,14 @@ async fn frozen_output_encodings_and_character_truncation_are_delivered() {
         ),
         (
             TextEncoding::Utf8,
+            br#"[{"id":"a"},{"id":"b"}]"#.to_vec(),
+            vec![],
+            OutputQuality::Truncated,
+            ProcessEnd::Exited,
+            "truncated",
+        ),
+        (
+            TextEncoding::Utf8,
             vec![0xff],
             b"secret-canary".to_vec(),
             OutputQuality::Failed,
@@ -1217,6 +1225,9 @@ async fn check_encoded_result(
     let data = server.data.lock().unwrap();
     let result = data.results.values().next().unwrap();
     assert_eq!(result["event"]["quality"], expected);
+    if expected == "truncated" {
+        assert_eq!(result["event"]["diagnostics"]["failure"], "output_limit");
+    }
     assert!(!result.to_string().contains("secret-canary"));
     if expected == "complete" {
         assert_eq!(result["event"]["output"]["ok"], true);

@@ -625,6 +625,7 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
             ProcessEnd::Rejected => Some(wire::TaskFailure::LaunchFailed),
             ProcessEnd::TimedOut => Some(wire::TaskFailure::TimedOut),
             ProcessEnd::OutputLimit => Some(wire::TaskFailure::OutputLimit),
+            _ if process.quality == OutputQuality::Truncated => Some(wire::TaskFailure::OutputLimit),
             _ if process.exit_code.is_some_and(|v| v != 0) => Some(wire::TaskFailure::NonZeroExit),
             _ if malformed || process.quality == OutputQuality::Failed => {
                 Some(wire::TaskFailure::CaptureFailed)
