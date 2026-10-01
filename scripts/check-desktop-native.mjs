@@ -441,6 +441,7 @@ try {
         [
           "build",
           "--locked",
+          "--release",
           "-p",
           "agent-service",
           "--example",
@@ -468,9 +469,9 @@ try {
       [
         join(root, "scripts/service/verify-execution-macos.py"),
         "--binary",
-        join(cargoTargetDir(root), "debug/rss-execution-service"),
+        join(cargoTargetDir(root), "release/rss-execution-service"),
         "--backend",
-        join(cargoTargetDir(root), "debug/examples/controlled-backend"),
+        join(cargoTargetDir(root), "release/examples/controlled-backend"),
         "--desktop",
         join(cargoTargetDir(root), "debug/rss-mdm-desktop"),
         "--output",
