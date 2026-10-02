@@ -311,6 +311,21 @@ def native_revocation_security(probe, matrix, query, command, package, receipt, 
     security_result(matrix,'revocation_active_process',dict(record=records[0],pidAbsent=pid,tailAbsent=True))
 
 
+def native_restart_security(probe,matrix,command,administrator):
+    connection=probe.open(establish=True)
+    starts=command('status')['startRequests']
+    administrator.command('restart')
+    try:
+        response=probe.send(connection,json.dumps(probe.identity['baseline']).encode())
+        if response.get('transport')=='reply' and response.get('bytes'):
+            assert_native_reply(response,'serviceStatus')
+            assert response['interrupted'] and response['peerPid']!=response['establishment']['peerPid'], 'old server incarnation did not end'
+        else: assert_connection_closed(response)
+        assert command('status')['startRequests']==starts
+        security_result(matrix,'restart_old_connection',response)
+    finally: probe.close_connection(connection)
+
+
 def native_worker_security(probe, matrix, frozen, lab, untrusted_binary, config):
     if not frozen.get('runtime'):
         matrix['scenarios']['worker_direct_access']['reason']='fixed private worker runtime required'
@@ -374,6 +389,7 @@ def native_stale_helper_security(probe, matrix, query, command, protected, prior
 def complete_native_security(probe, matrix, query, command, package, package_receipt, completed, effect,
         protected, installer, binary, config, administrator):
     native_offer_security(probe,matrix,query,command,package,package_receipt,completed,effect)
+    native_restart_security(probe,matrix,command,administrator)
     prior=query()
     offset=(protected/'service-stderr.log').stat().st_size
     run('/usr/bin/python3',str(installer),'remove','--scope','user','--binary',str(binary),'--config',str(config))
@@ -1183,7 +1199,8 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
 from pathlib import Path
 p=plistlib.loads(Path('/Library/LaunchDaemons/com.rss-mdm.agent.execution.plist').read_bytes())
 assert p['ProgramArguments']==%r, 'restart registration owner mismatch'
-pid=int(Path(%r).read_text());os.kill(pid,0)
+process_file=Path(%r)
+if process_file.exists(): os.kill(int(process_file.read_text()),0)
 subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.execution'],check=True)
 """ % ([str(binary),'--config',str(config)],str(protected/'restart-pid')))
         cleanup.write_text("from pathlib import Path\nif Path(%r).exists(): Path(%r).write_text('finished')\n" % (str(protected/'restart-pid'),str(protected/'restart-finish')) + cleanup.read_text())
