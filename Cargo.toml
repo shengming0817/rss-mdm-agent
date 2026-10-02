@@ -25,3 +25,8 @@ tokio = { version = "=1.53.1", default-features = false, features = ["rt", "macr
 tokio-util = { version = "=0.7.19", features = ["codec"] }
 futures-util = "=0.3.34"
 rusqlite = { version = "=0.32.1", default-features = false, features = ["bundled"] }
+
+# Native development still verifies complete protected images on every IPC request.
+# Keep hashing throughput close to the production profile without weakening those checks.
+[profile.dev.package.sha2]
+opt-level = 3
