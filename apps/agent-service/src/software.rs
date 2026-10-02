@@ -1,4 +1,4 @@
-//! Deterministic V5 compiler. The backend has already selected sources and ordered dependencies.
+//! Deterministic V6 compiler. The backend has already selected sources and ordered dependencies.
 use crate::{
     plan::{self, hex, id, reference},
     ExecutionConfig, SoftwareManagerKind,
@@ -202,6 +202,10 @@ impl Compiler<'_> {
             session_requirement: session,
             timeout_ms: u64::from(command.timeout_seconds) * 1000,
             output_bytes: u64::from(command.output_bytes),
+            exit_codes: SoftwareExitCodes {
+                success: command.exit_codes.success.clone(),
+                reboot: command.exit_codes.reboot.clone(),
+            },
             launch: LaunchSpec {
                 artifact: content_ref,
                 interpreter: InterpreterRef {
@@ -519,12 +523,29 @@ pub(crate) fn compile(
         };
         files.extend(compiler.files.values().cloned());
         steps.push(SoftwareProgramStep {
-            adapter,
+            format: match adapter {
+                SoftwareKind::Msi => SoftwareFormat::Msi {},
+                SoftwareKind::Pkg => SoftwareFormat::Pkg {},
+                SoftwareKind::WindowsBundle | SoftwareKind::MacosBundle => SoftwareFormat::Bundle {
+                    manifest: bundle.clone().ok_or(Error::Protocol)?,
+                    limits: BundleLimits {
+                        archive_bytes: 4 * 1024 * 1024 * 1024,
+                        files: 4096,
+                        file_bytes: 1024 * 1024 * 1024,
+                        expanded_bytes: 8 * 1024 * 1024 * 1024,
+                        depth: 32,
+                    },
+                },
+                _ => return Err(Error::Unsupported),
+            },
             package: package(&action.package)?,
             version: package(&action.version)?,
             architecture: architecture.clone(),
             payload: primary.1,
-            export_identity: None,
+            signatures: Vec::new(),
+            upgrade: SoftwareUpgrade::InPlace {
+                invocation: Box::new(install.clone()),
+            },
             install,
             uninstall,
             detection,
@@ -536,14 +557,6 @@ pub(crate) fn compile(
             },
             allow_downgrade: action.downgrade == wire::SoftwareTaskDowngrade::Allow,
             allow_reboot: action.reboot == wire::SoftwareTaskReboot::Report,
-            bundle_limits: bundle.as_ref().map(|_| BundleLimits {
-                archive_bytes: 4 * 1024 * 1024 * 1024,
-                files: 4096,
-                file_bytes: 1024 * 1024 * 1024,
-                expanded_bytes: 8 * 1024 * 1024 * 1024,
-                depth: 32,
-            }),
-            bundle,
         });
         sources.push(SoftwareStepArtifacts {
             mutation,
@@ -562,7 +575,7 @@ pub(crate) fn compile(
         steps,
     };
     let input = ExecutionInput {
-        schema_version: V5,
+        schema_version: V6,
         request: ExecutionRequest {
             schema_version: V1,
             request_id: offer.request_id()?,

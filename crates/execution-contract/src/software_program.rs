@@ -37,6 +37,8 @@ pub struct SoftwareInvocation {
     pub timeout_ms: u64,
     /// Shared diagnostic byte budget; observations and recovery do not replenish it.
     pub output_bytes: u64,
+    /// Exact successful and reboot-required exits authorized by the source.
+    pub exit_codes: SoftwareExitCodes,
 }
 /// Independent V4 detection rules; no installer exit is a detection result.
 #[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -71,8 +73,8 @@ pub enum SoftwareDetector {
 #[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SoftwareProgramStep {
-    /// Closed native adapter selection.
-    pub adapter: SoftwareKind,
+    /// Closed native material semantics; adapter identity is derived.
+    pub format: SoftwareFormat,
     /// Exact package coordinate, without a local source catalog.
     pub package: PackageValue,
     /// Exact version, also required for uninstall; there is no latest selector.
@@ -81,8 +83,10 @@ pub struct SoftwareProgramStep {
     pub architecture: PackageValue,
     /// Exact primary package, formula, manifest or Bundle bytes.
     pub payload: ExactArtifactRef,
-    /// Backend export identity, retained verbatim for WinGet and Homebrew.
-    pub export_identity: Option<Id>,
+    /// Native signature requirements on exact declared artifacts.
+    pub signatures: Vec<SoftwareSignature>,
+    /// Frozen strategy for an existing different version.
+    pub upgrade: SoftwareUpgrade,
     /// Frozen install/update invocation.
     pub install: SoftwareInvocation,
     /// Explicit frozen removal; absence means unsupported.
@@ -95,10 +99,6 @@ pub struct SoftwareProgramStep {
     pub allow_downgrade: bool,
     /// Whether a required reboot may be reported for separately authorized handling.
     pub allow_reboot: bool,
-    /// Exact V4 Bundle declaration; never an alternate archive manifest.
-    pub bundle: Option<BundleManifest>,
-    /// Bounded extraction resources for Bundle only.
-    pub bundle_limits: Option<BundleLimits>,
 }
 impl SoftwareProgramStep {
     /// Installer completion only; independent detection and quiescence still gate the step.
@@ -106,11 +106,10 @@ impl SoftwareProgramStep {
     pub fn mutation_succeeded(&self, facts: &ProcessEvidence) -> bool {
         facts.end == ProcessEnd::Exited
             && facts.failure_kind == ProcessFailureKind::None
-            && match facts.exit_code {
-                Some(0) => true,
-                Some(3010 | 1641) => self.adapter == SoftwareKind::Msi && self.allow_reboot,
-                _ => false,
-            }
+            && facts.exit_code.is_some_and(|code| {
+                self.install.exit_codes.success.contains(&code)
+                    || (self.allow_reboot && self.install.exit_codes.reboot.contains(&code))
+            })
     }
 }
 /// A single backend attempt and one execution intent, containing every ordered step.
@@ -147,10 +146,13 @@ impl SoftwareProgram {
         for step in &self.steps {
             keys.insert(format!(
                 "manager-{}",
-                match step.adapter {
-                    SoftwareKind::Msi | SoftwareKind::Winget => "windows-installers",
-                    SoftwareKind::Pkg => "macos-installer",
+                match step.format.adapter() {
+                    SoftwareKind::Msi | SoftwareKind::Exe | SoftwareKind::Winget =>
+                        "windows-installers",
+                    SoftwareKind::Pkg | SoftwareKind::DmgPkg => "macos-installer",
                     SoftwareKind::Homebrew => "homebrew",
+                    SoftwareKind::Msix => "windows-package-deployment",
+                    SoftwareKind::DmgApp => "macos-applications",
                     SoftwareKind::WindowsBundle | SoftwareKind::MacosBundle => "rss-bundle",
                 }
             ));
@@ -188,7 +190,7 @@ impl SoftwareProgramStep {
             &self.install
         };
         let bytes = serde_json_canonicalizer::to_vec(&(
-            self.adapter,
+            self.format.adapter(),
             &self.package,
             &self.architecture,
             &context.run_as,

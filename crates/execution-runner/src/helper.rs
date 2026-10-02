@@ -429,7 +429,7 @@ impl host::Handler for Helper {
             let connection = peer.system_connection(&policy)?;
             let envelope: Envelope =
                 serde_json::from_slice(bytes).map_err(|_| Error::InvalidInput)?;
-            if envelope.version != 1 {
+            if envelope.version != 2 {
                 return Err(Error::InvalidInput);
             }
             self.command(&connection, envelope.command)
@@ -566,7 +566,7 @@ impl Connection {
     }
     pub(crate) fn exchange(&self, command: Command) -> Result<Reply, Error> {
         let bytes = serde_json::to_vec(&Envelope {
-            version: 1,
+            version: 2,
             command,
         })
         .map_err(|_| Error::InvalidInput)?;

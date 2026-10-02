@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 5,
+  "schemaVersion": 6,
   "request": {
     "schemaVersion": 1,
     "requestId": "request-1",
@@ -105,7 +105,6 @@
       "intent": "install",
       "steps": [
         {
-          "adapter": "pkg",
           "package": "org.rss.fixture",
           "version": "1.0",
           "architecture": "aarch64",
@@ -116,7 +115,6 @@
             },
             "sha256": "1212121212121212121212121212121212121212121212121212121212121212"
           },
-          "exportIdentity": null,
           "install": {
             "launch": {
               "artifact": {
@@ -166,7 +164,13 @@
               "kind": "notRequired"
             },
             "timeoutMs": 1000,
-            "outputBytes": 4096
+            "outputBytes": 4096,
+            "exitCodes": {
+              "success": [
+                0
+              ],
+              "reboot": []
+            }
           },
           "uninstall": null,
           "detection": {
@@ -177,8 +181,70 @@
           "existing": "managedOnly",
           "allowDowngrade": false,
           "allowReboot": false,
-          "bundle": null,
-          "bundleLimits": null
+          "format": {
+            "kind": "pkg"
+          },
+          "signatures": [],
+          "upgrade": {
+            "kind": "inPlace",
+            "invocation": {
+              "launch": {
+                "artifact": {
+                  "resource": {
+                    "id": "script-1",
+                    "revision": "1"
+                  },
+                  "sha256": "1212121212121212121212121212121212121212121212121212121212121212"
+                },
+                "interpreter": {
+                  "artifact": {
+                    "resource": {
+                      "id": "test-interpreter",
+                      "revision": "1"
+                    },
+                    "sha256": "1212121212121212121212121212121212121212121212121212121212121212"
+                  },
+                  "profile": {
+                    "id": "native-posix-sh-file",
+                    "revision": "1"
+                  }
+                },
+                "argv": [
+                  {
+                    "kind": "artifactPath"
+                  }
+                ],
+                "cwd": "/workspace",
+                "env": {},
+                "artifactEncoding": "utf8",
+                "stdin": {
+                  "kind": "closed"
+                },
+                "output": {
+                  "stdout": "utf8",
+                  "stderr": "utf8",
+                  "format": {
+                    "kind": "text"
+                  }
+                }
+              },
+              "runAs": {
+                "kind": "system",
+                "platform": "macos"
+              },
+              "sessionRequirement": {
+                "kind": "notRequired"
+              },
+              "timeoutMs": 1000,
+              "outputBytes": 4096,
+              "exitCodes": {
+                "success": [
+                  0
+                ],
+                "reboot": []
+              }
+            }
+          }
         }
       ]
     }

@@ -125,7 +125,7 @@ pub(crate) fn materials(
             if let (Some(source), Some(invocation), Some(bundle)) = (
                 source.as_mut(),
                 program.invocation(index, phase),
-                step.bundle.as_ref(),
+                step.format.bundle().map(|(manifest, _)| manifest),
             ) {
                 if let Some((member, _)) = bundle.entries.iter().find(|(_, f)| {
                     crate::plan::hex(&f.sha256) == invocation.launch.artifact.sha256.as_str()
@@ -150,24 +150,26 @@ pub(crate) fn materials(
             .find(|r| matches!(r, RunAs::User { .. }))
             .unwrap_or(&p.run_as);
         let original = content(config, account, &step.payload.sha256);
-        let payload =
-            match crate::software::native_export_name(step.adapter, step.package.as_str())? {
-                Some(name) => {
-                    let export = original
-                        .parent()
-                        .ok_or(Error::Configuration)?
-                        .join(format!("export-{}", step.payload.sha256.as_str()))
-                        .join(name);
-                    retained_payload(
-                        original,
-                        export,
-                        std::iter::once(&step.install)
-                            .chain(step.uninstall.iter())
-                            .flat_map(|c| c.launch.argv.iter()),
-                    )
-                }
-                None => original,
-            };
+        let payload = match crate::software::native_export_name(
+            step.format.adapter(),
+            step.package.as_str(),
+        )? {
+            Some(name) => {
+                let export = original
+                    .parent()
+                    .ok_or(Error::Configuration)?
+                    .join(format!("export-{}", step.payload.sha256.as_str()))
+                    .join(name);
+                retained_payload(
+                    original,
+                    export,
+                    std::iter::once(&step.install)
+                        .chain(step.uninstall.iter())
+                        .flat_map(|c| c.launch.argv.iter()),
+                )
+            }
+            None => original,
+        };
         let mut files = vec![(payload, step.payload.clone())];
         for command in std::iter::once(&step.install).chain(step.uninstall.iter()) {
             for manager in &config.managers {

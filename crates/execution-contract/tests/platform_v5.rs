@@ -15,10 +15,10 @@ fn limits() -> ExecutionLimits {
 }
 
 #[test]
-fn explicit_os_identity_requires_v5_and_changes_the_frozen_digest() {
+fn explicit_os_identity_requires_v6_and_changes_the_frozen_digest() {
     let mut value: serde_json::Value =
         serde_json::from_str(include_str!("fixtures/plan.json")).unwrap();
-    value["schemaVersion"] = 5.into();
+    value["schemaVersion"] = 6.into();
     value["constraints"]["kind"] = "restricted".into();
     value["launch"]["output"]["format"] = serde_json::json!({"kind":"text"});
     let restricted = FrozenExecution::freeze(
@@ -35,7 +35,7 @@ fn explicit_os_identity_requires_v5_and_changes_the_frozen_digest() {
     assert_ne!(restricted.digest(), native.digest());
     value["schemaVersion"] = 1.into();
     assert!(decode_execution(&serde_json::to_vec(&value).unwrap(), &limits()).is_err());
-    value["schemaVersion"] = 5.into();
+    value["schemaVersion"] = 6.into();
     value["constraints"] = serde_json::json!({"kind":"automatic"});
     assert!(decode_execution(&serde_json::to_vec(&value).unwrap(), &limits()).is_err());
 }

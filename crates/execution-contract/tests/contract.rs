@@ -28,7 +28,7 @@ fn duplicate_parameters_and_untrusted_fields_are_rejected() {
     for input in [
         source.replace("\"host\": {", "\"host\": {}, \"host\": {"),
         source.replacen("{", "{\"authorized\":true,", 1),
-        source.replacen("\"schemaVersion\": 5", "\"schemaVersion\": 1", 1),
+        source.replacen("\"schemaVersion\": 6", "\"schemaVersion\": 1", 1),
     ] {
         assert!(decode_execution(input.as_bytes(), &limits()).is_err());
     }

@@ -138,8 +138,8 @@ impl AppHost for EnterpriseHost {
                 software: inventory(if let Some(program) = p.execution.software_program() {
                     let mut kinds = Vec::new();
                     for step in &program.steps {
-                        if !kinds.contains(&step.adapter) {
-                            kinds.push(step.adapter);
+                        if !kinds.contains(&step.format.adapter()) {
+                            kinds.push(step.format.adapter());
                         }
                     }
                     kinds

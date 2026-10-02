@@ -15,15 +15,15 @@ fn limits() -> ExecutionLimits {
 }
 
 #[test]
-fn v5_requires_explicit_execution_kind_and_rejects_old_plans() {
+fn v6_requires_explicit_execution_kind_and_rejects_old_plans() {
     let mut value: serde_json::Value =
         serde_json::from_str(include_str!("fixtures/plan.json")).unwrap();
-    value["schemaVersion"] = 5.into();
+    value["schemaVersion"] = 6.into();
     value["execution"] = serde_json::json!({"kind":"process"});
     assert!(decode_execution(&serde_json::to_vec(&value).unwrap(), &limits()).is_ok());
     value["schemaVersion"] = 2.into();
     assert!(decode_execution(&serde_json::to_vec(&value).unwrap(), &limits()).is_err());
-    value["schemaVersion"] = 5.into();
+    value["schemaVersion"] = 6.into();
     value.as_object_mut().unwrap().remove("execution");
     assert!(decode_execution(&serde_json::to_vec(&value).unwrap(), &limits()).is_err());
 }
@@ -32,7 +32,7 @@ fn v5_requires_explicit_execution_kind_and_rejects_old_plans() {
 fn process_cannot_impersonate_software_operation() {
     let mut value: serde_json::Value =
         serde_json::from_str(include_str!("fixtures/plan.json")).unwrap();
-    value["schemaVersion"] = 5.into();
+    value["schemaVersion"] = 6.into();
     value["execution"] = serde_json::json!({"kind":"process"});
     value["request"]["operation"]["action"] = "software.install".into();
     assert!(decode_execution(&serde_json::to_vec(&value).unwrap(), &limits()).is_err());
@@ -150,7 +150,17 @@ fn msi_reboot_completion_requires_permission_detection_and_quiescence() {
                         };
                         program.steps.truncate(1);
                         let step = &mut program.steps[0];
-                        step.adapter = adapter;
+                        step.format = if adapter == SoftwareKind::Msi {
+                            SoftwareFormat::Msi {}
+                        } else {
+                            SoftwareFormat::Pkg {}
+                        };
+                        step.install.exit_codes.reboot = if adapter == SoftwareKind::Msi {
+                            [1641, 3010].into_iter().collect()
+                        } else {
+                            Default::default()
+                        };
+                        step.upgrade = SoftwareUpgrade::Deny {};
                         step.allow_reboot = allow_reboot;
                         step.install.run_as = RunAs::System { platform };
                         if platform == Platform::Windows {
@@ -239,4 +249,39 @@ fn msi_reboot_completion_requires_permission_detection_and_quiescence() {
             }
         }
     }
+}
+
+#[test]
+fn approved_exit_policy_and_update_invocation_are_frozen_and_closed() {
+    use execution_contract::*;
+    let input = decode_execution(include_bytes!("fixtures/software.json"), &limits()).unwrap();
+    let original = FrozenExecution::freeze(input.clone(), &limits()).unwrap();
+    let mut changed = input;
+    let ExecutionSpec::SoftwareProgram { program } = &mut changed.execution else {
+        unreachable!()
+    };
+    let step = &mut program.steps[0];
+    step.install.exit_codes.success.insert(42);
+    let mut update = step.install.clone();
+    update.launch.argv.push(LaunchArg::Literal {
+        value: "--approved-update".into(),
+    });
+    step.upgrade = SoftwareUpgrade::InPlace {
+        invocation: Box::new(update),
+    };
+    let changed = FrozenExecution::freeze(changed, &limits()).unwrap();
+    assert_ne!(original.digest(), changed.digest());
+    let mut invalid = changed.spec().clone();
+    let ExecutionSpec::SoftwareProgram { program } = &mut invalid.execution else {
+        unreachable!()
+    };
+    program.steps[0].install.exit_codes.reboot.insert(42);
+    assert!(FrozenExecution::freeze(invalid, &limits()).is_err());
+    let mut old: serde_json::Value =
+        serde_json::from_slice(include_bytes!("fixtures/software.json")).unwrap();
+    old["schemaVersion"] = 5.into();
+    assert!(decode_execution(&serde_json::to_vec(&old).unwrap(), &limits()).is_err());
+    old["schemaVersion"] = 6.into();
+    old["execution"]["program"]["steps"][0]["adapter"] = "exe".into();
+    assert!(decode_execution(&serde_json::to_vec(&old).unwrap(), &limits()).is_err());
 }

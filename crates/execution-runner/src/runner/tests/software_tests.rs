@@ -11,6 +11,10 @@ fn unknown_detector_activity_keeps_real_exit_and_cannot_skip_to_mutation() {
         session_requirement: input.session_requirement.clone(),
         timeout_ms: 5000,
         output_bytes: 4096,
+        exit_codes: SoftwareExitCodes {
+            success: [0].into_iter().collect(),
+            reboot: Default::default(),
+        },
     };
     let mut p = input.clone();
     p.request.parameters.clear();
@@ -24,12 +28,13 @@ fn unknown_detector_activity_keeps_real_exit_and_cannot_skip_to_mutation() {
             definition_digest: Digest::new("ab".repeat(32)).unwrap(),
             intent: SoftwareOperation::Install,
             steps: vec![SoftwareProgramStep {
-                adapter: SoftwareKind::Pkg,
+                format: SoftwareFormat::Pkg {},
                 package: PackageValue::new("fixture").unwrap(),
                 version: PackageValue::new("1").unwrap(),
                 architecture: PackageValue::new("aarch64").unwrap(),
                 payload: invocation.launch.artifact.clone(),
-                export_identity: None,
+                signatures: Vec::new(),
+                upgrade: SoftwareUpgrade::Deny {},
                 install: invocation.clone(),
                 uninstall: None,
                 detection: SoftwareDetector::Script {
@@ -38,8 +43,6 @@ fn unknown_detector_activity_keeps_real_exit_and_cannot_skip_to_mutation() {
                 existing: ExistingSoftware::AllowUserExisting,
                 allow_downgrade: false,
                 allow_reboot: false,
-                bundle: None,
-                bundle_limits: None,
             }],
         }),
     };

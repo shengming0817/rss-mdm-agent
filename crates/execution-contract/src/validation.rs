@@ -506,7 +506,13 @@ fn software(p: &ExecutionInput, limits: &ExecutionLimits) -> Result<(), Contract
             return Err(invalid());
         }
         let invocation = |command: &crate::SoftwareInvocation| -> Result<(), ContractError> {
-            if command.timeout_ms == 0
+            if command.exit_codes.success.is_empty()
+                || !command
+                    .exit_codes
+                    .success
+                    .is_disjoint(&command.exit_codes.reboot)
+                || command.exit_codes.success.len() + command.exit_codes.reboot.len() > 32
+                || command.timeout_ms == 0
                 || command.timeout_ms > 86_400_000
                 || command.output_bytes == 0
                 || command.output_bytes > 1_048_576
@@ -524,20 +530,34 @@ fn software(p: &ExecutionInput, limits: &ExecutionLimits) -> Result<(), Contract
             validate_plan(&input, limits)
         };
         for step in &program.steps {
-            if step.adapter.platform() != p.request.target.platform
+            if !step.format.valid_for(step)
+                || step.format.adapter().platform() != p.request.target.platform
                 || !matches!(step.architecture.as_str(), "aarch64" | "x86_64")
-                || step.adapter.is_bundle() != step.bundle.is_some()
-                || step.adapter.is_bundle() != step.bundle_limits.is_some()
-                || matches!(
-                    step.adapter,
-                    crate::SoftwareKind::Winget | crate::SoftwareKind::Homebrew
-                ) != step.export_identity.is_some()
                 || (program.intent == crate::SoftwareOperation::Uninstall
                     && step.uninstall.is_none())
             {
                 return Err(invalid());
             }
             invocation(&step.install)?;
+            if step.install.exit_codes.success.is_empty()
+                || !step
+                    .install
+                    .exit_codes
+                    .success
+                    .is_disjoint(&step.install.exit_codes.reboot)
+                || step.install.exit_codes.success.len() + step.install.exit_codes.reboot.len() > 32
+            {
+                return Err(invalid());
+            }
+            match &step.upgrade {
+                crate::SoftwareUpgrade::InPlace {
+                    invocation: command,
+                } => invocation(command)?,
+                crate::SoftwareUpgrade::UninstallThenInstall {} if step.uninstall.is_none() => {
+                    return Err(invalid())
+                }
+                _ => (),
+            }
             if let Some(command) = &step.uninstall {
                 invocation(command)?;
             }
@@ -546,7 +566,7 @@ fn software(p: &ExecutionInput, limits: &ExecutionLimits) -> Result<(), Contract
                     product_code,
                     version,
                 } => {
-                    if step.adapter.platform() != Platform::Windows
+                    if step.format.adapter().platform() != Platform::Windows
                         || product_code.len() != 38
                         || !product_code.starts_with('{')
                         || !product_code.ends_with('}')
@@ -563,7 +583,7 @@ fn software(p: &ExecutionInput, limits: &ExecutionLimits) -> Result<(), Contract
                     }
                 }
                 crate::SoftwareDetector::PkgReceipt { receipt, version } => {
-                    if step.adapter.platform() != Platform::Macos
+                    if step.format.adapter().platform() != Platform::Macos
                         || receipt.is_empty()
                         || receipt.len() > 1024
                         || receipt.starts_with('-')
@@ -577,7 +597,7 @@ fn software(p: &ExecutionInput, limits: &ExecutionLimits) -> Result<(), Contract
                     invocation: command,
                 } => invocation(command)?,
             }
-            if let Some(bundle) = &step.bundle {
+            if let Some((bundle, _)) = step.format.bundle() {
                 if bundle.platform != p.request.target.platform
                     || bundle.architecture != step.architecture
                     || bundle.entries.is_empty()

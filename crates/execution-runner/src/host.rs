@@ -2,7 +2,7 @@
 use execution_contract::{Digest, Id, RequestId, VersionedRef};
 use serde::{Deserialize, Serialize};
 /// Current desktop/system IPC. No negotiation or legacy parser exists.
-pub const IPC_VERSION: u8 = 6;
+pub const IPC_VERSION: u8 = 7;
 /// Current protected installation document format.
 pub const DEPLOYMENT_VERSION: u32 = 2;
 

@@ -392,17 +392,20 @@ impl Artifacts {
             .software_program()
             .is_some_and(|program| {
                 program.steps.iter().any(|step| {
-                    step.bundle.as_ref().is_some_and(|manifest| {
-                        manifest.entries.iter().any(|(name, entry)| {
-                            Path::new(&launch.cwd).join(name) == *content_path
-                                && entry
-                                    .sha256
-                                    .iter()
-                                    .map(|b| format!("{b:02x}"))
-                                    .collect::<String>()
-                                    == launch.artifact.sha256.as_str()
+                    step.format
+                        .bundle()
+                        .map(|(manifest, _)| manifest)
+                        .is_some_and(|manifest| {
+                            manifest.entries.iter().any(|(name, entry)| {
+                                Path::new(&launch.cwd).join(name) == *content_path
+                                    && entry
+                                        .sha256
+                                        .iter()
+                                        .map(|b| format!("{b:02x}"))
+                                        .collect::<String>()
+                                        == launch.artifact.sha256.as_str()
+                            })
                         })
-                    })
                 })
             });
         let payload = if bundled {

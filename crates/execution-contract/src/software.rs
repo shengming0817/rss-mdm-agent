@@ -48,6 +48,14 @@ impl From<PackageValue> for String {
 pub enum SoftwareKind {
     /// Windows Installer with a fixed PowerShell entry.
     Msi,
+    /// Full offline executable.
+    Exe,
+    /// Native Windows package deployment.
+    Msix,
+    /// Exact disk image application copy.
+    DmgApp,
+    /// Exact disk image PackageInstaller payload.
+    DmgPkg,
     /// Exact Windows Package Manager source and coordinate.
     Winget,
     /// macOS installer package with a fixed shell entry.
@@ -63,8 +71,12 @@ impl SoftwareKind {
     /// OS on which this adapter can execute.
     pub fn platform(self) -> Platform {
         match self {
-            Self::Msi | Self::Winget | Self::WindowsBundle => Platform::Windows,
-            Self::Pkg | Self::Homebrew | Self::MacosBundle => Platform::Macos,
+            Self::Msi | Self::Exe | Self::Msix | Self::Winget | Self::WindowsBundle => {
+                Platform::Windows
+            }
+            Self::Pkg | Self::DmgApp | Self::DmgPkg | Self::Homebrew | Self::MacosBundle => {
+                Platform::Macos
+            }
         }
     }
     /// Whether the payload is an RSS ZIP bundle.

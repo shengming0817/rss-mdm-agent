@@ -23,7 +23,7 @@ pub enum SoftwareManagerKind {
     Winget,
     Brew,
 }
-/// Protected native package-manager binary selected by a closed V5 executor.
+/// Protected native package-manager binary selected by a closed V6 executor.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SoftwareManager {
@@ -236,7 +236,7 @@ pub(crate) fn script(
     };
     let plan = FrozenExecution::freeze(
         ExecutionInput {
-            schema_version: V5,
+            schema_version: V6,
             execution: ExecutionSpec::Process {},
             request: ExecutionRequest {
                 schema_version: V1,
