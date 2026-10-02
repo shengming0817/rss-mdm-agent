@@ -407,7 +407,8 @@ async function copy(text: string) {
               </UiPopoverContent></UiPopoverPortal
             >
           </UiPopover>
-          <UiMenu v-model:open="menuOpen">
+          <!-- The native drawer owns dialog focus; its launcher must not trap it. -->
+          <UiMenu v-model:open="menuOpen" :modal="false">
             <UiMenuTrigger
               class="icon-button conversation-menu"
               aria-label="更多"

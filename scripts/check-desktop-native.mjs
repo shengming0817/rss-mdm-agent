@@ -1563,6 +1563,7 @@ try {
       await click("继续到所选会话");
       await wait(() => browser.$(".resource-context").isDisplayed());
       if (width < 1440) {
+        mark(`resource context ${width}×${height}: native diagnostic focus`);
         await browser.$(".connection-trigger").click();
         await wait(() =>
           browser.$('.context-panel [aria-label="AI 连接选择"]').isDisplayed(),
@@ -1611,6 +1612,7 @@ try {
         ),
         1,
       );
+      mark(`resource context ${width}×${height}: explicit provider context`);
       await browser
         .$(".composer textarea")
         .setValue("GOLDEN_CONTEXT 解释这个软件的版本与限制");
