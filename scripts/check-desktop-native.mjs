@@ -432,27 +432,61 @@ const readWorkerScopes = async () => {
       };
     });
 };
-const verifyUnknownFence = (launch) => {
+const verifyUnknownFence = () => {
   const source = `
     import assert from 'node:assert/strict';
+    import {spawn,execFileSync} from 'node:child_process';
+    import {once} from 'node:events';
+    import {createInterface} from 'node:readline';
+    import {randomUUID} from 'node:crypto';
     import {pathToFileURL} from 'node:url';
     import {join} from 'node:path';
     const input=JSON.parse(process.argv[2]);
     const {openSqliteStore}=await import(pathToFileURL(join(input.root,'packages/ai-store-sqlite/dist/index.js')));
     const {createHost}=await import(pathToFileURL(join(input.root,'packages/ai-host/dist/index.js')));
+    const {scopeAbsentWithin}=await import(pathToFileURL(join(input.root,'packages/ai-host/dist/process.js')));
+    const {fixtureSession,acceptance}=await import(pathToFileURL(join(input.root,'packages/ai-contract/dist/testing/index.js')));
     const {fixturePersistence}=await import(pathToFileURL(join(input.root,'tests/ai-host/harness.mjs')));
-    const opened=openSqliteStore({path:input.path,mode:'open'});assert.equal(opened.ok,true,JSON.stringify(opened));
-    const store=opened.value;let resolves=0,host;
-    const budget=()=>({timeoutMs:10000,signal:new AbortController().signal});
+    const budget=()=>({timeoutMs:5000,signal:new AbortController().signal});
+    const field=(pid,name)=>execFileSync('/bin/ps',['-p',String(pid),'-o',name+'='],{encoding:'utf8'}).trim();
+    const unwrap=(result)=>{assert.equal(result.ok,true,JSON.stringify(result));return result.value};
+    // Existing launch-fence fault seam, isolated from the UI's credential namespace.
+    const parent=spawn(process.execPath,['-e',
+      "const {spawn}=require('node:child_process');const child=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'});child.once('spawn',()=>console.log(JSON.stringify({pid:child.pid})));setInterval(()=>{},1000)"],
+      {detached:true,stdio:['ignore','pipe','ignore']});
+    const lines=createInterface({input:parent.stdout});
+    let child, birth, store, host;
+    const scope={kind:'processGroup',root:parent.pid};
     try {
-      const created=await createHost({credentialPersistence:fixturePersistence(store),workerRuntime:input.runtime,
-        delivery:null,store,launchFences:store,resolve:async()=>{resolves++;throw Error('unknown scope must block restore')}});
-      assert.equal(created.ok,true,JSON.stringify(created));host=created.value;
-      const fences=await store.launches();assert.equal(fences.ok,true);
-      const retained=fences.value.find((row)=>row.launchId===input.launch.launchId);
-      assert.ok(retained);assert.deepEqual(retained.scope,input.launch.scope);assert.equal(resolves,0);
-      console.log(JSON.stringify({retained,resolveCalls:resolves,diagnostics:host.diagnostics}));
-    } finally {await host?.close(budget());await store.close(budget());}
+      const ready=await Promise.race([once(lines,'line'),new Promise((_,reject)=>setTimeout(()=>reject(Error('fault actor readiness deadline')),2000))]);
+      child=JSON.parse(ready[0]).pid;birth=field(child,'lstart');
+      assert.equal(Number(field(child,'pgid')),scope.root);
+      store=unwrap(openSqliteStore({path:input.path,mode:'create'}));
+      const session=fixtureSession();unwrap(await store.create(session));unwrap(await store.accept(acceptance(session)));
+      const launchId=randomUUID();
+      unwrap(await store.reserveLaunch({runtimeDigest:input.runtime.manifestDigest,namespace:session.namespace,
+        launchId,artifact:pathToFileURL(join(input.root,'tests/ai-host/provider.mjs')).href,phase:'reserved'}));
+      unwrap(await store.registerLaunch(session.namespace,launchId,scope));
+      const exited=once(parent,'exit');parent.kill('SIGKILL');await exited;
+      assert.equal(await scopeAbsentWithin(input.runtime,scope,budget()),false);process.kill(child,0);
+      await store.close(budget());store=unwrap(openSqliteStore({path:input.path,mode:'open'}));
+      let resolves=0;
+      host=unwrap(await createHost({credentialPersistence:fixturePersistence(store),workerRuntime:input.runtime,
+        delivery:null,store,launchFences:store,resolve:async()=>{resolves++;throw Error('unknown scope must block restore')}}));
+      const retained=unwrap(await store.launches()).find(row=>row.launchId===launchId);
+      assert.ok(retained);assert.deepEqual(retained.scope,scope);assert.equal(resolves,0);
+      assert.equal(unwrap(await store.snapshotPage(session.namespace,{limit:256})).session.status,'recovery_required');
+      process.kill(child,0);await host.close(budget());host=null;process.kill(child,0);
+      assert.equal(field(child,'lstart'),birth);assert.equal(Number(field(child,'pgid')),scope.root);
+      process.kill(-scope.root,'SIGKILL');
+      assert.equal(await scopeAbsentWithin(input.runtime,scope,budget()),true);
+      console.log(JSON.stringify({actor:'existing launch-fence fault seam',retained,resolveCalls:resolves,
+        descendantObserved:true,originalParentExited:true,scopeAbsentAfterOwnedCleanup:true}));
+    } finally {
+      lines.close();await host?.close(budget());await store?.close(budget());
+      if(parent.exitCode===null&&parent.signalCode===null)parent.kill('SIGKILL');
+      if(child&&birth){try{if(field(child,'lstart')===birth&&Number(field(child,'pgid'))===scope.root)process.kill(-scope.root,'SIGKILL')}catch{}}
+    }
   `;
   return JSON.parse(
     execFileSync(
@@ -462,9 +496,8 @@ const verifyUnknownFence = (launch) => {
         "-",
         JSON.stringify({
           root,
-          path: join(directory, "ai.sqlite"),
+          path: join(directory, "scope-fault.sqlite"),
           runtime: scopeRuntime,
-          launch,
         }),
       ],
       {
@@ -2090,45 +2123,22 @@ try {
       process.kill(stoppedHost, "SIGKILL");
       await wait(() => !processIdentity(stoppedHost, "comm"));
       await delay(150);
-      assert.equal(
-        await absent(launch.scope),
-        false,
-        "launcher exit alone is not scope absence",
-      );
-      const recovery = verifyUnknownFence(launch);
-      assert.equal(
-        await absent(launch.scope),
-        false,
-        "recovery cannot signal an unknown scope",
-      );
+      await wait(() => absent(launch.scope));
+      record("launcher_crash", { launch, scopeAbsent: true });
+      const recovery = verifyUnknownFence();
       assert.equal(
         fixture.facts.requests,
         requests,
-        "restart cannot redispatch the held model request",
+        "fault recovery cannot redispatch the model request",
       );
-      const retained = {
-        launch,
-        requests,
-        retainedFence: true,
-        recovery,
-        scopeAbsent: false,
-      };
-      record("launcher_crash", retained);
-      record("retained_descendant", retained);
-      record("unknown_scope", retained);
-      // The experiment still owns the observed live group; clear it explicitly only after proving retention.
-      assert.equal(
-        terminateObservedScope(ownedWorkerScopes.get(launch.scope.root)),
-        true,
-        "retained own scope identity changed",
-      );
-      await wait(() => absent(launch.scope));
+      record("retained_descendant", recovery);
+      record("unknown_scope", recovery);
       await restart();
 
       mark("security: actual Host crash and owned worker group termination");
       launch = await held();
       const crashedHost = hostPid();
-      assert.equal(Number(processField(crashedHost, "ppid")), receipt.pid);
+      assert.equal(Number(processIdentity(crashedHost, "ppid")), receipt.pid);
       process.kill(crashedHost, "SIGKILL");
       await wait(() => absent(launch.scope));
       await restart();
