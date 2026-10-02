@@ -842,8 +842,8 @@ impl Core {
                     }
                     let replay = Selection {
                         request: request.clone(),
-                        task,
-                        attempt,
+                        task: task.clone(),
+                        attempt: attempt.clone(),
                         revision: revision.clone(),
                         subject: command.subject.clone(),
                         session: command.session,
