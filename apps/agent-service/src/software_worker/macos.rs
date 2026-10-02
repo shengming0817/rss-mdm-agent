@@ -213,15 +213,7 @@ fn attach(request: &WorkerRequest, dmg: &Dmg) -> Result<(i32, SoftwareWorkerResu
                 .is_some_and(|d| d.contains_key("mount-point"))
         })
         .collect::<Vec<_>>();
-    let roots = entities
-        .iter()
-        .filter_map(|e| e.as_dictionary()?.get("dev-entry")?.as_string())
-        .filter(|d| disk_root(d))
-        .collect::<Vec<_>>();
-    if roots.len() != 1 {
-        return Err(Error::Untrusted);
-    }
-    record.device = Some(roots[0].into());
+    record.device = Some(image_device(entities)?.ok_or(Error::Untrusted)?);
     save(request, &record)?;
     if mounted.len() != 1
         || mounted[0]
@@ -249,6 +241,34 @@ fn disk_root(device: &str) -> bool {
     device
         .strip_prefix("/dev/disk")
         .is_some_and(|d| !d.is_empty() && d.bytes().all(|b| b.is_ascii_digit()))
+}
+// APFS exposes its synthetic container alongside the image's physical disk. Detach the
+// partition-scheme disk, retaining the single-device fallback for unpartitioned images.
+fn image_device(entities: &[plist::Value]) -> Result<Option<String>, Error> {
+    let mut roots = Vec::new();
+    let mut schemes = Vec::new();
+    for entity in entities {
+        let object = entity.as_dictionary().ok_or(Error::Protocol)?;
+        if let Some(device) = object
+            .get("dev-entry")
+            .and_then(plist::Value::as_string)
+            .filter(|device| disk_root(device))
+        {
+            roots.push(device);
+            if matches!(
+                object.get("content-hint").and_then(plist::Value::as_string),
+                Some("GUID_partition_scheme" | "Apple_partition_scheme")
+            ) {
+                schemes.push(device);
+            }
+        }
+    }
+    let candidates = if schemes.is_empty() { roots } else { schemes };
+    match candidates.as_slice() {
+        [] => Ok(None),
+        [device] => Ok(Some((*device).to_owned())),
+        _ => Err(Error::Untrusted),
+    }
 }
 fn readonly(path: &Path) -> Result<(), Error> {
     let name = CString::new(path.as_os_str().as_bytes()).map_err(|_| Error::Protocol)?;
@@ -1254,15 +1274,8 @@ fn owned_device(request: &WorkerRequest, dmg: &Dmg) -> Result<Option<String>, Er
             if object.get("image-path").and_then(plist::Value::as_string) != Some(text(&image)?) {
                 return Err(Error::Untrusted);
             }
-            for entity in entities {
-                if let Some(device) = entity
-                    .as_dictionary()
-                    .and_then(|d| d.get("dev-entry"))
-                    .and_then(plist::Value::as_string)
-                    .filter(|d| disk_root(d))
-                {
-                    devices.push(device.to_owned());
-                }
+            if let Some(device) = image_device(entities)? {
+                devices.push(device);
             }
         }
     }
@@ -1275,6 +1288,36 @@ fn owned_device(request: &WorkerRequest, dmg: &Dmg) -> Result<Option<String>, Er
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn apfs_image_uses_physical_partition_disk_for_attach_and_cleanup() {
+        let entity = |device: &str, hint: &str| {
+            let mut object = plist::Dictionary::new();
+            object.insert("dev-entry".into(), device.into());
+            object.insert("content-hint".into(), hint.into());
+            plist::Value::Dictionary(object)
+        };
+        let entities = [
+            entity("/dev/disk4", "GUID_partition_scheme"),
+            entity("/dev/disk4s1", "7C3457EF-0000-11AA-AA11-00306543ECAC"),
+            entity("/dev/disk5", "EF57347C-0000-11AA-AA11-00306543ECAC"),
+            entity("/dev/disk5s1", "41504653-0000-11AA-AA11-00306543ECAC"),
+        ];
+        assert_eq!(
+            image_device(&entities).unwrap().as_deref(),
+            Some("/dev/disk4")
+        );
+        assert_eq!(
+            image_device(&[entity("/dev/disk6", "Apple_HFS")])
+                .unwrap()
+                .as_deref(),
+            Some("/dev/disk6")
+        );
+        assert!(image_device(&[
+            entity("/dev/disk4", "GUID_partition_scheme"),
+            entity("/dev/disk6", "Apple_partition_scheme")
+        ])
+        .is_err());
+    }
     #[test]
     fn framework_links_metadata_and_atomic_replacement_use_actual_filesystem() {
         let root = std::env::temp_dir().join(format!("rss-dmg-files-{}", uuid::Uuid::new_v4()));

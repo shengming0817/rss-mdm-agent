@@ -1348,6 +1348,7 @@ fn software_application_commits_boundaries_before_ack_and_never_replays_unknown_
     struct Runner {
         inner: DeterministicTestRunner,
         path: std::path::PathBuf,
+        live: std::sync::Arc<std::sync::Mutex<Option<ProcessEvidence>>>,
         pending: std::sync::Arc<std::sync::Mutex<Option<SoftwareProgress>>>,
     }
     impl RunnerPort for Runner {
@@ -1365,7 +1366,7 @@ fn software_application_commits_boundaries_before_ack_and_never_replays_unknown_
             _: &FrozenExecution,
             _: &AttemptId,
         ) -> Result<Option<ProcessEvidence>, Error> {
-            Ok(None)
+            Ok(self.live.lock().unwrap().clone())
         }
         fn acknowledge_capture(
             &self,
@@ -1426,9 +1427,11 @@ fn software_application_commits_boundaries_before_ack_and_never_replays_unknown_
     .unwrap();
     host.template = plan.clone();
     let pending = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let live = std::sync::Arc::new(std::sync::Mutex::new(None));
     let runner = Runner {
         inner: DeterministicTestRunner::new(id("test-runner"), TestScenario::Unknown, 8).unwrap(),
         path: db.path.clone(),
+        live: live.clone(),
         pending: pending.clone(),
     };
     let mut app = ExecutionApp::start(
@@ -1441,7 +1444,7 @@ fn software_application_commits_boundaries_before_ack_and_never_replays_unknown_
     .unwrap();
     let status = app.request_execution(&caller(), &plan).unwrap();
     *pending.lock().unwrap() = Some(SoftwareProgress {
-        attempt_id: status.attempt_id.unwrap(),
+        attempt_id: status.attempt_id.clone().unwrap(),
         content_digest: plan.digest().clone(),
         runner: id("test-runner"),
         checkpoints: vec![SoftwareCheckpoint::Begin {
@@ -1453,10 +1456,62 @@ fn software_application_commits_boundaries_before_ack_and_never_replays_unknown_
     });
     app.reconcile(&plan.spec().request.request_id).unwrap();
     assert!(pending.lock().unwrap().is_none());
+    let attempt = status.attempt_id.unwrap();
+    *live.lock().unwrap() = Some(ProcessEvidence {
+        content_digest: plan.digest().clone(),
+        attempt_id: attempt.clone(),
+        runner: id("test-runner"),
+        scope: ProcessScope::Preparing {},
+        finished: false,
+        exit_code: None,
+        end: ProcessEnd::Unknown,
+        failure_kind: ProcessFailureKind::None,
+        quiescent: false,
+        stdout: vec![],
+        stderr: vec![],
+        total_output_bytes: 0,
+        quality: OutputQuality::Partial,
+    });
+    *pending.lock().unwrap() = Some(SoftwareProgress {
+        attempt_id: attempt.clone(),
+        content_digest: plan.digest().clone(),
+        runner: id("test-runner"),
+        checkpoints: vec![
+            SoftwareCheckpoint::Begin {
+                step: 0,
+                phase: SoftwarePhase::Before,
+            },
+            SoftwareCheckpoint::End {
+                step: 0,
+                phase: SoftwarePhase::Before,
+                duration_ms: 1,
+                process: None,
+                detected: Some(SoftwareState::Absent {}),
+                quiescent: true,
+            },
+        ],
+        elapsed_ms: 2,
+        output_bytes: 0,
+    });
+    let boundary = app.reconcile(&plan.spec().request.request_id).unwrap();
+    assert!(boundary.assessment.is_none());
+    assert!(!boundary
+        .evidence
+        .iter()
+        .any(|e| e.reference.revision.as_str() == "software-sequence"));
+    let sql = rusqlite::Connection::open(&db.path).unwrap();
+    assert_eq!(
+        sql.query_row("SELECT count(*) FROM software_claims", [], |r| r
+            .get::<_, i64>(0))
+            .unwrap(),
+        1
+    );
+    *live.lock().unwrap() = None;
     drop(app);
     let runner = Runner {
         inner: DeterministicTestRunner::new(id("test-runner"), TestScenario::Unknown, 8).unwrap(),
         path: db.path.clone(),
+        live: live.clone(),
         pending,
     };
     let mut app = ExecutionApp::start(
@@ -1720,7 +1775,7 @@ fn completed_step_cannot_become_sequence_exit_after_restart() {
             sql.query_row("SELECT count(*) FROM software_claims", [], |r| r
                 .get::<_, i64>(0))
                 .unwrap(),
-            if started_next { 1 } else { 0 }
+            if complete_sequence { 0 } else { 1 }
         );
     }
 }

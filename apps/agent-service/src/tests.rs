@@ -128,7 +128,10 @@ async fn signed_start_compiles_exactly_and_never_creates_a_local_enterprise_appr
     // a new attempt. The short-lived backend Start remains mandatory for admission.
     let original_grant = host.current.lock().unwrap().take().unwrap();
     let snapshot = execution_app::AppHost::trusted_snapshot(&host, &frozen).unwrap();
-    assert!(snapshot.fresh_until_unix_ms > host.clock.millis().unwrap());
+    assert_eq!(
+        snapshot.fresh_until_unix_ms,
+        frozen.spec().validity.expires_at_unix_ms
+    );
     assert!(snapshot.approvals.is_empty());
     assert!(host.verify(&frozen, &attempt).is_err());
     let mut foreign = frozen.spec().clone();

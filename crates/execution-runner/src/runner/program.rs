@@ -48,6 +48,8 @@ pub(super) fn execute(input: ProgramRun) {
         .count();
     let mut latest = rejected(&plan, &attempt, &runner, ProcessEnd::Unknown);
     latest.quiescent = false;
+    let mut physical_observed = false;
+    let mut physical_failed = false;
     let result = (|| -> Result<(), Error> {
         let program = plan
             .spec()
@@ -259,7 +261,22 @@ pub(super) fn execute(input: ProgramRun) {
                             .output_bytes
                             .saturating_add(facts.total_output_bytes);
                     }
-                    latest = facts.clone();
+                    // Detection and cleanup must not erase the actual installer failure/exit.
+                    if !phase.is_observation() {
+                        if !physical_failed {
+                            let failed = !quiet
+                                || !command.is_some_and(|command| {
+                                    command.succeeded(facts, step.allow_reboot)
+                                });
+                            if failed || phase != SoftwarePhase::Cleanup || !physical_observed {
+                                latest = facts.clone();
+                            }
+                            physical_failed = failed;
+                        }
+                        physical_observed = true;
+                    } else if !physical_observed {
+                        latest = facts.clone();
+                    }
                 }
                 if !replayed {
                     let duration_ms = phase_started
@@ -390,7 +407,7 @@ pub(super) fn execute(input: ProgramRun) {
         }
         Ok(())
     })();
-    // Retain the last observed root exit even when the overall sequence is unknown.
+    // Retain the physical root exit even when later detection or cleanup ends successfully.
     latest.finished = true;
     latest.total_output_bytes = journal.output_bytes;
     if result.is_ok() && latest.exit_code.is_none() {

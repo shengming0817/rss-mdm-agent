@@ -173,21 +173,14 @@ impl AppHost for EnterpriseHost {
         {
             return Err(execution_sqlite::Error::Trust);
         }
-        let permit = self
-            .permit(plan)
-            .map_err(|_| execution_sqlite::Error::Trust)?;
-        let fresh_until_unix_ms = u64::try_from(permit.start.payload().expires_at())
-            .ok()
-            .and_then(|seconds| seconds.checked_mul(1000))
-            .ok_or(execution_sqlite::Error::Clock)?
-            .min(input.validity.expires_at_unix_ms);
-        // Admission refresh uses the exact signed Start deadline, including the time spent
-        // rechecking retained materials. It grants no attempt and never renews that deadline.
-        // Reconciliation continues through the original journal without refreshing admission.
+        // Registration scope remains bound to this frozen journal after restart or a later
+        // dispatch. The snapshot grants no attempt: AuthorityVerifier independently requires
+        // the exact signed Start and its shorter deadline. Avoid a local one-second window
+        // that expires while retained software materials are checked; never renew plan validity.
         Ok(TrustSnapshot {
             authorization_revision: input.policy.clone(),
             approval_revision: input.policy.clone(),
-            fresh_until_unix_ms,
+            fresh_until_unix_ms: input.validity.expires_at_unix_ms,
             approvals: vec![],
         })
     }

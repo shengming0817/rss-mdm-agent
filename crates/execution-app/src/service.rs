@@ -686,7 +686,13 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
                 .with_input(Some(execution.input()));
             self.store
                 .record_process(&Scope::from_input(execution.input()), facts, &host)?;
-            if facts.total_output_bytes > active.output_bytes {
+            if execution
+                .snapshot()
+                .attempt
+                .as_ref()
+                .is_some_and(|attempt| attempt.termination.is_none())
+                && facts.total_output_bytes > active.output_bytes
+            {
                 let result = self.command(
                     None,
                     execution,
@@ -711,7 +717,9 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
                 self.runner.acknowledge_capture(execution.input(), facts)?;
             }
         }
-        // Step output remains charged even when there is no whole-sequence capture.
+        // While the attempt is active, step output is also charged without a whole capture.
+        // After termination, bounded recovery output stays in the append-only software journal;
+        // it cannot revise the immutable original process exit or lifecycle output total.
         if let Some(progress) = self.store.software_progress(
             &Scope::from_input(execution.input()),
             &active.id,
@@ -723,7 +731,13 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
                 .as_ref()
                 .ok_or(Error::Conflict)?
                 .output_bytes;
-            if progress.output_bytes > charged {
+            if execution
+                .snapshot()
+                .attempt
+                .as_ref()
+                .is_some_and(|attempt| attempt.termination.is_none())
+                && progress.output_bytes > charged
+            {
                 let result = self.command(
                     None,
                     execution,
@@ -862,6 +876,14 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
                 .filter(|progress| {
                     progress.complete(execution.input())
                         || (progress.closed(execution.input())
+                            && (capture.as_ref().is_some_and(|facts| facts.finished)
+                                || matches!(
+                                    progress.checkpoints.last(),
+                                    Some(execution_contract::SoftwareCheckpoint::CleanupEnd {
+                                        resources_closed: true,
+                                        ..
+                                    })
+                                ))
                             && (stage == ObservationStage::Termination
                                 || attempt.assessment.is_none()))
                 })
