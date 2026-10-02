@@ -4,7 +4,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { WorkerFactory } from "@rss-mdm-agent/ai-host/worker";
 import { startEgressProxy, type EgressProxy } from "./egress.js";
-import { readPrivateFile } from "./private-file.js";
+import { readPrivateFile } from "@rss-mdm-agent/platform-private-storage";
 import { resolveConnection, type ProviderActivation } from "./connection.js";
 /** Activated worker composition; this is the sole credential/SDK loading entry. */
 export const createProvider: WorkerFactory = async ({

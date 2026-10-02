@@ -1,4 +1,10 @@
-import { execFileSync } from "node:child_process";
+import {
+  privateDirectory,
+  validateDirectory,
+  validateFile,
+  validateOptionalFile,
+  createPrivateFile,
+} from "@rss-mdm-agent/platform-private-storage";
 import type { Scope } from "@rss-mdm-agent/ai-host/process-contract";
 import {
   activeStage,
@@ -22,16 +28,8 @@ import {
   sessionListItem,
 } from "@rss-mdm-agent/ai-contract/read-views";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
-import {
-  closeSync,
-  constants,
-  lstatSync,
-  mkdirSync,
-  openSync,
-  realpathSync,
-  readFileSync,
-} from "node:fs";
-import { dirname, isAbsolute, join, basename } from "node:path";
+import { readFileSync } from "node:fs";
+import { dirname, isAbsolute } from "node:path";
 import {
   boundedJson,
   decode,
@@ -199,49 +197,19 @@ function bounds(options: StoreOptions): Bounds {
   if (result.maxDatabaseBytes < 65536) throw new InputError("invalid_input");
   return result;
 }
+function validateSidecars(path: string): void {
+  for (const suffix of ["-wal", "-shm", "-journal"])
+    validateOptionalFile(path + suffix);
+}
 function privatePath(options: StoreOptions): string {
   if (!isAbsolute(options.path) || !["create", "open"].includes(options.mode))
     throw new InputError("invalid_input");
-  const parent = dirname(options.path);
-  if (options.mode === "create")
-    mkdirSync(parent, { recursive: true, mode: 0o700 });
-  if (process.platform === "win32")
-    execFileSync(
-      join(dirname(process.execPath), "rss-private-storage.exe"),
-      ["directory", parent],
-      { timeout: 5000, windowsHide: true, stdio: "ignore" },
-    );
-  const directory = realpathSync(parent),
-    stat = lstatSync(directory);
-  if (
-    !stat.isDirectory() ||
-    (process.platform !== "win32" && (stat.mode & 0o077) !== 0)
-  )
-    throw new InputError("invalid_input");
-  const path = join(directory, basename(options.path));
-  if (options.mode === "create")
-    closeSync(
-      openSync(
-        path,
-        constants.O_CREAT | constants.O_EXCL | constants.O_RDWR,
-        0o600,
-      ),
-    );
-  const file = lstatSync(path);
-  if (
-    !file.isFile() ||
-    file.isSymbolicLink() ||
-    file.nlink !== 1 ||
-    (process.platform !== "win32" && (file.mode & 0o077) !== 0)
-  )
-    throw new InputError("invalid_input");
-  if (process.platform === "win32")
-    execFileSync(
-      join(dirname(process.execPath), "rss-private-storage.exe"),
-      ["validate", path],
-      { timeout: 5000, windowsHide: true, stdio: "ignore" },
-    );
-  return path;
+  if (options.mode === "create") privateDirectory(dirname(options.path));
+  else validateDirectory(dirname(options.path));
+  validateSidecars(options.path);
+  if (options.mode === "create") createPrivateFile(options.path);
+  validateFile(options.path);
+  return options.path;
 }
 
 function pageLimit(db: DatabaseSync, maxBytes: number): number {
@@ -322,6 +290,8 @@ export function openSqliteStore(
     )
       throw new SchemaError("unsupported_version");
     if (options.mode === "create") initialize(db, true);
+    validateFile(path);
+    validateSidecars(path);
     return ok(new SqliteSessionStore(db, limits));
   } catch (error) {
     try {

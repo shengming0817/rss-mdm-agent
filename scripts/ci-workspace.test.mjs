@@ -18,6 +18,19 @@ test("real workspace resolves all metadata and source/test bridges", () => {
 
   assert.ok(graph.reverse.get(npm("ai-contract")).has("ai-session-contract"));
   assert.ok(graph.reverse.get("execution-app").has(npm("ai-host-app")));
+  assert.ok(
+    graph.reverse
+      .get("platform-private-storage")
+      .has(npm("platform-private-storage")),
+  );
+  assert.ok(
+    graph.reverse
+      .get(npm("platform-private-storage"))
+      .has(npm("ai-store-sqlite")),
+  );
+  assert.ok(
+    graph.reverse.get(npm("platform-private-storage")).has(npm("ai-host-app")),
+  );
   for (const adapter of ["claude", "codex", "deepseek"]) {
     assert.ok(
       graph.roots.some(

@@ -83,6 +83,9 @@ importers:
       '@rss-mdm-agent/execution-bindings':
         specifier: workspace:*
         version: link:../../packages/execution-bindings
+      '@rss-mdm-agent/platform-private-storage':
+        specifier: workspace:*
+        version: link:../../packages/platform-private-storage
       yaml:
         specifier: 2.9.1
         version: 2.9.1
@@ -282,6 +285,10 @@ importers:
         version: link:../ai-contract
 
   packages/ai-store-sqlite:
+    dependencies:
+      '@rss-mdm-agent/platform-private-storage':
+        specifier: workspace:*
+        version: link:../platform-private-storage
     devDependencies:
       '@rss-mdm-agent/ai-contract':
         specifier: workspace:*
@@ -309,6 +316,8 @@ importers:
         version: 3.5.38(typescript@5.6.2)
 
   packages/execution-bindings: {}
+
+  packages/platform-private-storage: {}
 
   packages/ui:
     dependencies:

@@ -53,6 +53,7 @@ export function packHost(root, directory) {
     "ai-contract",
     "execution-bindings",
     "ai-store-sqlite",
+    "platform-private-storage",
     "ai-host",
     "ai-access",
     "ai-adapter-claude",

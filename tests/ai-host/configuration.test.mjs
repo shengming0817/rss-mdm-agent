@@ -12,7 +12,7 @@ import {
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { readPrivateFile } from "../../apps/ai-host/dist/private-file.js";
+import { readPrivateFile } from "../../packages/platform-private-storage/dist/index.js";
 import {
   endpoint,
   readConfiguration,
@@ -52,14 +52,14 @@ test("private configuration and credentials require bounded owned files in priva
     link = join(directory, "link");
   await writeFile(file, "secret", { mode: 0o600 });
   assert.equal(await readPrivateFile(file, 6), "secret");
-  await assert.rejects(readPrivateFile(file, 5));
+  await assert.rejects(async () => readPrivateFile(file, 5));
   await symlink(file, link);
-  await assert.rejects(readPrivateFile(link, 64));
+  await assert.rejects(async () => readPrivateFile(link, 64));
   const fifo = join(directory, "fifo");
   assert.equal(spawnSync("/usr/bin/mkfifo", [fifo]).status, 0);
   await chmod(fifo, 0o600);
   const moduleUrl = new URL(
-    "../../apps/ai-host/dist/private-file.js",
+    "../../packages/platform-private-storage/dist/index.js",
     import.meta.url,
   ).href;
   const rejected = spawnSync(
@@ -78,10 +78,10 @@ test("private configuration and credentials require bounded owned files in priva
     "non-regular files must be rejected without blocking open",
   );
   await chmod(file, 0o644);
-  await assert.rejects(readPrivateFile(file, 64));
+  await assert.rejects(async () => readPrivateFile(file, 64));
   await chmod(file, 0o600);
   await chmod(directory, 0o755);
-  await assert.rejects(readPrivateFile(file, 64));
+  await assert.rejects(async () => readPrivateFile(file, 64));
 });
 test("custom HTTPS endpoints reject literal private and link-local destinations", () => {
   for (const value of [

@@ -1,5 +1,5 @@
 import { isAbsolute } from "node:path";
-import { readPrivateFile } from "./private-file.js";
+import { readPrivateFile } from "@rss-mdm-agent/platform-private-storage";
 /** Host bootstrap contains paths only. User identity comes from native ingress. */
 export interface LocalConfiguration {
   readonly version: 1;

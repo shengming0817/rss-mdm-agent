@@ -72,6 +72,8 @@ export function parseChanges(raw) {
 // Build scripts, generated bindings, runtime packing and shared fixtures are not
 // represented by Cargo or pnpm dependencies. These are directed consumer edges.
 export const sourceEdges = [
+  ["platform-private-storage", npm("platform-private-storage")],
+  ["native-process", npm("ai-host-app")],
   [npm("ai-contract"), "ai-session-contract"],
   ["ai-session-contract", npm("ai-contract")],
   ["execution-app", npm("desktop")],
@@ -91,6 +93,7 @@ export const testOwners = [
   ["scripts/service/verify-execution-macos.test.py", "agent-service"],
   ["tests/assistant/service-fixtures.json", "execution-runner"],
   ["scripts/service/execution-windows.ps1", "agent-service"],
+  ["scripts/service/verify-execution-windows.ps1", "agent-service"],
   ["scripts/service/execution-windows.test.ps1", "agent-service"],
   ["scripts/service/execution-macos.test.py", "agent-service"],
   ["packages/execution-bindings/src/tools.json", "execution-mcp"],
