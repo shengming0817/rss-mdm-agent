@@ -104,6 +104,7 @@ pub struct Data {
     pub start_ops: Vec<String>,
     pub forged_start: bool,
     pub start_permit: Option<SignedTask>,
+    pub start_validity_seconds: i64,
     pub result_calls: usize,
     pub chunks: BTreeMap<u16, OutputChunk>,
     pub chunk_calls: Vec<Value>,
@@ -276,6 +277,7 @@ impl Server {
             start_ops: vec![],
             forged_start: false,
             start_permit: None,
+            start_validity_seconds: 15,
             result_calls: 0,
             chunks: BTreeMap::new(),
             chunk_calls: vec![],
@@ -507,7 +509,7 @@ fn start_event(d: &mut Data, operation: String) -> Response {
     d.start_ops.push(operation);
     if d.start_permit.is_none() {
         let mut payload = d.offer.as_ref().unwrap().payload.clone();
-        let expiry = d.time.now().unwrap() + 15;
+        let expiry = d.time.now().unwrap() + d.start_validity_seconds;
         match &mut payload {
             TaskPayload::Script(v) => {
                 v.permit = TaskPermit::Start;

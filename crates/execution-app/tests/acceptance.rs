@@ -1425,6 +1425,13 @@ fn software_application_commits_boundaries_before_ack_and_never_replays_unknown_
         &test_store_limits().input,
     )
     .unwrap();
+    let mut input = plan.spec().clone();
+    let ExecutionSpec::SoftwareProgram { program } = &mut input.execution else {
+        panic!("software");
+    };
+    program.steps[0].install.exit_codes.reboot = [3010].into();
+    program.steps[0].allow_reboot = true;
+    let plan = FrozenExecution::freeze(input, &test_store_limits().input).unwrap();
     host.template = plan.clone();
     let pending = std::sync::Arc::new(std::sync::Mutex::new(None));
     let live = std::sync::Arc::new(std::sync::Mutex::new(None));
@@ -1512,7 +1519,7 @@ fn software_application_commits_boundaries_before_ack_and_never_replays_unknown_
         inner: DeterministicTestRunner::new(id("test-runner"), TestScenario::Unknown, 8).unwrap(),
         path: db.path.clone(),
         live: live.clone(),
-        pending,
+        pending: pending.clone(),
     };
     let mut app = ExecutionApp::start(
         &db.path,
@@ -1536,6 +1543,97 @@ fn software_application_commits_boundaries_before_ack_and_never_replays_unknown_
             .get::<_, i64>(0))
             .unwrap(),
         1
+    );
+    let version = plan.spec().execution.software_program().unwrap().steps[0]
+        .version
+        .clone();
+    *pending.lock().unwrap() = Some(SoftwareProgress {
+        attempt_id: attempt.clone(),
+        content_digest: plan.digest().clone(),
+        runner: id("test-runner"),
+        checkpoints: vec![
+            SoftwareCheckpoint::Begin {
+                step: 0,
+                phase: SoftwarePhase::Before,
+            },
+            SoftwareCheckpoint::End {
+                step: 0,
+                phase: SoftwarePhase::Before,
+                duration_ms: 1,
+                process: None,
+                detected: Some(SoftwareState::Absent {}),
+                quiescent: true,
+            },
+            SoftwareCheckpoint::Begin {
+                step: 0,
+                phase: SoftwarePhase::Mutation,
+            },
+            SoftwareCheckpoint::End {
+                step: 0,
+                phase: SoftwarePhase::Mutation,
+                duration_ms: 2,
+                process: Some(Box::new(ProcessEvidence {
+                    content_digest: plan.digest().clone(),
+                    attempt_id: attempt.clone(),
+                    runner: id("test-runner"),
+                    scope: ProcessScope::ProcessGroup { owner: 1, group: 2 },
+                    finished: true,
+                    exit_code: Some(3010),
+                    end: ProcessEnd::Exited,
+                    failure_kind: ProcessFailureKind::None,
+                    quiescent: true,
+                    stdout: vec![],
+                    stderr: vec![],
+                    total_output_bytes: 33,
+                    quality: OutputQuality::Complete,
+                })),
+                detected: None,
+                quiescent: true,
+            },
+            SoftwareCheckpoint::Begin {
+                step: 0,
+                phase: SoftwarePhase::After,
+            },
+            SoftwareCheckpoint::End {
+                step: 0,
+                phase: SoftwarePhase::After,
+                duration_ms: 1,
+                process: Some(Box::new(ProcessEvidence {
+                    content_digest: plan.digest().clone(),
+                    attempt_id: attempt.clone(),
+                    runner: id("test-runner"),
+                    scope: ProcessScope::ProcessGroup { owner: 1, group: 3 },
+                    finished: true,
+                    exit_code: Some(0),
+                    end: ProcessEnd::Exited,
+                    failure_kind: ProcessFailureKind::None,
+                    quiescent: true,
+                    stdout: vec![],
+                    stderr: vec![],
+                    total_output_bytes: 1,
+                    quality: OutputQuality::Complete,
+                })),
+                detected: Some(SoftwareState::Present { version }),
+                quiescent: true,
+            },
+            SoftwareCheckpoint::Complete { step: 0 },
+        ],
+        elapsed_ms: 5,
+        output_bytes: 34,
+    });
+    let complete = app.reconcile(&plan.spec().request.request_id).unwrap();
+    assert_eq!(
+        complete.assessment,
+        Some(execution_lifecycle::EffectAssessment::Satisfied)
+    );
+    let process = complete.process.unwrap();
+    assert_eq!(process.total_output_bytes, 34);
+    assert_eq!(process.exit_code, Some(3010));
+    assert_eq!(
+        sql.query_row("SELECT count(*) FROM software_claims", [], |r| r
+            .get::<_, i64>(0))
+            .unwrap(),
+        0
     );
 }
 

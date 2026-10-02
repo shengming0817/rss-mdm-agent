@@ -665,16 +665,31 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
                     progress
                         .filter(|progress| progress.complete(execution.input()))
                         .and_then(|progress| {
-                            progress.checkpoints.iter().rev().find_map(|c| match c {
-                                execution_contract::SoftwareCheckpoint::End {
-                                    process: Some(facts),
-                                    ..
-                                } => {
-                                    let mut facts = *facts.clone();
-                                    facts.total_output_bytes = progress.output_bytes;
-                                    Some(facts)
-                                }
-                                _ => None,
+                            let process = |physical_only: bool| {
+                                progress.checkpoints.iter().rev().find_map(|c| match c {
+                                    execution_contract::SoftwareCheckpoint::End {
+                                        phase,
+                                        process: Some(facts),
+                                        ..
+                                    } if !physical_only
+                                        || (!phase.is_observation()
+                                            && !matches!(
+                                                phase,
+                                                execution_contract::SoftwarePhase::Attach
+                                                    | execution_contract::SoftwarePhase::Cleanup
+                                            )) =>
+                                    {
+                                        Some(facts)
+                                    }
+                                    _ => None,
+                                })
+                            };
+                            // Restore installer/reboot facts, using detector capture only when
+                            // the complete sequence required no physical mutation.
+                            process(true).or_else(|| process(false)).map(|facts| {
+                                let mut facts = *facts.clone();
+                                facts.total_output_bytes = progress.output_bytes;
+                                facts
                             })
                         })
                         .or(stored)
