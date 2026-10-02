@@ -1598,28 +1598,14 @@ fn software_application_commits_boundaries_before_ack_and_never_replays_unknown_
                 step: 0,
                 phase: SoftwarePhase::After,
                 duration_ms: 1,
-                process: Some(Box::new(ProcessEvidence {
-                    content_digest: plan.digest().clone(),
-                    attempt_id: attempt.clone(),
-                    runner: id("test-runner"),
-                    scope: ProcessScope::ProcessGroup { owner: 1, group: 3 },
-                    finished: true,
-                    exit_code: Some(0),
-                    end: ProcessEnd::Exited,
-                    failure_kind: ProcessFailureKind::None,
-                    quiescent: true,
-                    stdout: vec![],
-                    stderr: vec![],
-                    total_output_bytes: 1,
-                    quality: OutputQuality::Complete,
-                })),
+                process: None,
                 detected: Some(SoftwareState::Present { version }),
                 quiescent: true,
             },
             SoftwareCheckpoint::Complete { step: 0 },
         ],
         elapsed_ms: 5,
-        output_bytes: 34,
+        output_bytes: 33,
     });
     let complete = app.reconcile(&plan.spec().request.request_id).unwrap();
     assert_eq!(
@@ -1627,7 +1613,7 @@ fn software_application_commits_boundaries_before_ack_and_never_replays_unknown_
         Some(execution_lifecycle::EffectAssessment::Satisfied)
     );
     let process = complete.process.unwrap();
-    assert_eq!(process.total_output_bytes, 34);
+    assert_eq!(process.total_output_bytes, 33);
     assert_eq!(process.exit_code, Some(3010));
     assert_eq!(
         sql.query_row("SELECT count(*) FROM software_claims", [], |r| r
