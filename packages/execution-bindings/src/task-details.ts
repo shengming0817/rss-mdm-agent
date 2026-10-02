@@ -21,6 +21,10 @@ export type BackendRequestFailure =
   | "expired"
   | "revoked";
 /**
+ * Safe native package effect for task details.
+ */
+export type SoftwareDeploymentSummary = "targetUser" | "futureUsers";
+/**
  * Value-only admission result; policy/rule/approver details remain in privileged audit.
  */
 export type AdmissionStatus = "admitted" | "denied" | "approvalRequired";
@@ -440,7 +444,7 @@ export interface FrozenExecutionSummary {
   /**
    * Version of the frozen execution plan, independent of the AI wire version.
    */
-  schemaVersion: 5;
+  schemaVersion: 6;
   /**
    * Required target user session.
    */
@@ -509,11 +513,19 @@ export interface SoftwareStepSummary {
    */
   adapter:
     | "msi"
+    | "exe"
+    | "msix"
+    | "dmgApp"
+    | "dmgPkg"
     | "winget"
     | "pkg"
     | "homebrew"
     | "windowsBundle"
     | "macosBundle";
+  /**
+   * Native MSIX effect, separately from OS account used to execute it.
+   */
+  deployment: SoftwareDeploymentSummary | null;
   /**
    * Exact backend package.
    */
