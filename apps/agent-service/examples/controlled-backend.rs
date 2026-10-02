@@ -59,7 +59,8 @@ async fn main() {
                         data.bytes = std::fs::read(command["path"].as_str().unwrap()).unwrap();
                         data.software(1, command["user"].as_bool() == Some(true));
                         let wire::TaskPayload::Software(mut payload) = data.offer.as_ref().unwrap().payload.clone() else { unreachable!() };
-                        payload.expires_at += 3600;
+                        payload.expires_at +=
+                            command["validitySeconds"].as_i64().unwrap_or(3660).clamp(2, 3660) - 60;
                         if let wire::SoftwareTaskBehavior::Pkg(native) = &mut payload.steps[0].action.behavior {
                             if let wire::SoftwareTaskDetection::PkgReceipt { receipt, .. } = &mut native.detect { *receipt = command["receipt"].as_str().unwrap().into(); }
                         }
@@ -102,7 +103,7 @@ async fn main() {
                     "stop" => break,
                     _ => panic!("unknown harness command"),
                 }
-                println!("{}", serde_json::json!({"task": data.task, "attempt":data.attempt,"startRequests":data.start_ops.len(),"resultCalls":data.result_calls,"acknowledged":data.acknowledged,"results":data.results}));
+                println!("{}", serde_json::json!({"task": data.task, "attempt":data.attempt,"received":data.received,"startRequests":data.start_ops.len(),"resultCalls":data.result_calls,"acknowledged":data.acknowledged,"results":data.results}));
                 std::io::stdout().flush().unwrap();
             }
             _ = tokio::time::sleep(std::time::Duration::from_millis(50)) => (),

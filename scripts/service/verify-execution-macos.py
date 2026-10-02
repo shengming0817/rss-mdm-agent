@@ -33,6 +33,491 @@ import contextlib
 import stat
 import selectors
 import signal
+import base64
+
+# Only this owner defines the final macOS security matrix. Journey success alone is partial.
+SECURITY_SCENARIOS = (
+    'authorized_channel', 'wrong_image_same_uid', 'wrong_code_identity', 'cross_user',
+    'login_generation', 'helper_wrong_identity', 'helper_stale_endpoint', 'worker_direct_access',
+    'fake_server', 'malformed_empty', 'malformed_json', 'malformed_truncated',
+    'unknown_version', 'unknown_method', 'unknown_field', 'system_wire_limit', 'native_frame_limit',
+    'connection_repeat', 'connection_expiry', 'offer_tamper', 'offer_replay', 'offer_expiry',
+    'revocation_preopened', 'revocation_new_connection', 'revocation_active_process',
+    'restart_old_connection', 'refresh_preflight', 'refresh_after_stop',
+    'desktop_service', 'desktop_codex', 'host_crash', 'launcher_crash', 'retained_descendant',
+    'registration_failure', 'close_timeout', 'unknown_scope', 'process_scope_empty',
+    'legacy_challenge',
+)
+
+
+def security_matrix():
+    rows = {name: dict(status='notExecuted', reason='required native scenario not executed')
+            for name in SECURITY_SCENARIOS}
+    rows['cross_user']['reason'] = 'second real GUI login required; sudo -u is not evidence'
+    rows['login_generation']['reason'] = 'isolated logout/login and retained old request required'
+    rows['legacy_challenge'] = dict(status='notApplicable',
+        reason='IPC V7 has no challenge; NSXPC one-shot/5s lifetime and backend offer expiry replace it',
+        source='crates/execution-runner/src/{host.rs,macos_service.m}')
+    return dict(platform='macOS', scenarios=rows, status='notExecuted')
+
+
+def security_result(matrix, name, evidence):
+    if name not in matrix['scenarios'] or not evidence:
+        raise RuntimeError('security result requires a known scenario and actual evidence')
+    matrix['scenarios'][name] = dict(status='passed', evidence=evidence)
+
+
+def summarize_security(matrix):
+    statuses = [row['status'] for row in matrix['scenarios'].values()]
+    if 'failed' in statuses or matrix.get('failure'): status = 'failed'
+    elif 'notExecuted' in statuses: status = 'partial' if 'passed' in statuses else 'notExecuted'
+    else: status = 'passed'
+    matrix['status'] = status
+    return status
+
+
+class NativeProbe:
+    def __init__(self, binary, config, log):
+        self.process = subprocess.Popen([str(binary), '--config', str(config)], stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE, stderr=log, text=True)
+        self.exchange = BackendExchange(self.process, timeout=6)
+        try:
+            self.identity = self.exchange.read(time.monotonic() + 6)
+            if self.identity.get('ready') is not True: raise RuntimeError('native probe not ready')
+        except BaseException:
+            self.exchange.close()
+            raise
+        self.sequence = 0
+
+    def open(self, **values):
+        self.sequence += 1
+        connection = str(self.sequence)
+        result = self.exchange.command('open', connection=connection, **values)
+        if result.get('opened') is not True: raise RuntimeError('native connection open failed')
+        return connection
+
+    def send(self, connection, payload=b'', **values):
+        reply = self.exchange.command('send', connection=connection,
+            payload=base64.b64encode(payload).decode(), **values)
+        if 'error' in reply: raise RuntimeError('native probe control failed')
+        reply['payloadSha256'] = hashlib.sha256(payload).hexdigest()
+        if reply.get('transport') == 'reply' and reply.get('bytes'):
+            raw = base64.b64decode(reply['replyBase64'], validate=True)
+            try: reply['envelope'] = json.loads(raw)
+            except (ValueError, UnicodeError): pass
+        return reply
+
+    def close_connection(self, connection):
+        self.exchange.command('close', connection=connection)
+
+    def request(self, request):
+        # Typed baseline is emitted by the production wire owner. Mutations are explicit attacks.
+        envelope = dict(self.identity['baseline'], request=request)
+        connection = self.open()
+        try: return self.send(connection, json.dumps(envelope).encode())
+        finally: self.close_connection(connection)
+
+    def close(self):
+        self.exchange.close()
+
+
+def assert_native_reply(result, kind):
+    assert result.get('transport') == 'reply' and result.get('peerUid') == 0, 'authenticated native reply required'
+    assert result.get('envelope', {}).get('reply', {}).get('kind') == kind, 'unexpected native reply'
+
+
+def assert_connection_closed(result):
+    # A timeout alone does not prove refusal. The OS error or explicit empty reply is required.
+    assert result.get('transport') == 'error' or (
+        result.get('transport') == 'reply' and result.get('bytes') == 0), 'connection closure not proven'
+
+
+def native_transport_security(probe, matrix, query, command):
+    baseline = probe.request(dict(method='serviceStatus'))
+    assert_native_reply(baseline, 'serviceStatus')
+    security_result(matrix, 'authorized_channel', dict(identity=probe.identity, response=baseline))
+    before = query()
+    backend_before = command('status')['startRequests']
+    attacks = dict(
+        malformed_empty=b'', malformed_json=b'not-json', malformed_truncated=b'{"version":',
+        unknown_version=json.dumps(dict(probe.identity['baseline'], version=255)).encode(),
+        unknown_method=json.dumps(dict(probe.identity['baseline'], request=dict(method='unknown'))).encode(),
+        unknown_field=json.dumps(dict(probe.identity['baseline'], unknown=True)).encode(),
+    )
+    for name, payload in attacks.items():
+        connection = probe.open()
+        try:
+            response = probe.send(connection, payload)
+            assert_native_reply(response, 'rejected')
+            security_result(matrix, name, response)
+        finally: probe.close_connection(connection)
+    for name, length in [('system_wire_limit', 65537), ('native_frame_limit', 8*1024*1024+1)]:
+        connection = probe.open()
+        try:
+            response = probe.send(connection, b' ', length=length)
+            if name == 'system_wire_limit': assert_native_reply(response, 'rejected')
+            else: assert_connection_closed(response)
+            security_result(matrix, name, response)
+        finally: probe.close_connection(connection)
+    payload = json.dumps(probe.identity['baseline']).encode()
+    connection = probe.open()
+    try:
+        first = probe.send(connection, payload); assert_native_reply(first, 'serviceStatus')
+        second = probe.send(connection, payload); assert_connection_closed(second)
+        security_result(matrix, 'connection_repeat', dict(first=first, second=second))
+    finally: probe.close_connection(connection)
+    connection = probe.open()
+    try:
+        time.sleep(5.3)
+        response = probe.send(connection, payload); assert_connection_closed(response)
+        assert response['ageMs'] >= 5000
+        security_result(matrix, 'connection_expiry', response)
+    finally: probe.close_connection(connection)
+    for stale, name in [(False, 'helper_wrong_identity')]:
+        connection = probe.open()
+        try:
+            response = probe.exchange.command('registerHelper', connection=connection, stale=stale)
+            assert response.get('transport') == 'reply' and response.get('accepted') is False
+            security_result(matrix, name, response)
+        finally: probe.close_connection(connection)
+    # First prove the fake endpoint is actually reachable. The system lookup target is never unpinned.
+    connection = probe.open(target='fake', untrusted=True)
+    try:
+        fake = probe.send(connection, payload)
+        assert fake.get('peerUid') == 0 and fake.get('envelope') == dict(fake=True)
+    finally: probe.close_connection(connection)
+    connection = probe.open(target='fake')
+    try:
+        rejected = probe.send(connection, payload); assert_connection_closed(rejected)
+        security_result(matrix, 'fake_server', dict(reachable=fake, trustedPolicy=rejected))
+    finally: probe.close_connection(connection)
+    after = query()
+    assert after == before and command('status')['startRequests'] == backend_before, 'attack changed service facts'
+    healthy = probe.request(dict(method='serviceStatus')); assert_native_reply(healthy, 'serviceStatus')
+    matrix['attackBoundaryProof'] = dict(before=before, after=after, startRequests=backend_before, healthy=healthy)
+
+
+def offer_request(offer):
+    return dict(method='startTask', request=offer['request'], task=offer['task'],
+        attempt=offer['attempt'], revision=offer['revision'], origin=dict(kind='desktop'))
+
+
+def await_offer(query, task):
+    deadline = time.monotonic() + 15
+    while True:
+        available = [offer for offer in query()['available'] if offer['task'] == task]
+        if available: return available[0]
+        assert time.monotonic() < deadline, 'offer did not reach the authenticated service'
+        time.sleep(.05)
+
+
+def native_offer_security(probe, matrix, query, command, package, receipt, completed, effect):
+    prior = query()['available']
+    if prior:
+        command('cancel')
+        deadline=time.monotonic()+15
+        while query()['available']:
+            assert time.monotonic()<deadline, 'previous unselected catalog offer did not withdraw'
+            time.sleep(.1)
+    task = command('package', path=str(package), receipt=receipt, user=True)
+    offer = await_offer(query, task['task'])
+    request = offer_request(offer)
+    baseline = command('status')['startRequests']
+    for field, replacement in [('request', 'foreign-request'), ('attempt', str(uuid.uuid4())), ('revision', 'a'*64)]:
+        changed = dict(request, **{field: replacement})
+        response = probe.request(changed); assert_native_reply(response, 'rejected')
+    assert command('status')['startRequests'] == baseline
+    security_result(matrix, 'offer_tamper', dict(offer=offer, startRequests=baseline))
+    # Exact replay before dispatch is consumed is admitted idempotently; observe both native replies.
+    first = probe.request(request); assert_native_reply(first, 'queued')
+    second = probe.request(request)
+    assert second.get('transport')=='reply' and second.get('peerUid')==0
+    assert second.get('envelope',{}).get('reply',{}).get('kind') in ('queued','pending','status')
+    remote = completed(task['attempt'], 90)
+    matching = [r for r in query()['value']['items'] if r['action']['initiator'].get('attempt') == task['attempt']]
+    assert len(matching) == 1 and matching[0]['status']['attempts'] == 1
+    assert remote['startRequests'] == baseline+1
+    outcome = effect()
+    assert outcome['receiptPresent'] and outcome['payloadMatches']
+    security_result(matrix, 'offer_replay', dict(first=first, second=second, record=matching[0],
+        backend=remote, effect=outcome))
+    expiring = command('package', path=str(package), receipt=receipt, user=True, validitySeconds=6)
+    offer = await_offer(query, expiring['task']); request = offer_request(offer)
+    starts = command('status')['startRequests']
+    time.sleep(max(0, offer['expiresAt'] + .2 - time.time()))
+    # Expired offers may already have been removed; both closed business outcomes deny admission.
+    replies = [probe.request(request) for _ in range(2)]
+    for response in replies:
+        assert response.get('envelope', {}).get('reply', {}).get('kind') in ('rejected', 'unavailable')
+        assert response.get('transport') == 'reply' and response.get('peerUid') == 0
+    assert command('status')['startRequests'] == starts
+    assert not any(r['action']['initiator'].get('attempt') == expiring['attempt'] for r in query()['value']['items'])
+    security_result(matrix, 'offer_expiry', dict(offer=offer, replies=replies, startRequests=starts))
+
+
+def native_revocation_security(probe, matrix, query, command, package, receipt, protected):
+    marker, tail = protected/'revoke-started', protected/'revoke-tail'
+    active = command('script', timeout=60,
+        body="umask 022; printf '%s' \"$$\" > "+shlex.quote(str(marker))+
+            "; /bin/sleep 25; printf x > "+shlex.quote(str(tail))+"\n")
+    deadline = time.monotonic()+15
+    while not marker.exists():
+        assert time.monotonic()<deadline, 'revocation process did not start'
+        time.sleep(.05)
+    task = command('package', path=str(package), receipt=receipt, user=True)
+    offer = await_offer(query, task['task']); request = offer_request(offer)
+    starts = command('status')['startRequests']
+    connection = probe.open()
+    started = time.monotonic()
+    command('revoke')
+    while True:
+        status = probe.request(dict(method='serviceStatus'))
+        assert_native_reply(status, 'serviceStatus')
+        if status['envelope']['reply']['value']['readiness']['phase'] == 'notReady': break
+        assert time.monotonic()-started<4, 'revocation not observed inside the live connection window'
+        time.sleep(.05)
+    try:
+        response = probe.send(connection, json.dumps(dict(probe.identity['baseline'],request=request)).encode())
+        assert response['ageMs']<5000, 'connection expired before revocation assertion'
+        assert_native_reply(response, 'rejected')
+        security_result(matrix,'revocation_preopened',dict(response=response,readiness=status))
+    finally: probe.close_connection(connection)
+    response = probe.request(request); assert_native_reply(response, 'rejected')
+    security_result(matrix,'revocation_new_connection',response)
+    assert command('status')['startRequests']==starts, 'revoked caller created another attempt'
+    deadline=time.monotonic()+15
+    while True:
+        records=[row for row in query()['value']['items'] if row['action']['initiator'].get('attempt')==active['attempt']]
+        if records and records[0]['status']['process'] and records[0]['status']['process']['finished']: break
+        assert time.monotonic()<deadline, 'revoked physical process termination not recorded'
+        time.sleep(.1)
+    pid=int(marker.read_text())
+    try: os.kill(pid,0)
+    except ProcessLookupError: pass
+    else: raise AssertionError('revoked shell is still alive')
+    time.sleep(max(0,started+26-time.monotonic()))
+    assert not tail.exists(), 'revoked process reached its tail'
+    security_result(matrix,'revocation_active_process',dict(record=records[0],pidAbsent=pid,tailAbsent=True))
+
+
+def native_worker_security(probe, matrix, frozen, lab, untrusted_binary, config):
+    if not frozen.get('runtime'):
+        matrix['scenarios']['worker_direct_access']['reason']='fixed private worker runtime required'
+        return
+    directory=lab/'worker-attack';directory.mkdir(mode=0o700)
+    (directory/'probe-input.json').write_text(json.dumps(dict(binary=str(untrusted_binary),config=str(config),
+        payload=base64.b64encode(json.dumps(probe.identity['baseline']).encode()).decode())))
+    root=Path(__file__).resolve().parents[2]
+    source="""import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import {join} from 'node:path';
+import {createHash} from 'node:crypto';
+import {pathToFileURL} from 'node:url';
+const input=JSON.parse(process.argv[2]);
+const {WorkerPort,scopeAbsentWithin}=await import(pathToFileURL(join(input.root,'packages/ai-host/dist/process.js')));
+const {openSqliteStore}=await import(pathToFileURL(join(input.root,'packages/ai-store-sqlite/dist/index.js')));
+const {fixtureSession}=await import(pathToFileURL(join(input.root,'packages/ai-contract/dist/testing/index.js')));
+const storeResult=openSqliteStore({path:join(input.directory,'host.sqlite'),mode:'create'});
+assert.equal(storeResult.ok,true);const store=storeResult.value;
+const runtime={launcher:join(input.runtime,'bin/rss-ai-worker-launcher'),
+    manifestDigest:createHash('sha256').update(readFileSync(join(input.runtime,'worker-manifest.json'))).digest('hex')};
+const budget=()=>({timeoutMs:10000,signal:new AbortController().signal});
+const namespace=fixtureSession().namespace;
+const port=new WorkerPort(runtime,store,namespace,pathToFileURL(join(input.root,'tests/ai-host/provider.mjs')).href+'?scenario=direct_service_probe');
+let launches;
+try {
+    const started=await port.start({namespace,provider:'fake',config:{id:'security',revision:'1'},
+        workingDirectory:input.directory,permissions:'tools_disabled'},budget());
+    assert.equal(started.ok,true,JSON.stringify(started));
+    launches=await store.launches();assert.equal(launches.ok,true);assert.equal(launches.value.length,1);
+    const receipt=JSON.parse(readFileSync(join(input.directory,'probe-receipt.json')));
+    assert.equal(receipt.workerParent,launches.value[0].scope.root);
+    const closed=await port.close(budget());assert.equal(closed.ok,true,JSON.stringify(closed));
+    assert.equal(await scopeAbsentWithin(runtime,launches.value[0].scope,budget()),true);
+    console.log(JSON.stringify({receipt,launch:launches.value[0],scopeAbsent:true}));
+} finally {await port.close(budget());await store.close(budget());}
+"""
+    result=run(shutil.which('node'),'--input-type=module','-',json.dumps(dict(root=str(root),
+        directory=str(directory),runtime=frozen['runtime']['path'])),input=source,timeout=45)
+    evidence=json.loads(result.stdout)
+    response=evidence['receipt']['responses'][2]
+    assert_connection_closed(response)
+    security_result(matrix,'worker_direct_access',evidence)
+
+
+def native_stale_helper_security(probe, matrix, query, command, protected, prior, log_offset):
+    marker=protected/'stale-helper-effect'
+    starts=command('status')['startRequests']
+    task=command('script',user=True,body='printf x > '+shlex.quote(str(marker))+'\n')
+    deadline=time.monotonic()+15
+    while not command('status')['received']:
+        assert time.monotonic()<deadline, 'signed helper-bound task not received'
+        time.sleep(.1)
+    time.sleep(3)
+    assert command('status')['startRequests']==starts, 'stale helper admitted a new attempt'
+    assert not marker.exists()
+    assert not any(r['action']['initiator'].get('attempt')==task['attempt'] for r in query()['value']['items'])
+    matrix['staleHelperPending']=dict(task=task,baseline=prior,startRequests=starts,effectAbsent=True,logOffset=log_offset)
+
+
+def complete_native_security(probe, matrix, query, command, package, package_receipt, completed, effect,
+        protected, installer, binary, config, administrator):
+    native_offer_security(probe,matrix,query,command,package,package_receipt,completed,effect)
+    prior=query()
+    offset=(protected/'service-stderr.log').stat().st_size
+    run('/usr/bin/python3',str(installer),'remove','--scope','user','--binary',str(binary),'--config',str(config))
+    native_stale_helper_security(probe,matrix,query,command,protected,prior,offset)
+    results=administrator.command('refresh')
+    pending=matrix.pop('staleHelperPending')
+    diagnostics=results['driverDiagnostics'].encode()[offset:].decode(errors='replace')
+    assert 'RSS_HELPER_ENDPOINT_INVALID' in diagnostics, 'stale endpoint refusal boundary not observed'
+    security_result(matrix,'helper_stale_endpoint',dict(pending,diagnostic=diagnostics))
+    security_result(matrix,'refresh_preflight',results['preflight'])
+    security_result(matrix,'refresh_after_stop',results['afterStop'])
+    run('/usr/bin/python3',str(installer),'install','--scope','user','--binary',str(binary),'--config',str(config))
+    query()
+    native_revocation_security(probe,matrix,query,command,package,package_receipt,protected)
+
+
+def root_refresh_security(root, binary, config, installer_source):
+    # This whole program is frozen before elevation; only the owned experiment is modified.
+    import contextlib, copy, hashlib, io, json, os, plistlib, re, subprocess, time, uuid
+    from pathlib import Path
+    root,binary,config=Path(root),Path(binary),Path(config)
+    namespace={'__name__':'acceptance_owner'}
+    exec(compile(installer_source,'<fixed installation owner>','exec'),namespace)
+    plist=Path('/Library/LaunchDaemons/com.rss-mdm.agent.execution.plist')
+    original=plist.read_bytes(); document=json.loads(config.read_text())
+    args=[str(binary),'--config',str(config)]
+    assert plistlib.loads(original)['ProgramArguments']==args
+    identity_paths=[root/'state/identity-binding',root/'state/execution-initialized']
+    identity_paths.extend(p for p in (root/'state/secrets').rglob('*') if p.is_file())
+    identities={str(p):hashlib.sha256(p.read_bytes()).hexdigest() for p in identity_paths}
+    before_config=config.read_bytes()
+    endpoint='system/com.rss-mdm.agent.execution'
+    pid=namespace['verify_registered'](endpoint,args)
+    next_config=root/'refresh-candidate.json'
+    rows=[]
+    for name in ['mode','symlink','acl','hash','cdhash','version','ipc_version','tenant','origin','state_root','registration','marker']:
+        changed=copy.deepcopy(document); actual=next_config
+        next_config.write_text(json.dumps(changed));next_config.chmod(0o644)
+        held=None; copied_plist=None
+        try:
+            if name=='mode': next_config.chmod(0o666)
+            elif name=='symlink':
+                actual=root/'refresh-link';actual.symlink_to(next_config)
+            elif name=='acl': subprocess.run(['/bin/chmod','+a','everyone allow write',str(next_config)],check=True)
+            elif name in ['hash','cdhash']:
+                changed['service']['sha256' if name=='hash' else 'cdhash']='0'*(64 if name=='hash' else 40)
+            elif name in ['version','ipc_version']: changed[name]=255
+            elif name=='tenant': changed['tenant']=str(uuid.uuid4())
+            elif name=='origin': changed['origin']='https://localhost:1/'
+            elif name=='state_root': changed['state_root']=str(root/'other-state')
+            elif name=='marker':
+                held=identity_paths[0].with_suffix('.held');identity_paths[0].rename(held)
+            if name not in ['mode','symlink','acl']: next_config.write_text(json.dumps(changed))
+            target_plist=plist
+            if name=='registration':
+                copied_plist=root/'unknown.plist';value=plistlib.loads(original);value['Label']='other'
+                copied_plist.write_bytes(plistlib.dumps(value));copied_plist.chmod(0o600);target_plist=copied_plist
+            # Invalid candidates must fail before refresh can stop a running service.
+            if name in ['mode','symlink','acl','hash','cdhash','version','ipc_version']:
+                operation=lambda: namespace['candidate'](binary,actual)
+            else:
+                operation=lambda: namespace['refresh'](target_plist,'com.rss-mdm.agent.execution','system',endpoint,args,config,binary,actual)
+            try: operation()
+            except (RuntimeError,subprocess.CalledProcessError,FileNotFoundError) as error:
+                rows.append(dict(case=name,error=str(error),stderr=getattr(error,'stderr',None)))
+            else: raise AssertionError('refresh negative unexpectedly admitted: '+name)
+        finally:
+            if held: held.rename(identity_paths[0])
+            if copied_plist: copied_plist.unlink(missing_ok=True)
+            if actual!=next_config: actual.unlink(missing_ok=True)
+            subprocess.run(['/bin/chmod','-N',str(next_config)],check=True)
+            next_config.unlink(missing_ok=True)
+        assert namespace['verify_registered'](endpoint,args)==pid
+        assert plist.read_bytes()==original and config.read_bytes()==before_config
+        assert all(hashlib.sha256(Path(p).read_bytes()).hexdigest()==digest for p,digest in identities.items())
+    preflight=dict(rows=rows,originalPid=pid,configurationUnchanged=True,identityDigests=identities)
+    # Real launchd startup failure after the owner has stopped the original process.
+    changed=plistlib.loads(original);changed['UserName']='rss-no-such-user-'+uuid.uuid4().hex
+    plist.write_bytes(plistlib.dumps(changed));plist.chmod(0o600)
+    try:
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                namespace['refresh'](plist,'com.rss-mdm.agent.execution','system',endpoint,args,config,binary,config)
+        except (RuntimeError,subprocess.CalledProcessError) as error: failure=str(error)
+        else: failure='registration publication returned; readiness must still fail for nonexistent OS user'
+        try: os.kill(pid,0)
+        except ProcessLookupError: pass
+        else: raise AssertionError('post-stop negative did not stop the original process')
+        result=subprocess.run([str(binary),'--config',str(config),'--query'],capture_output=True,text=True)
+        assert result.returncode!=0 or json.loads(result.stdout)['reply']['kind']!='tasks'
+        assert config.read_bytes()==before_config
+        assert all(hashlib.sha256(Path(p).read_bytes()).hexdigest()==digest for p,digest in identities.items())
+        after_stop=dict(failure=failure,oldPidAbsent=pid,diagnostic=result.stderr,
+            registration=plistlib.loads(plist.read_bytes()),identityDigests=identities)
+    finally:
+        lookup=subprocess.run(['/bin/launchctl','print',endpoint],capture_output=True)
+        if lookup.returncode==0: subprocess.run(['/bin/launchctl','bootout',endpoint],check=True)
+        else: assert lookup.returncode==113
+        plist.write_bytes(original);plist.chmod(0o600)
+        subprocess.run(['/bin/launchctl','bootstrap','system',str(plist)],check=True)
+    return dict(preflight=preflight,afterStop=after_stop,driverDiagnostics=(root/'service-stderr.log').read_text())
+
+
+def login_security(args, frozen):
+    if not frozen or not args.deployment_config or not args.login_state:
+        raise RuntimeError('login phase requires candidate, deployment config and login state')
+    # Operate only on an already installed candidate in a dedicated acceptance environment.
+    document=json.loads(args.deployment_config.read_text())
+    expected=frozen['binaries']['securityProbe']
+    pins=[image for image in document['clients']['images'] if image['sha256']==expected['sha256']]
+    if len(pins)!=1 or document['service']['sha256']!=frozen['binaries']['service']['sha256']:
+        raise RuntimeError('login installation does not match the frozen candidate')
+    args.output.mkdir(mode=0o700,parents=True,exist_ok=False)
+    with (args.output/'probe.log').open('w') as log:
+        probe=NativeProbe(Path(pins[0]['path']),args.deployment_config,log)
+        matrix=security_matrix()
+        digest=hashlib.sha256(args.candidate.read_bytes()).hexdigest()
+        try:
+            if args.login_phase=='prepare':
+                healthy=probe.request(dict(method='tasks',after=None));assert_native_reply(healthy,'tasks')
+                offers=healthy['envelope']['reply']['available']
+                assert len(offers)==1 and offers[0]['expiresAt']>time.time()+300, 'fresh user offer required before login switch'
+                request=offer_request(offers[0])
+                request['origin']=dict(kind='ai',config=dict(id='security-login',revision='1'),
+                    conversation='security-login',toolCall='security-login')
+                proposed=probe.request(request);assert_native_reply(proposed,'queued')
+                assert proposed['envelope']['reply']['confirmationRequired'] is True
+                state=dict(candidateSha256=digest,identity=probe.identity,offer=offers[0],request=request,
+                    baseline=healthy,proposed=proposed)
+                fd=os.open(args.login_state,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)
+                with os.fdopen(fd,'w') as stream: json.dump(state,stream,indent=2)
+                matrix['checkpoint']=dict(phase='prepared',state=str(args.login_state),
+                    reason='operator must retain this owned service/backend and switch the real GUI login')
+            else:
+                state=json.loads(args.login_state.read_text())
+                assert state['candidateSha256']==digest, 'login candidate changed'
+                assert time.time()<state['offer']['expiresAt'], 'expired offer cannot prove a login boundary'
+                previous,current=state['identity'],probe.identity
+                if args.login_phase=='cross-user':
+                    assert previous['uid']!=current['uid'] and current['session']!=0, 'second real login required'
+                    name='cross_user'
+                else:
+                    assert previous['uid']==current['uid'] and previous['binding']!=current['binding'], 'real new login generation required'
+                    name='login_generation'
+                response=probe.request(state['request'])
+                assert_native_reply(response,'rejected')
+                security_result(matrix,name,dict(before=previous,after=current,original=state['proposed'],response=response))
+                # Record only this boundary. A rejection does not prove stale helper cleanup or other rows.
+            summarize_security(matrix)
+            (args.output/'receipt.json').write_text(json.dumps(dict(status=matrix['status'],security=matrix),indent=2))
+        except BaseException as error:
+            matrix['status']='failed';matrix['failure']=str(error)
+            (args.output/'receipt.json').write_text(json.dumps(dict(status='failed',security=matrix),indent=2))
+            raise
+        finally: probe.close()
 
 
 # ref: CPython Lib/selectors.py. Wait for actual pipe bytes, including incomplete lines;
@@ -195,7 +680,7 @@ def authorized_steps(programs, endpoint, expected_pid, expected_uid, deadline):
                 line = reader.readline(4097)
                 if not line: break
                 message = json.loads(line)
-                if len(line)>4096 or set(message)!={'id','operation'} or type(message['id']) is not int or message['id']!=sequence+1 or message['operation'] not in ('initialize','restart','cleanup'):
+                if len(line)>4096 or set(message)!={'id','operation'} or type(message['id']) is not int or message['id']!=sequence+1 or message['operation'] not in programs:
                     connection.sendall((json.dumps({'id':message.get('id'),'ok':False,'error':'invalid operation'})+'\n').encode())
                     break
                 sequence = message['id']
@@ -210,7 +695,7 @@ def authorized_steps(programs, endpoint, expected_pid, expected_uid, deadline):
 
 
 class AdministratorSession:
-    def __init__(self, setup, initialize, restart, cleanup, lab, password_file=None):
+    def __init__(self, setup, initialize, restart, cleanup, lab, password_file=None, security=None, refresh=None):
         password = read_authorization_password(password_file) if password_file else None
         self.directory = Path(tempfile.mkdtemp(prefix='rss-admin-', dir='/private/tmp'))
         self.endpoint = self.directory/'control'
@@ -222,6 +707,8 @@ class AdministratorSession:
         # System Python 3.9's macOS monotonic() has a per-process epoch.
         self.deadline = time.clock_gettime(time.CLOCK_MONOTONIC)+120
         programs = {'setup':setup.read_text(),'initialize':initialize.read_text(),'restart':restart.read_text(),'cleanup':cleanup.read_text()}
+        if security: programs['security'] = security.read_text()
+        if refresh: programs['refresh'] = refresh.read_text()
         source = 'import socket,ctypes,struct,io,contextlib,json,time\n' + inspect.getsource(peer_identity) + inspect.getsource(authorized_steps)
         source += 'authorized_steps('+repr(programs)+','+repr(str(self.endpoint))+','+str(os.getpid())+','+str(os.geteuid())+','+repr(self.deadline)+')\n'
         command = 'cd /private/tmp && /usr/bin/python3 -I -c ' + shlex.quote(source)
@@ -388,17 +875,25 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--desktop', type=Path)
     parser.add_argument('--candidate', type=Path, help='Frozen prebuilt inputs; no rebuilding or resigning')
+    parser.add_argument('--security', action='store_true', help='Run native attacks on this isolated fixed candidate')
+    parser.add_argument('--login-phase', choices=['prepare','cross-user','resume'])
+    parser.add_argument('--login-state', type=Path)
+    parser.add_argument('--deployment-config', type=Path)
     parser.add_argument('--dmg-upgrade-app', type=Path, help='Second approved notarized app version for the same exact target')
     parser.add_argument('--dmg-app', type=Path, help='Approved notarized .app to place in an exact local DMG; no signature bypass')
     parser.add_argument('--authorization-password-file', type=Path)
     args = parser.parse_args()
     frozen = verify_candidate(args.candidate) if args.candidate else None
+    if args.login_phase:
+        return login_security(args,frozen)
     if frozen:
         for name, field in [('service', 'binary'), ('backend', 'backend'), ('desktop', 'desktop')]:
             actual = getattr(args, field)
             expected = frozen['binaries'].get(name)
             if (actual is None) != (expected is None) or (actual is not None and str(actual.resolve()) != expected['path']):
                 raise RuntimeError('candidate argument mismatch')
+    if args.security and (not frozen or not frozen['binaries'].get('securityProbe') or not frozen['binaries'].get('untrustedProbe')):
+        raise RuntimeError('security matrix requires frozen approved and wrong-code probe identities')
     if os.uname().sysname != 'Darwin' or os.geteuid() == 0:
         raise RuntimeError('run this harness from the actual macOS user login')
     for domain in ['system/com.rss-mdm.agent.execution', f'gui/{os.geteuid()}/com.rss-mdm.agent.execution.user']:
@@ -413,9 +908,9 @@ def main():
     inputs = Path(tempfile.mkdtemp(prefix='rss-native-service-input-')).resolve()
     receipt_inputs = inputs
     receipt = dict(platform=os.uname().sysname, architecture=os.uname().machine,
-                   osVersion=run('/usr/bin/sw_vers','-productVersion').stdout.strip(), subject=dict(uid=os.geteuid(),session=run('/bin/launchctl','managername').stdout.strip()), candidate=frozen, journal=None, scenarios={}, sourceHead=run('/usr/bin/git', 'rev-parse', 'HEAD').stdout.strip())
+                   osVersion=run('/usr/bin/sw_vers','-productVersion').stdout.strip(), subject=dict(uid=os.geteuid(),session=run('/bin/launchctl','managername').stdout.strip()), candidate=frozen, journal=None, scenarios={}, security=security_matrix(), sourceHead=run('/usr/bin/git', 'rev-parse', 'HEAD').stdout.strip())
     installed = helper = False
-    administrator_session = backend = exchange = backend_log = proxy = proxy_thread = protected = None
+    administrator_session = backend = exchange = backend_log = proxy = proxy_thread = protected = native_probe = probe_log = None
     try:
         # Verify before copying. Installation must preserve these bytes and code identities.
         receipt['inputArtifacts'] = {field: candidate_identity(value) for field in ['binary','desktop'] if (value := getattr(args,field)) is not None}
@@ -527,6 +1022,48 @@ with os.fdopen(fd,'w') as stream: json.dump(config,stream); stream.flush(); os.f
             initializer = "subprocess.run([str(binary),'--config',str(path),'--initialize'],input='AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',text=True,check=True)\n"
             contents = contents.replace(initializer, '')
             setup.write_text(contents)
+        security = refresh = None
+        if args.security:
+            probe_source = Path(frozen['binaries']['securityProbe']['path'])
+            probe_binary = protected / 'security-probe'
+            contents = setup.read_text()
+            insertion = """probe=root/'security-probe'
+copy_candidate(%r,probe,%r)
+subprocess.run(['/usr/bin/codesign','--verify','--strict',str(probe)],check=True)
+config['clients']['images'].append(artifact(probe))
+""" % (str(probe_source), frozen['binaries']['securityProbe']['sha256'])
+            setup.write_text(contents.replace("path=root/'execution.json'", insertion + "path=root/'execution.json'"))
+            untrusted_source=Path(frozen['binaries']['untrustedProbe']['path'])
+            assert frozen['binaries']['untrustedProbe']['signature']['cdhash']!=frozen['binaries']['securityProbe']['signature']['cdhash'], 'wrong-code stimulus must have distinct native identity'
+            untrusted_binary=protected/'untrusted-probe'
+            contents=setup.read_text()
+            insertion="copy_candidate(%r,root/'untrusted-probe',%r)\n" % (
+                str(untrusted_source),frozen['binaries']['untrustedProbe']['sha256'])
+            setup.write_text(contents.replace("path=root/'execution.json'",insertion+"path=root/'execution.json'"))
+            security = lab/'fake-service.py'
+            security.write_text("""import json,plistlib,subprocess,os
+from pathlib import Path
+root=Path(%r);label='com.rss-mdm.agent.security.fake'
+endpoint='system/'+label
+assert subprocess.run(['/bin/launchctl','print',endpoint],capture_output=True).returncode==113, 'unknown fake registration'
+plist=root/'fake.plist'
+document=dict(Label=label,ProgramArguments=[%r,'--fake-service'],MachServices={label:True},
+    RunAtLoad=True,StandardErrorPath=str(root/'fake-stderr.log'))
+fd=os.open(plist,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)
+with os.fdopen(fd,'wb') as stream: plistlib.dump(document,stream)
+subprocess.run(['/bin/launchctl','bootstrap','system',str(plist)],check=True)
+print(json.dumps(dict(label=label,plist=str(plist))))
+""" % (str(protected),str(probe_binary)))
+            security.write_text(security.read_text().replace(
+                "print(json.dumps(dict(label=label,plist=str(plist))))",
+                """result=subprocess.run(%r,capture_output=True,text=True)
+assert result.returncode!=0 and 'remove the matching helper' in result.stderr, 'loaded helper did not block refresh'
+print(json.dumps(dict(label=label,plist=str(plist),helperGuard=result.stderr)))
+""" % frozen_installer(installer_source,['refresh','--scope','system','--binary',str(binary),
+                    '--config',str(config),'--candidate-binary',str(binary),'--candidate-config',str(config)])))
+            refresh=lab/'refresh-security.py'
+            refresh.write_text(inspect.getsource(root_refresh_security)+"\nimport json\nprint(json.dumps(root_refresh_security(%r,%r,%r,%r)))\n" %
+                (str(protected),str(binary),str(config),installer_source))
         cleanup = lab / 'remove.py'
         cleanup.write_text(inspect.getsource(journal_proof) + """import json,sqlite3,subprocess
 from pathlib import Path
@@ -540,6 +1077,18 @@ if journal.exists():
     if diagnostic.exists(): proof['driverDiagnostics']=diagnostic.read_text()[-32768:]
     print(json.dumps(proof))
 """ % (frozen_installer(installer_source, ['remove', '--scope', 'system', '--binary', str(binary), '--config', str(config)]), str(protected / 'state/execution.sqlite')))
+        if args.security:
+            cleanup.write_text("""import plistlib,subprocess
+from pathlib import Path
+plist=Path(%r)
+if plist.exists():
+    value=plistlib.loads(plist.read_bytes())
+    assert value['ProgramArguments']==[%r,'--fake-service'], 'fake registration owner mismatch'
+    result=subprocess.run(['/bin/launchctl','print','system/com.rss-mdm.agent.security.fake'],capture_output=True)
+    if result.returncode==0: subprocess.run(['/bin/launchctl','bootout','system/com.rss-mdm.agent.security.fake'],check=True)
+    else: assert result.returncode==113, 'fake registration lookup failed'
+    plist.unlink()
+""" % (str(protected/'fake.plist'),str(probe_binary)) + cleanup.read_text())
         if args.desktop:
             cleanup.write_text(cleanup.read_text() + """default=Path(%r)
 if default.exists():
@@ -583,7 +1132,8 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
         receipt['journal'] = str(protected / 'state/execution.sqlite')
         first = None if args.desktop else command('script', body='printf \'{"fixture":"system"}\\n\'\n')
         if not args.desktop: command('result_failure')
-        administrator_session = AdministratorSession(setup,initialize,restart,cleanup,lab,args.authorization_password_file)
+        administrator_session = AdministratorSession(setup,initialize,restart,cleanup,lab,args.authorization_password_file,
+            **(dict(security=security, refresh=refresh) if args.security else {}))
         administrator_session.start()
         installed = True
         if args.desktop and select.select([sys.stdin], [], [], 0)[0]:
@@ -628,6 +1178,19 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
                     return status
                 time.sleep(.2)
             raise RuntimeError('backend result deadline exceeded')
+        if args.security:
+            receipt['scenarios']['fake_registration'] = administrator_session.command('security')
+            probe_log = (lab/'security-probe.log').open('w')
+            native_probe = NativeProbe(probe_binary, config, probe_log)
+            rejected_probe=NativeProbe(untrusted_binary,config,probe_log)
+            try:
+                response=rejected_probe.request(dict(method='serviceStatus'))
+                assert_connection_closed(response)
+                before=native_probe.request(dict(method='serviceStatus'));assert_native_reply(before,'serviceStatus')
+                security_result(receipt['security'],'wrong_code_identity',dict(
+                    baseline=before,response=response,artifact=frozen['binaries']['untrustedProbe']))
+            finally: rejected_probe.close()
+            native_worker_security(native_probe,receipt['security'],frozen,lab,untrusted_binary,config)
         if args.desktop:
             payload = lab / 'payload'; payload.mkdir()
             (payload / 'fixed.txt').write_text('controlled package payload\n')
@@ -651,7 +1214,15 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
                 elif method == 'security':
                     value = rejected_image_probe(args.binary,binary,config)
                     receipt['scenarios']['wrong_image_same_uid'] = value
+                    security_result(receipt['security'], 'wrong_image_same_uid', value)
+                    if native_probe: native_transport_security(native_probe, receipt['security'], query, command)
                 elif method == 'status': value = command('status')
+                elif method == 'processSecurity':
+                    proof=request['proof']
+                    assert frozen and proof['runtimeTreeSha256']==frozen['runtime']['sha256'], 'process proof candidate mismatch'
+                    for name in ['host_crash','launcher_crash','retained_descendant','registration_failure','close_timeout','unknown_scope']:
+                        security_result(receipt['security'],name,proof['scenarios'][name])
+                    value=dict(recorded=True)
                 elif method == 'catalog':
                     value = command('package', path=str(pkg), receipt=package_receipt, user=True)
                     receipt['scenarios']['second_unexecuted_catalog_offer'] = value
@@ -677,12 +1248,21 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
             receipt['scenarios']['completion'] = completion
             receipt['scenarios']['native_final'] = query()
             receipt['scenarios']['backend_final'] = command('status')
+            security_result(receipt['security'],'desktop_service',completion)
+            security_result(receipt['security'],'desktop_codex',dict(finish=finish,candidate=frozen))
+            assert finish.get('processScopeEmpty') is True, 'native process cleanup not proven'
+            security_result(receipt['security'],'process_scope_empty',dict(finish=finish))
+            if native_probe:
+                complete_native_security(native_probe,receipt['security'],query,command,pkg,package_receipt,
+                    completed,effect,protected,installer,binary,config,administrator_session)
             receipt['status'] = 'passed'
             return
         receipt['scenarios']['authenticated_ipc'] = query()
         receipt['scenarios']['wrong_image_same_uid'] = rejected_image_probe(args.binary, binary, config)
+        security_result(receipt['security'], 'wrong_image_same_uid', receipt['scenarios']['wrong_image_same_uid'])
         system = completed(first['attempt'])
         validate_script(acknowledged_result(system, first['attempt']), 'system')
+        if native_probe: native_transport_security(native_probe, receipt['security'], query, command)
         assert system['resultCalls'] >= 2, 'the injected 503 must be followed by an acknowledged retry'
         receipt['scenarios']['system_script'] = system
         second = command('script', user=True, body='printf \'{"fixture":"user"}\\n\'\n')
@@ -819,7 +1399,13 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
         while not counter.exists():
             assert time.monotonic() < deadline, 'restart fixture did not start'
             time.sleep(.2)
+        old_connection = native_probe.open() if native_probe else None
         administrator_session.command('restart')
+        if native_probe:
+            response = native_probe.send(old_connection, json.dumps(native_probe.identity['baseline']).encode())
+            assert_connection_closed(response)
+            security_result(receipt['security'], 'restart_old_connection', response)
+            native_probe.close_connection(old_connection)
         time.sleep(3)
         reopened = query()
         records = [r for r in reopened['value']['items'] if r['action']['initiator'].get('attempt') == fifth['attempt']]
@@ -828,10 +1414,18 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
         assert records[0]['status']['phase'] == 'outcomeUnknown'
         receipt['scenarios']['restart_no_redispatch'] = records[0]
 
+        if native_probe:
+            def effect():
+                detected = subprocess.run(['/usr/sbin/pkgutil','--pkg-info-plist',package_receipt],capture_output=True)
+                payload_file=protected/'package-payload/fixed.txt'
+                return dict(receiptPresent=detected.returncode==0,payloadMatches=payload_file.exists() and payload_file.read_text()=='controlled package payload\n')
+            complete_native_security(native_probe,receipt['security'],query,command,pkg,package_receipt,
+                completed,effect,protected,installer,binary,config,administrator_session)
         receipt['status'] = 'passed'
     except BaseException as error:
         receipt['status'] = 'cancelled' if isinstance(error, (AuthorizationCancelled, InterruptedError)) else 'failed'
         receipt['error'] = str(error)
+        if args.security: receipt['security']['failure'] = str(error)
         if installed:
             try:
                 receipt['scenarios']['failure_snapshot'] = query()
@@ -844,9 +1438,18 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
     finally:
         if protected is not None and protected.exists(): installed = True
         cleanup_errors = []
+        if native_probe:
+            try: native_probe.close()
+            except BaseException as error: cleanup_errors.append(str(error))
+        if probe_log: probe_log.close()
         if helper:
             try:
-                run('/usr/bin/python3', str(installer), 'remove', '--scope', 'user', '--binary', str(binary), '--config', str(config))
+                helper_plist=Path.home()/'Library/LaunchAgents/com.rss-mdm.agent.execution.user.plist'
+                if helper_plist.exists():
+                    run('/usr/bin/python3', str(installer), 'remove', '--scope', 'user', '--binary', str(binary), '--config', str(config))
+                else:
+                    lookup=subprocess.run(['/bin/launchctl','print',f'gui/{os.geteuid()}/com.rss-mdm.agent.execution.user'],capture_output=True)
+                    assert lookup.returncode==113, 'helper registration missing its owned removal evidence'
             except BaseException as error:
                 cleanup_errors.append(str(error))
         if administrator_session and administrator_session.reader:
@@ -876,7 +1479,10 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
             try: verify_candidate(args.candidate)
             except BaseException as error:
                 receipt['status']='failed'; receipt['candidateError']=str(error)
-        receipt['unexecutedSecurity'] = ['cross-user/login-generation', 'fake-server', 'malformed/replay/expiry IPC', 'full revocation with old connections', 'refresh negative matrix', 'Windows 11 x64', 'real Codex private process chain']
+        receipt['journeyStatus'] = receipt.get('status', 'failed')
+        summarize_security(receipt['security'])
+        if receipt['journeyStatus'] == 'passed' and receipt['security']['status'] != 'passed':
+            receipt['status'] = 'partial'
         receipt['installationCreated'] = installed
         receipt['cleanup'] = 'incomplete' if cleanup_errors else 'complete'
         receipt['inputStaging'] = str(receipt_inputs)

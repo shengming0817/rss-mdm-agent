@@ -7,10 +7,7 @@ extern int rss_execution_stopping(void);
 extern int rss_execution_allow_helper(void *, uint32_t, uint32_t, uint32_t);
 extern int rss_execution_helper_active(void);
 static const NSUInteger RSS_FRAME_LIMIT = 8 * 1024 * 1024;
-@protocol RSSExecution
-- (void)execute:(NSData *)request reply:(void (^)(NSData *))reply;
-- (void)registerHelper:(NSXPCListenerEndpoint *)endpoint reply:(void (^)(BOOL))reply;
-@end
+#import "macos_ipc.h"
 @interface RSSHelperRegistration:NSObject
 @property(strong) NSXPCListenerEndpoint *endpoint;
 @property uint32_t pid;
@@ -206,6 +203,7 @@ int rss_execution_helper_query(const uint8_t *request,size_t length,uint32_t uid
             finished=YES;BOOL peerOk=connection.effectiveUserIdentifier==uid&&(uint32_t)connection.auditSessionIdentifier==session&&(uint32_t)connection.processIdentifier==entry.pid;
             [connection invalidate];
             if(!result||!peerOk||result.length>*capacity){
+                fprintf(stderr,"RSS_HELPER_ENDPOINT_INVALID uid=%u session=%u\n",uid,session);
                 @synchronized(values){if(values[key]==entry)[values removeObjectForKey:key];}
                 return -1;
             }

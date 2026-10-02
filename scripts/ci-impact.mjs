@@ -91,6 +91,7 @@ export const testOwners = [
   ["scripts/service/execution-macos.py", "agent-service"],
   ["scripts/service/verify-execution-macos.py", "agent-service"],
   ["scripts/service/verify-execution-macos.test.py", "agent-service"],
+  ["scripts/native-candidate.mjs", "execution-runner"],
   ["tests/assistant/service-fixtures.json", "execution-runner"],
   ["scripts/service/execution-windows.ps1", "agent-service"],
   ["scripts/service/verify-execution-windows.ps1", "agent-service"],

@@ -31,9 +31,12 @@ function image(path) {
   } else signature = { mode: "target-platform-pending" };
   return { path, sha256: sha256(readFileSync(path)), signature };
 }
-export function freezeCandidate(root, { service, backend, desktop, runtime }) {
+export function freezeCandidate(
+  root,
+  { service, backend, desktop, securityProbe, untrustedProbe, runtime },
+) {
   const binaries = Object.fromEntries(
-    Object.entries({ service, backend, desktop })
+    Object.entries({ service, backend, desktop, securityProbe, untrustedProbe })
       .filter(([, path]) => path)
       .map(([name, path]) => [name, image(path)]),
   );
@@ -116,10 +119,22 @@ if (
   } else if (verb === "freeze") {
     const options = {};
     for (let i = 0; i < arguments_.length; i += 2) {
-      const name = arguments_[i]?.replace(/^--/, "");
+      const rawName = arguments_[i]?.replace(/^--/, "");
+      const name =
+        {
+          "security-probe": "securityProbe",
+          "untrusted-probe": "untrustedProbe",
+        }[rawName] ?? rawName;
       assert.ok(
-        ["service", "backend", "desktop", "runtime", "output"].includes(name) &&
-          arguments_[i + 1],
+        [
+          "service",
+          "backend",
+          "desktop",
+          "securityProbe",
+          "untrustedProbe",
+          "runtime",
+          "output",
+        ].includes(name) && arguments_[i + 1],
       );
       assert.ok(!Object.hasOwn(options, name));
       options[name] = resolve(arguments_[i + 1]);

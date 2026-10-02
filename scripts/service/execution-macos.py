@@ -36,6 +36,12 @@ def candidate(binary, config):
     document = json.loads(config.read_text())
     if document['service']['path'] != str(binary) or not binary.is_file() or hashlib.sha256(binary.read_bytes()).hexdigest() != document['service']['sha256']:
         raise RuntimeError('refresh candidate image mismatch')
+    cdhash = document['service'].get('cdhash')
+    if not isinstance(cdhash, str) or not re.fullmatch(r'[0-9a-fA-F]{40}', cdhash):
+        raise RuntimeError('refresh candidate code identity is invalid')
+    # ref: codesign(1) --test-requirement; check the native identity before executing a candidate.
+    subprocess.run(['/usr/bin/codesign', '--verify', '--strict', '--test-requirement',
+        '=cdhash H"' + cdhash + '"', str(binary)], check=True, capture_output=True, text=True)
     result = subprocess.run([str(binary), '--config', str(config), '--validate-installation'], check=True, capture_output=True, text=True)
     value = json.loads(result.stdout)
     if value['version'] != 2 or value['ipc_version'] != 7 or value['service']['path'] != str(binary):
