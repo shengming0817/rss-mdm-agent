@@ -2,6 +2,7 @@ import {
   privateDirectory,
   validateDirectory,
   validateFile,
+  validateSingleLinkFile,
   validateOptionalFile,
   createPrivateFile,
 } from "@rss-mdm-agent/platform-private-storage";
@@ -208,7 +209,7 @@ function privatePath(options: StoreOptions): string {
   else validateDirectory(dirname(options.path));
   validateSidecars(options.path);
   if (options.mode === "create") createPrivateFile(options.path);
-  validateFile(options.path);
+  validateSingleLinkFile(options.path);
   return options.path;
 }
 

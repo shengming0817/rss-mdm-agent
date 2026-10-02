@@ -53,7 +53,7 @@ export function freezeCandidate(root, { service, backend, desktop, runtime }) {
             path: runtimeRoot,
             sha256: runtimeTreeSha256(runtimeRoot),
             manifestSha256: sha256(
-              readFileSync(resolve(runtimeRoot, "runtime-manifest.json")),
+              readFileSync(resolve(runtimeRoot, "manifest.json")),
             ),
           },
         }
@@ -85,9 +85,7 @@ export function verifyCandidate(root, path) {
   if (candidate.runtime) {
     verifyRuntimeIntegrity(candidate.runtime.path, candidate.runtime.sha256);
     assert.equal(
-      sha256(
-        readFileSync(resolve(candidate.runtime.path, "runtime-manifest.json")),
-      ),
+      sha256(readFileSync(resolve(candidate.runtime.path, "manifest.json"))),
       candidate.runtime.manifestSha256,
     );
   }

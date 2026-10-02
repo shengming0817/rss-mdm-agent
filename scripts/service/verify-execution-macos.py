@@ -887,6 +887,8 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
                 (inputs / leaf).unlink(missing_ok=True)
         if cleanup_errors:
             raise RuntimeError('acceptance cleanup incomplete')
+        if receipt.get('candidateError') and not receipt.get('error'):
+            raise RuntimeError('fixed candidate validation failed at closeout')
 
 
 

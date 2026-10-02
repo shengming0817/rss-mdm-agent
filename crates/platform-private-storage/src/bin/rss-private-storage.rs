@@ -17,6 +17,9 @@ fn run(args: &[std::ffi::OsString]) -> io::Result<()> {
         [verb, path] if verb == "validate-directory" => {
             platform_private_storage::PrivateDirectory::open(Path::new(path)).map(|_| ())
         }
+        [verb, path] if verb == "validate-single-link" => {
+            platform_private_storage::validate_single_link(Path::new(path))
+        }
         [verb, path] if verb == "validate-file" => {
             platform_private_storage::open_existing(Path::new(path)).map(|_| ())
         }

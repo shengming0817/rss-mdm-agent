@@ -109,3 +109,100 @@ pub fn random_bytes(length: usize) -> io::Result<Vec<u8>> {
 pub struct NonInteractiveGuard {
     _guard: security_framework::os::macos::keychain::KeychainUserInteractionLock,
 }
+
+#[cfg(target_os = "macos")]
+fn read_user_options(
+    options: security_framework::passwords::PasswordOptions,
+) -> io::Result<Vec<u8>> {
+    security_framework::passwords::generic_password(options).map_err(|e| {
+        if e.code() == -25300 {
+            io::ErrorKind::NotFound.into()
+        } else {
+            io::Error::other(e)
+        }
+    })
+}
+/// Search the current user's keychain list, preserving credentials outside the default keychain.
+#[cfg(target_os = "macos")]
+pub fn read_user_password(service: &str, account: &str) -> io::Result<Vec<u8>> {
+    if unsafe { libc::geteuid() } == 0 {
+        return Err(io::ErrorKind::PermissionDenied.into());
+    }
+    read_user_options(
+        security_framework::passwords::PasswordOptions::new_generic_password(service, account),
+    )
+}
+/// Add to the current default user keychain only when no searchable item already exists.
+#[cfg(target_os = "macos")]
+pub fn create_user_password(service: &str, account: &str, bytes: &[u8]) -> io::Result<()> {
+    match read_user_password(service, account) {
+        Ok(_) => Err(io::ErrorKind::AlreadyExists.into()),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {
+            Keychain::open(Scope::User)?.create_new(service, account, bytes)
+        }
+        Err(e) => Err(e),
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    use super::*;
+    use core_foundation::{array::CFArray, base::TCFType, string::CFString};
+    use security_framework::passwords::PasswordOptions;
+    use security_framework_sys::item::kSecMatchSearchList;
+    struct Isolated(std::path::PathBuf);
+    impl Drop for Isolated {
+        fn drop(&mut self) {
+            for name in ["old.keychain", "new.keychain"] {
+                let _ = std::process::Command::new("/usr/bin/security")
+                    .arg("delete-keychain")
+                    .arg(self.0.join(name))
+                    .output();
+            }
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    #[test]
+    #[allow(deprecated)] // Upstream exposes no setter for the test's explicit isolated search list.
+    fn a_changed_default_does_not_hide_a_secret_in_the_isolated_search_list() {
+        let root = std::env::temp_dir()
+            .canonicalize()
+            .unwrap()
+            .join(format!("user-keychains-{}", std::process::id()));
+        std::fs::create_dir(&root).unwrap();
+        let _cleanup = Isolated(root.clone());
+        let _interaction = Keychain::disable_interaction().unwrap();
+        let old =
+            Keychain::create_file(&root.join("old.keychain"), "isolated-test-password").unwrap();
+        let new =
+            Keychain::create_file(&root.join("new.keychain"), "isolated-test-password").unwrap();
+        old.create_new("isolated-continuity", "master", b"original-key")
+            .unwrap();
+        assert_eq!(
+            new.read("isolated-continuity", "master")
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::NotFound
+        );
+        for search in [
+            [old.0.clone(), new.0.clone()],
+            [new.0.clone(), old.0.clone()],
+        ] {
+            let mut options =
+                PasswordOptions::new_generic_password("isolated-continuity", "master");
+            // Same SecItem query as production, constrained to two isolated chains rather than personal data.
+            options.query.push((
+                unsafe { CFString::wrap_under_get_rule(kSecMatchSearchList) },
+                CFArray::from_CFTypes(&search).as_CFType(),
+            ));
+            assert_eq!(read_user_options(options).unwrap(), b"original-key");
+        }
+        assert!(old
+            .create_new("isolated-continuity", "master", b"replacement")
+            .is_err());
+        assert_eq!(
+            old.read("isolated-continuity", "master").unwrap(),
+            b"original-key"
+        );
+    }
+}

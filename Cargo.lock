@@ -101,7 +101,6 @@ dependencies = [
  "quick-xml",
  "ring",
  "rusqlite",
- "security-framework",
  "serde",
  "serde_json",
  "sha2",
@@ -3297,8 +3296,10 @@ checksum = "f6b464fbc74e149a392436b17d523f769e057cb6877f6a5c4618bc6f11800548"
 name = "platform-credentials"
 version = "0.1.0"
 dependencies = [
+ "core-foundation",
  "libc",
  "security-framework",
+ "security-framework-sys",
  "windows-sys 0.61.2",
 ]
 

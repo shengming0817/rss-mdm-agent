@@ -223,3 +223,19 @@ pub fn sync_parent(path: &Path) -> io::Result<()> {
     let (dir, _) = parent(path)?;
     dir.sync()
 }
+
+/// Require a unique pathname for consumers whose journal naming cannot tolerate hard-link aliases.
+/// No such restriction applies to the transient two-link no-replace publication operation.
+pub fn validate_single_link(path: &Path) -> io::Result<()> {
+    let file = open_existing(path)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if file.metadata()?.nlink() != 1 {
+            return Err(io::Error::other("private file aliases"));
+        }
+    }
+    #[cfg(windows)]
+    win::single_link(&file)?;
+    Ok(())
+}

@@ -365,3 +365,14 @@ pub fn open_writable(path: &Path) -> io::Result<File> {
     self::file(&file)?;
     Ok(file)
 }
+
+pub fn single_link(file: &File) -> io::Result<()> {
+    let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+    if unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut info) } == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    if info.nNumberOfLinks != 1 {
+        return Err(io::Error::other("private file aliases"));
+    }
+    Ok(())
+}

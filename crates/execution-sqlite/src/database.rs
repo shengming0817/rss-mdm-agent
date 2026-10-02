@@ -279,13 +279,6 @@ fn check_metadata(path: &Path, directory: bool) -> Result<(), Error> {
     {
         return Err(Error::Storage);
     }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        if metadata.permissions().mode() & 0o077 != 0 {
-            return Err(Error::Storage);
-        }
-    }
     platform_private_storage::validate(path).map_err(|_| Error::Storage)?;
     Ok(())
 }

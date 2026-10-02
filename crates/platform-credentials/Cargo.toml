@@ -12,3 +12,7 @@ libc = "=0.2.189"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Security_Cryptography"] }
+
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+core-foundation = "=0.10.1"
+security-framework-sys = "=2.17.0"

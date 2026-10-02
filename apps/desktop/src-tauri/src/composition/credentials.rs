@@ -23,19 +23,14 @@ pub struct Keychain;
 #[cfg(target_os = "macos")]
 impl KeyBackend for Keychain {
     fn read(&self) -> std::result::Result<Option<Vec<u8>>, KeyUnavailable> {
-        match platform_credentials::Keychain::open(platform_credentials::Scope::User)
-            .map_err(|_| KeyUnavailable)?
-            .read(SERVICE, ACCOUNT)
-        {
+        match platform_credentials::read_user_password(SERVICE, ACCOUNT) {
             Ok(value) => Ok(Some(value)),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(_) => Err(KeyUnavailable),
         }
     }
     fn create(&self, key: &[u8]) -> std::result::Result<(), KeyUnavailable> {
-        platform_credentials::Keychain::open(platform_credentials::Scope::User)
-            .map_err(|_| KeyUnavailable)?
-            .create_new(SERVICE, ACCOUNT, key)
+        platform_credentials::create_user_password(SERVICE, ACCOUNT, key)
             .map_err(|_| KeyUnavailable)
     }
 }

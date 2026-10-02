@@ -44,3 +44,7 @@ export function validateOptionalFile(path: string): void {
 export function createPrivateFile(path: string): void {
   invoke(["create-new", path]);
 }
+
+export function validateSingleLinkFile(path: string): void {
+  invoke(["validate-single-link", path]);
+}
