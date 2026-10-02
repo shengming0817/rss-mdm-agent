@@ -20,6 +20,7 @@ test("AI boundary gate covers app dependencies, builtins and computed imports", 
   t.after(() => rmSync(fixture, { recursive: true, force: true }));
   for (const target of [
     "packages/execution-bindings",
+    "packages/platform-private-storage",
     "packages/ai-contract",
     "packages/ai-host",
     "packages/ai-access",

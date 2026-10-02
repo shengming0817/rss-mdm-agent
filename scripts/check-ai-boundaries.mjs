@@ -14,12 +14,14 @@ const allowed = {
     "@rss-mdm-agent/ai-contract",
     "@rss-mdm-agent/ai-host",
     "@rss-mdm-agent/ai-store-sqlite",
+    "@rss-mdm-agent/platform-private-storage",
     "@rss-mdm-agent/ai-access",
     "@rss-mdm-agent/ai-adapter-claude",
     "@rss-mdm-agent/ai-adapter-codex",
     "@rss-mdm-agent/ai-adapter-deepseek",
     ...Object.keys(appExternalDependencies),
   ],
+  "packages/platform-private-storage": [],
   "packages/ai-host": ["@rss-mdm-agent/ai-contract"],
   "packages/ai-contract": ["@noble/hashes", "canonicalize", "jsonc-parser"],
   "packages/ai-access": [
@@ -82,14 +84,12 @@ for (const [file, imports] of Object.entries({
     "node:https",
     "node:net",
   ],
-  "private-file.ts": [
-    "node:fs",
-    "node:fs/promises",
-    "node:path",
-    "node:child_process",
-  ],
 }))
   serverFiles.set(join(root, "apps/ai-host/src", file), imports);
+serverFiles.set(join(root, "packages/platform-private-storage/src/index.ts"), [
+  "node:child_process",
+  "node:path",
+]);
 const runtimeEdges = new Map();
 function walk(path) {
   return readdirSync(path, { withFileTypes: true }).flatMap((e) =>

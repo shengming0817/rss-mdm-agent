@@ -425,7 +425,7 @@ fn deployment(
     if request.operation == WorkerOperation::Detect {
         return Ok(result(0, Some(observation(&manager, msix)?), String::new()));
     }
-    if native_process::os_version::current()? < msix.minimum_os
+    if crate::os_version::current()? < msix.minimum_os
         || (msix.require_sideload && !sideload_allowed()?)
     {
         return Err(Error::Unsupported);

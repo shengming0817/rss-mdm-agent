@@ -170,7 +170,7 @@ impl<S: SecretProvider, C: Clock> Client<S, C> {
             return Err(Error::Capacity);
         }
         let root = self.store.root.join("content");
-        native_process::private_storage::directory(&root)?;
+        platform_private_storage::directory(&root)?;
         if root.canonicalize()? != root {
             return Err(Error::Storage);
         }
@@ -227,7 +227,7 @@ impl<S: SecretProvider, C: Clock> Client<S, C> {
         let mut file = if partial.try_exists()? {
             open(&partial, true)?
         } else {
-            native_process::private_storage::create_new(&partial)?
+            platform_private_storage::create_new(&partial)?
         };
         file.try_lock_exclusive().map_err(|_| Error::Storage)?;
         let mut offset = file.metadata()?.len();
@@ -338,7 +338,7 @@ impl<S: SecretProvider, C: Clock> Client<S, C> {
             return Err(Error::Untrusted);
         }
         file.sync_all()?;
-        native_process::private_storage::replace(&partial, &path)?;
+        platform_private_storage::replace(&partial, &path)?;
         FileExt::unlock(&file)?;
         // create_new is write-only; return a separately opened read handle.
         let file = open(&path, false)?;

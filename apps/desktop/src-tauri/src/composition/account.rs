@@ -128,7 +128,7 @@ impl Organizations {
         let path = root.join("organizations.json");
         let mut values: Vec<Organization> = if path.exists() {
             serde_json::from_slice(
-                &native_process::private_storage::read(&path, 65536).map_err(|_| unavailable())?,
+                &platform_private_storage::read(&path, 65536).map_err(|_| unavailable())?,
             )
             .map_err(|_| unavailable())?
         } else {
@@ -201,11 +201,11 @@ impl Organizations {
         }
         let temporary = self.path.with_extension(format!("{}.tmp", Uuid::new_v4()));
         let result = (|| {
-            let mut file = native_process::private_storage::create_new(&temporary)?;
+            let mut file = platform_private_storage::create_new(&temporary)?;
             file.write_all(&bytes)?;
             file.sync_all()?;
             drop(file);
-            native_process::private_storage::replace(&temporary, &self.path)?;
+            platform_private_storage::replace(&temporary, &self.path)?;
             Ok::<_, Box<dyn std::error::Error>>(())
         })();
         if result.is_err() {
@@ -624,7 +624,7 @@ mod tests {
     fn default_is_not_persisted_and_all_read_paths_use_the_same_effective_list() {
         let root =
             std::env::temp_dir().join(format!("rss-default-organization-{}", Uuid::new_v4()));
-        native_process::private_storage::directory(&root).unwrap();
+        platform_private_storage::directory(&root).unwrap();
         let mut default = organization();
         normalize_organization(&mut default).unwrap();
         let mut store = Organizations::open(&root, Some(default.clone())).unwrap();
@@ -678,7 +678,7 @@ mod tests {
     #[test]
     fn organization_count_does_not_limit_reopening_or_changing_defaults() {
         let root = std::env::temp_dir().join(format!("rss-default-capacity-{}", Uuid::new_v4()));
-        native_process::private_storage::directory(&root).unwrap();
+        platform_private_storage::directory(&root).unwrap();
         let mut store = Organizations::open(&root, None).unwrap();
         for i in 0..40 {
             let mut value = organization();
@@ -733,7 +733,7 @@ mod tests {
     #[test]
     fn organizations_reopen_normalized_records_and_refuse_corrupt_or_oversized_storage() {
         let root = std::env::temp_dir().join(format!("rss-organizations-{}", Uuid::new_v4()));
-        native_process::private_storage::directory(&root).unwrap();
+        platform_private_storage::directory(&root).unwrap();
         let mut store = Organizations::open(&root, None).unwrap();
         let saved = store.save(organization()).unwrap();
         let reopened = Organizations::open(&root, None)
@@ -753,7 +753,7 @@ mod tests {
     fn failed_destination_replacement_preserves_live_and_previous_persisted_configuration() {
         let root =
             std::env::temp_dir().join(format!("rss-organization-replace-{}", Uuid::new_v4()));
-        native_process::private_storage::directory(&root).unwrap();
+        platform_private_storage::directory(&root).unwrap();
         let mut store = Organizations::open(&root, None).unwrap();
         let saved = store.save(organization()).unwrap();
         let original = std::fs::read(root.join("organizations.json")).unwrap();

@@ -1,8 +1,8 @@
 //! Immutable device credentials protected by the actual OS account and key store.
 //! ref: security-framework src/os/macos/passwords.rs (add, never set/update).
-use crate::private_storage as files;
 #[cfg(target_os = "macos")]
-use security_framework::os::macos::keychain::{SecKeychain, SecPreferencesDomain};
+use platform_credentials::{Keychain, Scope};
+use platform_private_storage as files;
 use sha2::{Digest, Sha256};
 use std::{
     io,
@@ -16,7 +16,7 @@ pub struct SecretStore {
     root: PathBuf,
     namespace: String,
     #[cfg(target_os = "macos")]
-    keychain: SecKeychain,
+    keychain: Keychain,
     access: Mutex<()>,
 }
 
@@ -51,12 +51,7 @@ mod tests {
             root: root.clone(),
         };
         let password = "controlled-keychain-test-password-not-a-device-secret";
-        let mut keychain = security_framework::os::macos::keychain::CreateOptions::new()
-            .password(password)
-            .prompt_user(false)
-            .create(&isolated.path)
-            .unwrap();
-        keychain.unlock(Some(password)).unwrap();
+        let keychain = Keychain::create_file(&isolated.path, password).unwrap();
         let store = SecretStore {
             root: root.clone(),
             namespace: "a".repeat(64),
@@ -103,10 +98,10 @@ impl SecretStore {
             return Err(denied());
         }
         #[cfg(target_os = "macos")]
-        let keychain = SecKeychain::default_for_domain(if unsafe { libc::geteuid() } == 0 {
-            SecPreferencesDomain::System
+        let keychain = Keychain::open(if unsafe { libc::geteuid() } == 0 {
+            Scope::System
         } else {
-            SecPreferencesDomain::User
+            Scope::User
         })
         .map_err(|_| denied())?;
         Ok(Self {
@@ -135,20 +130,13 @@ impl SecretStore {
     }
     #[cfg(target_os = "macos")]
     fn read_inner(&self, account: &str) -> io::Result<Zeroizing<Vec<u8>>> {
-        let interaction = SecKeychain::user_interaction_allowed().map_err(|_| denied())?;
-        let _guard = if interaction {
-            Some(SecKeychain::disable_user_interaction().map_err(|_| denied())?)
-        } else {
-            None
-        };
-        match self
-            .keychain
-            .find_generic_password("RSS MDM Agent device", account)
-        {
-            Ok((secret, _)) if secret.len() == 32 => Ok(Zeroizing::new(secret.to_vec())),
-            Err(e) if e.code() == -25300 => Err(io::ErrorKind::NotFound.into()),
-            _ => Err(denied()),
-        }
+        self.keychain.without_interaction(|| {
+            match self.keychain.read("RSS MDM Agent device", account) {
+                Ok(secret) if secret.len() == 32 => Ok(Zeroizing::new(secret)),
+                Err(e) if e.kind() == io::ErrorKind::NotFound => Err(e),
+                _ => Err(denied()),
+            }
+        })
     }
     #[cfg(windows)]
     fn read_inner(&self, account: &str) -> io::Result<Zeroizing<Vec<u8>>> {
@@ -156,7 +144,7 @@ impl SecretStore {
             .root
             .join(format!("{:x}.dpapi", Sha256::digest(account.as_bytes())));
         let encrypted = files::read(&path, 65536)?;
-        let bytes = Zeroizing::new(files::unprotect_key(&encrypted)?);
+        let bytes = Zeroizing::new(platform_credentials::unprotect_key(&encrypted)?);
         if bytes.len() != account.len() + 1 + 32
             || bytes.get(..account.len()) != Some(account.as_bytes())
             || bytes[account.len()] != 0
@@ -175,14 +163,11 @@ impl SecretStore {
         }
         #[cfg(target_os = "macos")]
         {
-            let interaction = SecKeychain::user_interaction_allowed().map_err(|_| denied())?;
-            let _guard = if interaction {
-                Some(SecKeychain::disable_user_interaction().map_err(|_| denied())?)
-            } else {
-                None
-            };
             self.keychain
-                .add_generic_password("RSS MDM Agent device", account, secret)
+                .without_interaction(|| {
+                    self.keychain
+                        .create_new("RSS MDM Agent device", account, secret)
+                })
                 .map_err(|_| denied())
         }
         #[cfg(windows)]
@@ -190,7 +175,7 @@ impl SecretStore {
             let mut bytes = Zeroizing::new(account.as_bytes().to_vec());
             bytes.push(0);
             bytes.extend_from_slice(secret);
-            let encrypted = files::protect_key(&bytes)?;
+            let encrypted = platform_credentials::protect_key(&bytes)?;
             files::write_new(
                 &self
                     .root
@@ -224,26 +209,15 @@ impl SecretStore {
             .join(format!("{:x}.lock", Sha256::digest(account.as_bytes())));
         let file = match files::create_new(&path) {
             Ok(file) => file,
-            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
-                files::validate(&path)?;
-                std::fs::File::open(&path)?
-            }
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => files::open_existing(&path)?,
             Err(e) => return Err(e),
         };
         file.try_lock_exclusive()?;
         match self.read_inner(&account) {
             Ok(value) => Ok(value),
             Err(e) if e.kind() == io::ErrorKind::NotFound => {
-                #[cfg(target_os = "macos")]
-                let value = {
-                    let mut v = Zeroizing::new(vec![0; 32]);
-                    security_framework::random::SecRandom::default()
-                        .copy_bytes(&mut v)
-                        .map_err(|_| denied())?;
-                    v
-                };
-                #[cfg(windows)]
-                let value = Zeroizing::new(files::random_key()?);
+                #[cfg(any(target_os = "macos", windows))]
+                let value = Zeroizing::new(platform_credentials::random_bytes(32)?);
                 #[cfg(not(any(target_os = "macos", windows)))]
                 return Err(denied());
                 #[cfg(any(target_os = "macos", windows))]

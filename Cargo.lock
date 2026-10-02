@@ -60,7 +60,7 @@ dependencies = [
  "fs2",
  "futures-util",
  "libc",
- "native-process",
+ "platform-private-storage",
  "reqwest",
  "ring",
  "rss-mdm-agent-wire",
@@ -91,9 +91,12 @@ dependencies = [
  "execution-lifecycle",
  "execution-runner",
  "execution-sqlite",
+ "fs2",
  "installation-security",
  "libc",
  "native-process",
+ "platform-credentials",
+ "platform-private-storage",
  "plist",
  "quick-xml",
  "ring",
@@ -1196,6 +1199,7 @@ dependencies = [
  "installation-security",
  "libc",
  "native-process",
+ "platform-private-storage",
  "plist",
  "rss-mdm-resource",
  "rusqlite",
@@ -1220,7 +1224,7 @@ dependencies = [
  "execution-contract",
  "execution-interaction",
  "execution-lifecycle",
- "native-process",
+ "platform-private-storage",
  "rusqlite",
  "schemars 1.2.2",
  "serde",
@@ -2684,15 +2688,12 @@ dependencies = [
 name = "native-process"
 version = "0.1.0"
 dependencies = [
- "fs2",
  "libc",
  "schemars 1.2.2",
- "security-framework",
  "serde",
  "serde_json",
  "sha2",
  "windows-sys 0.61.2",
- "zeroize",
 ]
 
 [[package]]
@@ -3292,6 +3293,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f6b464fbc74e149a392436b17d523f769e057cb6877f6a5c4618bc6f11800548"
 
 [[package]]
+name = "platform-credentials"
+version = "0.1.0"
+dependencies = [
+ "core-foundation",
+ "libc",
+ "security-framework",
+ "security-framework-sys",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "platform-private-storage"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "plist"
 version = "1.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3785,11 +3805,12 @@ dependencies = [
  "objc2",
  "objc2-app-kit",
  "objc2-foundation",
+ "platform-credentials",
+ "platform-private-storage",
  "proc-macro2",
  "reqwest",
  "rusqlite",
  "schemars 1.2.2",
- "security-framework",
  "serde",
  "serde_json",
  "sha2",

@@ -34,11 +34,20 @@ import {
   waitForAppearance,
 } from "./native-evidence.mjs";
 import { developmentFingerprint } from "./desktop-dev-runtime.mjs";
+import { verifyCandidate } from "./native-candidate.mjs";
 import { verifyRuntimeIntegrity } from "./ai-host-artifacts.mjs";
 
 const visualOnly = process.argv.includes("--visual");
 const baseline = process.argv.includes("--baseline");
 const controlledService = process.argv.includes("--controlled-service");
+const candidateIndex = process.argv.indexOf("--candidate");
+const candidatePath =
+  candidateIndex < 0 ? undefined : process.argv[candidateIndex + 1];
+assert.ok(
+  candidateIndex < 0 || (controlledService && candidatePath),
+  "candidate requires controlled-service mode",
+);
+
 const passwordFileIndex = process.argv.indexOf("--authorization-password-file");
 const authorizationPasswordFile =
   passwordFileIndex < 0 ? undefined : process.argv[passwordFileIndex + 1];
@@ -439,36 +448,51 @@ try {
       { cwd: root, env, detached: true, stdio: ["ignore", "pipe", "pipe"] },
     );
   } else {
-    mark("prepare fixed native production candidate");
-    for (const [command, args] of [
-      ["pnpm", ["build:ai-access"]],
-      ["pnpm", ["--filter", "@rss-mdm-agent/desktop", "build"]],
-      [
-        process.execPath,
-        [
-          join(root, "scripts/desktop-dev-runtime.mjs"),
-          "--prepare",
-          root,
-          join(root, ".local-ci-runs/ai-host-dev-runtime"),
-          "build",
-        ],
-      ],
-      ["pnpm", ["desktop:build", "--native-acceptance"]],
-      [
-        "cargo",
-        [
-          "build",
-          "--locked",
-          "--release",
-          "-p",
-          "agent-service",
-          "--example",
-          "controlled-backend",
-          "--bin",
-          "rss-execution-service",
-        ],
-      ],
-    ])
+    const candidate = candidatePath
+      ? verifyCandidate(root, candidatePath)
+      : undefined;
+    if (candidate)
+      assert.ok(
+        candidate.binaries.desktop && candidate.runtime,
+        "desktop and runtime candidate required",
+      );
+    result.candidate = candidate;
+    mark(
+      candidate
+        ? "verify prebuilt frozen candidate"
+        : "prepare fixed native production candidate",
+    );
+    for (const [command, args] of candidate
+      ? []
+      : [
+          ["pnpm", ["build:ai-access"]],
+          ["pnpm", ["--filter", "@rss-mdm-agent/desktop", "build"]],
+          [
+            process.execPath,
+            [
+              join(root, "scripts/desktop-dev-runtime.mjs"),
+              "--prepare",
+              root,
+              join(root, ".local-ci-runs/ai-host-dev-runtime"),
+              "build",
+            ],
+          ],
+          ["pnpm", ["desktop:build", "--native-acceptance"]],
+          [
+            "cargo",
+            [
+              "build",
+              "--locked",
+              "--release",
+              "-p",
+              "agent-service",
+              "--example",
+              "controlled-backend",
+              "--bin",
+              "rss-execution-service",
+            ],
+          ],
+        ])
       assert.equal(
         await runPreparation(command, args, root, env),
         0,
@@ -487,13 +511,17 @@ try {
       [
         join(root, "scripts/service/verify-execution-macos.py"),
         "--binary",
-        join(cargoTargetDir(root), "release/rss-execution-service"),
+        candidate?.binaries.service.path ??
+          join(cargoTargetDir(root), "release/rss-execution-service"),
         "--backend",
-        join(cargoTargetDir(root), "release/examples/controlled-backend"),
+        candidate?.binaries.backend.path ??
+          join(cargoTargetDir(root), "release/examples/controlled-backend"),
         "--desktop",
-        join(cargoTargetDir(root), "debug/rss-mdm-desktop"),
+        candidate?.binaries.desktop.path ??
+          join(cargoTargetDir(root), "debug/rss-mdm-desktop"),
         "--output",
         serviceEvidence,
+        ...(candidatePath ? ["--candidate", candidatePath] : []),
         ...(authorizationPasswordFile
           ? ["--authorization-password-file", authorizationPasswordFile]
           : []),
@@ -547,7 +575,10 @@ try {
     assert.equal(probe.phase, "connected");
     assert.equal(probe.status.readiness.phase, "ready");
     assert.equal((await serviceCall("status")).startRequests, 0);
-    env.RSS_AI_HOST_RUNTIME = join(root, ".local-ci-runs/ai-host-dev-runtime");
+    env.RSS_AI_HOST_RUNTIME =
+      candidate?.runtime.path ??
+      join(root, ".local-ci-runs/ai-host-dev-runtime");
+    result.security = await serviceCall("security");
     mark("launch protected fixed production main as the actual login user");
     child = spawn(serviceReady.desktop, ["--test-data-dir", directory], {
       cwd: root,
@@ -623,7 +654,8 @@ try {
       return false;
     }
   });
-  const artifact = join(root, ".local-ci-runs/ai-host-dev-runtime");
+  const artifact =
+    env.RSS_AI_HOST_RUNTIME ?? join(root, ".local-ci-runs/ai-host-dev-runtime");
   let manifest;
   if (!visualOnly) {
     manifest = JSON.parse(readFileSync(join(artifact, "manifest.json")));
@@ -631,6 +663,7 @@ try {
     assert.equal(manifest.status, "passed");
     assert.equal(manifest.developmentFingerprint, developmentFingerprint(root));
     verifyRuntimeIntegrity(artifact, manifest.runtimeTreeSha256);
+    if (candidatePath) verifyCandidate(root, candidatePath);
     result.runtimeManifestSha256 = sha256(
       readFileSync(join(artifact, "manifest.json")),
     );
@@ -1902,6 +1935,7 @@ try {
       result.runtimeManifestSha256,
     );
     verifyRuntimeIntegrity(artifact, manifest.runtimeTreeSha256);
+    if (candidatePath) verifyCandidate(root, candidatePath);
     result.status = "passed";
   }
 } catch (error) {

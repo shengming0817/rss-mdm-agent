@@ -14,6 +14,8 @@ url.workspace = true
 uuid = "=1.26.0"
 
 [dependencies]
+platform-private-storage = { path = "../../../crates/platform-private-storage" }
+platform-credentials = { path = "../../../crates/platform-credentials" }
 aes-gcm = { version = "=0.10.3", features = ["zeroize"] }
 zeroize = "=1.8.2"
 reqwest = { version = "=0.13.5", default-features = false, features = ["json", "native-tls"] }
@@ -43,7 +45,6 @@ tauri-plugin-wdio-webdriver = { path = "../../../vendor/tauri-plugin-wdio-webdri
 
 [target.'cfg(target_os = "macos")'.dependencies]
 window-vibrancy = "=0.6.0"
-security-framework = "=3.5.1"
 objc2 = "=0.6.4"
 objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSAlert", "NSButton", "NSControl", "NSSecureTextField", "NSTextField", "NSView", "NSResponder", "NSWindow", "NSApplication", "NSSavePanel", "NSPanel", "NSWorkspace", "NSAccessibility"] }
 objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSString", "NSGeometry", "NSURL"] }
@@ -68,5 +69,6 @@ tauri = { workspace = true, features = ["test"] }
 windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_System_Threading"] }
 
 [target.'cfg(windows)'.dependencies]
+windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Security_Credentials", "Win32_UI_Controls_Dialogs", "Win32_UI_WindowsAndMessaging", "Win32_Graphics_Gdi", "Win32_System_Com", "Win32_UI_Shell"] }
 windows = { version = "=0.61.3", features = ["UI_ViewManagement", "Win32_Graphics_Dwm", "Win32_UI_Accessibility", "Win32_UI_WindowsAndMessaging"] }
 windows-version = "=0.1.7"

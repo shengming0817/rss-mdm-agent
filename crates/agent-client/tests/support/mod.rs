@@ -28,7 +28,7 @@ impl Root {
             .canonicalize()
             .unwrap()
             .join(format!("agent-test-{}", Uuid::new_v4()));
-        native_process::private_storage::directory(&path).unwrap();
+        platform_private_storage::directory(&path).unwrap();
         Self { path }
     }
 }

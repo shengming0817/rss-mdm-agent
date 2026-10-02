@@ -499,7 +499,7 @@ async fn symlink_partial_never_reads_or_overwrites_external_file() {
         .unwrap()
         .path();
     let target = external.path.join("protected");
-    native_process::private_storage::write_new(&target, b"keep").unwrap();
+    platform_private_storage::write_new(&target, b"keep").unwrap();
     std::fs::remove_file(&partial).unwrap();
     std::os::unix::fs::symlink(&target, &partial).unwrap();
     assert!(matches!(client.prepare(&offer).await, Err(Error::Storage)));

@@ -21,10 +21,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .parent()
         .ok_or("execution database must have a parent")?
         .join("execution-users");
-    native_process::private_storage::directory(&user_root)?;
+    platform_private_storage::directory(&user_root)?;
     let users_path = user_root.join("users.json");
     if !users_path.try_exists()? {
-        native_process::private_storage::create_new(&users_path)?.write_all(
+        platform_private_storage::create_new(&users_path)?.write_all(
             serde_json::to_vec(&json!({
             "schemaVersion": 7,
             "kind": "testUserPage",

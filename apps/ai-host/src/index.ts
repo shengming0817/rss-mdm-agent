@@ -1,4 +1,4 @@
-import { privateDirectory } from "./private-file.js";
+import { privateDirectory } from "@rss-mdm-agent/platform-private-storage";
 import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { Readable, Writable } from "node:stream";

@@ -314,7 +314,7 @@ mod tests {
             std::process::id(),
             super::super::execution::now().unwrap()
         ));
-        native_process::private_storage::directory(&root).unwrap();
+        platform_private_storage::directory(&root).unwrap();
         let root = root.canonicalize().unwrap();
         let runtime = tauri::async_runtime::block_on(DesktopRuntime::start(
             &root,

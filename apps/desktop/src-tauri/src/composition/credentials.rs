@@ -1,7 +1,5 @@
 //! Rust-owned credential cryptography and one application master key.
 use crate::self_service::{error, Result};
-#[cfg(target_os = "macos")]
-use security_framework::passwords::{get_generic_password, set_generic_password};
 use std::sync::Mutex;
 #[cfg(target_os = "macos")]
 const SERVICE: &str = "RSS MDM Agent";
@@ -25,14 +23,15 @@ pub struct Keychain;
 #[cfg(target_os = "macos")]
 impl KeyBackend for Keychain {
     fn read(&self) -> std::result::Result<Option<Vec<u8>>, KeyUnavailable> {
-        match get_generic_password(SERVICE, ACCOUNT) {
+        match platform_credentials::read_user_password(SERVICE, ACCOUNT) {
             Ok(value) => Ok(Some(value)),
-            Err(error) if error.code() == -25300 => Ok(None),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(_) => Err(KeyUnavailable),
         }
     }
     fn create(&self, key: &[u8]) -> std::result::Result<(), KeyUnavailable> {
-        set_generic_password(SERVICE, ACCOUNT, key).map_err(|_| KeyUnavailable)
+        platform_credentials::create_user_password(SERVICE, ACCOUNT, key)
+            .map_err(|_| KeyUnavailable)
     }
 }
 pub struct MasterKey {
@@ -63,17 +62,7 @@ impl MasterKey {
             Some(_) => return Err(unavailable()),
             None if !create => return Err(unavailable()),
             None => {
-                #[cfg(target_os = "macos")]
-                let key = {
-                    let mut key = vec![0; 32];
-                    security_framework::random::SecRandom::default()
-                        .copy_bytes(&mut key)
-                        .map_err(|_| unavailable())?;
-                    key
-                };
-                #[cfg(windows)]
-                let key =
-                    native_process::private_storage::random_key().map_err(|_| unavailable())?;
+                let key = platform_credentials::random_bytes(32).map_err(|_| unavailable())?;
                 self.backend.create(&key).map_err(|_| unavailable())?;
                 key
             }
@@ -231,9 +220,9 @@ pub struct Dpapi;
 #[cfg(windows)]
 impl KeyBackend for Dpapi {
     fn read(&self) -> std::result::Result<Option<Vec<u8>>, KeyUnavailable> {
-        let path = native_process::private_storage::key_path().map_err(|_| KeyUnavailable)?;
-        match native_process::private_storage::read(&path, 65536) {
-            Ok(bytes) => native_process::private_storage::unprotect_key(&bytes)
+        let path = key_path().map_err(|_| KeyUnavailable)?;
+        match platform_private_storage::read(&path, 65536) {
+            Ok(bytes) => platform_credentials::unprotect_key(&bytes)
                 .map(Some)
                 .map_err(|_| KeyUnavailable),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
@@ -241,10 +230,9 @@ impl KeyBackend for Dpapi {
         }
     }
     fn create(&self, key: &[u8]) -> std::result::Result<(), KeyUnavailable> {
-        let path = native_process::private_storage::key_path().map_err(|_| KeyUnavailable)?;
-        let encrypted =
-            native_process::private_storage::protect_key(key).map_err(|_| KeyUnavailable)?;
-        native_process::private_storage::write_new(&path, &encrypted).map_err(|_| KeyUnavailable)
+        let path = key_path().map_err(|_| KeyUnavailable)?;
+        let encrypted = platform_credentials::protect_key(key).map_err(|_| KeyUnavailable)?;
+        platform_private_storage::write_new(&path, &encrypted).map_err(|_| KeyUnavailable)
     }
 }
 pub fn platform_backend() -> impl KeyBackend {
@@ -302,7 +290,7 @@ pub async fn enter_enterprise_password<R: tauri::Runtime>(
 ) -> Result<String> {
     let (sender, receiver) = tokio::sync::oneshot::channel();
     app.run_on_main_thread(move || {
-        let result = native_process::private_storage::enter_enterprise_password(&target)
+        let result = super::windows_dialogs::enter_enterprise_password(&target)
             .map_err(|_| unavailable())
             .and_then(|value| value.ok_or_else(|| error("cancelled", "未完成登录")))
             .and_then(|value| {
@@ -461,5 +449,35 @@ mod tests {
         assert_eq!(first.len(), 32);
         assert_eq!(keys.get(false).unwrap(), first);
         assert_eq!(writes.load(Ordering::SeqCst), 1);
+    }
+}
+
+#[cfg(windows)]
+fn key_path() -> std::io::Result<std::path::PathBuf> {
+    use windows_sys::Win32::{
+        System::Com::CoTaskMemFree,
+        UI::Shell::{FOLDERID_LocalAppData, SHGetKnownFolderPath},
+    };
+    unsafe {
+        let mut raw = std::ptr::null_mut();
+        if SHGetKnownFolderPath(&FOLDERID_LocalAppData, 0, std::ptr::null_mut(), &mut raw) < 0 {
+            return Err(std::io::Error::other("local app data"));
+        }
+        let mut length = 0;
+        while length < 32768 && *raw.add(length) != 0 {
+            length += 1;
+        }
+        let value = if length == 32768 {
+            Err(std::io::Error::other("local app data length"))
+        } else {
+            String::from_utf16(std::slice::from_raw_parts(raw, length))
+                .map_err(std::io::Error::other)
+        };
+        CoTaskMemFree(raw.cast());
+        let root = std::path::PathBuf::from(value?)
+            .join("RSS MDM Agent")
+            .join("private");
+        platform_private_storage::directory(&root)?;
+        Ok(root.join("connection-master-key.dpapi"))
     }
 }

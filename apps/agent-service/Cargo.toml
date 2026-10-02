@@ -11,6 +11,8 @@ name = "rss-execution-service"
 path = "src/main.rs"
 
 [dependencies]
+platform-private-storage = { path = "../../crates/platform-private-storage" }
+platform-credentials = { path = "../../crates/platform-credentials" }
 agent-client = { path = "../../crates/agent-client" }
 execution-interaction = { path = "../../crates/execution-interaction" }
 execution-app = { path = "../../crates/execution-app" }
@@ -32,6 +34,7 @@ tokio = { workspace = true, features = ["rt-multi-thread", "net"] }
 uuid = { version = "=1.26.0", features = ["v4", "serde"] }
 base64 = "=0.23.1"
 zeroize = "=1.8.2"
+fs2 = "=0.4.3"
 zip = { version = "=8.6.0", default-features = false, features = ["deflate"] }
 quick-xml = "=0.42.0"
 

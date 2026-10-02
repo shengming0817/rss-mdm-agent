@@ -9,7 +9,7 @@ fn directory() -> PathBuf {
         rss_mdm_desktop::composition::execution::now().unwrap(),
         NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     ));
-    native_process::private_storage::directory(&p).unwrap();
+    platform_private_storage::directory(&p).unwrap();
     p.canonicalize().unwrap()
 }
 #[test]

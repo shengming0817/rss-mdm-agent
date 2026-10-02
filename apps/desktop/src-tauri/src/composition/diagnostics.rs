@@ -112,7 +112,7 @@ pub async fn export<R: tauri::Runtime>(
     let bytes = snapshot(&status)?;
     let (sender, receiver) = tokio::sync::oneshot::channel();
     app.run_on_main_thread(move || {
-        let _ = sender.send(native_process::private_storage::save_dialog());
+        let _ = sender.send(super::windows_dialogs::save_dialog());
     })
     .map_err(|_| failed())?;
     let Some(path) = receiver

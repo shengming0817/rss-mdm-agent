@@ -168,13 +168,12 @@ impl Deployment {
         Ok(Config {
             execution_context: wire::SoftwareExecutionContext {
                 revision: 1,
-                os_version: native_process::os_version::current()?,
+                os_version: crate::os_version::current()?,
                 system_broker: true,
                 interactive_user: None,
                 source_credentials: vec![],
                 msix_sideload: crate::software_worker::sideload_allowed()?,
-                msix_unsigned: cfg!(windows)
-                    && native_process::os_version::current()? >= [10, 0, 19041, 0],
+                msix_unsigned: cfg!(windows) && crate::os_version::current()? >= [10, 0, 19041, 0],
             },
             origin: url::Url::parse(&self.origin).map_err(|_| Error::Configuration)?,
             tenant: self.tenant,
@@ -228,14 +227,14 @@ impl Deployment {
         }
         installation_security::protected(self.state_root.parent().ok_or(Error::Configuration)?)
             .map_err(|_| Error::Storage)?;
-        native_process::private_storage::directory(&self.state_root)?;
+        platform_private_storage::directory(&self.state_root)?;
         installation_security::protected(&self.state_root).map_err(|_| Error::Storage)?;
         if marker.exists() {
-            if native_process::private_storage::read(&marker, 128)? != namespace.as_bytes() {
+            if platform_private_storage::read(&marker, 128)? != namespace.as_bytes() {
                 return Err(Error::Identity);
             }
         } else {
-            native_process::private_storage::write_new(&marker, namespace.as_bytes())?;
+            platform_private_storage::write_new(&marker, namespace.as_bytes())?;
         }
         let communication = self.state_root.join("communication");
         let journal = self.state_root.join("execution.sqlite");
@@ -247,7 +246,7 @@ impl Deployment {
         }
         let secrets = self.state_root.join("secrets");
         for path in [&communication, &secrets, &self.execution.work_root] {
-            native_process::private_storage::directory(path)?;
+            platform_private_storage::directory(path)?;
         }
         execution_runner::staging::initialize(&self.execution.material_root)?;
         let secrets = DeviceSecrets::open(&secrets, &namespace)?;
@@ -295,9 +294,8 @@ impl Deployment {
         )?;
         drop(service);
         if !initialized.exists() {
-            native_process::private_storage::write_new(&initialized, namespace.as_bytes())?;
-        } else if native_process::private_storage::read(&initialized, 128)? != namespace.as_bytes()
-        {
+            platform_private_storage::write_new(&initialized, namespace.as_bytes())?;
+        } else if platform_private_storage::read(&initialized, 128)? != namespace.as_bytes() {
             return Err(Error::Identity);
         }
         Ok(())
@@ -322,14 +320,14 @@ impl Deployment {
             crate::plan::storage_limits(),
         )
         .map_err(|_| Error::Storage)?;
-        native_process::private_storage::validate(&self.execution.work_root)?;
+        platform_private_storage::validate(&self.execution.work_root)?;
         Ok(())
     }
     pub fn open(&self) -> Result<DeviceService, Error> {
         self.require_service()?;
         let namespace = self.namespace()?;
         installation_security::protected(&self.state_root).map_err(|_| Error::Storage)?;
-        if native_process::private_storage::read(&self.state_root.join("identity-binding"), 128)?
+        if platform_private_storage::read(&self.state_root.join("identity-binding"), 128)?
             != namespace.as_bytes()
         {
             return Err(Error::Identity);
@@ -454,7 +452,7 @@ fn startup_failure(error: Error) -> execution_contract::ProcessFailureKind {
 
 fn validate_markers(root: &Path, namespace: &str) -> Result<(), Error> {
     for name in ["identity-binding", "execution-initialized"] {
-        if native_process::private_storage::read(&root.join(name), 128)? != namespace.as_bytes() {
+        if platform_private_storage::read(&root.join(name), 128)? != namespace.as_bytes() {
             return Err(Error::Identity);
         }
     }
@@ -526,24 +524,20 @@ mod tests {
             .canonicalize()
             .unwrap()
             .join(format!("refresh-markers-{}", uuid::Uuid::new_v4()));
-        native_process::private_storage::directory(&root).unwrap();
+        platform_private_storage::directory(&root).unwrap();
         assert!(validate_markers(&root, "original").is_err());
         assert_eq!(std::fs::read_dir(&root).unwrap().count(), 0);
-        native_process::private_storage::write_new(&root.join("identity-binding"), b"original")
-            .unwrap();
+        platform_private_storage::write_new(&root.join("identity-binding"), b"original").unwrap();
         assert!(validate_markers(&root, "original").is_err());
-        native_process::private_storage::write_new(
-            &root.join("execution-initialized"),
-            b"original",
-        )
-        .unwrap();
+        platform_private_storage::write_new(&root.join("execution-initialized"), b"original")
+            .unwrap();
         validate_markers(&root, "original").unwrap();
         assert!(matches!(
             validate_markers(&root, "other"),
             Err(Error::Identity)
         ));
         assert_eq!(
-            native_process::private_storage::read(&root.join("identity-binding"), 128).unwrap(),
+            platform_private_storage::read(&root.join("identity-binding"), 128).unwrap(),
             b"original"
         );
         std::fs::remove_dir_all(root).unwrap();

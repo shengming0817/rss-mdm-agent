@@ -23,7 +23,7 @@ pub(crate) fn hash(b: &[u8]) -> String {
     format!("{:x}", Sha256::digest(b))
 }
 pub(crate) fn private(p: &Path) -> Result<(), Error> {
-    native_process::private_storage::validate(p)?;
+    platform_private_storage::validate(p)?;
     Ok(())
 }
 impl Store {
@@ -37,11 +37,10 @@ impl Store {
             return Err(Error::Storage);
         }
         let lock_path = root.join("client.lock");
-        let lock = match native_process::private_storage::create_new(&lock_path) {
+        let lock = match platform_private_storage::create_new(&lock_path) {
             Ok(f) => f,
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                private(&lock_path)?;
-                File::open(&lock_path)?
+                platform_private_storage::open_existing(&lock_path)?
             }
             Err(_) => return Err(Error::Storage),
         };
@@ -56,7 +55,7 @@ impl Store {
         ))?;
         match mode {
             OpenMode::Create => {
-                drop(native_process::private_storage::create_new(&path)?);
+                drop(platform_private_storage::create_new(&path)?);
                 let conn = Connection::open(&path)?;
                 conn.execute_batch(
                     "PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA journal_mode=DELETE;",
@@ -80,10 +79,12 @@ impl Store {
                 drop(read_existing(root, &cfg)?);
             }
         }
-        let conn = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE)?;
+        sidecars(&path)?;
+        let conn = Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE)?;
         conn.execute_batch(
             "PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA trusted_schema=OFF;",
         )?;
+        sidecars(&path)?;
         conn.pragma_update(None, "max_page_count", cfg.limits.database_pages)?;
         conn.busy_timeout(std::time::Duration::from_millis(250))?;
         Ok(Self {
@@ -135,6 +136,7 @@ fn read_existing(root: &Path, cfg: &Config) -> Result<Connection, Error> {
     private(root)?;
     let path = root.join("communication.sqlite");
     private(&path)?;
+    sidecars(&path)?;
     let reader = Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
     let version: u32 = reader.pragma_query_value(None, "user_version", |r| r.get(0))?;
     let app: u32 = reader.pragma_query_value(None, "application_id", |r| r.get(0))?;
@@ -178,4 +180,20 @@ pub fn inspect_registration(root: &Path, cfg: &Config) -> Result<wire::Registrat
         |r| r.get(0),
     )?;
     decode(&body)
+}
+
+fn sidecars(path: &Path) -> Result<(), Error> {
+    for suffix in ["-journal", "-wal", "-shm"] {
+        let mut name = path.as_os_str().to_os_string();
+        name.push(suffix);
+        let sidecar = Path::new(&name);
+        match std::fs::symlink_metadata(sidecar) {
+            Ok(_) => {
+                drop(platform_private_storage::open_existing(sidecar)?);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e.into()),
+        }
+    }
+    Ok(())
 }

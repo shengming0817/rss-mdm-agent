@@ -1,3 +1,4 @@
+import { privateRuntimeNode, runPrivateRuntime } from "./ai-host-artifacts.mjs";
 import { connectionPersistence } from "../apps/ai-host/dist/secrets.js";
 import { sourceSummary } from "./connection-source-results.mjs";
 import {
@@ -17,6 +18,21 @@ import { localResolver } from "../apps/ai-host/dist/resolver.js";
 /** Explicit manual acceptance: passes existing local directories to the official tools and sends one probe per available source.
  * Emits only source type and closed outcome. Never emits account identities, paths or credentials. */
 const repository = fileURLToPath(new URL("../", import.meta.url));
+const fixedNode = await realpath(privateRuntimeNode(repository)).catch(() => {
+  throw Error(
+    "prepare the fixed AI runtime with pnpm check:connection-sources",
+  );
+});
+if ((await realpath(process.execPath)) !== fixedNode) {
+  process.exit(
+    runPrivateRuntime(repository, [
+      fileURLToPath(import.meta.url),
+      ...process.argv.slice(2),
+    ]),
+  );
+}
+const preflight = process.argv.includes("--preflight");
+let sqliteReady = false;
 
 const startedAt = new Date().toISOString();
 const budget = () => ({ timeoutMs: 60000, signal: AbortSignal.timeout(60000) });
@@ -40,77 +56,88 @@ try {
   const opened = openSqliteStore({ path: local.databasePath, mode: "create" });
   if (!opened.ok) throw Error(opened.error.code);
   const store = opened.value;
-  const created = await createHost({
-    credentialPersistence: connectionPersistence(
+  if (preflight) {
+    const closed = await store.close(budget());
+    if (!closed.ok) throw Error(closed.error.code);
+    sqliteReady = true;
+  } else {
+    const created = await createHost({
+      credentialPersistence: connectionPersistence(
+        store,
+        () => true,
+        async () => false,
+      ),
       store,
-      () => true,
-      async () => false,
-    ),
-    store,
-    launchFences: store,
-    delivery: null,
-    operationTimeoutMs: 60000,
-    resolve: localResolver(local, store, {
-      read: async () => {
-        throw Error("custom key not part of existing-config probe");
-      },
-    }),
-  });
-  if (!created.ok) throw Error(created.error.code);
-  host = created.value;
-  for (const provider of ["codex", "claude"])
-    for (const type of ["existing_config"]) {
-      const id = provider + "-" + type;
-      const directory = await realpath(
-        join(homedir(), provider === "codex" ? ".codex" : ".claude"),
-      ).catch(() => undefined);
-      if (!directory) {
-        results.push({ provider, source: type, result: "source_absent" });
-        continue;
-      }
-      const saved = await host.saveConnection(
-        caller,
-        {
-          connectionId: id,
-          name: id,
-          provider,
-          profile: "conversation",
-          source: { type, directory: directory ?? root },
+      launchFences: store,
+      delivery: null,
+      operationTimeoutMs: 60000,
+      resolve: localResolver(local, store, {
+        read: async () => {
+          throw Error("custom key not part of existing-config probe");
         },
-        null,
-        budget(),
-      );
-      const tested = saved.ok
-        ? await host.testConnection(
-            caller,
-            id,
-            saved.value.configRevision,
-            budget(),
-          )
-        : saved;
-      const row = {
-        provider,
-        source: type,
-        result: !tested.ok
-          ? tested.error.code
-          : tested.value.lastTest?.outcome === "passed"
-            ? "model_probe_completed"
-            : (tested.value.lastTest?.failure.code ?? "unavailable"),
-      };
-      results.push(row);
-      process.stdout.write(JSON.stringify(row) + "\n");
-    }
+      }),
+    });
+    if (!created.ok) throw Error(created.error.code);
+    host = created.value;
+    for (const provider of ["codex", "claude"])
+      for (const type of ["existing_config"]) {
+        const id = provider + "-" + type;
+        const directory = await realpath(
+          join(homedir(), provider === "codex" ? ".codex" : ".claude"),
+        ).catch(() => undefined);
+        if (!directory) {
+          results.push({ provider, source: type, result: "source_absent" });
+          continue;
+        }
+        const saved = await host.saveConnection(
+          caller,
+          {
+            connectionId: id,
+            name: id,
+            provider,
+            profile: "conversation",
+            source: { type, directory: directory ?? root },
+          },
+          null,
+          budget(),
+        );
+        const tested = saved.ok
+          ? await host.testConnection(
+              caller,
+              id,
+              saved.value.configRevision,
+              budget(),
+            )
+          : saved;
+        const row = {
+          provider,
+          source: type,
+          result: !tested.ok
+            ? tested.error.code
+            : tested.value.lastTest?.outcome === "passed"
+              ? "model_probe_completed"
+              : (tested.value.lastTest?.failure.code ?? "unavailable"),
+        };
+        results.push(row);
+        process.stdout.write(JSON.stringify(row) + "\n");
+      }
+  }
 } finally {
   if (host) await host.close(budget());
   await rm(root, { recursive: true, force: true });
 
-  const output = join(repository, ".local-ci-runs", "connection-sources.json");
+  const output = join(
+    repository,
+    ".local-ci-runs",
+    preflight ? "connection-sources-preflight.json" : "connection-sources.json",
+  );
   await mkdir(join(repository, ".local-ci-runs"), { recursive: true });
   await writeFile(
     output,
     JSON.stringify(
       {
-        command: "node scripts/check-connection-sources.mjs",
+        command:
+          "pnpm check:connection-sources" + (preflight ? " --preflight" : ""),
         startedAt,
         finishedAt: new Date().toISOString(),
         runtime: {
@@ -118,8 +145,16 @@ try {
           platform: process.platform,
           arch: process.arch,
         },
-        mode: "official-config/isolated-provider/minimal-real-model-probe",
-        ...sourceSummary(results),
+        mode: preflight
+          ? "native-private-storage/sqlite-preflight"
+          : "official-config/isolated-provider/minimal-real-model-probe",
+        ...(preflight
+          ? {
+              status: sqliteReady ? "passed" : "failed",
+              sqliteReady,
+              probesRun: false,
+            }
+          : sourceSummary(results)),
         notCovered: [
           "custom_api_covered_separately_by_check_native_credentials",
           "windows",
@@ -131,4 +166,10 @@ try {
     ),
   );
 }
-if (sourceSummary(results).status === "failed") process.exitCode = 1;
+if (preflight ? !sqliteReady : sourceSummary(results).status === "failed")
+  process.exitCode = 1;
+
+if (preflight)
+  process.stdout.write(
+    JSON.stringify({ sqliteReady, probesRun: false }) + "\n",
+  );

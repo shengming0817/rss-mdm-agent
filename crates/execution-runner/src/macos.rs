@@ -333,7 +333,7 @@ mod path_tests {
             .canonicalize()
             .unwrap()
             .join(format!("rss-script-pipe-{}", std::process::id()));
-        native_process::private_storage::directory(&root).unwrap();
+        platform_private_storage::directory(&root).unwrap();
         let source = root.join("input");
         // Larger than a pipe buffer: preparation must not preload and block before spawning.
         let bytes = format!(
@@ -426,7 +426,7 @@ mod path_tests {
             .canonicalize()
             .unwrap()
             .join(format!("rss-read-acl-{}", std::process::id()));
-        native_process::private_storage::directory(&root).unwrap();
+        platform_private_storage::directory(&root).unwrap();
         let path = root.join("artifact");
         std::fs::write(&path, b"immutable input").unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();

@@ -88,11 +88,11 @@ impl Store {
             return Err(Error::Busy);
         }
         conn.close().map_err(|_| Error::Storage)?;
-        std::fs::File::open(&staged)
+        platform_private_storage::open_existing(&staged)
             .and_then(|f| f.sync_all())
             .map_err(|_| Error::Storage)?;
         // A hard link is an atomic no-replace publication on the same filesystem.
-        std::fs::hard_link(&staged, path).map_err(|_| Error::Storage)?;
+        platform_private_storage::publish_new(&staged, path).map_err(|_| Error::Storage)?;
         sync_parent(path)?;
         std::fs::remove_file(&staged).map_err(|_| Error::Storage)?;
         sync_parent(path)?;
@@ -165,28 +165,12 @@ fn staging_connection(final_path: &Path) -> Result<(std::path::PathBuf, Connecti
         std::process::id(),
         NEXT.fetch_add(1, Ordering::Relaxed)
     ));
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    #[cfg(unix)]
-    drop(options.open(&staged).map_err(|_| Error::Storage)?);
-    #[cfg(windows)]
-    drop(native_process::private_storage::create_new(&staged).map_err(|_| Error::Storage)?);
+    drop(platform_private_storage::create_new(&staged).map_err(|_| Error::Storage)?);
     let conn = Connection::open_with_flags(&staged, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
     Ok((staged, conn))
 }
 fn sync_parent(path: &Path) -> Result<(), Error> {
-    #[cfg(unix)]
-    std::fs::File::open(path.parent().ok_or(Error::Storage)?)
-        .and_then(|f| f.sync_all())
-        .map_err(|_| Error::Storage)?;
-    #[cfg(not(unix))]
-    let _ = path;
-    Ok(())
+    platform_private_storage::sync_parent(path).map_err(|_| Error::Storage)
 }
 pub(crate) fn ensure_current(
     conn: &Connection,
@@ -295,14 +279,7 @@ fn check_metadata(path: &Path, directory: bool) -> Result<(), Error> {
     {
         return Err(Error::Storage);
     }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        if metadata.permissions().mode() & 0o077 != 0 {
-            return Err(Error::Storage);
-        }
-    }
-    native_process::private_storage::validate(path).map_err(|_| Error::Storage)?;
+    platform_private_storage::validate(path).map_err(|_| Error::Storage)?;
     Ok(())
 }
 
@@ -404,7 +381,7 @@ mod tests {
             .canonicalize()
             .unwrap()
             .join(format!("refresh-inspect-{}", std::process::id()));
-        native_process::private_storage::directory(&root).unwrap();
+        platform_private_storage::directory(&root).unwrap();
         let path = root.join("journal.sqlite");
         let store = Store::initialize_test(&path, authority(), test_limits()).unwrap();
         let before = std::fs::read(&path).unwrap();

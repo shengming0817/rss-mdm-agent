@@ -14,6 +14,7 @@ execution-contract = { path = "../execution-contract" }
 execution-app = { path = "../execution-app" }
 execution-lifecycle = { path = "../execution-lifecycle" }
 native-process = { path = "../native-process" }
+platform-private-storage = { path = "../platform-private-storage" }
 installation-security = { path = "../installation-security" }
 schemars.workspace = true
 serde.workspace = true

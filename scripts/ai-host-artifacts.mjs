@@ -53,6 +53,7 @@ export function packHost(root, directory) {
     "ai-contract",
     "execution-bindings",
     "ai-store-sqlite",
+    "platform-private-storage",
     "ai-host",
     "ai-access",
     "ai-adapter-claude",
@@ -327,6 +328,23 @@ export function runtimeArtifact(root, target) {
     target: target === "win32-x64" ? "win-x64" : target,
     ...artifact,
   };
+}
+
+/** The canonical Node that shares a directory with both native runtime helpers. */
+export function privateRuntimeNode(root) {
+  return join(
+    root,
+    ".local-ci-runs/worker-runtime/bin",
+    process.platform === "win32" ? "node.exe" : "node",
+  );
+}
+export function runPrivateRuntime(root, args) {
+  const result = spawnSync(privateRuntimeNode(root), args, {
+    cwd: root,
+    stdio: "inherit",
+  });
+  if (result.error) throw new Error("fixed private runtime unavailable");
+  return result.status ?? 1;
 }
 
 /** Stage the fixed native launcher alongside the application Host. */
