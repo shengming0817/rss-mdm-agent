@@ -153,8 +153,7 @@ const processIdentity = (pid, field) => {
 };
 const rememberScopes = (rows, host) => {
   for (const row of rows) {
-    if (row.phase !== "registered" || row.scope?.kind !== "processGroup")
-      continue;
+    if (row.scope?.kind !== "processGroup") continue;
     const scope = row.scope;
     if (ownedWorkerScopes.has(scope.root)) continue;
     let anchor;
@@ -389,25 +388,94 @@ const dbRead = (file, action) => {
     db.close();
   }
 };
-const readWorkerScopes = async () =>
-  wait(() => {
+// The live store is exclusive. Observe the actual fixed native launcher, not its locked database.
+const readWorkerScopes = async () => {
+  if (!scopeRuntime || !receipt?.pid) return [];
+  let children;
+  try {
+    children = execFileSync("/usr/bin/pgrep", ["-P", String(receipt.pid)], {
+      encoding: "utf8",
+    })
+      .trim()
+      .split(/\s+/)
+      .map(Number);
+  } catch {
+    return [];
+  }
+  const hosts = children.filter(
+    (pid) => processIdentity(pid, "comm") === scopeRuntime.node,
+  );
+  assert.ok(hosts.length <= 1, "one actual owned Host");
+  if (!hosts.length) return [];
+  try {
+    children = execFileSync("/usr/bin/pgrep", ["-P", String(hosts[0])], {
+      encoding: "utf8",
+    })
+      .trim()
+      .split(/\s+/)
+      .map(Number);
+  } catch {
+    return [];
+  }
+  return children
+    .filter((pid) => processIdentity(pid, "comm") === scopeRuntime.launcher)
+    .map((pid) => {
+      assert.equal(Number(processIdentity(pid, "pgid")), pid);
+      const launchId = / launch ([a-f0-9-]{36})$/.exec(
+        processIdentity(pid, "args"),
+      )?.[1];
+      assert.ok(launchId, "fixed native launch identity");
+      return {
+        phase: "observedNative",
+        launchId,
+        scope: { kind: "processGroup", root: pid },
+      };
+    });
+};
+const verifyUnknownFence = (launch) => {
+  const source = `
+    import assert from 'node:assert/strict';
+    import {pathToFileURL} from 'node:url';
+    import {join} from 'node:path';
+    const input=JSON.parse(process.argv[2]);
+    const {openSqliteStore}=await import(pathToFileURL(join(input.root,'packages/ai-store-sqlite/dist/index.js')));
+    const {createHost}=await import(pathToFileURL(join(input.root,'packages/ai-host/dist/index.js')));
+    const {fixturePersistence}=await import(pathToFileURL(join(input.root,'tests/ai-host/harness.mjs')));
+    const opened=openSqliteStore({path:input.path,mode:'open'});assert.equal(opened.ok,true,JSON.stringify(opened));
+    const store=opened.value;let resolves=0,host;
+    const budget=()=>({timeoutMs:10000,signal:new AbortController().signal});
     try {
-      return dbRead("ai.sqlite", (db) =>
-        db
-          .prepare("SELECT json FROM worker_launches")
-          .all()
-          .map((row) => JSON.parse(row.json)),
-      );
-    } catch (error) {
-      if (
-        error.errcode === 5 ||
-        error.errcode === 6 ||
-        error.message === "database is locked"
-      )
-        return undefined;
-      throw error;
-    }
-  }, 5000);
+      const created=await createHost({credentialPersistence:fixturePersistence(store),workerRuntime:input.runtime,
+        delivery:null,store,launchFences:store,resolve:async()=>{resolves++;throw Error('unknown scope must block restore')}});
+      assert.equal(created.ok,true,JSON.stringify(created));host=created.value;
+      const fences=await store.launches();assert.equal(fences.ok,true);
+      const retained=fences.value.find((row)=>row.launchId===input.launch.launchId);
+      assert.ok(retained);assert.deepEqual(retained.scope,input.launch.scope);assert.equal(resolves,0);
+      console.log(JSON.stringify({retained,resolveCalls:resolves,diagnostics:host.diagnostics}));
+    } finally {await host?.close(budget());await store.close(budget());}
+  `;
+  return JSON.parse(
+    execFileSync(
+      scopeRuntime.node,
+      [
+        "--input-type=module",
+        "-",
+        JSON.stringify({
+          root,
+          path: join(directory, "ai.sqlite"),
+          runtime: scopeRuntime,
+          launch,
+        }),
+      ],
+      {
+        input: source,
+        encoding: "utf8",
+        timeout: 30000,
+        stdio: ["pipe", "pipe", "pipe"],
+      },
+    ),
+  );
+};
 const task = async () => {
   const reply = await serviceCall("query");
   const request = fixture.facts.request;
@@ -1973,9 +2041,7 @@ try {
         const previous = fixture.facts.held;
         await prompt("GOLDEN_HOLD 安全验收：保持请求等待");
         await wait(() => fixture.facts.held > previous);
-        const rows = (await fences()).filter(
-          (row) => row.phase === "registered",
-        );
+        const rows = await fences();
         assert.equal(rows.length, 1, "one actual live Codex worker scope");
         assert.equal(rows[0].scope.kind, "processGroup");
         assert.equal(await absent(rows[0].scope), false);
@@ -2015,10 +2081,15 @@ try {
         false,
         "launcher exit alone is not scope absence",
       );
-      await restart();
-      assert.ok(
-        (await fences()).some((row) => row.launchId === launch.launchId),
-        "unknown old scope fence retained",
+      const stoppedHost = hostPid();
+      assert.equal(Number(processIdentity(stoppedHost, "ppid")), receipt.pid);
+      process.kill(stoppedHost, "SIGKILL");
+      await wait(() => !processIdentity(stoppedHost, "comm"));
+      const recovery = verifyUnknownFence(launch);
+      assert.equal(
+        await absent(launch.scope),
+        false,
+        "recovery cannot signal an unknown scope",
       );
       assert.equal(
         fixture.facts.requests,
@@ -2029,6 +2100,7 @@ try {
         launch,
         requests,
         retainedFence: true,
+        recovery,
         scopeAbsent: false,
       };
       record("launcher_crash", retained);
