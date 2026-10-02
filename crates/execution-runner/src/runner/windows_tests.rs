@@ -34,7 +34,7 @@ fn fixture(script: &str, argv: Vec<LaunchArg>, budget: u64, timeout: u64) -> Fix
         std::process::id(),
         NEXT.fetch_add(1, Ordering::Relaxed)
     ));
-    native_process::private_storage::directory(&root).unwrap();
+    platform_private_storage::directory(&root).unwrap();
     let root = root.canonicalize().unwrap();
 
     let content = root.join("source");

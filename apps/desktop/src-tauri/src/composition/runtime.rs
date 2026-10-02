@@ -57,7 +57,7 @@ pub struct DesktopRuntime {
     next: AtomicU64,
 }
 fn private_directory(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    native_process::private_storage::directory(path)?;
+    platform_private_storage::directory(path)?;
     Ok(())
 }
 fn configuration(root: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
@@ -65,11 +65,11 @@ fn configuration(root: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let path = root.join("host.json");
     let value = json!({"version":1,"databasePath":root.join("ai.sqlite"),"nativeDirectory":root.join("native"),"workingDirectory":root.join("workspace")});
     let temporary = root.join(format!("host-{}.tmp", uuid::Uuid::new_v4()));
-    let mut file = native_process::private_storage::create_new(&temporary)?;
+    let mut file = platform_private_storage::create_new(&temporary)?;
     file.write_all(&serde_json::to_vec(&value)?)?;
     file.sync_all()?;
     drop(file);
-    native_process::private_storage::replace(&temporary, &path)?;
+    platform_private_storage::replace(&temporary, &path)?;
     Ok(path)
 }
 impl DesktopRuntime {

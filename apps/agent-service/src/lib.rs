@@ -19,7 +19,7 @@ use std::{
 };
 
 /// Device credential provider, isolated from desktop/provider credentials.
-pub struct DeviceSecrets(native_process::protected_secret::SecretStore);
+pub struct DeviceSecrets(secrets::SecretStore);
 impl DeviceSecrets {
     fn storage_binding(root: &Path) -> Result<[u8; 32], Error> {
         use sha2::{Digest as _, Sha256};
@@ -40,9 +40,7 @@ impl DeviceSecrets {
     }
     /// Open the OS-protected namespace selected by the administrator's deployment binding.
     pub fn open(root: &Path, namespace: &str) -> Result<Self, Error> {
-        Ok(Self(native_process::protected_secret::SecretStore::open(
-            root, namespace,
-        )?))
+        Ok(Self(secrets::SecretStore::open(root, namespace)?))
     }
     /// Import the server-issued enrollment secret once, without overwrite or plaintext persistence.
     pub fn import_enrollment(&self, reference: &str, value: &wire::Secret) -> Result<(), Error> {
@@ -106,3 +104,6 @@ impl Clock for SystemClock {
 
 #[cfg(all(test, target_os = "macos"))]
 mod tests;
+
+mod os_version;
+mod secrets;

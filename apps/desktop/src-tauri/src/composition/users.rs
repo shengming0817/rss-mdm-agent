@@ -45,8 +45,7 @@ impl Users {
     pub fn open(root: &Path) -> Result<Self> {
         let path = root.join("users.json");
         let page = if path.exists() {
-            let data =
-                native_process::private_storage::read(&path, 65536).map_err(|_| storage())?;
+            let data = platform_private_storage::read(&path, 65536).map_err(|_| storage())?;
             let record = ai_session_contract::decode(
                 &data,
                 &ai_session_contract::Limits {
@@ -179,13 +178,12 @@ impl Users {
     pub fn guest(&self) -> Result<UserContext> {
         let path = self.path.with_file_name("guest-id");
         let id = if path.exists() {
-            let data = native_process::private_storage::read(&path, 64).map_err(|_| storage())?;
+            let data = platform_private_storage::read(&path, 64).map_err(|_| storage())?;
             Uuid::parse_str(std::str::from_utf8(&data).map_err(|_| storage())?)
                 .map_err(|_| storage())?
         } else {
             let id = Uuid::new_v4();
-            let mut file =
-                native_process::private_storage::create_new(&path).map_err(|_| storage())?;
+            let mut file = platform_private_storage::create_new(&path).map_err(|_| storage())?;
             file.write_all(id.to_string().as_bytes())
                 .map_err(|_| storage())?;
             file.sync_all().map_err(|_| storage())?;
@@ -203,7 +201,7 @@ impl Users {
     fn persist(&self, page: &TestUserPage) -> Result<()> {
         let temporary = self.path.with_extension(format!("{}.tmp", Uuid::new_v4()));
         let result = (|| {
-            let mut file = native_process::private_storage::create_new(&temporary)?;
+            let mut file = platform_private_storage::create_new(&temporary)?;
             let data = serde_json::to_vec(page)?;
             if data.len() > 65536 {
                 return Err("user registry capacity".into());
@@ -211,7 +209,7 @@ impl Users {
             file.write_all(&data)?;
             file.sync_all()?;
             drop(file);
-            native_process::private_storage::replace(&temporary, &self.path)?;
+            platform_private_storage::replace(&temporary, &self.path)?;
             Ok::<_, Box<dyn std::error::Error>>(())
         })();
         if result.is_err() {
@@ -226,7 +224,7 @@ mod tests {
     #[test]
     fn guest_is_stable_separate_from_same_named_test_user_and_revokes_generation() {
         let root = std::env::temp_dir().join(format!("rss-guest-{}", Uuid::new_v4()));
-        native_process::private_storage::directory(&root).unwrap();
+        platform_private_storage::directory(&root).unwrap();
         let mut users = Users::open(&root).unwrap();
         let test = users.select("访客").unwrap();
         let guest = users.select_guest().unwrap();
@@ -255,7 +253,7 @@ mod tests {
     #[test]
     fn selection_restores_actor_but_rotates_generation_and_preserves_first_spelling() {
         let root = std::env::temp_dir().join(format!("rss-users-{}", Uuid::new_v4()));
-        native_process::private_storage::directory(&root).unwrap();
+        platform_private_storage::directory(&root).unwrap();
         let mut users = Users::open(&root).unwrap();
         assert!(users.current().is_err());
         let a = users.select(" Alice ").unwrap();

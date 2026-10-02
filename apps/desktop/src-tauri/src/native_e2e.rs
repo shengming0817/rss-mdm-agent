@@ -45,37 +45,32 @@ pub fn keychain(
     root: &Path,
 ) -> Result<impl rss_mdm_desktop::composition::credentials::KeyBackend, Box<dyn std::error::Error>>
 {
+    use platform_credentials::{Keychain, NonInteractiveGuard};
     use rss_mdm_desktop::composition::credentials::{KeyBackend, KeyUnavailable};
-    use security_framework::os::macos::keychain::{
-        CreateOptions, KeychainUserInteractionLock, SecKeychain,
-    };
     struct Isolated {
-        keychain: SecKeychain,
-        _noninteractive: KeychainUserInteractionLock,
+        keychain: Keychain,
+        _noninteractive: NonInteractiveGuard,
     }
     const SERVICE: &str = "RSS MDM Agent native-e2e";
     const ACCOUNT: &str = "connection-master-key";
     impl KeyBackend for Isolated {
         fn read(&self) -> Result<Option<Vec<u8>>, KeyUnavailable> {
-            match self.keychain.find_generic_password(SERVICE, ACCOUNT) {
-                Ok((key, _)) => Ok(Some(key.to_owned())),
-                Err(error) if error.code() == -25300 => Ok(None),
+            match self.keychain.read(SERVICE, ACCOUNT) {
+                Ok(key) => Ok(Some(key)),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
                 Err(_) => Err(KeyUnavailable),
             }
         }
         fn create(&self, key: &[u8]) -> Result<(), KeyUnavailable> {
             self.keychain
-                .add_generic_password(SERVICE, ACCOUNT, key)
+                .create_new(SERVICE, ACCOUNT, key)
                 .map_err(|_| KeyUnavailable)
         }
     }
-    native_process::private_storage::directory(root)?;
-    let noninteractive = SecKeychain::disable_user_interaction()?;
+    platform_private_storage::directory(root)?;
+    let noninteractive = Keychain::disable_interaction()?;
     let password = zeroize::Zeroizing::new(uuid::Uuid::new_v4().to_string());
-    let keychain = CreateOptions::new()
-        .password(&password)
-        .prompt_user(false)
-        .create(root.join("native-e2e.keychain"))?;
+    let keychain = Keychain::create_file(&root.join("native-e2e.keychain"), &password)?;
     Ok(Isolated {
         keychain,
         _noninteractive: noninteractive,

@@ -138,7 +138,7 @@ impl Helper {
         if subject == "0" || subject == "S-1-5-18" || session == 0 {
             return Err(Error::Unbound);
         }
-        native_process::private_storage::directory(&work_root).map_err(|_| Error::Storage)?;
+        platform_private_storage::directory(&work_root).map_err(|_| Error::Storage)?;
         let work_root = work_root.canonicalize().map_err(|_| Error::Storage)?;
         let materials = MaterialRegistry::new(capacity)?;
         let runner = NativeRunner::with_materials(

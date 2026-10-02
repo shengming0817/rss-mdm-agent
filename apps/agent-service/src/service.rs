@@ -99,7 +99,7 @@ impl<S: SecretProvider> DeviceService<S> {
             profiles.push(interpreter.profile);
         }
         client.set_profiles(profiles)?;
-        native_process::private_storage::validate(&config.work_root)?;
+        platform_private_storage::validate(&config.work_root)?;
         let (binding, actor) = plan::context(
             client.configuration().origin.as_str(),
             client.configuration().tenant,
@@ -292,7 +292,7 @@ impl<S: SecretProvider> DeviceService<S> {
         let reports = 16.min(self.client.configuration().limits.pending_reports);
         network(self.client.flush_reports(reports), &mut self.core, commands).await?;
         let mut context = self.client.execution_context()?;
-        context.os_version = native_process::os_version::current()?;
+        context.os_version = crate::os_version::current()?;
         context.interactive_user =
             self.core
                 .helpers

@@ -75,7 +75,7 @@ pub fn publish(
     );
     let directory = root.join(key);
     if !directory.exists() {
-        native_process::private_storage::directory(&directory).map_err(|_| Error::Storage)?;
+        platform_private_storage::directory(&directory).map_err(|_| Error::Storage)?;
     }
     let _directory = crate::platform::PathLease::source(&directory, true)?;
     if let Some(subject) = subject {
@@ -238,7 +238,7 @@ pub fn bundle(
     );
     let parent = root.join(namespace);
     if !parent.exists() {
-        native_process::private_storage::directory(&parent).map_err(|_| Error::Storage)?;
+        platform_private_storage::directory(&parent).map_err(|_| Error::Storage)?;
     }
     let _parent = crate::platform::PathLease::source(&parent, true)?;
     if let Some(subject) = subject {
@@ -246,7 +246,7 @@ pub fn bundle(
     }
     let tree = parent.join(format!("bundle-{}", digest.as_str()));
     if !tree.exists() {
-        native_process::private_storage::directory(&tree).map_err(|_| Error::Storage)?;
+        platform_private_storage::directory(&tree).map_err(|_| Error::Storage)?;
     }
     let _tree = crate::platform::PathLease::source(&tree, true)?;
     if let Some(subject) = subject {
@@ -281,8 +281,7 @@ pub fn bundle(
         for part in &components[..components.len() - 1] {
             directory.push(part);
             if !directory.exists() {
-                native_process::private_storage::directory(&directory)
-                    .map_err(|_| Error::Storage)?;
+                platform_private_storage::directory(&directory).map_err(|_| Error::Storage)?;
             }
             let _ = crate::platform::PathLease::source(&directory, true)?;
             if let Some(subject) = subject {
@@ -331,7 +330,7 @@ pub fn native_export(
     let parent = source.parent().ok_or(Error::Configuration)?;
     let directory = parent.join(format!("export-{}", expected.as_str()));
     if !directory.exists() {
-        native_process::private_storage::directory(&directory).map_err(|_| Error::Storage)?;
+        platform_private_storage::directory(&directory).map_err(|_| Error::Storage)?;
     }
     let _directory = crate::platform::PathLease::source(&directory, true)?;
     if let Some(subject) = subject {

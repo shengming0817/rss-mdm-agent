@@ -187,7 +187,7 @@ async fn real_https_registration_reports_script_software_and_journal_results() {
     };
     let path = std::env::var("AGENT_LIVE_CONFIG").expect("AGENT_LIVE_CONFIG is required");
     let fixture: LiveConfig = serde_json::from_slice(
-        &native_process::private_storage::read(std::path::Path::new(&path), 16384).unwrap(),
+        &platform_private_storage::read(std::path::Path::new(&path), 16384).unwrap(),
     )
     .unwrap();
     let ca = std::fs::read(&fixture.ca_file).unwrap();
@@ -228,7 +228,7 @@ async fn real_https_registration_reports_script_software_and_journal_results() {
         csrf: None,
     };
     let password = String::from_utf8(
-        native_process::private_storage::read(&fixture.admin_password_file, 4096).unwrap(),
+        platform_private_storage::read(&fixture.admin_password_file, 4096).unwrap(),
     )
     .unwrap();
     admin
