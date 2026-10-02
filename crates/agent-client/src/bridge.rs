@@ -783,6 +783,12 @@ fn software_encoding(
             step.uninstall.as_ref().ok_or(Error::Protocol)?
         }
         P::Mutation => &step.install,
+        P::Upgrade => match &step.upgrade {
+            execution_contract::SoftwareUpgrade::InPlace { invocation } => invocation,
+            _ => return Err(Error::Protocol),
+        },
+        P::Removal => step.uninstall.as_ref().ok_or(Error::Protocol)?,
+        P::Attach | P::Stage | P::Cleanup => step.auxiliary.get(&phase).ok_or(Error::Protocol)?,
         P::Before | P::After => match &step.detection {
             SoftwareDetector::Script { invocation } => invocation.as_ref(),
             _ => &step.install,

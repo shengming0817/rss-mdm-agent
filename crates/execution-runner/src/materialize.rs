@@ -114,6 +114,7 @@ pub trait InputResolver: Send + Sync {
     ) -> Result<InputBytes, Error>;
 }
 /// Fixed local materialization coordinates. These paths never grant execution authority.
+#[derive(Clone)]
 pub struct Artifacts {
     /// Ordered physical recipes for a software program; empty for a single process.
     pub program: Vec<SoftwareStepArtifacts>,
@@ -132,9 +133,10 @@ pub struct Artifacts {
     pub(crate) fixture_owned: bool,
 }
 /// Immutable material coordinates for one backend-defined step.
+#[derive(Clone)]
 pub struct SoftwareStepArtifacts {
-    /// Exact mutation recipe selected by the program intent.
-    pub mutation: Option<Box<Artifacts>>,
+    /// Exact physical recipes in the original attempt, keyed by durable phase.
+    pub mutations: BTreeMap<SoftwarePhase, Box<Artifacts>>,
     /// Exact detector recipe, shared by before/after observations.
     pub detection: Option<Box<Artifacts>>,
     /// Additional exact manager/package objects retained during the invocation.
@@ -235,12 +237,17 @@ impl Artifacts {
                 for (path, artifact) in &sources.files {
                     verify_material(path, &artifact.sha256)?;
                 }
-                if let Some(invocation) = program.invocation(index, SoftwarePhase::Mutation) {
-                    sources
-                        .mutation
-                        .as_ref()
-                        .ok_or(Error::Unbound)?
-                        .inspect_recipe(Recipe::invocation(invocation))?;
+                for (phase, material) in &sources.mutations {
+                    if phase.is_observation() {
+                        return Err(Error::Unbound);
+                    }
+                    let invocation = program.invocation(index, *phase).ok_or(Error::Unbound)?;
+                    material.inspect_recipe(Recipe::invocation(invocation))?;
+                }
+                if program.intent != SoftwareOperation::Detect
+                    && !sources.mutations.contains_key(&SoftwarePhase::Mutation)
+                {
+                    return Err(Error::Unbound);
                 }
                 if let Some(invocation) = program.invocation(index, SoftwarePhase::Before) {
                     sources

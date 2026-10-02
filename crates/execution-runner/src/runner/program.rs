@@ -40,6 +40,7 @@ pub(super) fn execute(input: ProgramRun) {
         output_bytes: 0,
     });
     let elapsed = journal.elapsed_ms;
+    let prior = journal.clone();
     let completed = journal
         .checkpoints
         .iter()
@@ -73,142 +74,187 @@ pub(super) fn execute(input: ProgramRun) {
             let mut before = None;
             let mut step_quiescent = true;
             let mut mutation_succeeded = true;
-            for phase in [
-                SoftwarePhase::Before,
-                SoftwarePhase::Mutation,
-                SoftwarePhase::After,
-            ] {
-                if cancel.load(Ordering::Acquire)
-                    || Instant::now() >= deadline
-                    || journal.output_bytes >= output_limit
-                {
-                    return Err(Error::OutcomeUnknown);
-                }
-                journal.checkpoints.push(SoftwareCheckpoint::Begin {
-                    step: index as u32,
-                    phase,
-                });
-                commit(
-                    &mut journal,
-                    (started, elapsed),
-                    &progress,
-                    deadline,
-                    &cancel,
-                )?;
-                if first.is_some_and(|before| {
-                    crate::host::monotonic_millis().map_or(true, |now| now >= before)
-                }) {
-                    return Err(Error::Clock);
+            let mut phases = std::collections::VecDeque::from([SoftwarePhase::Before]);
+            let mut failed_mutation = false;
+            let mut invocation_elapsed = std::collections::BTreeMap::<SoftwarePhase, u64>::new();
+            let mut invocation_output = std::collections::BTreeMap::<SoftwarePhase, u64>::new();
+            while let Some(phase) = phases.pop_front() {
+                if failed_mutation && !phase.is_observation() && phase != SoftwarePhase::Cleanup {
+                    continue;
                 }
                 let command = program.invocation(index, phase);
-                let (facts, detected, quiet) = if let Some(command) = command {
-                    let material = if phase == SoftwarePhase::Mutation {
-                        sources.mutation.as_deref().ok_or(Error::Unbound)?
-                    } else {
-                        sources.detection.as_deref().ok_or(Error::Unbound)?
-                    };
-                    let elapsed = if phase == SoftwarePhase::Mutation {
-                        0
-                    } else {
-                        detector_elapsed
-                    };
-                    let consumed = if phase == SoftwarePhase::Mutation {
-                        0
-                    } else {
-                        detector_output
-                    };
-                    let remaining = command.timeout_ms.saturating_sub(elapsed);
-                    let cap = command
-                        .output_bytes
-                        .saturating_sub(consumed)
-                        .min(output_limit.saturating_sub(journal.output_bytes));
-                    if remaining == 0 || cap == 0 {
-                        return Err(Error::Capacity);
+                let recorded = prior.checkpoints.iter().find_map(|c| match c {
+                    SoftwareCheckpoint::End {
+                        step,
+                        phase: p,
+                        process,
+                        detected,
+                        quiescent,
+                    } if *step as usize == index && *p == phase => {
+                        Some((process.as_deref().cloned(), detected.clone(), *quiescent))
                     }
-                    let invoked = Instant::now();
-                    let invocation_deadline =
-                        deadline.min(invoked + Duration::from_millis(remaining));
-                    let facts = invoke(
-                        &runtime,
-                        material,
-                        (&plan, &attempt, &runner),
-                        command,
-                        (index as u32, phase),
-                        (invocation_deadline, cap, first.take()),
-                        cancel.clone(),
-                    )?;
-                    if phase != SoftwarePhase::Mutation {
-                        detector_elapsed = detector_elapsed.saturating_add(
-                            invoked.elapsed().as_millis().min(u128::from(u64::MAX)) as u64,
+                    _ => None,
+                });
+                let replayed = recorded.is_some();
+                let (facts, detected, quiet) = if let Some(recorded) = recorded {
+                    if phase.is_observation() {
+                        // Original checkpoint waits and observations already consumed time.
+                        // Conservatively debit all prior elapsed time; recovery cannot replenish it.
+                        detector_elapsed = prior.elapsed_ms;
+                        detector_output = detector_output.saturating_add(
+                            recorded.0.as_ref().map_or(0, |p| p.total_output_bytes),
                         );
-                        detector_output = detector_output.saturating_add(facts.total_output_bytes);
                     }
-                    let detection = if phase == SoftwarePhase::Mutation {
-                        None
-                    } else {
-                        Some(script_detection(&facts))
-                    };
-                    let quiet = facts.quiescent;
-                    (Some(facts), detection, quiet)
-                } else if phase != SoftwarePhase::Mutation {
-                    // Native read-only receipt queries do not create a child process or invent
-                    // an exit status. Their observation is recorded separately in this journal.
-                    let context = program
-                        .invocation(index, SoftwarePhase::Mutation)
-                        .unwrap_or(&step.install);
-                    if matches!(context.run_as, RunAs::User { .. }) {
-                        if let Some(connection) = &source.delegate {
-                            connection
-                                .verify_context(&context.run_as, &context.session_requirement)?;
-                        } else {
-                            crate::platform::identity(
-                                &context.run_as,
-                                &context.session_requirement,
-                            )?;
-                        }
-                    }
+                    recorded
+                } else {
                     if cancel.load(Ordering::Acquire)
                         || Instant::now() >= deadline
-                        || first.is_some_and(|end| {
-                            crate::host::monotonic_millis().map_or(true, |now| now >= end)
-                        })
+                        || journal.output_bytes >= output_limit
                     {
+                        return Err(Error::OutcomeUnknown);
+                    }
+                    journal.checkpoints.push(SoftwareCheckpoint::Begin {
+                        step: index as u32,
+                        phase,
+                    });
+                    commit(
+                        &mut journal,
+                        (started, elapsed),
+                        &progress,
+                        deadline,
+                        &cancel,
+                    )?;
+                    if first.is_some_and(|before| {
+                        crate::host::monotonic_millis().map_or(true, |now| now >= before)
+                    }) {
                         return Err(Error::Clock);
                     }
-                    first = None;
-                    (
-                        None,
-                        Some(crate::software::native_detection(
-                            &step.detection,
-                            &context.run_as,
-                        )),
-                        true,
-                    )
-                } else {
-                    return Err(Error::InvalidInput);
+                    if let Some(command) = command {
+                        let material = if !phase.is_observation() {
+                            sources
+                                .mutations
+                                .get(&phase)
+                                .map(Box::as_ref)
+                                .ok_or(Error::Unbound)?
+                        } else {
+                            sources.detection.as_deref().ok_or(Error::Unbound)?
+                        };
+                        let elapsed = if !phase.is_observation() {
+                            invocation_elapsed.get(&phase).copied().unwrap_or(0)
+                        } else {
+                            detector_elapsed
+                        };
+                        let consumed = if !phase.is_observation() {
+                            invocation_output.get(&phase).copied().unwrap_or(0)
+                        } else {
+                            detector_output
+                        };
+                        let remaining = command.timeout_ms.saturating_sub(elapsed);
+                        let cap = command
+                            .output_bytes
+                            .saturating_sub(consumed)
+                            .min(output_limit.saturating_sub(journal.output_bytes));
+                        if remaining == 0 || cap == 0 {
+                            return Err(Error::Capacity);
+                        }
+                        let invoked = Instant::now();
+                        let invocation_deadline =
+                            deadline.min(invoked + Duration::from_millis(remaining));
+                        let facts = invoke(
+                            &runtime,
+                            material,
+                            (&plan, &attempt, &runner),
+                            command,
+                            (index as u32, phase),
+                            (invocation_deadline, cap, first.take()),
+                            cancel.clone(),
+                        )?;
+                        if phase.is_observation() {
+                            detector_elapsed = detector_elapsed.saturating_add(
+                                invoked.elapsed().as_millis().min(u128::from(u64::MAX)) as u64,
+                            );
+                            detector_output =
+                                detector_output.saturating_add(facts.total_output_bytes);
+                        }
+                        if !phase.is_observation() {
+                            *invocation_elapsed.entry(phase).or_default() +=
+                                invoked.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+                            *invocation_output.entry(phase).or_default() +=
+                                facts.total_output_bytes;
+                        }
+                        let detection = if !phase.is_observation() {
+                            None
+                        } else {
+                            Some(script_detection(&facts))
+                        };
+                        let quiet = facts.quiescent;
+                        (Some(facts), detection, quiet)
+                    } else if phase.is_observation() {
+                        // Native read-only receipt queries do not create a child process or invent
+                        // an exit status. Their observation is recorded separately in this journal.
+                        let context = program
+                            .invocation(index, SoftwarePhase::Mutation)
+                            .unwrap_or(&step.install);
+                        if matches!(context.run_as, RunAs::User { .. }) {
+                            if let Some(connection) = &source.delegate {
+                                connection.verify_context(
+                                    &context.run_as,
+                                    &context.session_requirement,
+                                )?;
+                            } else {
+                                crate::platform::identity(
+                                    &context.run_as,
+                                    &context.session_requirement,
+                                )?;
+                            }
+                        }
+                        if cancel.load(Ordering::Acquire)
+                            || Instant::now() >= deadline
+                            || first.is_some_and(|end| {
+                                crate::host::monotonic_millis().map_or(true, |now| now >= end)
+                            })
+                        {
+                            return Err(Error::Clock);
+                        }
+                        first = None;
+                        (
+                            None,
+                            Some(crate::software::native_detection(
+                                &step.detection,
+                                &context.run_as,
+                            )),
+                            true,
+                        )
+                    } else {
+                        return Err(Error::InvalidInput);
+                    }
                 };
                 if let Some(facts) = &facts {
-                    journal.output_bytes = journal
-                        .output_bytes
-                        .saturating_add(facts.total_output_bytes);
+                    if !replayed {
+                        journal.output_bytes = journal
+                            .output_bytes
+                            .saturating_add(facts.total_output_bytes);
+                    }
                     latest = facts.clone();
                 }
-                journal.checkpoints.push(SoftwareCheckpoint::End {
-                    step: index as u32,
-                    phase,
-                    process: facts.clone().map(Box::new),
-                    detected: detected.clone(),
-                    quiescent: quiet,
-                });
-                commit(
-                    &mut journal,
-                    (started, elapsed),
-                    &progress,
-                    deadline,
-                    &cancel,
-                )?;
-                let material = if phase == SoftwarePhase::Mutation {
-                    sources.mutation.as_deref()
+                if !replayed {
+                    journal.checkpoints.push(SoftwareCheckpoint::End {
+                        step: index as u32,
+                        phase,
+                        process: facts.clone().map(Box::new),
+                        detected: detected.clone(),
+                        quiescent: quiet,
+                    });
+                    commit(
+                        &mut journal,
+                        (started, elapsed),
+                        &progress,
+                        deadline,
+                        &cancel,
+                    )?;
+                }
+                let material = if !phase.is_observation() {
+                    sources.mutations.get(&phase).map(Box::as_ref)
                 } else {
                     sources.detection.as_deref()
                 };
@@ -221,20 +267,14 @@ pub(super) fn execute(input: ProgramRun) {
                     });
                 }
                 step_quiescent &= quiet;
-                if !quiet && phase != SoftwarePhase::Mutation {
+                if !quiet {
                     return Err(Error::OutcomeUnknown);
                 }
                 if let Some(state) = detected {
                     if matches!(state, SoftwareState::Unknown { .. }) {
                         return Err(Error::OutcomeUnknown);
                     }
-                    let satisfied = match program.intent {
-                        SoftwareOperation::Install => {
-                            matches!(&state, SoftwareState::Present { version } if *version == step.version)
-                        }
-                        SoftwareOperation::Uninstall => matches!(state, SoftwareState::Absent {}),
-                        SoftwareOperation::Detect => true,
-                    };
+                    let satisfied = program.satisfied(step, &state);
                     if satisfied && step_quiescent && mutation_succeeded {
                         journal
                             .checkpoints
@@ -282,10 +322,21 @@ pub(super) fn execute(input: ProgramRun) {
                             return Err(Error::Denied);
                         }
                     }
+                    if phase == SoftwarePhase::Before {
+                        let mutations = program.mutation_phases(step, &state);
+                        if mutations.is_empty() {
+                            return Err(Error::Denied);
+                        }
+                        phases.extend(mutations);
+                        phases.push_back(SoftwarePhase::After);
+                    }
                     before = Some(state);
-                } else if phase == SoftwarePhase::Mutation {
+                } else if !phase.is_observation() {
                     let facts = facts.as_ref().ok_or(Error::OutcomeUnknown)?;
-                    mutation_succeeded = step.mutation_succeeded(facts);
+                    mutation_succeeded &= command
+                        .ok_or(Error::InvalidInput)?
+                        .succeeded(facts, step.allow_reboot);
+                    failed_mutation |= !mutation_succeeded;
                     if before.is_none() {
                         return Err(Error::OutcomeUnknown);
                     }
@@ -302,7 +353,7 @@ pub(super) fn execute(input: ProgramRun) {
         latest.failure_kind = ProcessFailureKind::None;
     }
     if let Err(error) = result {
-        latest.quiescent = false;
+        latest.quiescent = journal.closed(&plan);
         latest.quality = OutputQuality::Partial;
         fault(&mut latest, classify(error));
     }

@@ -83,12 +83,16 @@ pub struct SoftwareProgramStep {
     pub architecture: PackageValue,
     /// Exact primary package, formula, manifest or Bundle bytes.
     pub payload: ExactArtifactRef,
+    /// Complete retained material coordinates; recovery never guesses alternate paths.
+    pub materials: Vec<SoftwareMaterial>,
     /// Native signature requirements on exact declared artifacts.
     pub signatures: Vec<SoftwareSignature>,
     /// Frozen strategy for an existing different version.
     pub upgrade: SoftwareUpgrade,
     /// Frozen install/update invocation.
     pub install: SoftwareInvocation,
+    /// Exact additional physical operations, each with its own durable phase boundary.
+    pub auxiliary: std::collections::BTreeMap<SoftwarePhase, SoftwareInvocation>,
     /// Explicit frozen removal; absence means unsupported.
     pub uninstall: Option<SoftwareInvocation>,
     /// Independent detector used under one shared observation budget.
@@ -104,12 +108,7 @@ impl SoftwareProgramStep {
     /// Installer completion only; independent detection and quiescence still gate the step.
     /// MSI reboot codes never authorize this client to initiate a reboot.
     pub fn mutation_succeeded(&self, facts: &ProcessEvidence) -> bool {
-        facts.end == ProcessEnd::Exited
-            && facts.failure_kind == ProcessFailureKind::None
-            && facts.exit_code.is_some_and(|code| {
-                self.install.exit_codes.success.contains(&code)
-                    || (self.allow_reboot && self.install.exit_codes.reboot.contains(&code))
-            })
+        self.install.succeeded(facts, self.allow_reboot)
     }
 }
 /// A single backend attempt and one execution intent, containing every ordered step.
@@ -133,11 +132,71 @@ impl SoftwareProgram {
                 SoftwareOperation::Uninstall => step.uninstall.as_ref(),
                 SoftwareOperation::Detect => None,
             },
+            SoftwarePhase::Removal => step.uninstall.as_ref(),
+            SoftwarePhase::Upgrade => match &step.upgrade {
+                SoftwareUpgrade::InPlace { invocation } => Some(invocation),
+                _ => None,
+            },
+            SoftwarePhase::Attach | SoftwarePhase::Stage | SoftwarePhase::Cleanup => {
+                step.auxiliary.get(&phase)
+            }
             SoftwarePhase::Before | SoftwarePhase::After => match &step.detection {
                 SoftwareDetector::Script { invocation } => Some(invocation),
                 _ => None,
             },
         }
+    }
+    /// Desired effect, evaluated independently of installer process exits.
+    pub fn satisfied(&self, step: &SoftwareProgramStep, state: &SoftwareState) -> bool {
+        match self.intent {
+            SoftwareOperation::Install => {
+                matches!(state, SoftwareState::Present { version } if version == &step.version)
+            }
+            SoftwareOperation::Uninstall => matches!(state, SoftwareState::Absent {}),
+            SoftwareOperation::Detect => !matches!(state, SoftwareState::Unknown { .. }),
+        }
+    }
+    /// Ordered physical operations derived from the frozen format, intent and before-state.
+    pub fn mutation_phases(
+        &self,
+        step: &SoftwareProgramStep,
+        before: &SoftwareState,
+    ) -> Vec<SoftwarePhase> {
+        if self.intent == SoftwareOperation::Detect
+            || matches!(before, SoftwareState::Unknown { .. })
+        {
+            return Vec::new();
+        }
+        let updating = self.intent == SoftwareOperation::Install
+            && matches!(before, SoftwareState::Present { .. });
+        if updating && matches!(step.upgrade, SoftwareUpgrade::Deny {}) {
+            return Vec::new();
+        }
+        let mut phases = Vec::new();
+        if step.auxiliary.contains_key(&SoftwarePhase::Attach)
+            && self.intent == SoftwareOperation::Install
+        {
+            phases.push(SoftwarePhase::Attach);
+            if step.auxiliary.contains_key(&SoftwarePhase::Stage) {
+                phases.push(SoftwarePhase::Stage);
+            }
+        }
+        if updating && matches!(step.upgrade, SoftwareUpgrade::UninstallThenInstall {}) {
+            phases.push(SoftwarePhase::Removal);
+        }
+        phases.push(
+            if updating && matches!(step.upgrade, SoftwareUpgrade::InPlace { .. }) {
+                SoftwarePhase::Upgrade
+            } else {
+                SoftwarePhase::Mutation
+            },
+        );
+        if step.auxiliary.contains_key(&SoftwarePhase::Cleanup)
+            && self.intent == SoftwareOperation::Install
+        {
+            phases.push(SoftwarePhase::Cleanup);
+        }
+        phases
     }
     /// Agent serialization keys, deliberately independent of tenant and package-name aliases.
     /// These claims never promise exclusion of unrelated OS writers.
@@ -208,4 +267,26 @@ impl std::fmt::Debug for SoftwareProgram {
             .field("steps", &self.steps.len())
             .finish_non_exhaustive()
     }
+}
+
+impl SoftwareInvocation {
+    /// Match approved exits without inferring installation, quiescence or reboot authority.
+    pub fn succeeded(&self, facts: &ProcessEvidence, allow_reboot: bool) -> bool {
+        facts.end == ProcessEnd::Exited
+            && facts.failure_kind == ProcessFailureKind::None
+            && facts.exit_code.is_some_and(|code| {
+                self.exit_codes.success.contains(&code)
+                    || (allow_reboot && self.exit_codes.reboot.contains(&code))
+            })
+    }
+}
+
+/// One immutable material retained by the original program, including sidecars and native images.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SoftwareMaterial {
+    /// Absolute protected path selected by the trusted compiler.
+    pub path: String,
+    /// Exact declared bytes.
+    pub artifact: ExactArtifactRef,
 }

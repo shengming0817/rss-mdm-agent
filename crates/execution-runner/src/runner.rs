@@ -380,8 +380,8 @@ impl RunnerPort for NativeRunner {
             return Ok(None);
         };
         let sources = source.program.get(*step as usize).ok_or(Error::Unbound)?;
-        let material = if *phase == SoftwarePhase::Mutation {
-            sources.mutation.as_deref()
+        let material = if !phase.is_observation() {
+            sources.mutations.get(phase).map(Box::as_ref)
         } else {
             sources.detection.as_deref()
         };
@@ -411,7 +411,7 @@ impl RunnerPort for NativeRunner {
             return Err(Error::Denied);
         }
         facts.runner = self.id.clone();
-        let detected = if *phase == SoftwarePhase::Mutation {
+        let detected = if !phase.is_observation() {
             None
         } else {
             Some(program::script_detection(&facts))
@@ -440,14 +440,7 @@ impl RunnerPort for NativeRunner {
             if records.len() >= self.capacity {
                 return Err(Error::Capacity);
             }
-            if !journal.valid_for(&plan)
-                || journal.runner != self.id
-                || journal.complete(&plan)
-                || !matches!(
-                    journal.checkpoints.last(),
-                    Some(SoftwareCheckpoint::Complete { .. })
-                )
-            {
+            if !journal.valid_for(&plan) || journal.runner != self.id || !journal.resumable(&plan) {
                 return Err(Error::Denied);
             }
             let Some(source) = self.artifacts.get(plan.digest().as_str())? else {

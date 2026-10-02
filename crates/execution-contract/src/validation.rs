@@ -538,7 +538,34 @@ fn software(p: &ExecutionInput, limits: &ExecutionLimits) -> Result<(), Contract
             {
                 return Err(invalid());
             }
+            if step.materials.len() > 4096
+                || step
+                    .materials
+                    .iter()
+                    .any(|m| path(&m.path, p.request.target.platform, Field::Document).is_err())
+            {
+                return Err(invalid());
+            }
             invocation(&step.install)?;
+            let expected = match &step.format {
+                crate::SoftwareFormat::DmgApp { .. } => vec![
+                    crate::SoftwarePhase::Attach,
+                    crate::SoftwarePhase::Stage,
+                    crate::SoftwarePhase::Cleanup,
+                ],
+                crate::SoftwareFormat::DmgPkg { .. } => {
+                    vec![crate::SoftwarePhase::Attach, crate::SoftwarePhase::Cleanup]
+                }
+                _ => Vec::new(),
+            };
+            if step.auxiliary.len() != expected.len()
+                || expected.iter().any(|p| !step.auxiliary.contains_key(p))
+            {
+                return Err(invalid());
+            }
+            for command in step.auxiliary.values() {
+                invocation(command)?;
+            }
             if step.install.exit_codes.success.is_empty()
                 || !step
                     .install

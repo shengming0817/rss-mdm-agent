@@ -235,7 +235,11 @@ fn msi_reboot_completion_requires_permission_detection_and_quiescence() {
                                 },
                             ],
                         };
-                        assert!(progress.valid_for(&plan));
+                        assert_eq!(progress.valid_for(&plan), quiet);
+                        if !quiet {
+                            continue;
+                        }
+                        assert_eq!(progress.closed(&plan), quiet);
                         progress
                             .checkpoints
                             .push(SoftwareCheckpoint::Complete { step: 0 });

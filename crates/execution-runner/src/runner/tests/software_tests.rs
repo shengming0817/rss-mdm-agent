@@ -33,9 +33,11 @@ fn unknown_detector_activity_keeps_real_exit_and_cannot_skip_to_mutation() {
                 version: PackageValue::new("1").unwrap(),
                 architecture: PackageValue::new("aarch64").unwrap(),
                 payload: invocation.launch.artifact.clone(),
+                materials: Vec::new(),
                 signatures: Vec::new(),
                 upgrade: SoftwareUpgrade::Deny {},
                 install: invocation.clone(),
+                auxiliary: Default::default(),
                 uninstall: None,
                 detection: SoftwareDetector::Script {
                     invocation: Box::new(invocation),
@@ -59,7 +61,7 @@ fn unknown_detector_activity_keeps_real_exit_and_cannot_skip_to_mutation() {
     };
     let mut materials = source();
     materials.program.push(crate::SoftwareStepArtifacts {
-        mutation: Some(Box::new(source())),
+        mutations: [(SoftwarePhase::Mutation, Box::new(source()))].into(),
         detection: Some(Box::new(source())),
         files: vec![],
     });

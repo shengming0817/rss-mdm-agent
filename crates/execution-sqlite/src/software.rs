@@ -45,7 +45,7 @@ pub(crate) fn settle(
         });
         if never
             || crate::software_progress::read(conn, &attempt.id, limits)?
-                .is_some_and(|p| p.complete(plan))
+                .is_some_and(|p| p.closed(plan))
         {
             conn.execute(
                 "DELETE FROM software_claims WHERE attempt_id=?1",

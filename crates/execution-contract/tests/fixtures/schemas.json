@@ -2405,6 +2405,25 @@
         ],
         "type": "object"
       },
+      "SoftwareMaterial": {
+        "additionalProperties": false,
+        "description": "One immutable material retained by the original program, including sidecars and native images.",
+        "properties": {
+          "artifact": {
+            "$ref": "#/$defs/ExactArtifactRef",
+            "description": "Exact declared bytes."
+          },
+          "path": {
+            "description": "Absolute protected path selected by the trusted compiler.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "artifact"
+        ],
+        "type": "object"
+      },
       "SoftwareOperation": {
         "description": "One backend software intent, independent of individual process exit codes.",
         "oneOf": [
@@ -2468,6 +2487,13 @@
             "$ref": "#/$defs/PackageValue",
             "description": "Common architecture selector from the device-bound backend task."
           },
+          "auxiliary": {
+            "additionalProperties": {
+              "$ref": "#/$defs/SoftwareInvocation"
+            },
+            "description": "Exact additional physical operations, each with its own durable phase boundary.",
+            "type": "object"
+          },
           "detection": {
             "$ref": "#/$defs/SoftwareDetector",
             "description": "Independent detector used under one shared observation budget."
@@ -2483,6 +2509,13 @@
           "install": {
             "$ref": "#/$defs/SoftwareInvocation",
             "description": "Frozen install/update invocation."
+          },
+          "materials": {
+            "description": "Complete retained material coordinates; recovery never guesses alternate paths.",
+            "items": {
+              "$ref": "#/$defs/SoftwareMaterial"
+            },
+            "type": "array"
           },
           "package": {
             "$ref": "#/$defs/PackageValue",
@@ -2525,9 +2558,11 @@
           "version",
           "architecture",
           "payload",
+          "materials",
           "signatures",
           "upgrade",
           "install",
+          "auxiliary",
           "detection",
           "existing",
           "allowDowngrade",

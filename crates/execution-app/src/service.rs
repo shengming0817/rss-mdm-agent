@@ -588,11 +588,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
                 &active.id,
                 &self.adapter(None, Some(execution.input())),
             )? {
-                if matches!(
-                    progress.checkpoints.last(),
-                    Some(execution_contract::SoftwareCheckpoint::Complete { .. })
-                ) && !progress.complete(execution.input())
-                {
+                if progress.resumable(execution.input()) {
                     let allowance = execution
                         .allowance(self.host.reliable_now()?)
                         .map_err(|_| Error::Clock)?;

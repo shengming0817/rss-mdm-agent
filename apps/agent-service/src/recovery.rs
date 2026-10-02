@@ -134,49 +134,37 @@ pub(crate) fn materials(
                 }
             }
         }
-        // All step files were published into the task's user namespace if any command needs it.
-        let account = program
-            .steps
+        // Reuse every original protected coordinate. No current compiler decision, filename
+        // convention, or filesystem availability can select a replacement on recovery.
+        let files = step
+            .materials
             .iter()
-            .flat_map(|s| {
-                std::iter::once(&s.install)
-                    .chain(s.uninstall.iter())
-                    .chain(match &s.detection {
-                        SoftwareDetector::Script { invocation } => Some(invocation.as_ref()),
-                        _ => None,
-                    })
-            })
-            .map(|i| &i.run_as)
-            .find(|r| matches!(r, RunAs::User { .. }))
-            .unwrap_or(&p.run_as);
-        let original = content(config, account, &step.payload.sha256);
-        let payload = match crate::software::native_export_name(
-            step.format.adapter(),
-            step.package.as_str(),
-        )? {
-            Some(name) => {
-                let export = original
-                    .parent()
-                    .ok_or(Error::Configuration)?
-                    .join(format!("export-{}", step.payload.sha256.as_str()))
-                    .join(name);
-                retained_payload(
-                    original,
-                    export,
-                    std::iter::once(&step.install)
-                        .chain(step.uninstall.iter())
-                        .flat_map(|c| c.launch.argv.iter()),
-                )
+            .map(|m| (PathBuf::from(&m.path), m.artifact.clone()))
+            .collect();
+        let mut mutations = std::collections::BTreeMap::new();
+        for phase in [
+            SoftwarePhase::Mutation,
+            SoftwarePhase::Upgrade,
+            SoftwarePhase::Removal,
+            SoftwarePhase::Attach,
+            SoftwarePhase::Stage,
+            SoftwarePhase::Cleanup,
+        ] {
+            if let Some(command) = program.invocation(index, phase) {
+                mutations.insert(
+                    phase,
+                    Box::new(recipe(
+                        config,
+                        helpers,
+                        &command.launch,
+                        &command.run_as,
+                        &command.session_requirement,
+                    )?),
+                );
             }
-            None => original,
-        };
-        let mut files = vec![(payload, step.payload.clone())];
-        for command in std::iter::once(&step.install).chain(step.uninstall.iter()) {
-            for manager in &config.managers {
-                if command.launch.argv.iter().any(|a| matches!(a, LaunchArg::Literal { value } if Some(value.as_str()) == manager.image.path.to_str())) {
-                    files.push((manager.image.path.clone(), ExactArtifactRef { resource: crate::plan::reference("native-manager", &manager.image.sha256)?, sha256: Digest::new(&manager.image.sha256).map_err(|_| Error::Configuration)? }));
-                }
-            }
+        }
+        if let Some(original) = mutation {
+            mutations.insert(SoftwarePhase::Mutation, original);
         }
         if delegate.is_none() && matches!(step.install.run_as, RunAs::User { .. }) {
             delegate = recipe(
@@ -189,7 +177,7 @@ pub(crate) fn materials(
             .delegate;
         }
         sources.push(SoftwareStepArtifacts {
-            mutation,
+            mutations,
             detection,
             files,
         });
@@ -202,57 +190,4 @@ pub(crate) fn materials(
         work_root: config.work_root.clone(),
         controlled_input: None,
     })
-}
-
-// The protected journal keeps the original invocation coordinates. Current compilation rules
-// never rewrite them, and filesystem availability never chooses a replacement payload.
-fn retained_payload<'a>(
-    original: PathBuf,
-    export: PathBuf,
-    argv: impl Iterator<Item = &'a LaunchArg>,
-) -> PathBuf {
-    if argv.into_iter().any(|arg| matches!(arg, LaunchArg::Literal { value } if Some(value.as_str()) == export.to_str())) {
-        export
-    } else {
-        original
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn recovery_keeps_frozen_package_coordinates_when_exports_differ() {
-        let root =
-            std::env::temp_dir().join(format!("rss-retained-payload-{}", std::process::id()));
-        std::fs::create_dir(&root).unwrap();
-        let original = root.join("original-digest");
-        std::fs::write(&original, b"retained package").unwrap();
-        for leaf in ["package.pkg", "package.msi"] {
-            let export = root.join("export-digest").join(leaf);
-            let old = [LaunchArg::Literal {
-                value: original.to_str().unwrap().into(),
-            }];
-            let new = [LaunchArg::Literal {
-                value: export.to_str().unwrap().into(),
-            }];
-            assert!(!export.exists());
-            assert_eq!(
-                retained_payload(original.clone(), export.clone(), old.iter()),
-                original
-            );
-            assert_eq!(
-                retained_payload(original.clone(), export.clone(), new.iter()),
-                export
-            );
-            std::fs::create_dir_all(export.parent().unwrap()).unwrap();
-            std::fs::hard_link(&original, &export).unwrap();
-            // Publication of a new filename does not change an already frozen invocation.
-            assert_eq!(
-                retained_payload(original.clone(), export, old.iter()),
-                original
-            );
-        }
-        std::fs::remove_dir_all(root).unwrap();
-    }
 }

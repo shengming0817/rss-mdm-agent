@@ -467,6 +467,14 @@ pub(crate) fn compile(
             None
         };
         let uninstall = removal.as_ref().map(|(command, _, _)| command.clone());
+        let mut physical_sources = BTreeMap::new();
+        if intent == SoftwareOperation::Install {
+            physical_sources.insert(SoftwarePhase::Upgrade, Box::new(install_source.clone()));
+            if let Some((_, source, extra)) = &removal {
+                physical_sources.insert(SoftwarePhase::Removal, Box::new(source.clone()));
+                files.extend(extra.clone());
+            }
+        }
         let (mutation, mutation_budget) = match intent {
             SoftwareOperation::Install => (Some(Box::new(install_source)), Some(&install)),
             SoftwareOperation::Uninstall => (
@@ -542,11 +550,21 @@ pub(crate) fn compile(
             version: package(&action.version)?,
             architecture: architecture.clone(),
             payload: primary.1,
+            materials: files
+                .iter()
+                .map(|(path, artifact)| {
+                    Ok(SoftwareMaterial {
+                        path: path.to_str().ok_or(Error::Configuration)?.into(),
+                        artifact: artifact.clone(),
+                    })
+                })
+                .collect::<Result<_, Error>>()?,
             signatures: Vec::new(),
             upgrade: SoftwareUpgrade::InPlace {
                 invocation: Box::new(install.clone()),
             },
             install,
+            auxiliary: Default::default(),
             uninstall,
             detection,
             existing: match action.ownership {
@@ -558,8 +576,11 @@ pub(crate) fn compile(
             allow_downgrade: action.downgrade == wire::SoftwareTaskDowngrade::Allow,
             allow_reboot: action.reboot == wire::SoftwareTaskReboot::Report,
         });
+        if let Some(source) = mutation {
+            physical_sources.insert(SoftwarePhase::Mutation, source);
+        }
         sources.push(SoftwareStepArtifacts {
-            mutation,
+            mutations: physical_sources,
             detection: detector_source,
             files,
         });
