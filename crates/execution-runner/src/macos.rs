@@ -224,18 +224,86 @@ pub(crate) fn encoding(encoding: ArtifactEncoding) -> Result<(), Error> {
     }
 }
 pub(crate) fn payload(
-    file: File,
-    _: &[u8],
-    _: &Path,
+    mut file: File,
+    bytes: &[u8],
+    root: &Path,
     _: &AttemptId,
     _: &VersionedRef,
 ) -> Result<crate::materialize::Payload, Error> {
     use std::os::fd::AsRawFd;
+    let metadata = file.metadata().map_err(|_| Error::Unavailable)?;
+    let uid = unsafe { libc::geteuid() };
+    if uid != 0 && (metadata.uid() != uid || metadata.mode() & 0o400 == 0) {
+        // /dev/fd does not preserve an ACL read grant when the interpreter reopens a root
+        // artifact. Snapshot the already verified bytes into this physical owner's anonymous
+        // file, keeping the protected source unchanged and exposing only a read-only handle.
+        file = anonymous_payload(bytes, root)?;
+    }
     Ok(crate::materialize::Payload {
         path: format!("/dev/fd/{}", file.as_raw_fd()).into(),
         file: Some(file),
         directory: None,
     })
+}
+fn anonymous_payload(bytes: &[u8], root: &Path) -> Result<File, Error> {
+    use std::{
+        io::Write,
+        os::fd::{AsRawFd, FromRawFd},
+    };
+    let directory = open_directory(root)?;
+    let mut nonce = [0u8; 16];
+    // SAFETY: arc4random_buf initializes the writable nonce buffer.
+    unsafe { libc::arc4random_buf(nonce.as_mut_ptr().cast(), nonce.len()) };
+    let name = std::ffi::CString::new(format!(
+        ".script-{}",
+        nonce.iter().map(|v| format!("{v:02x}")).collect::<String>()
+    ))
+    .map_err(|_| Error::Unavailable)?;
+    // Open the reader while the file is still empty, then remove its only name BEFORE writing.
+    // /dev/fd duplicates access mode, so reopening a writable anonymous fd cannot downgrade it.
+    // ref: Apple Libc stdio/FreeBSD/tmpfile.c; XNU bsd/miscfs/devfs/devfs_vnops.c.
+    let raw = unsafe {
+        libc::openat(
+            directory.as_raw_fd(),
+            name.as_ptr(),
+            libc::O_RDWR | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+            0o400,
+        )
+    };
+    if raw < 0 {
+        return Err(Error::Unavailable);
+    }
+    // SAFETY: openat returned a uniquely owned descriptor.
+    let mut writer = unsafe { File::from_raw_fd(raw) };
+    let raw_reader = unsafe {
+        libc::openat(
+            directory.as_raw_fd(),
+            name.as_ptr(),
+            libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+        )
+    };
+    let removed = unsafe { libc::unlinkat(directory.as_raw_fd(), name.as_ptr(), 0) } == 0;
+    if raw_reader < 0 {
+        return Err(Error::Unavailable);
+    }
+    // SAFETY: the second openat returned another uniquely owned descriptor.
+    let mut reader = unsafe { File::from_raw_fd(raw_reader) };
+    let original = writer.metadata().map_err(|_| Error::Unavailable)?;
+    let retained = reader.metadata().map_err(|_| Error::Unavailable)?;
+    if !removed
+        || !retained.is_file()
+        || retained.nlink() != 0
+        || original.nlink() != 0
+        || retained.uid() != unsafe { libc::geteuid() }
+        || retained.dev() != original.dev()
+        || retained.ino() != original.ino()
+        || retained.mode() & 0o777 != 0o400
+    {
+        return Err(Error::Denied);
+    }
+    writer.write_all(bytes).map_err(|_| Error::Unavailable)?;
+    std::io::Seek::rewind(&mut reader).map_err(|_| Error::Unavailable)?;
+    Ok(reader)
 }
 pub(crate) struct WorkingDirectory(File);
 impl WorkingDirectory {
@@ -288,6 +356,57 @@ impl PathLease {
 #[cfg(test)]
 mod path_tests {
     use super::*;
+    #[test]
+    fn acl_readable_payload_uses_an_anonymous_read_only_snapshot_for_the_interpreter() {
+        use std::io::Write;
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir()
+            .canonicalize()
+            .unwrap()
+            .join(format!("rss-anonymous-script-{}", std::process::id()));
+        native_process::private_storage::directory(&root).unwrap();
+        let source = root.join("input");
+        let bytes = b"printf 'exact-snapshot\\n'\n";
+        let mut original = File::create(&source).unwrap();
+        original.write_all(bytes).unwrap();
+        // An already open ACL-readable file can lack the POSIX read bit used by /dev/fd.
+        original
+            .set_permissions(std::fs::Permissions::from_mode(0o000))
+            .unwrap();
+        let profile = VersionedRef {
+            id: Id::new("native-posix-sh-file").unwrap(),
+            revision: Id::new("1").unwrap(),
+        };
+        let captured = payload(
+            original,
+            bytes,
+            &root,
+            &AttemptId::new("snapshot").unwrap(),
+            &profile,
+        )
+        .unwrap();
+        let descriptor = captured.file.as_ref().unwrap();
+        assert_eq!(descriptor.metadata().unwrap().nlink(), 0);
+        let mut command = std::process::Command::new("/bin/sh");
+        command.arg(&captured.path);
+        let cwd = WorkingDirectory::open(&root).unwrap();
+        cwd.configure(&mut command, descriptor).unwrap();
+        let output = command.output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(output.stdout, b"exact-snapshot\n");
+        assert_eq!(std::fs::metadata(&source).unwrap().mode() & 0o777, 0);
+        use std::os::fd::AsRawFd;
+        assert_eq!(
+            unsafe { libc::fcntl(descriptor.as_raw_fd(), libc::F_GETFL) } & libc::O_ACCMODE,
+            libc::O_RDONLY
+        );
+        drop(captured);
+        std::fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     fn read_only_acl_is_allowed_but_mutation_acl_is_rejected() {
         use std::os::unix::fs::PermissionsExt;
