@@ -525,6 +525,9 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
                 method = request['method']
                 if method == 'query': value = query()
                 elif method == 'status': value = command('status')
+                elif method == 'catalog':
+                    value = command('package', path=str(pkg), receipt=package_receipt, user=True)
+                    receipt['scenarios']['second_unexecuted_catalog_offer'] = value
                 elif method == 'effect': value = effect()
                 elif method == 'completion':
                     deadline = time.monotonic() + 60

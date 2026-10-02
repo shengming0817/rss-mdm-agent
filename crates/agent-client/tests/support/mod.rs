@@ -437,7 +437,12 @@ fn claim_response(d: &mut Data, value: Value) -> Response {
             d.script();
         }
         let mut signed = d.offer.clone().unwrap();
-        if d.explicit_offers {
+        if d.explicit_offers
+            && !d
+                .claims
+                .values()
+                .any(|v| v.payload.task_id() == signed.payload.task_id())
+        {
             if let TaskPayload::Software(mut spec) = signed.payload.clone() {
                 spec.execution_context =
                     serde_json::from_value(value["executionContext"].clone()).unwrap();

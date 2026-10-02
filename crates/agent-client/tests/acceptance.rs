@@ -1550,6 +1550,30 @@ async fn controlled_backend_issues_only_explicit_offers_bound_to_the_actual_clai
 }
 
 #[tokio::test]
+async fn controlled_backend_keeps_an_issued_software_offer_frozen_across_context_changes() {
+    let server = Server::new().await;
+    server.data.lock().unwrap().explicit_offers = true;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    server.data.lock().unwrap().software(1, true);
+    let original = client.claim().await.unwrap().offer.unwrap();
+    client.received(&original).await.unwrap();
+    let mut observed = client.execution_context().unwrap();
+    observed.os_version = [26, 4, 0, 0];
+    client.set_execution_context(observed).unwrap();
+    let repeated = client.claim().await.unwrap().offer.unwrap();
+    assert_eq!(repeated.payload(), original.payload());
+    let materials = client.prepare(&original).await.unwrap();
+    let started = client
+        .start_user_initiated(&original, &materials)
+        .await
+        .unwrap();
+    assert!(matches!(started.payload(), TaskPayload::Software(_)));
+    assert_eq!(started.payload().attempt_id(), original.attempt_id());
+}
+
+#[tokio::test]
 async fn claim_retry_freezes_executor_profiles_and_context_across_restart() {
     let server = Server::new().await;
     let root = Root::new();

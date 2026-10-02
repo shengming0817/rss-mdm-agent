@@ -1317,20 +1317,11 @@ try {
       : "explicit-selection-fallback";
     result.checks.push("native-copy-or-explicit-fallback");
 
-    await text("等待用户确认本次动作");
+    await text("等待本人确认");
     assert.equal(
       (await task()).snapshot.attempts,
       0,
       "AI permission cannot replace Rust action confirmation",
-    );
-    await click("查看设备操作");
-    await text("等待用户确认本次动作");
-    // Native Escape must close dialog and return focus to its trigger.
-    key(53);
-    await wait(async () => !(await browser.$("dialog[open]").isExisting()));
-    assert.equal(
-      await browser.execute(() => document.activeElement?.textContent?.trim()),
-      "查看设备操作",
     );
     await prompt("GOLDEN_CANCEL_REJECT 拒绝取消");
     await permission(false);
@@ -1344,14 +1335,18 @@ try {
         (await serviceCall("query")).preparations.length,
       1,
     );
-    await click("查看设备操作");
-    await click("前往任务确认动作");
-    await wait(async () => !(await browser.$("dialog[open]").isExisting()));
-    await click("刷新任务");
-    await browser.$(".task-list .task-row").click();
-    await click("确认并执行");
+    await click("确认上述操作");
     await wait(async () => (await task())?.snapshot.attempts === 1);
-    await navigate("AI 助手");
+    await text("查看设备操作");
+    await click("查看设备操作");
+    await wait(() => browser.$("dialog[open]").isDisplayed());
+    // Native Escape closes the actual execution inspector and restores its trigger.
+    key(53);
+    await wait(async () => !(await browser.$("dialog[open]").isExisting()));
+    assert.equal(
+      await browser.execute(() => document.activeElement?.textContent?.trim()),
+      "查看设备操作",
+    );
     await prompt("GOLDEN_CANCEL_ALLOW 允许取消请求");
     await permission(true);
     await text("完成 CANCEL_ALLOW");
@@ -1509,6 +1504,15 @@ try {
       "all first-chat operations share one session",
     );
     mark("resource context in the same native conversation at three sizes");
+    // The first offer belongs to its original journal request. Publish a new fixed signed
+    // offer for catalogue interaction, without executing it or replacing that first request.
+    result.catalogOffer = await serviceCall("catalog");
+    await wait(async () =>
+      (await serviceCall("query")).available.some(
+        (offer) => offer.task === result.catalogOffer.task,
+      ),
+    );
+    assert.equal((await task()).snapshot.attempts, 1);
     const proposalsBeforeContext = fixture.facts.proposals.length;
     for (const [width, height] of [
       [1100, 760],
