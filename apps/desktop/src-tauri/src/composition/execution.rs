@@ -38,6 +38,7 @@ pub struct ExecutionHandle {
     generation: Option<String>,
     origin: ClientOrigin,
     permits: Arc<tokio::sync::Semaphore>,
+    wire: Arc<Mutex<()>>,
 }
 impl ExecutionHandle {
     pub fn new() -> Self {
@@ -46,6 +47,7 @@ impl ExecutionHandle {
             generation: None,
             origin: ClientOrigin::Desktop {},
             permits: Arc::new(tokio::sync::Semaphore::new(16)),
+            wire: Arc::new(Mutex::new(())),
         }
     }
     pub fn with_trusted_users(mut self, users: Arc<Mutex<super::users::Users>>) -> Self {
@@ -87,8 +89,14 @@ impl ExecutionHandle {
             .clone()
             .try_acquire_owned()
             .map_err(|_| Error::Capacity)?;
+        let wire = self.wire.clone();
+        let bound = self.clone();
         let reply = tokio::task::spawn_blocking(move || {
             let _permit = permit;
+            // One short-lived native connection at a time. The existing admission semaphore
+            // bounds both waiting and active transport; these handles own no business queue.
+            let _wire = wire.lock().map_err(|_| Error::Unavailable)?;
+            bound.current()?;
             let client = ServiceClient::installed().inspect_err(|error| {
                 eprintln!("RSS_EXECUTION_IPC_FAILURE stage=installation code={error:?}");
             })?;
