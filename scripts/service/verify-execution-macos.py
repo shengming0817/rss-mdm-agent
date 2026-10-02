@@ -432,12 +432,16 @@ def complete_native_security(probe, matrix, query, command, package, package_rec
     offset=(protected/'service-stderr.log').stat().st_size
     run('/usr/bin/python3',str(installer),'remove','--scope','user','--binary',str(binary),'--config',str(config))
     native_stale_helper_security(probe,matrix,query,command,protected,prior,offset)
-    results=administrator.command('refresh')
+    preflight=administrator.command('refresh_preflight')
+    healthy=probe.request(dict(method='serviceStatus'));assert_native_reply(healthy,'serviceStatus')
+    assert healthy['envelope']['reply']['value']['readiness']['phase']=='ready', 'preflight changed service readiness'
+    query()
     pending=matrix.pop('staleHelperPending')
-    diagnostics=results['driverDiagnostics'].encode()[offset:].decode(errors='replace')
+    diagnostics=preflight['driverDiagnostics'].encode()[offset:].decode(errors='replace')
     assert 'RSS_HELPER_ENDPOINT_INVALID' in diagnostics, 'stale endpoint refusal boundary not observed'
     security_result(matrix,'helper_stale_endpoint',dict(pending,diagnostic=diagnostics))
-    security_result(matrix,'refresh_preflight',results['preflight'])
+    security_result(matrix,'refresh_preflight',dict(preflight['preflight'],healthy=healthy))
+    results=administrator.command('refresh')
     security_result(matrix,'refresh_after_stop',results['afterStop'])
     run('/usr/bin/python3',str(installer),'install','--scope','user','--binary',str(binary),'--config',str(config))
     query()
@@ -445,7 +449,7 @@ def complete_native_security(probe, matrix, query, command, package, package_rec
     native_revocation_security(probe,matrix,query,command,package,package_receipt,protected)
 
 
-def root_refresh_security(root, binary, config, installer_source):
+def root_refresh_security(root, binary, config, installer_source, phase):
     # This whole program is frozen before elevation; only the owned experiment is modified.
     import contextlib, copy, hashlib, io, json, os, plistlib, re, sqlite3, subprocess, time, uuid
     from pathlib import Path
@@ -460,6 +464,7 @@ def root_refresh_security(root, binary, config, installer_source):
     identity_paths.extend(p for p in (root/'state/secrets').rglob('*') if p.is_file())
     identities={str(p):hashlib.sha256(p.read_bytes()).hexdigest() for p in identity_paths}
     before_config=config.read_bytes()
+    before_document=namespace['candidate'](binary,config)
     journal=root/'state/execution.sqlite'
     journal_before=journal_proof(journal)
     original_attempts={row['request']:(row['snapshot']['attempts'],(row['snapshot'].get('attempt') or {}).get('id'))
@@ -468,7 +473,9 @@ def root_refresh_security(root, binary, config, installer_source):
     pid=namespace['verify_registered'](endpoint,args)
     next_config=root/'refresh-candidate.json'
     rows=[]
-    for name in ['mode','symlink','acl','hash','cdhash','version','ipc_version','tenant','origin','state_root','registration','marker','journal','communication','secret']:
+    cases=['mode','symlink','acl','hash','cdhash','version','ipc_version','tenant','origin','state_root','registration','marker','journal','communication','secret']
+    assert phase in ('preflight','afterStop')
+    for name in cases if phase=='preflight' else []:
         changed=copy.deepcopy(document); actual=next_config
         next_config.write_text(json.dumps(changed));next_config.chmod(0o644)
         held=None; held_source=None; copied_plist=None; unexpected=None; paused=False
@@ -522,6 +529,8 @@ def root_refresh_security(root, binary, config, installer_source):
         assert plist.read_bytes()==original and config.read_bytes()==before_config
         assert all(hashlib.sha256(Path(p).read_bytes()).hexdigest()==digest for p,digest in identities.items())
     preflight=dict(rows=rows,originalPid=pid,configurationUnchanged=True,identityDigests=identities)
+    if phase=='preflight':
+        return dict(preflight=preflight,journalBefore=journal_before,driverDiagnostics=(root/'service-stderr.log').read_text())
     # Real launchd startup failure after the owner has stopped the original process.
     changed=plistlib.loads(original);changed['UserName']='rss-no-such-user-'+uuid.uuid4().hex
     plist.write_bytes(plistlib.dumps(changed));plist.chmod(0o600)
@@ -538,7 +547,7 @@ def root_refresh_security(root, binary, config, installer_source):
         assert result.returncode!=0 or json.loads(result.stdout)['reply']['kind']!='tasks'
         lookup=subprocess.run(['/bin/launchctl','print',endpoint],capture_output=True,text=True)
         assert not re.search(r'^\s*pid = [0-9]+\s*$',lookup.stdout,re.MULTILINE), 'candidate unexpectedly running'
-        assert config.read_bytes()==before_config
+        assert json.loads(config.read_bytes())==before_document
         assert all(hashlib.sha256(Path(p).read_bytes()).hexdigest()==digest for p,digest in identities.items())
         after_stop=dict(failure=failure,oldPidAbsent=pid,diagnostic=result.stderr,
             registration=plistlib.loads(plist.read_bytes()),identityDigests=identities)
@@ -810,7 +819,7 @@ def authorized_steps(programs, endpoint, expected_pid, expected_uid, deadline):
 
 
 class AdministratorSession:
-    def __init__(self, setup, initialize, restart, cleanup, lab, password_file=None, security=None, refresh=None, diagnostics=None):
+    def __init__(self, setup, initialize, restart, cleanup, lab, password_file=None, security=None, refresh=None, diagnostics=None, refresh_preflight=None):
         password = read_authorization_password(password_file) if password_file else None
         self.directory = Path(tempfile.mkdtemp(prefix='rss-admin-', dir='/private/tmp'))
         self.endpoint = self.directory/'control'
@@ -824,6 +833,7 @@ class AdministratorSession:
         programs = {'setup':setup.read_text(),'initialize':initialize.read_text(),'restart':restart.read_text(),'cleanup':cleanup.read_text()}
         if security: programs['security'] = security.read_text()
         if refresh: programs['refresh'] = refresh.read_text()
+        if refresh_preflight: programs['refresh_preflight'] = refresh_preflight.read_text()
         if diagnostics: programs['diagnostics'] = diagnostics.read_text()
         source = 'import socket,ctypes,struct,io,contextlib,json,time\n' + inspect.getsource(peer_identity) + inspect.getsource(authorized_steps)
         source += 'authorized_steps('+repr(programs)+','+repr(str(self.endpoint))+','+str(os.getpid())+','+str(os.geteuid())+','+repr(self.deadline)+')\n'
@@ -1143,7 +1153,7 @@ with os.fdopen(fd,'w') as stream: json.dump(config,stream); stream.flush(); os.f
             initializer = "subprocess.run([str(binary),'--config',str(path),'--initialize'],input='AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',text=True,check=True)\n"
             contents = contents.replace(initializer, '')
             setup.write_text(contents)
-        security = refresh = diagnostics = None
+        security = refresh = diagnostics = refresh_preflight = None
         if args.security:
             probe_source = Path(frozen['binaries']['securityProbe']['path'])
             staged_probe=inputs/'security-probe'
@@ -1189,8 +1199,11 @@ print(json.dumps(dict(label=label,plist=str(plist),helperGuard=result.stderr)))
 """ % frozen_installer(installer_source,['refresh','--scope','system','--binary',str(binary),
                     '--config',str(config),'--candidate-binary',str(binary),'--candidate-config',str(config)])))
             refresh=lab/'refresh-security.py'
-            refresh.write_text("import json,sqlite3\n"+inspect.getsource(journal_proof)+inspect.getsource(root_refresh_security)+"\nprint(json.dumps(root_refresh_security(%r,%r,%r,%r)))\n" %
-                (str(protected),str(binary),str(config),installer_source))
+            refresh_preflight=lab/'refresh-preflight.py'
+            refresh_source="import json,sqlite3\n"+inspect.getsource(journal_proof)+inspect.getsource(root_refresh_security)
+            for phase,path in [('preflight',refresh_preflight),('afterStop',refresh)]:
+                path.write_text(refresh_source+"\nprint(json.dumps(root_refresh_security(%r,%r,%r,%r,%r)))\n" %
+                    (str(protected),str(binary),str(config),installer_source,phase))
             diagnostics=lab/'diagnostics.py'
             diagnostics.write_text("import json\nfrom pathlib import Path\nprint(json.dumps({'log':Path(%r).read_text()[-65536:]}))\n" % str(protected/'service-stderr.log'))
         cleanup = lab / 'remove.py'
@@ -1263,7 +1276,7 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
         first = None if args.desktop else command('script', body='printf \'{"fixture":"system"}\\n\'\n')
         if not args.desktop: command('result_failure')
         administrator_session = AdministratorSession(setup,initialize,restart,cleanup,lab,args.authorization_password_file,
-            **(dict(security=security, refresh=refresh, diagnostics=diagnostics) if args.security else {}))
+            **(dict(security=security, refresh=refresh, diagnostics=diagnostics, refresh_preflight=refresh_preflight) if args.security else {}))
         administrator_session.start()
         installed = True
         if args.desktop and select.select([sys.stdin], [], [], 0)[0]:
