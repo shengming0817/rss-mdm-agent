@@ -428,6 +428,19 @@ fn claim_response(d: &mut Data, value: Value) -> Response {
         }
         old.clone()
     } else {
+        // A new claim never re-offers an already acknowledged terminal attempt. Retain
+        // the old-operation branch above for exact idempotent claim replay.
+        if d.explicit_offers
+            && d.offer.as_ref().is_some_and(|offer| {
+                let attempt = offer.payload.attempt_id().to_string();
+                d.results.iter().any(|(operation, result)| {
+                    d.acknowledged.contains(operation) && result["attemptId"] == attempt
+                })
+            })
+        {
+            return axum::Json(TaskClaimResponse::new(None, d.cancellations.clone()).unwrap())
+                .into_response();
+        }
         if d.offer
             .as_ref()
             .is_none_or(|v| v.payload.expires_at() <= d.time.now().unwrap())
