@@ -92,6 +92,7 @@ fn normalize_organization(value: &mut Organization) -> Result<()> {
         origin: value.origin.clone(),
         tenant: value.tenant_id.clone(),
         label: value.label.clone(),
+        ca_pem: None,
     })
     .map_err(|_| invalid())?;
     Ok(())
@@ -243,18 +244,49 @@ async fn body(mut response: reqwest::Response, stage: Stage) -> Result<Value> {
     }
     serde_json::from_slice(&data).map_err(|_| failure(stage, Reason::Contract))
 }
+fn configured_ca(
+    config: Option<crate::organization_config::OrganizationConfiguration>,
+    organization: &Organization,
+) -> Result<Option<Vec<u8>>> {
+    let Some(config) = config else {
+        return Ok(None);
+    };
+    let config = config.normalize().map_err(|_| invalid())?;
+    if config.origin != organization.origin || config.tenant != organization.tenant_id {
+        return Ok(None);
+    }
+    Ok(config.ca_pem.map(String::into_bytes))
+}
+fn organization_ca(organization: &Organization) -> Result<Option<Vec<u8>>> {
+    let config = serde_json::from_str(include_str!(concat!(
+        env!("OUT_DIR"),
+        "/default_organization.json"
+    )))
+    .map_err(|_| invalid())?;
+    configured_ca(config, organization)
+}
+// ref: reqwest v0.13.5 src/async_impl/client.rs (per-client root certificates).
+fn enterprise_client(ca: Option<Vec<u8>>) -> Result<Client> {
+    let mut builder = Client::builder()
+        .https_only(true)
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(8))
+        .connect_timeout(Duration::from_secs(4));
+    if let Some(pem) = ca {
+        builder = builder
+            .add_root_certificate(reqwest::Certificate::from_pem(&pem).map_err(|_| invalid())?);
+    }
+    builder
+        .build()
+        .map_err(|_| failure(Stage::Login, Reason::Unavailable))
+}
+
 impl Session {
     pub async fn login(organization: Organization, login: &str, password: String) -> Result<Self> {
         if login.is_empty() || login.len() > 256 || password.is_empty() || password.len() > 16384 {
             return Err(failure(Stage::Login, Reason::Denied));
         }
-        let client = Client::builder()
-            .https_only(true)
-            .redirect(reqwest::redirect::Policy::none())
-            .timeout(Duration::from_secs(8))
-            .connect_timeout(Duration::from_secs(4))
-            .build()
-            .map_err(|_| failure(Stage::Login, Reason::Unavailable))?;
+        let client = enterprise_client(organization_ca(&organization)?)?;
         Self::login_with_client(client, organization, login, password).await
     }
     pub(super) async fn login_with_client(
@@ -439,6 +471,155 @@ impl Session {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn bundled_ca_is_bound_to_origin_and_tenant() {
+        let mut org = organization();
+        normalize_organization(&mut org).unwrap();
+        let config = crate::organization_config::OrganizationConfiguration {
+            origin: org.origin.clone(),
+            tenant: org.tenant_id.clone(),
+            label: org.label.clone(),
+            ca_pem: Some("public-ca".into()),
+        };
+        assert_eq!(
+            configured_ca(Some(config.clone()), &org).unwrap(),
+            Some(b"public-ca".to_vec())
+        );
+        let mut other = org.clone();
+        other.origin = "https://other.fixture.test".into();
+        assert!(configured_ca(Some(config.clone()), &other)
+            .unwrap()
+            .is_none());
+        other = org.clone();
+        other.tenant_id = Uuid::new_v4().to_string();
+        assert!(configured_ca(Some(config), &other).unwrap().is_none());
+        assert!(configured_ca(None, &org).unwrap().is_none());
+        assert!(enterprise_client(Some(b"not a certificate".to_vec())).is_err());
+    }
+
+    #[tokio::test]
+    async fn enterprise_ca_trusts_only_verified_tls_without_system_installation() {
+        use std::process::{Command, Stdio};
+        struct Server(std::process::Child, PathBuf);
+        impl Drop for Server {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+                let _ = std::fs::remove_dir_all(&self.1);
+            }
+        }
+        let root = std::env::temp_dir().join(format!("rss-local-ca-{}", Uuid::new_v4()));
+        std::fs::create_dir(&root).unwrap();
+        let cert = root.join("cert.pem");
+        let key = root.join("key.pem");
+        assert!(Command::new("openssl")
+            .args([
+                "req",
+                "-x509",
+                "-newkey",
+                "rsa:2048",
+                "-nodes",
+                "-days",
+                "1",
+                "-subj",
+                "/CN=localhost",
+                "-addext",
+                "subjectAltName=DNS:localhost",
+                "-addext",
+                "basicConstraints=critical,CA:TRUE",
+                "-keyout"
+            ])
+            .arg(&key)
+            .arg("-out")
+            .arg(&cert)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .unwrap()
+            .success());
+        let server_cert = root.join("server.pem");
+        let server_key = root.join("server.key");
+        let csr = root.join("server.csr");
+        let extensions = root.join("server.ext");
+        std::fs::write(&extensions, "basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\nsubjectAltName=DNS:localhost\n").unwrap();
+        assert!(Command::new("openssl")
+            .args([
+                "req",
+                "-new",
+                "-newkey",
+                "rsa:2048",
+                "-nodes",
+                "-subj",
+                "/CN=localhost",
+                "-keyout"
+            ])
+            .arg(&server_key)
+            .arg("-out")
+            .arg(&csr)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("openssl")
+            .args(["x509", "-req", "-days", "1", "-in"])
+            .arg(&csr)
+            .arg("-CA")
+            .arg(&cert)
+            .arg("-CAkey")
+            .arg(&key)
+            .arg("-CAcreateserial")
+            .arg("-extfile")
+            .arg(&extensions)
+            .arg("-out")
+            .arg(&server_cert)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .unwrap()
+            .success());
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        let process = Command::new("openssl")
+            .args(["s_server", "-quiet", "-www", "-accept"])
+            .arg(format!("127.0.0.1:{port}"))
+            .arg("-cert")
+            .arg(&server_cert)
+            .arg("-key")
+            .arg(&server_key)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let _server = Server(process, root);
+        let address = format!("127.0.0.1:{port}");
+        let mut ready = false;
+        for _ in 0..100 {
+            if std::net::TcpStream::connect(&address).is_ok() {
+                ready = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert!(ready);
+        let url = format!("https://localhost:{port}/");
+        assert!(enterprise_client(None)
+            .unwrap()
+            .get(&url)
+            .send()
+            .await
+            .is_err());
+        let client = enterprise_client(Some(std::fs::read(cert).unwrap())).unwrap();
+        assert_eq!(client.get(url).send().await.unwrap().status(), 200);
+        assert!(client
+            .get(format!("https://127.0.0.1:{port}/"))
+            .send()
+            .await
+            .is_err());
+    }
+
     #[test]
     fn default_is_not_persisted_and_all_read_paths_use_the_same_effective_list() {
         let root =
