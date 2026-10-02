@@ -141,6 +141,8 @@ pub struct SoftwareStepArtifacts {
     pub files: Vec<(PathBuf, ExactArtifactRef)>,
 }
 pub(crate) struct Payload {
+    #[cfg(target_os = "macos")]
+    pub input: Option<(std::io::PipeWriter, Vec<u8>)>,
     pub path: PathBuf,
     pub file: Option<File>,
     pub directory: Option<PathBuf>,
@@ -190,6 +192,10 @@ impl<'a> Recipe<'a> {
     }
 }
 impl Materialized {
+    #[cfg(target_os = "macos")]
+    pub(crate) fn take_payload_input(&mut self) -> Option<(std::io::PipeWriter, Vec<u8>)> {
+        self.payload.input.take()
+    }
     pub(crate) fn configure(&self, command: &mut std::process::Command) -> Result<(), Error> {
         self.cwd.configure(
             command,
@@ -401,6 +407,8 @@ impl Artifacts {
             });
         let payload = if bundled {
             Payload {
+                #[cfg(target_os = "macos")]
+                input: None,
                 path: content_path.clone(),
                 file: Some(content_file),
                 directory: None,
