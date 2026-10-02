@@ -36,6 +36,14 @@ import { verifyRuntimeIntegrity } from "./ai-host-artifacts.mjs";
 const visualOnly = process.argv.includes("--visual");
 const baseline = process.argv.includes("--baseline");
 const controlledService = process.argv.includes("--controlled-service");
+const passwordFileIndex = process.argv.indexOf("--authorization-password-file");
+const authorizationPasswordFile =
+  passwordFileIndex < 0 ? undefined : process.argv[passwordFileIndex + 1];
+assert.ok(
+  passwordFileIndex < 0 ||
+    (controlledService && authorizationPasswordFile?.startsWith("/")),
+  "authorization password file requires controlled service mode and an absolute path",
+);
 let serviceWorker,
   serviceReady,
   serviceOutput = "",
@@ -482,6 +490,9 @@ try {
         join(cargoTargetDir(root), "debug/rss-mdm-desktop"),
         "--output",
         serviceEvidence,
+        ...(authorizationPasswordFile
+          ? ["--authorization-password-file", authorizationPasswordFile]
+          : []),
       ],
       { cwd: root, detached: true, stdio: ["pipe", "pipe", "pipe"] },
     );

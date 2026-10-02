@@ -56,6 +56,7 @@ async fn main() {
                         data.bytes = std::fs::read(command["path"].as_str().unwrap()).unwrap();
                         data.software(1, command["user"].as_bool() == Some(true));
                         let wire::TaskPayload::Software(mut payload) = data.offer.as_ref().unwrap().payload.clone() else { unreachable!() };
+                        payload.expires_at += 3600;
                         if let wire::SoftwareTaskBehavior::Pkg(native) = &mut payload.steps[0].action.behavior {
                             if let wire::SoftwareTaskDetection::PkgReceipt { receipt, .. } = &mut native.detect { *receipt = command["receipt"].as_str().unwrap().into(); }
                         }

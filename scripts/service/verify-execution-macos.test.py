@@ -11,6 +11,8 @@ import socket
 import threading
 import os
 import time
+import inspect
+import subprocess
 from unittest.mock import patch, MagicMock
 
 spec = importlib.util.spec_from_file_location('acceptance', Path(__file__).with_name('verify-execution-macos.py'))
@@ -19,6 +21,25 @@ spec.loader.exec_module(acceptance)
 
 
 class EvidenceTests(unittest.TestCase):
+    def test_authorization_password_file_is_private_and_never_an_argument(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);password=root/'.passwd';password.write_text('synthetic-admin-password\n');password.chmod(0o600)
+            self.assertEqual(acceptance.read_authorization_password(password),'synthetic-admin-password')
+            password.chmod(0o644)
+            with self.assertRaisesRegex(RuntimeError,'private'): acceptance.read_authorization_password(password)
+            password.chmod(0o600);link=root/'link';link.symlink_to(password)
+            with self.assertRaises(OSError): acceptance.read_authorization_password(link)
+            script=root/'fixed.py';script.write_text('pass')
+            process=MagicMock()
+            with patch.object(acceptance.subprocess,'Popen',return_value=process) as popen:
+                session=acceptance.AdministratorSession(script,script,script,script,root,password)
+            session.close()
+            self.assertEqual(popen.call_args.args[0],['/usr/bin/osascript'])
+            self.assertIn(b'password "synthetic-admin-password"',process.stdin.write.call_args.args[0])
+            self.assertNotIn('synthetic-admin-password',(root/'administrator-session.log').read_text())
+            password.write_text('')
+            with self.assertRaisesRegex(RuntimeError,'empty'): acceptance.read_authorization_password(password)
+
     def test_candidate_copy_publishes_only_the_verified_read(self):
         with tempfile.TemporaryDirectory() as directory:
             source, target = Path(directory)/'source', Path(directory)/'target'
@@ -115,7 +136,7 @@ class EvidenceTests(unittest.TestCase):
         session.listener.accept.return_value=(connection,None)
         session.connection=None;session.deadline=120;session.process=MagicMock()
         session.receive=lambda identity: None
-        with patch.object(acceptance.time,'monotonic',return_value=121), patch.object(acceptance,'peer_identity',return_value=(1,0)):
+        with patch.object(acceptance.time,'clock_gettime',return_value=121), patch.object(acceptance,'peer_identity',return_value=(1,0)):
             with self.assertRaisesRegex(RuntimeError,'authorization deadline exceeded'): session.start()
         connection.sendall.assert_not_called()
 
@@ -124,7 +145,7 @@ class EvidenceTests(unittest.TestCase):
             path=Path(directory)/'control'; marker=Path(directory)/'cleaned'
             listener=socket.socket(socket.AF_UNIX); listener.bind(str(path));listener.listen(1)
             programs={'setup':'pass','initialize':'raise RuntimeError("injected initialization failure")','restart':'pass','cleanup':f'from pathlib import Path;Path({str(marker)!r}).write_text("cleaned")'}
-            worker=threading.Thread(target=acceptance.authorized_steps,args=(programs,str(path),os.getpid(),os.geteuid(),time.monotonic()+60))
+            worker=threading.Thread(target=acceptance.authorized_steps,args=(programs,str(path),os.getpid(),os.geteuid(),time.clock_gettime(time.CLOCK_MONOTONIC)+60))
             worker.start();connection,_=listener.accept();reader=connection.makefile('rb')
             connection.sendall(b'{"id":0,"operation":"setup"}\n')
             self.assertTrue(json.loads(reader.readline())['ok'])
@@ -140,12 +161,27 @@ class EvidenceTests(unittest.TestCase):
             path=Path(directory)/'control';marker=Path(directory)/'changed'
             listener=socket.socket(socket.AF_UNIX);listener.bind(str(path));listener.listen(1)
             change=f'from pathlib import Path;Path({str(marker)!r}).write_text("changed")'
-            worker=threading.Thread(target=acceptance.authorized_steps,args=({'setup':change,'cleanup':change},str(path),os.getpid(),os.geteuid(),time.monotonic()-1))
+            worker=threading.Thread(target=acceptance.authorized_steps,args=({'setup':change,'cleanup':change},str(path),os.getpid(),os.geteuid(),time.clock_gettime(time.CLOCK_MONOTONIC)-1))
             worker.start();connection,_=listener.accept();reader=connection.makefile('rb')
             connection.sendall(b'{"id":0,"operation":"setup"}\n')
             self.assertEqual(reader.readline(),b'')
             reader.close();connection.close();listener.close();worker.join(5)
             self.assertFalse(worker.is_alive());self.assertFalse(marker.exists())
+
+    def test_independent_system_python_uses_the_same_authorization_deadline_clock(self):
+        with tempfile.TemporaryDirectory(dir='/private/tmp') as directory:
+            path=Path(directory)/'control';marker=Path(directory)/'changed'
+            listener=socket.socket(socket.AF_UNIX);listener.bind(str(path));listener.listen(1);listener.settimeout(5)
+            change=f'from pathlib import Path;Path({str(marker)!r}).write_text("changed")'
+            source='import socket,ctypes,struct,io,contextlib,json,time\n'+inspect.getsource(acceptance.peer_identity)+inspect.getsource(acceptance.authorized_steps)
+            programs={'setup':change,'cleanup':change}
+            source+=f'authorized_steps({programs!r},{str(path)!r},{os.getpid()},{os.geteuid()},{time.clock_gettime(time.CLOCK_MONOTONIC)-1!r})'
+            worker=subprocess.Popen(['/usr/bin/python3','-I','-c',source],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+            connection,_=listener.accept();reader=connection.makefile('rb')
+            connection.sendall(b'{"id":0,"operation":"setup"}\n')
+            reply=reader.readline()
+            reader.close();connection.close();listener.close();worker.communicate(timeout=5)
+            self.assertEqual(reply,b'');self.assertFalse(marker.exists())
 
     def test_http_failure_is_not_acknowledgement(self):
         status = {'results': {'op': {'attemptId': 'a', 'event': {'kind': 'result'}}}, 'acknowledged': []}

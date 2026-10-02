@@ -20,8 +20,8 @@ async function refresh() {
 onMounted(refresh);
 </script>
 <template>
-  <section class="settings-card" aria-label="本机安全服务">
-    <h2>本机安全服务</h2>
+  <section class="settings-card" aria-label="本机执行服务">
+    <h2>本机执行服务</h2>
     <p v-if="!native">请在桌面应用中查询本机服务。</p>
     <p v-else-if="pending">正在验证服务连接…</p>
     <p v-else-if="view?.phase === 'notInstalled'">

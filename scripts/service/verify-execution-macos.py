@@ -30,6 +30,7 @@ import ctypes
 import struct
 import io
 import contextlib
+import stat
 
 
 def run(*args, **kwargs):
@@ -49,6 +50,21 @@ def frozen_installer(source, arguments):
 
 class AuthorizationCancelled(RuntimeError):
     pass
+
+
+def read_authorization_password(path):
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    with os.fdopen(descriptor, 'rb') as stream:
+        metadata = os.fstat(stream.fileno())
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.geteuid() or metadata.st_mode & 0o077:
+            raise RuntimeError('authorization password file must be private and owned by the login user')
+        data = stream.read(4097)
+    if len(data)>4096:
+        raise RuntimeError('authorization password file exceeds its bound')
+    value = data.decode('utf-8').rstrip('\r\n')
+    if not value or '\r' in value or '\n' in value or '\0' in value:
+        raise RuntimeError('authorization password file is empty or invalid')
+    return value
 
 
 def peer_identity(connection):
@@ -93,7 +109,7 @@ def authorized_steps(programs, endpoint, expected_pid, expected_uid, deadline):
         connection.settimeout(60)
         with connection.makefile('rb') as reader:
             begin = reader.readline(4097)
-            if time.monotonic() >= deadline or len(begin)>4096 or not begin or json.loads(begin) != {'id':0,'operation':'setup'}:
+            if time.clock_gettime(time.CLOCK_MONOTONIC) >= deadline or len(begin)>4096 or not begin or json.loads(begin) != {'id':0,'operation':'setup'}:
                 return
             started = True
             connection.settimeout(1200)
@@ -118,7 +134,8 @@ def authorized_steps(programs, endpoint, expected_pid, expected_uid, deadline):
 
 
 class AdministratorSession:
-    def __init__(self, setup, initialize, restart, cleanup, lab):
+    def __init__(self, setup, initialize, restart, cleanup, lab, password_file=None):
+        password = read_authorization_password(password_file) if password_file else None
         self.directory = Path(tempfile.mkdtemp(prefix='rss-admin-', dir='/private/tmp'))
         self.endpoint = self.directory/'control'
         self.listener = socket.socket(socket.AF_UNIX)
@@ -126,13 +143,21 @@ class AdministratorSession:
         self.connection = self.reader = self.process = None
         self.sequence = 0
         self.lab = lab
-        self.deadline = time.monotonic()+120
+        # System Python 3.9's macOS monotonic() has a per-process epoch.
+        self.deadline = time.clock_gettime(time.CLOCK_MONOTONIC)+120
         programs = {'setup':setup.read_text(),'initialize':initialize.read_text(),'restart':restart.read_text(),'cleanup':cleanup.read_text()}
         source = 'import socket,ctypes,struct,io,contextlib,json,time\n' + inspect.getsource(peer_identity) + inspect.getsource(authorized_steps)
         source += 'authorized_steps('+repr(programs)+','+repr(str(self.endpoint))+','+str(os.getpid())+','+str(os.geteuid())+','+repr(self.deadline)+')\n'
         command = 'cd /private/tmp && /usr/bin/python3 -I -c ' + shlex.quote(source)
         self.log = (lab/'administrator-session.log').open('w')
-        self.process = subprocess.Popen(['/usr/bin/osascript','-e','do shell script '+json.dumps(command)+' with administrator privileges'],stdout=self.log,stderr=self.log)
+        script = 'do shell script '+json.dumps(command)
+        if password is not None:
+            script += ' password '+json.dumps(password,ensure_ascii=False)
+        script += ' with administrator privileges\n'
+        # ref: AppleScript Language Guide, do shell script password parameter. Source travels
+        # over stdin; neither the password nor the frozen operations enter process arguments.
+        self.process = subprocess.Popen(['/usr/bin/osascript'],stdin=subprocess.PIPE,stdout=self.log,stderr=self.log)
+        self.process.stdin.write(script.encode('utf-8'));self.process.stdin.close()
     def start(self):
         while self.connection is None:
             try: self.connection,_ = self.listener.accept()
@@ -142,10 +167,10 @@ class AdministratorSession:
                     if '(-128)' in (self.lab/'administrator-session.log').read_text():
                         raise AuthorizationCancelled('native administrator authorization cancelled')
                     raise RuntimeError('native administrator authorization failed; see administrator-session.log')
-                if time.monotonic() >= self.deadline:
+                if time.clock_gettime(time.CLOCK_MONOTONIC) >= self.deadline:
                     self.process.terminate()
                     raise RuntimeError('native administrator authorization deadline exceeded')
-        if time.monotonic() >= self.deadline:
+        if time.clock_gettime(time.CLOCK_MONOTONIC) >= self.deadline:
             self.connection.close();self.connection=None
             raise RuntimeError('native administrator authorization deadline exceeded')
         if peer_identity(self.connection)[1] != 0:
@@ -259,6 +284,7 @@ def main():
     parser.add_argument('--backend', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--desktop', type=Path)
+    parser.add_argument('--authorization-password-file', type=Path)
     args = parser.parse_args()
     if os.uname().sysname != 'Darwin' or os.geteuid() == 0:
         raise RuntimeError('run this harness from the actual macOS user login')
@@ -436,7 +462,7 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
     try:
         first = None if args.desktop else command('script', body='printf \'{"fixture":"system"}\\n\'\n')
         if not args.desktop: command('result_failure')
-        administrator_session = AdministratorSession(setup,initialize,restart,cleanup,lab)
+        administrator_session = AdministratorSession(setup,initialize,restart,cleanup,lab,args.authorization_password_file)
         administrator_session.start()
         installed = True
         if args.desktop and select.select([sys.stdin], [], [], 0)[0]:
