@@ -344,7 +344,7 @@ fn newer_schema_retains_read_only_startup_diagnostic() {
     };
     assert_eq!(
         format!("{error:?}"),
-        "UnsupportedSchema { found: 999, supported: 6 }"
+        "UnsupportedSchema { found: 999, supported: 7 }"
     );
     assert_eq!(std::fs::read(&db.path).unwrap(), before);
     assert_eq!(runner.dispatch_count(), 0);
@@ -1720,7 +1720,7 @@ fn completed_step_cannot_become_sequence_exit_after_restart() {
             sql.query_row("SELECT count(*) FROM software_claims", [], |r| r
                 .get::<_, i64>(0))
                 .unwrap(),
-            if complete_sequence { 0 } else { 1 }
+            if started_next { 1 } else { 0 }
         );
     }
 }
@@ -1963,7 +1963,7 @@ fn old_schema_reports_exact_versions_and_keeps_bytes() {
         Ok(_) => panic!("old format opened"),
         Err(e) => e,
     };
-    assert_eq!(error.to_string(),"execution database schema 4 is unsupported; required schema 6; preserve the existing database; initialization and automatic migration are disabled");
+    assert_eq!(error.to_string(),"execution database schema 4 is unsupported; required schema 7; preserve the existing database; initialization and automatic migration are disabled");
     assert_eq!(std::fs::read(&db.path).unwrap(), before);
 }
 

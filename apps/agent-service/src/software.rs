@@ -318,8 +318,7 @@ pub(crate) fn compile(
                 | wire::SoftwareTaskBehavior::Dmg(_)
         ) {
             let (compiled, source) = native::compile(
-                step,
-                index,
+                (step, index),
                 payload,
                 materials,
                 config,

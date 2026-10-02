@@ -202,11 +202,9 @@ pub(super) fn execute(input: ProgramRun) {
                             material,
                             (&plan, &attempt, &runner),
                             command,
-                            (index as u32, phase),
+                            (index as u32, phase, 0),
                             (invocation_deadline, cap, first.take()),
-                            cancel.clone(),
-                            before.clone(),
-                            0,
+                            (cancel.clone(), before.clone()),
                         )?;
                         let detection = if !phase.is_observation() {
                             None
@@ -455,11 +453,9 @@ pub(super) fn cleanup(
             material,
             (&plan, &journal.attempt_id, &runner),
             command,
-            (step, SoftwarePhase::Cleanup),
+            (step, SoftwarePhase::Cleanup, sequence),
             (deadline, output_bytes, None),
-            cancel.clone(),
-            None,
-            sequence,
+            (cancel.clone(), None),
         )?;
         let resources_closed = facts.quiescent
             && facts.end == ProcessEnd::Exited
@@ -545,11 +541,9 @@ fn invoke(
     material: &Artifacts,
     (plan, attempt, runner): (&FrozenExecution, &AttemptId, &Id),
     invocation: &SoftwareInvocation,
-    (step, phase): (u32, SoftwarePhase),
+    (step, phase, cleanup_sequence): (u32, SoftwarePhase, u32),
     (deadline, cap, first_start): (Instant, u64, Option<u64>),
-    cancel: Arc<AtomicBool>,
-    before: Option<SoftwareState>,
-    cleanup_sequence: u32,
+    (cancel, before): (Arc<AtomicBool>, Option<SoftwareState>),
 ) -> Result<ProcessEvidence, Error> {
     if let Some(connection) = &material.delegate {
         use crate::helper::{Command, Reply};

@@ -684,6 +684,7 @@ mod shutdown_tests {
                     AttemptId::new("attempt").unwrap(),
                     step as u32,
                     SoftwarePhase::Mutation,
+                    0,
                 ),
                 crate::runner::invocation::PhysicalInvocation {
                     digest: Digest::new("ab".repeat(32)).unwrap(),

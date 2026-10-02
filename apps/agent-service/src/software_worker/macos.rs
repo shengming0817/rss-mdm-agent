@@ -1298,7 +1298,7 @@ mod tests {
         .unwrap();
         let path = CString::new(source.as_os_str().as_bytes()).unwrap();
         let attribute = c"com.apple.quarantine";
-        let quarantine = b"0081;native-proof;RSS;";
+        let quarantine = b"0081;00000001;RSS;";
         assert_eq!(
             unsafe {
                 libc::setxattr(
@@ -1327,7 +1327,11 @@ mod tests {
                 0,
             )
         };
-        assert_eq!(&observed[..length as usize], quarantine);
+        assert!(length >= 0, "{}", std::io::Error::last_os_error());
+        let quarantine = std::str::from_utf8(&observed[..length as usize]).unwrap();
+        let flags = u32::from_str_radix(quarantine.split(';').next().unwrap(), 16).unwrap();
+        // Apple's copyfile may update quarantine metadata; it must retain the original flags.
+        assert_eq!(flags & 0x0081, 0x0081);
         let installed = root.join("installed.app");
         rename(&stage, &installed, false).unwrap();
         assert_eq!(inventory(&installed).unwrap(), tree);

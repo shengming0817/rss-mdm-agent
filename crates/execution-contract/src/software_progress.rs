@@ -285,11 +285,7 @@ impl SoftwareProgress {
                     process,
                     ..
                 } => {
-                    if !quiescent {
-                        pending = true;
-                    } else {
-                        pending = false;
-                    }
+                    pending = !quiescent;
                     if *phase == SoftwarePhase::Cleanup
                         && process.as_ref().is_some_and(|p| {
                             p.end == ProcessEnd::Exited

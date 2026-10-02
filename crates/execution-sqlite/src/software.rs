@@ -69,7 +69,7 @@ pub(crate) fn diagnostic(
         .transpose()?
         .flatten();
     Ok(Some(match progress {
-        Some(p) if p.complete(plan) => {
+        Some(p) => {
             let program = plan.spec().execution.software_program().expect("program");
             let reboot = p.checkpoints.iter().any(|checkpoint| match checkpoint {
                 execution_contract::SoftwareCheckpoint::End {
@@ -90,13 +90,11 @@ pub(crate) fn diagnostic(
                 _ => false,
             });
             if reboot {
-                SoftwareDiagnostic::RestartPending
-            } else {
-                SoftwareDiagnostic::DesiredStateObserved
+                return Ok(Some(SoftwareDiagnostic::RestartPending));
             }
-        }
-        Some(p) => {
-            let program = plan.spec().execution.software_program().expect("program");
+            if p.complete(plan) {
+                return Ok(Some(SoftwareDiagnostic::DesiredStateObserved));
+            }
             let matched = p
                 .checkpoints
                 .iter()

@@ -28,19 +28,17 @@ fn pin(path: &Path) -> Result<SoftwareMaterial, Error> {
         artifact: reference,
     })
 }
+type NativeIdentity = (
+    RunAs,
+    SessionRequirement,
+    PathBuf,
+    Option<Arc<execution_runner::helper::Connection>>,
+);
 fn identity(
     config: &ExecutionConfig,
     helper: Option<&Arc<execution_runner::helper::Connection>>,
     command: &wire::SoftwareTaskInvocation,
-) -> Result<
-    (
-        RunAs,
-        SessionRequirement,
-        PathBuf,
-        Option<Arc<execution_runner::helper::Connection>>,
-    ),
-    Error,
-> {
+) -> Result<NativeIdentity, Error> {
     match command.run_as {
         wire::ExecutionIdentity::System => Ok((
             RunAs::System {
@@ -172,8 +170,7 @@ fn msix_identity(v: &wire::SoftwareTaskMsixIdentity) -> Result<MsixIdentity, Err
     })
 }
 pub(super) fn compile(
-    step: &wire::SoftwareTaskStep,
-    index: usize,
+    (step, index): (&wire::SoftwareTaskStep, usize),
     payload: &wire::SoftwareTaskSpec,
     materials: &Materials,
     config: &ExecutionConfig,
@@ -366,7 +363,12 @@ pub(super) fn compile(
         },
         _ => return Err(Error::Unsupported),
     };
-    let (run_as, session, work_root, _) = identity(config, helper.as_ref(), commands.install)?;
+    let source_command = if intent == SoftwareOperation::Uninstall {
+        commands.uninstall.ok_or(Error::Unsupported)?
+    } else {
+        commands.install
+    };
+    let (run_as, session, work_root, _) = identity(config, helper.as_ref(), source_command)?;
     let request = WorkerRequest {
         external_pending: Default::default(),
         native_pending: Default::default(),
@@ -391,7 +393,7 @@ pub(super) fn compile(
         run_as,
         session,
         architecture: payload.architecture,
-        output_bytes: u64::from(commands.install.output_bytes),
+        output_bytes: u64::from(source_command.output_bytes),
         step: index.try_into().map_err(|_| Error::Protocol)?,
     };
     let build = |operation, invocation| {
@@ -420,7 +422,7 @@ pub(super) fn compile(
             phases.push((SoftwarePhase::Stage, O::Stage));
         }
         for (phase, operation) in phases {
-            let (mut command, source) = build(operation, commands.install)?;
+            let (mut command, source) = build(operation, source_command)?;
             if phase == SoftwarePhase::Cleanup {
                 // Reserve closure within the original source invocation before any image effect.
                 command.timeout_ms = (command.timeout_ms / 4).min(30_000);
