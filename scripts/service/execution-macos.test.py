@@ -96,7 +96,7 @@ class Installation(unittest.TestCase):
             self.assertTrue(plist.exists())
 
     def test_refresh_preserves_state_and_rejects_unknown_or_changed_identity(self):
-        for failure in [None, 'identity', 'stop', 'restart', 'owner', 'binding']:
+        for failure in [None, 'identity', 'stop', 'restart', 'owner', 'binding', 'candidate_access']:
             with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory:
                 home=Path(directory); folder=home/'Library/LaunchAgents'; folder.mkdir(parents=True)
                 label='com.rss-mdm.agent.execution.user'; plist=folder/(label+'.plist')
@@ -114,7 +114,7 @@ class Installation(unittest.TestCase):
                 def run(args, **kwargs):
                     nonlocal loaded
                     calls.append(args)
-                    if args[1]=='--config' and failure=='binding': raise module.subprocess.CalledProcessError(5,args)
+                    if args[1]=='--config' and (failure=='binding' or (failure=='candidate_access' and args[0]=='/new/service')): raise module.subprocess.CalledProcessError(5,args)
                     if args[1]=='print': return SimpleNamespace(returncode=0 if loaded else 113)
                     if args[1]=='bootout':
                         if failure=='stop': raise module.subprocess.CalledProcessError(5,args)
@@ -132,8 +132,9 @@ class Installation(unittest.TestCase):
                 self.assertEqual(journal.read_bytes(),b'unresolved journal')
                 self.assertEqual(secret.read_bytes(),b'credential marker')
                 self.assertTrue(plist.exists())
-                if failure in ['identity','owner','stop','binding']:
+                if failure in ['identity','owner','stop','binding','candidate_access']:
                     self.assertFalse(any(cmd[1]=='bootstrap' for cmd in calls)); published.assert_not_called()
+                    if failure=='candidate_access': self.assertFalse(any(cmd[1]=='bootout' for cmd in calls))
                 else: published.assert_called_once_with(Path('/old/config'),new)
                 if failure=='restart':
                     self.assertEqual(plistlib.loads(plist.read_bytes())['ProgramArguments'],['/new/service','--config','/old/config'])

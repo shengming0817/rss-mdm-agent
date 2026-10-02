@@ -100,6 +100,7 @@ def refresh(plist, label, domain, endpoint, program, config, next_binary, next_c
         raise RuntimeError('refresh cannot replace identity, storage or unresolved task resources')
     # Read-only proof by the current identity owner before any stop or publication.
     subprocess.run([program[0], '--config', str(config), '--validate-persistent'], check=True, capture_output=True, text=True)
+    subprocess.run([str(next_binary), '--config', str(next_config), '--validate-persistent'], check=True, capture_output=True, text=True)
     targets = [config]
     if domain == 'system':
         for subject in old['helper_work_roots']:

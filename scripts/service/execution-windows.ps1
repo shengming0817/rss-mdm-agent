@@ -54,6 +54,8 @@ function Assert-Refresh {
     foreach ($Field in @('work_root','material_root')) { if ($Old.execution.$Field -cne $New.execution.$Field) { throw 'Refresh cannot replace unresolved task resources' } }
     $null = & $Binary --config $Config --validate-persistent
     if ($LASTEXITCODE -ne 0) { throw 'Current persistent identity/storage binding failed; service retained' }
+    $null = & $CandidateBinary --config $CandidateConfig --validate-persistent
+    if ($LASTEXITCODE -ne 0) { throw 'Candidate cannot access original identity/storage; service retained' }
     return $New
 }
 function Publish-Config($Path, $Document) {
