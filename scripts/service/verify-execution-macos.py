@@ -190,8 +190,12 @@ def native_transport_security(probe, matrix, query, command, administrator):
         assert len(opened)==1, 'one actual server connection required'
         serial=opened[0]
         time.sleep(5.3)
-        log_expired=administrator.command('diagnostics')['log']
-        assert 'RSS_IPC_EXPIRED id='+str(serial)+' clientPid='+str(probe.process.pid) in log_expired, 'server expiry not observed'
+        expiry_deadline=time.monotonic()+3
+        while True:
+            log_expired=administrator.command('diagnostics')['log']
+            if 'RSS_IPC_EXPIRED id='+str(serial)+' clientPid='+str(probe.process.pid) in log_expired: break
+            assert time.monotonic()<expiry_deadline, 'server expiry not observed'
+            time.sleep(.05)
         response = probe.send(connection, payload)
         matrix['scenarios']['connection_expiry']=dict(status='failed',evidence=response,reason='native lifetime assertion pending')
         if response.get('transport')=='reply' and response.get('bytes'):

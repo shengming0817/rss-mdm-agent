@@ -232,7 +232,11 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
             client.store.put(&key, &binding)?;
         }
         // The only first dispatch is still created by local admission and the execution journal.
-        let status = app.request_execution(caller, plan)?;
+        let status = app.request_execution(caller, plan).map_err(|error| {
+            // Closed error variants identify the journal boundary without exposing input.
+            eprintln!("agent_dispatch: {error:?}");
+            Error::from(error)
+        })?;
         if binding.local_attempt.is_some() && binding.local_attempt != status.attempt_id {
             return Err(Error::Conflict);
         }
