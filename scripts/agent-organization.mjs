@@ -1,6 +1,13 @@
 // Generate new installation inputs from the same root .env used by desktop builds.
-import { readFileSync, writeFileSync, unlinkSync, existsSync } from "node:fs";
-import { isAbsolute, resolve } from "node:path";
+import {
+  readFileSync,
+  writeFileSync,
+  unlinkSync,
+  existsSync,
+  chmodSync,
+  realpathSync,
+} from "node:fs";
+import { isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
 import { organizationConfiguration } from "./desktop-organization.mjs";
 
@@ -48,7 +55,7 @@ export function agentOrganizationConfiguration(root, template, caOutput) {
 
 if (
   process.argv[1] &&
-  resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+  realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)
 ) {
   const args = process.argv.slice(2);
   if (

@@ -8,6 +8,7 @@ import {
   copyFileSync,
   readFileSync,
   statSync,
+  symlinkSync,
 } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -190,20 +191,27 @@ test("real Agent generator CLI preserves user-readable public inputs under restr
     template,
     JSON.stringify({ version: 2, ipc_version: 6, state_root: "/state" }),
   );
+  let entry = join(root, "scripts", "agent-organization.mjs");
+  if (process.platform !== "win32") {
+    symlinkSync(join(root, "scripts"), join(root, "scripts-link"), "dir");
+    entry = join(root, "scripts-link", "agent-organization.mjs");
+  }
+  const withoutCa = join(root, "without-ca.json");
   const previousUmask =
     process.platform === "win32" ? undefined : process.umask(0o077);
   try {
     execFileSync(
       process.execPath,
-      [
-        join(root, "scripts", "agent-organization.mjs"),
-        "--config",
-        template,
-        "--output",
-        output,
-        "--ca-output",
-        ca,
-      ],
+      [entry, "--config", template, "--output", output, "--ca-output", ca],
+      { stdio: "ignore" },
+    );
+    writeFileSync(
+      join(root, ".env"),
+      "RSS_MDM_ORIGIN=https://fixture.test\nRSS_MDM_TENANT_ID=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\nRSS_MDM_ORGANIZATION_LABEL=Fixture\n",
+    );
+    execFileSync(
+      process.execPath,
+      [entry, "--config", template, "--output", withoutCa],
       { stdio: "ignore" },
     );
   } finally {
@@ -211,10 +219,12 @@ test("real Agent generator CLI preserves user-readable public inputs under restr
   }
   const config = JSON.parse(readFileSync(output, "utf8"));
   assert.equal(config.ca_file, ca);
+  assert.equal(JSON.parse(readFileSync(withoutCa, "utf8")).ca_file, null);
   assert.equal(config.state_root, "/state");
   assert.match(readFileSync(ca, "utf8"), /BEGIN CERTIFICATE/);
   if (process.platform !== "win32") {
     assert.equal(statSync(output).mode & 0o777, 0o644);
     assert.equal(statSync(ca).mode & 0o777, 0o644);
+    assert.equal(statSync(withoutCa).mode & 0o777, 0o644);
   }
 });
