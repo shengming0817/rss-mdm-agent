@@ -1,13 +1,14 @@
-// ref: Munki installer/dmg.py and dmgutils.py; Apple copyfile.h and renameatx_np(2).
+// ref: Munki installer/dmg.py and dmgutils.py; Apple copyfile.c, copyfile.h, renameatx_np(2).
 use super::*;
 use std::{
-    ffi::CString,
+    collections::VecDeque,
+    ffi::{CStr, CString, OsStr, OsString},
     fs::{self, File, OpenOptions},
     io::{Read, Write},
     os::{
-        fd::{AsRawFd, FromRawFd},
+        fd::{AsRawFd, FromRawFd, IntoRawFd},
         unix::{
-            ffi::OsStrExt,
+            ffi::{OsStrExt, OsStringExt},
             fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt},
         },
     },
@@ -295,11 +296,9 @@ impl std::ops::Deref for SelectedPayload {
 }
 impl SelectedPayload {
     fn anchored(&self) -> PathBuf {
-        if self.file.metadata().is_ok_and(|metadata| metadata.is_dir()) {
-            PathBuf::from(format!("/dev/fd/{}/.", self.file.as_raw_fd()))
-        } else {
-            PathBuf::from(format!("/dev/fd/{}", self.file.as_raw_fd()))
-        }
+        // Only the contained PKG installer consumes a file-descriptor pathname.
+        // macOS /dev/fd does not support traversing retained directory descriptors.
+        PathBuf::from(format!("/dev/fd/{}", self.file.as_raw_fd()))
     }
     fn verify(&self, request: &WorkerRequest, dmg: &Dmg) -> Result<(), Error> {
         let record = state(request)?;
@@ -334,23 +333,18 @@ fn selected(request: &WorkerRequest, relative: &str) -> Result<SelectedPayload, 
     readonly(&volume)?;
     let selected = volume.join(relative);
     // The selected payload itself and each directory component must be real objects.
-    let mut current = volume.clone();
     let volume_file = OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
         .open(&volume)?;
     let mut parents = Vec::new();
     for component in Path::new(relative).components() {
-        current.push(component);
-        if fs::symlink_metadata(&current)?.file_type().is_symlink() {
-            return Err(Error::Untrusted);
-        }
-        parents.push(
-            OpenOptions::new()
-                .read(true)
-                .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
-                .open(&current)?,
-        );
+        let parent = parents.last().unwrap_or(&volume_file);
+        parents.push(open_at(
+            parent,
+            component.as_os_str(),
+            libc::O_NOFOLLOW | libc::O_NONBLOCK,
+        )?);
     }
     if !selected.canonicalize()?.starts_with(volume.canonicalize()?) {
         return Err(Error::Untrusted);
@@ -451,7 +445,7 @@ fn bundle(
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(SoftwareState::Absent {}),
         Err(e) => return Err(e.into()),
         Ok(meta) if !meta.is_dir() || meta.file_type().is_symlink() => {
-            return Err(Error::Untrusted)
+            return Err(Error::Untrusted);
         }
         _ => (),
     }
@@ -587,38 +581,210 @@ fn verify_code(
     }
     Ok(())
 }
+fn open_at(parent: &File, name: &OsStr, flags: i32) -> Result<File, Error> {
+    let name = CString::new(name.as_bytes()).map_err(|_| Error::Protocol)?;
+    let fd = unsafe {
+        libc::openat(
+            parent.as_raw_fd(),
+            name.as_ptr(),
+            libc::O_RDONLY | libc::O_CLOEXEC | flags,
+        )
+    };
+    if fd < 0 {
+        return Err(std::io::Error::last_os_error().into());
+    }
+    Ok(unsafe { File::from_raw_fd(fd) })
+}
+fn stat_at(parent: &File, name: &OsStr) -> Result<libc::stat, Error> {
+    let name = CString::new(name.as_bytes()).map_err(|_| Error::Protocol)?;
+    let mut observed = std::mem::MaybeUninit::<libc::stat>::uninit();
+    if unsafe {
+        libc::fstatat(
+            parent.as_raw_fd(),
+            name.as_ptr(),
+            observed.as_mut_ptr(),
+            libc::AT_SYMLINK_NOFOLLOW,
+        )
+    } != 0
+    {
+        return Err(std::io::Error::last_os_error().into());
+    }
+    Ok(unsafe { observed.assume_init() })
+}
+fn open_entry(parent: &File, name: &OsStr) -> Result<File, Error> {
+    let observed = stat_at(parent, name)?;
+    let flags = match observed.st_mode & libc::S_IFMT {
+        libc::S_IFDIR => libc::O_DIRECTORY | libc::O_NOFOLLOW,
+        libc::S_IFREG => libc::O_NOFOLLOW | libc::O_NONBLOCK,
+        libc::S_IFLNK => libc::O_SYMLINK,
+        _ => return Err(Error::Untrusted),
+    };
+    let file = open_at(parent, name, flags)?;
+    let retained = file.metadata()?;
+    if observed.st_dev as u64 != retained.dev() || observed.st_ino != retained.ino() {
+        return Err(Error::Untrusted);
+    }
+    Ok(file)
+}
+fn directory_names(directory: &File) -> Result<Vec<OsString>, Error> {
+    struct Directory(*mut libc::DIR);
+    impl Drop for Directory {
+        fn drop(&mut self) {
+            unsafe { libc::closedir(self.0) };
+        }
+    }
+    // A fresh open description avoids sharing/reusing the retained directory's cursor.
+    let fd = open_at(
+        directory,
+        OsStr::new("."),
+        libc::O_DIRECTORY | libc::O_NOFOLLOW,
+    )?
+    .into_raw_fd();
+    let directory = unsafe { libc::fdopendir(fd) };
+    if directory.is_null() {
+        let error = std::io::Error::last_os_error();
+        unsafe { libc::close(fd) };
+        return Err(error.into());
+    }
+    let directory = Directory(directory);
+    let mut names = Vec::new();
+    loop {
+        unsafe { *libc::__error() = 0 };
+        let entry = unsafe { libc::readdir(directory.0) };
+        if entry.is_null() {
+            if unsafe { *libc::__error() } != 0 {
+                return Err(std::io::Error::last_os_error().into());
+            }
+            return Ok(names);
+        }
+        let name = unsafe { CStr::from_ptr((*entry).d_name.as_ptr()) }.to_bytes();
+        if name == b"." || name == b".." {
+            continue;
+        }
+        if names.len() >= 4096 {
+            return Err(Error::Capacity);
+        }
+        names.push(OsString::from_vec(name.to_vec()));
+    }
+}
+fn link_at(parent: &File, name: &OsStr, retained: &File) -> Result<PathBuf, Error> {
+    let name_c = CString::new(name.as_bytes()).map_err(|_| Error::Protocol)?;
+    let mut target = [0u8; 4096];
+    let length = unsafe {
+        libc::readlinkat(
+            parent.as_raw_fd(),
+            name_c.as_ptr(),
+            target.as_mut_ptr().cast(),
+            target.len(),
+        )
+    };
+    if length < 0 {
+        return Err(std::io::Error::last_os_error().into());
+    }
+    if length as usize == target.len() {
+        return Err(Error::Capacity);
+    }
+    let observed = stat_at(parent, name)?;
+    let metadata = retained.metadata()?;
+    if observed.st_dev as u64 != metadata.dev() || observed.st_ino != metadata.ino() {
+        return Err(Error::Untrusted);
+    }
+    Ok(PathBuf::from(OsString::from_vec(
+        target[..length as usize].to_vec(),
+    )))
+}
+fn validate_links(tree: &Tree) -> Result<(), Error> {
+    for (path, entry) in tree {
+        let Entry::Link { target } = entry else {
+            continue;
+        };
+        if target.is_absolute() {
+            return Err(Error::Untrusted);
+        }
+        let mut current = path.parent().ok_or(Error::Untrusted)?.to_path_buf();
+        let mut pending: VecDeque<_> = target
+            .components()
+            .map(|part| part.as_os_str().to_os_string())
+            .collect();
+        let mut followed = 0;
+        while let Some(part) = pending.pop_front() {
+            if part == OsStr::new(".") {
+                continue;
+            }
+            if part == OsStr::new("..") {
+                if !current.pop() {
+                    return Err(Error::Untrusted);
+                }
+                continue;
+            }
+            current.push(part);
+            match tree.get(&current).ok_or(Error::Untrusted)? {
+                Entry::Link { target } => {
+                    if target.is_absolute() || followed >= 32 {
+                        return Err(Error::Untrusted);
+                    }
+                    followed += 1;
+                    current.pop();
+                    // Resolve .. after following each link, just as the filesystem does.
+                    for part in target.components().rev() {
+                        pending.push_front(part.as_os_str().to_os_string());
+                    }
+                }
+                Entry::File { .. } if !pending.is_empty() => return Err(Error::Untrusted),
+                _ => {}
+            }
+        }
+        if !tree.contains_key(&current) {
+            return Err(Error::Untrusted);
+        }
+    }
+    Ok(())
+}
 fn inventory(root: &Path) -> Result<Tree, Error> {
+    let root = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(root)?;
+    inventory_from(&root)
+}
+fn inventory_from(root: &File) -> Result<Tree, Error> {
     fn visit(
-        root: &Path,
-        path: &Path,
+        file: File,
+        relative: &Path,
+        parent: Option<&File>,
         device: u64,
         tree: &mut Tree,
         total: &mut u64,
     ) -> Result<(), Error> {
-        let relative = path
-            .strip_prefix(root)
-            .map_err(|_| Error::Untrusted)?
-            .to_path_buf();
         if relative.components().count() > 32 || tree.len() >= 4096 {
             return Err(Error::Capacity);
         }
-        let metadata = fs::symlink_metadata(path)?;
+        let metadata = file.metadata()?;
         if metadata.dev() != device {
             return Err(Error::Untrusted);
         }
         let entry = if metadata.file_type().is_symlink() {
-            let target = fs::read_link(path)?;
-            if target.is_absolute() || !path.canonicalize()?.starts_with(root.canonicalize()?) {
-                return Err(Error::Untrusted);
-            }
+            let target = link_at(
+                parent.ok_or(Error::Untrusted)?,
+                relative.file_name().ok_or(Error::Untrusted)?,
+                &file,
+            )?;
             Entry::Link { target }
         } else if metadata.is_dir() {
             let entry = Entry::Directory {
                 mode: metadata.mode() & 0o755,
             };
-            tree.insert(relative.clone(), entry.clone());
-            for child in fs::read_dir(path)? {
-                visit(root, &child?.path(), device, tree, total)?;
+            tree.insert(relative.to_path_buf(), entry.clone());
+            for name in directory_names(&file)? {
+                let child = open_entry(&file, &name)?;
+                visit(
+                    child,
+                    &relative.join(name),
+                    Some(&file),
+                    device,
+                    tree,
+                    total,
+                )?;
             }
             entry
         } else if metadata.is_file() {
@@ -629,10 +795,6 @@ fn inventory(root: &Path) -> Result<Tree, Error> {
             if *total > 8 * 1024 * 1024 * 1024 {
                 return Err(Error::Capacity);
             }
-            let file = OpenOptions::new()
-                .read(true)
-                .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
-                .open(path)?;
             use sha2::{Digest as _, Sha256};
             let mut hash = Sha256::new();
             let mut file = file;
@@ -652,96 +814,121 @@ fn inventory(root: &Path) -> Result<Tree, Error> {
         } else {
             return Err(Error::Untrusted);
         };
-        tree.insert(relative, entry);
+        tree.insert(relative.to_path_buf(), entry);
         Ok(())
     }
+    if !root.metadata()?.is_dir() {
+        return Err(Error::Untrusted);
+    }
     let mut tree = Tree::new();
-    let device = fs::symlink_metadata(root)?.dev();
-    visit(root, root, device, &mut tree, &mut 0)?;
+    visit(
+        root.try_clone()?,
+        Path::new(""),
+        None,
+        root.metadata()?.dev(),
+        &mut tree,
+        &mut 0,
+    )?;
+    validate_links(&tree)?;
     Ok(tree)
 }
+fn source_entry(root: &File, relative: &Path, entry: &Entry) -> Result<File, Error> {
+    if relative.as_os_str().is_empty() {
+        return Ok(root.try_clone()?);
+    }
+    let mut parent = root.try_clone()?;
+    for component in relative.parent().ok_or(Error::Untrusted)?.components() {
+        if !matches!(component, Component::Normal(_)) {
+            return Err(Error::Untrusted);
+        }
+        parent = open_at(
+            &parent,
+            component.as_os_str(),
+            libc::O_DIRECTORY | libc::O_NOFOLLOW,
+        )?;
+    }
+    let file = open_entry(&parent, relative.file_name().ok_or(Error::Untrusted)?)?;
+    let metadata = file.metadata()?;
+    if metadata.dev() != root.metadata()?.dev()
+        || match entry {
+            Entry::Directory { .. } => !metadata.is_dir(),
+            Entry::File { .. } => !metadata.is_file(),
+            Entry::Link { target } => {
+                !metadata.file_type().is_symlink()
+                    || link_at(
+                        &parent,
+                        relative.file_name().ok_or(Error::Untrusted)?,
+                        &file,
+                    )? != *target
+            }
+        }
+    {
+        return Err(Error::Untrusted);
+    }
+    Ok(file)
+}
+#[cfg(test)]
 fn copy_tree(source: &Path, target: &Path, tree: &Tree) -> Result<(), Error> {
-    // Copy data and extended attributes through retained no-follow descriptors. Ownership
-    // belongs to the actual invocation account; quarantine is preserved, never cleared.
+    let source = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(source)?;
+    copy_tree_from(&source, target, tree)
+}
+fn copy_tree_from(source: &File, target: &Path, tree: &Tree) -> Result<(), Error> {
+    // Data and extended attributes (including quarantine) come from retained source
+    // descriptors. O_SYMLINK lets fcopyfile preserve link metadata without following it.
     unsafe extern "C" {
         fn fcopyfile(from: i32, to: i32, state: *mut libc::c_void, flags: u32) -> i32;
     }
     for (relative, entry) in tree {
-        let original = source.join(relative);
+        let source = source_entry(source, relative, entry)?;
         let copy = target.join(relative);
-        match entry {
+        let (output, flags) = match entry {
             Entry::Directory { mode } => {
                 fs::DirBuilder::new().mode(*mode).create(&copy)?;
-                let source = OpenOptions::new()
-                    .read(true)
-                    .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
-                    .open(&original)?;
-                let target = OpenOptions::new()
-                    .read(true)
-                    .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
-                    .open(&copy)?;
-                if unsafe {
-                    fcopyfile(
-                        source.as_raw_fd(),
-                        target.as_raw_fd(),
-                        std::ptr::null_mut(),
-                        1 << 2,
-                    )
-                } != 0
-                {
-                    return Err(std::io::Error::last_os_error().into());
-                }
+                (
+                    OpenOptions::new()
+                        .read(true)
+                        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+                        .open(&copy)?,
+                    1 << 2,
+                )
             }
             Entry::Link { target } => {
                 std::os::unix::fs::symlink(target, &copy)?;
-                unsafe extern "C" {
-                    fn copyfile(
-                        from: *const libc::c_char,
-                        to: *const libc::c_char,
-                        state: *mut libc::c_void,
-                        flags: u32,
-                    ) -> i32;
-                }
-                let from =
-                    CString::new(original.as_os_str().as_bytes()).map_err(|_| Error::Protocol)?;
-                let to = CString::new(copy.as_os_str().as_bytes()).map_err(|_| Error::Protocol)?;
-                if unsafe {
-                    copyfile(
-                        from.as_ptr(),
-                        to.as_ptr(),
-                        std::ptr::null_mut(),
-                        (1 << 2) | (1 << 18) | (1 << 19),
-                    )
-                } != 0
-                {
-                    return Err(std::io::Error::last_os_error().into());
-                }
+                (
+                    OpenOptions::new()
+                        .read(true)
+                        .custom_flags(libc::O_SYMLINK | libc::O_CLOEXEC)
+                        .open(&copy)?,
+                    1 << 2,
+                )
             }
-            Entry::File { mode, .. } => {
-                let source = OpenOptions::new()
-                    .read(true)
-                    .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
-                    .open(original)?;
-                let target = OpenOptions::new()
+            Entry::File { mode, .. } => (
+                OpenOptions::new()
                     .write(true)
                     .create_new(true)
                     .mode(*mode)
                     .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
-                    .open(&copy)?;
-                if unsafe {
-                    fcopyfile(
-                        source.as_raw_fd(),
-                        target.as_raw_fd(),
-                        std::ptr::null_mut(),
-                        (1 << 2) | (1 << 3),
-                    )
-                } != 0
-                {
-                    return Err(std::io::Error::last_os_error().into());
-                }
-                target.sync_all()?;
-                fs::set_permissions(copy, fs::Permissions::from_mode(*mode))?;
-            }
+                    .open(&copy)?,
+                (1 << 2) | (1 << 3),
+            ),
+        };
+        if unsafe {
+            fcopyfile(
+                source.as_raw_fd(),
+                output.as_raw_fd(),
+                std::ptr::null_mut(),
+                flags,
+            )
+        } != 0
+        {
+            return Err(std::io::Error::last_os_error().into());
+        }
+        if let Entry::File { mode, .. } = entry {
+            output.sync_all()?;
+            output.set_permissions(fs::Permissions::from_mode(*mode))?;
         }
     }
     if inventory(target)? != *tree {
@@ -1024,13 +1211,13 @@ pub(super) fn execute(
                     return Err(Error::Untrusted);
                 }
                 payload.verify(request, dmg)?;
-                let tree = inventory(&payload.anchored())?;
+                let tree = inventory_from(&payload.file)?;
                 let mut record = state(request)?;
                 record.stage = Some(tree.clone());
                 record.partial_stage = true;
                 record.group = unsafe { libc::getpgrp() };
                 save(request, &record)?;
-                copy_tree(&payload.anchored(), &staged, &tree)?;
+                copy_tree_from(&payload.file, &staged, &tree)?;
                 payload.verify(request, dmg)?;
                 if bundle(request, &staged, application)?
                     != (SoftwareState::Present {
@@ -1063,7 +1250,7 @@ pub(super) fn execute(
                 let actual = inventory(&installed)?;
                 // Exact-version removal compares complete bytes/links to the approved read-only image.
                 if request.operation == WorkerOperation::Uninstall
-                    && actual != inventory(&payload.anchored())?
+                    && actual != inventory_from(&payload.file)?
                 {
                     return Err(Error::Untrusted);
                 }
@@ -1071,7 +1258,7 @@ pub(super) fn execute(
                 return Ok(result(0, None, String::new()));
             }
             let new = inventory(&staged)?;
-            if new != inventory(&payload.anchored())? {
+            if new != inventory_from(&payload.file)? {
                 return Err(Error::Untrusted);
             }
             let mut record = state(request)?;
@@ -1355,9 +1542,29 @@ mod tests {
             },
             0
         );
-        let tree = inventory(&source).unwrap();
+        let source_file = OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+            .open(&source)
+            .unwrap();
+        let tree = inventory_from(&source_file).unwrap();
+        let retained_source = root.join("retained.app");
+        fs::rename(&source, &retained_source).unwrap();
+        fs::create_dir(&source).unwrap();
+        fs::write(
+            source.join("replacement"),
+            b"unapproved pathname replacement",
+        )
+        .unwrap();
+        assert_ne!(inventory(&source).unwrap(), tree);
+        assert_eq!(inventory_from(&source_file).unwrap(), tree);
         let stage = root.join("stage.app");
-        copy_tree(&source, &stage, &tree).unwrap();
+        copy_tree_from(&source_file, &stage, &tree).unwrap();
+        assert_eq!(
+            fs::read(stage.join("Contents/Frameworks/Test.framework/Test")).unwrap(),
+            b"approved framework"
+        );
+        assert!(!stage.join("replacement").exists());
         let staged_path = CString::new(stage.as_os_str().as_bytes()).unwrap();
         let mut observed = [0u8; 128];
         let length = unsafe {
@@ -1378,7 +1585,7 @@ mod tests {
         let installed = root.join("installed.app");
         rename(&stage, &installed, false).unwrap();
         assert_eq!(inventory(&installed).unwrap(), tree);
-        copy_tree(&source, &stage, &tree).unwrap();
+        copy_tree_from(&source_file, &stage, &tree).unwrap();
         fs::write(
             installed.join("Contents/Frameworks/Test.framework/Versions/A/Test"),
             b"old version",
@@ -1390,10 +1597,15 @@ mod tests {
         assert_eq!(inventory(&stage).unwrap(), old);
         remove_tree(&stage, &old).unwrap();
         remove_tree(&installed, &tree).unwrap();
-        std::os::unix::fs::symlink("/tmp", source.join("escape")).unwrap();
-        assert!(inventory(&source).is_err());
-        fs::remove_file(source.join("escape")).unwrap();
-        remove_tree(&source, &tree).unwrap();
+        std::os::unix::fs::symlink("/tmp", retained_source.join("escape")).unwrap();
+        assert!(inventory_from(&source_file).is_err());
+        fs::remove_file(retained_source.join("escape")).unwrap();
+        std::os::unix::fs::symlink("../source.app", retained_source.join("escape")).unwrap();
+        assert!(inventory_from(&source_file).is_err());
+        fs::remove_file(retained_source.join("escape")).unwrap();
+        remove_tree(&retained_source, &tree).unwrap();
+        fs::remove_file(source.join("replacement")).unwrap();
+        fs::remove_dir(source).unwrap();
         fs::remove_dir(root).unwrap();
     }
     #[test]

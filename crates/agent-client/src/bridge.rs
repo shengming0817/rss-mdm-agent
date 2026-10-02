@@ -885,6 +885,18 @@ fn software_result(
             }
         });
         let process = chosen.map(|(_, p, _)| *p);
+        let duration_ms = checkpoints
+            .iter()
+            .filter_map(|checkpoint| match checkpoint {
+                C::End {
+                    step, duration_ms, ..
+                }
+                | C::CleanupEnd {
+                    step, duration_ms, ..
+                } if *step as usize == index => Some(*duration_ms),
+                _ => None,
+            })
+            .fold(0u64, u64::saturating_add);
         let mut step_diagnostics = match selected {
             Some((phase, p)) => {
                 let original =
@@ -899,18 +911,20 @@ fn software_result(
                 wire::TaskDiagnostics::new(
                     original.stdout().into(),
                     original.stderr().into(),
-                    0,
+                    duration_ms,
                     time,
                     failure,
                 )?
             }
-            None => wire::TaskDiagnostics::new(String::new(), String::new(), 0, time, None)?,
+            None => {
+                wire::TaskDiagnostics::new(String::new(), String::new(), duration_ms, time, None)?
+            }
         };
         if begun && !completed && step_diagnostics.failure().is_none() {
             step_diagnostics = wire::TaskDiagnostics::new(
                 step_diagnostics.stdout().into(),
                 step_diagnostics.stderr().into(),
-                0,
+                duration_ms,
                 time,
                 Some(wire::TaskFailure::CaptureFailed),
             )?;
@@ -1075,6 +1089,8 @@ mod result_tests {
         };
         let result = software_result(&spec, Some(&progress), encoding, &Redact, 1000).unwrap();
         assert_eq!(result.steps.len(), 2);
+        assert_eq!(result.steps[0].diagnostics.duration_ms(), 60);
+        assert_eq!(result.steps[1].diagnostics.duration_ms(), 0);
         for (i, step) in result.steps.iter().enumerate() {
             assert_eq!(step.index as usize, i);
             assert_eq!(step.step_digest, spec.steps[i].digest().unwrap());

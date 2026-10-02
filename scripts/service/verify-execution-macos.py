@@ -719,6 +719,10 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
                 upgrade_event = acknowledged_result(upgraded,upgrade_task['attempt'])
                 assert upgrade_event['steps'][0]['before']['version'] == info['CFBundleShortVersionString']
                 assert upgrade_event['steps'][0]['after']['version'] == upgrade_info['CFBundleShortVersionString'] and upgrade_event['steps'][0]['diagnostics']['failure'] is None
+                observed_upgrade = plistlib.loads((installed_app/'Contents/Info.plist').read_bytes())
+                assert observed_upgrade['CFBundleShortVersionString'] == upgrade_info['CFBundleShortVersionString']
+                run('/usr/bin/codesign','--verify','--deep','--strict',str(installed_app))
+                run('/usr/sbin/spctl','--assess','--type','execute',str(installed_app))
                 receipt['scenarios']['dmg_app_upgrade'] = upgraded
             remove_task = command('dmg',uninstall=True,**parameters)
             removed = completed(remove_task['attempt'],120)
@@ -727,7 +731,9 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
             assert remove_event['steps'][0]['diagnostics']['failure'] is None and not installed_app.exists()
             receipt['scenarios']['dmg_app_uninstall'] = removed
             mounts = plistlib.loads(run('/usr/bin/hdiutil','info','-plist').stdout.encode())
-            assert not any(str(image) == item.get('image-path') for item in mounts.get('images',[]))
+            # The worker mounts its protected cached image, rather than the lab source path.
+            assert not any(Path(item.get('image-path','')).is_relative_to(protected)
+                           for item in mounts.get('images',[])), 'owned cached image remains mounted'
         marker = protected / 'cancel-started'
         cancel_tail = protected / 'cancel-tail'
         fourth = command('script', body=f"umask 022; printf x > {shlex.quote(str(marker))}; printf '{{\"fixture\":\"cancel\"}}\\n'; /bin/sleep 20; printf x > {shlex.quote(str(cancel_tail))}\n")

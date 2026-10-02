@@ -1342,78 +1342,104 @@ fn live_capture_stays_running_and_retired_capture_survives_reopen() {
         .contains("secret-canary"));
 }
 
+#[derive(Clone)]
+struct SoftwareCheckpointRunner {
+    inner: DeterministicTestRunner,
+    path: std::path::PathBuf,
+    terminate_from_capture: bool,
+    live: std::sync::Arc<std::sync::Mutex<Option<ProcessEvidence>>>,
+    pending: std::sync::Arc<std::sync::Mutex<Option<SoftwareProgress>>>,
+}
+impl RunnerPort for SoftwareCheckpointRunner {
+    fn id(&self) -> Id {
+        self.inner.id()
+    }
+    fn mode(&self) -> execution_lifecycle::ExecutionMode {
+        execution_lifecycle::ExecutionMode::Test
+    }
+    fn dispatch(&self, permit: AuthorizedDispatch) -> Result<DispatchOutcome, Error> {
+        self.inner.dispatch(permit)
+    }
+    fn evidence(
+        &self,
+        _: &FrozenExecution,
+        _: &AttemptId,
+    ) -> Result<Option<ProcessEvidence>, Error> {
+        Ok(self.live.lock().unwrap().clone())
+    }
+    fn acknowledge_capture(&self, _: &FrozenExecution, _: &ProcessEvidence) -> Result<(), Error> {
+        Ok(())
+    }
+    fn stop(&self, p: &FrozenExecution, a: &AttemptId) -> Result<(), Error> {
+        self.inner.stop(p, a)
+    }
+    fn observe(
+        &self,
+        p: &FrozenExecution,
+        a: &AttemptId,
+        s: ObservationStage,
+        n: u64,
+    ) -> Result<Option<execution_lifecycle::ObservationFacts>, Error> {
+        if self.terminate_from_capture && s == ObservationStage::Termination {
+            if let Some(facts) = self
+                .live
+                .lock()
+                .unwrap()
+                .as_ref()
+                .filter(|facts| facts.finished)
+            {
+                return Ok(Some(execution_lifecycle::ObservationFacts {
+                    request_id: p.spec().request.request_id.clone(),
+                    content_digest: p.digest().clone(),
+                    attempt_id: a.clone(),
+                    observed_at_unix_ms: n,
+                    evidence: EvidenceRef {
+                        reference: VersionedRef {
+                            id: id(a.as_str()),
+                            revision: id("checkpoint-owner"),
+                        },
+                        runner: self.id(),
+                        kind: EvidenceKind::TestResult,
+                    },
+                    observation: execution_lifecycle::Observation::Exited {
+                        exit_code: facts.exit_code.unwrap(),
+                        total_output_bytes: facts.total_output_bytes,
+                    },
+                }));
+            }
+        }
+        self.inner.observe(p, a, s, n)
+    }
+    fn software_progress(
+        &self,
+        _: &FrozenExecution,
+        _: &AttemptId,
+    ) -> Result<Option<SoftwareProgress>, Error> {
+        Ok(self.pending.lock().unwrap().clone())
+    }
+    fn acknowledge_software_progress(
+        &self,
+        receipt: CommittedSoftwareProgress,
+    ) -> Result<(), Error> {
+        let sql = rusqlite::Connection::open(&self.path).unwrap();
+        let body: Vec<u8> = sql
+            .query_row(
+                "SELECT body FROM software_progress WHERE attempt_id=?1",
+                [receipt.facts().attempt_id.as_str()],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            serde_json::from_slice::<SoftwareProgress>(&body).unwrap(),
+            *receipt.facts()
+        );
+        self.pending.lock().unwrap().take();
+        Ok(())
+    }
+}
+
 #[test]
 fn software_application_commits_boundaries_before_ack_and_never_replays_unknown_begin() {
-    #[derive(Clone)]
-    struct Runner {
-        inner: DeterministicTestRunner,
-        path: std::path::PathBuf,
-        live: std::sync::Arc<std::sync::Mutex<Option<ProcessEvidence>>>,
-        pending: std::sync::Arc<std::sync::Mutex<Option<SoftwareProgress>>>,
-    }
-    impl RunnerPort for Runner {
-        fn id(&self) -> Id {
-            self.inner.id()
-        }
-        fn mode(&self) -> execution_lifecycle::ExecutionMode {
-            execution_lifecycle::ExecutionMode::Test
-        }
-        fn dispatch(&self, permit: AuthorizedDispatch) -> Result<DispatchOutcome, Error> {
-            self.inner.dispatch(permit)
-        }
-        fn evidence(
-            &self,
-            _: &FrozenExecution,
-            _: &AttemptId,
-        ) -> Result<Option<ProcessEvidence>, Error> {
-            Ok(self.live.lock().unwrap().clone())
-        }
-        fn acknowledge_capture(
-            &self,
-            _: &FrozenExecution,
-            _: &ProcessEvidence,
-        ) -> Result<(), Error> {
-            Ok(())
-        }
-        fn stop(&self, p: &FrozenExecution, a: &AttemptId) -> Result<(), Error> {
-            self.inner.stop(p, a)
-        }
-        fn observe(
-            &self,
-            p: &FrozenExecution,
-            a: &AttemptId,
-            s: ObservationStage,
-            n: u64,
-        ) -> Result<Option<execution_lifecycle::ObservationFacts>, Error> {
-            self.inner.observe(p, a, s, n)
-        }
-        fn software_progress(
-            &self,
-            _: &FrozenExecution,
-            _: &AttemptId,
-        ) -> Result<Option<SoftwareProgress>, Error> {
-            Ok(self.pending.lock().unwrap().clone())
-        }
-        fn acknowledge_software_progress(
-            &self,
-            receipt: CommittedSoftwareProgress,
-        ) -> Result<(), Error> {
-            let sql = rusqlite::Connection::open(&self.path).unwrap();
-            let body: Vec<u8> = sql
-                .query_row(
-                    "SELECT body FROM software_progress WHERE attempt_id=?1",
-                    [receipt.facts().attempt_id.as_str()],
-                    |r| r.get(0),
-                )
-                .unwrap();
-            assert_eq!(
-                serde_json::from_slice::<SoftwareProgress>(&body).unwrap(),
-                *receipt.facts()
-            );
-            self.pending.lock().unwrap().take();
-            Ok(())
-        }
-    }
     let db = Database::new();
     let mut host = TestHost::new();
     let plan = FrozenExecution::freeze(
@@ -1435,9 +1461,10 @@ fn software_application_commits_boundaries_before_ack_and_never_replays_unknown_
     host.template = plan.clone();
     let pending = std::sync::Arc::new(std::sync::Mutex::new(None));
     let live = std::sync::Arc::new(std::sync::Mutex::new(None));
-    let runner = Runner {
+    let runner = SoftwareCheckpointRunner {
         inner: DeterministicTestRunner::new(id("test-runner"), TestScenario::Unknown, 8).unwrap(),
         path: db.path.clone(),
+        terminate_from_capture: false,
         live: live.clone(),
         pending: pending.clone(),
     };
@@ -1515,9 +1542,10 @@ fn software_application_commits_boundaries_before_ack_and_never_replays_unknown_
     );
     *live.lock().unwrap() = None;
     drop(app);
-    let runner = Runner {
+    let runner = SoftwareCheckpointRunner {
         inner: DeterministicTestRunner::new(id("test-runner"), TestScenario::Unknown, 8).unwrap(),
         path: db.path.clone(),
+        terminate_from_capture: false,
         live: live.clone(),
         pending: pending.clone(),
     };
@@ -1621,6 +1649,277 @@ fn software_application_commits_boundaries_before_ack_and_never_replays_unknown_
             .unwrap(),
         0
     );
+}
+
+#[test]
+fn software_cleanup_preserves_terminated_capture_and_recovers_without_one_after_restart() {
+    run_software_cleanup_recovery(false);
+    run_software_cleanup_recovery(true);
+}
+fn run_software_cleanup_recovery(restart_without_capture: bool) {
+    let db = Database::new();
+    let mut host = TestHost::new();
+    let plan = dmg_cleanup_plan();
+    host.template = plan.clone();
+    let pending = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let live = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let runner = SoftwareCheckpointRunner {
+        inner: DeterministicTestRunner::new(id("test-runner"), TestScenario::Unknown, 8).unwrap(),
+        path: db.path.clone(),
+        terminate_from_capture: !restart_without_capture,
+        live: live.clone(),
+        pending: pending.clone(),
+    };
+    let dispatches = runner.inner.clone();
+    let mut app = ExecutionApp::start(
+        &db.path,
+        Startup::CreateTest,
+        host.clone(),
+        runner,
+        AppConfig::test_defaults(1),
+    )
+    .unwrap();
+    let request = &plan.spec().request.request_id;
+    let attempt = app
+        .request_execution(&caller(), &plan)
+        .unwrap()
+        .attempt_id
+        .unwrap();
+    let mut progress = failed_dmg_cleanup_progress(&plan, &attempt);
+    let mut original_capture = *software_cleanup_facts(&plan, &attempt, 7, progress.output_bytes);
+    original_capture.stdout = b"original installer diagnostic".to_vec();
+    original_capture.quality = OutputQuality::Failed;
+    if !restart_without_capture {
+        *live.lock().unwrap() = Some(original_capture.clone());
+    }
+    reconcile_cleanup_progress(&mut app, &pending, &plan, &progress);
+    assert_eq!(db.count("software_claims"), 1);
+    let snapshot = || {
+        let body: Vec<u8> = db
+            .sql()
+            .query_row("SELECT snapshot FROM executions", [], |row| row.get(0))
+            .unwrap();
+        serde_json::from_slice::<execution_lifecycle::Snapshot>(&body).unwrap()
+    };
+    let original_attempt = snapshot().attempt.unwrap();
+    assert_eq!(original_attempt.output_bytes, progress.output_bytes);
+    assert_eq!(
+        original_attempt.termination.is_none(),
+        restart_without_capture
+    );
+    if restart_without_capture {
+        drop(app);
+        assert!(live.lock().unwrap().is_none());
+        let runner = SoftwareCheckpointRunner {
+            inner: dispatches.clone(),
+            path: db.path.clone(),
+            terminate_from_capture: false,
+            live: live.clone(),
+            pending: pending.clone(),
+        };
+        app = ExecutionApp::start(
+            &db.path,
+            Startup::OpenTest,
+            host,
+            runner,
+            AppConfig::test_defaults(1),
+        )
+        .unwrap();
+    }
+    // Each Begin is committed and acknowledged before publishing its physical result.
+    for (code, bytes, closed) in [(1, 64, false), (0, 96, true)] {
+        let (step, sequence, timeout_ms, output_bytes) = progress.cleanup_allowance(&plan).unwrap();
+        progress.checkpoints.push(SoftwareCheckpoint::CleanupBegin {
+            step,
+            sequence,
+            timeout_ms,
+            output_bytes,
+        });
+        progress.elapsed_ms += 1;
+        reconcile_cleanup_progress(&mut app, &pending, &plan, &progress);
+        assert_eq!(db.count("software_claims"), 1);
+        progress.checkpoints.push(SoftwareCheckpoint::CleanupEnd {
+            step,
+            sequence,
+            duration_ms: 10,
+            process: software_cleanup_facts(&plan, &attempt, code, bytes),
+            resources_closed: closed,
+        });
+        progress.elapsed_ms += 10;
+        progress.output_bytes += bytes;
+        let status = reconcile_cleanup_progress(&mut app, &pending, &plan, &progress);
+        assert_eq!(db.count("software_claims"), if closed { 0 } else { 1 });
+        assert_cleanup_status(
+            &snapshot().attempt.unwrap(),
+            &original_attempt,
+            &status,
+            &original_capture,
+            &progress,
+            (restart_without_capture, closed),
+        );
+    }
+    let deliveries = app
+        .service_delivery(request, &id("agent-delivery"), 64)
+        .unwrap();
+    assert!(!deliveries.is_empty());
+    for delivery in deliveries {
+        assert_cleanup_delivery(delivery, &plan, &original_capture, restart_without_capture);
+    }
+    assert_eq!(dispatches.dispatch_count(), 1);
+    assert_eq!(db.count("attempts"), 1);
+}
+
+fn reconcile_cleanup_progress(
+    app: &mut ExecutionApp<TestHost, SoftwareCheckpointRunner>,
+    pending: &std::sync::Mutex<Option<SoftwareProgress>>,
+    plan: &FrozenExecution,
+    progress: &SoftwareProgress,
+) -> ExecutionStatus {
+    assert!(progress.valid_for(plan));
+    *pending.lock().unwrap() = Some(progress.clone());
+    let status = app.reconcile(&plan.spec().request.request_id).unwrap();
+    assert!(pending.lock().unwrap().is_none());
+    status
+}
+
+fn dmg_cleanup_plan() -> FrozenExecution {
+    // Use the existing software fixture and the DMG shape exercised by contract recovery.
+    let mut input = decode_execution(
+        include_bytes!("../../execution-contract/tests/fixtures/software.json"),
+        &test_store_limits().input,
+    )
+    .unwrap();
+    let ExecutionSpec::SoftwareProgram { program } = &mut input.execution else {
+        panic!("software");
+    };
+    let step = &mut program.steps[0];
+    step.format = SoftwareFormat::DmgPkg {
+        volume: PackageValue::new("Approved").unwrap(),
+        path: "fixed.pkg".into(),
+        length: 1,
+        sha256: step.payload.sha256.clone(),
+        receipt: PackageValue::new("org.rss.fixture").unwrap(),
+    };
+    let mut cleanup = step.install.clone();
+    cleanup.launch.interpreter.profile.id = id("native-software-worker");
+    cleanup.timeout_ms = 900;
+    cleanup.output_bytes = 6144;
+    step.auxiliary
+        .insert(SoftwarePhase::Attach, step.install.clone());
+    step.auxiliary.insert(SoftwarePhase::Cleanup, cleanup);
+    FrozenExecution::freeze(input, &test_store_limits().input).unwrap()
+}
+
+fn software_cleanup_facts(
+    plan: &FrozenExecution,
+    attempt: &AttemptId,
+    code: i32,
+    bytes: u64,
+) -> Box<ProcessEvidence> {
+    Box::new(ProcessEvidence {
+        content_digest: plan.digest().clone(),
+        attempt_id: attempt.clone(),
+        runner: id("test-runner"),
+        scope: ProcessScope::ProcessGroup { owner: 1, group: 2 },
+        finished: true,
+        exit_code: Some(code),
+        end: ProcessEnd::Exited,
+        failure_kind: ProcessFailureKind::None,
+        quiescent: true,
+        stdout: vec![],
+        stderr: vec![],
+        total_output_bytes: bytes,
+        quality: OutputQuality::Complete,
+    })
+}
+
+fn failed_dmg_cleanup_progress(plan: &FrozenExecution, attempt: &AttemptId) -> SoftwareProgress {
+    let mut progress = SoftwareProgress {
+        attempt_id: attempt.clone(),
+        content_digest: plan.digest().clone(),
+        runner: id("test-runner"),
+        elapsed_ms: 50,
+        output_bytes: 40,
+        checkpoints: vec![
+            SoftwareCheckpoint::Begin {
+                step: 0,
+                phase: SoftwarePhase::Before,
+            },
+            SoftwareCheckpoint::End {
+                step: 0,
+                phase: SoftwarePhase::Before,
+                duration_ms: 5,
+                process: None,
+                detected: Some(SoftwareState::Absent {}),
+                quiescent: true,
+            },
+        ],
+    };
+    for (phase, code, bytes) in [
+        (SoftwarePhase::Attach, 0, 10),
+        (SoftwarePhase::Mutation, 7, 20),
+        (SoftwarePhase::Cleanup, 1, 10),
+    ] {
+        progress
+            .checkpoints
+            .push(SoftwareCheckpoint::Begin { step: 0, phase });
+        progress.checkpoints.push(SoftwareCheckpoint::End {
+            step: 0,
+            phase,
+            duration_ms: 5,
+            process: Some(software_cleanup_facts(plan, attempt, code, bytes)),
+            detected: None,
+            quiescent: true,
+        });
+    }
+    assert!(progress.valid_for(plan) && !progress.closed(plan));
+    progress
+}
+
+fn assert_cleanup_status(
+    current_attempt: &execution_lifecycle::AttemptSnapshot,
+    original_attempt: &execution_lifecycle::AttemptSnapshot,
+    status: &ExecutionStatus,
+    original_capture: &ProcessEvidence,
+    progress: &SoftwareProgress,
+    scenario: (bool, bool),
+) {
+    let (restart_without_capture, closed) = scenario;
+    if !restart_without_capture {
+        assert_eq!(current_attempt.termination, original_attempt.termination);
+        assert_eq!(current_attempt.output_bytes, original_attempt.output_bytes);
+        assert_eq!(status.process, Some(original_capture.summary()));
+    } else {
+        assert!(status.process.is_none());
+        assert_eq!(current_attempt.termination.is_some(), closed);
+    }
+    if closed {
+        assert_eq!(status.phase, TaskPhase::OutcomeUnknown);
+        assert_eq!(
+            status.assessment,
+            Some(execution_lifecycle::EffectAssessment::Unknown)
+        );
+        assert!(!progress
+            .checkpoints
+            .iter()
+            .any(|checkpoint| matches!(checkpoint, SoftwareCheckpoint::Complete { .. })));
+    }
+}
+fn assert_cleanup_delivery(
+    delivery: execution_sqlite::DeliveryEvidence,
+    plan: &FrozenExecution,
+    original_capture: &ProcessEvidence,
+    restart_without_capture: bool,
+) {
+    let retained = delivery.software_progress.unwrap();
+    assert_eq!(retained.output_bytes, 200);
+    assert!(retained.closed(plan) && !retained.complete(plan));
+    assert!(retained.cleanup_allowance(plan).is_none());
+    if restart_without_capture {
+        assert!(delivery.process.is_none());
+    } else {
+        assert_eq!(delivery.process.as_deref(), Some(original_capture));
+    }
 }
 
 #[test]
@@ -2102,7 +2401,10 @@ fn old_schema_reports_exact_versions_and_keeps_bytes() {
         Ok(_) => panic!("old format opened"),
         Err(e) => e,
     };
-    assert_eq!(error.to_string(),"execution database schema 4 is unsupported; required schema 7; preserve the existing database; initialization and automatic migration are disabled");
+    assert_eq!(
+        error.to_string(),
+        "execution database schema 4 is unsupported; required schema 7; preserve the existing database; initialization and automatic migration are disabled"
+    );
     assert_eq!(std::fs::read(&db.path).unwrap(), before);
 }
 
