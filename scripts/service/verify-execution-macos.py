@@ -426,7 +426,8 @@ def native_stale_helper_security(probe, matrix, query, command, protected, prior
 
 def complete_native_security(probe, matrix, query, command, package, package_receipt, completed, effect,
         protected, installer, binary, config, administrator):
-    native_restart_security(probe,matrix,command,administrator)
+    if matrix['scenarios']['restart_old_connection']['status']!='passed':
+        native_restart_security(probe,matrix,command,administrator)
     prior=query()
     offset=(protected/'service-stderr.log').stat().st_size
     run('/usr/bin/python3',str(installer),'remove','--scope','user','--binary',str(binary),'--config',str(config))
