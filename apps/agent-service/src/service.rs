@@ -851,16 +851,26 @@ impl Core {
                         origin: origin.clone(),
                     };
                     if let Some(previous) = self.app.backend_request(&self.caller(), &request)? {
-                        if previous.offer.task != task
-                            || previous.offer.attempt != attempt
-                            || previous.offer.revision != revision
-                            || previous.trigger != replay.trigger(&self.host.binding.device)?
-                        {
-                            return Err(Error::Conflict);
+                        // A proposed AI request still needs its explicit desktop confirmation.
+                        // Once selected, replay returns facts and never repeats that transition.
+                        if previous.state != BackendRequestState::Proposed {
+                            let original_origin =
+                                previous.trigger == replay.trigger(&self.host.binding.device)?;
+                            let desktop_confirmation =
+                                matches!(origin, execution_runner::host::ClientOrigin::Desktop {})
+                                    && matches!(previous.trigger, BackendTrigger::Ai { .. })
+                                    && same_login(&previous.trigger, &replay);
+                            if previous.offer.task != task
+                                || previous.offer.attempt != attempt
+                                || previous.offer.revision != revision
+                                || !(original_origin || desktop_confirmation)
+                            {
+                                return Err(Error::Conflict);
+                            }
+                            return Ok(Reply::Pending {
+                                value: Box::new(previous),
+                            });
                         }
-                        return Ok(Reply::Pending {
-                            value: Box::new(previous),
-                        });
                     }
                     let offer = self.available.as_ref().ok_or(Error::Unavailable)?;
                     if offer.request != request
