@@ -725,13 +725,13 @@ def authorized_steps(programs, endpoint, expected_pid, expected_uid, deadline):
                 return
             started = True
             connection.settimeout(1200)
-            if not reply(0, 'setup'): return
+            setup_ok = reply(0, 'setup')
             sequence = 0
             while True:
                 line = reader.readline(4097)
                 if not line: break
                 message = json.loads(line)
-                if len(line)>4096 or set(message)!={'id','operation'} or type(message['id']) is not int or message['id']!=sequence+1 or message['operation'] not in programs:
+                if len(line)>4096 or set(message)!={'id','operation'} or type(message['id']) is not int or message['id']!=sequence+1 or message['operation'] not in programs or (not setup_ok and message['operation']!='cleanup'):
                     connection.sendall((json.dumps({'id':message.get('id'),'ok':False,'error':'invalid operation'})+'\n').encode())
                     break
                 sequence = message['id']
@@ -1077,6 +1077,9 @@ with os.fdopen(fd,'w') as stream: json.dump(config,stream); stream.flush(); os.f
         security = refresh = None
         if args.security:
             probe_source = Path(frozen['binaries']['securityProbe']['path'])
+            staged_probe=inputs/'security-probe'
+            copy_candidate(probe_source,staged_probe,frozen['binaries']['securityProbe']['sha256'])
+            probe_source=staged_probe
             probe_binary = protected / 'security-probe'
             contents = setup.read_text()
             insertion = """probe=root/'security-probe'
@@ -1086,6 +1089,9 @@ config['clients']['images'].append(artifact(probe))
 """ % (str(probe_source), frozen['binaries']['securityProbe']['sha256'])
             setup.write_text(contents.replace("path=root/'execution.json'", insertion + "path=root/'execution.json'"))
             untrusted_source=Path(frozen['binaries']['untrustedProbe']['path'])
+            staged_untrusted=inputs/'untrusted-probe'
+            copy_candidate(untrusted_source,staged_untrusted,frozen['binaries']['untrustedProbe']['sha256'])
+            untrusted_source=staged_untrusted
             assert frozen['binaries']['untrustedProbe']['signature']['cdhash']!=frozen['binaries']['securityProbe']['signature']['cdhash'], 'wrong-code stimulus must have distinct native identity'
             untrusted_binary=protected/'untrusted-probe'
             contents=setup.read_text()
@@ -1551,7 +1557,7 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
         (lab / 'receipt.json').write_text(json.dumps(receipt, indent=2))
         if not cleanup_errors:
             # The original helper work root can hold unresolved recovery evidence.
-            for leaf in ['rss-execution-service','rss-mdm-desktop','execution-macos.py','tls.pem']:
+            for leaf in ['rss-execution-service','rss-mdm-desktop','security-probe','untrusted-probe','execution-macos.py','tls.pem']:
                 (inputs / leaf).unlink(missing_ok=True)
         if cleanup_errors:
             raise RuntimeError('acceptance cleanup incomplete')
