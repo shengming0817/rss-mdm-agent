@@ -378,7 +378,11 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
         let scope = Scope::from_input(execution.input());
         let revision = self
             .store
-            .trust_revision(&scope, &self.adapter(context, Some(execution.input())))?;
+            .trust_revision(&scope, &self.adapter(context, Some(execution.input())))
+            .map_err(|error| {
+                eprintln!("execution_trust_revision: {error:?}");
+                Error::from(error)
+            })?;
         let refresh = operation(
             execution.input(),
             "trust",
@@ -387,7 +391,11 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
         let host = Host::new(&self.host, &self.binding, &self.config, context)
             .with_input(Some(execution.input()));
         self.store
-            .refresh_trust(&refresh, &scope, revision, &host)?;
+            .refresh_trust(&refresh, &scope, revision, &host)
+            .map_err(|error| {
+                eprintln!("execution_trust_refresh: {error:?}");
+                Error::from(error)
+            })?;
         let bindings = self.host.approval_bindings(execution.input())?;
         let attempt = AttemptId::new(key(execution.input(), "attempt", command.as_str())?)
             .map_err(|_| Error::InvalidInput)?;
