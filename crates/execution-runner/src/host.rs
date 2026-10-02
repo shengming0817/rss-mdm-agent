@@ -257,7 +257,10 @@ impl Peer {
     /// Authenticate the live connection against administrator-owned image and OS account pins.
     /// This is local ingress identity, never an enterprise task permission.
     pub fn authenticate(&self, policy: &PeerPolicy) -> Result<String, execution_app::Error> {
-        policy.validate()?;
+        // Endpoint assembly validates every installed candidate before listening. Each
+        // message checks the bounded policy and the actual live peer's protected image;
+        // hashing unrelated candidates again does not authenticate this connection.
+        policy.validate_shape()?;
         #[cfg(target_os = "macos")]
         {
             crate::macos_service::authenticate(self, policy)
@@ -343,8 +346,7 @@ pub struct PeerPolicy {
     pub interactive: bool,
 }
 impl PeerPolicy {
-    /// Verify bounded pins and every protected image before exposing a native endpoint.
-    pub fn validate(&self) -> Result<(), execution_app::Error> {
+    fn validate_shape(&self) -> Result<(), execution_app::Error> {
         if self.images.is_empty()
             || self.images.len() > 8
             || self.subjects.is_empty()
@@ -353,6 +355,11 @@ impl PeerPolicy {
         {
             return Err(execution_app::Error::Configuration);
         }
+        Ok(())
+    }
+    /// Verify bounded pins and every protected image before exposing a native endpoint.
+    pub fn validate(&self) -> Result<(), execution_app::Error> {
+        self.validate_shape()?;
         for image in &self.images {
             image
                 .verify(&image.path)
