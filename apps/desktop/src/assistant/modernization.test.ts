@@ -1,5 +1,6 @@
 import { mount, flushPromises } from "@vue/test-utils";
 import { expect, it, vi } from "vitest";
+import { computed, shallowRef } from "vue";
 import ExecutionActivity from "./ExecutionActivity.vue";
 import { createAssistant } from "./controller";
 import { taskPresentation } from "./execution-presentation";
@@ -117,6 +118,46 @@ it("discards a late task read after the view has been hidden", async () => {
     finish({ kind: "execution", value: task("verified", "satisfied") });
     await flushPromises();
     expect(wrapper.find(".execution-activity").exists()).toBe(false);
+  } finally {
+    wrapper.unmount();
+    c.dispose();
+  }
+});
+
+it("keeps one pending task read while conversation snapshots stream in the same generation", async () => {
+  const c = createAssistant(undefined, () => "id");
+  c.state.selected = "session";
+  const snapshot = shallowRef({
+    generation: "generation-1",
+  } as NonNullable<typeof c.view.value>);
+  const controller = { ...c, view: computed(() => snapshot.value) };
+  let finish!: (value: BackendTaskView) => void;
+  const read = vi.spyOn(controller, "executionDetails").mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const wrapper = mount(ExecutionActivity, {
+    props: {
+      controller,
+      operationId: "tool",
+      detailsOpen: false,
+      recorded: true,
+      visible: true,
+      now: 1000,
+    },
+  });
+  try {
+    for (let token = 0; token < 20; token++) {
+      snapshot.value = { ...snapshot.value };
+      await flushPromises();
+    }
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(read.mock.calls[0][1].aborted).toBe(false);
+    finish({ kind: "execution", value: task("running") });
+    await flushPromises();
+    expect(wrapper.find(".execution-activity").exists()).toBe(true);
   } finally {
     wrapper.unmount();
     c.dispose();
