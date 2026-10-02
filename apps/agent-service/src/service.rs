@@ -1008,8 +1008,8 @@ async fn network<T>(
     commands: &mut tokio::sync::mpsc::Receiver<Command>,
 ) -> Result<T, Error> {
     tokio::pin!(future);
-    let mut progress = tokio::time::interval(std::time::Duration::from_millis(50));
-    progress.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    // Native supervisors enforce process budgets independently. Reconcile between bounded
+    // network operations, so synchronous OS fact checks cannot starve an artifact stream.
     loop {
         tokio::select! {
             biased;
@@ -1018,7 +1018,6 @@ async fn network<T>(
                 if let Some(command)=command {core.handle(command);} else {core.stopping=true;}
                 if core.stopping{return Err(Error::Unavailable);}
             },
-            _=progress.tick()=>core.reconcile()?,
         }
     }
 }
