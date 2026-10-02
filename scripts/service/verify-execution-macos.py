@@ -359,6 +359,7 @@ def main():
     installer_source = Path(__file__).with_name('execution-macos.py').read_text()
     installer.write_text(installer_source)
     installer.chmod(0o600)
+    system_installer_source = installer_source.replace("'ProcessType': 'Background'", "'ProcessType': 'Background', 'StandardErrorPath': " + repr(str(protected/'service-stderr.log')))
     shutil.copyfile(lab / 'tls.pem', inputs / 'tls.pem')
     deployment = dict(version=2, ipc_version=6, origin=f'https://localhost:{proxy.server_port}/', tenant=info['tenant'],
                       signing_keys={'test': info['key']}, ca_file=str(protected / 'ca.pem'),
@@ -373,6 +374,7 @@ from pathlib import Path
 root=Path(%r)
 root.parent.mkdir(mode=0o755,parents=True,exist_ok=True)
 root.mkdir(mode=0o755)
+(root/'service-stderr.log').touch(mode=0o600,exist_ok=False)
 binary=root/'rss-execution-service'
 copy_candidate(%r,binary,%r)
 subprocess.run(['/usr/bin/codesign','--force','--sign','-','--options','runtime',str(binary)],check=True)
@@ -388,7 +390,7 @@ config['execution']['managers']=[dict(executor='package_installer',image=artifac
 path=root/'execution.json';path.write_text(json.dumps(config));os.chmod(path,0o644)
 subprocess.run([str(binary),'--config',str(path),'--initialize'],input='AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',text=True,check=True)
 subprocess.run(%r,check=True)
-''' % (str(protected), str(args.binary.resolve()), hashlib.sha256(args.binary.read_bytes()).hexdigest(), deployment, str(os.geteuid()), (lab / 'tls.pem').read_bytes(), frozen_installer(installer_source, ['install','--scope','system','--binary',str(binary),'--config',str(config)])))
+''' % (str(protected), str(args.binary.resolve()), hashlib.sha256(args.binary.read_bytes()).hexdigest(), deployment, str(os.geteuid()), (lab / 'tls.pem').read_bytes(), frozen_installer(system_installer_source, ['install','--scope','system','--binary',str(binary),'--config',str(config)])))
     if args.desktop:
         # Extend this same installation owner, retaining its protected binary/config checks.
         contents = setup.read_text()
@@ -413,7 +415,11 @@ expected=%r
 plist=Path('/Library/LaunchDaemons/com.rss-mdm.agent.execution.plist')
 if plist.exists(): subprocess.run(expected,check=True)
 journal=Path(%r)
-if journal.exists(): print(json.dumps(journal_proof(journal)))
+if journal.exists():
+    proof=journal_proof(journal)
+    diagnostic=journal.parent.parent/'service-stderr.log'
+    if diagnostic.exists(): proof['driverDiagnostics']=diagnostic.read_text()[-32768:]
+    print(json.dumps(proof))
 """ % (frozen_installer(installer_source, ['remove', '--scope', 'system', '--binary', str(binary), '--config', str(config)]), str(protected / 'state/execution.sqlite')))
     if args.desktop:
         cleanup.write_text(cleanup.read_text() + """default=Path(%r)
