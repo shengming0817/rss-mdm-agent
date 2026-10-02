@@ -68,6 +68,28 @@ async fn main() {
                         payload.definition_digest = Sha256::digest(serde_json::to_vec(&payload.steps).unwrap()).into();
                         data.offer = Some(data.signed(wire::TaskPayload::Software(payload)));
                     }
+                    "bundle" => {
+                        data.task = uuid::Uuid::new_v4(); data.attempt = uuid::Uuid::new_v4();
+                        data.bytes = std::fs::read(command["path"].as_str().unwrap()).unwrap();
+                        data.software(1, true);
+                        let wire::TaskPayload::Software(mut payload) = data.offer.as_ref().unwrap().payload.clone() else { unreachable!() };
+                        payload.expires_at += 3600;
+                        let wire::SoftwareTaskBehavior::Pkg(native) = &payload.steps[0].action.behavior else { unreachable!() };
+                        let invocation = native.install.clone();
+                        let script = |entry: &str| wire::SoftwareTaskScript {
+                            interpreter: wire::SoftwareTaskInterpreter::PosixSh,
+                            entry: entry.into(), invocation: invocation.clone(),
+                        };
+                        payload.steps[0].action.package = "native-security-replay".into();
+                        payload.steps[0].action.behavior = wire::SoftwareTaskBehavior::Bundle(wire::SoftwareTaskBundleBehavior {
+                            archive: "package".into(), manifest: serde_json::from_value(command["manifest"].clone()).unwrap(),
+                            install: script("install.sh"), uninstall: None,
+                            detect: wire::SoftwareTaskDetection::Script { command: script("detect.sh") },
+                        });
+                        use sha2::{Digest, Sha256};
+                        payload.definition_digest = Sha256::digest(serde_json::to_vec(&payload.steps).unwrap()).into();
+                        data.offer = Some(data.signed(wire::TaskPayload::Software(payload)));
+                    }
                     "dmg" => {
                         data.task = uuid::Uuid::new_v4(); data.attempt = uuid::Uuid::new_v4();
                         data.bytes = std::fs::read(command["path"].as_str().unwrap()).unwrap();

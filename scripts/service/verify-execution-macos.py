@@ -247,7 +247,7 @@ def await_offer(query, task):
         time.sleep(.05)
 
 
-def native_offer_security(probe, matrix, query, command, package, receipt, completed, effect):
+def native_offer_security(probe, matrix, query, command, package, receipt, completed, effect, protected):
     prior = query()['available']
     if prior:
         command('cancel')
@@ -255,7 +255,21 @@ def native_offer_security(probe, matrix, query, command, package, receipt, compl
         while query()['available']:
             assert time.monotonic()<deadline, 'previous unselected catalog offer did not withdraw'
             time.sleep(.1)
-    task = command('package', path=str(package), receipt=receipt, user=True)
+    import zipfile
+    counter=protected/'security-replay-count'
+    assert not counter.exists(), 'replay effect must begin absent'
+    entries={
+        'install.sh': ('#!/bin/sh\nset -eu\numask 022\nprintf x >> '+shlex.quote(str(counter))+"\nprintf '{\"fixture\":\"replay\"}\\n'\n").encode(),
+        'detect.sh': ('#!/bin/sh\nif [ -e '+shlex.quote(str(counter))+" ]; then printf '{\"kind\":\"present\",\"version\":\"1.0\"}\\n'; else printf '{\"kind\":\"absent\"}\\n'; fi\n").encode(),
+    }
+    archive=Path(package).parent/'security-replay.zip'
+    with zipfile.ZipFile(archive,'w',compression=zipfile.ZIP_STORED) as bundle:
+        for name,body in entries.items():
+            info=zipfile.ZipInfo(name);info.external_attr=(stat.S_IFREG|0o600)<<16
+            bundle.writestr(info,body)
+    manifest=dict(schema=1,platform='macos',architecture='aarch64',entries={name:
+        dict(length=len(body),sha256=list(hashlib.sha256(body).digest())) for name,body in entries.items()})
+    task = command('bundle', path=str(archive), manifest=manifest)
     offer = await_offer(query, task['task'])
     request = offer_request(offer)
     baseline = command('status')['startRequests']
@@ -275,8 +289,8 @@ def native_offer_security(probe, matrix, query, command, package, receipt, compl
     matching = [r for r in query()['value']['items'] if r['action']['initiator'].get('attempt') == task['attempt']]
     assert len(matching) == 1 and matching[0]['status']['attempts'] == 1
     assert remote['startRequests'] == baseline+1
-    outcome = effect()
-    assert outcome['receiptPresent'] and outcome['payloadMatches']
+    outcome=dict(counter=counter.read_text(),exactlyOnce=counter.read_text()=='x')
+    assert outcome['exactlyOnce']
     security_result(matrix, 'offer_replay', dict(first=first, second=second, record=matching[0],
         backend=remote, effect=outcome))
     expiring = command('package', path=str(package), receipt=receipt, user=True, validitySeconds=6)
@@ -302,7 +316,21 @@ def native_revocation_security(probe, matrix, query, command, package, receipt, 
     while not marker.exists():
         assert time.monotonic()<deadline, 'revocation process did not start'
         time.sleep(.05)
-    task = command('package', path=str(package), receipt=receipt, user=True)
+    import zipfile
+    counter=protected/'security-replay-count'
+    assert not counter.exists(), 'replay effect must begin absent'
+    entries={
+        'install.sh': ('#!/bin/sh\nset -eu\numask 022\nprintf x >> '+shlex.quote(str(counter))+"\nprintf '{\"fixture\":\"replay\"}\\n'\n").encode(),
+        'detect.sh': ('#!/bin/sh\nif [ -e '+shlex.quote(str(counter))+" ]; then printf '{\"kind\":\"present\",\"version\":\"1.0\"}\\n'; else printf '{\"kind\":\"absent\"}\\n'; fi\n").encode(),
+    }
+    archive=Path(package).parent/'security-replay.zip'
+    with zipfile.ZipFile(archive,'w',compression=zipfile.ZIP_STORED) as bundle:
+        for name,body in entries.items():
+            info=zipfile.ZipInfo(name);info.external_attr=(stat.S_IFREG|0o600)<<16
+            bundle.writestr(info,body)
+    manifest=dict(schema=1,platform='macos',architecture='aarch64',entries={name:
+        dict(length=len(body),sha256=list(hashlib.sha256(body).digest())) for name,body in entries.items()})
+    task = command('bundle', path=str(archive), manifest=manifest)
     offer = await_offer(query, task['task']); request = offer_request(offer)
     starts = command('status')['startRequests']
     connection = probe.open(establish=True)
@@ -454,7 +482,7 @@ def complete_native_security(probe, matrix, query, command, package, package_rec
     security_result(matrix,'refresh_after_stop',results['afterStop'])
     run('/usr/bin/python3',str(installer),'install','--scope','user','--binary',str(binary),'--config',str(config))
     query()
-    native_offer_security(probe,matrix,query,command,package,package_receipt,completed,effect)
+    native_offer_security(probe,matrix,query,command,package,package_receipt,completed,effect,protected)
     native_revocation_security(probe,matrix,query,command,package,package_receipt,protected)
 
 
