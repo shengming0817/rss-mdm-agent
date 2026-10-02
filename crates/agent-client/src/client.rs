@@ -94,7 +94,7 @@ pub struct ResumedStart {
     pub materials: Materials,
 }
 /// Explicitly driven V5 client; SQLite transactions never cross HTTP awaits.
-/// A private-root lease permits one driving owner, with no hidden workers.
+/// A private-root lease permits one driving owner, with one driving owner; bounded HTTP tasks never access its state.
 pub struct Client<S, C> {
     pub(crate) store: Store,
     pub(crate) http: reqwest::Client,
@@ -218,8 +218,12 @@ impl<S: SecretProvider, C: Clock> Client<S, C> {
             .map_err(|_| Error::Configuration)
     }
     pub(crate) async fn checked_response(&self, response: Response) -> Result<Response, Error> {
-        match response.status() {
-            s if s.is_success() => Ok(response),
+        self.check_status(response.status())?;
+        Ok(response)
+    }
+    fn check_status(&self, status: StatusCode) -> Result<(), Error> {
+        match status {
+            s if s.is_success() => Ok(()),
             StatusCode::UNAUTHORIZED => {
                 self.store.put("blocked", &true)?;
                 Err(Error::Identity)
@@ -252,32 +256,9 @@ impl<S: SecretProvider, C: Clock> Client<S, C> {
                 .header("content-type", "application/json")
                 .body(body.to_owned());
         }
-        let mut response = self
-            .checked_response(request.send().await.map_err(|_| Error::Unavailable)?)
-            .await?;
-        if !response
-            .headers()
-            .get("content-type")
-            .and_then(|v| v.to_str().ok())
-            .is_some_and(|v| {
-                v.split(';')
-                    .next()
-                    .is_some_and(|v| v.trim() == "application/json")
-            })
-        {
-            return Err(Error::Protocol);
-        }
         let max = self.store.cfg.limits.response_bytes;
-        if response.content_length().is_some_and(|n| n > max as u64) {
-            return Err(Error::Capacity);
-        }
-        let mut bytes = Vec::new();
-        while let Some(chunk) = response.chunk().await.map_err(|_| Error::Unavailable)? {
-            if bytes.len().checked_add(chunk.len()).is_none_or(|n| n > max) {
-                return Err(Error::Capacity);
-            }
-            bytes.extend_from_slice(&chunk);
-        }
+        let (status, bytes) = json_transport(request, max).await?;
+        self.check_status(status)?;
         decode(&bytes)
     }
     /// Registration replay preserves the operation and protected secret references.
@@ -865,5 +846,126 @@ pub(crate) fn same_input(a: &wire::TaskPayload, b: &wire::TaskPayload) -> bool {
             &b == a
         }
         _ => false,
+    }
+}
+
+// Pure bounded transport; the caller owns all identity, decoding and storage decisions.
+async fn json_transport(
+    request: reqwest::RequestBuilder,
+    max: usize,
+) -> Result<(StatusCode, Vec<u8>), Error> {
+    let task = tokio::spawn(async move {
+        let mut response = request.send().await.map_err(|_| Error::Unavailable)?;
+        let status = response.status();
+        if !status.is_success() {
+            return Ok((status, Vec::new()));
+        }
+        if !response
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|v| {
+                v.split(';')
+                    .next()
+                    .is_some_and(|v| v.trim() == "application/json")
+            })
+        {
+            return Err(Error::Protocol);
+        }
+        if response.content_length().is_some_and(|n| n > max as u64) {
+            return Err(Error::Capacity);
+        }
+        let mut bytes = Vec::new();
+        while let Some(chunk) = response.chunk().await.map_err(|_| Error::Unavailable)? {
+            if bytes.len().checked_add(chunk.len()).is_none_or(|n| n > max) {
+                return Err(Error::Capacity);
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        Ok((status, bytes))
+    });
+    // Dropping an owner operation cancels its transport instead of detaching it.
+    let _cancel = CancelTransport(task.abort_handle());
+    task.await.map_err(|_| Error::Unavailable)?
+}
+struct CancelTransport(tokio::task::AbortHandle);
+impl Drop for CancelTransport {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+#[cfg(test)]
+mod transport_tests {
+    use super::*;
+    #[test]
+    fn bounded_http_body_finishes_while_owner_checks_os_facts() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let (received, ready) = std::sync::mpsc::channel();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0; 4096];
+            assert!(stream.read(&mut request).unwrap() > 0);
+            received.send(()).unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}").unwrap();
+        });
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let request = reqwest::Client::new()
+                .get(format!("http://{address}"))
+                .timeout(std::time::Duration::from_millis(150));
+            let future = json_transport(request, 2);
+            tokio::pin!(future);
+            tokio::select! {
+                result = &mut future => panic!("unexpected early response: {result:?}"),
+                _ = async {
+                    while ready.try_recv().is_err() {
+                        tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+                    }
+                } => ()
+            }
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            assert_eq!(future.await, Ok((StatusCode::OK, b"{}".to_vec())));
+        });
+        server.join().unwrap();
+    }
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn dropping_owner_operation_closes_pending_http() {
+        use std::io::Read;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let (received, ready) = std::sync::mpsc::channel();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+                .unwrap();
+            let mut request = [0; 4096];
+            assert!(stream.read(&mut request).unwrap() > 0);
+            received.send(()).unwrap();
+            assert_eq!(stream.read(&mut request).unwrap(), 0);
+        });
+        {
+            let future = json_transport(reqwest::Client::new().get(format!("http://{address}")), 2);
+            tokio::pin!(future);
+            tokio::select! {
+                result = &mut future => panic!("unexpected response: {result:?}"),
+                _ = async {
+                    while ready.try_recv().is_err() {
+                        tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+                    }
+                } => ()
+            }
+        }
+        tokio::task::spawn_blocking(move || server.join().unwrap())
+            .await
+            .unwrap();
     }
 }
