@@ -249,7 +249,9 @@ pub fn query_trusted(bytes: &[u8], system: bool, server: &PeerPolicy) -> Result<
     if bytes.len() > host::FRAME_LIMIT || server.subjects.len() != 1 {
         return Err(Error::InvalidInput);
     }
+    let started = std::time::Instant::now();
     let requirement = server.requirement()?;
+    let pins_ms = started.elapsed().as_millis();
     let uid = server.subjects[0]
         .parse()
         .map_err(|_| Error::InvalidInput)?;
@@ -266,6 +268,12 @@ pub fn query_trusted(bytes: &[u8], system: bool, server: &PeerPolicy) -> Result<
             uid,
         )
     };
+    if status != 0 || started.elapsed().as_millis() > 1500 {
+        eprintln!(
+            "RSS_IPC_TIMING pinsMs={pins_ms} totalMs={} transport={status}",
+            started.elapsed().as_millis()
+        );
+    }
     if status == -2 {
         return Err(Error::Denied);
     }
