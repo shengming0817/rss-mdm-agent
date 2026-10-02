@@ -131,9 +131,7 @@ impl Data {
     }
     pub fn script(&mut self) {
         self.attempt = Uuid::new_v4();
-        self.started = false;
-        self.received = false;
-        self.start_permit = None;
+        self.reset_current_task();
         let spec = TaskSpec {
             wire_version: 5,
             tenant_id: self.tenant,
@@ -163,6 +161,7 @@ impl Data {
         self.offer = Some(self.signed(TaskPayload::Script(spec)));
     }
     pub fn software(&mut self, steps: usize, user: bool) {
+        self.reset_current_task();
         let command = SoftwareTaskInvocation {
             run_as: ExecutionIdentity::System,
             arguments: vec![],
@@ -228,6 +227,12 @@ impl Data {
             },
         };
         self.offer = Some(self.signed(TaskPayload::Software(spec)));
+    }
+    fn reset_current_task(&mut self) {
+        self.started = false;
+        self.received = false;
+        self.start_permit = None;
+        self.chunks.clear();
     }
 }
 pub struct Server {

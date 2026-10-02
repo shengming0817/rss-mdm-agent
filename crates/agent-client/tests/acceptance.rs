@@ -1478,6 +1478,30 @@ async fn acknowledged_v5_result_is_not_replaced_by_later_local_facts() {
 }
 
 #[tokio::test]
+async fn controlled_factory_software_start_never_reuses_a_prior_script_permit() {
+    let server = Server::new().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    let first = client.claim().await.unwrap().offer.unwrap();
+    client.received(&first).await.unwrap();
+    let materials = client.prepare(&first).await.unwrap();
+    client.request_start(&first, &materials).await.unwrap();
+    {
+        let mut data = server.data.lock().unwrap();
+        data.task = uuid::Uuid::new_v4();
+        data.attempt = uuid::Uuid::new_v4();
+        data.software(1, false);
+    }
+    let second = client.claim().await.unwrap().offer.unwrap();
+    client.received(&second).await.unwrap();
+    let materials = client.prepare(&second).await.unwrap();
+    let started = client.request_start(&second, &materials).await.unwrap();
+    assert!(matches!(started.payload(), TaskPayload::Software(_)));
+    assert_eq!(started.payload().attempt_id(), second.attempt_id());
+}
+
+#[tokio::test]
 async fn durable_claim_does_not_wait_for_an_unresolved_execution_to_release() {
     let server = Server::new().await;
     let root = Root::new();
