@@ -173,17 +173,21 @@ impl AppHost for EnterpriseHost {
         {
             return Err(execution_sqlite::Error::Trust);
         }
-        // Only this owner compiles verified backend plans or loads its protected journal;
-        // IPC never supplies a plan. Registration scope remains trustworthy for reconciliation
-        // after a different task starts or the process restarts. This snapshot grants no attempt:
-        // AuthorityVerifier still requires the exact, unexpired backend Start for new admission.
+        let permit = self
+            .permit(plan)
+            .map_err(|_| execution_sqlite::Error::Trust)?;
+        let fresh_until_unix_ms = u64::try_from(permit.start.payload().expires_at())
+            .ok()
+            .and_then(|seconds| seconds.checked_mul(1000))
+            .ok_or(execution_sqlite::Error::Clock)?
+            .min(input.validity.expires_at_unix_ms);
+        // Admission refresh uses the exact signed Start deadline, including the time spent
+        // rechecking retained materials. It grants no attempt and never renews that deadline.
+        // Reconciliation continues through the original journal without refreshing admission.
         Ok(TrustSnapshot {
             authorization_revision: input.policy.clone(),
             approval_revision: input.policy.clone(),
-            fresh_until_unix_ms: self
-                .reliable_now()?
-                .checked_add(1000)
-                .ok_or(execution_sqlite::Error::Clock)?,
+            fresh_until_unix_ms,
             approvals: vec![],
         })
     }
