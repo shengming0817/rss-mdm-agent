@@ -144,7 +144,7 @@ def assert_connection_closed(result):
         result.get('transport')=='timeout' and (result.get('invalidated') or result.get('interrupted'))), 'connection closure not proven: '+json.dumps(result)
 
 
-def native_transport_security(probe, matrix, query, command):
+def native_transport_security(probe, matrix, query, command, administrator):
     baseline = probe.request(dict(method='serviceStatus'))
     assert_native_reply(baseline, 'serviceStatus')
     security_result(matrix, 'authorized_channel', dict(identity=probe.identity, response=baseline))
@@ -182,15 +182,26 @@ def native_transport_security(probe, matrix, query, command):
         second = probe.send(connection, payload); assert_connection_closed(second)
         security_result(matrix, 'connection_repeat', dict(first=first, second=second))
     finally: probe.close_connection(connection)
+    log_before=administrator.command('diagnostics')['log']
     connection = probe.open(establish=True)
     try:
+        log_open=administrator.command('diagnostics')['log']
+        opened=[int(value) for value in re.findall(r'RSS_IPC_OPEN id=(\d+) clientPid='+str(probe.process.pid)+r'\b',log_open[len(log_before):])]
+        assert len(opened)==1, 'one actual server connection required'
+        serial=opened[0]
         time.sleep(5.3)
+        log_expired=administrator.command('diagnostics')['log']
+        assert 'RSS_IPC_EXPIRED id='+str(serial)+' clientPid='+str(probe.process.pid) in log_expired, 'server expiry not observed'
         response = probe.send(connection, payload)
         matrix['scenarios']['connection_expiry']=dict(status='failed',evidence=response,reason='native lifetime assertion pending')
-        if response.get('transport')=='reply' and response.get('bytes') and response.get('interrupted'):
+        if response.get('transport')=='reply' and response.get('bytes'):
             assert_native_reply(response,'serviceStatus')
+            log_after=administrator.command('diagnostics')['log']
+            executed=[int(value) for value in re.findall(r'RSS_IPC_EXECUTE id=(\d+) clientPid='+str(probe.process.pid)+r'\b',log_after[len(log_expired):])]
+            assert executed and executed[-1]!=serial, 'expired server connection executed again'
             response['boundary']='old transport interrupted; NSXPC reauthenticated a replacement transport under the unchanged pins'
         else: assert_connection_closed(response)
+        response['serverExpiredConnection']=serial
         assert response['ageMs'] >= 5000
         security_result(matrix, 'connection_expiry', response)
     finally: probe.close_connection(connection)
@@ -785,7 +796,7 @@ def authorized_steps(programs, endpoint, expected_pid, expected_uid, deadline):
 
 
 class AdministratorSession:
-    def __init__(self, setup, initialize, restart, cleanup, lab, password_file=None, security=None, refresh=None):
+    def __init__(self, setup, initialize, restart, cleanup, lab, password_file=None, security=None, refresh=None, diagnostics=None):
         password = read_authorization_password(password_file) if password_file else None
         self.directory = Path(tempfile.mkdtemp(prefix='rss-admin-', dir='/private/tmp'))
         self.endpoint = self.directory/'control'
@@ -799,6 +810,7 @@ class AdministratorSession:
         programs = {'setup':setup.read_text(),'initialize':initialize.read_text(),'restart':restart.read_text(),'cleanup':cleanup.read_text()}
         if security: programs['security'] = security.read_text()
         if refresh: programs['refresh'] = refresh.read_text()
+        if diagnostics: programs['diagnostics'] = diagnostics.read_text()
         source = 'import socket,ctypes,struct,io,contextlib,json,time\n' + inspect.getsource(peer_identity) + inspect.getsource(authorized_steps)
         source += 'authorized_steps('+repr(programs)+','+repr(str(self.endpoint))+','+str(os.getpid())+','+str(os.geteuid())+','+repr(self.deadline)+')\n'
         command = 'cd /private/tmp && /usr/bin/python3 -I -c ' + shlex.quote(source)
@@ -1113,7 +1125,7 @@ with os.fdopen(fd,'w') as stream: json.dump(config,stream); stream.flush(); os.f
             initializer = "subprocess.run([str(binary),'--config',str(path),'--initialize'],input='AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',text=True,check=True)\n"
             contents = contents.replace(initializer, '')
             setup.write_text(contents)
-        security = refresh = None
+        security = refresh = diagnostics = None
         if args.security:
             probe_source = Path(frozen['binaries']['securityProbe']['path'])
             staged_probe=inputs/'security-probe'
@@ -1161,6 +1173,8 @@ print(json.dumps(dict(label=label,plist=str(plist),helperGuard=result.stderr)))
             refresh=lab/'refresh-security.py'
             refresh.write_text("import json,sqlite3\n"+inspect.getsource(journal_proof)+inspect.getsource(root_refresh_security)+"\nprint(json.dumps(root_refresh_security(%r,%r,%r,%r)))\n" %
                 (str(protected),str(binary),str(config),installer_source))
+            diagnostics=lab/'diagnostics.py'
+            diagnostics.write_text("import json\nfrom pathlib import Path\nprint(json.dumps({'log':Path(%r).read_text()[-65536:]}))\n" % str(protected/'service-stderr.log'))
         cleanup = lab / 'remove.py'
         cleanup.write_text(inspect.getsource(journal_proof) + """import json,sqlite3,subprocess
 from pathlib import Path
@@ -1231,7 +1245,7 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
         first = None if args.desktop else command('script', body='printf \'{"fixture":"system"}\\n\'\n')
         if not args.desktop: command('result_failure')
         administrator_session = AdministratorSession(setup,initialize,restart,cleanup,lab,args.authorization_password_file,
-            **(dict(security=security, refresh=refresh) if args.security else {}))
+            **(dict(security=security, refresh=refresh, diagnostics=diagnostics) if args.security else {}))
         administrator_session.start()
         installed = True
         if args.desktop and select.select([sys.stdin], [], [], 0)[0]:
@@ -1313,7 +1327,7 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
                     value = rejected_image_probe(args.binary,binary,config)
                     receipt['scenarios']['wrong_image_same_uid'] = value
                     security_result(receipt['security'], 'wrong_image_same_uid', value)
-                    if native_probe: native_transport_security(native_probe, receipt['security'], query, command)
+                    if native_probe: native_transport_security(native_probe, receipt['security'], query, command, administrator_session)
                 elif method == 'status': value = command('status')
                 elif method == 'processSecurity':
                     proof=request['proof']
@@ -1365,7 +1379,7 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
         security_result(receipt['security'], 'wrong_image_same_uid', receipt['scenarios']['wrong_image_same_uid'])
         system = completed(first['attempt'])
         validate_script(acknowledged_result(system, first['attempt']), 'system')
-        if native_probe: native_transport_security(native_probe, receipt['security'], query, command)
+        if native_probe: native_transport_security(native_probe, receipt['security'], query, command, administrator_session)
         assert system['resultCalls'] >= 2, 'the injected 503 must be followed by an acknowledged retry'
         receipt['scenarios']['system_script'] = system
         second = command('script', user=True, body='printf \'{"fixture":"user"}\\n\'\n')
