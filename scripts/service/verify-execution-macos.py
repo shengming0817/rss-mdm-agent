@@ -259,11 +259,13 @@ def native_offer_security(probe, matrix, query, command, package, receipt, compl
     offer = await_offer(query, task['task'])
     request = offer_request(offer)
     baseline = command('status')['startRequests']
+    tampered=[]
     for field, replacement in [('request', 'foreign-request'), ('attempt', str(uuid.uuid4())), ('revision', 'a'*64)]:
         changed = dict(request, **{field: replacement})
         response = probe.request(changed); assert_native_reply(response, 'rejected')
+        tampered.append(dict(field=field,response=response))
     assert command('status')['startRequests'] == baseline
-    security_result(matrix, 'offer_tamper', dict(offer=offer, startRequests=baseline))
+    security_result(matrix, 'offer_tamper', dict(offer=offer, startRequests=baseline,rejections=tampered))
     # Exact replay before dispatch is consumed is admitted idempotently; observe both native replies.
     first = probe.request(request); assert_native_reply(first, 'queued')
     second = probe.request(request)
@@ -441,6 +443,7 @@ def complete_native_security(probe, matrix, query, command, package, package_rec
     preflight=administrator.command('refresh_preflight')
     healthy=probe.request(dict(method='serviceStatus'));assert_native_reply(healthy,'serviceStatus')
     assert healthy['envelope']['reply']['value']['readiness']['phase']=='ready', 'preflight changed service readiness'
+    assert healthy['peerPid']==preflight['preflight']['originalPid'], 'preflight replaced the original process'
     query()
     pending=matrix.pop('staleHelperPending')
     diagnostics=preflight['driverDiagnostics'].encode()[offset:].decode(errors='replace')
@@ -476,7 +479,11 @@ def root_refresh_security(root, binary, config, installer_source, phase):
     original_attempts={row['request']:(row['snapshot']['attempts'],(row['snapshot'].get('attempt') or {}).get('id'))
         for row in journal_before['records']}
     endpoint='system/com.rss-mdm.agent.execution'
-    pid=namespace['verify_registered'](endpoint,args)
+    try: pid=namespace['verify_registered'](endpoint,args)
+    except RuntimeError:
+        lookup=subprocess.run(['/bin/launchctl','print',endpoint],capture_output=True,text=True)
+        print(json.dumps(dict(phase=phase,registration=lookup.stdout,stderr=lookup.stderr)))
+        raise
     next_config=root/'refresh-candidate.json'
     rows=[]
     cases=['mode','symlink','acl','hash','cdhash','version','ipc_version','tenant','origin','state_root','registration','marker','journal','communication','secret']
