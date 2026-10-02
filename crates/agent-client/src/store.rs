@@ -189,7 +189,7 @@ fn sidecars(path: &Path) -> Result<(), Error> {
         let sidecar = Path::new(&name);
         match std::fs::symlink_metadata(sidecar) {
             Ok(_) => {
-                drop(platform_private_storage::open_existing(sidecar)?);
+                platform_private_storage::validate_sqlite_file(sidecar)?;
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(e) => return Err(e.into()),
