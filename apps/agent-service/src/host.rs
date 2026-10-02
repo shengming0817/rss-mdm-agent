@@ -163,15 +163,25 @@ impl AppHost for EnterpriseHost {
         &self,
         plan: &FrozenExecution,
     ) -> Result<TrustSnapshot, execution_sqlite::Error> {
-        let grant = self
-            .permit(plan)
+        self.service_binding()
             .map_err(|_| execution_sqlite::Error::Trust)?;
+        let input = plan.spec();
+        if input.request.authority != self.binding.authority
+            || input.request.actor != self.actor
+            || input.request.target.device != self.binding.device
+        {
+            return Err(execution_sqlite::Error::Trust);
+        }
+        // Only this owner compiles verified backend plans or loads its protected journal;
+        // IPC never supplies a plan. Registration scope remains trustworthy for reconciliation
+        // after a different task starts or the process restarts. This snapshot grants no attempt:
+        // AuthorityVerifier still requires the exact, unexpired backend Start for new admission.
         Ok(TrustSnapshot {
-            authorization_revision: grant.plan.spec().policy.clone(),
-            approval_revision: grant.plan.spec().policy.clone(),
-            fresh_until_unix_ms: u64::try_from(grant.start.payload().expires_at())
-                .map_err(|_| execution_sqlite::Error::Clock)?
-                .checked_mul(1000)
+            authorization_revision: input.policy.clone(),
+            approval_revision: input.policy.clone(),
+            fresh_until_unix_ms: self
+                .reliable_now()?
+                .checked_add(1000)
                 .ok_or(execution_sqlite::Error::Clock)?,
             approvals: vec![],
         })

@@ -72,6 +72,18 @@ async fn signed_start_compiles_exactly_and_never_creates_a_local_enterprise_appr
     assert!(execution_app::AppHost::approval_bindings(&host, &frozen)
         .unwrap()
         .is_empty());
+    // Journal reconciliation survives a later dispatch or process restart without granting
+    // a new attempt. The short-lived backend Start remains mandatory for admission.
+    let original_grant = host.current.lock().unwrap().take().unwrap();
+    let snapshot = execution_app::AppHost::trusted_snapshot(&host, &frozen).unwrap();
+    assert!(snapshot.fresh_until_unix_ms > host.clock.millis().unwrap());
+    assert!(snapshot.approvals.is_empty());
+    assert!(host.verify(&frozen, &attempt).is_err());
+    let mut foreign = frozen.spec().clone();
+    foreign.request.actor = ActorId::new("foreign-registration").unwrap();
+    let foreign = FrozenExecution::freeze(foreign, &plan::storage_limits().input).unwrap();
+    assert!(execution_app::AppHost::trusted_snapshot(&host, &foreign).is_err());
+    *host.current.lock().unwrap() = Some(original_grant);
     for change in 0..7 {
         let mut changed = payload.clone();
         match change {
