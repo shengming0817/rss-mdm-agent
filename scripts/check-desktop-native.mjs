@@ -75,7 +75,11 @@ function serviceCall(method, input = {}) {
         servicePending.delete(id);
         reject(new Error(`service ${method} deadline exceeded`));
       },
-      method === "completion" ? 90000 : 15000,
+      method === "finish"
+        ? 180000
+        : ["completion", "security"].includes(method)
+          ? 90000
+          : 15000,
     );
     servicePending.set(id, {
       resolve(value) {
@@ -135,6 +139,68 @@ let directory,
   stage = "preflight",
   spawnError,
   keychainState;
+let scopeRuntime;
+const ownedWorkerScopes = new Map();
+const processIdentity = (pid, field) => {
+  try {
+    return execFileSync("/bin/ps", ["-p", String(pid), "-o", field + "="], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    return undefined;
+  }
+};
+const rememberScopes = (rows, host) => {
+  for (const row of rows) {
+    if (row.phase !== "registered" || row.scope?.kind !== "processGroup")
+      continue;
+    const scope = row.scope;
+    if (ownedWorkerScopes.has(scope.root)) continue;
+    let anchor;
+    if (
+      scopeRuntime &&
+      processIdentity(scope.root, "comm") === scopeRuntime.launcher &&
+      Number(processIdentity(scope.root, "ppid")) === host
+    ) {
+      try {
+        const children = execFileSync(
+          "/usr/bin/pgrep",
+          ["-P", String(scope.root)],
+          { encoding: "utf8" },
+        )
+          .trim()
+          .split(/\s+/)
+          .map(Number);
+        const pid = children.find(
+          (child) => processIdentity(child, "comm") === scopeRuntime.node,
+        );
+        if (pid && Number(processIdentity(pid, "pgid")) === scope.root)
+          anchor = { pid, start: processIdentity(pid, "lstart") };
+      } catch {}
+    }
+    ownedWorkerScopes.set(scope.root, {
+      scope,
+      anchor,
+      launchId: row.launchId,
+    });
+  }
+};
+const terminateObservedScope = (entry) => {
+  if (
+    !entry.anchor ||
+    processIdentity(entry.anchor.pid, "lstart") !== entry.anchor.start ||
+    Number(processIdentity(entry.anchor.pid, "pgid")) !== entry.scope.root
+  )
+    return false;
+  try {
+    process.kill(-entry.scope.root, "SIGKILL");
+    return true;
+  } catch (error) {
+    if (error.code === "ESRCH") return true;
+    throw error;
+  }
+};
 const systemKeychains = () =>
   ["default-keychain", "list-keychains"].map((command) =>
     execFileSync("/usr/bin/security", [command, "-d", "user"], {
@@ -678,6 +744,14 @@ try {
     result.runtimeManifestSha256 = sha256(
       readFileSync(join(artifact, "manifest.json")),
     );
+    scopeRuntime = {
+      launcher: join(artifact, "bin/rss-ai-worker-launcher"),
+      node: join(artifact, "bin/node"),
+      manifestDigest: sha256(
+        readFileSync(join(artifact, "worker-manifest.json")),
+      ),
+      runtimeTreeSha256: manifest.runtimeTreeSha256,
+    };
   }
   const processField = (pid, field) =>
     execFileSync("/bin/ps", ["-p", String(pid), "-o", field + "="], {
@@ -1807,6 +1881,15 @@ try {
     await navigate("AI 助手");
     await text("GOLDEN_INSTALL 安装办公套件");
     mark("restart Host through settings");
+    rememberScopes(
+      dbRead("ai.sqlite", (db) =>
+        db
+          .prepare("SELECT json FROM worker_launches")
+          .all()
+          .map((row) => JSON.parse(row.json)),
+      ),
+      hostPid(),
+    );
     await navigate("设置");
     await click("重启 AI Host");
     await click("确认重启");
@@ -1861,6 +1944,7 @@ try {
       };
       const restart = async () => {
         const previous = hostPid();
+        rememberScopes(fences(), previous);
         await navigate("设置");
         await click("重启 AI Host");
         await click("确认重启");
@@ -1888,6 +1972,11 @@ try {
         assert.equal(rows.length, 1, "one actual live Codex worker scope");
         assert.equal(rows[0].scope.kind, "processGroup");
         assert.equal(await absent(rows[0].scope), false);
+        rememberScopes(rows, hostPid());
+        assert.ok(
+          ownedWorkerScopes.get(rows[0].scope.root)?.anchor,
+          "live native worker ownership required before fault injection",
+        );
         return rows[0];
       };
       const record = (name, evidence) => {
@@ -1939,7 +2028,11 @@ try {
       record("retained_descendant", retained);
       record("unknown_scope", retained);
       // The experiment still owns the observed live group; clear it explicitly only after proving retention.
-      process.kill(-launch.scope.root, "SIGKILL");
+      assert.equal(
+        terminateObservedScope(ownedWorkerScopes.get(launch.scope.root)),
+        true,
+        "retained own scope identity changed",
+      );
       await wait(() => absent(launch.scope));
       await restart();
 
@@ -2168,6 +2261,22 @@ try {
   }
   process.exitCode = 1;
 } finally {
+  let scopeObservationFailed = false;
+  if (scopeRuntime && directory && existsSync(join(directory, "ai.sqlite"))) {
+    try {
+      rememberScopes(
+        dbRead("ai.sqlite", (db) =>
+          db
+            .prepare("SELECT json FROM worker_launches")
+            .all()
+            .map((row) => JSON.parse(row.json)),
+        ),
+        result.owner?.restartedHostPid ?? result.owner?.hostPid,
+      );
+    } catch {
+      scopeObservationFailed = true;
+    }
+  }
   awake?.kill("SIGTERM");
   if (browser && !cancelled)
     await Promise.race([browser.deleteSession().catch(() => {}), delay(5000)]);
@@ -2208,7 +2317,39 @@ try {
   const cleanupDeadline = Date.now() + 7000;
   while ((alive().length || rootAlive()) && Date.now() < cleanupDeadline)
     await delay(100);
-  const cleanupComplete = alive().length === 0 && !rootAlive();
+  const scopeCleanup = [];
+  for (const entry of ownedWorkerScopes.values()) {
+    const absent = () =>
+      scopeAbsentWithin(scopeRuntime, entry.scope, {
+        timeoutMs: 1000,
+        signal: new AbortController().signal,
+      });
+    let confirmed = await absent();
+    if (!confirmed && terminateObservedScope(entry)) {
+      const deadline = Date.now() + 7000;
+      do {
+        confirmed = await absent();
+        if (confirmed) break;
+        await delay(100);
+      } while (Date.now() < deadline);
+    }
+    scopeCleanup.push({
+      scope: entry.scope,
+      launchId: entry.launchId,
+      confirmed,
+      ownershipObserved: !!entry.anchor,
+    });
+  }
+  result.processScopeProof = {
+    runtimeTreeSha256: scopeRuntime?.runtimeTreeSha256,
+    observationComplete: !scopeObservationFailed,
+    scopes: scopeCleanup,
+  };
+  const cleanupComplete =
+    alive().length === 0 &&
+    !rootAlive() &&
+    !scopeObservationFailed &&
+    scopeCleanup.every((row) => row.confirmed);
   if (!cleanupComplete) {
     result.cleanup = "owned-processes-still-present";
     result.status = cancelled ? "cancelled" : "failed";
@@ -2246,6 +2387,7 @@ try {
           status: result.status,
           request: fixture?.facts.request,
           processScopeEmpty: cleanupComplete,
+          processScopeProof: result.processScopeProof,
         });
       } catch {
         result.status = "failed";

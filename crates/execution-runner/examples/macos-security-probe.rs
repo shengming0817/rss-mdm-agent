@@ -5,6 +5,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     use std::ffi::CString;
     extern "C" {
         fn rss_security_probe_main(requirement: *const std::ffi::c_char, fake: i32) -> i32;
+        fn rss_execution_gui_active() -> i32;
     }
     let args = std::env::args().skip(1).collect::<Vec<_>>();
     let fake = args == ["--fake-service"];
@@ -39,6 +40,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "ready": true, "uid": unsafe { libc::geteuid() },
             "pid": std::process::id(), "session": execution_runner::host::current_session()?,
             "binding": execution_runner::host::current_session_binding()?,
+            "guiActive": unsafe { rss_execution_gui_active() } == 1,
             "baseline": serde_json::from_slice::<serde_json::Value>(&baseline)?,
         })
     );

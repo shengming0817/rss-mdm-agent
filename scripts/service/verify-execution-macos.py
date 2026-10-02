@@ -69,6 +69,8 @@ def security_result(matrix, name, evidence):
 
 def summarize_security(matrix):
     statuses = [row['status'] for row in matrix['scenarios'].values()]
+    if set(statuses)-{'passed','failed','notApplicable','notExecuted'}:
+        raise RuntimeError('unknown security scenario status')
     if 'failed' in statuses or matrix.get('failure'): status = 'failed'
     elif 'notExecuted' in statuses: status = 'partial' if 'passed' in statuses else 'notExecuted'
     else: status = 'passed'
@@ -88,18 +90,23 @@ class NativeProbe:
             self.exchange.close()
             raise
         self.sequence = 0
+        self.open_evidence = {}
 
     def open(self, **values):
         self.sequence += 1
         connection = str(self.sequence)
         result = self.exchange.command('open', connection=connection, **values)
-        if result.get('opened') is not True: raise RuntimeError('native connection open failed')
+        if result.get('created') is not True: raise RuntimeError('native connection creation failed')
+        if values.get('establish') and (result.get('established') is not True or result.get('peerUid')!=0 or result.get('peerPid',0)<=1):
+            raise RuntimeError('native connection establishment not proven')
+        self.open_evidence[connection]=result
         return connection
 
     def send(self, connection, payload=b'', **values):
         reply = self.exchange.command('send', connection=connection,
             payload=base64.b64encode(payload).decode(), **values)
         if 'error' in reply: raise RuntimeError('native probe control failed')
+        reply['establishment']=self.open_evidence[connection]
         actual=payload
         if 'length' in values:
             length=values['length'];actual=payload[:length]+b'\0'*max(0,length-len(payload))
@@ -112,6 +119,7 @@ class NativeProbe:
 
     def close_connection(self, connection):
         self.exchange.command('close', connection=connection)
+        self.open_evidence.pop(connection,None)
 
     def request(self, request):
         # Typed baseline is emitted by the production wire owner. Mutations are explicit attacks.
@@ -163,13 +171,13 @@ def native_transport_security(probe, matrix, query, command):
             security_result(matrix, name, response)
         finally: probe.close_connection(connection)
     payload = json.dumps(probe.identity['baseline']).encode()
-    connection = probe.open()
+    connection = probe.open(establish=True)
     try:
         first = probe.send(connection, payload); assert_native_reply(first, 'serviceStatus')
         second = probe.send(connection, payload); assert_connection_closed(second)
         security_result(matrix, 'connection_repeat', dict(first=first, second=second))
     finally: probe.close_connection(connection)
-    connection = probe.open()
+    connection = probe.open(establish=True)
     try:
         time.sleep(5.3)
         response = probe.send(connection, payload); assert_connection_closed(response)
@@ -270,7 +278,7 @@ def native_revocation_security(probe, matrix, query, command, package, receipt, 
     task = command('package', path=str(package), receipt=receipt, user=True)
     offer = await_offer(query, task['task']); request = offer_request(offer)
     starts = command('status')['startRequests']
-    connection = probe.open()
+    connection = probe.open(establish=True)
     started = time.monotonic()
     command('revoke')
     while True:
@@ -502,6 +510,7 @@ def login_security(args, frozen):
         matrix=security_matrix()
         digest=hashlib.sha256(args.candidate.read_bytes()).hexdigest()
         try:
+            assert probe.identity.get('guiActive') is True, 'actual foreground GUI login required'
             if args.login_phase=='prepare':
                 healthy=probe.request(dict(method='tasks',after=None));assert_native_reply(healthy,'tasks')
                 offers=healthy['envelope']['reply']['available']
@@ -511,8 +520,9 @@ def login_security(args, frozen):
                     conversation='security-login',toolCall='security-login')
                 proposed=probe.request(request);assert_native_reply(proposed,'queued')
                 assert proposed['envelope']['reply']['confirmationRequired'] is True
+                after_proposal=probe.request(dict(method='tasks',after=None));assert_native_reply(after_proposal,'tasks')
                 state=dict(candidateSha256=digest,identity=probe.identity,offer=offers[0],request=request,
-                    baseline=healthy,proposed=proposed)
+                    baseline=healthy,proposed=proposed,afterProposal=after_proposal['envelope']['reply'])
                 fd=os.open(args.login_state,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)
                 with os.fdopen(fd,'w') as stream: json.dump(state,stream,indent=2)
                 matrix['checkpoint']=dict(phase='prepared',state=str(args.login_state),
@@ -522,16 +532,36 @@ def login_security(args, frozen):
                 assert state['candidateSha256']==digest, 'login candidate changed'
                 assert time.time()<state['offer']['expiresAt'], 'expired offer cannot prove a login boundary'
                 previous,current=state['identity'],probe.identity
+                def ready_and_original_offer():
+                    healthy=probe.request(dict(method='serviceStatus'));assert_native_reply(healthy,'serviceStatus')
+                    assert healthy['envelope']['reply']['value']['readiness']['phase']=='ready', 'unready service cannot prove a login rejection'
+                    snapshot=probe.request(dict(method='tasks',after=None));assert_native_reply(snapshot,'tasks')
+                    value=snapshot['envelope']['reply']
+                    assert state['offer'] in value['available'], 'original offer changed or disappeared'
+                    assert value['value']==state['afterProposal']['value'] and value['preparations']==state['afterProposal']['preparations'], 'login attack changed original journal facts'
+                    return dict(readiness=healthy,snapshot=snapshot)
                 if args.login_phase=='cross-user':
                     assert previous['uid']!=current['uid'] and current['session']!=0, 'second real login required'
-                    name='cross_user'
-                else:
+                    response=probe.request(state['request']);assert_native_reply(response,'rejected')
+                    matrix['loginAttack']=dict(candidateSha256=digest,phase='cross-user',identity=current,response=response,
+                        checkpointSha256=hashlib.sha256(args.login_state.read_bytes()).hexdigest())
+                    matrix['scenarios']['cross_user']['reason']='rejection recorded; original login must confirm readiness, original offer and unchanged journal'
+                elif args.login_phase=='resume':
                     assert previous['uid']==current['uid'] and previous['binding']!=current['binding'], 'real new login generation required'
-                    name='login_generation'
-                response=probe.request(state['request'])
-                assert_native_reply(response,'rejected')
-                security_result(matrix,name,dict(before=previous,after=current,original=state['proposed'],response=response))
-                # Record only this boundary. A rejection does not prove stale helper cleanup or other rows.
+                    before=ready_and_original_offer()
+                    response=probe.request(state['request']);assert_native_reply(response,'rejected')
+                    after=ready_and_original_offer()
+                    security_result(matrix,'login_generation',dict(before=previous,after=current,original=state['proposed'],
+                        readinessBefore=before,response=response,readinessAfter=after))
+                else:
+                    assert args.login_response and previous['uid']==current['uid'], 'cross-user confirmation requires the original OS user'
+                    attack=json.loads(args.login_response.read_text())['security']['loginAttack']
+                    assert attack['phase']=='cross-user' and attack['candidateSha256']==digest
+                    assert attack['checkpointSha256']==hashlib.sha256(args.login_state.read_bytes()).hexdigest()
+                    assert attack['identity']['uid']!=current['uid'] and attack['identity']['session']!=0
+                    assert_native_reply(attack['response'],'rejected')
+                    healthy=ready_and_original_offer()
+                    security_result(matrix,'cross_user',dict(original=state['proposed'],attack=attack,confirmation=healthy))
             summarize_security(matrix)
             (args.output/'receipt.json').write_text(json.dumps(dict(status=matrix['status'],security=matrix),indent=2))
         except BaseException as error:
@@ -897,8 +927,9 @@ def main():
     parser.add_argument('--desktop', type=Path)
     parser.add_argument('--candidate', type=Path, help='Frozen prebuilt inputs; no rebuilding or resigning')
     parser.add_argument('--security', action='store_true', help='Run native attacks on this isolated fixed candidate')
-    parser.add_argument('--login-phase', choices=['prepare','cross-user','resume'])
+    parser.add_argument('--login-phase', choices=['prepare','cross-user','resume','confirm'])
     parser.add_argument('--login-state', type=Path)
+    parser.add_argument('--login-response', type=Path)
     parser.add_argument('--deployment-config', type=Path)
     parser.add_argument('--dmg-upgrade-app', type=Path, help='Second approved notarized app version for the same exact target')
     parser.add_argument('--dmg-app', type=Path, help='Approved notarized .app to place in an exact local DMG; no signature bypass')
@@ -1261,7 +1292,7 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
                     value = completion
                 elif method == 'finish':
                     finish = request
-                    value = {}
+                    break
                 else: raise RuntimeError('unknown native harness control')
                 print(json.dumps({'id': request['id'], 'value': value}), flush=True)
                 if method == 'finish': break
@@ -1272,11 +1303,16 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
             security_result(receipt['security'],'desktop_service',completion)
             security_result(receipt['security'],'desktop_codex',dict(finish=finish,candidate=frozen))
             assert finish.get('processScopeEmpty') is True, 'native process cleanup not proven'
+            scope_proof=finish.get('processScopeProof')
+            assert scope_proof and scope_proof['observationComplete'] and scope_proof['scopes'], 'actual worker scope collection required'
+            assert all(row['confirmed'] for row in scope_proof['scopes']), 'actual worker scope remains unknown or present'
+            if frozen: assert scope_proof['runtimeTreeSha256']==frozen['runtime']['sha256'], 'scope proof candidate mismatch'
             security_result(receipt['security'],'process_scope_empty',dict(finish=finish))
             if native_probe:
                 complete_native_security(native_probe,receipt['security'],query,command,pkg,package_receipt,
                     completed,effect,protected,installer,binary,config,administrator_session)
             receipt['status'] = 'passed'
+            print(json.dumps(dict(id=finish['id'],value=dict(journeyStatus='passed'))),flush=True)
             return
         receipt['scenarios']['authenticated_ipc'] = query()
         receipt['scenarios']['wrong_image_same_uid'] = rejected_image_probe(args.binary, binary, config)
@@ -1420,11 +1456,16 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
         while not counter.exists():
             assert time.monotonic() < deadline, 'restart fixture did not start'
             time.sleep(.2)
-        old_connection = native_probe.open() if native_probe else None
+        old_connection = native_probe.open(establish=True) if native_probe else None
+        old_starts=command('status')['startRequests']
         administrator_session.command('restart')
         if native_probe:
             response = native_probe.send(old_connection, json.dumps(native_probe.identity['baseline']).encode())
-            assert_connection_closed(response)
+            if response.get('transport')=='reply' and response.get('bytes'):
+                assert_native_reply(response,'serviceStatus')
+                assert response['interrupted'] and response['peerPid']!=response['establishment']['peerPid'], 'old server incarnation did not end'
+            else: assert_connection_closed(response)
+            assert command('status')['startRequests']==old_starts
             security_result(receipt['security'], 'restart_old_connection', response)
             native_probe.close_connection(old_connection)
         time.sleep(3)

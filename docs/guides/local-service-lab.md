@@ -120,13 +120,18 @@ Host/launcher 故障、保留后代和未知 scope。模型端仍是确定性协
 `passed / failed / notApplicable / notExecuted`，完整矩阵由 `security.status` 汇总。
 旅程通过但矩阵未完成时顶层为 `partial`。旧 `unexecutedSecurity` 字段直接退出，不双读旧回执。
 五秒 challenge 不属于 IPC V7，记录为有依据的不适用；连接寿命和业务 offer 有效期分别实测。
+连接场景先用现有空 helper 注册的拒绝回包建立真实 NSXPC，且不消费业务调用额度。
+重启场景允许 NSXPC 按原 pins 重新认证新服务，要求旧实例终止、实际新 PID 及无新增执行证据。
 未安装、未就绪、超时及未连接到攻击端点不能作为身份攻击被拒绝的证据。
 
 跨用户和登录世代在专用可重置 macOS 环境执行，保留原实验服务、backend 和固定候选。
-同一脚本提供 `--login-phase prepare|cross-user|resume`、
+同一脚本提供 `--login-phase prepare|cross-user|resume|confirm`、
 `--deployment-config <受保护配置>`、`--login-state <checkpoint.json>`，并使用新 `--output` 目录。
 prepare 要求有效期至少五分钟的 user-initiated offer，保存需要确认的原请求与真实 UID/ASID；
 随后由操作员切换第二真实 GUI 用户执行 cross-user，或注销/重新登录原用户执行 resume。
+cross-user 的拒绝先记录为待确认；回到原用户后以 confirm 和
+`--login-response <第二用户回执>` 核验服务 ready、原 offer 未变及 journal 无新事实，才记通过。
+resume 同样在拒绝前后核验这些前提，不把撤销、旧产物或 offer 被替换造成的拒绝当作登录边界证据。
 检查点含请求关联数据，按测试主体受控交接；不含授权秘密。resume 要求 offer 仍未过期。
 脚本不创建账户、不自动注销，不使用 sudo 切 UID 代替 GUI 登录。缺环境时保留未执行，
 不得把这两个场景或 Windows 计为通过。

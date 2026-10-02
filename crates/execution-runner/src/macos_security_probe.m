@@ -79,7 +79,32 @@ int rss_security_probe_main(const char *requirement,int fake) {
                     connection.invalidationHandler=^{RSSProbeConnection *e=weakEntry;@synchronized(e){e.invalidated=YES;}};
                     connection.interruptionHandler=^{RSSProbeConnection *e=weakEntry;@synchronized(e){e.interrupted=YES;}};
                     [connection resume];connections[identity]=entry;
-                    emit(@{@"opened":@YES,@"connection":identity,@"monotonic":@(entry.opened)});continue;
+                    if([command[@"establish"] boolValue]) {
+                        // A nil endpoint is rejected before setting consumed in the production owner.
+                        // This existing method establishes NSXPC without consuming the business one-shot.
+                        dispatch_semaphore_t ready=dispatch_semaphore_create(0);
+                        NSObject *guard=[NSObject new];__block BOOL answered=NO,accepted=YES,finished=NO;
+                        id<RSSExecution> remote=[connection remoteObjectProxyWithErrorHandler:^(NSError *error){
+                            (void)error;@synchronized(guard){if(!finished){finished=YES;dispatch_semaphore_signal(ready);}}
+                        }];
+                        [remote registerHelper:nil reply:^(BOOL allowed){@synchronized(guard){
+                            if(!finished){finished=YES;answered=YES;accepted=allowed;dispatch_semaphore_signal(ready);}
+                        }}];
+                        dispatch_semaphore_wait(ready,dispatch_time(DISPATCH_TIME_NOW,2*NSEC_PER_SEC));
+                        @synchronized(guard) {
+                            finished=YES;
+                            if(!answered||accepted||connection.effectiveUserIdentifier!=0||connection.processIdentifier<=1) {
+                                [connection invalidate];[connections removeObjectForKey:identity];
+                                emit(@{@"error":@"remote connection establishment not proven"});continue;
+                            }
+                            entry.opened=elapsed();
+                            emit(@{@"created":@YES,@"established":@YES,@"connection":identity,
+                                @"monotonic":@(entry.opened),@"peerUid":@(connection.effectiveUserIdentifier),
+                                @"peerPid":@(connection.processIdentifier),@"peerSession":@(connection.auditSessionIdentifier),
+                                @"method":@"registerHelper:nil",@"accepted":@NO});
+                        }
+                    } else emit(@{@"created":@YES,@"established":@NO,@"connection":identity,@"monotonic":@(entry.opened)});
+                    continue;
                 }
                 RSSProbeConnection *entry=connections[identity];
                 if(!entry){emit(@{@"error":@"unknown connection"});continue;}
