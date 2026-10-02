@@ -149,10 +149,17 @@ pub(crate) fn materials(
             .map(|i| &i.run_as)
             .find(|r| matches!(r, RunAs::User { .. }))
             .unwrap_or(&p.run_as);
-        let mut files = vec![(
-            content(config, account, &step.payload.sha256),
-            step.payload.clone(),
-        )];
+        let original = content(config, account, &step.payload.sha256);
+        let payload =
+            match crate::software::native_export_name(step.adapter, step.package.as_str())? {
+                Some(name) => original
+                    .parent()
+                    .ok_or(Error::Configuration)?
+                    .join(format!("export-{}", step.payload.sha256.as_str()))
+                    .join(name),
+                None => original,
+            };
+        let mut files = vec![(payload, step.payload.clone())];
         for command in std::iter::once(&step.install).chain(step.uninstall.iter()) {
             for manager in &config.managers {
                 if command.launch.argv.iter().any(|a| matches!(a, LaunchArg::Literal { value } if Some(value.as_str()) == manager.image.path.to_str())) {
