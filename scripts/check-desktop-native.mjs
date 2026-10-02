@@ -2015,6 +2015,7 @@ try {
         runtimeTreeSha256: manifest.runtimeTreeSha256,
         scenarios: {},
       };
+      result.processSecurity = proof;
       const restart = async () => {
         const previous = hostPid();
         rememberScopes(await fences(), previous);
@@ -2081,6 +2082,7 @@ try {
       );
       launch = await held();
       const requests = fixture.facts.requests;
+      process.kill(-launch.scope.root, "SIGSTOP");
       process.kill(launch.scope.root, "SIGKILL");
       await delay(150);
       assert.equal(
