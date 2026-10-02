@@ -68,12 +68,13 @@ static uint64_t rss_registration_order;
 @implementation RSSExecutionListener
 - (BOOL)listener:(NSXPCListener *)listener shouldAcceptNewConnection:(NSXPCConnection *)connection {
     (void)listener;
-    @synchronized(self){if(_active>=8||rss_execution_stopping())return NO;_active++;}
+    @synchronized(self){if(_active>=8||rss_execution_stopping()){fprintf(stderr,"RSS_IPC_SLOT_LIMIT active=%lu\n",(unsigned long)_active);return NO;}_active++;}
     if(_requirement){[connection setCodeSigningRequirement:_requirement];}
     RSSExecutionPeer *peer=[RSSExecutionPeer new];peer.connection=connection;
     connection.exportedInterface=[NSXPCInterface interfaceWithProtocol:@protocol(RSSExecution)];
     connection.exportedObject=peer;
-    connection.invalidationHandler=^{@synchronized(self){self.active--;}};
+    __block BOOL counted=YES;
+    connection.invalidationHandler=^{@synchronized(self){if(counted){counted=NO;self.active--;}}};
     [connection resume];
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW,5*NSEC_PER_SEC),dispatch_get_global_queue(QOS_CLASS_DEFAULT,0),^{[connection invalidate];});
     return YES;
@@ -116,7 +117,7 @@ int rss_execution_query(const uint8_t *request,size_t length,int system,uint8_t 
         dispatch_semaphore_t done=dispatch_semaphore_create(0);NSObject *lock=[NSObject new];__block NSData *result=nil;__block BOOL finished=NO;
         void (^finish)(NSData *)=^(NSData *bytes){@synchronized(lock){if(!finished){finished=YES;result=bytes;dispatch_semaphore_signal(done);}}};
         connection.interruptionHandler=^{finish(nil);};connection.invalidationHandler=^{finish(nil);};[connection resume];
-        id<RSSExecution> remote=[connection remoteObjectProxyWithErrorHandler:^(NSError *error){(void)error;finish(nil);}];
+        id<RSSExecution> remote=[connection remoteObjectProxyWithErrorHandler:^(NSError *error){fprintf(stderr,"RSS_IPC_TRANSPORT_ERROR code=%ld\n",(long)error.code);finish(nil);}];
         [remote execute:[NSData dataWithBytes:request length:length] reply:^(NSData *bytes){finish(bytes);}];
         dispatch_semaphore_wait(done,dispatch_time(DISPATCH_TIME_NOW,5*NSEC_PER_SEC));
         @synchronized(lock){finished=YES;BOOL peerOk=expectedUid==UINT32_MAX||connection.effectiveUserIdentifier==expectedUid;[connection invalidate];if(!result||!result.length||result.length>*capacity)return -1;if(!peerOk)return -2;memcpy(output,result.bytes,result.length);*capacity=result.length;}
