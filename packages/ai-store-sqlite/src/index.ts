@@ -1,5 +1,6 @@
 import {
   privateDirectory,
+  PrivateStorageRejected,
   validateDirectory,
   validateFile,
   validateSingleLinkFile,
@@ -135,6 +136,7 @@ function errorResult(error: unknown): Result<never> {
   if (error instanceof ContractError)
     return fail(error.code === "limit" ? "limit_exceeded" : "invalid_input");
   if (error instanceof InputError) return fail(error.code);
+  if (error instanceof PrivateStorageRejected) return fail("invalid_input");
   if (typeof error === "object" && error !== null) {
     const native = error as { errcode?: unknown; code?: unknown };
     if (

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { sourceEvidence, sha256 } from "./native-evidence.mjs";
 import {
   runtimeTreeSha256,
@@ -40,12 +41,26 @@ export function freezeCandidate(root, { service, backend, desktop, runtime }) {
     binaries.service && binaries.backend,
     "service and backend candidates required",
   );
+  const source = sourceEvidence(root);
+  const manifest = JSON.parse(
+    readFileSync(resolve(root, "package.json"), "utf8"),
+  );
+  assert.equal(
+    source.node,
+    "v" + manifest.engines.node,
+    "candidate Node version mismatch",
+  );
+  assert.equal(
+    "pnpm@" + source.pnpm,
+    manifest.packageManager,
+    "candidate pnpm version mismatch",
+  );
   const runtimeRoot = runtime ? realpathSync(runtime) : undefined;
   return {
     version: 1,
     platform: process.platform,
     architecture: process.arch,
-    source: sourceEvidence(root),
+    source,
     binaries,
     ...(runtimeRoot
       ? {
@@ -93,7 +108,7 @@ export function verifyCandidate(root, path) {
 }
 if (
   process.argv[1] &&
-  resolve(process.argv[1]) === new URL(import.meta.url).pathname
+  resolve(process.argv[1]) === fileURLToPath(import.meta.url)
 ) {
   const [verb, ...arguments_] = process.argv.slice(2);
   if (verb === "verify" && arguments_.length === 1) {

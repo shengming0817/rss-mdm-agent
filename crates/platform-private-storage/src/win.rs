@@ -280,8 +280,15 @@ fn ancestor(handle: &File) -> io::Result<()> {
             return Err(io::Error::from_raw_os_error(status as i32));
         }
         let _security = Local(security);
-        let trusted =
-            |subject: &str| subject == user || matches!(subject, "S-1-5-18" | "S-1-5-32-544");
+        let trusted = |subject: &str| {
+            subject == user
+                || matches!(
+                    subject,
+                    "S-1-5-18"
+                        | "S-1-5-32-544"
+                        | "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464"
+                )
+        };
         if acl.is_null() || !trusted(&sid(owner)?) {
             return Err(io::Error::other("untrusted ancestor owner"));
         }

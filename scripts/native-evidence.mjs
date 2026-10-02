@@ -47,9 +47,23 @@ export function sourceEvidence(root) {
     cargoLockSha256: sha256(readFileSync(join(root, "Cargo.lock"))),
     pnpmLockSha256: sha256(readFileSync(join(root, "pnpm-lock.yaml"))),
     node: process.version,
-    pnpm: execFileSync("pnpm", ["--version"], {
-      cwd: root,
-      encoding: "utf8",
-    }).trim(),
+    pnpm: execFileSync(
+      process.platform === "win32" ? process.execPath : "pnpm",
+      process.platform === "win32"
+        ? [
+            process.env.npm_execpath ??
+              (() => {
+                throw new Error(
+                  "run Windows candidate tools through pnpm exec",
+                );
+              })(),
+            "--version",
+          ]
+        : ["--version"],
+      {
+        cwd: root,
+        encoding: "utf8",
+      },
+    ).trim(),
   };
 }
