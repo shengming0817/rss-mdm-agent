@@ -109,7 +109,10 @@ RefreshSystem 还要求 CurrentBinary/CurrentConfig，复用安装 owner 的持�
 `pnpm check:desktop-native --controlled-service --candidate <candidate.json>` 增加 `--security`，
 执行原生非法字段/方法/版本、大小限制、重复与过期、错误代码身份、假服务、helper/worker
 边界、刷新与撤销。完整桌面旅程还覆盖真实 WKWebView、manifest 固定 Codex、
-Host/launcher 故障、保留后代和未知 scope。模型端仍是确定性协议样本，
+Host/launcher 故障、保留后代和未知 scope。真实 Codex 链分别验证 Host/launcher
+崩溃后的整组回收；保留后代与未知 scope 复用现有 launch-fence 故障入口、冻结 runtime
+和隔离存储，要求存活后代、阻断恢复、保留原 fence 以及本次拥有 scope 的回收证据。
+模型端仍是确定性协议样本，
 在线模型能力由既有 smoke 单独验证。
 
 管理员授权使用 `--authorization-password-file <主仓库绝对路径/.passwd>`。
@@ -119,6 +122,13 @@ Host/launcher 故障、保留后代和未知 scope。模型端仍是确定性协
 回执用 `journeyStatus` 表示本次旅程结果，用 `security.scenarios` 逐项记录
 `passed / failed / notApplicable / notExecuted`，完整矩阵由 `security.status` 汇总。
 旅程通过但矩阵未完成时顶层为 `partial`。旧 `unexecutedSecurity` 字段直接退出，不双读旧回执。
+macOS 普通 PKG 包装执行保留既有保守语义：不保证逃逸后代停止，可能返回
+`outcomeUnknown / capture_failed`。回执保留 `executionUncertain`；旅程仅在原尝试、
+后台确认、安装器退出及独立设备效果全部相符时接纳该已知不确定性，不改写执行成功。
+刷新停止前先验证原 PID、持久事实和正常用户健康查询；停止后失败比较完整配置值，
+保留注册、凭据及 journal，不要求旧 PID 存活。SQLite 权限检查不得另开、关闭活跃
+数据或 sidecar 文件，以免释放同进程 POSIX 锁并破坏 WAL 共享内存。
+
 五秒 challenge 不属于 IPC V7，记录为有依据的不适用；连接寿命和业务 offer 有效期分别实测。
 连接场景先用现有空 helper 注册的拒绝回包建立真实 NSXPC，且不消费业务调用额度。
 重启场景允许 NSXPC 按原 pins 重新认证新服务，要求旧实例终止、实际新 PID 及无新增执行证据。

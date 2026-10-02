@@ -135,7 +135,7 @@ fn read_existing(root: &Path, cfg: &Config) -> Result<Connection, Error> {
     }
     private(root)?;
     let path = root.join("communication.sqlite");
-    private(&path)?;
+    platform_private_storage::validate_sqlite_file(&path)?;
     sidecars(&path)?;
     let reader = Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
     let version: u32 = reader.pragma_query_value(None, "user_version", |r| r.get(0))?;
