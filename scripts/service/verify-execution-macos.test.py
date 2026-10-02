@@ -21,6 +21,29 @@ spec.loader.exec_module(acceptance)
 
 
 class BackendLifecycleTests(unittest.TestCase):
+    def test_failed_setup_keeps_only_the_fixed_cleanup_channel_available(self):
+        with tempfile.TemporaryDirectory(dir='/private/tmp') as directory:
+            endpoint=str(Path(directory)/'control')
+            listener=socket.socket(socket.AF_UNIX);listener.bind(endpoint);listener.listen(1)
+            programs={'setup':'raise PermissionError("protected input")',
+                      'cleanup':'print(json.dumps({"cleaned":True}))'}
+            failures=[]
+            def run():
+                try: acceptance.authorized_steps(programs,endpoint,123,501,time.clock_gettime(time.CLOCK_MONOTONIC)+10)
+                except BaseException as error: failures.append(error)
+            with patch.object(acceptance,'peer_identity',return_value=(123,501)):
+                worker=threading.Thread(target=run);worker.start()
+                connection,_=listener.accept();connection.settimeout(3)
+                with connection,connection.makefile('rb') as reader:
+                    connection.sendall(b'{"id":0,"operation":"setup"}\n')
+                    setup=json.loads(reader.readline())
+                    self.assertFalse(setup['ok']);self.assertEqual(setup['error'],'PermissionError')
+                    connection.sendall(b'{"id":1,"operation":"cleanup"}\n')
+                    closed=json.loads(reader.readline())
+                    self.assertTrue(closed['ok']);self.assertEqual(closed['value'],{'cleaned':True})
+                worker.join(3);self.assertFalse(worker.is_alive());self.assertEqual(failures,[])
+            listener.close()
+
     def backend(self, source):
         return subprocess.Popen(['/usr/bin/python3', '-u', '-c', source], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
 
