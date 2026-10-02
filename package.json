@@ -44,7 +44,8 @@
     "stage:desktop-runtime": "node scripts/stage-desktop-runtime.mjs",
     "check:desktop-bundle": "node scripts/check-desktop-bundle.mjs",
     "check:desktop-native": "node scripts/check-desktop-native.mjs",
-    "test:ai-acceptance": "pnpm build:ai-host && node scripts/check-ai-acceptance.mjs"
+    "test:ai-acceptance": "pnpm build:ai-host && node scripts/check-ai-acceptance.mjs",
+    "check:connection-sources": "pnpm build:ai-host && node scripts/check-connection-sources.mjs"
   },
   "devDependencies": {
     "@types/node": "24.3.0",

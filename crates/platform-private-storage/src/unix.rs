@@ -15,6 +15,8 @@ fn fd(value: i32) -> io::Result<File> {
     if value < 0 {
         Err(io::Error::last_os_error())
     } else {
+        // SAFETY: every caller passes a newly returned open/openat fd. The negative
+        // result was rejected above; this is its only ownership transfer, and File closes it.
         Ok(unsafe { File::from_raw_fd(value) })
     }
 }
@@ -51,6 +53,7 @@ fn open_at(parent: &File, name: &OsStr, flags: i32) -> io::Result<File> {
 fn ancestor(file: &File) -> io::Result<()> {
     let meta = file.metadata()?;
     if !meta.is_dir()
+        // SAFETY: geteuid has no pointer arguments or memory preconditions.
         || (meta.uid() != 0 && meta.uid() != unsafe { libc::geteuid() })
         || (meta.mode() & 0o022 != 0
             && !(meta.uid() == 0 && meta.mode() & u32::from(libc::S_ISVTX) != 0))
@@ -63,6 +66,7 @@ fn ancestor(file: &File) -> io::Result<()> {
 }
 pub fn private_handle(file: &File) -> io::Result<()> {
     let meta = file.metadata()?;
+    // SAFETY: geteuid only reads the kernel-maintained identity of this process.
     if meta.uid() != unsafe { libc::geteuid() } || meta.mode() & 0o077 != 0 {
         return Err(io::Error::other("private ownership required"));
     }
@@ -72,6 +76,7 @@ pub fn private_handle(file: &File) -> io::Result<()> {
 }
 pub fn directory(path: &Path, create: bool) -> io::Result<File> {
     let path = normalized(path)?;
+    // SAFETY: the root pathname is a static NUL-terminated string; open returns a new owned fd.
     let mut directory = fd(unsafe {
         libc::open(
             c"/".as_ptr(),
@@ -95,6 +100,8 @@ pub fn directory(path: &Path, create: bool) -> io::Result<File> {
             Err(e) if create && e.kind() == io::ErrorKind::NotFound => {
                 // The empty new directory is checked before any child data is created.
                 let name_c = text(name)?;
+                // SAFETY: the borrowed directory fd remains open, name_c is NUL-terminated
+                // and live for the call, and mkdirat does not retain either argument.
                 if unsafe { libc::mkdirat(directory.as_raw_fd(), name_c.as_ptr(), 0o700) } != 0 {
                     let error = io::Error::last_os_error();
                     if error.kind() != io::ErrorKind::AlreadyExists {
@@ -146,6 +153,8 @@ pub fn open_path(path: &Path) -> io::Result<File> {
 pub fn replace(dir: &File, staged: &Path, target: &Path) -> io::Result<()> {
     let staged = text(staged.as_os_str())?;
     let target = text(target.as_os_str())?;
+    // SAFETY: both directory fd borrows remain valid for the call; both C strings
+    // remain live and NUL-terminated. renameat consumes neither fd nor pointer.
     if unsafe {
         libc::renameat(
             dir.as_raw_fd(),
@@ -162,6 +171,8 @@ pub fn replace(dir: &File, staged: &Path, target: &Path) -> io::Result<()> {
 pub fn publish_new(dir: &File, staged: &Path, target: &Path) -> io::Result<()> {
     let staged = text(staged.as_os_str())?;
     let target = text(target.as_os_str())?;
+    // SAFETY: the same live directory fd anchors both names, and the C strings
+    // outlive this synchronous call. No ownership of either fd or string is transferred.
     if unsafe {
         libc::linkat(
             dir.as_raw_fd(),
@@ -192,11 +203,15 @@ fn acl(file: &File, private: bool) -> io::Result<()> {
     struct Acl(*mut c_void);
     impl Drop for Acl {
         fn drop(&mut self) {
+            // SAFETY: Acl is constructed only from non-null allocations returned by
+            // acl_get_fd_np/acl_get_qualifier. Both require acl_free, and this is their sole owner.
             unsafe {
                 acl_free(self.0);
             }
         }
     }
+    // SAFETY: file owns the live fd for this entire function. ACL_TYPE_EXTENDED
+    // is supported by Darwin; a non-null result is an independent owned ACL allocation.
     let raw = unsafe { acl_get_fd_np(file.as_raw_fd(), 0x100) };
     if raw.is_null() {
         let e = io::Error::last_os_error();
@@ -211,6 +226,8 @@ fn acl(file: &File, private: bool) -> io::Result<()> {
     let mut which = 0;
     loop {
         let mut entry = std::ptr::null_mut();
+        // SAFETY: _acl owns raw until function exit. entry is a writable stack output;
+        // returned entries borrow raw and are used only while that owner is alive.
         let result = unsafe { acl_get_entry(raw, which, &mut entry) };
         if result != 0 {
             let error = io::Error::last_os_error();
@@ -225,6 +242,7 @@ fn acl(file: &File, private: bool) -> io::Result<()> {
         }
         which = -1;
         let mut tag = 0;
+        // SAFETY: entry was obtained successfully from the live ACL; tag is a writable i32.
         if unsafe { acl_get_tag_type(entry, &mut tag) } != 0 {
             return Err(io::Error::last_os_error());
         }
@@ -235,11 +253,15 @@ fn acl(file: &File, private: bool) -> io::Result<()> {
             return Err(io::Error::other("unsupported ancestor ACL"));
         }
         let mut set = std::ptr::null_mut();
+        // SAFETY: entry still borrows the live ACL; set is a writable output, and
+        // the returned permset is borrowed, never independently freed.
         if unsafe { acl_get_permset(entry, &mut set) } != 0 {
             return Err(io::Error::last_os_error());
         }
         let mut mutates = false;
         for permission in [1 << 2, 1 << 4, 1 << 6, 1 << 8, 1 << 10, 1 << 12, 1 << 13] {
+            // SAFETY: set borrows the still-live ACL entry; permissions are valid
+            // Darwin ACL permission bits, and the query neither frees nor retains set.
             let has = unsafe { acl_get_perm_np(set, permission) };
             if has < 0 {
                 return Err(io::Error::last_os_error());
@@ -247,6 +269,8 @@ fn acl(file: &File, private: bool) -> io::Result<()> {
             mutates |= has == 1;
         }
         if mutates {
+            // SAFETY: entry is a live extended-allow entry with a UUID qualifier.
+            // The returned copy is separately allocated and released by _qualifier using acl_free.
             let qualifier = unsafe { acl_get_qualifier(entry) };
             if qualifier.is_null() {
                 return Err(io::Error::last_os_error());
@@ -254,8 +278,11 @@ fn acl(file: &File, private: bool) -> io::Result<()> {
             let _qualifier = Acl(qualifier);
             let mut id = 0;
             let mut kind = 0;
+            // SAFETY: _qualifier owns a non-null 16-byte Darwin UUID; id/kind are
+            // writable u32/i32 outputs whose lifetimes cover the synchronous membership query.
             if unsafe { mbr_uuid_to_id(qualifier.cast(), &mut id, &mut kind) } != 0
                 || kind != 0
+                // SAFETY: geteuid has no pointer arguments and does not alter identity.
                 || (id != 0 && id != unsafe { libc::geteuid() })
             {
                 return Err(io::Error::other("writable ancestor ACL"));

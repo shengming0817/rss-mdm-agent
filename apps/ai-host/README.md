@@ -43,7 +43,7 @@ worker 的 activation 数据通过既有私有管道传入，包含该次启动�
 
 `pnpm check:desktop-native` 从根 `pnpm dev` 启动真实产品 WebView，以固定 Codex CLI、本地协议夹具和合成凭据验证表单 → Rust 加密 → SQLite 保存 → 测试失败重试 → Host 重启 → 删除，并验证一次性工具许可和独立 Rust 动作确认。该入口使用实际系统密钥 backend，不读取个人 AI 配置；输出 `.local-ci-runs/desktop-native.json`。范围与前置条件见[桌面开发](../../docs/guides/desktop-development.md)。
 
-`node scripts/check-connection-sources.mjs` 把当前用户已有配置目录交给官方 Codex/Claude，发送最小真实模型请求。两个来源均须完成探针；目录缺失记 partial，认证或能力失败仍判失败。报告不包含账号、目录或秘密，该入口不纳入无凭据 CI。平台窗口验收见[桌面指南](../../docs/guides/desktop-development.md)。
+`pnpm check:connection-sources` 把当前用户已有配置目录交给官方 Codex/Claude，发送最小真实模型请求。两个来源均须完成探针；目录缺失记 partial，认证或能力失败仍判失败。报告不包含账号、目录或秘密，该入口复用固定 Node/原生 helper runtime，不纳入无凭据 CI。`pnpm check:connection-sources --preflight` 只验证该入口的原生私有文件/SQLite 初始化和关闭，不访问个人配置或发送模型请求。平台窗口验收见[桌面指南](../../docs/guides/desktop-development.md)。
 
 来源：Rust `std::os::unix::net::UnixStream::pair`；[Codex 0.155.0 config merge](https://github.com/openai/codex/blob/rust-v0.155.0/codex-rs/config/src/merge.rs) 与 [CLI profile 入口](https://github.com/openai/codex/blob/rust-v0.155.0/codex-rs/cli/src/main.rs)；Claude Agent SDK 0.3.277 `sdk.d.ts`；[Node `http.request` 自定义 `lookup`](https://nodejs.org/api/http.html#httprequestoptions-callback)；[OWASP SSRF DNS/redirect 防护](https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html)；[RustCrypto AES-GCM](https://github.com/RustCrypto/AEADs/blob/aes-gcm-v0.10.3/aes-gcm/src/lib.rs)；security-framework 3.5.1 `src/passwords.rs`、`src/random.rs`。没有复制上游认证实现。
 

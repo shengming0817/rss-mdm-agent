@@ -330,6 +330,23 @@ export function runtimeArtifact(root, target) {
   };
 }
 
+/** The canonical Node that shares a directory with both native runtime helpers. */
+export function privateRuntimeNode(root) {
+  return join(
+    root,
+    ".local-ci-runs/worker-runtime/bin",
+    process.platform === "win32" ? "node.exe" : "node",
+  );
+}
+export function runPrivateRuntime(root, args) {
+  const result = spawnSync(privateRuntimeNode(root), args, {
+    cwd: root,
+    stdio: "inherit",
+  });
+  if (result.error) throw new Error("fixed private runtime unavailable");
+  return result.status ?? 1;
+}
+
 /** Stage the fixed native launcher alongside the application Host. */
 export function stageWorkerRuntime(
   root,

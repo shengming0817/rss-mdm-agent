@@ -213,3 +213,18 @@ test("a corrupt existing store retains its closed startup category without expos
     await rm(root, { recursive: true, force: true });
   }
 });
+
+// The manual probe entry must initialize SQLite before any provider/account access.
+test("ordinary Node connection-source entry hands off to fixed native runtime before SQLite preflight", () => {
+  const root = fileURLToPath(new URL("../../", import.meta.url));
+  const result = spawnSync(
+    "node",
+    ["scripts/check-connection-sources.mjs", "--preflight"],
+    { cwd: root, encoding: "utf8", timeout: 15000 },
+  );
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout.trim()), {
+    sqliteReady: true,
+    probesRun: false,
+  });
+});
