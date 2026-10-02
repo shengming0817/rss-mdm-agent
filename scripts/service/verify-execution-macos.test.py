@@ -68,7 +68,7 @@ class EvidenceTests(unittest.TestCase):
 
     def test_desktop_pass_requires_terminal_acknowledged_process_and_independent_effect(self):
         record = {'action':{'initiator':{'kind':'backend','attempt':'attempt'}},'status':{'operationRequestId':'request','attempts':1,'process':{'finished':True,'end':'exited','exitCode':0}}}
-        event = {'kind':'software_result','steps':[{'process':{'kind':'exited','code':0},'diagnostics':{'failure':None},'after':{'kind':'unknown'}}]}
+        event = {'kind':'software_result','steps':[{'process':{'kind':'exited','code':0},'diagnostics':{'failure':None},'after':{'state':'unknown'}}]}
         backend = {'startRequests':1,'results':{'op':{'attemptId':'attempt','event':event}},'acknowledged':['op']}
         effect = {'receiptPresent':True,'payloadPresent':True,'payloadMatches':True}
         acceptance.validate_desktop_completion([record], backend, effect, 'request')

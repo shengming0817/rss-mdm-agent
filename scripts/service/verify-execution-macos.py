@@ -242,7 +242,7 @@ def validate_desktop_completion(records, backend, effect, request):
             assert step['process'] == {'kind':'exited','code':0}, 'installer failed or did not run'
             assert process['end'] == 'exited' and process['exitCode'] == 0
             assert step['diagnostics']['failure'] is None
-            assert step['after']['kind'] in ('present','unknown')
+            assert step['after']['state'] in ('present','unknown')
     present = all(effect[key] is True for key in ('receiptPresent','payloadPresent','payloadMatches'))
     absent = all(effect[key] is False for key in ('receiptPresent','payloadPresent','payloadMatches'))
     assert present or (cancelled and absent), 'independent device effect conflicts with terminal result'
@@ -577,7 +577,7 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
         assert installed_receipt['pkg-version'] == '1.0'
         # macOS process groups cannot establish global quiescence. Keep Unknown while
         # independently requiring the actual installer exit, receipt and payload facts.
-        assert step['after']['kind'] in ('present', 'unknown')
+        assert step['after']['state'] in ('present', 'unknown')
         receipt['scenarios']['package_exit_and_independent_effect'] = package
         final = query()
         for attempt in [first['attempt'], second['attempt'], third['attempt']]:
