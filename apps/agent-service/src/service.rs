@@ -840,6 +840,28 @@ impl Core {
                     if self.host.revoked.load(Ordering::Acquire) {
                         return Err(Error::Denied);
                     }
+                    let replay = Selection {
+                        request: request.clone(),
+                        task,
+                        attempt,
+                        revision: revision.clone(),
+                        subject: command.subject.clone(),
+                        session: command.session,
+                        binding: command.binding.clone().ok_or(Error::Denied)?,
+                        origin: origin.clone(),
+                    };
+                    if let Some(previous) = self.app.backend_request(&self.caller(), &request)? {
+                        if previous.offer.task != task
+                            || previous.offer.attempt != attempt
+                            || previous.offer.revision != revision
+                            || previous.trigger != replay.trigger(&self.host.binding.device)?
+                        {
+                            return Err(Error::Conflict);
+                        }
+                        return Ok(Reply::Pending {
+                            value: Box::new(previous),
+                        });
+                    }
                     let offer = self.available.as_ref().ok_or(Error::Unavailable)?;
                     if offer.request != request
                         || offer.task != task

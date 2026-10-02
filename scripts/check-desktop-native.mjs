@@ -2082,12 +2082,13 @@ try {
       );
       launch = await held();
       const requests = fixture.facts.requests;
-      process.kill(-launch.scope.root, "SIGSTOP");
       const stoppedHost = hostPid();
       assert.equal(Number(processIdentity(stoppedHost, "ppid")), receipt.pid);
+      // Keep descendants running: orphaning a stopped group sends HUP/CONT on macOS.
+      process.kill(stoppedHost, "SIGSTOP");
+      process.kill(launch.scope.root, "SIGKILL");
       process.kill(stoppedHost, "SIGKILL");
       await wait(() => !processIdentity(stoppedHost, "comm"));
-      process.kill(launch.scope.root, "SIGKILL");
       await delay(150);
       assert.equal(
         await absent(launch.scope),
