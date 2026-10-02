@@ -389,6 +389,25 @@ const dbRead = (file, action) => {
     db.close();
   }
 };
+const readWorkerScopes = async () =>
+  wait(() => {
+    try {
+      return dbRead("ai.sqlite", (db) =>
+        db
+          .prepare("SELECT json FROM worker_launches")
+          .all()
+          .map((row) => JSON.parse(row.json)),
+      );
+    } catch (error) {
+      if (
+        error.errcode === 5 ||
+        error.errcode === 6 ||
+        error.message === "database is locked"
+      )
+        return undefined;
+      throw error;
+    }
+  }, 5000);
 const task = async () => {
   const reply = await serviceCall("query");
   const request = fixture.facts.request;
@@ -1881,15 +1900,7 @@ try {
     await navigate("AI 助手");
     await text("GOLDEN_INSTALL 安装办公套件");
     mark("restart Host through settings");
-    rememberScopes(
-      dbRead("ai.sqlite", (db) =>
-        db
-          .prepare("SELECT json FROM worker_launches")
-          .all()
-          .map((row) => JSON.parse(row.json)),
-      ),
-      hostPid(),
-    );
+    rememberScopes(await readWorkerScopes(), hostPid());
     await navigate("设置");
     await click("重启 AI Host");
     await click("确认重启");
@@ -1926,13 +1937,7 @@ try {
           readFileSync(join(artifact, "worker-manifest.json")),
         ),
       };
-      const fences = () =>
-        dbRead("ai.sqlite", (db) =>
-          db
-            .prepare("SELECT json FROM worker_launches")
-            .all()
-            .map((row) => JSON.parse(row.json)),
-        );
+      const fences = readWorkerScopes;
       const absent = (scope) =>
         scopeAbsentWithin(runtime, scope, {
           timeoutMs: 1000,
@@ -1944,7 +1949,7 @@ try {
       };
       const restart = async () => {
         const previous = hostPid();
-        rememberScopes(fences(), previous);
+        rememberScopes(await fences(), previous);
         await navigate("设置");
         await click("重启 AI Host");
         await click("确认重启");
@@ -1968,7 +1973,9 @@ try {
         const previous = fixture.facts.held;
         await prompt("GOLDEN_HOLD 安全验收：保持请求等待");
         await wait(() => fixture.facts.held > previous);
-        const rows = fences().filter((row) => row.phase === "registered");
+        const rows = (await fences()).filter(
+          (row) => row.phase === "registered",
+        );
         assert.equal(rows.length, 1, "one actual live Codex worker scope");
         assert.equal(rows[0].scope.kind, "processGroup");
         assert.equal(await absent(rows[0].scope), false);
@@ -2010,7 +2017,7 @@ try {
       );
       await restart();
       assert.ok(
-        fences().some((row) => row.launchId === launch.launchId),
+        (await fences()).some((row) => row.launchId === launch.launchId),
         "unknown old scope fence retained",
       );
       assert.equal(
@@ -2226,12 +2233,7 @@ try {
   if (scopeRuntime && directory && existsSync(join(directory, "ai.sqlite"))) {
     try {
       rememberScopes(
-        dbRead("ai.sqlite", (db) =>
-          db
-            .prepare("SELECT json FROM worker_launches")
-            .all()
-            .map((row) => JSON.parse(row.json)),
-        ),
+        await readWorkerScopes(),
         result.owner?.restartedHostPid ?? result.owner?.hostPid,
       );
     } catch {
