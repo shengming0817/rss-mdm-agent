@@ -601,7 +601,7 @@ impl<S: SecretProvider> DeviceService<S> {
             struct Finished(Arc<AtomicBool>);impl Drop for Finished{fn drop(&mut self){self.0.store(true,Ordering::Release);}}
             let _finished=Finished(done);
             let result=(||->Result<(),Error>{
-                let runtime=tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|_|Error::Unavailable)?;
+                let runtime=owner_runtime()?;
                 runtime.block_on(async{
                     let mut timer=tokio::time::interval(std::time::Duration::from_millis(50));
                     timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -1012,12 +1012,13 @@ async fn network<T>(
     progress.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
         tokio::select! {
+            biased;
             result=&mut future=>return result,
-            _=progress.tick()=>core.reconcile()?,
             command=commands.recv()=>{
                 if let Some(command)=command {core.handle(command);} else {core.stopping=true;}
                 if core.stopping{return Err(Error::Unavailable);}
-            }
+            },
+            _=progress.tick()=>core.reconcile()?,
         }
     }
 }
@@ -1301,4 +1302,14 @@ pub(crate) fn app_config() -> AppConfig {
         max_timeout_ms: bounds.max_timeout_ms,
         max_output_bytes: bounds.max_output_bytes,
     }
+}
+
+pub(crate) fn owner_runtime() -> Result<tokio::runtime::Runtime, Error> {
+    // The block_on caller remains the only SQLite/journal owner. Two fixed reactor workers
+    // keep bounded transport alive while that caller performs synchronous OS fact checks.
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .map_err(|_| Error::Unavailable)
 }

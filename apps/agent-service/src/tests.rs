@@ -7,6 +7,58 @@ use execution_admission::AuthorityVerifier;
 use execution_contract::*;
 use sha2::{Digest as _, Sha256};
 
+#[test]
+fn production_network_io_progresses_while_the_owner_checks_synchronous_native_facts() {
+    use std::io::{Read, Write};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let (release, waiting) = std::sync::mpsc::channel();
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        stream
+            .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+            .unwrap();
+        stream.read_exact(&mut [0u8; 4]).unwrap();
+        waiting
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .unwrap();
+        stream.write_all(b"ack").unwrap();
+    });
+    let sent = Arc::new(AtomicBool::new(false));
+    let completed = Arc::new(AtomicBool::new(false));
+    let progressed = crate::service::owner_runtime().unwrap().block_on(async {
+        let ready = sent.clone();
+        let acknowledged = completed.clone();
+        let network = tokio::spawn(async move {
+            let mut stream = tokio::net::TcpStream::connect(address).await.unwrap();
+            stream.write_all(b"body").await.unwrap();
+            ready.store(true, Ordering::Release);
+            stream.read_exact(&mut [0u8; 3]).await.unwrap();
+            acknowledged.store(true, Ordering::Release);
+        });
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while !sent.load(Ordering::Acquire) {
+                tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .unwrap();
+        release.send(()).unwrap();
+        // A real NSXPC fact check is synchronous on this sole SQLite/journal owner.
+        std::thread::sleep(std::time::Duration::from_millis(250));
+        let progressed = completed.load(Ordering::Acquire);
+        network.await.unwrap();
+        progressed
+    });
+    server.join().unwrap();
+    assert!(
+        progressed,
+        "network reactor was blocked by native fact reconciliation"
+    );
+}
+
 #[tokio::test]
 async fn signed_start_compiles_exactly_and_never_creates_a_local_enterprise_approval() {
     let server = protocol::Server::new().await;
