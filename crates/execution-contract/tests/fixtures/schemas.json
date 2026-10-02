@@ -1510,9 +1510,156 @@
         "const": 1,
         "type": "integer"
       },
-      "LocalContractV5": {
-        "const": 5,
+      "LocalContractV6": {
+        "const": 6,
         "type": "integer"
+      },
+      "MsixContainer": {
+        "description": "MSIX container selection; no implicit architecture or language selection.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "description": "One application package.",
+            "properties": {
+              "kind": {
+                "const": "package",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Exactly declared application and resource members.",
+            "properties": {
+              "kind": {
+                "const": "bundle",
+                "type": "string"
+              },
+              "members": {
+                "description": "Frozen applicable member set.",
+                "items": {
+                  "$ref": "#/$defs/MsixMember"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "kind",
+              "members"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "MsixDeployment": {
+        "description": "Native effects with separate observation and removal semantics.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "description": "Registration for the exact user bound by the invocation and authenticated helper.",
+            "properties": {
+              "kind": {
+                "const": "targetUserRegistration",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Provision/deprovision the future-user device set.",
+            "properties": {
+              "kind": {
+                "const": "deviceProvisioning",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "MsixIdentity": {
+        "additionalProperties": false,
+        "description": "One native package identity, including resource packages and exact publisher DN.",
+        "properties": {
+          "architecture": {
+            "$ref": "#/$defs/PackageValue",
+            "description": "Native architecture: x86_64, aarch64 or neutral."
+          },
+          "name": {
+            "$ref": "#/$defs/PackageValue",
+            "description": "Manifest Name."
+          },
+          "publisher": {
+            "$ref": "#/$defs/PackageValue",
+            "description": "Manifest Publisher, preserved exactly."
+          },
+          "resourceId": {
+            "description": "Manifest ResourceId; empty denotes the application.",
+            "type": "string"
+          },
+          "version": {
+            "description": "Native four-part version.",
+            "items": {
+              "format": "uint16",
+              "maximum": 65535,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxItems": 4,
+            "minItems": 4,
+            "type": "array"
+          }
+        },
+        "required": [
+          "name",
+          "publisher",
+          "version",
+          "architecture",
+          "resourceId"
+        ],
+        "type": "object"
+      },
+      "MsixMember": {
+        "additionalProperties": false,
+        "description": "A precisely selected bundle member, including its complete content identity.",
+        "properties": {
+          "identity": {
+            "$ref": "#/$defs/MsixIdentity",
+            "description": "Complete package identity."
+          },
+          "length": {
+            "description": "Complete uncompressed length.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "path": {
+            "description": "Container-relative path.",
+            "type": "string"
+          },
+          "sha256": {
+            "$ref": "#/$defs/Digest",
+            "description": "Complete uncompressed SHA256."
+          }
+        },
+        "required": [
+          "path",
+          "identity",
+          "length",
+          "sha256"
+        ],
+        "type": "object"
       },
       "NetworkAccess": {
         "description": "Required network restrictions. Unknown or unenforceable restrictions must be rejected by the runner.",
@@ -1929,10 +2076,305 @@
           }
         ]
       },
+      "SoftwareExitCodes": {
+        "additionalProperties": false,
+        "description": "Approved exit-code policy; reboot classification never authorizes an automatic reboot.",
+        "properties": {
+          "reboot": {
+            "description": "Successful exits requiring separately authorized reboot handling.",
+            "items": {
+              "format": "int32",
+              "type": "integer"
+            },
+            "type": "array",
+            "uniqueItems": true
+          },
+          "success": {
+            "description": "Successful native exits, including explicitly approved nonzero values.",
+            "items": {
+              "format": "int32",
+              "type": "integer"
+            },
+            "type": "array",
+            "uniqueItems": true
+          }
+        },
+        "required": [
+          "success",
+          "reboot"
+        ],
+        "type": "object"
+      },
+      "SoftwareFormat": {
+        "description": "Format-specific immutable material. Shared invocations and detection stay on the step.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "description": "Windows Installer product.",
+            "properties": {
+              "kind": {
+                "const": "msi",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "macOS PackageInstaller package.",
+            "properties": {
+              "kind": {
+                "const": "pkg",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Frozen WinGet export.",
+            "properties": {
+              "exportIdentity": {
+                "$ref": "#/$defs/Id",
+                "description": "Backend export identity."
+              },
+              "kind": {
+                "const": "winget",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "exportIdentity"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Frozen Homebrew export.",
+            "properties": {
+              "exportIdentity": {
+                "$ref": "#/$defs/Id",
+                "description": "Backend export identity."
+              },
+              "kind": {
+                "const": "homebrew",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "exportIdentity"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "RSS archive with an explicit member inventory and bounded extraction.",
+            "properties": {
+              "kind": {
+                "const": "bundle",
+                "type": "string"
+              },
+              "limits": {
+                "$ref": "#/$defs/BundleLimits",
+                "description": "Exact extraction limits."
+              },
+              "manifest": {
+                "$ref": "#/$defs/BundleManifest",
+                "description": "Complete manifest."
+              }
+            },
+            "required": [
+              "kind",
+              "manifest",
+              "limits"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Full offline executable, including exact sidecar layout.",
+            "properties": {
+              "kind": {
+                "const": "exe",
+                "type": "string"
+              },
+              "layout": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/ExactArtifactRef"
+                },
+                "description": "Portable relative paths to exact immutable artifacts.",
+                "type": "object"
+              },
+              "ownership": {
+                "$ref": "#/$defs/Digest",
+                "description": "Stable native detector selector, excluding desired version and artifact bytes."
+              }
+            },
+            "required": [
+              "kind",
+              "ownership",
+              "layout"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Native package deployment.",
+            "properties": {
+              "allowUnsigned": {
+                "description": "Explicit permission for native unsigned deployment support.",
+                "type": "boolean"
+              },
+              "container": {
+                "$ref": "#/$defs/MsixContainer",
+                "description": "Container selection."
+              },
+              "dependencies": {
+                "description": "Exact prerequisite identities; never resolved from a store.",
+                "items": {
+                  "$ref": "#/$defs/MsixIdentity"
+                },
+                "type": "array"
+              },
+              "deployment": {
+                "$ref": "#/$defs/MsixDeployment",
+                "description": "Registration or provisioning effect."
+              },
+              "identity": {
+                "$ref": "#/$defs/MsixIdentity",
+                "description": "Expected application identity."
+              },
+              "kind": {
+                "const": "msix",
+                "type": "string"
+              },
+              "minimumOs": {
+                "description": "Minimum native OS version.",
+                "items": {
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "maxItems": 4,
+                "minItems": 4,
+                "type": "array"
+              },
+              "requireSideload": {
+                "description": "Require existing sideload permission.",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "kind",
+              "container",
+              "identity",
+              "dependencies",
+              "deployment",
+              "minimumOs",
+              "requireSideload",
+              "allowUnsigned"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Read-only image with one selected application.",
+            "properties": {
+              "bundleId": {
+                "$ref": "#/$defs/PackageValue",
+                "description": "Expected CFBundleIdentifier."
+              },
+              "kind": {
+                "const": "dmgApp",
+                "type": "string"
+              },
+              "path": {
+                "description": "Exact image-relative application path.",
+                "type": "string"
+              },
+              "targetName": {
+                "description": "Exact application basename in the selected Applications directory.",
+                "type": "string"
+              },
+              "version": {
+                "$ref": "#/$defs/PackageValue",
+                "description": "Expected bundle version."
+              },
+              "volume": {
+                "$ref": "#/$defs/PackageValue",
+                "description": "Exact volume label."
+              }
+            },
+            "required": [
+              "kind",
+              "volume",
+              "path",
+              "bundleId",
+              "version",
+              "targetName"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Read-only image with one selected PackageInstaller package.",
+            "properties": {
+              "kind": {
+                "const": "dmgPkg",
+                "type": "string"
+              },
+              "length": {
+                "description": "Selected complete package length.",
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "path": {
+                "description": "Exact image-relative PKG path.",
+                "type": "string"
+              },
+              "receipt": {
+                "$ref": "#/$defs/PackageValue",
+                "description": "Exact package receipt."
+              },
+              "sha256": {
+                "$ref": "#/$defs/Digest",
+                "description": "Selected complete package SHA256."
+              },
+              "volume": {
+                "$ref": "#/$defs/PackageValue",
+                "description": "Exact volume label."
+              }
+            },
+            "required": [
+              "kind",
+              "volume",
+              "path",
+              "length",
+              "sha256",
+              "receipt"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "SoftwareInvocation": {
         "additionalProperties": false,
         "description": "Exact invocation of a fixed native profile or a declared script.",
         "properties": {
+          "exitCodes": {
+            "$ref": "#/$defs/SoftwareExitCodes",
+            "description": "Exact successful and reboot-required exits authorized by the source."
+          },
           "launch": {
             "$ref": "#/$defs/LaunchSpec",
             "description": "Complete immutable launch inputs, with literal arguments and pinned artifacts."
@@ -1963,44 +2405,29 @@
           "runAs",
           "sessionRequirement",
           "timeoutMs",
-          "outputBytes"
+          "outputBytes",
+          "exitCodes"
         ],
         "type": "object"
       },
-      "SoftwareKind": {
-        "description": "The supported software adapters. No plugin names or command strings are accepted.",
-        "oneOf": [
-          {
-            "const": "msi",
-            "description": "Windows Installer with a fixed PowerShell entry.",
-            "type": "string"
+      "SoftwareMaterial": {
+        "additionalProperties": false,
+        "description": "One immutable material retained by the original program, including sidecars and native images.",
+        "properties": {
+          "artifact": {
+            "$ref": "#/$defs/ExactArtifactRef",
+            "description": "Exact declared bytes."
           },
-          {
-            "const": "winget",
-            "description": "Exact Windows Package Manager source and coordinate.",
-            "type": "string"
-          },
-          {
-            "const": "pkg",
-            "description": "macOS installer package with a fixed shell entry.",
-            "type": "string"
-          },
-          {
-            "const": "homebrew",
-            "description": "Exact formula from a fixed Homebrew tap.",
-            "type": "string"
-          },
-          {
-            "const": "windowsBundle",
-            "description": "RSS archive with a PowerShell entry.",
-            "type": "string"
-          },
-          {
-            "const": "macosBundle",
-            "description": "RSS archive with an explicit sh/Bash entry.",
+          "path": {
+            "description": "Absolute protected path selected by the trusted compiler.",
             "type": "string"
           }
-        ]
+        },
+        "required": [
+          "path",
+          "artifact"
+        ],
+        "type": "object"
       },
       "SoftwareOperation": {
         "description": "One backend software intent, independent of individual process exit codes.",
@@ -2053,10 +2480,6 @@
         "additionalProperties": false,
         "description": "One executable step; dependency selection and ordering have already happened on the server.",
         "properties": {
-          "adapter": {
-            "$ref": "#/$defs/SoftwareKind",
-            "description": "Closed native adapter selection."
-          },
           "allowDowngrade": {
             "description": "Permission for an exact downgrade; unknown comparisons do not imply permission.",
             "type": "boolean"
@@ -2069,27 +2492,12 @@
             "$ref": "#/$defs/PackageValue",
             "description": "Common architecture selector from the device-bound backend task."
           },
-          "bundle": {
-            "anyOf": [
-              {
-                "$ref": "#/$defs/BundleManifest"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Exact V4 Bundle declaration; never an alternate archive manifest."
-          },
-          "bundleLimits": {
-            "anyOf": [
-              {
-                "$ref": "#/$defs/BundleLimits"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Bounded extraction resources for Bundle only."
+          "auxiliary": {
+            "additionalProperties": {
+              "$ref": "#/$defs/SoftwareInvocation"
+            },
+            "description": "Exact additional physical operations, each with its own durable phase boundary.",
+            "type": "object"
           },
           "detection": {
             "$ref": "#/$defs/SoftwareDetector",
@@ -2099,20 +2507,20 @@
             "$ref": "#/$defs/ExistingSoftware",
             "description": "Permission to change existing user installations, supplied by the backend."
           },
-          "exportIdentity": {
-            "anyOf": [
-              {
-                "$ref": "#/$defs/Id"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Backend export identity, retained verbatim for WinGet and Homebrew."
+          "format": {
+            "$ref": "#/$defs/SoftwareFormat",
+            "description": "Closed native material semantics; adapter identity is derived."
           },
           "install": {
             "$ref": "#/$defs/SoftwareInvocation",
             "description": "Frozen install/update invocation."
+          },
+          "materials": {
+            "description": "Complete retained material coordinates; recovery never guesses alternate paths.",
+            "items": {
+              "$ref": "#/$defs/SoftwareMaterial"
+            },
+            "type": "array"
           },
           "package": {
             "$ref": "#/$defs/PackageValue",
@@ -2121,6 +2529,13 @@
           "payload": {
             "$ref": "#/$defs/ExactArtifactRef",
             "description": "Exact primary package, formula, manifest or Bundle bytes."
+          },
+          "signatures": {
+            "description": "Native signature requirements on exact declared artifacts.",
+            "items": {
+              "$ref": "#/$defs/SoftwareSignature"
+            },
+            "type": "array"
           },
           "uninstall": {
             "anyOf": [
@@ -2133,24 +2548,161 @@
             ],
             "description": "Explicit frozen removal; absence means unsupported."
           },
+          "upgrade": {
+            "$ref": "#/$defs/SoftwareUpgrade",
+            "description": "Frozen strategy for an existing different version."
+          },
           "version": {
             "$ref": "#/$defs/PackageValue",
             "description": "Exact version, also required for uninstall; there is no latest selector."
           }
         },
         "required": [
-          "adapter",
+          "format",
           "package",
           "version",
           "architecture",
           "payload",
+          "materials",
+          "signatures",
+          "upgrade",
           "install",
+          "auxiliary",
           "detection",
           "existing",
           "allowDowngrade",
           "allowReboot"
         ],
         "type": "object"
+      },
+      "SoftwareSignature": {
+        "description": "Expected native signature, applied to immutable bytes and selected inner payloads.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "description": "Authenticode certificate subject on one exact artifact.",
+            "properties": {
+              "artifact": {
+                "$ref": "#/$defs/ExactArtifactRef",
+                "description": "Exact artifact content identity."
+              },
+              "kind": {
+                "const": "authenticode",
+                "type": "string"
+              },
+              "publisher": {
+                "$ref": "#/$defs/PackageValue",
+                "description": "Approved native publisher."
+              }
+            },
+            "required": [
+              "kind",
+              "artifact",
+              "publisher"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Apple Developer ID TeamIdentifier on image and selected payload.",
+            "properties": {
+              "artifact": {
+                "$ref": "#/$defs/ExactArtifactRef",
+                "description": "Exact image or package artifact."
+              },
+              "kind": {
+                "const": "appleDeveloperId",
+                "type": "string"
+              },
+              "publisher": {
+                "$ref": "#/$defs/PackageValue",
+                "description": "Approved native publisher/team identity."
+              }
+            },
+            "required": [
+              "kind",
+              "artifact",
+              "publisher"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "MSIX native package publisher and platform trust.",
+            "properties": {
+              "artifact": {
+                "$ref": "#/$defs/ExactArtifactRef",
+                "description": "Exact container content identity."
+              },
+              "kind": {
+                "const": "msix",
+                "type": "string"
+              },
+              "publisher": {
+                "$ref": "#/$defs/PackageValue",
+                "description": "Approved manifest publisher DN."
+              }
+            },
+            "required": [
+              "kind",
+              "artifact",
+              "publisher"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "SoftwareUpgrade": {
+        "description": "Update strategy selected by the source, without inferred switches or removal discovery.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "description": "Exact distinct update invocation.",
+            "properties": {
+              "invocation": {
+                "$ref": "#/$defs/SoftwareInvocation",
+                "description": "Frozen update command."
+              },
+              "kind": {
+                "const": "inPlace",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "invocation"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Execute the explicit removal before the exact install.",
+            "properties": {
+              "kind": {
+                "const": "uninstallThenInstall",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Reject changes to an existing different version.",
+            "properties": {
+              "kind": {
+                "const": "deny",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
       },
       "StandardInput": {
         "description": "Noninteractive stdin only: no inherited handle, terminal, literal body or executable text.",
@@ -2355,8 +2907,8 @@
         "description": "Requested target execution identity, separate from actor and originating login."
       },
       "schemaVersion": {
-        "$ref": "#/$defs/LocalContractV5",
-        "description": "Required current V5 discriminator; absent or unsupported versions are rejected."
+        "$ref": "#/$defs/LocalContractV6",
+        "description": "Required current V6 discriminator; absent or unsupported versions are rejected."
       },
       "sessionRequirement": {
         "$ref": "#/$defs/SessionRequirement",

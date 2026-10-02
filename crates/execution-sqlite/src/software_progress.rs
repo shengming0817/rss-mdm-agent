@@ -53,6 +53,7 @@ impl Store {
         tx.execute("INSERT INTO software_progress(attempt_id,body) VALUES(?1,?2) ON CONFLICT(attempt_id) DO UPDATE SET body=excluded.body",
             params![attempt.id.as_str(), encode(facts, self.limits.max_record_bytes)?])?;
         ownership(&tx, &plan, facts, previous_count, self.limits)?;
+        crate::software::settle(&tx, &plan, execution.snapshot(), self.limits)?;
         tx.commit().map_err(|_| Error::OperationCommitUnknown)?;
         Ok(CommittedSoftwareProgress(facts.clone()))
     }

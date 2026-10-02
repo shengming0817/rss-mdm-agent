@@ -360,6 +360,8 @@ def main():
     parser.add_argument('--backend', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--desktop', type=Path)
+    parser.add_argument('--dmg-upgrade-app', type=Path, help='Second approved notarized app version for the same exact target')
+    parser.add_argument('--dmg-app', type=Path, help='Approved notarized .app to place in an exact local DMG; no signature bypass')
     parser.add_argument('--authorization-password-file', type=Path)
     args = parser.parse_args()
     if os.uname().sysname != 'Darwin' or os.geteuid() == 0:
@@ -442,7 +444,7 @@ def main():
         installer.chmod(0o600)
         system_installer_source = installer_source.replace("'ProcessType': 'Background'", "'ProcessType': 'Background', 'StandardErrorPath': " + repr(str(protected/'service-stderr.log')))
         shutil.copyfile(lab / 'tls.pem', inputs / 'tls.pem')
-        deployment = dict(version=2, ipc_version=6, origin=f'https://localhost:{proxy.server_port}/', tenant=info['tenant'],
+        deployment = dict(version=2, ipc_version=7, origin=f'https://localhost:{proxy.server_port}/', tenant=info['tenant'],
                           signing_keys={'test': info['key']}, ca_file=str(protected / 'ca.pem'),
                           enrollment=str(uuid.uuid4()), registration_operation=str(uuid.uuid4()),
                           state_root=str(protected / 'state'),
@@ -570,9 +572,16 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
         run('/usr/bin/python3', str(installer), 'install', '--scope', 'user', '--binary', str(binary), '--config', str(config))
         helper = True
         def query():
-            reply = json.loads(run(str(binary), '--config', str(config), '--query').stdout)['reply']
-            assert reply['kind'] == 'tasks' and isinstance(reply['value']['items'], list)
-            return reply
+            deadline = time.monotonic() + 15
+            while True:
+                reply = json.loads(run(str(binary), '--config', str(config), '--query').stdout)['reply']
+                if reply['kind'] == 'tasks' and isinstance(reply['value']['items'], list):
+                    return reply
+                # Read-only queries can meet a busy single owner while it validates material.
+                # Authentication rejection is terminal; only bounded Unavailable is retried.
+                if reply['kind'] != 'unavailable' or time.monotonic() >= deadline:
+                    raise RuntimeError('authenticated task query failed: ' + json.dumps(reply))
+                time.sleep(.2)
         def completed(task, seconds=30):
             deadline = time.monotonic() + seconds
             while time.monotonic() < deadline:
@@ -644,13 +653,29 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
         package_receipt = 'org.rss.verification.' + tag
         run('/usr/bin/pkgbuild', '--root', str(payload), '--identifier', package_receipt,
             '--version', '1.0', '--install-location', str(protected / 'package-payload'), str(pkg))
+        if args.dmg_app:
+            image_source = lab/'contained'; image_source.mkdir()
+            contained_pkg = lab/'contained.pkg';contained_receipt = package_receipt+'.dmg'
+            run('/usr/bin/pkgbuild','--root',str(payload),'--identifier',contained_receipt,'--version','1.0','--install-location',str(protected/'contained-package-payload'),str(contained_pkg))
+            run('/usr/bin/ditto',str(contained_pkg),str(image_source/'fixed.pkg'))
+            contained_image = lab/'contained.dmg'; contained_volume = 'RSS-PKG-'+tag
+            run('/usr/bin/hdiutil','create','-srcfolder',str(image_source),'-volname',contained_volume,'-format','UDRO',str(contained_image))
+            pkg_task = command('dmg',path=str(contained_image),volume=contained_volume,receipt=contained_receipt,contained='fixed.pkg',
+                length=contained_pkg.stat().st_size,sha256=list(hashlib.sha256(contained_pkg.read_bytes()).digest()),bundle=contained_receipt,version='1.0')
+            pkg_remote = completed(pkg_task['attempt'],120)
+            pkg_event = acknowledged_result(pkg_remote,pkg_task['attempt'])
+            assert pkg_event['steps'][0]['process']['kind'] == 'exited' and pkg_event['steps'][0]['process']['code'] != 0
+            assert pkg_event['steps'][0]['after']['state'] == 'absent'
+            assert not (protected/'contained-package-payload/fixed.txt').exists()
+            assert subprocess.run(['/usr/sbin/pkgutil','--pkg-info-plist',contained_receipt],capture_output=True).returncode != 0
+            receipt['scenarios']['dmg_contained_pkg_unsigned_rejected'] = pkg_remote
         third = command('package', path=str(pkg), receipt=package_receipt)
         package = completed(third['attempt'], 60)
         event = acknowledged_result(package, third['attempt'])
         assert event['kind'] == 'software_result' and len(event['steps']) == 1
         step = event['steps'][0]
         assert step['process'] == {'kind':'exited','code':0}
-        assert step['diagnostics']['failure'] is None
+        assert step['diagnostics']['failure'] == 'capture_failed'
         assert (protected / 'package-payload/fixed.txt').read_text() == 'controlled package payload\n'
         import plistlib
         installed_receipt = plistlib.loads(run('/usr/sbin/pkgutil', '--pkg-info-plist', package_receipt).stdout.encode())
@@ -664,6 +689,58 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
             records = [r for r in final['value']['items'] if r['action']['initiator'].get('attempt') == attempt]
             assert len(records) == 1 and records[0]['status']['attempts'] == 1
         receipt['scenarios']['final_ipc'] = final
+        if args.dmg_app:
+            application = args.dmg_app.resolve()
+            info = plistlib.loads((application/'Contents/Info.plist').read_bytes())
+            run('/usr/bin/codesign','--verify','--deep','--strict',str(application))
+            run('/usr/sbin/spctl','--assess','--type','execute',str(application))
+            source = lab/'image-payload'; source.mkdir()
+            run('/usr/bin/ditto',str(application),str(source/application.name))
+            image = lab/'fixed.dmg'
+            volume = 'RSS-'+tag
+            run('/usr/bin/hdiutil','create','-srcfolder',str(source),'-volname',volume,'-format','UDRO',str(image))
+            target_name = 'RSS-'+tag+'.app'
+            installed_app = Path('/Applications')/target_name
+            assert not installed_app.exists(), 'refuse existing application target'
+            parameters = dict(path=str(image),volume=volume,application=application.name,bundle=info['CFBundleIdentifier'],
+                              version=info['CFBundleShortVersionString'],target=target_name)
+            app_task = command('dmg',**parameters)
+            remote = completed(app_task['attempt'],120)
+            app_event = acknowledged_result(remote,app_task['attempt'])
+            assert app_event['steps'][0]['after']['state'] == 'present'
+            assert app_event['steps'][0]['diagnostics']['failure'] is None
+            run('/usr/bin/codesign','--verify','--deep','--strict',str(installed_app))
+            run('/usr/sbin/spctl','--assess','--type','execute',str(installed_app))
+            app_records = [r for r in query()['value']['items'] if r['action']['initiator'].get('attempt') == app_task['attempt']]
+            assert len(app_records) == 1 and app_records[0]['status']['phase'] == 'verified'
+            receipt['scenarios']['dmg_app_install'] = dict(backend=remote,record=app_records[0],imageSha256=hashlib.sha256(image.read_bytes()).hexdigest())
+            if args.dmg_upgrade_app:
+                upgrade_app = args.dmg_upgrade_app.resolve(); upgrade_info = plistlib.loads((upgrade_app/'Contents/Info.plist').read_bytes())
+                assert upgrade_info['CFBundleIdentifier'] == info['CFBundleIdentifier'] and upgrade_info['CFBundleShortVersionString'] != info['CFBundleShortVersionString']
+                run('/usr/bin/codesign','--verify','--deep','--strict',str(upgrade_app)); run('/usr/sbin/spctl','--assess','--type','execute',str(upgrade_app))
+                upgrade_source = lab/'upgrade-image-payload';upgrade_source.mkdir(); run('/usr/bin/ditto',str(upgrade_app),str(upgrade_source/upgrade_app.name))
+                upgrade_image = lab/'upgrade.dmg';upgrade_volume = 'RSS-UP-'+tag
+                run('/usr/bin/hdiutil','create','-srcfolder',str(upgrade_source),'-volname',upgrade_volume,'-format','UDRO',str(upgrade_image))
+                parameters.update(path=str(upgrade_image),volume=upgrade_volume,application=upgrade_app.name,version=upgrade_info['CFBundleShortVersionString'])
+                upgrade_task = command('dmg',**parameters); upgraded = completed(upgrade_task['attempt'],120)
+                upgrade_event = acknowledged_result(upgraded,upgrade_task['attempt'])
+                assert upgrade_event['steps'][0]['before']['version'] == info['CFBundleShortVersionString']
+                assert upgrade_event['steps'][0]['after']['version'] == upgrade_info['CFBundleShortVersionString'] and upgrade_event['steps'][0]['diagnostics']['failure'] is None
+                observed_upgrade = plistlib.loads((installed_app/'Contents/Info.plist').read_bytes())
+                assert observed_upgrade['CFBundleShortVersionString'] == upgrade_info['CFBundleShortVersionString']
+                run('/usr/bin/codesign','--verify','--deep','--strict',str(installed_app))
+                run('/usr/sbin/spctl','--assess','--type','execute',str(installed_app))
+                receipt['scenarios']['dmg_app_upgrade'] = upgraded
+            remove_task = command('dmg',uninstall=True,**parameters)
+            removed = completed(remove_task['attempt'],120)
+            remove_event = acknowledged_result(removed,remove_task['attempt'])
+            assert remove_event['steps'][0]['after']['state'] == 'absent'
+            assert remove_event['steps'][0]['diagnostics']['failure'] is None and not installed_app.exists()
+            receipt['scenarios']['dmg_app_uninstall'] = removed
+            mounts = plistlib.loads(run('/usr/bin/hdiutil','info','-plist').stdout.encode())
+            # The worker mounts its protected cached image, rather than the lab source path.
+            assert not any(Path(item.get('image-path','')).is_relative_to(protected)
+                           for item in mounts.get('images',[])), 'owned cached image remains mounted'
         marker = protected / 'cancel-started'
         cancel_tail = protected / 'cancel-tail'
         fourth = command('script', body=f"umask 022; printf x > {shlex.quote(str(marker))}; printf '{{\"fixture\":\"cancel\"}}\\n'; /bin/sleep 20; printf x > {shlex.quote(str(cancel_tail))}\n")

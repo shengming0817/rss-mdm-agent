@@ -12,6 +12,14 @@ impl Progress {
         let state = self.state.lock().map_err(|_| Error::Unavailable)?;
         Ok(state.1 && state.0.as_ref().is_some_and(|p| p.complete(plan)))
     }
+    pub(super) fn closed(&self, plan: &FrozenExecution) -> Result<bool, Error> {
+        let state = self.state.lock().map_err(|_| Error::Unavailable)?;
+        Ok(state.1
+            && state
+                .0
+                .as_ref()
+                .is_some_and(|progress| progress.closed(plan)))
+    }
     pub(super) fn new() -> Self {
         Self {
             state: Mutex::new((None, false)),

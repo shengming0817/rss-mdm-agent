@@ -178,6 +178,14 @@ function adapterLabel(
   value: SoftwareAction["steps"][number]["adapter"],
 ): string {
   switch (value) {
+    case "exe":
+      return "Windows EXE";
+    case "msix":
+      return "Windows MSIX";
+    case "dmgApp":
+      return "macOS DMG 应用";
+    case "dmgPkg":
+      return "macOS DMG PKG";
     case "msi":
       return "Windows MSI";
     case "winget":
@@ -278,7 +286,16 @@ const text = (value: unknown) => JSON.stringify(value, null, 2);
                 v-for="(step, index) in details.action.execution.steps"
                 :key="index"
               >
-                {{ adapterLabel(step.adapter) }} · {{ step.package }}
+                {{ adapterLabel(step.adapter)
+                }}<template v-if="step.deployment">
+                  ·
+                  {{
+                    step.deployment === "futureUsers"
+                      ? "未来用户预配置"
+                      : "目标用户注册"
+                  }}</template
+                >
+                · {{ step.package }}
                 {{ step.version }}
               </li>
             </ol>

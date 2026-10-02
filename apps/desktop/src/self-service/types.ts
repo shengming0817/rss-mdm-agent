@@ -259,11 +259,22 @@ export type ExecutionSummary =
  */
 export type SoftwareKind =
   | "msi"
+  | "exe"
+  | "msix"
+  | "dmgApp"
+  | "dmgPkg"
   | "winget"
   | "pkg"
   | "homebrew"
   | "windowsBundle"
   | "macosBundle";
+/**
+ * Safe native package effect for task details.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "SoftwareDeploymentSummary".
+ */
+export type SoftwareDeploymentSummary = "targetUser" | "futureUsers";
 /**
  * Exact ecosystem text: no SemVer, case folding, alias lookup or normalization.
  * Accepts 1..=1024 UTF-8 bytes without control characters, including '+' and '~'.
@@ -354,9 +365,9 @@ export type Initiator =
     };
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "LocalContractV5".
+ * via the `definition` "LocalContractV6".
  */
-export type LocalContractV5 = 5;
+export type LocalContractV6 = 6;
 /**
  * Required target user-session availability, independent of the originating login.
  *
@@ -807,7 +818,7 @@ export interface FrozenExecutionSummary {
   /**
    * Version of the frozen execution plan, independent of the AI wire version.
    */
-  schemaVersion: LocalContractV5;
+  schemaVersion: LocalContractV6;
   /**
    * Required target user session.
    */
@@ -869,6 +880,10 @@ export interface SoftwareStepSummary {
    * Selected closed adapter.
    */
   adapter: SoftwareKind;
+  /**
+   * Native MSIX effect, separately from OS account used to execute it.
+   */
+  deployment: SoftwareDeploymentSummary | null;
   /**
    * Exact backend package.
    */

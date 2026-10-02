@@ -588,26 +588,36 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
                 &active.id,
                 &self.adapter(None, Some(execution.input())),
             )? {
-                if matches!(
-                    progress.checkpoints.last(),
-                    Some(execution_contract::SoftwareCheckpoint::Complete { .. })
-                ) && !progress.complete(execution.input())
-                {
-                    let allowance = execution
-                        .allowance(self.host.reliable_now()?)
-                        .map_err(|_| Error::Clock)?;
-                    if allowance.remaining_timeout_ms > 0 && allowance.remaining_output_bytes > 0 {
-                        self.runner.resume_software(crate::SoftwareResume {
-                            ownership: self.store.software_ownership(
-                                &scope,
-                                &self.adapter(None, Some(execution.input())),
-                            )?,
-                            plan: execution.input().clone(),
-                            progress,
-                            allowance,
-                        })?;
+                if progress.resumable(execution.input()) {
+                    if let Ok(allowance) = execution.allowance(self.host.reliable_now()?) {
+                        if allowance.remaining_timeout_ms > 0
+                            && allowance.remaining_output_bytes > 0
+                        {
+                            self.runner.resume_software(crate::SoftwareResume {
+                                ownership: self.store.software_ownership(
+                                    &scope,
+                                    &self.adapter(None, Some(execution.input())),
+                                )?,
+                                plan: execution.input().clone(),
+                                progress,
+                                allowance,
+                            })?;
+                        }
                     }
                 }
+            }
+        }
+        if let Some(progress) = self.store.software_progress(
+            &scope,
+            &active.id,
+            &self.adapter(None, Some(execution.input())),
+        )? {
+            if progress.cleanup_allowance(execution.input()).is_some() {
+                self.runner
+                    .resume_software_cleanup(crate::SoftwareCleanupResume {
+                        plan: execution.input().clone(),
+                        progress,
+                    })?;
             }
         }
         let host = Host::new(&self.host, &self.binding, &self.config, None)
@@ -655,16 +665,31 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
                     progress
                         .filter(|progress| progress.complete(execution.input()))
                         .and_then(|progress| {
-                            progress.checkpoints.iter().rev().find_map(|c| match c {
-                                execution_contract::SoftwareCheckpoint::End {
-                                    process: Some(facts),
-                                    ..
-                                } => {
-                                    let mut facts = *facts.clone();
-                                    facts.total_output_bytes = progress.output_bytes;
-                                    Some(facts)
-                                }
-                                _ => None,
+                            let process = |physical_only: bool| {
+                                progress.checkpoints.iter().rev().find_map(|c| match c {
+                                    execution_contract::SoftwareCheckpoint::End {
+                                        phase,
+                                        process: Some(facts),
+                                        ..
+                                    } if !physical_only
+                                        || (!phase.is_observation()
+                                            && !matches!(
+                                                phase,
+                                                execution_contract::SoftwarePhase::Attach
+                                                    | execution_contract::SoftwarePhase::Cleanup
+                                            )) =>
+                                    {
+                                        Some(facts)
+                                    }
+                                    _ => None,
+                                })
+                            };
+                            // Restore installer/reboot facts, using detector capture only when
+                            // the complete sequence required no physical mutation.
+                            process(true).or_else(|| process(false)).map(|facts| {
+                                let mut facts = *facts.clone();
+                                facts.total_output_bytes = progress.output_bytes;
+                                facts
                             })
                         })
                         .or(stored)
@@ -676,7 +701,13 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
                 .with_input(Some(execution.input()));
             self.store
                 .record_process(&Scope::from_input(execution.input()), facts, &host)?;
-            if facts.total_output_bytes > active.output_bytes {
+            if execution
+                .snapshot()
+                .attempt
+                .as_ref()
+                .is_some_and(|attempt| attempt.termination.is_none())
+                && facts.total_output_bytes > active.output_bytes
+            {
                 let result = self.command(
                     None,
                     execution,
@@ -701,7 +732,9 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
                 self.runner.acknowledge_capture(execution.input(), facts)?;
             }
         }
-        // Step output remains charged even when there is no whole-sequence capture.
+        // While the attempt is active, step output is also charged without a whole capture.
+        // After termination, bounded recovery output stays in the append-only software journal;
+        // it cannot revise the immutable original process exit or lifecycle output total.
         if let Some(progress) = self.store.software_progress(
             &Scope::from_input(execution.input()),
             &active.id,
@@ -713,7 +746,13 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
                 .as_ref()
                 .ok_or(Error::Conflict)?
                 .output_bytes;
-            if progress.output_bytes > charged {
+            if execution
+                .snapshot()
+                .attempt
+                .as_ref()
+                .is_some_and(|attempt| attempt.termination.is_none())
+                && progress.output_bytes > charged
+            {
                 let result = self.command(
                     None,
                     execution,
@@ -849,8 +888,21 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
                     &attempt.id,
                     &self.adapter(None, Some(execution.input())),
                 )?
-                .filter(|p| p.complete(execution.input()))
-                .map(|_| ObservationFacts {
+                .filter(|progress| {
+                    progress.complete(execution.input())
+                        || (progress.closed(execution.input())
+                            && (capture.as_ref().is_some_and(|facts| facts.finished)
+                                || matches!(
+                                    progress.checkpoints.last(),
+                                    Some(execution_contract::SoftwareCheckpoint::CleanupEnd {
+                                        resources_closed: true,
+                                        ..
+                                    })
+                                ))
+                            && (stage == ObservationStage::Termination
+                                || attempt.assessment.is_none()))
+                })
+                .map(|progress| ObservationFacts {
                     request_id: execution.input().spec().request.request_id.clone(),
                     content_digest: execution.input().digest().clone(),
                     attempt_id: attempt.id.clone(),
@@ -873,7 +925,11 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
                         Observation::Quiescent {}
                     } else {
                         Observation::Effect {
-                            assessment: execution_lifecycle::EffectAssessment::Satisfied,
+                            assessment: if progress.complete(execution.input()) {
+                                execution_lifecycle::EffectAssessment::Satisfied
+                            } else {
+                                execution_lifecycle::EffectAssessment::Unknown
+                            },
                         }
                     },
                 });

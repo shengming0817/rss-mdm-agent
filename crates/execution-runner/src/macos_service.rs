@@ -337,7 +337,7 @@ mod tests {
             &handler,
             &stop,
             &peer,
-            br#"{"version":6,"request":{"method":"status","request":"r"}}"#
+            br#"{"version":7,"request":{"method":"status","request":"r"}}"#
         )
         .is_err());
         assert!(stop.load(Ordering::Acquire));

@@ -37,6 +37,8 @@ pub struct SoftwareInvocation {
     pub timeout_ms: u64,
     /// Shared diagnostic byte budget; observations and recovery do not replenish it.
     pub output_bytes: u64,
+    /// Exact successful and reboot-required exits authorized by the source.
+    pub exit_codes: SoftwareExitCodes,
 }
 /// Independent V4 detection rules; no installer exit is a detection result.
 #[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -71,8 +73,8 @@ pub enum SoftwareDetector {
 #[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SoftwareProgramStep {
-    /// Closed native adapter selection.
-    pub adapter: SoftwareKind,
+    /// Closed native material semantics; adapter identity is derived.
+    pub format: SoftwareFormat,
     /// Exact package coordinate, without a local source catalog.
     pub package: PackageValue,
     /// Exact version, also required for uninstall; there is no latest selector.
@@ -81,10 +83,16 @@ pub struct SoftwareProgramStep {
     pub architecture: PackageValue,
     /// Exact primary package, formula, manifest or Bundle bytes.
     pub payload: ExactArtifactRef,
-    /// Backend export identity, retained verbatim for WinGet and Homebrew.
-    pub export_identity: Option<Id>,
+    /// Complete retained material coordinates; recovery never guesses alternate paths.
+    pub materials: Vec<SoftwareMaterial>,
+    /// Native signature requirements on exact declared artifacts.
+    pub signatures: Vec<SoftwareSignature>,
+    /// Frozen strategy for an existing different version.
+    pub upgrade: SoftwareUpgrade,
     /// Frozen install/update invocation.
     pub install: SoftwareInvocation,
+    /// Exact additional physical operations, each with its own durable phase boundary.
+    pub auxiliary: std::collections::BTreeMap<SoftwarePhase, SoftwareInvocation>,
     /// Explicit frozen removal; absence means unsupported.
     pub uninstall: Option<SoftwareInvocation>,
     /// Independent detector used under one shared observation budget.
@@ -95,22 +103,12 @@ pub struct SoftwareProgramStep {
     pub allow_downgrade: bool,
     /// Whether a required reboot may be reported for separately authorized handling.
     pub allow_reboot: bool,
-    /// Exact V4 Bundle declaration; never an alternate archive manifest.
-    pub bundle: Option<BundleManifest>,
-    /// Bounded extraction resources for Bundle only.
-    pub bundle_limits: Option<BundleLimits>,
 }
 impl SoftwareProgramStep {
     /// Installer completion only; independent detection and quiescence still gate the step.
     /// MSI reboot codes never authorize this client to initiate a reboot.
     pub fn mutation_succeeded(&self, facts: &ProcessEvidence) -> bool {
-        facts.end == ProcessEnd::Exited
-            && facts.failure_kind == ProcessFailureKind::None
-            && match facts.exit_code {
-                Some(0) => true,
-                Some(3010 | 1641) => self.adapter == SoftwareKind::Msi && self.allow_reboot,
-                _ => false,
-            }
+        self.install.succeeded(facts, self.allow_reboot)
     }
 }
 /// A single backend attempt and one execution intent, containing every ordered step.
@@ -134,11 +132,76 @@ impl SoftwareProgram {
                 SoftwareOperation::Uninstall => step.uninstall.as_ref(),
                 SoftwareOperation::Detect => None,
             },
-            SoftwarePhase::Before | SoftwarePhase::After => match &step.detection {
-                SoftwareDetector::Script { invocation } => Some(invocation),
+            SoftwarePhase::Removal => step.auxiliary.get(&phase).or(step.uninstall.as_ref()),
+            SoftwarePhase::Upgrade => match &step.upgrade {
+                SoftwareUpgrade::InPlace { invocation } => Some(invocation),
                 _ => None,
             },
+            SoftwarePhase::Attach | SoftwarePhase::Stage | SoftwarePhase::Cleanup => {
+                step.auxiliary.get(&phase)
+            }
+            SoftwarePhase::Before | SoftwarePhase::RemovalAfter | SoftwarePhase::After => {
+                match &step.detection {
+                    SoftwareDetector::Script { invocation } => Some(invocation),
+                    _ => None,
+                }
+            }
         }
+    }
+    /// Desired effect, evaluated independently of installer process exits.
+    pub fn satisfied(&self, step: &SoftwareProgramStep, state: &SoftwareState) -> bool {
+        match self.intent {
+            SoftwareOperation::Install => {
+                matches!(state, SoftwareState::Present { version } if version == &step.version)
+            }
+            SoftwareOperation::Uninstall => matches!(state, SoftwareState::Absent {}),
+            SoftwareOperation::Detect => !matches!(state, SoftwareState::Unknown { .. }),
+        }
+    }
+    /// Ordered physical operations derived from the frozen format, intent and before-state.
+    pub fn mutation_phases(
+        &self,
+        step: &SoftwareProgramStep,
+        before: &SoftwareState,
+    ) -> Vec<SoftwarePhase> {
+        if self.intent == SoftwareOperation::Detect
+            || matches!(before, SoftwareState::Unknown { .. })
+        {
+            return Vec::new();
+        }
+        let updating = self.intent == SoftwareOperation::Install
+            && matches!(before, SoftwareState::Present { .. });
+        if updating && matches!(step.upgrade, SoftwareUpgrade::Deny {}) {
+            return Vec::new();
+        }
+        let mut phases = Vec::new();
+        if step.auxiliary.contains_key(&SoftwarePhase::Attach)
+            && (self.intent == SoftwareOperation::Install
+                || matches!(step.format, SoftwareFormat::DmgApp { .. }))
+        {
+            phases.push(SoftwarePhase::Attach);
+            if step.auxiliary.contains_key(&SoftwarePhase::Stage) {
+                phases.push(SoftwarePhase::Stage);
+            }
+        }
+        if updating && matches!(step.upgrade, SoftwareUpgrade::UninstallThenInstall {}) {
+            phases.push(SoftwarePhase::Removal);
+            phases.push(SoftwarePhase::RemovalAfter);
+        }
+        phases.push(
+            if updating && matches!(step.upgrade, SoftwareUpgrade::InPlace { .. }) {
+                SoftwarePhase::Upgrade
+            } else {
+                SoftwarePhase::Mutation
+            },
+        );
+        if step.auxiliary.contains_key(&SoftwarePhase::Cleanup)
+            && (self.intent == SoftwareOperation::Install
+                || matches!(step.format, SoftwareFormat::DmgApp { .. }))
+        {
+            phases.push(SoftwarePhase::Cleanup);
+        }
+        phases
     }
     /// Agent serialization keys, deliberately independent of tenant and package-name aliases.
     /// These claims never promise exclusion of unrelated OS writers.
@@ -147,10 +210,13 @@ impl SoftwareProgram {
         for step in &self.steps {
             keys.insert(format!(
                 "manager-{}",
-                match step.adapter {
-                    SoftwareKind::Msi | SoftwareKind::Winget => "windows-installers",
-                    SoftwareKind::Pkg => "macos-installer",
+                match step.format.adapter() {
+                    SoftwareKind::Msi | SoftwareKind::Exe | SoftwareKind::Winget =>
+                        "windows-installers",
+                    SoftwareKind::Pkg | SoftwareKind::DmgPkg => "macos-installer",
                     SoftwareKind::Homebrew => "homebrew",
+                    SoftwareKind::Msix => "windows-package-deployment",
+                    SoftwareKind::DmgApp => "macos-applications",
                     SoftwareKind::WindowsBundle | SoftwareKind::MacosBundle => "rss-bundle",
                 }
             ));
@@ -171,16 +237,68 @@ impl SoftwareProgramStep {
     /// Stable native resource identity across version updates, independent of display aliases.
     pub fn ownership_key(&self, operation: SoftwareOperation) -> String {
         use sha2::{Digest as _, Sha256};
-        let detector = match &self.detection {
-            SoftwareDetector::MsiProduct { product_code, .. } => product_code.clone(),
-            SoftwareDetector::PkgReceipt { receipt, .. } => receipt.clone(),
-            SoftwareDetector::Script { invocation } => format!(
-                "{:x}",
-                Sha256::digest(
-                    serde_json_canonicalizer::to_vec(&(&invocation.launch, &invocation.run_as))
-                        .expect("closed detector")
-                )
+        let native_identity = match &self.format {
+            SoftwareFormat::Exe { ownership, .. } => {
+                Some(serde_json::to_vec(ownership).expect("closed identity"))
+            }
+            SoftwareFormat::Msix {
+                identity,
+                deployment,
+                ..
+            } => Some(
+                serde_json::to_vec(&(
+                    identity.name.as_str(),
+                    identity.publisher.as_str(),
+                    identity.resource_id.as_str(),
+                    identity.architecture.as_str(),
+                    deployment,
+                ))
+                .expect("closed identity"),
             ),
+            SoftwareFormat::DmgApp {
+                bundle_id,
+                target_name,
+                ..
+            } => Some(
+                serde_json::to_vec(&(
+                    bundle_id.as_str(),
+                    target_name,
+                    self.signatures
+                        .iter()
+                        .map(|s| match s {
+                            SoftwareSignature::AppleDeveloperId { publisher, .. } => {
+                                ("apple", publisher.as_str())
+                            }
+                            SoftwareSignature::Authenticode { publisher, .. } => {
+                                ("authenticode", publisher.as_str())
+                            }
+                            SoftwareSignature::Msix { publisher, .. } => {
+                                ("msix", publisher.as_str())
+                            }
+                        })
+                        .collect::<Vec<_>>(),
+                ))
+                .expect("closed identity"),
+            ),
+            SoftwareFormat::DmgPkg { receipt, .. } => {
+                Some(serde_json::to_vec(receipt).expect("closed identity"))
+            }
+            _ => None,
+        };
+        let detector = if let Some(identity) = native_identity {
+            format!("{:x}", Sha256::digest(identity))
+        } else {
+            match &self.detection {
+                SoftwareDetector::MsiProduct { product_code, .. } => product_code.clone(),
+                SoftwareDetector::PkgReceipt { receipt, .. } => receipt.clone(),
+                SoftwareDetector::Script { invocation } => format!(
+                    "{:x}",
+                    Sha256::digest(
+                        serde_json_canonicalizer::to_vec(&(&invocation.launch, &invocation.run_as))
+                            .expect("closed detector")
+                    )
+                ),
+            }
         };
         let context = if operation == SoftwareOperation::Uninstall {
             self.uninstall.as_ref().unwrap_or(&self.install)
@@ -188,7 +306,7 @@ impl SoftwareProgramStep {
             &self.install
         };
         let bytes = serde_json_canonicalizer::to_vec(&(
-            self.adapter,
+            self.format.adapter(),
             &self.package,
             &self.architecture,
             &context.run_as,
@@ -206,4 +324,40 @@ impl std::fmt::Debug for SoftwareProgram {
             .field("steps", &self.steps.len())
             .finish_non_exhaustive()
     }
+}
+
+impl SoftwareInvocation {
+    /// Match approved exits without inferring installation, quiescence or reboot authority.
+    pub fn succeeded(&self, facts: &ProcessEvidence, allow_reboot: bool) -> bool {
+        facts.end == ProcessEnd::Exited
+            && facts.failure_kind == ProcessFailureKind::None
+            && facts.exit_code.is_some_and(|code| {
+                self.exit_codes.success.contains(&code)
+                    || (allow_reboot && self.exit_codes.reboot.contains(&code))
+            })
+    }
+}
+
+/// One immutable material retained by the original program, including sidecars and native images.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SoftwareMaterial {
+    /// Absolute protected path selected by the trusted compiler.
+    pub path: String,
+    /// Exact declared bytes.
+    pub artifact: ExactArtifactRef,
+}
+
+/// Facts from fixed operations; these describe native completion, never inferred installation.
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SoftwareWorkerResult {
+    /// Bytes observed by native tools, including output consumed for independent checks.
+    pub native_output_bytes: u64,
+    /// Independent observation for a detector only.
+    pub detected: Option<SoftwareState>,
+    /// Native operation completion is known; a process group alone cannot prove this on macOS.
+    pub closed: bool,
+    /// Captured native tool diagnostics within the original budget.
+    pub diagnostics: String,
 }

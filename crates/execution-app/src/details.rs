@@ -1,6 +1,6 @@
 use execution_contract::{
     Digest, ExactArtifactRef, ExecutionBudget, FrozenExecution, InterpreterRef, NetworkAccess,
-    Operation, RequestId, RunAs, SessionRequirement, Target, ValidityWindow, VersionedRef, V5,
+    Operation, RequestId, RunAs, SessionRequirement, Target, ValidityWindow, VersionedRef, V6,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -43,7 +43,7 @@ pub struct FrozenExecutionSummary {
     /// Human or AI origin, without granting execution permission.
     pub initiator: execution_contract::Initiator,
     /// Version of the frozen execution plan, independent of the AI wire version.
-    pub schema_version: V5,
+    pub schema_version: V6,
     /// Closed execution kind without private software paths or source inputs.
     pub execution: ExecutionSummary,
     /// Exact frozen plan identity.
@@ -88,7 +88,12 @@ impl FrozenExecutionSummary {
                             .steps
                             .iter()
                             .map(|step| SoftwareStepSummary {
-                                adapter: step.adapter,
+                                adapter: step.format.adapter(),
+                                deployment: match step.format {
+                                    execution_contract::SoftwareFormat::Msix { deployment: execution_contract::MsixDeployment::DeviceProvisioning {},.. } => Some(SoftwareDeploymentSummary::FutureUsers),
+                                    execution_contract::SoftwareFormat::Msix { deployment: execution_contract::MsixDeployment::TargetUserRegistration {},.. } => Some(SoftwareDeploymentSummary::TargetUser),
+                                    _ => None,
+                                },
                                 package: step.package.clone(),
                                 version: step.version.clone(),
                                 run_as: if program.intent
@@ -191,6 +196,8 @@ pub enum ExecutionSummary {
 pub struct SoftwareStepSummary {
     /// Selected closed adapter.
     pub adapter: execution_contract::SoftwareKind,
+    /// Native MSIX effect, separately from OS account used to execute it.
+    pub deployment: Option<SoftwareDeploymentSummary>,
     /// Exact backend package.
     pub package: execution_contract::PackageValue,
     /// Fixed package version.
@@ -213,4 +220,14 @@ pub enum BackendTaskView {
         /// Real frozen input projection and lifecycle facts.
         value: Box<ExecutionTaskDetails>,
     },
+}
+
+/// Safe native package effect for task details.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum SoftwareDeploymentSummary {
+    /// Registration for the exact bound user.
+    TargetUser,
+    /// Provisioning for future users; existing registrations are unchanged.
+    FutureUsers,
 }

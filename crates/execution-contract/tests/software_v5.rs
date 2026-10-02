@@ -15,15 +15,15 @@ fn limits() -> ExecutionLimits {
 }
 
 #[test]
-fn v5_requires_explicit_execution_kind_and_rejects_old_plans() {
+fn v6_requires_explicit_execution_kind_and_rejects_old_plans() {
     let mut value: serde_json::Value =
         serde_json::from_str(include_str!("fixtures/plan.json")).unwrap();
-    value["schemaVersion"] = 5.into();
+    value["schemaVersion"] = 6.into();
     value["execution"] = serde_json::json!({"kind":"process"});
     assert!(decode_execution(&serde_json::to_vec(&value).unwrap(), &limits()).is_ok());
     value["schemaVersion"] = 2.into();
     assert!(decode_execution(&serde_json::to_vec(&value).unwrap(), &limits()).is_err());
-    value["schemaVersion"] = 5.into();
+    value["schemaVersion"] = 6.into();
     value.as_object_mut().unwrap().remove("execution");
     assert!(decode_execution(&serde_json::to_vec(&value).unwrap(), &limits()).is_err());
 }
@@ -32,7 +32,7 @@ fn v5_requires_explicit_execution_kind_and_rejects_old_plans() {
 fn process_cannot_impersonate_software_operation() {
     let mut value: serde_json::Value =
         serde_json::from_str(include_str!("fixtures/plan.json")).unwrap();
-    value["schemaVersion"] = 5.into();
+    value["schemaVersion"] = 6.into();
     value["execution"] = serde_json::json!({"kind":"process"});
     value["request"]["operation"]["action"] = "software.install".into();
     assert!(decode_execution(&serde_json::to_vec(&value).unwrap(), &limits()).is_err());
@@ -108,6 +108,7 @@ fn journal_history_cannot_skip_unknown_steps_or_rewrite_exits() {
     assert!(progress.valid_for(&plan));
     let begun = progress.clone();
     progress.checkpoints.push(SoftwareCheckpoint::End {
+        duration_ms: 0,
         step: 0,
         phase: SoftwarePhase::Before,
         process: None,
@@ -150,7 +151,17 @@ fn msi_reboot_completion_requires_permission_detection_and_quiescence() {
                         };
                         program.steps.truncate(1);
                         let step = &mut program.steps[0];
-                        step.adapter = adapter;
+                        step.format = if adapter == SoftwareKind::Msi {
+                            SoftwareFormat::Msi {}
+                        } else {
+                            SoftwareFormat::Pkg {}
+                        };
+                        step.install.exit_codes.reboot = if adapter == SoftwareKind::Msi {
+                            [1641, 3010].into_iter().collect()
+                        } else {
+                            Default::default()
+                        };
+                        step.upgrade = SoftwareUpgrade::Deny {};
                         step.allow_reboot = allow_reboot;
                         step.install.run_as = RunAs::System { platform };
                         if platform == Platform::Windows {
@@ -191,6 +202,7 @@ fn msi_reboot_completion_requires_permission_detection_and_quiescence() {
                                     phase: SoftwarePhase::Before,
                                 },
                                 SoftwareCheckpoint::End {
+                                    duration_ms: 0,
                                     step: 0,
                                     phase: SoftwarePhase::Before,
                                     process: None,
@@ -202,6 +214,7 @@ fn msi_reboot_completion_requires_permission_detection_and_quiescence() {
                                     phase: SoftwarePhase::Mutation,
                                 },
                                 SoftwareCheckpoint::End {
+                                    duration_ms: 0,
                                     step: 0,
                                     phase: SoftwarePhase::Mutation,
                                     process: Some(Box::new(facts)),
@@ -213,6 +226,7 @@ fn msi_reboot_completion_requires_permission_detection_and_quiescence() {
                                     phase: SoftwarePhase::After,
                                 },
                                 SoftwareCheckpoint::End {
+                                    duration_ms: 0,
                                     step: 0,
                                     phase: SoftwarePhase::After,
                                     process: None,
@@ -225,7 +239,11 @@ fn msi_reboot_completion_requires_permission_detection_and_quiescence() {
                                 },
                             ],
                         };
-                        assert!(progress.valid_for(&plan));
+                        assert_eq!(progress.valid_for(&plan), quiet);
+                        if !quiet {
+                            continue;
+                        }
+                        assert_eq!(progress.closed(&plan), quiet);
                         progress
                             .checkpoints
                             .push(SoftwareCheckpoint::Complete { step: 0 });
@@ -238,5 +256,314 @@ fn msi_reboot_completion_requires_permission_detection_and_quiescence() {
                 }
             }
         }
+    }
+}
+
+#[test]
+fn approved_exit_policy_and_update_invocation_are_frozen_and_closed() {
+    use execution_contract::*;
+    let input = decode_execution(include_bytes!("fixtures/software.json"), &limits()).unwrap();
+    let original = FrozenExecution::freeze(input.clone(), &limits()).unwrap();
+    let mut changed = input;
+    let ExecutionSpec::SoftwareProgram { program } = &mut changed.execution else {
+        unreachable!()
+    };
+    let step = &mut program.steps[0];
+    step.install.exit_codes.success.insert(42);
+    let mut update = step.install.clone();
+    update.launch.argv.push(LaunchArg::Literal {
+        value: "--approved-update".into(),
+    });
+    step.upgrade = SoftwareUpgrade::InPlace {
+        invocation: Box::new(update),
+    };
+    let changed = FrozenExecution::freeze(changed, &limits()).unwrap();
+    assert_ne!(original.digest(), changed.digest());
+    let mut invalid = changed.spec().clone();
+    let ExecutionSpec::SoftwareProgram { program } = &mut invalid.execution else {
+        unreachable!()
+    };
+    program.steps[0].install.exit_codes.reboot.insert(42);
+    assert!(FrozenExecution::freeze(invalid, &limits()).is_err());
+    let mut old: serde_json::Value =
+        serde_json::from_slice(include_bytes!("fixtures/software.json")).unwrap();
+    old["schemaVersion"] = 5.into();
+    assert!(decode_execution(&serde_json::to_vec(&old).unwrap(), &limits()).is_err());
+    old["schemaVersion"] = 6.into();
+    old["execution"]["program"]["steps"][0]["adapter"] = "exe".into();
+    assert!(decode_execution(&serde_json::to_vec(&old).unwrap(), &limits()).is_err());
+}
+
+#[test]
+fn removal_updates_require_independent_absence_and_keep_failed_work_closed() {
+    use execution_contract::*;
+    let mut input = decode_execution(include_bytes!("fixtures/software.json"), &limits()).unwrap();
+    let ExecutionSpec::SoftwareProgram { program } = &mut input.execution else {
+        unreachable!()
+    };
+    program.steps.truncate(1);
+    let step = &mut program.steps[0];
+    step.uninstall = Some(step.install.clone());
+    step.upgrade = SoftwareUpgrade::UninstallThenInstall {};
+    let before = SoftwareState::Present {
+        version: PackageValue::new("0.9").unwrap(),
+    };
+    assert_eq!(
+        program.mutation_phases(&program.steps[0], &before),
+        vec![
+            SoftwarePhase::Removal,
+            SoftwarePhase::RemovalAfter,
+            SoftwarePhase::Mutation
+        ]
+    );
+    let plan = FrozenExecution::freeze(input, &limits()).unwrap();
+    let attempt = AttemptId::new("same-attempt").unwrap();
+    let runner = Id::new("native").unwrap();
+    let facts = |code| ProcessEvidence {
+        content_digest: plan.digest().clone(),
+        attempt_id: attempt.clone(),
+        runner: runner.clone(),
+        scope: ProcessScope::NotStarted {},
+        finished: true,
+        exit_code: Some(code),
+        end: ProcessEnd::Exited,
+        failure_kind: ProcessFailureKind::None,
+        quiescent: true,
+        stdout: vec![],
+        stderr: vec![],
+        total_output_bytes: 0,
+        quality: OutputQuality::Complete,
+    };
+    let mut progress = SoftwareProgress {
+        attempt_id: attempt.clone(),
+        content_digest: plan.digest().clone(),
+        runner: runner.clone(),
+        elapsed_ms: 40,
+        output_bytes: 0,
+        checkpoints: vec![
+            SoftwareCheckpoint::Begin {
+                step: 0,
+                phase: SoftwarePhase::Before,
+            },
+            SoftwareCheckpoint::End {
+                step: 0,
+                phase: SoftwarePhase::Before,
+                process: None,
+                detected: Some(before),
+                quiescent: true,
+                duration_ms: 5,
+            },
+            SoftwareCheckpoint::Begin {
+                step: 0,
+                phase: SoftwarePhase::Removal,
+            },
+            SoftwareCheckpoint::End {
+                step: 0,
+                phase: SoftwarePhase::Removal,
+                process: Some(Box::new(facts(0))),
+                detected: None,
+                quiescent: true,
+                duration_ms: 10,
+            },
+        ],
+    };
+    assert!(progress.valid_for(&plan) && progress.resumable(&plan));
+    let durable = progress.clone();
+    // Successful removal exit cannot dispatch installation without an absence observation.
+    progress.checkpoints.push(SoftwareCheckpoint::Begin {
+        step: 0,
+        phase: SoftwarePhase::Mutation,
+    });
+    assert!(!progress.valid_for(&plan));
+    progress = durable;
+    progress.checkpoints.extend([
+        SoftwareCheckpoint::Begin {
+            step: 0,
+            phase: SoftwarePhase::RemovalAfter,
+        },
+        SoftwareCheckpoint::End {
+            step: 0,
+            phase: SoftwarePhase::RemovalAfter,
+            process: None,
+            detected: Some(SoftwareState::Absent {}),
+            quiescent: true,
+            duration_ms: 5,
+        },
+        SoftwareCheckpoint::Begin {
+            step: 0,
+            phase: SoftwarePhase::Mutation,
+        },
+        SoftwareCheckpoint::End {
+            step: 0,
+            phase: SoftwarePhase::Mutation,
+            process: Some(Box::new(facts(7))),
+            detected: None,
+            quiescent: true,
+            duration_ms: 10,
+        },
+        SoftwareCheckpoint::Begin {
+            step: 0,
+            phase: SoftwarePhase::After,
+        },
+        SoftwareCheckpoint::End {
+            step: 0,
+            phase: SoftwarePhase::After,
+            process: None,
+            detected: Some(SoftwareState::Absent {}),
+            quiescent: true,
+            duration_ms: 5,
+        },
+    ]);
+    assert!(progress.valid_for(&plan));
+    assert!(progress.closed(&plan));
+    assert!(!progress.complete(&plan));
+    let known_failure = progress.clone();
+    progress.checkpoints.pop();
+    assert!(progress.valid_for(&plan));
+    assert!(!progress.closed(&plan));
+    assert!(!progress.resumable(&plan));
+    progress = known_failure;
+    progress.elapsed_ms = 34;
+    assert!(
+        !progress.valid_for(&plan),
+        "recovery cannot drop already consumed operation time"
+    );
+}
+
+#[test]
+fn cleanup_recovery_closes_resources_without_replaying_unknown_business_work() {
+    use execution_contract::*;
+    let mut input = decode_execution(include_bytes!("fixtures/software.json"), &limits()).unwrap();
+    let ExecutionSpec::SoftwareProgram { program } = &mut input.execution else {
+        unreachable!()
+    };
+    let step = &mut program.steps[0];
+    step.format = SoftwareFormat::DmgPkg {
+        volume: PackageValue::new("Approved").unwrap(),
+        path: "fixed.pkg".into(),
+        length: 1,
+        sha256: step.payload.sha256.clone(),
+        receipt: PackageValue::new("org.rss.fixture").unwrap(),
+    };
+    let mut cleanup = step.install.clone();
+    cleanup.launch.interpreter.profile.id = Id::new("native-software-worker").unwrap();
+    cleanup.timeout_ms = 900;
+    cleanup.output_bytes = 6144;
+    step.auxiliary
+        .insert(SoftwarePhase::Attach, step.install.clone());
+    step.auxiliary.insert(SoftwarePhase::Cleanup, cleanup);
+    let plan = FrozenExecution::freeze(input, &limits()).unwrap();
+    for unknown_mutation in [false, true] {
+        let attempt = AttemptId::new("original-attempt").unwrap();
+        let runner = Id::new("native").unwrap();
+        let facts = |code| {
+            Box::new(ProcessEvidence {
+                content_digest: plan.digest().clone(),
+                attempt_id: attempt.clone(),
+                runner: runner.clone(),
+                scope: ProcessScope::ProcessGroup { owner: 1, group: 2 },
+                finished: true,
+                exit_code: Some(code),
+                end: ProcessEnd::Exited,
+                failure_kind: ProcessFailureKind::None,
+                quiescent: true,
+                stdout: vec![],
+                stderr: vec![],
+                total_output_bytes: 0,
+                quality: OutputQuality::Complete,
+            })
+        };
+        let mut progress = SoftwareProgress {
+            content_digest: plan.digest().clone(),
+            attempt_id: attempt.clone(),
+            runner: runner.clone(),
+            elapsed_ms: 100,
+            output_bytes: 0,
+            checkpoints: vec![
+                SoftwareCheckpoint::Begin {
+                    step: 0,
+                    phase: SoftwarePhase::Before,
+                },
+                SoftwareCheckpoint::End {
+                    step: 0,
+                    phase: SoftwarePhase::Before,
+                    duration_ms: 5,
+                    process: None,
+                    detected: Some(SoftwareState::Absent {}),
+                    quiescent: true,
+                },
+                SoftwareCheckpoint::Begin {
+                    step: 0,
+                    phase: SoftwarePhase::Attach,
+                },
+                SoftwareCheckpoint::End {
+                    step: 0,
+                    phase: SoftwarePhase::Attach,
+                    duration_ms: 10,
+                    process: Some(facts(0)),
+                    detected: None,
+                    quiescent: true,
+                },
+                SoftwareCheckpoint::Begin {
+                    step: 0,
+                    phase: SoftwarePhase::Mutation,
+                },
+            ],
+        };
+        if !unknown_mutation {
+            progress.checkpoints.extend([
+                SoftwareCheckpoint::End {
+                    step: 0,
+                    phase: SoftwarePhase::Mutation,
+                    duration_ms: 10,
+                    process: Some(facts(7)),
+                    detected: None,
+                    quiescent: true,
+                },
+                SoftwareCheckpoint::Begin {
+                    step: 0,
+                    phase: SoftwarePhase::Cleanup,
+                },
+                SoftwareCheckpoint::End {
+                    step: 0,
+                    phase: SoftwarePhase::Cleanup,
+                    duration_ms: 10,
+                    process: Some(facts(1)),
+                    detected: None,
+                    quiescent: true,
+                },
+            ]);
+        }
+        assert!(progress.valid_for(&plan) && !progress.closed(&plan));
+        let original = progress.clone();
+        let (step, sequence, timeout_ms, output_bytes) = progress.cleanup_allowance(&plan).unwrap();
+        progress.checkpoints.push(SoftwareCheckpoint::CleanupBegin {
+            step,
+            sequence,
+            timeout_ms,
+            output_bytes,
+        });
+        assert!(progress.valid_for(&plan) && !progress.resumable(&plan));
+        // Losing an acknowledgement burns the whole granted slice; restart cannot refill it.
+        let next = progress.cleanup_allowance(&plan).unwrap();
+        assert_eq!(next.1, sequence + 1);
+        progress.checkpoints.push(SoftwareCheckpoint::CleanupEnd {
+            step,
+            sequence,
+            duration_ms: 15,
+            process: facts(0),
+            resources_closed: true,
+        });
+        assert!(progress.valid_for(&plan) && progress.extends(&original));
+        assert_eq!(progress.closed(&plan), !unknown_mutation);
+        assert!(!progress.complete(&plan) && !progress.resumable(&plan));
+        progress.checkpoints.push(SoftwareCheckpoint::Begin {
+            step: 0,
+            phase: SoftwarePhase::Mutation,
+        });
+        assert!(
+            !progress.valid_for(&plan),
+            "cleanup never authorizes business redispatch"
+        );
     }
 }

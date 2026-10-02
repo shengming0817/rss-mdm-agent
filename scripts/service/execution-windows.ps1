@@ -82,7 +82,7 @@ function Assert-Refresh {
     if ($LASTEXITCODE -ne 0) { throw 'Current candidate failed native validation' }
     $New = (& $CandidateBinary --config $CandidateConfig --validate-installation | ConvertFrom-Json)
     if ($LASTEXITCODE -ne 0) { throw 'New candidate failed native validation' }
-    if ($Old.version -ne 2 -or $New.version -ne 2 -or $Old.ipc_version -ne 6 -or $New.ipc_version -ne 6 -or $Old.service.path -cne $Binary -or $New.service.path -cne $CandidateBinary) { throw 'Current-format candidate/protocol required' }
+    if ($Old.version -ne 2 -or $New.version -ne 2 -or $Old.ipc_version -ne 7 -or $New.ipc_version -ne 7 -or $Old.service.path -cne $Binary -or $New.service.path -cne $CandidateBinary) { throw 'Current-format candidate/protocol required' }
     foreach ($Field in @('origin','tenant','enrollment','registration_operation','state_root','helper_work_roots')) {
         if (($Old.$Field | ConvertTo-Json -Depth 20 -Compress) -cne ($New.$Field | ConvertTo-Json -Depth 20 -Compress)) { throw 'Refresh cannot replace identity or persistent state' }
     }

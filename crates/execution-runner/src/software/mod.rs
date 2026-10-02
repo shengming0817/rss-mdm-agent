@@ -25,3 +25,20 @@ impl PreparationControl {
         }
     }
 }
+
+/// Read an exact native macOS package receipt without creating a process or guessing removal.
+pub fn receipt_state(
+    receipt: &str,
+) -> Result<execution_contract::SoftwareState, execution_app::Error> {
+    let version = execution_contract::PackageValue::new("observation")
+        .map_err(|_| execution_app::Error::InvalidInput)?;
+    Ok(native_detection::detect(
+        &execution_contract::SoftwareDetector::PkgReceipt {
+            receipt: receipt.into(),
+            version,
+        },
+        &execution_contract::RunAs::System {
+            platform: execution_contract::Platform::Macos,
+        },
+    ))
+}

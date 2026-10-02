@@ -45,7 +45,7 @@ pub(crate) fn settle(
         });
         if never
             || crate::software_progress::read(conn, &attempt.id, limits)?
-                .is_some_and(|p| p.complete(plan))
+                .is_some_and(|p| p.closed(plan))
         {
             conn.execute(
                 "DELETE FROM software_claims WHERE attempt_id=?1",
@@ -69,9 +69,32 @@ pub(crate) fn diagnostic(
         .transpose()?
         .flatten();
     Ok(Some(match progress {
-        Some(p) if p.complete(plan) => SoftwareDiagnostic::DesiredStateObserved,
         Some(p) => {
             let program = plan.spec().execution.software_program().expect("program");
+            let reboot = p.checkpoints.iter().any(|checkpoint| match checkpoint {
+                execution_contract::SoftwareCheckpoint::End {
+                    step,
+                    phase,
+                    process: Some(process),
+                    ..
+                } if !phase.is_observation() => {
+                    program.steps[*step as usize].allow_reboot
+                        && program
+                            .invocation(*step as usize, *phase)
+                            .is_some_and(|invocation| {
+                                process.exit_code.is_some_and(|code| {
+                                    invocation.exit_codes.reboot.contains(&code)
+                                })
+                            })
+                }
+                _ => false,
+            });
+            if reboot {
+                return Ok(Some(SoftwareDiagnostic::RestartPending));
+            }
+            if p.complete(plan) {
+                return Ok(Some(SoftwareDiagnostic::DesiredStateObserved));
+            }
             let matched = p
                 .checkpoints
                 .iter()
@@ -81,20 +104,26 @@ pub(crate) fn diagnostic(
                         step,
                         detected: Some(state),
                         ..
-                    } => Some(match (program.intent, state) {
-                        (
-                            execution_contract::SoftwareOperation::Uninstall,
-                            execution_contract::SoftwareState::Absent {},
-                        ) => true,
-                        (_, execution_contract::SoftwareState::Present { version }) => {
-                            version == &program.steps[*step as usize].version
-                        }
-                        _ => false,
-                    }),
+                    } => Some(program.satisfied(&program.steps[*step as usize], state)),
                     _ => None,
                 })
                 .unwrap_or(false);
-            if matched {
+            let activity_unknown = p.checkpoints.iter().any(|checkpoint| {
+                matches!(
+                    checkpoint,
+                    execution_contract::SoftwareCheckpoint::End { phase, quiescent: false, .. }
+                        if *phase != execution_contract::SoftwarePhase::Cleanup
+                )
+            }) || matches!(
+                p.checkpoints.last(),
+                Some(execution_contract::SoftwareCheckpoint::Begin { phase, .. })
+                    if *phase != execution_contract::SoftwarePhase::Cleanup
+            );
+            if activity_unknown && !p.closed(plan) {
+                SoftwareDiagnostic::DetectionUnavailable
+            } else if matched && !p.closed(plan) {
+                SoftwareDiagnostic::CleanupPending
+            } else if matched {
                 SoftwareDiagnostic::DesiredStateObserved
             } else {
                 SoftwareDiagnostic::DetectionUnavailable

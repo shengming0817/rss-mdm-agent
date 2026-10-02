@@ -1,4 +1,4 @@
-//! Deterministic V5 compiler. The backend has already selected sources and ordered dependencies.
+//! Deterministic V6 compiler. The backend has already selected sources and ordered dependencies.
 use crate::{
     plan::{self, hex, id, reference},
     ExecutionConfig, SoftwareManagerKind,
@@ -7,6 +7,8 @@ use agent_client::{wire, Error, Materials, Offer};
 use execution_contract::*;
 use execution_runner::{Artifacts, SoftwareStepArtifacts};
 use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
+
+mod native;
 
 fn package(value: &str) -> Result<PackageValue, Error> {
     PackageValue::new(value).map_err(|_| Error::Protocol)
@@ -95,17 +97,6 @@ impl Compiler<'_> {
             }
             CommandKind::Script(wire::SoftwareTaskInterpreter::Bash) => wire::ExecutorProfile::Bash,
         };
-        let expected_reboot = if adapter == SoftwareKind::Msi {
-            [3010, 1641].into_iter().collect()
-        } else {
-            Default::default()
-        };
-        if command.exit_codes.success != [0].into_iter().collect()
-            || (!command.exit_codes.reboot.is_empty()
-                && command.exit_codes.reboot != expected_reboot)
-        {
-            return Err(Error::Unsupported);
-        }
         let interpreter = self
             .config
             .interpreters
@@ -202,6 +193,10 @@ impl Compiler<'_> {
             session_requirement: session,
             timeout_ms: u64::from(command.timeout_seconds) * 1000,
             output_bytes: u64::from(command.output_bytes),
+            exit_codes: SoftwareExitCodes {
+                success: command.exit_codes.success.clone(),
+                reboot: command.exit_codes.reboot.clone(),
+            },
             launch: LaunchSpec {
                 artifact: content_ref,
                 interpreter: InterpreterRef {
@@ -286,11 +281,16 @@ pub(crate) fn compile(
     };
     let mut steps = Vec::new();
     let mut sources = Vec::new();
-    let mut timeout = 0u64;
-    let mut output = 0u64;
     for (index, step) in payload.steps.iter().enumerate() {
         let action = &step.action;
-        if !action.signatures.is_empty() {
+        if !action.signatures.is_empty()
+            && !matches!(
+                action.behavior,
+                wire::SoftwareTaskBehavior::Exe(_)
+                    | wire::SoftwareTaskBehavior::Msix(_)
+                    | wire::SoftwareTaskBehavior::Dmg(_)
+            )
+        {
             return Err(Error::Unsupported);
         }
         if !matches!(step.export, wire::SoftwareTaskExport::Direct) {
@@ -309,6 +309,25 @@ pub(crate) fn compile(
             _ => return Err(Error::Identity),
         }
 
+        if matches!(
+            action.behavior,
+            wire::SoftwareTaskBehavior::Exe(_)
+                | wire::SoftwareTaskBehavior::Msix(_)
+                | wire::SoftwareTaskBehavior::Dmg(_)
+        ) {
+            let (compiled, source) = native::compile(
+                (step, index),
+                payload,
+                materials,
+                config,
+                helper.clone(),
+                intent,
+                &architecture,
+            )?;
+            steps.push(compiled);
+            sources.push(source);
+            continue;
+        }
         let commands = agent_client::software_commands(action)?;
         let (adapter, native) = match &action.behavior {
             wire::SoftwareTaskBehavior::Msi(n) => {
@@ -334,11 +353,6 @@ pub(crate) fn compile(
             ),
             _ => return Err(Error::Unsupported),
         };
-        if native.is_some_and(|(_, n)| {
-            n.upgrade != wire::SoftwareTaskUpgrade::InPlace || n.upgrade_invocation != n.install
-        }) {
-            return Err(Error::Unsupported);
-        }
         let install_command = if let Some(script) = commands.install_script {
             CommandKind::script(script)
         } else {
@@ -462,23 +476,47 @@ pub(crate) fn compile(
         } else {
             None
         };
-        let uninstall = removal.as_ref().map(|(command, _, _)| command.clone());
-        let (mutation, mutation_budget) = match intent {
-            SoftwareOperation::Install => (Some(Box::new(install_source)), Some(&install)),
-            SoftwareOperation::Uninstall => (
-                removal.map(|(_, source, extra)| {
-                    files.extend(extra);
-                    Box::new(source)
-                }),
-                uninstall.as_ref(),
-            ),
-            SoftwareOperation::Detect => (None, None),
+        let upgrade = if let Some(command) = commands.upgrade {
+            Some(compiler.command(
+                if let Some(script) = commands.install_script {
+                    CommandKind::script(script)
+                } else {
+                    (
+                        CommandKind::Native(native.ok_or(Error::Unsupported)?.0),
+                        None,
+                        command,
+                    )
+                },
+                adapter,
+                &primary,
+                SoftwareOperation::Install,
+                &action.version,
+                &action.package,
+            )?)
+        } else {
+            None
         };
-        if let Some(command) = mutation_budget {
-            timeout = timeout.saturating_add(command.timeout_ms);
-            output = output.saturating_add(command.output_bytes);
+        let uninstall = removal.as_ref().map(|(command, _, _)| command.clone());
+        let mut physical_sources = BTreeMap::new();
+        if intent == SoftwareOperation::Install {
+            if let Some((_, source, extra)) = &upgrade {
+                physical_sources.insert(SoftwarePhase::Upgrade, Box::new(source.clone()));
+                files.extend(extra.clone());
+            }
+            if let Some((_, source, extra)) = &removal {
+                physical_sources.insert(SoftwarePhase::Removal, Box::new(source.clone()));
+                files.extend(extra.clone());
+            }
         }
-        let (detection, detector_source) = match commands.detection {
+        let mutation = match intent {
+            SoftwareOperation::Install => Some(Box::new(install_source)),
+            SoftwareOperation::Uninstall => removal.map(|(_, source, extra)| {
+                files.extend(extra);
+                Box::new(source)
+            }),
+            SoftwareOperation::Detect => None,
+        };
+        let (detection, detector_source) = match commands.detection.ok_or(Error::Unsupported)? {
             wire::SoftwareTaskDetection::MsiProduct {
                 product_code,
                 version,
@@ -505,8 +543,6 @@ pub(crate) fn compile(
                     &action.version,
                     &action.package,
                 )?;
-                timeout = timeout.saturating_add(invocation.timeout_ms);
-                output = output.saturating_add(invocation.output_bytes);
                 files.extend(extra);
                 (
                     SoftwareDetector::Script {
@@ -519,13 +555,46 @@ pub(crate) fn compile(
         };
         files.extend(compiler.files.values().cloned());
         steps.push(SoftwareProgramStep {
-            adapter,
+            format: match adapter {
+                SoftwareKind::Msi => SoftwareFormat::Msi {},
+                SoftwareKind::Pkg => SoftwareFormat::Pkg {},
+                SoftwareKind::WindowsBundle | SoftwareKind::MacosBundle => SoftwareFormat::Bundle {
+                    manifest: bundle.clone().ok_or(Error::Protocol)?,
+                    limits: BundleLimits {
+                        archive_bytes: 4 * 1024 * 1024 * 1024,
+                        files: 4096,
+                        file_bytes: 1024 * 1024 * 1024,
+                        expanded_bytes: 8 * 1024 * 1024 * 1024,
+                        depth: 32,
+                    },
+                },
+                _ => return Err(Error::Unsupported),
+            },
             package: package(&action.package)?,
             version: package(&action.version)?,
             architecture: architecture.clone(),
             payload: primary.1,
-            export_identity: None,
+            materials: files
+                .iter()
+                .map(|(path, artifact)| {
+                    Ok(SoftwareMaterial {
+                        path: path.to_str().ok_or(Error::Configuration)?.into(),
+                        artifact: artifact.clone(),
+                    })
+                })
+                .collect::<Result<_, Error>>()?,
+            signatures: Vec::new(),
+            upgrade: match commands.upgrade_policy {
+                wire::SoftwareTaskUpgrade::InPlace => SoftwareUpgrade::InPlace {
+                    invocation: Box::new(upgrade.ok_or(Error::Unsupported)?.0),
+                },
+                wire::SoftwareTaskUpgrade::UninstallThenInstall => {
+                    SoftwareUpgrade::UninstallThenInstall {}
+                }
+                wire::SoftwareTaskUpgrade::Deny => SoftwareUpgrade::Deny {},
+            },
             install,
+            auxiliary: Default::default(),
             uninstall,
             detection,
             existing: match action.ownership {
@@ -536,23 +605,17 @@ pub(crate) fn compile(
             },
             allow_downgrade: action.downgrade == wire::SoftwareTaskDowngrade::Allow,
             allow_reboot: action.reboot == wire::SoftwareTaskReboot::Report,
-            bundle_limits: bundle.as_ref().map(|_| BundleLimits {
-                archive_bytes: 4 * 1024 * 1024 * 1024,
-                files: 4096,
-                file_bytes: 1024 * 1024 * 1024,
-                expanded_bytes: 8 * 1024 * 1024 * 1024,
-                depth: 32,
-            }),
-            bundle,
         });
+        if let Some(source) = mutation {
+            physical_sources.insert(SoftwarePhase::Mutation, source);
+        }
         sources.push(SoftwareStepArtifacts {
-            mutation,
+            mutations: physical_sources,
             detection: detector_source,
             files,
         });
     }
-    timeout = timeout.clamp(1000, 86_400_000);
-    output = output.clamp(1024, 1_048_576);
+    let (timeout, output) = agent_client::software_budget(payload)?;
     let mut controller = steps.first().ok_or(Error::Protocol)?.install.launch.clone();
     controller.interpreter.profile = reference("native-software-sequence", "1")?;
     let program = SoftwareProgram {
@@ -562,7 +625,7 @@ pub(crate) fn compile(
         steps,
     };
     let input = ExecutionInput {
-        schema_version: V5,
+        schema_version: V6,
         request: ExecutionRequest {
             schema_version: V1,
             request_id: offer.request_id()?,

@@ -11,6 +11,10 @@ fn unknown_detector_activity_keeps_real_exit_and_cannot_skip_to_mutation() {
         session_requirement: input.session_requirement.clone(),
         timeout_ms: 5000,
         output_bytes: 4096,
+        exit_codes: SoftwareExitCodes {
+            success: [0].into_iter().collect(),
+            reboot: Default::default(),
+        },
     };
     let mut p = input.clone();
     p.request.parameters.clear();
@@ -24,13 +28,16 @@ fn unknown_detector_activity_keeps_real_exit_and_cannot_skip_to_mutation() {
             definition_digest: Digest::new("ab".repeat(32)).unwrap(),
             intent: SoftwareOperation::Install,
             steps: vec![SoftwareProgramStep {
-                adapter: SoftwareKind::Pkg,
+                format: SoftwareFormat::Pkg {},
                 package: PackageValue::new("fixture").unwrap(),
                 version: PackageValue::new("1").unwrap(),
                 architecture: PackageValue::new("aarch64").unwrap(),
                 payload: invocation.launch.artifact.clone(),
-                export_identity: None,
+                materials: Vec::new(),
+                signatures: Vec::new(),
+                upgrade: SoftwareUpgrade::Deny {},
                 install: invocation.clone(),
+                auxiliary: Default::default(),
                 uninstall: None,
                 detection: SoftwareDetector::Script {
                     invocation: Box::new(invocation),
@@ -38,8 +45,6 @@ fn unknown_detector_activity_keeps_real_exit_and_cannot_skip_to_mutation() {
                 existing: ExistingSoftware::AllowUserExisting,
                 allow_downgrade: false,
                 allow_reboot: false,
-                bundle: None,
-                bundle_limits: None,
             }],
         }),
     };
@@ -56,7 +61,7 @@ fn unknown_detector_activity_keeps_real_exit_and_cannot_skip_to_mutation() {
     };
     let mut materials = source();
     materials.program.push(crate::SoftwareStepArtifacts {
-        mutation: Some(Box::new(source())),
+        mutations: [(SoftwarePhase::Mutation, Box::new(source()))].into(),
         detection: Some(Box::new(source())),
         files: vec![],
     });
@@ -114,7 +119,11 @@ fn unknown_detector_activity_keeps_real_exit_and_cannot_skip_to_mutation() {
             ..
         }
     )));
-    assert!(progress.checkpoints.iter().any(|c| matches!(c, SoftwareCheckpoint::End { process: Some(p), quiescent: false, .. } if p.exit_code == Some(0))));
+    assert!(progress
+        .checkpoints
+        .iter()
+        .any(|c| matches!(c, SoftwareCheckpoint::End {
+ process: Some(p), quiescent: false, .. } if p.exit_code == Some(0))));
     assert!(!progress.complete(&plan));
     assert_eq!(carrier.1.load(Ordering::SeqCst), 1);
     let sqlite = rusqlite::Connection::open(f.root.join("software.sqlite")).unwrap();

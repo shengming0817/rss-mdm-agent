@@ -24,29 +24,34 @@ pub(crate) enum Command {
         attempt: AttemptId,
         step: u32,
         phase: SoftwarePhase,
+        cleanup_sequence: u32,
         interpreter: PathBuf,
         content: PathBuf,
         timeout_ms: u64,
         output_bytes: u64,
         first_start: Option<u64>,
+        before: Option<SoftwareState>,
     },
     InvocationEvidence {
         input: Box<ExecutionInput>,
         attempt: AttemptId,
         step: u32,
         phase: SoftwarePhase,
+        cleanup_sequence: u32,
     },
     InvocationStop {
         input: Box<ExecutionInput>,
         attempt: AttemptId,
         step: u32,
         phase: SoftwarePhase,
+        cleanup_sequence: u32,
     },
     InvocationAck {
         input: Box<ExecutionInput>,
         attempt: AttemptId,
         step: u32,
         phase: SoftwarePhase,
+        cleanup_sequence: u32,
     },
     Ready,
     Inspect {
@@ -104,10 +109,10 @@ pub(crate) enum Reply {
 /// A physical process owner for one actual user login; it has no device secrets or database.
 pub struct Helper {
     physical: std::collections::BTreeMap<
-        (AttemptId, u32, SoftwarePhase),
+        (AttemptId, u32, SoftwarePhase, u32),
         crate::runner::invocation::PhysicalInvocation,
     >,
-    retired: std::collections::BTreeMap<(AttemptId, u32, SoftwarePhase), (Digest, u64)>,
+    retired: std::collections::BTreeMap<(AttemptId, u32, SoftwarePhase, u32), (Digest, u64)>,
     clock_watermark: u64,
     capacity: usize,
     limits: ExecutionLimits,
@@ -192,12 +197,18 @@ impl Helper {
                 attempt,
                 step,
                 phase,
+                cleanup_sequence,
                 interpreter,
                 content,
                 timeout_ms,
                 output_bytes,
                 first_start,
+                before,
             } => {
+                if cleanup_sequence > 3 || (cleanup_sequence > 0 && phase != SoftwarePhase::Cleanup)
+                {
+                    return Err(Error::Denied);
+                }
                 let (plan, invocation) = self.invocation(*input, step, phase)?;
                 let now = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -209,13 +220,13 @@ impl Helper {
                     return Err(Error::Clock);
                 }
                 self.clock_watermark = now;
-                if now >= plan.spec().validity.expires_at_unix_ms {
+                if cleanup_sequence == 0 && now >= plan.spec().validity.expires_at_unix_ms {
                     return Err(Error::Clock);
                 }
                 // An expired invocation can never be accepted again, even after its tombstone
                 // is reclaimed. The watermark prevents a clock rollback reopening that window.
                 self.retired.retain(|_, (_, expiry)| *expiry > now);
-                let key = (attempt.clone(), step, phase);
+                let key = (attempt.clone(), step, phase, cleanup_sequence);
                 if let Some((digest, _)) = self.retired.get(&key) {
                     return if digest == plan.digest() {
                         Ok(Reply::Acknowledged)
@@ -235,10 +246,22 @@ impl Helper {
                 {
                     return Err(Error::Capacity);
                 }
+                let mut source = self.artifacts(interpreter, content);
+                if matches!(invocation.launch.stdin, StandardInput::Controlled { .. })
+                    && invocation.launch.interpreter.profile.id.as_str() == "native-software-worker"
+                {
+                    source.controlled_input =
+                        Some(std::sync::Arc::new(crate::runner::program::BeforeInput {
+                            digest: plan.digest().clone(),
+                            attempt: attempt.clone(),
+                            step,
+                            state: before.ok_or(Error::Denied)?,
+                        }));
+                }
                 let owner = crate::runner::invocation::PhysicalInvocation::start(
                     plan,
                     attempt,
-                    self.artifacts(interpreter, content),
+                    source,
                     invocation,
                     timeout_ms,
                     output_bytes,
@@ -252,9 +275,10 @@ impl Helper {
                 attempt,
                 step,
                 phase,
+                cleanup_sequence,
             } => {
                 let (plan, _) = self.invocation(*input, step, phase)?;
-                let process = match self.physical.get(&(attempt, step, phase)) {
+                let process = match self.physical.get(&(attempt, step, phase, cleanup_sequence)) {
                     Some(owner) if &owner.digest == plan.digest() => owner
                         .facts
                         .lock()
@@ -271,11 +295,12 @@ impl Helper {
                 attempt,
                 step,
                 phase,
+                cleanup_sequence,
             } => {
                 let (plan, _) = self.invocation(*input, step, phase)?;
                 let owner = self
                     .physical
-                    .get(&(attempt, step, phase))
+                    .get(&(attempt, step, phase, cleanup_sequence))
                     .ok_or(Error::NotFound)?;
                 if &owner.digest != plan.digest() {
                     return Err(Error::Denied);
@@ -290,9 +315,10 @@ impl Helper {
                 attempt,
                 step,
                 phase,
+                cleanup_sequence,
             } => {
                 let (plan, _) = self.invocation(*input, step, phase)?;
-                let key = (attempt, step, phase);
+                let key = (attempt, step, phase, cleanup_sequence);
                 if let Some(owner) = self.physical.get(&key) {
                     if &owner.digest != plan.digest()
                         || !owner
@@ -429,7 +455,7 @@ impl host::Handler for Helper {
             let connection = peer.system_connection(&policy)?;
             let envelope: Envelope =
                 serde_json::from_slice(bytes).map_err(|_| Error::InvalidInput)?;
-            if envelope.version != 1 {
+            if envelope.version != 2 {
                 return Err(Error::InvalidInput);
             }
             self.command(&connection, envelope.command)
@@ -566,7 +592,7 @@ impl Connection {
     }
     pub(crate) fn exchange(&self, command: Command) -> Result<Reply, Error> {
         let bytes = serde_json::to_vec(&Envelope {
-            version: 1,
+            version: 2,
             command,
         })
         .map_err(|_| Error::InvalidInput)?;
@@ -658,6 +684,7 @@ mod shutdown_tests {
                     AttemptId::new("attempt").unwrap(),
                     step as u32,
                     SoftwarePhase::Mutation,
+                    0,
                 ),
                 crate::runner::invocation::PhysicalInvocation {
                     digest: Digest::new("ab".repeat(32)).unwrap(),

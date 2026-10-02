@@ -119,29 +119,7 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
                 {
                     return Err(Error::Untrusted);
                 }
-                let mut timeout = 0u64;
-                let mut output = 0u64;
-                for step in &v.steps {
-                    let commands = crate::software_commands(&step.action)?;
-                    let command = match v.intent {
-                        wire::SoftwareTaskIntent::Install => Some(commands.install),
-                        wire::SoftwareTaskIntent::Uninstall => {
-                            Some(commands.uninstall.ok_or(Error::Unsupported)?)
-                        }
-                        wire::SoftwareTaskIntent::Detect => None,
-                    };
-                    if let Some(c) = command {
-                        timeout = timeout.saturating_add(u64::from(c.timeout_seconds) * 1000);
-                        output = output.saturating_add(u64::from(c.output_bytes));
-                    }
-                    if let wire::SoftwareTaskDetection::Script { command: script } =
-                        commands.detection
-                    {
-                        timeout = timeout
-                            .saturating_add(u64::from(script.invocation.timeout_seconds) * 1000);
-                        output = output.saturating_add(u64::from(script.invocation.output_bytes));
-                    }
-                }
+                let (timeout, output) = crate::software::software_budget(v)?;
                 (
                     &v.device_id,
                     v.platform,
@@ -783,7 +761,17 @@ fn software_encoding(
             step.uninstall.as_ref().ok_or(Error::Protocol)?
         }
         P::Mutation => &step.install,
-        P::Before | P::After => match &step.detection {
+        P::Upgrade => match &step.upgrade {
+            execution_contract::SoftwareUpgrade::InPlace { invocation } => invocation,
+            _ => return Err(Error::Protocol),
+        },
+        P::Removal => step
+            .auxiliary
+            .get(&phase)
+            .or(step.uninstall.as_ref())
+            .ok_or(Error::Protocol)?,
+        P::Attach | P::Stage | P::Cleanup => step.auxiliary.get(&phase).ok_or(Error::Protocol)?,
+        P::Before | P::RemovalAfter | P::After => match &step.detection {
             SoftwareDetector::Script { invocation } => invocation.as_ref(),
             _ => &step.install,
         },
@@ -830,49 +818,117 @@ fn software_result(
                 diagnostic: "native observation unavailable".into(),
             },
         };
-        let process = checkpoints.iter().rev().find_map(|c| match c {
-            C::End {
-                step,
-                phase: P::Mutation,
-                process,
-                ..
-            } if *step as usize == index => process.as_ref(),
-            _ => None,
-        });
-        let begun = checkpoints
+        let commands = crate::software::software_commands(&step.action)?;
+        let policy_for = |phase| match phase {
+            P::Upgrade => commands.upgrade.unwrap_or(commands.install),
+            P::Removal => commands.uninstall.unwrap_or(commands.install),
+            P::Mutation if spec.intent == wire::SoftwareTaskIntent::Uninstall => {
+                commands.uninstall.unwrap_or(commands.install)
+            }
+            _ => commands.install,
+        };
+        let completed = checkpoints
             .iter()
-            .any(|c| matches!(c,C::Begin {step,phase:P::Mutation} if *step as usize==index));
-        // A mutation owns its diagnostics even when its End is absent. Otherwise a
-        // detector-only step may report its own last observed detector process.
-        let selected = if begun {
-            process.map(|p| (P::Mutation, p.as_ref()))
-        } else {
-            checkpoints.iter().rev().find_map(|c| match c {
+            .any(|c| matches!(c,C::Complete { step } if *step as usize == index));
+        let begun = checkpoints.iter().any(|c| matches!(c,C::Begin {step,phase} if *step as usize == index && !phase.is_observation()));
+        let physical: Vec<_> = checkpoints
+            .iter()
+            .filter_map(|c| match c {
                 C::End {
                     step,
                     phase,
-                    process: Some(p),
+                    process: Some(process),
+                    quiescent,
                     ..
-                } if *step as usize == index => Some((*phase, p.as_ref())),
+                } if *step as usize == index && !phase.is_observation() => {
+                    Some((*phase, process.as_ref(), *quiescent))
+                }
                 _ => None,
             })
+            .collect();
+        let approved = |phase, p: &execution_contract::ProcessEvidence| {
+            p.end == ProcessEnd::Exited
+                && p.failure_kind == execution_contract::ProcessFailureKind::None
+                && p.exit_code.is_some_and(|code| {
+                    if matches!(phase, P::Attach | P::Stage | P::Cleanup) {
+                        code == 0
+                    } else {
+                        policy_for(phase).exit_codes.success.contains(&code)
+                            || (step.action.reboot == wire::SoftwareTaskReboot::Report
+                                && policy_for(phase).exit_codes.reboot.contains(&code))
+                    }
+                })
         };
+        let chosen = physical
+            .iter()
+            .find(|(phase, p, quiet)| !quiet || !approved(*phase, p))
+            .or_else(|| {
+                physical
+                    .iter()
+                    .rev()
+                    .find(|(phase, _, _)| matches!(phase, P::Mutation | P::Upgrade | P::Removal))
+            })
+            .or_else(|| physical.last());
+        let selected = chosen.map(|(phase, p, _)| (*phase, *p)).or_else(|| {
+            if begun {
+                None
+            } else {
+                checkpoints.iter().rev().find_map(|c| match c {
+                    C::End {
+                        step,
+                        phase,
+                        process: Some(p),
+                        ..
+                    } if *step as usize == index => Some((*phase, p.as_ref())),
+                    _ => None,
+                })
+            }
+        });
+        let process = chosen.map(|(_, p, _)| *p);
+        let duration_ms = checkpoints
+            .iter()
+            .filter_map(|checkpoint| match checkpoint {
+                C::End {
+                    step, duration_ms, ..
+                }
+                | C::CleanupEnd {
+                    step, duration_ms, ..
+                } if *step as usize == index => Some(*duration_ms),
+                _ => None,
+            })
+            .fold(0u64, u64::saturating_add);
         let mut step_diagnostics = match selected {
             Some((phase, p)) => {
-                project_diagnostics(policy, p, encoding(index, phase)?, observed_at_ms)?.2
-            }
-            None => wire::TaskDiagnostics::new(
-                String::new(),
-                String::new(),
-                0,
-                time,
-                if begun {
-                    Some(wire::TaskFailure::CaptureFailed)
-                } else {
+                let original =
+                    project_diagnostics(policy, p, encoding(index, phase)?, observed_at_ms)?.2;
+                let failure = if original.failure() == Some(wire::TaskFailure::NonZeroExit)
+                    && approved(phase, p)
+                {
                     None
-                },
-            )?,
+                } else {
+                    original.failure()
+                };
+                wire::TaskDiagnostics::new(
+                    original.stdout().into(),
+                    original.stderr().into(),
+                    duration_ms,
+                    time,
+                    failure,
+                )?
+            }
+            None => {
+                wire::TaskDiagnostics::new(String::new(), String::new(), duration_ms, time, None)?
+            }
         };
+        if begun && !completed && step_diagnostics.failure().is_none() {
+            step_diagnostics = wire::TaskDiagnostics::new(
+                step_diagnostics.stdout().into(),
+                step_diagnostics.stderr().into(),
+                duration_ms,
+                time,
+                Some(wire::TaskFailure::CaptureFailed),
+            )?;
+        }
         let observed_process = if !begun {
             wire::SoftwareProcessObservation::NotRun
         } else if let Some(code) = process
@@ -881,17 +937,11 @@ fn software_result(
         {
             wire::SoftwareProcessObservation::Exited { code }
         } else {
-            let failure = step_diagnostics
-                .failure()
-                .unwrap_or(wire::TaskFailure::CaptureFailed);
-            step_diagnostics = wire::TaskDiagnostics::new(
-                step_diagnostics.stdout().to_owned(),
-                step_diagnostics.stderr().to_owned(),
-                0,
-                time,
-                Some(failure),
-            )?;
-            wire::SoftwareProcessObservation::Failed { failure }
+            wire::SoftwareProcessObservation::Failed {
+                failure: step_diagnostics
+                    .failure()
+                    .unwrap_or(wire::TaskFailure::CaptureFailed),
+            }
         };
         let before = observation(P::Before);
         let mut after = observation(P::After);
@@ -911,7 +961,11 @@ fn software_result(
             before,
             after,
             process: observed_process,
-            reboot_required: process.is_some_and(|p| matches!(p.exit_code, Some(3010 | 1641))),
+            reboot_required: physical.iter().any(|(phase, p, _)| {
+                !matches!(phase, P::Attach | P::Stage | P::Cleanup)
+                    && p.exit_code
+                        .is_some_and(|code| policy_for(*phase).exit_codes.reboot.contains(&code))
+            }),
             diagnostics: step_diagnostics,
         });
     }
@@ -989,7 +1043,7 @@ mod result_tests {
             attempt_id: attempt,
             content_digest: digest,
             runner,
-            elapsed_ms: 1,
+            elapsed_ms: 100,
             output_bytes: 0,
             checkpoints: vec![
                 C::Begin {
@@ -997,6 +1051,7 @@ mod result_tests {
                     phase: P::Before,
                 },
                 C::End {
+                    duration_ms: 20,
                     step: 0,
                     phase: P::Before,
                     process: None,
@@ -1008,6 +1063,7 @@ mod result_tests {
                     phase: P::Mutation,
                 },
                 C::End {
+                    duration_ms: 20,
                     step: 0,
                     phase: P::Mutation,
                     process: Some(Box::new(process)),
@@ -1019,6 +1075,7 @@ mod result_tests {
                     phase: P::After,
                 },
                 C::End {
+                    duration_ms: 20,
                     step: 0,
                     phase: P::After,
                     process: None,
@@ -1032,6 +1089,8 @@ mod result_tests {
         };
         let result = software_result(&spec, Some(&progress), encoding, &Redact, 1000).unwrap();
         assert_eq!(result.steps.len(), 2);
+        assert_eq!(result.steps[0].diagnostics.duration_ms(), 60);
+        assert_eq!(result.steps[1].diagnostics.duration_ms(), 0);
         for (i, step) in result.steps.iter().enumerate() {
             assert_eq!(step.index as usize, i);
             assert_eq!(step.step_digest, spec.steps[i].digest().unwrap());
@@ -1058,12 +1117,62 @@ mod result_tests {
             result.steps[1].process,
             wire::SoftwareProcessObservation::NotRun
         );
+        let mut upgraded = progress.clone();
+        for checkpoint in &mut upgraded.checkpoints {
+            match checkpoint {
+                C::Begin { phase, .. } | C::End { phase, .. } if *phase == P::Mutation => {
+                    *phase = P::Upgrade
+                }
+                _ => (),
+            }
+        }
+        let mut upgrade_spec = spec.clone();
+        let wire::SoftwareTaskBehavior::Pkg(native) = &mut upgrade_spec.steps[0].action.behavior
+        else {
+            unreachable!()
+        };
+        native.upgrade_invocation.exit_codes.success.insert(42);
+        for checkpoint in &mut upgraded.checkpoints {
+            if let C::End {
+                phase: P::Upgrade,
+                process: Some(p),
+                ..
+            } = checkpoint
+            {
+                p.exit_code = Some(42);
+            }
+        }
+        let result =
+            software_result(&upgrade_spec, Some(&upgraded), encoding, &Redact, 1000).unwrap();
+        assert_eq!(
+            result.steps[0].process,
+            wire::SoftwareProcessObservation::Exited { code: 42 }
+        );
+        assert_eq!(result.steps[0].diagnostics.failure(), None);
+        upgraded
+            .checkpoints
+            .retain(|c| !matches!(c, C::Complete { step: 0 }));
+        upgraded.checkpoints.push(C::Begin {
+            step: 0,
+            phase: P::Cleanup,
+        });
+        let result =
+            software_result(&upgrade_spec, Some(&upgraded), encoding, &Redact, 1000).unwrap();
+        assert_eq!(
+            result.steps[0].process,
+            wire::SoftwareProcessObservation::Exited { code: 42 }
+        );
+        assert_eq!(
+            result.steps[0].diagnostics.failure(),
+            Some(wire::TaskFailure::CaptureFailed)
+        );
         progress.checkpoints.extend([
             C::Begin {
                 step: 1,
                 phase: P::Before,
             },
             C::End {
+                duration_ms: 20,
                 step: 1,
                 phase: P::Before,
                 process: None,
@@ -1100,6 +1209,7 @@ mod result_tests {
             .flat_map(u16::to_le_bytes)
             .collect();
         progress.checkpoints.push(C::End {
+            duration_ms: 20,
             step: 1,
             phase: P::Mutation,
             process: Some(timed_out),

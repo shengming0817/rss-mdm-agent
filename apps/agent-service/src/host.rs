@@ -138,8 +138,8 @@ impl AppHost for EnterpriseHost {
                 software: inventory(if let Some(program) = p.execution.software_program() {
                     let mut kinds = Vec::new();
                     for step in &program.steps {
-                        if !kinds.contains(&step.adapter) {
-                            kinds.push(step.adapter);
+                        if !kinds.contains(&step.format.adapter()) {
+                            kinds.push(step.format.adapter());
                         }
                     }
                     kinds
@@ -147,6 +147,7 @@ impl AppHost for EnterpriseHost {
                     vec![]
                 }),
                 launch_io: inventory(vec![
+                    LaunchIoCapability::ControlledStdin(TextEncoding::Utf8),
                     LaunchIoCapability::CapturedText(TextEncoding::Utf8),
                     LaunchIoCapability::CapturedText(TextEncoding::Utf16Le),
                 ]),
@@ -172,17 +173,14 @@ impl AppHost for EnterpriseHost {
         {
             return Err(execution_sqlite::Error::Trust);
         }
-        // Only this owner compiles verified backend plans or loads its protected journal;
-        // IPC never supplies a plan. Registration scope remains trustworthy for reconciliation
-        // after a different task starts or the process restarts. This snapshot grants no attempt:
-        // AuthorityVerifier still requires the exact, unexpired backend Start for new admission.
+        // Registration scope remains bound to this frozen journal after restart or a later
+        // dispatch. The snapshot grants no attempt: AuthorityVerifier independently requires
+        // the exact signed Start and its shorter deadline. Avoid a local one-second window
+        // that expires while retained software materials are checked; never renew plan validity.
         Ok(TrustSnapshot {
             authorization_revision: input.policy.clone(),
             approval_revision: input.policy.clone(),
-            fresh_until_unix_ms: self
-                .reliable_now()?
-                .checked_add(1000)
-                .ok_or(execution_sqlite::Error::Clock)?,
+            fresh_until_unix_ms: input.validity.expires_at_unix_ms,
             approvals: vec![],
         })
     }

@@ -104,6 +104,7 @@ pub struct Data {
     pub start_ops: Vec<String>,
     pub forged_start: bool,
     pub start_permit: Option<SignedTask>,
+    pub start_validity_seconds: i64,
     pub result_calls: usize,
     pub chunks: BTreeMap<u16, OutputChunk>,
     pub chunk_calls: Vec<Value>,
@@ -276,6 +277,7 @@ impl Server {
             start_ops: vec![],
             forged_start: false,
             start_permit: None,
+            start_validity_seconds: 15,
             result_calls: 0,
             chunks: BTreeMap::new(),
             chunk_calls: vec![],
@@ -426,6 +428,19 @@ fn claim_response(d: &mut Data, value: Value) -> Response {
         }
         old.clone()
     } else {
+        // A new claim never re-offers an already acknowledged terminal attempt. Retain
+        // the old-operation branch above for exact idempotent claim replay.
+        if d.explicit_offers
+            && d.offer.as_ref().is_some_and(|offer| {
+                let attempt = offer.payload.attempt_id().to_string();
+                d.results.iter().any(|(operation, result)| {
+                    d.acknowledged.contains(operation) && result["attemptId"] == attempt
+                })
+            })
+        {
+            return axum::Json(TaskClaimResponse::new(None, d.cancellations.clone()).unwrap())
+                .into_response();
+        }
         if d.offer
             .as_ref()
             .is_none_or(|v| v.payload.expires_at() <= d.time.now().unwrap())
@@ -507,7 +522,7 @@ fn start_event(d: &mut Data, operation: String) -> Response {
     d.start_ops.push(operation);
     if d.start_permit.is_none() {
         let mut payload = d.offer.as_ref().unwrap().payload.clone();
-        let expiry = d.time.now().unwrap() + 15;
+        let expiry = d.time.now().unwrap() + d.start_validity_seconds;
         match &mut payload {
             TaskPayload::Script(v) => {
                 v.permit = TaskPermit::Start;

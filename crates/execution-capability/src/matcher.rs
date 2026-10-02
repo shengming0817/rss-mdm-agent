@@ -139,7 +139,7 @@ pub fn match_capabilities(
     push(Dimension::Interpreter, interpreters(interpreter));
     if let Some(program) = execution.software_program() {
         for step in &program.steps {
-            push(Dimension::Software, software(&step.adapter));
+            push(Dimension::Software, software(&step.format.adapter()));
         }
     }
     match stdin {

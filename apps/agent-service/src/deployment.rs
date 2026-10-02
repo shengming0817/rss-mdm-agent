@@ -172,8 +172,9 @@ impl Deployment {
                 system_broker: true,
                 interactive_user: None,
                 source_credentials: vec![],
-                msix_sideload: false,
-                msix_unsigned: false,
+                msix_sideload: crate::software_worker::sideload_allowed()?,
+                msix_unsigned: cfg!(windows)
+                    && native_process::os_version::current()? >= [10, 0, 19041, 0],
             },
             origin: url::Url::parse(&self.origin).map_err(|_| Error::Configuration)?,
             tenant: self.tenant,
@@ -395,6 +396,36 @@ impl Deployment {
             } else {
                 [C::SoftwareBundleMacosSystemV5, C::SoftwareBundleMacosUserV5]
             });
+        }
+        if cfg!(windows) && has(wire::ExecutorProfile::PowerShell7) {
+            values.extend([
+                C::SoftwareExeSystemV5,
+                C::SoftwareExeUserV5,
+                C::SoftwareMsixRegistrationUserV5,
+                C::SoftwareMsixProvisioningSystemV5,
+            ]);
+        }
+        if cfg!(target_os = "macos")
+            && has(wire::ExecutorProfile::PosixSh)
+            && [
+                "/usr/bin/hdiutil",
+                "/usr/sbin/diskutil",
+                "/usr/bin/codesign",
+                "/usr/sbin/spctl",
+                "/usr/bin/lipo",
+            ]
+            .iter()
+            .all(|p| installation_security::protected(std::path::Path::new(p)).is_ok())
+        {
+            values.extend([C::SoftwareDmgAppSystemV5, C::SoftwareDmgAppUserV5]);
+            if self
+                .execution
+                .managers
+                .iter()
+                .any(|m| m.executor == M::PackageInstaller)
+            {
+                values.push(C::SoftwareDmgPkgSystemV5);
+            }
         }
         values.sort();
         values.dedup();

@@ -159,6 +159,7 @@ pub(crate) fn profile(profile: &VersionedRef) -> Result<(), Error> {
             "native-posix-sh-file",
             "native-bash-file",
             "native-osquery-template",
+            "native-software-worker",
         ]
         .contains(&profile.id.as_str())
     {
@@ -179,6 +180,13 @@ pub(crate) fn arguments(
         };
     }
     let path = script.to_str().ok_or(Error::InvalidInput)?;
+    if profile.id.as_str() == "native-software-worker" {
+        return if args == ["--software-worker", path] {
+            Ok(())
+        } else {
+            Err(Error::Denied)
+        };
+    }
     let prefix: &[&str] = match profile.id.as_str() {
         "native-posix-sh-file" => &[path],
         "native-bash-file" => &["--noprofile", "--norc", path],

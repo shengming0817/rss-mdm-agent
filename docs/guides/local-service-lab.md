@@ -26,7 +26,7 @@ Windows 使用 PowerShell 7 运行 `scripts/service/execution-windows.ps1 -Actio
 
 卸载将 install/Install 改为 remove/Remove，并提供原始精确二进制和配置路径。install 拒绝已有注册；卸载核对归属，只移除注册，不删除凭据、journal、材料或审计。生产桌面读取默认受保护部署 pin；自定义配置用于显式命令行部署和隔离验收，不作为桌面失败后的回退。
 
-本地执行 V5、桌面/系统 IPC V6、SQLite schema 6 拒绝旧格式；远程 Agent 使用 V5，通信 SQLite 使用 schema 3。远程旧协议和旧通信库明确拒绝，保留原文件，不迁移、自动换库或重新注册。测试执行器仅用于测试专用装配。按实际运行的平台分别记录编译、测试与验收结果；开发机不承担 Windows 验证，未执行的环境不记为通过。
+本地执行 V6、桌面/系统 IPC V7、SQLite schema 7 拒绝旧格式；远程 Agent 使用 V5，通信 SQLite 使用 schema 3。远程旧协议和旧通信库明确拒绝，保留原文件，不迁移、自动换库或重新注册。测试执行器仅用于测试专用装配。按实际运行的平台分别记录编译、测试与验收结果；开发机不承担 Windows 验证，未执行的环境不记为通过。
 
 软件脚本检测器在退出码为 0 且完整捕获 stdout 时读取一个严格 JSON 对象：`{"kind":"absent"}` 或 `{"kind":"present","version":"固定版本"}`。其它输出、截断或无法核实的执行活动保持 Unknown；检测事实与安装进程退出分别记入同一 journal。
 
@@ -49,7 +49,9 @@ Windows 使用 PowerShell 7 运行 `scripts/service/execution-windows.ps1 -Actio
 
 真实 osquery 接缝使用 `OSQUERY_TEST_BINARY=<已独立验证的官方二进制绝对路径> python3 scripts/build-run.py -- cargo test --locked -p execution-runner --test osquery -- --ignored`。macOS 必须保留官方 `.app` 完整结构以验证签名，单独复制 Mach-O 文件会破坏签名。该测试验证固定参数、字面量绑定和成功零行；不替代系统服务身份或完整平台部署验收。可复现候选为官方 5.23.1 的 `osquery-5.23.1_1.macos_arm64.tar.gz`，SHA-256 为 `5484f0b62e05a7b2fa9d6e43f038915ea2b7ce063d59bd671ede0cf8dd0552da`。
 
-执行上下文使用本机数值 OS 版本和认证 helper 的登录世代，待确认注册与 claim 保留原上下文。#2531 合入后的软件合同按格式/作用域声明能力；当前远程生产编译器消费 MSI、PKG 和 Bundle 已实现路径，拒绝尚未实现的 EXE/DMG/MSIX 及新版 WinGet/Brew 原生发布源，不宣称这些 profile 可执行。既有本地 runner 的冻结任务恢复不变。原生返回码与升级调用若超出当前 runner 已实现语义，同样明确拒绝，不回退为脚本或猜测命令。
+执行上下文使用本机数值 OS 版本和认证 helper 的登录世代，待确认注册与 claim 保留原上下文。生产编译器消费当前远程 V5 的 MSI、PKG、Bundle、离线 EXE、MSIX 和 DMG；WinGet/Brew 原生发布源仍不支持。EXE 仅执行完整离线布局、显式参数和明确卸载入口；退出码与重启按源任务策略解释，不自动重启。实际启动 EXE 后，当前 V5 没有可信外部安装会话完成协议，因此保留真实退出码与重启事实，同时报告 Unknown、保留离线布局与排他；Job 归零或检测命中不解除该限制。MSIX 明确区分目标用户注册与未来用户设备 provisioning，后者不改写已有用户注册；只查询既有侧载/依赖，不导入证书、改策略或终止应用。DMG 用镜像的完整长度/SHA256 确认内容身份，只读挂载并精确选择 app/内含 PKG，不计算独立 app 目录摘要；app 保留内部链接与 quarantine，经原生签名/Gatekeeper 检查再复制或原子替换。运行中应用拒绝替换/删除；卸载不清理用户数据。挂载、staging 和物理阶段在同一 attempt 中核算，Unknown 保留证据与排他，不重新执行安装。DMG 在原 invocation 内预留最多四分之一预算用于清理，取消/超时/重启后的恢复只使用原冻结 Cleanup 和递增日志序号；清理资源不改写未知安装事实，原活动未证明结束时仍保留排他。内含 PKG 必须通过原生签名与 Gatekeeper；未签名包被拒绝。
+
+验收入口可加 `--dmg-app <已公证 app>`，将固定候选装入只读镜像，经真实 HTTPS、系统服务、SQLite 与认证 IPC 验证安装及精确卸载；测试不修改签名信任或 quarantine。
 
 ## 显式开发刷新
 

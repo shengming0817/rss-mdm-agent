@@ -6,7 +6,7 @@ use crate::{ErrorKind, Field, Rule};
 use sha2::{Digest as _, Sha256};
 use std::fmt;
 
-const DIGEST_DOMAIN: &[u8] = b"rss-mdm-agent/execution-input/v5\0";
+const DIGEST_DOMAIN: &[u8] = b"rss-mdm-agent/execution-input/v6\0";
 
 /// Immutable, validated plan data. Freezing does not authenticate or authorize it.
 ///
@@ -25,7 +25,7 @@ pub struct FrozenExecution {
     digest: Digest,
 }
 impl FrozenExecution {
-    /// Validate and normalize the complete plan, then bind its canonical V5 bytes to SHA-256.
+    /// Validate and normalize the complete plan, then bind its canonical V6 bytes to SHA-256.
     /// Returns a structured configuration, value, context, budget or encoding diagnostic; grants no authority.
     pub fn freeze(
         mut spec: ExecutionInput,

@@ -244,7 +244,12 @@ pub(crate) fn identity(run_as: &RunAs, session: &SessionRequirement) -> Result<(
 }
 pub(crate) fn profile(profile: &VersionedRef) -> Result<(), Error> {
     if profile.revision.as_str() == "1"
-        && ["native-pwsh7-file", "native-osquery-template"].contains(&profile.id.as_str())
+        && [
+            "native-pwsh7-file",
+            "native-osquery-template",
+            "native-software-worker",
+        ]
+        .contains(&profile.id.as_str())
     {
         Ok(())
     } else {
@@ -267,6 +272,13 @@ pub(crate) fn arguments(
         };
     }
     let path = script.to_str().ok_or(Error::InvalidInput)?;
+    if profile.id.as_str() == "native-software-worker" {
+        return if args == ["--software-worker", path] {
+            Ok(())
+        } else {
+            Err(Error::Denied)
+        };
+    }
     let prefix: &[&str] = match profile.id.as_str() {
         "native-pwsh7-file" => &["-NoLogo", "-NoProfile", "-NonInteractive", "-File", path],
         _ => return Err(Error::Unsupported),

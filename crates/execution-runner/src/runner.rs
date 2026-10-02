@@ -14,7 +14,7 @@ use std::{
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 pub(crate) mod invocation;
-mod program;
+pub(crate) mod program;
 mod progress;
 
 struct Record {
@@ -23,6 +23,7 @@ struct Record {
     cancel: Arc<AtomicBool>,
     facts: Arc<Mutex<Option<ProcessEvidence>>>,
     progress: Arc<progress::Progress>,
+    cleanup_running: Arc<AtomicBool>,
 }
 /// One bounded OS runner. Its inventory is supplied by trusted host code, never IPC DTOs.
 pub struct NativeRunner {
@@ -222,6 +223,7 @@ impl NativeRunner {
                 cancel: cancel.clone(),
                 facts: facts.clone(),
                 progress: progress.clone(),
+                cleanup_running: Arc::new(AtomicBool::new(false)),
             },
         );
         drop(records); // Never hold the admission lock during filesystem or input I/O.
@@ -360,6 +362,74 @@ impl Drop for NativeRunner {
     }
 }
 impl RunnerPort for NativeRunner {
+    fn resume_software_cleanup(
+        &self,
+        resume: execution_app::SoftwareCleanupResume,
+    ) -> Result<(), Error> {
+        resume.resume(|plan, journal| {
+            if !journal.valid_for(&plan) || journal.runner != self.id {
+                return Err(Error::Denied);
+            }
+            let Some(grant) = journal.cleanup_allowance(&plan) else {
+                return Ok(());
+            };
+            let mut records = self.records.lock().map_err(|_| Error::Unavailable)?;
+            if let Some(record) = records.get(&journal.attempt_id) {
+                if record.plan.digest() != plan.digest() {
+                    return Err(Error::Conflict);
+                }
+                if record.cleanup_running.load(Ordering::Acquire)
+                    || record.progress.pending()?.is_some()
+                    || record
+                        .facts
+                        .lock()
+                        .map_err(|_| Error::Unavailable)?
+                        .as_ref()
+                        .is_some_and(|facts| !facts.finished)
+                {
+                    return Ok(());
+                }
+            } else if records.len() >= self.capacity {
+                return Err(Error::Capacity);
+            }
+            let Some(source) = self.artifacts.get(plan.digest().as_str())? else {
+                return Ok(());
+            };
+            source.inspect(&plan)?;
+            let progress = Arc::new(progress::Progress::new());
+            let running = Arc::new(AtomicBool::new(true));
+            let facts = records
+                .get(&journal.attempt_id)
+                .map(|record| record.facts.clone())
+                .unwrap_or_else(|| Arc::new(Mutex::new(None)));
+            let key = journal.attempt_id.clone();
+            records.insert(
+                key.clone(),
+                Record {
+                    plan: plan.clone(),
+                    _materials: Some(source.clone()),
+                    cancel: Arc::new(AtomicBool::new(false)),
+                    facts,
+                    progress: progress.clone(),
+                    cleanup_running: running.clone(),
+                },
+            );
+            let runner = self.id.clone();
+            if std::thread::Builder::new()
+                .name("rss-software-cleanup".into())
+                .spawn(move || {
+                    program::cleanup(source, plan, journal, runner, grant, progress);
+                    running.store(false, Ordering::Release);
+                })
+                .is_err()
+            {
+                records.remove(&key);
+                return Err(Error::Unavailable);
+            }
+            Ok(())
+        })
+    }
+
     fn recover_software_progress(
         &self,
         plan: &FrozenExecution,
@@ -380,8 +450,8 @@ impl RunnerPort for NativeRunner {
             return Ok(None);
         };
         let sources = source.program.get(*step as usize).ok_or(Error::Unbound)?;
-        let material = if *phase == SoftwarePhase::Mutation {
-            sources.mutation.as_deref()
+        let material = if !phase.is_observation() {
+            sources.mutations.get(phase).map(Box::as_ref)
         } else {
             sources.detection.as_deref()
         };
@@ -395,6 +465,7 @@ impl RunnerPort for NativeRunner {
             attempt: previous.attempt_id.clone(),
             step: *step,
             phase: *phase,
+            cleanup_sequence: 0,
         })
         else {
             return Ok(None);
@@ -411,14 +482,31 @@ impl RunnerPort for NativeRunner {
             return Err(Error::Denied);
         }
         facts.runner = self.id.clone();
-        let detected = if *phase == SoftwarePhase::Mutation {
+        let detected = if !phase.is_observation() {
             None
         } else {
-            Some(program::script_detection(&facts))
+            Some(program::invocation_detection(
+                plan.spec()
+                    .execution
+                    .software_program()
+                    .and_then(|p| p.invocation(*step as usize, *phase))
+                    .ok_or(Error::Unbound)?,
+                &facts,
+            ))
         };
         let mut next = previous.clone();
         next.output_bytes = next.output_bytes.saturating_add(facts.total_output_bytes);
         next.checkpoints.push(SoftwareCheckpoint::End {
+            duration_ms: next.elapsed_ms.saturating_sub(
+                previous
+                    .checkpoints
+                    .iter()
+                    .filter_map(|c| match c {
+                        SoftwareCheckpoint::End { duration_ms, .. } => Some(*duration_ms),
+                        _ => None,
+                    })
+                    .sum::<u64>(),
+            ),
             step: *step,
             phase: *phase,
             quiescent: facts.quiescent,
@@ -440,14 +528,7 @@ impl RunnerPort for NativeRunner {
             if records.len() >= self.capacity {
                 return Err(Error::Capacity);
             }
-            if !journal.valid_for(&plan)
-                || journal.runner != self.id
-                || journal.complete(&plan)
-                || !matches!(
-                    journal.checkpoints.last(),
-                    Some(SoftwareCheckpoint::Complete { .. })
-                )
-            {
+            if !journal.valid_for(&plan) || journal.runner != self.id || !journal.resumable(&plan) {
                 return Err(Error::Denied);
             }
             let Some(source) = self.artifacts.get(plan.digest().as_str())? else {
@@ -470,6 +551,7 @@ impl RunnerPort for NativeRunner {
                     cancel: cancel.clone(),
                     facts: facts.clone(),
                     progress: progress.clone(),
+                    cleanup_running: Arc::new(AtomicBool::new(false)),
                 },
             );
             let runner = self.id.clone();
@@ -575,6 +657,7 @@ impl RunnerPort for NativeRunner {
             }
             if plan.spec().execution.software_program().is_none()
                 || record.progress.complete(plan)?
+                || record.progress.closed(plan)?
             {
                 if plan.spec().execution.software_program().is_none() {
                     delegate = record
@@ -1028,6 +1111,9 @@ async fn run(
     let mut stop_at = None;
     let mut killed = false;
     let mut exited = false;
+    // A software installer may finish its root while child installation work is still active.
+    // Job completion is awaited naturally; cancellation/timeout still owns termination.
+    let software = invocation.is_some();
     let mut next_session_check = Instant::now();
     loop {
         let clock = Instant::now();
@@ -1073,10 +1159,14 @@ async fn run(
                     facts.exit_code = status.code();
                     if stop_at.is_none() {
                         facts.end = ProcessEnd::Exited;
-                        stop_at = Some(clock)
+                        if !software {
+                            stop_at = Some(clock);
+                        }
                     }
-                    owner.terminate();
-                    killed = true;
+                    if !software {
+                        owner.terminate();
+                        killed = true;
+                    }
                 }
                 Err(_) => {
                     fail_running(
@@ -1089,7 +1179,12 @@ async fn run(
                 Ok(None) => {}
             }
         }
-        if exited && out_done && err_done && input_done {
+        if exited
+            && out_done
+            && err_done
+            && input_done
+            && (!software || cfg!(target_os = "macos") || owner.quiescent())
+        {
             break;
         }
         let mut event = None;
@@ -1158,7 +1253,26 @@ async fn run(
         fault(&mut facts, ProcessFailureKind::Supervision);
     }
     facts.finished = true;
-    facts.quiescent = exited && out_done && err_done && owner.quiescent();
+    let native_worker = recipe.launch.interpreter.profile.id.as_str() == "native-software-worker";
+    if native_worker {
+        if let Ok(result) = serde_json::from_slice::<SoftwareWorkerResult>(&facts.stdout) {
+            facts.total_output_bytes = facts
+                .total_output_bytes
+                .saturating_add(result.native_output_bytes);
+            if facts.total_output_bytes > cap {
+                facts.end = ProcessEnd::OutputLimit;
+            }
+        }
+    }
+    let operation_closed = native_worker
+        && facts.end == ProcessEnd::Exited
+        && facts.failure_kind == ProcessFailureKind::None
+        && serde_json::from_slice::<SoftwareWorkerResult>(&facts.stdout).is_ok_and(|r| r.closed);
+    facts.quiescent = exited
+        && out_done
+        && err_done
+        && ((owner.quiescent() && (!native_worker || operation_closed))
+            || (cfg!(target_os = "macos") && operation_closed));
     facts.quality = if facts.total_output_bytes > cap || facts.end == ProcessEnd::OutputLimit {
         OutputQuality::Truncated
     } else if !out_done || !err_done {
@@ -1166,7 +1280,11 @@ async fn run(
     } else if input_failed
         || facts.failure_kind != ProcessFailureKind::None
         || facts.end != ProcessEnd::Exited
-        || facts.exit_code != Some(0)
+        || !facts.exit_code.is_some_and(|code| {
+            invocation.as_ref().map_or(code == 0, |i| {
+                i.exit_codes.success.contains(&code) || i.exit_codes.reboot.contains(&code)
+            })
+        })
     {
         OutputQuality::Failed
     } else {

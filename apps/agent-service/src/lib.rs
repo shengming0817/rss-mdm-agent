@@ -6,6 +6,7 @@ mod plan;
 mod recovery;
 mod service;
 mod software;
+pub mod software_worker;
 pub use agent_client::wire;
 use agent_client::{Clock, Error, SecretProvider};
 use base64::Engine;

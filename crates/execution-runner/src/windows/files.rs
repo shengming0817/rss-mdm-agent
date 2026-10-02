@@ -197,7 +197,13 @@ pub(crate) fn payload(
         bInheritHandle: 0,
     };
     use sha2::{Digest as _, Sha256};
-    let directory = root.join(format!("{:x}", Sha256::digest(attempt.as_str().as_bytes())));
+    let directory = root.join(format!(
+        "{:x}",
+        Sha256::new()
+            .chain_update(attempt.as_str().as_bytes())
+            .chain_update(content)
+            .finalize()
+    ));
     if unsafe { CreateDirectoryW(wide(&directory).as_ptr(), &attributes) } == 0 {
         return Err(Error::Conflict);
     }
