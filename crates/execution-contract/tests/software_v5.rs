@@ -429,3 +429,141 @@ fn removal_updates_require_independent_absence_and_keep_failed_work_closed() {
         "recovery cannot drop already consumed operation time"
     );
 }
+
+#[test]
+fn cleanup_recovery_closes_resources_without_replaying_unknown_business_work() {
+    use execution_contract::*;
+    let mut input = decode_execution(include_bytes!("fixtures/software.json"), &limits()).unwrap();
+    let ExecutionSpec::SoftwareProgram { program } = &mut input.execution else {
+        unreachable!()
+    };
+    let step = &mut program.steps[0];
+    step.format = SoftwareFormat::DmgPkg {
+        volume: PackageValue::new("Approved").unwrap(),
+        path: "fixed.pkg".into(),
+        length: 1,
+        sha256: step.payload.sha256.clone(),
+        receipt: PackageValue::new("org.rss.fixture").unwrap(),
+    };
+    let mut cleanup = step.install.clone();
+    cleanup.launch.interpreter.profile.id = Id::new("native-software-worker").unwrap();
+    cleanup.timeout_ms = 900;
+    cleanup.output_bytes = 6144;
+    step.auxiliary
+        .insert(SoftwarePhase::Attach, step.install.clone());
+    step.auxiliary.insert(SoftwarePhase::Cleanup, cleanup);
+    let plan = FrozenExecution::freeze(input, &limits()).unwrap();
+    for unknown_mutation in [false, true] {
+        let attempt = AttemptId::new("original-attempt").unwrap();
+        let runner = Id::new("native").unwrap();
+        let facts = |code| {
+            Box::new(ProcessEvidence {
+                content_digest: plan.digest().clone(),
+                attempt_id: attempt.clone(),
+                runner: runner.clone(),
+                scope: ProcessScope::ProcessGroup { owner: 1, group: 2 },
+                finished: true,
+                exit_code: Some(code),
+                end: ProcessEnd::Exited,
+                failure_kind: ProcessFailureKind::None,
+                quiescent: true,
+                stdout: vec![],
+                stderr: vec![],
+                total_output_bytes: 0,
+                quality: OutputQuality::Complete,
+            })
+        };
+        let mut progress = SoftwareProgress {
+            content_digest: plan.digest().clone(),
+            attempt_id: attempt.clone(),
+            runner: runner.clone(),
+            elapsed_ms: 100,
+            output_bytes: 0,
+            checkpoints: vec![
+                SoftwareCheckpoint::Begin {
+                    step: 0,
+                    phase: SoftwarePhase::Before,
+                },
+                SoftwareCheckpoint::End {
+                    step: 0,
+                    phase: SoftwarePhase::Before,
+                    duration_ms: 5,
+                    process: None,
+                    detected: Some(SoftwareState::Absent {}),
+                    quiescent: true,
+                },
+                SoftwareCheckpoint::Begin {
+                    step: 0,
+                    phase: SoftwarePhase::Attach,
+                },
+                SoftwareCheckpoint::End {
+                    step: 0,
+                    phase: SoftwarePhase::Attach,
+                    duration_ms: 10,
+                    process: Some(facts(0)),
+                    detected: None,
+                    quiescent: true,
+                },
+                SoftwareCheckpoint::Begin {
+                    step: 0,
+                    phase: SoftwarePhase::Mutation,
+                },
+            ],
+        };
+        if !unknown_mutation {
+            progress.checkpoints.extend([
+                SoftwareCheckpoint::End {
+                    step: 0,
+                    phase: SoftwarePhase::Mutation,
+                    duration_ms: 10,
+                    process: Some(facts(7)),
+                    detected: None,
+                    quiescent: true,
+                },
+                SoftwareCheckpoint::Begin {
+                    step: 0,
+                    phase: SoftwarePhase::Cleanup,
+                },
+                SoftwareCheckpoint::End {
+                    step: 0,
+                    phase: SoftwarePhase::Cleanup,
+                    duration_ms: 10,
+                    process: Some(facts(1)),
+                    detected: None,
+                    quiescent: true,
+                },
+            ]);
+        }
+        assert!(progress.valid_for(&plan) && !progress.closed(&plan));
+        let original = progress.clone();
+        let (step, sequence, timeout_ms, output_bytes) = progress.cleanup_allowance(&plan).unwrap();
+        progress.checkpoints.push(SoftwareCheckpoint::CleanupBegin {
+            step,
+            sequence,
+            timeout_ms,
+            output_bytes,
+        });
+        assert!(progress.valid_for(&plan) && !progress.resumable(&plan));
+        // Losing an acknowledgement burns the whole granted slice; restart cannot refill it.
+        let next = progress.cleanup_allowance(&plan).unwrap();
+        assert_eq!(next.1, sequence + 1);
+        progress.checkpoints.push(SoftwareCheckpoint::CleanupEnd {
+            step,
+            sequence,
+            duration_ms: 15,
+            process: facts(0),
+            resources_closed: true,
+        });
+        assert!(progress.valid_for(&plan) && progress.extends(&original));
+        assert_eq!(progress.closed(&plan), !unknown_mutation);
+        assert!(!progress.complete(&plan) && !progress.resumable(&plan));
+        progress.checkpoints.push(SoftwareCheckpoint::Begin {
+            step: 0,
+            phase: SoftwarePhase::Mutation,
+        });
+        assert!(
+            !progress.valid_for(&plan),
+            "cleanup never authorizes business redispatch"
+        );
+    }
+}

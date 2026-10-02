@@ -1486,11 +1486,14 @@ fn software_application_commits_boundaries_before_ack_and_never_replays_unknown_
 
 #[test]
 fn completed_step_cannot_become_sequence_exit_after_restart() {
-    for started_next in [false, true] {
+    for scenario in 0..3 {
+        let started_next = scenario == 1;
+        let complete_sequence = scenario == 2;
         #[derive(Clone)]
         struct Runner {
             inner: DeterministicTestRunner,
             path: std::path::PathBuf,
+            crash_after_checkpoint: bool,
             pending: std::sync::Arc<std::sync::Mutex<Option<SoftwareProgress>>>,
         }
         impl RunnerPort for Runner {
@@ -1553,6 +1556,9 @@ fn completed_step_cannot_become_sequence_exit_after_restart() {
                     *receipt.facts()
                 );
                 self.pending.lock().unwrap().take();
+                if self.crash_after_checkpoint {
+                    return Err(Error::OutcomeUnknown);
+                }
                 Ok(())
             }
         }
@@ -1571,7 +1577,9 @@ fn completed_step_cannot_become_sequence_exit_after_restart() {
         let ExecutionSpec::SoftwareProgram { program } = &mut input.execution else {
             panic!("program")
         };
-        program.steps.push(program.steps[0].clone());
+        if !complete_sequence {
+            program.steps.push(program.steps[0].clone());
+        }
         let plan = FrozenExecution::freeze(input, &test_store_limits().input).unwrap();
         host.template = plan.clone();
         let pending = std::sync::Arc::new(std::sync::Mutex::new(None));
@@ -1579,6 +1587,7 @@ fn completed_step_cannot_become_sequence_exit_after_restart() {
             inner: DeterministicTestRunner::new(id("test-runner"), TestScenario::Unknown, 8)
                 .unwrap(),
             path: db.path.clone(),
+            crash_after_checkpoint: complete_sequence,
             pending: pending.clone(),
         };
         let mut app = ExecutionApp::start(
@@ -1600,7 +1609,7 @@ fn completed_step_cannot_become_sequence_exit_after_restart() {
                 phase: SoftwarePhase::Before,
             },
             SoftwareCheckpoint::End {
-                duration_ms: 0,
+                duration_ms: 20,
                 step: 0,
                 phase: SoftwarePhase::Before,
                 process: None,
@@ -1612,7 +1621,7 @@ fn completed_step_cannot_become_sequence_exit_after_restart() {
                 phase: SoftwarePhase::Mutation,
             },
             SoftwareCheckpoint::End {
-                duration_ms: 0,
+                duration_ms: 20,
                 step: 0,
                 phase: SoftwarePhase::Mutation,
                 process: Some(Box::new(ProcessEvidence {
@@ -1638,7 +1647,7 @@ fn completed_step_cannot_become_sequence_exit_after_restart() {
                 phase: SoftwarePhase::After,
             },
             SoftwareCheckpoint::End {
-                duration_ms: 0,
+                duration_ms: 20,
                 step: 0,
                 phase: SoftwarePhase::After,
                 process: None,
@@ -1658,16 +1667,22 @@ fn completed_step_cannot_become_sequence_exit_after_restart() {
             content_digest: plan.digest().clone(),
             runner: id("test-runner"),
             checkpoints,
-            elapsed_ms: 1,
+            elapsed_ms: 100,
             output_bytes: 0,
         });
-        app.reconcile(&plan.spec().request.request_id).unwrap();
+        let first = app.reconcile(&plan.spec().request.request_id);
+        if complete_sequence {
+            assert!(first.is_err());
+        } else {
+            first.unwrap();
+        }
         assert!(pending.lock().unwrap().is_none());
         drop(app);
         let runner = Runner {
             inner: DeterministicTestRunner::new(id("test-runner"), TestScenario::Unknown, 8)
                 .unwrap(),
             path: db.path.clone(),
+            crash_after_checkpoint: false,
             pending,
         };
         let mut app = ExecutionApp::start(
@@ -1680,10 +1695,20 @@ fn completed_step_cannot_become_sequence_exit_after_restart() {
         .unwrap();
         let status = app.reconcile(&plan.spec().request.request_id).unwrap();
         assert_eq!(status.attempts, 1);
-        assert!(
-            status.process.is_none(),
-            "a completed child cannot represent the unfinished sequence"
-        );
+        if complete_sequence {
+            assert_eq!(
+                status
+                    .process
+                    .as_ref()
+                    .and_then(|process| process.exit_code),
+                Some(0)
+            );
+        } else {
+            assert!(
+                status.process.is_none(),
+                "a completed child cannot represent the unfinished sequence"
+            );
+        }
         let sql = rusqlite::Connection::open(&db.path).unwrap();
         assert_eq!(
             sql.query_row("SELECT count(*) FROM software_progress", [], |r| r
@@ -1695,7 +1720,7 @@ fn completed_step_cannot_become_sequence_exit_after_restart() {
             sql.query_row("SELECT count(*) FROM software_claims", [], |r| r
                 .get::<_, i64>(0))
                 .unwrap(),
-            1
+            if complete_sequence { 0 } else { 1 }
         );
     }
 }

@@ -382,6 +382,52 @@ pub fn verify_retained(
         _path: lease,
     })
 }
+/// Lease an exact private staging file under the already verified physical worker account.
+/// Only descendants of this frozen attempt resource root may use the current-account policy.
+/// Immutable producer materials continue using `verify_retained`.
+pub fn verify_staged(
+    path: &std::path::Path,
+    digest: &execution_contract::Digest,
+    root: &std::path::Path,
+    run_as: &execution_contract::RunAs,
+    session: &execution_contract::SessionRequirement,
+) -> Result<RetainedMaterialLease, execution_app::Error> {
+    verify_worker_identity(run_as, session)?;
+    if !root.is_absolute()
+        || path == root
+        || !path.starts_with(root)
+        || path.components().any(|part| {
+            matches!(
+                part,
+                std::path::Component::ParentDir | std::path::Component::CurDir
+            )
+        })
+    {
+        return Err(execution_app::Error::Denied);
+    }
+    crate::platform::protected_path(root, true)?;
+    let (file, lease) = crate::materialize::verify_material_kind(path, digest, false)?;
+    Ok(RetainedMaterialLease {
+        _file: file,
+        _path: lease,
+    })
+}
+/// Independently observe exact installed bytes under the verified native account.
+/// User-owned targets do not become immutable producer input or dispatch authority.
+pub fn verify_observed(
+    path: &std::path::Path,
+    digest: &execution_contract::Digest,
+    run_as: &execution_contract::RunAs,
+    session: &execution_contract::SessionRequirement,
+) -> Result<RetainedMaterialLease, execution_app::Error> {
+    verify_worker_identity(run_as, session)?;
+    let immutable = matches!(run_as, execution_contract::RunAs::System { .. });
+    let (file, lease) = crate::materialize::verify_material_kind(path, digest, immutable)?;
+    Ok(RetainedMaterialLease {
+        _file: file,
+        _path: lease,
+    })
+}
 /// Read the protected, bounded input already pinned by the parent runner's launch recipe.
 pub fn read_worker_input(
     path: &std::path::Path,

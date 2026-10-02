@@ -2535,6 +2535,7 @@ fn software_checkpoints_commit_atomically_and_survive_reopen_without_replay() {
     );
     let old = progress.clone();
     progress.checkpoints.push(SoftwareCheckpoint::End {
+        duration_ms: 0,
         step: 0,
         phase: SoftwarePhase::Before,
         process: None,
@@ -2732,6 +2733,8 @@ fn managed_provenance_follows_committed_steps_and_is_lost_when_detection_changes
     let mut host = software_host();
     let mut input = host.plan.spec().clone();
     if let ExecutionSpec::SoftwareProgram { program } = &mut input.execution {
+        program.steps[0].allow_reboot = true;
+        program.steps[0].install.exit_codes.reboot.insert(3010);
         program.steps.push(program.steps[0].clone());
     }
     host.plan = FrozenExecution::freeze(input, &limits().input).unwrap();
@@ -2753,7 +2756,7 @@ fn managed_provenance_follows_committed_steps_and_is_lost_when_detection_changes
         runner: id("test-runner"),
         scope: ProcessScope::ProcessGroup { owner: 1, group: 1 },
         finished: true,
-        exit_code: Some(0),
+        exit_code: Some(3010),
         end: ProcessEnd::Exited,
         failure_kind: ProcessFailureKind::None,
         quiescent: true,
@@ -2766,7 +2769,7 @@ fn managed_provenance_follows_committed_steps_and_is_lost_when_detection_changes
         attempt_id: attempt,
         content_digest: host.plan.digest().clone(),
         runner: id("test-runner"),
-        elapsed_ms: 2,
+        elapsed_ms: 100,
         output_bytes: 0,
         checkpoints: vec![
             SoftwareCheckpoint::Begin {
@@ -2774,6 +2777,7 @@ fn managed_provenance_follows_committed_steps_and_is_lost_when_detection_changes
                 phase: SoftwarePhase::Before,
             },
             SoftwareCheckpoint::End {
+                duration_ms: 20,
                 step: 0,
                 phase: SoftwarePhase::Before,
                 process: None,
@@ -2785,6 +2789,7 @@ fn managed_provenance_follows_committed_steps_and_is_lost_when_detection_changes
                 phase: SoftwarePhase::Mutation,
             },
             SoftwareCheckpoint::End {
+                duration_ms: 20,
                 step: 0,
                 phase: SoftwarePhase::Mutation,
                 process: Some(Box::new(process)),
@@ -2796,6 +2801,7 @@ fn managed_provenance_follows_committed_steps_and_is_lost_when_detection_changes
                 phase: SoftwarePhase::After,
             },
             SoftwareCheckpoint::End {
+                duration_ms: 20,
                 step: 0,
                 phase: SoftwarePhase::After,
                 process: None,
@@ -2812,6 +2818,17 @@ fn managed_provenance_follows_committed_steps_and_is_lost_when_detection_changes
         .unwrap();
     assert_eq!(
         store
+            .execution_by_request(
+                &host.plan.spec().request.request_id,
+                ExecutionAccess::Result,
+                &host
+            )
+            .unwrap()
+            .software,
+        Some(SoftwareDiagnostic::RestartPending)
+    );
+    assert_eq!(
+        store
             .software_ownership(&host.scope(), &host)
             .unwrap()
             .len(),
@@ -2826,6 +2843,7 @@ fn managed_provenance_follows_committed_steps_and_is_lost_when_detection_changes
         .unwrap();
     assert_eq!(db.count("software_ownership"), 1);
     progress.checkpoints.push(SoftwareCheckpoint::End {
+        duration_ms: 20,
         step: 1,
         phase: SoftwarePhase::Before,
         process: None,
@@ -2846,4 +2864,206 @@ fn managed_provenance_follows_committed_steps_and_is_lost_when_detection_changes
         .unwrap();
     assert_eq!(db.count("software_ownership"), 0);
     assert_eq!(db.count("software_claims"), 1);
+}
+
+#[test]
+fn failed_software_claims_require_resource_closure_even_after_reopen() {
+    for image in [false, true] {
+        let db = Database::new();
+        let mut host = software_host();
+        if image {
+            let mut input = host.plan.spec().clone();
+            let ExecutionSpec::SoftwareProgram { program } = &mut input.execution else {
+                unreachable!()
+            };
+            let step = &mut program.steps[0];
+            step.format = SoftwareFormat::DmgPkg {
+                volume: PackageValue::new("Approved").unwrap(),
+                path: "fixed.pkg".into(),
+                length: 1,
+                sha256: step.payload.sha256.clone(),
+                receipt: PackageValue::new("org.rss.fixture").unwrap(),
+            };
+            step.auxiliary
+                .insert(SoftwarePhase::Attach, step.install.clone());
+            let mut cleanup = step.install.clone();
+            cleanup.launch.interpreter.profile.id = id("native-software-worker");
+            step.auxiliary.insert(SoftwarePhase::Cleanup, cleanup);
+            host.plan = FrozenExecution::freeze(input, &limits().input).unwrap();
+        }
+        let mut store = db.create();
+        host.prepare(&mut store);
+        store
+            .apply_command(
+                &operation("begin"),
+                &host.scope(),
+                &host.begin(),
+                &[],
+                &host,
+            )
+            .unwrap();
+        let attempt = AttemptId::new("attempt-1").unwrap();
+        let process = |code| {
+            Box::new(ProcessEvidence {
+                attempt_id: attempt.clone(),
+                content_digest: host.plan.digest().clone(),
+                runner: id("test-runner"),
+                scope: ProcessScope::ProcessGroup { owner: 1, group: 2 },
+                finished: true,
+                exit_code: Some(code),
+                end: ProcessEnd::Exited,
+                failure_kind: ProcessFailureKind::None,
+                quiescent: true,
+                stdout: vec![],
+                stderr: vec![],
+                total_output_bytes: 0,
+                quality: OutputQuality::Complete,
+            })
+        };
+        let mut progress = SoftwareProgress {
+            attempt_id: attempt.clone(),
+            content_digest: host.plan.digest().clone(),
+            runner: id("test-runner"),
+            elapsed_ms: 100,
+            output_bytes: 0,
+            checkpoints: vec![
+                SoftwareCheckpoint::Begin {
+                    step: 0,
+                    phase: SoftwarePhase::Before,
+                },
+                SoftwareCheckpoint::End {
+                    step: 0,
+                    phase: SoftwarePhase::Before,
+                    duration_ms: 5,
+                    process: None,
+                    detected: Some(SoftwareState::Absent {}),
+                    quiescent: true,
+                },
+            ],
+        };
+        if image {
+            progress.checkpoints.extend([
+                SoftwareCheckpoint::Begin {
+                    step: 0,
+                    phase: SoftwarePhase::Attach,
+                },
+                SoftwareCheckpoint::End {
+                    step: 0,
+                    phase: SoftwarePhase::Attach,
+                    duration_ms: 5,
+                    process: Some(process(0)),
+                    detected: None,
+                    quiescent: true,
+                },
+            ]);
+        }
+        progress.checkpoints.extend([
+            SoftwareCheckpoint::Begin {
+                step: 0,
+                phase: SoftwarePhase::Mutation,
+            },
+            SoftwareCheckpoint::End {
+                step: 0,
+                phase: SoftwarePhase::Mutation,
+                duration_ms: 5,
+                process: Some(process(7)),
+                detected: None,
+                quiescent: true,
+            },
+        ]);
+        if image {
+            progress.checkpoints.extend([
+                SoftwareCheckpoint::Begin {
+                    step: 0,
+                    phase: SoftwarePhase::Cleanup,
+                },
+                SoftwareCheckpoint::End {
+                    step: 0,
+                    phase: SoftwarePhase::Cleanup,
+                    duration_ms: 5,
+                    process: Some(process(1)),
+                    detected: None,
+                    quiescent: true,
+                },
+            ]);
+        }
+        progress.checkpoints.extend([
+            SoftwareCheckpoint::Begin {
+                step: 0,
+                phase: SoftwarePhase::After,
+            },
+            SoftwareCheckpoint::End {
+                step: 0,
+                phase: SoftwarePhase::After,
+                duration_ms: 5,
+                process: None,
+                detected: Some(SoftwareState::Absent {}),
+                quiescent: true,
+            },
+        ]);
+        store
+            .record_software_progress(&host.scope(), &progress, &host)
+            .unwrap();
+        let exit = observation_event(
+            "exit",
+            2,
+            attempt.clone(),
+            EvidenceRef {
+                reference: reference("exit"),
+                kind: EvidenceKind::TestResult,
+                runner: id("test-runner"),
+            },
+        );
+        store
+            .apply_observation(
+                &operation("exit"),
+                &host.scope(),
+                &exit,
+                &host,
+                &TestEvidence::new(lifecycle::Observation::Exited {
+                    exit_code: 7,
+                    total_output_bytes: 0,
+                }),
+            )
+            .unwrap();
+        drop(store);
+        let mut store = db.open();
+        assert_eq!(db.count("software_claims"), if image { 1 } else { 0 });
+        if image {
+            let (step, sequence, timeout_ms, output_bytes) =
+                progress.cleanup_allowance(&host.plan).unwrap();
+            progress.checkpoints.push(SoftwareCheckpoint::CleanupBegin {
+                step,
+                sequence,
+                timeout_ms,
+                output_bytes,
+            });
+            store
+                .record_software_progress(&host.scope(), &progress, &host)
+                .unwrap();
+            assert_eq!(db.count("software_claims"), 1);
+            progress.checkpoints.push(SoftwareCheckpoint::CleanupEnd {
+                step,
+                sequence,
+                duration_ms: 5,
+                process: process(0),
+                resources_closed: true,
+            });
+            store
+                .record_software_progress(&host.scope(), &progress, &host)
+                .unwrap();
+            drop(store);
+            let store = db.open();
+            assert!(store
+                .software_progress(&host.scope(), &attempt, &host)
+                .unwrap()
+                .unwrap()
+                .closed(&host.plan));
+            assert_eq!(
+                db.count("software_claims"),
+                0,
+                "late cleanup must settle the already terminated attempt atomically"
+            );
+        }
+    }
 }

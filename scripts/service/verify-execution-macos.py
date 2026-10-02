@@ -657,16 +657,18 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
                 length=contained_pkg.stat().st_size,sha256=list(hashlib.sha256(contained_pkg.read_bytes()).digest()),bundle=contained_receipt,version='1.0')
             pkg_remote = completed(pkg_task['attempt'],120)
             pkg_event = acknowledged_result(pkg_remote,pkg_task['attempt'])
-            assert pkg_event['steps'][0]['after']['state'] == 'present' and pkg_event['steps'][0]['diagnostics']['failure'] is None
-            assert (protected/'contained-package-payload/fixed.txt').read_text() == 'controlled package payload\n'
-            receipt['scenarios']['dmg_contained_pkg'] = pkg_remote
+            assert pkg_event['steps'][0]['process']['kind'] == 'exited' and pkg_event['steps'][0]['process']['code'] != 0
+            assert pkg_event['steps'][0]['after']['state'] == 'absent'
+            assert not (protected/'contained-package-payload/fixed.txt').exists()
+            assert subprocess.run(['/usr/sbin/pkgutil','--pkg-info-plist',contained_receipt],capture_output=True).returncode != 0
+            receipt['scenarios']['dmg_contained_pkg_unsigned_rejected'] = pkg_remote
         third = command('package', path=str(pkg), receipt=package_receipt)
         package = completed(third['attempt'], 60)
         event = acknowledged_result(package, third['attempt'])
         assert event['kind'] == 'software_result' and len(event['steps']) == 1
         step = event['steps'][0]
         assert step['process'] == {'kind':'exited','code':0}
-        assert step['diagnostics']['failure'] is None
+        assert step['diagnostics']['failure'] == 'capture_failed'
         assert (protected / 'package-payload/fixed.txt').read_text() == 'controlled package payload\n'
         import plistlib
         installed_receipt = plistlib.loads(run('/usr/sbin/pkgutil', '--pkg-info-plist', package_receipt).stdout.encode())

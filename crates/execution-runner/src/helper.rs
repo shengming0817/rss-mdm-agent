@@ -24,6 +24,7 @@ pub(crate) enum Command {
         attempt: AttemptId,
         step: u32,
         phase: SoftwarePhase,
+        cleanup_sequence: u32,
         interpreter: PathBuf,
         content: PathBuf,
         timeout_ms: u64,
@@ -36,18 +37,21 @@ pub(crate) enum Command {
         attempt: AttemptId,
         step: u32,
         phase: SoftwarePhase,
+        cleanup_sequence: u32,
     },
     InvocationStop {
         input: Box<ExecutionInput>,
         attempt: AttemptId,
         step: u32,
         phase: SoftwarePhase,
+        cleanup_sequence: u32,
     },
     InvocationAck {
         input: Box<ExecutionInput>,
         attempt: AttemptId,
         step: u32,
         phase: SoftwarePhase,
+        cleanup_sequence: u32,
     },
     Ready,
     Inspect {
@@ -105,10 +109,10 @@ pub(crate) enum Reply {
 /// A physical process owner for one actual user login; it has no device secrets or database.
 pub struct Helper {
     physical: std::collections::BTreeMap<
-        (AttemptId, u32, SoftwarePhase),
+        (AttemptId, u32, SoftwarePhase, u32),
         crate::runner::invocation::PhysicalInvocation,
     >,
-    retired: std::collections::BTreeMap<(AttemptId, u32, SoftwarePhase), (Digest, u64)>,
+    retired: std::collections::BTreeMap<(AttemptId, u32, SoftwarePhase, u32), (Digest, u64)>,
     clock_watermark: u64,
     capacity: usize,
     limits: ExecutionLimits,
@@ -193,6 +197,7 @@ impl Helper {
                 attempt,
                 step,
                 phase,
+                cleanup_sequence,
                 interpreter,
                 content,
                 timeout_ms,
@@ -200,6 +205,10 @@ impl Helper {
                 first_start,
                 before,
             } => {
+                if cleanup_sequence > 3 || (cleanup_sequence > 0 && phase != SoftwarePhase::Cleanup)
+                {
+                    return Err(Error::Denied);
+                }
                 let (plan, invocation) = self.invocation(*input, step, phase)?;
                 let now = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -211,13 +220,13 @@ impl Helper {
                     return Err(Error::Clock);
                 }
                 self.clock_watermark = now;
-                if now >= plan.spec().validity.expires_at_unix_ms {
+                if cleanup_sequence == 0 && now >= plan.spec().validity.expires_at_unix_ms {
                     return Err(Error::Clock);
                 }
                 // An expired invocation can never be accepted again, even after its tombstone
                 // is reclaimed. The watermark prevents a clock rollback reopening that window.
                 self.retired.retain(|_, (_, expiry)| *expiry > now);
-                let key = (attempt.clone(), step, phase);
+                let key = (attempt.clone(), step, phase, cleanup_sequence);
                 if let Some((digest, _)) = self.retired.get(&key) {
                     return if digest == plan.digest() {
                         Ok(Reply::Acknowledged)
@@ -266,9 +275,10 @@ impl Helper {
                 attempt,
                 step,
                 phase,
+                cleanup_sequence,
             } => {
                 let (plan, _) = self.invocation(*input, step, phase)?;
-                let process = match self.physical.get(&(attempt, step, phase)) {
+                let process = match self.physical.get(&(attempt, step, phase, cleanup_sequence)) {
                     Some(owner) if &owner.digest == plan.digest() => owner
                         .facts
                         .lock()
@@ -285,11 +295,12 @@ impl Helper {
                 attempt,
                 step,
                 phase,
+                cleanup_sequence,
             } => {
                 let (plan, _) = self.invocation(*input, step, phase)?;
                 let owner = self
                     .physical
-                    .get(&(attempt, step, phase))
+                    .get(&(attempt, step, phase, cleanup_sequence))
                     .ok_or(Error::NotFound)?;
                 if &owner.digest != plan.digest() {
                     return Err(Error::Denied);
@@ -304,9 +315,10 @@ impl Helper {
                 attempt,
                 step,
                 phase,
+                cleanup_sequence,
             } => {
                 let (plan, _) = self.invocation(*input, step, phase)?;
-                let key = (attempt, step, phase);
+                let key = (attempt, step, phase, cleanup_sequence);
                 if let Some(owner) = self.physical.get(&key) {
                     if &owner.digest != plan.digest()
                         || !owner

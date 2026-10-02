@@ -118,6 +118,11 @@ pub enum ObservationStage {
 }
 /// Trusted bounded runner seam. Only dispatch may start work; observations never replay it.
 pub trait RunnerPort {
+    /// Close only original frozen software resources, including after cancellation or expiry.
+    /// This permission cannot start or repeat an install, upgrade, removal or detector.
+    fn resume_software_cleanup(&self, _resume: SoftwareCleanupResume) -> Result<(), Error> {
+        Ok(())
+    }
     /// Resume only a known completed step boundary in the existing intent. An unfinished
     /// Begin cannot be turned into a new invocation by recovery.
     fn resume_software(&self, _resume: SoftwareResume) -> Result<(), Error> {
@@ -198,5 +203,20 @@ impl SoftwareResume {
         ) -> T,
     ) -> T {
         run(self.plan, self.progress, self.allowance, self.ownership)
+    }
+}
+
+/// Journal-derived permission for one bounded resource-only recovery in the same attempt.
+pub struct SoftwareCleanupResume {
+    pub(crate) plan: FrozenExecution,
+    pub(crate) progress: execution_contract::SoftwareProgress,
+}
+impl SoftwareCleanupResume {
+    /// Consume the original plan and append-only facts; the runner must verify the reserved grant.
+    pub fn resume<T>(
+        self,
+        run: impl FnOnce(FrozenExecution, execution_contract::SoftwareProgress) -> T,
+    ) -> T {
+        run(self.plan, self.progress)
     }
 }

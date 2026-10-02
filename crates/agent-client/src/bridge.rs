@@ -835,7 +835,6 @@ fn software_result(
             .iter()
             .filter_map(|c| match c {
                 C::End {
-                    duration_ms: 0,
                     step,
                     phase,
                     process: Some(process),
@@ -876,7 +875,6 @@ fn software_result(
             } else {
                 checkpoints.iter().rev().find_map(|c| match c {
                     C::End {
-                        duration_ms: 0,
                         step,
                         phase,
                         process: Some(p),
@@ -1031,7 +1029,7 @@ mod result_tests {
             attempt_id: attempt,
             content_digest: digest,
             runner,
-            elapsed_ms: 1,
+            elapsed_ms: 100,
             output_bytes: 0,
             checkpoints: vec![
                 C::Begin {
@@ -1039,7 +1037,7 @@ mod result_tests {
                     phase: P::Before,
                 },
                 C::End {
-                    duration_ms: 0,
+                    duration_ms: 20,
                     step: 0,
                     phase: P::Before,
                     process: None,
@@ -1051,7 +1049,7 @@ mod result_tests {
                     phase: P::Mutation,
                 },
                 C::End {
-                    duration_ms: 0,
+                    duration_ms: 20,
                     step: 0,
                     phase: P::Mutation,
                     process: Some(Box::new(process)),
@@ -1063,7 +1061,7 @@ mod result_tests {
                     phase: P::After,
                 },
                 C::End {
-                    duration_ms: 0,
+                    duration_ms: 20,
                     step: 0,
                     phase: P::After,
                     process: None,
@@ -1158,7 +1156,7 @@ mod result_tests {
                 phase: P::Before,
             },
             C::End {
-                duration_ms: 0,
+                duration_ms: 20,
                 step: 1,
                 phase: P::Before,
                 process: None,
@@ -1195,7 +1193,7 @@ mod result_tests {
             .flat_map(u16::to_le_bytes)
             .collect();
         progress.checkpoints.push(C::End {
-            duration_ms: 0,
+            duration_ms: 20,
             step: 1,
             phase: P::Mutation,
             process: Some(timed_out),

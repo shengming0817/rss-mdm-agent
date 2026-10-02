@@ -54,6 +54,30 @@ pub enum SoftwareCheckpoint {
         /// All installation activity for this invocation is independently accounted for.
         quiescent: bool,
     },
+    /// A separately numbered resource-only recovery, committed before invoking frozen Cleanup.
+    CleanupBegin {
+        /// Original backend step.
+        step: u32,
+        /// Monotonic recovery number, bounded to three.
+        sequence: u32,
+        /// Slice of the original reserved closure time, never a new business grant.
+        timeout_ms: u64,
+        /// Slice of the original reserved closure output.
+        output_bytes: u64,
+    },
+    /// Cleanup facts never rewrite a pending or unknown installer operation.
+    CleanupEnd {
+        /// Original backend step.
+        step: u32,
+        /// Matches the preceding recovery begin.
+        sequence: u32,
+        /// Actual measured duration.
+        duration_ms: u64,
+        /// Real fixed cleanup worker evidence.
+        process: Box<ProcessEvidence>,
+        /// Owned image/staging resources were verifiably closed.
+        resources_closed: bool,
+    },
     /// All required phase facts were durably committed and the step reached its desired state.
     Complete {
         /// Zero-based backend step.
@@ -94,9 +118,17 @@ impl SoftwareProgress {
             return false;
         };
         if self.content_digest != *plan.digest()
-            || self.checkpoints.len() > program.steps.len() * 17
+            || self.checkpoints.len() > program.steps.len() * 17 + 6
         {
             return false;
+        }
+        if let Some(start) = self.checkpoints.iter().position(|checkpoint| {
+            matches!(
+                checkpoint,
+                SoftwareCheckpoint::CleanupBegin { .. } | SoftwareCheckpoint::CleanupEnd { .. }
+            )
+        }) {
+            return self.valid_cleanup_tail(plan, start);
         }
         let mut index = 0usize;
         let mut pending = None;
@@ -212,6 +244,9 @@ impl SoftwareProgress {
                             && output == self.output_bytes;
                     }
                 }
+                SoftwareCheckpoint::CleanupBegin { .. } | SoftwareCheckpoint::CleanupEnd { .. } => {
+                    return false
+                }
                 SoftwareCheckpoint::Complete { step: i } => {
                     if *i as usize != index || pending.is_some() || !can_complete {
                         return false;
@@ -251,9 +286,10 @@ impl SoftwareProgress {
                     ..
                 } => {
                     if !quiescent {
-                        return false;
+                        pending = true;
+                    } else {
+                        pending = false;
                     }
-                    pending = false;
                     if *phase == SoftwarePhase::Cleanup
                         && process.as_ref().is_some_and(|p| {
                             p.end == ProcessEnd::Exited
@@ -262,6 +298,17 @@ impl SoftwareProgress {
                         })
                     {
                         mounts.remove(step);
+                    }
+                }
+                SoftwareCheckpoint::CleanupBegin { .. } => pending = true,
+                SoftwareCheckpoint::CleanupEnd {
+                    step,
+                    resources_closed,
+                    ..
+                } => {
+                    if *resources_closed {
+                        mounts.remove(step);
+                        pending = !self.original_activity_ended();
                     }
                 }
                 SoftwareCheckpoint::Complete { .. } => (),
@@ -273,6 +320,12 @@ impl SoftwareProgress {
     pub fn resumable(&self, plan: &FrozenExecution) -> bool {
         self.valid_for(plan)
             && !self.complete(plan)
+            && !self.checkpoints.iter().any(|checkpoint| {
+                matches!(
+                    checkpoint,
+                    SoftwareCheckpoint::CleanupBegin { .. } | SoftwareCheckpoint::CleanupEnd { .. }
+                )
+            })
             && self.checkpoints.iter().all(|c| {
                 !matches!(
                     c,
@@ -289,6 +342,204 @@ impl SoftwareProgress {
                 self.checkpoints.last(),
                 Some(SoftwareCheckpoint::Complete { .. } | SoftwareCheckpoint::End { .. })
             )
+    }
+    /// Remaining reserved cleanup grant. Pending calls debit their full granted slice.
+    pub fn cleanup_allowance(&self, plan: &FrozenExecution) -> Option<(u32, u32, u64, u64)> {
+        let program = plan.spec().execution.software_program()?;
+        let step = self
+            .checkpoints
+            .iter()
+            .rev()
+            .find_map(|checkpoint| match checkpoint {
+                SoftwareCheckpoint::Begin {
+                    step,
+                    phase: SoftwarePhase::Attach,
+                } => Some(*step),
+                _ => None,
+            })?;
+        let command = program.invocation(step as usize, SoftwarePhase::Cleanup)?;
+        let mut elapsed = 0u64;
+        let mut output = 0u64;
+        let mut pending = None;
+        let mut sequence = 0;
+        for checkpoint in &self.checkpoints {
+            match checkpoint {
+                SoftwareCheckpoint::Begin {
+                    step: i,
+                    phase: SoftwarePhase::Cleanup,
+                } if *i == step => {
+                    pending = Some((command.timeout_ms / 3, command.output_bytes / 3));
+                }
+                SoftwareCheckpoint::End {
+                    step: i,
+                    phase: SoftwarePhase::Cleanup,
+                    duration_ms,
+                    process,
+                    ..
+                } if *i == step => {
+                    pending = None;
+                    elapsed = elapsed.saturating_add(*duration_ms);
+                    output = output.saturating_add(
+                        process
+                            .as_ref()
+                            .map_or(0, |process| process.total_output_bytes),
+                    );
+                }
+                SoftwareCheckpoint::CleanupBegin {
+                    timeout_ms,
+                    output_bytes,
+                    sequence: n,
+                    ..
+                } => {
+                    if let Some((time, bytes)) = pending.take() {
+                        elapsed = elapsed.saturating_add(time);
+                        output = output.saturating_add(bytes);
+                    }
+                    pending = Some((*timeout_ms, *output_bytes));
+                    sequence = *n;
+                }
+                SoftwareCheckpoint::CleanupEnd {
+                    duration_ms,
+                    process,
+                    ..
+                } => {
+                    pending = None;
+                    elapsed = elapsed.saturating_add(*duration_ms);
+                    output = output.saturating_add(process.total_output_bytes);
+                }
+                _ => (),
+            }
+        }
+        if let Some((time, bytes)) = pending {
+            elapsed = elapsed.saturating_add(time);
+            output = output.saturating_add(bytes);
+        }
+        if sequence >= 3 || self.closed(plan) || self.complete(plan) {
+            return None;
+        }
+        let time = command
+            .timeout_ms
+            .saturating_sub(elapsed)
+            .min(command.timeout_ms / 3);
+        let bytes = command
+            .output_bytes
+            .saturating_sub(output)
+            .min(command.output_bytes / 3);
+        (time > 0 && bytes >= 1024).then_some((step, sequence + 1, time, bytes))
+    }
+    /// Only ended business operations can be released after resource-only recovery.
+    fn original_activity_ended(&self) -> bool {
+        let mut pending = None;
+        for checkpoint in &self.checkpoints {
+            match checkpoint {
+                SoftwareCheckpoint::Begin { phase, .. } => pending = Some(*phase),
+                SoftwareCheckpoint::End {
+                    phase, quiescent, ..
+                } => {
+                    if !quiescent && *phase != SoftwarePhase::Cleanup {
+                        return false;
+                    }
+                    pending = None;
+                }
+                SoftwareCheckpoint::CleanupBegin { .. } | SoftwareCheckpoint::CleanupEnd { .. } => {
+                    break
+                }
+                _ => (),
+            }
+        }
+        pending.is_none() || pending == Some(SoftwarePhase::Cleanup)
+    }
+    fn valid_cleanup_tail(&self, plan: &FrozenExecution, start: usize) -> bool {
+        let mut prefix = self.clone();
+        prefix.checkpoints.truncate(start);
+        let added_output = self.checkpoints[start..]
+            .iter()
+            .filter_map(|checkpoint| match checkpoint {
+                SoftwareCheckpoint::CleanupEnd { process, .. } => Some(process.total_output_bytes),
+                _ => None,
+            })
+            .try_fold(0u64, |sum, bytes| sum.checked_add(bytes));
+        let Some(added_output) = added_output else {
+            return false;
+        };
+        let Some(prefix_output) = self.output_bytes.checked_sub(added_output) else {
+            return false;
+        };
+        prefix.output_bytes = prefix_output;
+        if !prefix.valid_for(plan) || prefix.complete(plan) {
+            return false;
+        }
+        let added_duration = self.checkpoints[start..]
+            .iter()
+            .filter_map(|checkpoint| match checkpoint {
+                SoftwareCheckpoint::CleanupEnd { duration_ms, .. } => Some(*duration_ms),
+                _ => None,
+            })
+            .try_fold(0u64, |sum, duration| sum.checked_add(duration));
+        let Some(added_duration) = added_duration else {
+            return false;
+        };
+        let Some(prefix_elapsed) = self.elapsed_ms.checked_sub(added_duration) else {
+            return false;
+        };
+        prefix.elapsed_ms = prefix_elapsed;
+        if !prefix.valid_for(plan) {
+            return false;
+        }
+        let mut pending = None;
+        for checkpoint in &self.checkpoints[start..] {
+            match checkpoint {
+                SoftwareCheckpoint::CleanupBegin {
+                    step,
+                    sequence,
+                    timeout_ms,
+                    output_bytes,
+                } => {
+                    if prefix.cleanup_allowance(plan)
+                        != Some((*step, *sequence, *timeout_ms, *output_bytes))
+                    {
+                        return false;
+                    }
+                    pending = Some((*step, *sequence, *timeout_ms, *output_bytes));
+                }
+                SoftwareCheckpoint::CleanupEnd {
+                    step,
+                    sequence,
+                    duration_ms,
+                    process,
+                    resources_closed,
+                } => {
+                    let Some((i, n, _, cap)) = pending.take() else {
+                        return false;
+                    };
+                    if *step != i
+                        || *sequence != n
+                        || process.attempt_id != self.attempt_id
+                        || process.content_digest != self.content_digest
+                        || process.runner != self.runner
+                        || !process.finished
+                        || process.total_output_bytes > cap
+                        || (process.stdout.len() as u64).saturating_add(process.stderr.len() as u64)
+                            > process.total_output_bytes
+                        || *duration_ms > self.elapsed_ms
+                        || (*resources_closed
+                            && !(process.quiescent
+                                && process.end == ProcessEnd::Exited
+                                && process.exit_code == Some(0)
+                                && process.failure_kind == ProcessFailureKind::None))
+                    {
+                        return false;
+                    }
+                    prefix.output_bytes = prefix
+                        .output_bytes
+                        .saturating_add(process.total_output_bytes);
+                    prefix.elapsed_ms = prefix.elapsed_ms.saturating_add(*duration_ms);
+                }
+                _ => return false,
+            }
+            prefix.checkpoints.push(checkpoint.clone());
+        }
+        true
     }
     /// A replacement may append evidence or increase elapsed accounting, never rewrite history.
     pub fn extends(&self, previous: &Self) -> bool {

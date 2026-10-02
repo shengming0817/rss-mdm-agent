@@ -183,6 +183,22 @@ pub(super) fn compile(
 ) -> Result<(SoftwareProgramStep, SoftwareStepArtifacts), Error> {
     let action = &step.action;
     let commands = agent_client::software_commands(action)?;
+    if let wire::SoftwareTaskBehavior::Exe(exe) = &action.behavior {
+        if intent != SoftwareOperation::Detect {
+            let key = if intent == SoftwareOperation::Uninstall {
+                &exe.uninstall.as_ref().ok_or(Error::Unsupported)?.installer
+            } else {
+                &exe.installer
+            };
+            if !action.signatures.iter().any(|signature| {
+                signature.artifact == *key
+                    && signature.mechanism == wire::SoftwareTaskSignatureMechanism::Authenticode
+            }) {
+                return Err(Error::Unsupported);
+            }
+        }
+    }
+
     let mut compiler = Compiler {
         config,
         helper: helper.clone(),
@@ -352,6 +368,7 @@ pub(super) fn compile(
     };
     let (run_as, session, work_root, _) = identity(config, helper.as_ref(), commands.install)?;
     let request = WorkerRequest {
+        external_pending: Default::default(),
         native_pending: Default::default(),
         native_output: Default::default(),
         action: action.clone(),
@@ -404,6 +421,14 @@ pub(super) fn compile(
         }
         for (phase, operation) in phases {
             let (mut command, source) = build(operation, commands.install)?;
+            if phase == SoftwarePhase::Cleanup {
+                // Reserve closure within the original source invocation before any image effect.
+                command.timeout_ms = (command.timeout_ms / 4).min(30_000);
+                command.output_bytes = (command.output_bytes / 4).min(65_536);
+                if command.timeout_ms == 0 || command.output_bytes < 1024 {
+                    return Err(Error::Unsupported);
+                }
+            }
             command.exit_codes = SoftwareExitCodes {
                 success: [0].into(),
                 reboot: Default::default(),

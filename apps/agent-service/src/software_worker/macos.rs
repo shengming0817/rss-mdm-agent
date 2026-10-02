@@ -41,6 +41,8 @@ struct ImageState {
     device: Option<String>,
     stage: Option<Tree>,
     alternate: Option<Tree>,
+    partial_stage: bool,
+    group: i32,
 }
 fn owner(request: &WorkerRequest) -> Result<String, Error> {
     use sha2::{Digest as _, Sha256};
@@ -72,6 +74,34 @@ fn owned_root(request: &WorkerRequest) -> Result<File, Error> {
 }
 fn state(request: &WorkerRequest) -> Result<ImageState, Error> {
     let _root = owned_root(request)?;
+    let next = request.resource_root.join("owner.next");
+    if next.try_exists()? {
+        let mut file = OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+            .open(&next)?;
+        let metadata = file.metadata()?;
+        if metadata.uid() != unsafe { libc::geteuid() }
+            || metadata.mode() & 0o077 != 0
+            || metadata.nlink() != 1
+            || metadata.len() > 4 * 1024 * 1024
+        {
+            return Err(Error::Untrusted);
+        }
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes)?;
+        match serde_json::from_slice::<ImageState>(&bytes) {
+            Ok(next_state) if next_state.owner == owner(request)? => {
+                fs::rename(&next, request.resource_root.join("owner.json"))?;
+                _root.sync_all()?;
+            }
+            _ if request.resource_root.join("owner.json").try_exists()? => {
+                fs::remove_file(&next)?;
+                _root.sync_all()?;
+            }
+            _ => return Err(Error::Untrusted),
+        }
+    }
     let file = OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
@@ -132,13 +162,20 @@ fn attach(request: &WorkerRequest, dmg: &Dmg) -> Result<(i32, SoftwareWorkerResu
         device: None,
         stage: None,
         alternate: None,
+        partial_stage: false,
+        group: unsafe { libc::getpgrp() },
     };
     save(request, &record)?;
     let mount = request.resource_root.join("volume");
     fs::DirBuilder::new().mode(0o700).create(&mount)?;
     let image = request.material(&dmg.image)?;
-    if !request.action.signatures.is_empty() {
-        verify_code(request, &image, "open")?;
+    if request
+        .action
+        .signatures
+        .iter()
+        .any(|signature| signature.artifact == dmg.image)
+    {
+        verify_code(request, &image, "open", Some(&dmg.image))?;
     }
     let (code, output, error) = native(
         request,
@@ -224,26 +261,89 @@ fn readonly(path: &Path) -> Result<(), Error> {
     }
     Ok(())
 }
-fn selected(request: &WorkerRequest, relative: &str) -> Result<PathBuf, Error> {
+struct SelectedPayload {
+    path: PathBuf,
+    _volume: File,
+    file: File,
+    _parents: Vec<File>,
+}
+impl std::ops::Deref for SelectedPayload {
+    type Target = Path;
+    fn deref(&self) -> &Path {
+        &self.path
+    }
+}
+impl SelectedPayload {
+    fn anchored(&self) -> PathBuf {
+        if self.file.metadata().is_ok_and(|metadata| metadata.is_dir()) {
+            PathBuf::from(format!("/dev/fd/{}/.", self.file.as_raw_fd()))
+        } else {
+            PathBuf::from(format!("/dev/fd/{}", self.file.as_raw_fd()))
+        }
+    }
+    fn verify(&self, request: &WorkerRequest, dmg: &Dmg) -> Result<(), Error> {
+        let record = state(request)?;
+        if !record
+            .device
+            .as_ref()
+            .is_some_and(|device| owns_device(request, dmg, device).unwrap_or(false))
+        {
+            return Err(Error::Untrusted);
+        }
+        let observed = fs::symlink_metadata(&self.path)?;
+        let retained = self.file.metadata()?;
+        if observed.dev() != retained.dev() || observed.ino() != retained.ino() {
+            return Err(Error::Untrusted);
+        }
+        readonly(&request.resource_root.join("volume"))
+    }
+}
+fn selected(request: &WorkerRequest, relative: &str) -> Result<SelectedPayload, Error> {
     if !relative_path(relative) {
         return Err(Error::Untrusted);
     }
-    state(request)?;
+    let wire::SoftwareTaskBehavior::Dmg(dmg) = &request.action.behavior else {
+        return Err(Error::Untrusted);
+    };
+    let record = state(request)?;
+    let device = record.device.as_deref().ok_or(Error::Untrusted)?;
+    if !owns_device(request, dmg, device)? {
+        return Err(Error::Untrusted);
+    }
     let volume = request.resource_root.join("volume");
     readonly(&volume)?;
     let selected = volume.join(relative);
     // The selected payload itself and each directory component must be real objects.
     let mut current = volume.clone();
+    let volume_file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(&volume)?;
+    let mut parents = Vec::new();
     for component in Path::new(relative).components() {
         current.push(component);
         if fs::symlink_metadata(&current)?.file_type().is_symlink() {
             return Err(Error::Untrusted);
         }
+        parents.push(
+            OpenOptions::new()
+                .read(true)
+                .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+                .open(&current)?,
+        );
     }
     if !selected.canonicalize()?.starts_with(volume.canonicalize()?) {
         return Err(Error::Untrusted);
     }
-    Ok(selected)
+    let file = parents.pop().ok_or(Error::Untrusted)?;
+    let payload = SelectedPayload {
+        path: selected,
+        _volume: volume_file,
+        file,
+        _parents: parents,
+    };
+    payload.verify(request, dmg)?;
+    Ok(payload)
 }
 fn target(request: &WorkerRequest, dmg: &Dmg, application: &Application) -> Result<PathBuf, Error> {
     if !relative_path(&application.target_name)
@@ -360,7 +460,7 @@ fn bundle(
         .get("CFBundleShortVersionString")
         .and_then(plist::Value::as_string)
         .ok_or(Error::Protocol)?;
-    verify_code(request, path, "execute")?;
+    verify_code(request, path, "execute", None)?;
     let executable = dictionary
         .get("CFBundleExecutable")
         .and_then(plist::Value::as_string)
@@ -389,7 +489,12 @@ fn bundle(
 fn package_value(value: &str) -> Result<PackageValue, Error> {
     PackageValue::new(value).map_err(|_| Error::Protocol)
 }
-fn verify_code(request: &WorkerRequest, path: &Path, kind: &str) -> Result<(), Error> {
+fn verify_code(
+    request: &WorkerRequest,
+    path: &Path,
+    kind: &str,
+    artifact: Option<&str>,
+) -> Result<(), Error> {
     if kind == "execute" || kind == "open" {
         if native(
             request,
@@ -409,7 +514,12 @@ fn verify_code(request: &WorkerRequest, path: &Path, kind: &str) -> Result<(), E
             return Err(Error::Untrusted);
         }
         let details = std::str::from_utf8(&details).map_err(|_| Error::Protocol)?;
-        for signature in &request.action.signatures {
+        for signature in request
+            .action
+            .signatures
+            .iter()
+            .filter(|signature| artifact == Some(signature.artifact.as_str()))
+        {
             if signature.mechanism != wire::SoftwareTaskSignatureMechanism::AppleDeveloperId
                 || !details
                     .lines()
@@ -424,13 +534,18 @@ fn verify_code(request: &WorkerRequest, path: &Path, kind: &str) -> Result<(), E
             native(request, "pkgutil", &["--check-signature", text(path)?])?;
         let certificate = std::str::from_utf8(&certificate).map_err(|_| Error::Protocol)?;
         if code != 0
-            || request.action.signatures.iter().any(|s| {
-                s.mechanism != wire::SoftwareTaskSignatureMechanism::AppleDeveloperId
-                    || !certificate.lines().any(|line| {
-                        line.contains("Developer ID Installer:")
-                            && line.trim_end().ends_with(&format!("({})", s.publisher))
-                    })
-            })
+            || request
+                .action
+                .signatures
+                .iter()
+                .filter(|signature| artifact == Some(signature.artifact.as_str()))
+                .any(|s| {
+                    s.mechanism != wire::SoftwareTaskSignatureMechanism::AppleDeveloperId
+                        || !certificate.lines().any(|line| {
+                            line.contains("Developer ID Installer:")
+                                && line.trim_end().ends_with(&format!("({})", s.publisher))
+                        })
+                })
         {
             return Err(Error::Untrusted);
         }
@@ -650,6 +765,9 @@ fn remove_tree(root: &Path, expected: &Tree) -> Result<(), Error> {
     if inventory(root)? != *expected {
         return Err(Error::Untrusted);
     }
+    unlink_tree(root, expected)
+}
+fn unlink_tree(root: &Path, expected: &Tree) -> Result<(), Error> {
     let root_file = OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
@@ -695,15 +813,83 @@ fn remove_tree(root: &Path, expected: &Tree) -> Result<(), Error> {
     fs::remove_dir(root)?;
     Ok(())
 }
-fn cleanup(request: &WorkerRequest, dmg: &Dmg) -> Result<(i32, SoftwareWorkerResult), Error> {
-    let record = state(request)?;
-    let staged = request.resource_root.join("application.app");
-    if staged.exists() {
-        let actual = inventory(&staged)?;
-        if record.stage.as_ref() != Some(&actual) && record.alternate.as_ref() != Some(&actual) {
+fn remove_owned_stage(root: &Path, expected: &Tree, partial: bool) -> Result<(), Error> {
+    fn visit(
+        root: &Path,
+        path: &Path,
+        expected: &Tree,
+        partial: bool,
+        actual: &mut Tree,
+    ) -> Result<(), Error> {
+        let relative = path
+            .strip_prefix(root)
+            .map_err(|_| Error::Untrusted)?
+            .to_path_buf();
+        let approved = expected.get(&relative).ok_or(Error::Untrusted)?;
+        let metadata = fs::symlink_metadata(path)?;
+        if metadata.dev() != fs::symlink_metadata(root)?.dev() {
             return Err(Error::Untrusted);
         }
-        remove_tree(&staged, &actual)?;
+        match approved {
+            Entry::Directory { .. } if metadata.is_dir() && !metadata.file_type().is_symlink() => {
+                actual.insert(relative, approved.clone());
+                for child in fs::read_dir(path)? {
+                    visit(root, &child?.path(), expected, partial, actual)?;
+                }
+            }
+            Entry::Link { target }
+                if metadata.file_type().is_symlink() && fs::read_link(path)? == *target =>
+            {
+                actual.insert(relative, approved.clone());
+            }
+            Entry::File { length, sha256, .. }
+                if metadata.is_file()
+                    && !metadata.file_type().is_symlink()
+                    && metadata.nlink() == 1 =>
+            {
+                if !(partial
+                    && metadata.uid() == unsafe { libc::geteuid() }
+                    && metadata.len() <= *length)
+                    && (metadata.len() != *length || file_hash(path)? != *sha256)
+                {
+                    return Err(Error::Untrusted);
+                }
+                actual.insert(relative, approved.clone());
+            }
+            _ => return Err(Error::Untrusted),
+        }
+        Ok(())
+    }
+    let mut remaining = Tree::new();
+    visit(root, root, expected, partial, &mut remaining)?;
+    unlink_tree(root, &remaining)
+}
+fn cleanup(request: &WorkerRequest, dmg: &Dmg) -> Result<(i32, SoftwareWorkerResult), Error> {
+    if !request.resource_root.try_exists()? {
+        return Ok(result(0, None, String::new()));
+    }
+    let mut record = state(request)?;
+    if record.group != unsafe { libc::getpgrp() } && record.group > 1 {
+        let exists = unsafe { libc::kill(-record.group, 0) };
+        if exists == 0 || std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH) {
+            return Err(Error::Unavailable);
+        }
+    }
+    record.group = unsafe { libc::getpgrp() };
+    save(request, &record)?;
+    let staged = request.resource_root.join("application.app");
+    if staged.try_exists()? {
+        let candidates = record.stage.iter().chain(record.alternate.iter());
+        let mut accepted = false;
+        for expected in candidates {
+            if remove_owned_stage(&staged, expected, record.partial_stage).is_ok() {
+                accepted = true;
+                break;
+            }
+        }
+        if !accepted {
+            return Err(Error::Untrusted);
+        }
     }
     let device = record.device.clone().or(owned_device(request, dmg)?);
     if let Some(device) = &device {
@@ -724,7 +910,10 @@ fn cleanup(request: &WorkerRequest, dmg: &Dmg) -> Result<(i32, SoftwareWorkerRes
             }
         }
     }
-    fs::remove_dir(request.resource_root.join("volume"))?;
+    let volume = request.resource_root.join("volume");
+    if volume.try_exists()? {
+        fs::remove_dir(volume)?;
+    }
     fs::remove_file(request.resource_root.join("owner.json"))?;
     fs::remove_dir(&request.resource_root)?;
     Ok(result(0, None, String::new()))
@@ -786,6 +975,11 @@ pub(super) fn execute(
         WorkerOperation::Cleanup => return cleanup(request, dmg),
         _ => (),
     }
+    if request.operation != WorkerOperation::Detect {
+        let mut record = state(request)?;
+        record.group = unsafe { libc::getpgrp() };
+        save(request, &record)?;
+    }
     match &dmg.payload {
         Payload::AppCopy {
             application,
@@ -809,8 +1003,15 @@ pub(super) fn execute(
                 {
                     return Err(Error::Untrusted);
                 }
-                let tree = inventory(&payload)?;
-                copy_tree(&payload, &staged, &tree)?;
+                payload.verify(request, dmg)?;
+                let tree = inventory(&payload.anchored())?;
+                let mut record = state(request)?;
+                record.stage = Some(tree.clone());
+                record.partial_stage = true;
+                record.group = unsafe { libc::getpgrp() };
+                save(request, &record)?;
+                copy_tree(&payload.anchored(), &staged, &tree)?;
+                payload.verify(request, dmg)?;
                 if bundle(request, &staged, application)?
                     != (SoftwareState::Present {
                         version: package_value(&application.version)?,
@@ -820,9 +1021,11 @@ pub(super) fn execute(
                 }
                 let mut record = state(request)?;
                 record.stage = Some(tree);
+                record.partial_stage = false;
                 save(request, &record)?;
                 return Ok(result(0, None, String::new()));
             }
+            payload.verify(request, dmg)?;
             let observed = bundle(request, &installed, application)?;
             if installed.exists() {
                 require_not_running(&installed)?;
@@ -839,7 +1042,8 @@ pub(super) fn execute(
                 }
                 let actual = inventory(&installed)?;
                 // Exact-version removal compares complete bytes/links to the approved read-only image.
-                if request.operation == WorkerOperation::Uninstall && actual != inventory(&payload)?
+                if request.operation == WorkerOperation::Uninstall
+                    && actual != inventory(&payload.anchored())?
                 {
                     return Err(Error::Untrusted);
                 }
@@ -847,7 +1051,7 @@ pub(super) fn execute(
                 return Ok(result(0, None, String::new()));
             }
             let new = inventory(&staged)?;
-            if new != inventory(&payload)? {
+            if new != inventory(&payload.anchored())? {
                 return Err(Error::Untrusted);
             }
             let mut record = state(request)?;
@@ -857,6 +1061,7 @@ pub(super) fn execute(
                 None
             };
             // Persist the role of the staging slot before the atomic publication/swap.
+            record.group = unsafe { libc::getpgrp() };
             record.alternate = old.clone();
             save(request, &record)?;
             rename(&staged, &installed, old.is_some())?;
@@ -892,6 +1097,7 @@ pub(super) fn execute(
             if before != Some(&execution_runner::software::receipt_state(receipt)?) {
                 return Err(Error::Conflict);
             }
+            let mut selected_package = None;
             let package = if matches!(
                 request.operation,
                 WorkerOperation::Uninstall | WorkerOperation::RemovePrevious
@@ -899,7 +1105,7 @@ pub(super) fn execute(
                 request.material(&uninstall.as_ref().ok_or(Error::Unsupported)?.installer)?
             } else {
                 let package = selected(request, path)?;
-                if fs::metadata(&package)?.len() != *length {
+                if package.file.metadata()?.len() != *length {
                     return Err(Error::Untrusted);
                 }
                 let digest = Digest::new(crate::plan::hex(sha256)).map_err(|_| Error::Protocol)?;
@@ -907,11 +1113,30 @@ pub(super) fn execute(
                 if file_hash(&package)? != digest.as_str() {
                     return Err(Error::Untrusted);
                 }
-                package
+                package.verify(request, dmg)?;
+                if unsafe { libc::fcntl(package.file.as_raw_fd(), libc::F_SETFD, 0) } < 0 {
+                    return Err(Error::Unavailable);
+                }
+                // The owned read-only FD is deliberately inherited by the pinned installer only.
+                let anchored = package.anchored();
+                selected_package = Some(package);
+                anchored
             };
-            if !request.action.signatures.is_empty() {
-                verify_code(request, &package, "install")?;
-            }
+            let artifact = if matches!(
+                request.operation,
+                WorkerOperation::Uninstall | WorkerOperation::RemovePrevious
+            ) {
+                Some(
+                    uninstall
+                        .as_ref()
+                        .ok_or(Error::Unsupported)?
+                        .installer
+                        .as_str(),
+                )
+            } else {
+                None
+            };
+            verify_code(request, &package, "install", artifact)?;
             let mut args = vec![
                 "-pkg".into(),
                 text(&package)?.into(),
@@ -932,6 +1157,7 @@ pub(super) fn execute(
                 );
             }
             let (code, stdout, stderr) = run_tool(request, &request.tool("installer")?, &args)?;
+            drop(selected_package);
             Ok(result(
                 code,
                 None,
@@ -1120,6 +1346,29 @@ mod tests {
         std::os::unix::fs::symlink("/tmp", source.join("escape")).unwrap();
         assert!(inventory(&source).is_err());
         fs::remove_file(source.join("escape")).unwrap();
+        remove_tree(&source, &tree).unwrap();
+        fs::remove_dir(root).unwrap();
+    }
+    #[test]
+    fn interrupted_owned_stage_cleanup_is_resumable_and_rejects_unknown_names() {
+        let root = std::env::temp_dir().join(format!("rss-dmg-partial-{}", uuid::Uuid::new_v4()));
+        fs::DirBuilder::new().mode(0o700).create(&root).unwrap();
+        let source = root.join("source.app");
+        fs::create_dir_all(source.join("Contents")).unwrap();
+        fs::write(source.join("Contents/first"), b"approved complete bytes").unwrap();
+        fs::write(source.join("Contents/second"), b"approved second file").unwrap();
+        let tree = inventory(&source).unwrap();
+        let stage = root.join("stage.app");
+        fs::create_dir_all(stage.join("Contents")).unwrap();
+        fs::write(stage.join("Contents/first"), b"approved").unwrap();
+        fs::write(stage.join("unowned"), b"must remain").unwrap();
+        assert!(remove_owned_stage(&stage, &tree, true).is_err());
+        assert!(stage.join("unowned").exists());
+        fs::remove_file(stage.join("unowned")).unwrap();
+        remove_owned_stage(&stage, &tree, true).unwrap();
+        copy_tree(&source, &stage, &tree).unwrap();
+        fs::remove_file(stage.join("Contents/first")).unwrap();
+        remove_owned_stage(&stage, &tree, false).unwrap();
         remove_tree(&source, &tree).unwrap();
         fs::remove_dir(root).unwrap();
     }

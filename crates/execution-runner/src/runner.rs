@@ -23,6 +23,7 @@ struct Record {
     cancel: Arc<AtomicBool>,
     facts: Arc<Mutex<Option<ProcessEvidence>>>,
     progress: Arc<progress::Progress>,
+    cleanup_running: Arc<AtomicBool>,
 }
 /// One bounded OS runner. Its inventory is supplied by trusted host code, never IPC DTOs.
 pub struct NativeRunner {
@@ -222,6 +223,7 @@ impl NativeRunner {
                 cancel: cancel.clone(),
                 facts: facts.clone(),
                 progress: progress.clone(),
+                cleanup_running: Arc::new(AtomicBool::new(false)),
             },
         );
         drop(records); // Never hold the admission lock during filesystem or input I/O.
@@ -360,6 +362,74 @@ impl Drop for NativeRunner {
     }
 }
 impl RunnerPort for NativeRunner {
+    fn resume_software_cleanup(
+        &self,
+        resume: execution_app::SoftwareCleanupResume,
+    ) -> Result<(), Error> {
+        resume.resume(|plan, journal| {
+            if !journal.valid_for(&plan) || journal.runner != self.id {
+                return Err(Error::Denied);
+            }
+            let Some(grant) = journal.cleanup_allowance(&plan) else {
+                return Ok(());
+            };
+            let mut records = self.records.lock().map_err(|_| Error::Unavailable)?;
+            if let Some(record) = records.get(&journal.attempt_id) {
+                if record.plan.digest() != plan.digest() {
+                    return Err(Error::Conflict);
+                }
+                if record.cleanup_running.load(Ordering::Acquire)
+                    || record.progress.pending()?.is_some()
+                    || record
+                        .facts
+                        .lock()
+                        .map_err(|_| Error::Unavailable)?
+                        .as_ref()
+                        .is_some_and(|facts| !facts.finished)
+                {
+                    return Ok(());
+                }
+            } else if records.len() >= self.capacity {
+                return Err(Error::Capacity);
+            }
+            let Some(source) = self.artifacts.get(plan.digest().as_str())? else {
+                return Ok(());
+            };
+            source.inspect(&plan)?;
+            let progress = Arc::new(progress::Progress::new());
+            let running = Arc::new(AtomicBool::new(true));
+            let facts = records
+                .get(&journal.attempt_id)
+                .map(|record| record.facts.clone())
+                .unwrap_or_else(|| Arc::new(Mutex::new(None)));
+            let key = journal.attempt_id.clone();
+            records.insert(
+                key.clone(),
+                Record {
+                    plan: plan.clone(),
+                    _materials: Some(source.clone()),
+                    cancel: Arc::new(AtomicBool::new(false)),
+                    facts,
+                    progress: progress.clone(),
+                    cleanup_running: running.clone(),
+                },
+            );
+            let runner = self.id.clone();
+            if std::thread::Builder::new()
+                .name("rss-software-cleanup".into())
+                .spawn(move || {
+                    program::cleanup(source, plan, journal, runner, grant, progress);
+                    running.store(false, Ordering::Release);
+                })
+                .is_err()
+            {
+                records.remove(&key);
+                return Err(Error::Unavailable);
+            }
+            Ok(())
+        })
+    }
+
     fn recover_software_progress(
         &self,
         plan: &FrozenExecution,
@@ -395,6 +465,7 @@ impl RunnerPort for NativeRunner {
             attempt: previous.attempt_id.clone(),
             step: *step,
             phase: *phase,
+            cleanup_sequence: 0,
         })
         else {
             return Ok(None);
@@ -480,6 +551,7 @@ impl RunnerPort for NativeRunner {
                     cancel: cancel.clone(),
                     facts: facts.clone(),
                     progress: progress.clone(),
+                    cleanup_running: Arc::new(AtomicBool::new(false)),
                 },
             );
             let runner = self.id.clone();
@@ -585,6 +657,7 @@ impl RunnerPort for NativeRunner {
             }
             if plan.spec().execution.software_program().is_none()
                 || record.progress.complete(plan)?
+                || record.progress.closed(plan)?
             {
                 if plan.spec().execution.software_program().is_none() {
                     delegate = record

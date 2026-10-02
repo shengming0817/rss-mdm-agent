@@ -69,15 +69,13 @@ pub(super) fn execute(input: ProgramRun) {
                 .iter()
                 .map(|(path, artifact)| crate::materialize::verify_material(path, &artifact.sha256))
                 .collect::<Result<Vec<_>, _>>()?;
-            let mut detector_elapsed = 0u64;
-            let mut detector_output = 0u64;
             let mut before = None;
             let mut step_quiescent = true;
             let mut mutation_succeeded = true;
             let mut phases = std::collections::VecDeque::from([SoftwarePhase::Before]);
             let mut failed_mutation = false;
-            let mut invocation_elapsed = std::collections::BTreeMap::<SoftwarePhase, u64>::new();
-            let mut invocation_output = std::collections::BTreeMap::<SoftwarePhase, u64>::new();
+            let mut invocation_elapsed = std::collections::BTreeMap::<BudgetGroup, u64>::new();
+            let mut invocation_output = std::collections::BTreeMap::<BudgetGroup, u64>::new();
             while let Some(phase) = phases.pop_front() {
                 if failed_mutation && !phase.is_observation() && phase != SoftwarePhase::Cleanup {
                     continue;
@@ -102,12 +100,10 @@ pub(super) fn execute(input: ProgramRun) {
                 });
                 let replayed = recorded.is_some();
                 let (facts, detected, quiet) = if let Some(recorded) = recorded {
-                    if phase.is_observation() {
-                        detector_elapsed = detector_elapsed.saturating_add(recorded.3);
-                        detector_output = detector_output.saturating_add(
-                            recorded.0.as_ref().map_or(0, |p| p.total_output_bytes),
-                        );
-                    }
+                    let group = budget_group(step, phase);
+                    *invocation_elapsed.entry(group).or_default() += recorded.3;
+                    *invocation_output.entry(group).or_default() +=
+                        recorded.0.as_ref().map_or(0, |p| p.total_output_bytes);
                     (recorded.0, recorded.1, recorded.2)
                 } else {
                     if cancel.load(Ordering::Acquire)
@@ -142,19 +138,57 @@ pub(super) fn execute(input: ProgramRun) {
                         } else {
                             sources.detection.as_deref().ok_or(Error::Unbound)?
                         };
-                        let elapsed = if !phase.is_observation() {
-                            invocation_elapsed.get(&phase).copied().unwrap_or(0)
+                        let group = budget_group(step, phase);
+                        let elapsed = invocation_elapsed.get(&group).copied().unwrap_or(0);
+                        let consumed = invocation_output.get(&group).copied().unwrap_or(0);
+                        let reserve = if group == BudgetGroup::Mutation {
+                            step.auxiliary.get(&SoftwarePhase::Cleanup)
                         } else {
-                            detector_elapsed
+                            None
                         };
-                        let consumed = if !phase.is_observation() {
-                            invocation_output.get(&phase).copied().unwrap_or(0)
+                        let primary = journal
+                            .checkpoints
+                            .iter()
+                            .rev()
+                            .find_map(|checkpoint| match checkpoint {
+                                SoftwareCheckpoint::Begin { step: i, phase: p }
+                                    if *i as usize == index
+                                        && matches!(
+                                            p,
+                                            SoftwarePhase::Mutation | SoftwarePhase::Upgrade
+                                        ) =>
+                                {
+                                    Some(*p)
+                                }
+                                _ => None,
+                            })
+                            .unwrap_or_else(|| {
+                                if phases.contains(&SoftwarePhase::Upgrade) {
+                                    SoftwarePhase::Upgrade
+                                } else {
+                                    SoftwarePhase::Mutation
+                                }
+                            });
+                        let source_budget = if group == BudgetGroup::Mutation {
+                            program.invocation(index, primary).unwrap_or(command)
                         } else {
-                            detector_output
+                            command
                         };
-                        let remaining = command.timeout_ms.saturating_sub(elapsed);
-                        let cap = command
-                            .output_bytes
+                        let physical_timeout = if group == BudgetGroup::Cleanup {
+                            command.timeout_ms / 3
+                        } else {
+                            source_budget.timeout_ms.min(command.timeout_ms)
+                        };
+                        let physical_output = if group == BudgetGroup::Cleanup {
+                            command.output_bytes / 3
+                        } else {
+                            source_budget.output_bytes.min(command.output_bytes)
+                        };
+                        let remaining = physical_timeout
+                            .saturating_sub(reserve.map_or(0, |c| c.timeout_ms))
+                            .saturating_sub(elapsed);
+                        let cap = physical_output
+                            .saturating_sub(reserve.map_or(0, |c| c.output_bytes))
                             .saturating_sub(consumed)
                             .min(output_limit.saturating_sub(journal.output_bytes));
                         if remaining == 0 || cap == 0 {
@@ -172,20 +206,8 @@ pub(super) fn execute(input: ProgramRun) {
                             (invocation_deadline, cap, first.take()),
                             cancel.clone(),
                             before.clone(),
+                            0,
                         )?;
-                        if phase.is_observation() {
-                            detector_elapsed = detector_elapsed.saturating_add(
-                                invoked.elapsed().as_millis().min(u128::from(u64::MAX)) as u64,
-                            );
-                            detector_output =
-                                detector_output.saturating_add(facts.total_output_bytes);
-                        }
-                        if !phase.is_observation() {
-                            *invocation_elapsed.entry(phase).or_default() +=
-                                invoked.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
-                            *invocation_output.entry(phase).or_default() +=
-                                facts.total_output_bytes;
-                        }
                         let detection = if !phase.is_observation() {
                             None
                         } else {
@@ -242,11 +264,16 @@ pub(super) fn execute(input: ProgramRun) {
                     latest = facts.clone();
                 }
                 if !replayed {
+                    let duration_ms = phase_started
+                        .elapsed()
+                        .as_millis()
+                        .min(u128::from(u64::MAX)) as u64;
+                    let group = budget_group(step, phase);
+                    *invocation_elapsed.entry(group).or_default() += duration_ms;
+                    *invocation_output.entry(group).or_default() +=
+                        facts.as_ref().map_or(0, |facts| facts.total_output_bytes);
                     journal.checkpoints.push(SoftwareCheckpoint::End {
-                        duration_ms: phase_started
-                            .elapsed()
-                            .as_millis()
-                            .min(u128::from(u64::MAX)) as u64,
+                        duration_ms,
                         step: index as u32,
                         phase,
                         process: facts.clone().map(Box::new),
@@ -272,6 +299,7 @@ pub(super) fn execute(input: ProgramRun) {
                         attempt: attempt.clone(),
                         step: index as u32,
                         phase,
+                        cleanup_sequence: 0,
                     });
                 }
                 step_quiescent &= quiet;
@@ -378,6 +406,116 @@ pub(super) fn execute(input: ProgramRun) {
     }
     publish(&capture, latest);
 }
+pub(super) fn cleanup(
+    source: Arc<Artifacts>,
+    plan: FrozenExecution,
+    mut journal: SoftwareProgress,
+    runner: Id,
+    (step, sequence, timeout_ms, output_bytes): (u32, u32, u64, u64),
+    progress: Arc<progress::Progress>,
+) {
+    let _ = (|| -> Result<(), Error> {
+        let command = plan
+            .spec()
+            .execution
+            .software_program()
+            .and_then(|program| program.invocation(step as usize, SoftwarePhase::Cleanup))
+            .ok_or(Error::Denied)?;
+        if command.launch.interpreter.profile.id.as_str() != "native-software-worker" {
+            return Err(Error::Denied);
+        }
+        let material = source
+            .program
+            .get(step as usize)
+            .and_then(|sources| sources.mutations.get(&SoftwarePhase::Cleanup))
+            .ok_or(Error::Unbound)?;
+        let started = Instant::now();
+        let elapsed = journal.elapsed_ms;
+        let deadline = started + Duration::from_millis(timeout_ms);
+        let cancel = Arc::new(AtomicBool::new(false));
+        journal.checkpoints.push(SoftwareCheckpoint::CleanupBegin {
+            step,
+            sequence,
+            timeout_ms,
+            output_bytes,
+        });
+        commit(
+            &mut journal,
+            (started, elapsed),
+            &progress,
+            deadline,
+            &cancel,
+        )?;
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|_| Error::Unavailable)?;
+        let facts = invoke(
+            &runtime,
+            material,
+            (&plan, &journal.attempt_id, &runner),
+            command,
+            (step, SoftwarePhase::Cleanup),
+            (deadline, output_bytes, None),
+            cancel.clone(),
+            None,
+            sequence,
+        )?;
+        let resources_closed = facts.quiescent
+            && facts.end == ProcessEnd::Exited
+            && facts.exit_code == Some(0)
+            && facts.failure_kind == ProcessFailureKind::None;
+        journal.output_bytes = journal
+            .output_bytes
+            .saturating_add(facts.total_output_bytes);
+        journal.checkpoints.push(SoftwareCheckpoint::CleanupEnd {
+            step,
+            sequence,
+            duration_ms: started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64,
+            process: Box::new(facts),
+            resources_closed,
+        });
+        commit(
+            &mut journal,
+            (started, elapsed),
+            &progress,
+            Instant::now() + Duration::from_secs(3),
+            &cancel,
+        )?;
+        if let Some(connection) = &material.delegate {
+            let _ = connection.exchange(crate::helper::Command::InvocationAck {
+                input: Box::new(plan.spec().clone()),
+                attempt: journal.attempt_id.clone(),
+                step,
+                phase: SoftwarePhase::Cleanup,
+                cleanup_sequence: sequence,
+            });
+        }
+        Ok(())
+    })();
+}
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum BudgetGroup {
+    Mutation,
+    Removal,
+    Observation,
+    Cleanup,
+}
+fn budget_group(step: &SoftwareProgramStep, phase: SoftwarePhase) -> BudgetGroup {
+    if phase == SoftwarePhase::Cleanup {
+        BudgetGroup::Cleanup
+    } else if phase == SoftwarePhase::Removal {
+        BudgetGroup::Removal
+    } else if phase.is_observation()
+        && matches!(&step.detection,
+        SoftwareDetector::Script { invocation }
+            if invocation.launch.interpreter.profile.id.as_str() != "native-software-worker")
+    {
+        BudgetGroup::Observation
+    } else {
+        BudgetGroup::Mutation
+    }
+}
 fn commit(
     facts: &mut SoftwareProgress,
     (started, elapsed): (Instant, u64),
@@ -411,6 +549,7 @@ fn invoke(
     (deadline, cap, first_start): (Instant, u64, Option<u64>),
     cancel: Arc<AtomicBool>,
     before: Option<SoftwareState>,
+    cleanup_sequence: u32,
 ) -> Result<ProcessEvidence, Error> {
     if let Some(connection) = &material.delegate {
         use crate::helper::{Command, Reply};
@@ -424,6 +563,7 @@ fn invoke(
             attempt: attempt.clone(),
             step,
             phase,
+            cleanup_sequence,
             interpreter: material.interpreter.clone(),
             content: material.content.clone(),
             timeout_ms: remaining,
@@ -454,6 +594,7 @@ fn invoke(
                     attempt: attempt.clone(),
                     step,
                     phase,
+                    cleanup_sequence,
                 });
             }
             if let Ok(Reply::Evidence {
@@ -463,6 +604,7 @@ fn invoke(
                 attempt: attempt.clone(),
                 step,
                 phase,
+                cleanup_sequence,
             }) {
                 if facts.content_digest != *plan.digest()
                     || facts.attempt_id != *attempt

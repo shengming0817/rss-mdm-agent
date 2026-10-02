@@ -41,7 +41,7 @@ Windows 使用 PowerShell 7 运行 `scripts/service/execution-windows.ps1 -Actio
 
 真实 osquery 接缝使用 `OSQUERY_TEST_BINARY=<已独立验证的官方二进制绝对路径> python3 scripts/build-run.py -- cargo test --locked -p execution-runner --test osquery -- --ignored`。macOS 必须保留官方 `.app` 完整结构以验证签名，单独复制 Mach-O 文件会破坏签名。该测试验证固定参数、字面量绑定和成功零行；不替代系统服务身份或完整平台部署验收。可复现候选为官方 5.23.1 的 `osquery-5.23.1_1.macos_arm64.tar.gz`，SHA-256 为 `5484f0b62e05a7b2fa9d6e43f038915ea2b7ce063d59bd671ede0cf8dd0552da`。
 
-执行上下文使用本机数值 OS 版本和认证 helper 的登录世代，待确认注册与 claim 保留原上下文。生产编译器消费当前远程 V5 的 MSI、PKG、Bundle、离线 EXE、MSIX 和 DMG；WinGet/Brew 原生发布源仍不支持。EXE 仅执行完整离线布局、显式参数和明确卸载入口；退出码与重启按源任务策略解释，不自动重启。MSIX 明确区分目标用户注册与未来用户设备 provisioning，后者不改写已有用户注册；只查询既有侧载/依赖，不导入证书、改策略或终止应用。DMG 用镜像的完整长度/SHA256 确认内容身份，只读挂载并精确选择 app/内含 PKG，不计算独立 app 目录摘要；app 保留内部链接与 quarantine，经原生签名/Gatekeeper 检查再复制或原子替换。运行中应用拒绝替换/删除；卸载不清理用户数据。挂载、staging 和物理阶段在同一 attempt 中核算，Unknown 保留证据与排他，不重新执行安装。
+执行上下文使用本机数值 OS 版本和认证 helper 的登录世代，待确认注册与 claim 保留原上下文。生产编译器消费当前远程 V5 的 MSI、PKG、Bundle、离线 EXE、MSIX 和 DMG；WinGet/Brew 原生发布源仍不支持。EXE 仅执行完整离线布局、显式参数和明确卸载入口；退出码与重启按源任务策略解释，不自动重启。实际启动 EXE 后，当前 V5 没有可信外部安装会话完成协议，因此保留真实退出码与重启事实，同时报告 Unknown、保留离线布局与排他；Job 归零或检测命中不解除该限制。MSIX 明确区分目标用户注册与未来用户设备 provisioning，后者不改写已有用户注册；只查询既有侧载/依赖，不导入证书、改策略或终止应用。DMG 用镜像的完整长度/SHA256 确认内容身份，只读挂载并精确选择 app/内含 PKG，不计算独立 app 目录摘要；app 保留内部链接与 quarantine，经原生签名/Gatekeeper 检查再复制或原子替换。运行中应用拒绝替换/删除；卸载不清理用户数据。挂载、staging 和物理阶段在同一 attempt 中核算，Unknown 保留证据与排他，不重新执行安装。DMG 在原 invocation 内预留最多四分之一预算用于清理，取消/超时/重启后的恢复只使用原冻结 Cleanup 和递增日志序号；清理资源不改写未知安装事实，原活动未证明结束时仍保留排他。内含 PKG 必须通过原生签名与 Gatekeeper；未签名包被拒绝。
 
 验收入口可加 `--dmg-app <已公证 app>`，将固定候选装入只读镜像，经真实 HTTPS、系统服务、SQLite 与认证 IPC 验证安装及精确卸载；测试不修改签名信任或 quarantine。
 

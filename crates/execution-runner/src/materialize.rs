@@ -509,7 +509,14 @@ pub(crate) fn verify_material(
     path: &Path,
     expected: &Digest,
 ) -> Result<(File, super::platform::PathLease), Error> {
-    let lease = super::platform::PathLease::source(path, true)?;
+    verify_material_kind(path, expected, true)
+}
+pub(crate) fn verify_material_kind(
+    path: &Path,
+    expected: &Digest,
+    immutable: bool,
+) -> Result<(File, super::platform::PathLease), Error> {
+    let lease = super::platform::PathLease::source(path, immutable)?;
     let mut file = super::platform::open_file(path)?;
     if file.metadata().map_err(|_| Error::Unavailable)?.len() > 8 * 1024 * 1024 * 1024 {
         return Err(Error::Capacity);

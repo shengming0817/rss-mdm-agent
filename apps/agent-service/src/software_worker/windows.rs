@@ -83,8 +83,20 @@ fn executable(
         }
         _ => return Err(Error::Unsupported),
     };
-    for signature in &request.action.signatures {
-        authenticode(request, &signature.artifact)?;
+    if !request.action.signatures.iter().any(|signature| {
+        signature.artifact == *key
+            && signature.mechanism == wire::SoftwareTaskSignatureMechanism::Authenticode
+    }) {
+        return Err(Error::Unsupported);
+    }
+    for artifact in request
+        .action
+        .signatures
+        .iter()
+        .map(|signature| &signature.artifact)
+        .collect::<std::collections::BTreeSet<_>>()
+    {
+        authenticode(request, artifact)?;
     }
     // Every sidecar is copied from leased exact content into one private offline layout.
     // No command-line switches, registry removal strings, URLs or bootstrap downloads are added.
@@ -110,7 +122,7 @@ fn executable(
             fs::create_dir_all(parent)?;
         }
         copy_new(&source, &target)?;
-        leases.push(execution_runner::staging::verify_retained(
+        leases.push(execution_runner::staging::verify_staged(
             &target,
             &request
                 .materials
@@ -118,6 +130,9 @@ fn executable(
                 .ok_or(Error::Untrusted)?
                 .artifact
                 .sha256,
+            &request.resource_root,
+            &request.run_as,
+            &request.session,
         )?);
         if artifact_key == key {
             if executable.replace(target).is_some() {
@@ -133,7 +148,7 @@ fn executable(
     if separate_removal {
         let path = layout.join("rss-removal.exe");
         copy_new(&request.material(key)?, &path)?;
-        leases.push(execution_runner::staging::verify_retained(
+        leases.push(execution_runner::staging::verify_staged(
             &path,
             &request
                 .materials
@@ -141,6 +156,9 @@ fn executable(
                 .ok_or(Error::Untrusted)?
                 .artifact
                 .sha256,
+            &request.resource_root,
+            &request.run_as,
+            &request.session,
         )?);
         executable = Some(path);
     }
@@ -152,25 +170,21 @@ fn executable(
         return Err(Error::Untrusted);
     }
     let (code, stdout, stderr) = run_tool(request, &image, &invocation.arguments)?;
-    // The immutable declared layout is the only tree removed here. The parent Windows Job
-    // continues accounting for installer descendants before it accepts this result.
-    wait_for_job_peers()?;
-    drop(leases);
-    if separate_removal {
-        fs::remove_file(&image)?;
-    }
-    remove_layout(&layout, &exe.layout)?;
-    fs::remove_dir(&request.resource_root)?;
-    Ok(result(
+    // Root/Job completion cannot bind work delegated through services or WMI to this attempt.
+    // Retain the exact layout for that activity; never infer closure from desired-state detection.
+    let mut completion = result(
         code,
         None,
         format!(
-            "{}{}",
+            "{}{}\nexternal installer completion is unproven; retained layout and software claim",
             String::from_utf8_lossy(&stdout),
-            String::from_utf8_lossy(&stderr)
+            String::from_utf8_lossy(&stderr),
         ),
-    ))
+    );
+    completion.1.closed = false;
+    Ok(completion)
 }
+
 fn detect(
     request: &WorkerRequest,
     detection: &wire::SoftwareTaskDetection,
@@ -201,7 +215,12 @@ fn detect(
                 _ => (),
             }
             let digest = Digest::new(crate::plan::hex(sha256)).map_err(|_| Error::Protocol)?;
-            match execution_runner::staging::verify_retained(Path::new(path), &digest) {
+            match execution_runner::staging::verify_observed(
+                Path::new(path),
+                &digest,
+                &request.run_as,
+                &request.session,
+            ) {
                 Ok(_) => Ok(SoftwareState::Present {
                     version: PackageValue::new(version).map_err(|_| Error::Protocol)?,
                 }),
@@ -278,6 +297,14 @@ fn matches(package: &Package, identity: &Identity, exact_version: bool) -> Resul
                 ] == identity.version),
     )
 }
+fn dependency_family(package: &Package, identity: &Identity) -> Result<bool, Error> {
+    let id = package.Id().map_err(|_| Error::Unavailable)?;
+    Ok(
+        id.Name().map_err(|_| Error::Unavailable)?.to_string() == identity.name
+            && id.Publisher().map_err(|_| Error::Unavailable)?.to_string() == identity.publisher
+            && id.ResourceId().map_err(|_| Error::Unavailable)?.to_string() == identity.resource_id,
+    )
+}
 fn packages(
     manager: &PackageManager,
     msix: &Msix,
@@ -321,6 +348,27 @@ fn observation(manager: &PackageManager, msix: &Msix) -> Result<SoftwareState, E
         });
     }
     if matches(&candidates[0], &msix.identity, true)? {
+        let dependencies = candidates[0]
+            .Dependencies()
+            .map_err(|_| Error::Unavailable)?;
+        if dependencies.Size().map_err(|_| Error::Unavailable)? as usize != msix.dependencies.len()
+        {
+            return Ok(SoftwareState::Unknown {
+                reason: SoftwareDetectionFailure::Unavailable,
+            });
+        }
+        for dependency in dependencies {
+            if !msix
+                .dependencies
+                .iter()
+                .any(|approved| matches(&dependency, approved, true).unwrap_or(false))
+            {
+                return Ok(SoftwareState::Unknown {
+                    reason: SoftwareDetectionFailure::Unavailable,
+                });
+            }
+        }
+
         if let wire::SoftwareTaskMsixContainer::Bundle { members, .. } = &msix.container {
             let material_scope = if msix.deployment == Deployment::DeviceProvisioning {
                 packages(manager, msix, true)?
@@ -384,13 +432,15 @@ fn deployment(
     // Dependencies are exact already-present packages in this same effect scope.
     let existing = packages(&manager, msix, false)?;
     for dependency in &msix.dependencies {
-        if existing
+        let family = existing
             .iter()
-            .filter_map(|p| matches(p, dependency, true).ok())
-            .filter(|m| *m)
-            .count()
-            != 1
-        {
+            .filter_map(|package| match dependency_family(package, dependency) {
+                Ok(true) => Some(Ok(package)),
+                Ok(false) => None,
+                Err(error) => Some(Err(error)),
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        if family.len() != 1 || !matches(family[0], dependency, true)? {
             return Err(Error::Untrusted);
         }
     }
@@ -440,8 +490,33 @@ fn deployment(
             .store(false, std::sync::atomic::Ordering::Release);
         return completed(completion);
     }
-    for signature in &request.action.signatures {
-        authenticode(request, &signature.artifact)?;
+    for artifact in request
+        .action
+        .signatures
+        .iter()
+        .map(|signature| &signature.artifact)
+        .collect::<std::collections::BTreeSet<_>>()
+    {
+        authenticode(request, artifact)?;
+    }
+    if msix.deployment == Deployment::DeviceProvisioning {
+        for candidate in packages(&manager, msix, true)? {
+            if matches(&candidate, &msix.identity, false)? {
+                let version = candidate
+                    .Id()
+                    .and_then(|id| id.Version())
+                    .map_err(|_| Error::Unavailable)?;
+                if [
+                    version.Major,
+                    version.Minor,
+                    version.Build,
+                    version.Revision,
+                ] > msix.identity.version
+                {
+                    return Err(Error::Unsupported);
+                }
+            }
+        }
     }
     let selected = selected_packages(request, msix)?;
     for (path, identity) in &selected {
@@ -621,7 +696,13 @@ fn selected_packages(
                 drop(file);
                 let digest =
                     Digest::new(crate::plan::hex(&member.sha256)).map_err(|_| Error::Protocol)?;
-                execution_runner::staging::verify_retained(&path, &digest)?;
+                execution_runner::staging::verify_staged(
+                    &path,
+                    &digest,
+                    &request.resource_root,
+                    &request.run_as,
+                    &request.session,
+                )?;
                 super::material::manifest(
                     fs::File::open(&path)?,
                     &member.identity,
@@ -663,26 +744,6 @@ fn copy_new(source: &Path, target: &Path) -> Result<(), Error> {
     output.sync_all()?;
     Ok(())
 }
-fn remove_layout(root: &Path, layout: &BTreeMap<String, String>) -> Result<(), Error> {
-    let mut directories = std::collections::BTreeSet::new();
-    for name in layout.keys() {
-        let path = root.join(name);
-        fs::remove_file(&path)?;
-        let mut parent = path.parent();
-        while let Some(p) = parent {
-            if p == root {
-                break;
-            }
-            directories.insert(p.to_path_buf());
-            parent = p.parent();
-        }
-    }
-    for directory in directories.iter().rev() {
-        fs::remove_dir(directory)?;
-    }
-    fs::remove_dir(root)?;
-    Ok(())
-}
 pub(crate) fn sideload_allowed() -> Result<bool, Error> {
     use ::windows::Win32::System::Registry::*;
     for key in [
@@ -711,28 +772,4 @@ pub(crate) fn sideload_allowed() -> Result<bool, Error> {
         return Ok(length == 4 && value == 1);
     }
     Ok(false)
-}
-
-fn wait_for_job_peers() -> Result<(), Error> {
-    use ::windows::Win32::System::JobObjects::*;
-    loop {
-        let mut accounting = JOBOBJECT_BASIC_ACCOUNTING_INFORMATION::default();
-        unsafe {
-            QueryInformationJobObject(
-                None,
-                JobObjectBasicAccountingInformation,
-                (&mut accounting as *mut JOBOBJECT_BASIC_ACCOUNTING_INFORMATION).cast(),
-                std::mem::size_of_val(&accounting) as u32,
-                None,
-            )
-        }
-        .map_err(|_| Error::Unavailable)?;
-        if accounting.ActiveProcesses == 1 {
-            return Ok(());
-        }
-        if accounting.ActiveProcesses == 0 {
-            return Err(Error::Unavailable);
-        }
-        std::thread::sleep(std::time::Duration::from_millis(20));
-    }
 }

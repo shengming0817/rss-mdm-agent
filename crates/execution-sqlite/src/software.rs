@@ -69,7 +69,32 @@ pub(crate) fn diagnostic(
         .transpose()?
         .flatten();
     Ok(Some(match progress {
-        Some(p) if p.complete(plan) => SoftwareDiagnostic::DesiredStateObserved,
+        Some(p) if p.complete(plan) => {
+            let program = plan.spec().execution.software_program().expect("program");
+            let reboot = p.checkpoints.iter().any(|checkpoint| match checkpoint {
+                execution_contract::SoftwareCheckpoint::End {
+                    step,
+                    phase,
+                    process: Some(process),
+                    ..
+                } if !phase.is_observation() => {
+                    program.steps[*step as usize].allow_reboot
+                        && program
+                            .invocation(*step as usize, *phase)
+                            .is_some_and(|invocation| {
+                                process.exit_code.is_some_and(|code| {
+                                    invocation.exit_codes.reboot.contains(&code)
+                                })
+                            })
+                }
+                _ => false,
+            });
+            if reboot {
+                SoftwareDiagnostic::RestartPending
+            } else {
+                SoftwareDiagnostic::DesiredStateObserved
+            }
+        }
         Some(p) => {
             let program = plan.spec().execution.software_program().expect("program");
             let matched = p

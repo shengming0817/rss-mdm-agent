@@ -589,21 +589,35 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
                 &self.adapter(None, Some(execution.input())),
             )? {
                 if progress.resumable(execution.input()) {
-                    let allowance = execution
-                        .allowance(self.host.reliable_now()?)
-                        .map_err(|_| Error::Clock)?;
-                    if allowance.remaining_timeout_ms > 0 && allowance.remaining_output_bytes > 0 {
-                        self.runner.resume_software(crate::SoftwareResume {
-                            ownership: self.store.software_ownership(
-                                &scope,
-                                &self.adapter(None, Some(execution.input())),
-                            )?,
-                            plan: execution.input().clone(),
-                            progress,
-                            allowance,
-                        })?;
+                    if let Ok(allowance) = execution.allowance(self.host.reliable_now()?) {
+                        if allowance.remaining_timeout_ms > 0
+                            && allowance.remaining_output_bytes > 0
+                        {
+                            self.runner.resume_software(crate::SoftwareResume {
+                                ownership: self.store.software_ownership(
+                                    &scope,
+                                    &self.adapter(None, Some(execution.input())),
+                                )?,
+                                plan: execution.input().clone(),
+                                progress,
+                                allowance,
+                            })?;
+                        }
                     }
                 }
+            }
+        }
+        if let Some(progress) = self.store.software_progress(
+            &scope,
+            &active.id,
+            &self.adapter(None, Some(execution.input())),
+        )? {
+            if progress.cleanup_allowance(execution.input()).is_some() {
+                self.runner
+                    .resume_software_cleanup(crate::SoftwareCleanupResume {
+                        plan: execution.input().clone(),
+                        progress,
+                    })?;
             }
         }
         let host = Host::new(&self.host, &self.binding, &self.config, None)
@@ -653,7 +667,6 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
                         .and_then(|progress| {
                             progress.checkpoints.iter().rev().find_map(|c| match c {
                                 execution_contract::SoftwareCheckpoint::End {
-                                    duration_ms: 0,
                                     process: Some(facts),
                                     ..
                                 } => {
@@ -846,8 +859,13 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
                     &attempt.id,
                     &self.adapter(None, Some(execution.input())),
                 )?
-                .filter(|p| p.complete(execution.input()))
-                .map(|_| ObservationFacts {
+                .filter(|progress| {
+                    progress.complete(execution.input())
+                        || (progress.closed(execution.input())
+                            && (stage == ObservationStage::Termination
+                                || attempt.assessment.is_none()))
+                })
+                .map(|progress| ObservationFacts {
                     request_id: execution.input().spec().request.request_id.clone(),
                     content_digest: execution.input().digest().clone(),
                     attempt_id: attempt.id.clone(),
@@ -870,7 +888,11 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
                         Observation::Quiescent {}
                     } else {
                         Observation::Effect {
-                            assessment: execution_lifecycle::EffectAssessment::Satisfied,
+                            assessment: if progress.complete(execution.input()) {
+                                execution_lifecycle::EffectAssessment::Satisfied
+                            } else {
+                                execution_lifecycle::EffectAssessment::Unknown
+                            },
                         }
                     },
                 });

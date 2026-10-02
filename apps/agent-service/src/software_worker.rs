@@ -36,6 +36,9 @@ pub struct WorkerRequest {
     /// Native work that has started without verified completion.
     #[serde(skip)]
     pub native_pending: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// EXE effects may escape the job; this fact can never be cleared by a later tool exit.
+    #[serde(skip)]
+    pub external_pending: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// Current producer-owned behavior and signatures, already frozen in the signed task.
     pub action: wire::SoftwareTaskAction,
     /// Exact physical operation.
@@ -117,6 +120,12 @@ pub fn run(path: &std::path::Path) -> Result<i32, Error> {
             .load(std::sync::atomic::Ordering::Acquire);
         failed
     });
+    if request
+        .external_pending
+        .load(std::sync::atomic::Ordering::Acquire)
+    {
+        result.1.closed = false;
+    }
     if !matches!(request.action.behavior, wire::SoftwareTaskBehavior::Dmg(_))
         && request.resource_root.exists()
     {
@@ -186,6 +195,11 @@ fn run_tool(
         .stderr(Stdio::piped())
         .spawn()?;
     request.native_pending.store(true, Ordering::Release);
+    if matches!(request.action.behavior, wire::SoftwareTaskBehavior::Exe(_))
+        && image.starts_with(&request.resource_root)
+    {
+        request.external_pending.store(true, Ordering::Release);
+    }
     let observed = request.native_output.clone();
     let bound = request
         .output_bytes
