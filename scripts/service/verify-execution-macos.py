@@ -354,16 +354,51 @@ def validate_desktop_finish(finish, evidence):
     assert evidence and finish.get('request') == evidence['request'], 'completion evidence missing or mismatched'
 
 
+def verify_candidate(path):
+    root = Path(__file__).resolve().parents[2]
+    return json.loads(run('node', str(root/'scripts/native-candidate.mjs'), 'verify', str(path.resolve()), cwd=root).stdout)
+
+
+def candidate_identity(path):
+    path = path.resolve()
+    run('/usr/bin/codesign', '--verify', '--strict', str(path))
+    details = run('/usr/bin/codesign', '-d', '--verbose=4', str(path)).stderr
+    return dict(sha256=hashlib.sha256(path.read_bytes()).hexdigest(), cdhash=re.search(r'CDHash=([0-9a-f]+)', details)[1],
+                signingMode='controlled-ad-hoc' if 'Signature=adhoc' in details else 'signed')
+
+
+def rejected_image_probe(image, binary, config):
+    # First show the exact authorized channel is healthy, then change only the client image path.
+    baseline = json.loads(run(str(binary), '--config', str(config), '--query').stdout)
+    if baseline['reply']['kind'] != 'tasks':
+        raise RuntimeError('security baseline unavailable; negative probe not executed')
+    rejected = subprocess.run([str(image), '--config', str(config), '--query'], capture_output=True, text=True, timeout=15)
+    try: reply = json.loads(rejected.stdout)['reply']
+    except (ValueError, KeyError):
+        raise RuntimeError('wrong-image probe did not reach a verifiable IPC reply') from None
+    if reply['kind'] != 'rejected':
+        raise RuntimeError('wrong-image client was not explicitly rejected')
+    return dict(baseline=baseline, response=reply, exitCode=rejected.returncode, changed='client image path')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, required=True)
     parser.add_argument('--backend', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--desktop', type=Path)
+    parser.add_argument('--candidate', type=Path, help='Frozen prebuilt inputs; no rebuilding or resigning')
     parser.add_argument('--dmg-upgrade-app', type=Path, help='Second approved notarized app version for the same exact target')
     parser.add_argument('--dmg-app', type=Path, help='Approved notarized .app to place in an exact local DMG; no signature bypass')
     parser.add_argument('--authorization-password-file', type=Path)
     args = parser.parse_args()
+    frozen = verify_candidate(args.candidate) if args.candidate else None
+    if frozen:
+        for name, field in [('service', 'binary'), ('backend', 'backend'), ('desktop', 'desktop')]:
+            actual = getattr(args, field)
+            expected = frozen['binaries'].get(name)
+            if (actual is None) != (expected is None) or (actual is not None and str(actual.resolve()) != expected['path']):
+                raise RuntimeError('candidate argument mismatch')
     if os.uname().sysname != 'Darwin' or os.geteuid() == 0:
         raise RuntimeError('run this harness from the actual macOS user login')
     for domain in ['system/com.rss-mdm.agent.execution', f'gui/{os.geteuid()}/com.rss-mdm.agent.execution.user']:
@@ -378,11 +413,12 @@ def main():
     inputs = Path(tempfile.mkdtemp(prefix='rss-native-service-input-')).resolve()
     receipt_inputs = inputs
     receipt = dict(platform=os.uname().sysname, architecture=os.uname().machine,
-                   journal=None, scenarios={}, sourceHead=run('/usr/bin/git', 'rev-parse', 'HEAD').stdout.strip())
+                   osVersion=run('/usr/bin/sw_vers','-productVersion').stdout.strip(), subject=dict(uid=os.geteuid(),session=run('/bin/launchctl','managername').stdout.strip()), candidate=frozen, journal=None, scenarios={}, sourceHead=run('/usr/bin/git', 'rev-parse', 'HEAD').stdout.strip())
     installed = helper = False
     administrator_session = backend = exchange = backend_log = proxy = proxy_thread = protected = None
     try:
-        # Copy only this fixed candidate; no writable worktree image is trusted by the service.
+        # Verify before copying. Installation must preserve these bytes and code identities.
+        receipt['inputArtifacts'] = {field: candidate_identity(value) for field in ['binary','desktop'] if (value := getattr(args,field)) is not None}
         for field, leaf in [('binary', 'rss-execution-service'), ('desktop', 'rss-mdm-desktop')]:
             value = getattr(args, field)
             if value is not None:
@@ -460,7 +496,7 @@ root.mkdir(mode=0o755)
 (root/'service-stderr.log').touch(mode=0o600,exist_ok=False)
 binary=root/'rss-execution-service'
 copy_candidate(%r,binary,%r)
-subprocess.run(['/usr/bin/codesign','--force','--sign','-','--options','runtime',str(binary)],check=True)
+subprocess.run(['/usr/bin/codesign','--verify','--strict',str(binary)],check=True)
 def artifact(path):
     identity=subprocess.run(['/usr/bin/codesign','-d','--verbose=4',str(path)],capture_output=True,text=True,check=True).stderr
     return dict(path=str(path),sha256=hashlib.sha256(Path(path).read_bytes()).hexdigest(),cdhash=re.search(r'CDHash=([0-9a-f]+)',identity)[1])
@@ -479,7 +515,7 @@ subprocess.run(%r,check=True)
             contents = setup.read_text()
             insertion = """desktop=root/'rss-mdm-desktop'
 copy_candidate(%r,desktop,%r)
-subprocess.run(['/usr/bin/codesign','--force','--sign','-','--options','runtime',str(desktop)],check=True)
+subprocess.run(['/usr/bin/codesign','--verify','--strict',str(desktop)],check=True)
 config['clients']['images'].append(artifact(desktop))
 """ % (str(args.desktop.resolve()), hashlib.sha256(args.desktop.read_bytes()).hexdigest())
             contents = contents.replace("path=root/'execution.json'", insertion + "path=root/'execution.json'")
@@ -553,6 +589,8 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
         if args.desktop and select.select([sys.stdin], [], [], 0)[0]:
             raise RuntimeError('native acceptance parent ended before readiness; refusing initialization')
         receipt['artifact'] = json.loads(config.read_text())['service']
+        assert receipt['artifact']['sha256'] == receipt['inputArtifacts']['binary']['sha256'], 'installed service candidate changed'
+        if frozen: verify_candidate(args.candidate)
         if args.desktop:
             deadline = time.monotonic() + 15
             while True:
@@ -610,6 +648,9 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
                 request = json.loads(line)
                 method = request['method']
                 if method == 'query': value = query()
+                elif method == 'security':
+                    value = rejected_image_probe(args.binary,binary,config)
+                    receipt['scenarios']['wrong_image_same_uid'] = value
                 elif method == 'status': value = command('status')
                 elif method == 'catalog':
                     value = command('package', path=str(pkg), receipt=package_receipt, user=True)
@@ -639,6 +680,7 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
             receipt['status'] = 'passed'
             return
         receipt['scenarios']['authenticated_ipc'] = query()
+        receipt['scenarios']['wrong_image_same_uid'] = rejected_image_probe(args.binary, binary, config)
         system = completed(first['attempt'])
         validate_script(acknowledged_result(system, first['attempt']), 'system')
         assert system['resultCalls'] >= 2, 'the injected 503 must be followed by an acknowledged retry'
@@ -830,6 +872,11 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
         if cleanup_errors:
             receipt['status'] = 'failed'
             receipt['cleanupErrors'] = cleanup_errors
+        if frozen:
+            try: verify_candidate(args.candidate)
+            except BaseException as error:
+                receipt['status']='failed'; receipt['candidateError']=str(error)
+        receipt['unexecutedSecurity'] = ['cross-user/login-generation', 'fake-server', 'malformed/replay/expiry IPC', 'full revocation with old connections', 'refresh negative matrix', 'Windows 11 x64', 'real Codex private process chain']
         receipt['installationCreated'] = installed
         receipt['cleanup'] = 'incomplete' if cleanup_errors else 'complete'
         receipt['inputStaging'] = str(receipt_inputs)

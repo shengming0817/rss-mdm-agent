@@ -20,7 +20,10 @@ export function waitForAppearance(readSnapshot, preferences, wait) {
 }
 export function sourceEvidence(root) {
   const git = (...args) =>
-    execFileSync("/usr/bin/git", args, { cwd: root, encoding: "utf8" }).trim();
+    execFileSync(process.platform === "win32" ? "git" : "/usr/bin/git", args, {
+      cwd: root,
+      encoding: "utf8",
+    }).trim();
   const files = [
     ...new Set(
       git("ls-files", "-z", "--cached", "--others", "--exclude-standard")

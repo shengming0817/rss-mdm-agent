@@ -78,3 +78,20 @@ Windows 使用同一 owner：`execution-windows.ps1 -Action Refresh -Scope Syste
 旧独立状态服务已退出。实验室管理员如发现历史注册，须先核对真实程序、参数和安装归属，再使用 OS 原生管理工具停用/撤销注册；本仓不再提供旧服务安装或兼容接口。不得为迁移删除历史凭据、journal、个人数据或覆盖未知安装。
 
 macOS arm64 的实际执行与目标 Windows 环境按需运行的验证分别记录；#2559 独立安全验收的有效范围与状态以 tracker 为准。开发机不要求补齐 Windows 编译或真实安全矩阵才能关闭已完成实现项；fixture、服务未安装或单平台结果不能作为 Windows 验证通过的证据。正式 MSI/PKG、签名、公证和首次生产注册仍由其原 owner 持有。
+
+## 固定候选安全验收
+
+在全部源码变更与构建完成后，使用 `node scripts/native-candidate.mjs freeze --service <服务产物> --backend <controlled-backend产物> --desktop <native-acceptance桌面产物> --runtime <Host运行包> --output <新的忽略目录内candidate.json>` 固定候选。
+服务单独旅程可以省略 desktop/runtime。签名在冻结前完成；验收只复制原字节，不重新签名或构建。
+候选绑定源码、锁文件、程序摘要、代码身份与运行包完整性；改代码、改锁或换产物后重新冻结。
+
+macOS 服务入口增加 `--candidate <candidate.json>`，其它产物参数必须与候选一致。
+真实桌面入口为 `pnpm check:desktop-native --controlled-service --candidate <candidate.json>`，跳过候选构建。
+先证明认证查询可用，再仅改变客户端程序路径验证同用户错误映像被明确拒绝；不可用诊断不能算攻击拒绝。
+macOS 私有数据遇到扩展 ACL 会拒绝，原数据保留；不会自动改权限，部署方应核查正确主体与 ACL。
+
+Windows 11 x64 目标使用 `scripts/service/verify-execution-windows.ps1 -Phase <InstallSystem|VerifyUser|RefreshSystem|RemoveSystem> -Candidate <candidate.json> -Config <受保护配置> -Output <新回执目录>`。
+先由既有部署 owner 准备真实注册与受控配置；系统阶段在管理员会话执行，VerifyUser 在原非提升登录会话执行。
+RefreshSystem 还要求 CurrentBinary/CurrentConfig，复用安装 owner 的持久身份检查。
+该入口只证明已运行的阶段；远程/同名管道、跨用户/会话、秘密作用域、旧连接撤销和真实桌面进程链仍须补齐目标环境矩阵。
+开发机不运行 Windows 入口。回执明确区分成功、失败和未执行；#2559 仍以两平台全部适用场景通过为关闭条件。
