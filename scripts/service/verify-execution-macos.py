@@ -409,19 +409,25 @@ try {
     security_result(matrix,'registration_failure',evidence['reservationFailure'])
 
 
-def native_stale_helper_security(probe, matrix, query, command, protected, prior, log_offset):
-    marker=protected/'stale-helper-effect'
+def native_stale_helper_security(probe, matrix, query, command, protected, prior, log_offset, package, package_receipt):
+    payload_file=protected/'package-payload/fixed.txt'
+    before=(payload_file.read_bytes(),payload_file.stat().st_mtime_ns)
     starts=command('status')['startRequests']
-    task=command('script',user=True,body='printf x > '+shlex.quote(str(marker))+'\n')
+    task=command('package',path=str(package),receipt=package_receipt,user=True)
+    offer=await_offer(query,task['task'])
+    response=probe.request(offer_request(offer));assert_native_reply(response,'queued')
     deadline=time.monotonic()+15
-    while not command('status')['received']:
-        assert time.monotonic()<deadline, 'signed helper-bound task not received'
+    while True:
+        value=query()
+        records=[row for row in value['preparations'] if row['offer']['attempt']==task['attempt']]
+        if records and records[0]['state']=='failed':break
+        assert time.monotonic()<deadline, 'stale helper denial did not settle the original selection'
         time.sleep(.1)
-    time.sleep(3)
     assert command('status')['startRequests']==starts, 'stale helper admitted a new attempt'
-    assert not marker.exists()
-    assert not any(r['action']['initiator'].get('attempt')==task['attempt'] for r in query()['value']['items'])
-    matrix['staleHelperPending']=dict(task=task,baseline=prior,startRequests=starts,effectAbsent=True,logOffset=log_offset)
+    assert (payload_file.read_bytes(),payload_file.stat().st_mtime_ns)==before
+    assert not any(r['action']['initiator'].get('attempt')==task['attempt'] for r in value['value']['items'])
+    matrix['staleHelperPending']=dict(task=task,baseline=prior,startRequests=starts,
+        selection=response,record=records[0],effectUnchanged=True,logOffset=log_offset)
 
 
 def complete_native_security(probe, matrix, query, command, package, package_receipt, completed, effect,
@@ -431,7 +437,7 @@ def complete_native_security(probe, matrix, query, command, package, package_rec
     prior=query()
     offset=(protected/'service-stderr.log').stat().st_size
     run('/usr/bin/python3',str(installer),'remove','--scope','user','--binary',str(binary),'--config',str(config))
-    native_stale_helper_security(probe,matrix,query,command,protected,prior,offset)
+    native_stale_helper_security(probe,matrix,query,command,protected,prior,offset,package,package_receipt)
     preflight=administrator.command('refresh_preflight')
     healthy=probe.request(dict(method='serviceStatus'));assert_native_reply(healthy,'serviceStatus')
     assert healthy['envelope']['reply']['value']['readiness']['phase']=='ready', 'preflight changed service readiness'
