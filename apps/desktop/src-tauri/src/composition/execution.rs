@@ -22,6 +22,7 @@ fn bad(_: Error) -> ui::ServiceError {
     ui::error("execution_unavailable", "执行服务未确认操作，请查询原任务")
 }
 fn mcp_error(error: Error) -> mcp::ServiceError {
+    eprintln!("RSS_EXECUTION_MCP_FAILURE code={error:?}");
     match error {
         Error::Denied | Error::Unbound => mcp::ServiceError::Denied,
         Error::NotFound => mcp::ServiceError::NotFound,
@@ -88,7 +89,12 @@ impl ExecutionHandle {
             .map_err(|_| Error::Capacity)?;
         let reply = tokio::task::spawn_blocking(move || {
             let _permit = permit;
-            ServiceClient::installed()?.request(request)
+            let client = ServiceClient::installed().inspect_err(|error| {
+                eprintln!("RSS_EXECUTION_IPC_FAILURE stage=installation code={error:?}");
+            })?;
+            client.request(request).inspect_err(|error| {
+                eprintln!("RSS_EXECUTION_IPC_FAILURE stage=request code={error:?}");
+            })
         })
         .await
         .map_err(|_| Error::OutcomeUnknown)??;
