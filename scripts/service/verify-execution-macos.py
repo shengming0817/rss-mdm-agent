@@ -572,9 +572,16 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
         run('/usr/bin/python3', str(installer), 'install', '--scope', 'user', '--binary', str(binary), '--config', str(config))
         helper = True
         def query():
-            reply = json.loads(run(str(binary), '--config', str(config), '--query').stdout)['reply']
-            assert reply['kind'] == 'tasks' and isinstance(reply['value']['items'], list)
-            return reply
+            deadline = time.monotonic() + 15
+            while True:
+                reply = json.loads(run(str(binary), '--config', str(config), '--query').stdout)['reply']
+                if reply['kind'] == 'tasks' and isinstance(reply['value']['items'], list):
+                    return reply
+                # Read-only queries can meet a busy single owner while it validates material.
+                # Authentication rejection is terminal; only bounded Unavailable is retried.
+                if reply['kind'] != 'unavailable' or time.monotonic() >= deadline:
+                    raise RuntimeError('authenticated task query failed: ' + json.dumps(reply))
+                time.sleep(.2)
         def completed(task, seconds=30):
             deadline = time.monotonic() + seconds
             while time.monotonic() < deadline:

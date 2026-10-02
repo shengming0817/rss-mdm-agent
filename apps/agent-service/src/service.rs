@@ -253,13 +253,6 @@ impl<S: SecretProvider> DeviceService<S> {
                 }
                 let request = self.client.bound_request(task)?.ok_or(Error::Conflict)?;
                 let input = self.core.app.frozen_input(&caller, &request)?;
-                if !self.core.host.materials.registered(&input)? {
-                    if let Ok(materials) =
-                        crate::recovery::materials(&input, &self.core.config, &self.core.helpers)
-                    {
-                        self.core.host.materials.register(&input, materials)?;
-                    }
-                }
                 match self
                     .bridge
                     .finish(&mut self.client, task, &self.core.app, &caller)
@@ -268,7 +261,19 @@ impl<S: SecretProvider> DeviceService<S> {
                         Ok(()) | Err(execution_app::Error::Conflict) => (),
                         Err(error) => return Err(error.into()),
                     },
-                    Err(Error::Conflict) => (), // Original intent remains unresolved.
+                    Err(Error::Conflict) => {
+                        // Only unresolved original work needs recovery material. Settled tasks
+                        // must release first, without rebuilding every native phase after ACK.
+                        if !self.core.host.materials.registered(&input)? {
+                            if let Ok(materials) = crate::recovery::materials(
+                                &input,
+                                &self.core.config,
+                                &self.core.helpers,
+                            ) {
+                                self.core.host.materials.register(&input, materials)?;
+                            }
+                        }
+                    }
                     Err(error) => return Err(error),
                 }
             } else if self.recovering
