@@ -2036,12 +2036,19 @@ try {
         result.owner.restartedHostPid = hostPid();
       };
       const held = async () => {
+        const existing = await fences();
+        rememberScopes(existing, hostPid());
+        const previousRoots = new Set(existing.map((row) => row.scope.root));
         await navigate("AI 助手");
         await browser.$(".conversation-list .new-conversation").click();
         const previous = fixture.facts.held;
         await prompt("GOLDEN_HOLD 安全验收：保持请求等待");
         await wait(() => fixture.facts.held > previous);
-        const rows = await fences();
+        const observed = await fences();
+        rememberScopes(observed, hostPid());
+        const rows = observed.filter(
+          (row) => !previousRoots.has(row.scope.root),
+        );
         assert.equal(rows.length, 1, "one actual live Codex worker scope");
         assert.equal(rows[0].scope.kind, "processGroup");
         assert.equal(await absent(rows[0].scope), false);
