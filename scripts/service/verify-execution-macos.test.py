@@ -20,6 +20,70 @@ acceptance = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(acceptance)
 
 
+class BackendLifecycleTests(unittest.TestCase):
+    def backend(self, source):
+        return subprocess.Popen(['/usr/bin/python3', '-u', '-c', source], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+
+    def test_partial_line_has_a_deadline_and_owned_backend_is_reaped(self):
+        child=self.backend("import time;print('{',end='',flush=True);time.sleep(60)")
+        owner=acceptance.BackendExchange(child)
+        started=time.monotonic()
+        try:
+            with self.assertRaises(TimeoutError): owner.read(time.monotonic()+.1)
+            self.assertLess(time.monotonic()-started,1)
+        finally: owner.close()
+        self.assertIsNotNone(child.poll())
+
+    def test_split_lines_and_large_requests_use_actual_readiness(self):
+        child=self.backend("import sys,json,time;sys.stdout.write('{');sys.stdout.flush();time.sleep(.02);print('\"ready\":true}');v=json.loads(sys.stdin.readline());print(json.dumps({'size':len(v['body'])}))")
+        owner=acceptance.BackendExchange(child)
+        try:
+            self.assertEqual(owner.read(time.monotonic()+1),{'ready':True})
+            self.assertEqual(owner.command('script',body='x'*200_000),{'size':200_000})
+        finally: owner.close()
+
+    def test_full_input_pipe_also_has_a_deadline(self):
+        child=self.backend("import time;print('{}',flush=True);time.sleep(60)")
+        owner=acceptance.BackendExchange(child,timeout=.1)
+        try:
+            owner.read(time.monotonic()+1)
+            started=time.monotonic()
+            with self.assertRaises(TimeoutError): owner.command('script',body='x'*500_000)
+            self.assertLess(time.monotonic()-started,1)
+        finally: owner.close()
+
+    def test_invalid_startup_response_runs_preparation_cleanup_without_installation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);backend=root/'backend';pid=root/'pid';output=root/'output'
+            backend.write_text('#!/usr/bin/python3\nimport os,time\nfrom pathlib import Path\nPath('+repr(str(pid))+').write_text(str(os.getpid()))\nprint("[]",flush=True)\ntime.sleep(60)\n');backend.chmod(0o700)
+            with patch.object(acceptance.sys,'argv',['verify','--binary','/bin/sh','--backend',str(backend),'--output',str(output)]), patch.object(acceptance,'AdministratorSession') as administrator:
+                with self.assertRaisesRegex(RuntimeError,'invalid controlled backend response'): acceptance.main()
+                administrator.assert_not_called()
+            receipt=json.loads((output/'receipt.json').read_text())
+            self.assertEqual(receipt['cleanup'],'complete');self.assertFalse(receipt['installationCreated'])
+            with self.assertRaises(ProcessLookupError): os.kill(int(pid.read_text()),0)
+            staged=Path(receipt['inputStaging']);self.assertFalse((staged/'rss-execution-service').exists());staged.rmdir()
+
+    def test_prepared_administrator_programs_remain_valid_before_authority(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);backend=root/'backend';output=root/'output'
+            info={'origin':'http://127.0.0.1:1','tenant':'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','key':'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'}
+            backend.write_text('#!/usr/bin/python3\nimport sys,json\nprint('+repr(json.dumps(info))+',flush=True)\nfor line in sys.stdin: pass\n');backend.chmod(0o700)
+            programs=[]
+            class NoAuthority:
+                reader=None
+                def __init__(self,setup,initialize,restart,cleanup,*args):
+                    for path in (setup,initialize,restart,cleanup):
+                        program=path.read_text();compile(program,str(path),'exec');programs.append(program)
+                def start(self): raise RuntimeError('stop before administrator authority')
+                def close(self): pass
+            with patch.object(acceptance.sys,'argv',['verify','--binary','/bin/sh','--desktop','/bin/sh','--backend',str(backend),'--output',str(output)]),patch.object(acceptance,'AdministratorSession',NoAuthority):
+                with self.assertRaisesRegex(RuntimeError,'stop before administrator authority'): acceptance.main()
+            self.assertEqual(len(programs),4)
+            receipt=json.loads((output/'receipt.json').read_text());self.assertEqual(receipt['cleanup'],'complete');self.assertFalse(receipt['installationCreated'])
+            staged=Path(receipt['inputStaging']);(staged/'helper').rmdir();staged.rmdir()
+
+
 class EvidenceTests(unittest.TestCase):
     def test_authorization_password_file_is_private_and_never_an_argument(self):
         with tempfile.TemporaryDirectory() as directory:

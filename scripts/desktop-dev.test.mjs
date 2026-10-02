@@ -16,6 +16,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { test } from "node:test";
 import { waitForAppearance } from "./native-evidence.mjs";
+import { reapOwnedProcessGroup } from "./desktop-dev-process.mjs";
 import {
   developmentFingerprint,
   ensureDevelopmentRuntime,
@@ -609,3 +610,66 @@ test(
     assert.equal(existsSync(join(root, "launched")), false);
   },
 );
+
+test("controlled worker reap lets the owner clean up before group escalation", async () => {
+  const root = mkdtempSync(join(tmpdir(), "rss-worker-reap-"));
+  const marker = join(root, "cleaned");
+  const child = spawn(
+    process.execPath,
+    [
+      "-e",
+      `
+    const fs = require('node:fs');
+    process.on('SIGTERM', () => { fs.writeFileSync(${JSON.stringify(marker)}, 'owned cleanup'); process.exit(0); });
+    console.log('ready'); setInterval(() => {}, 1000);
+  `,
+    ],
+    { detached: true, stdio: ["pipe", "pipe", "pipe"] },
+  );
+  try {
+    await once(child.stdout, "data");
+    const result = await reapOwnedProcessGroup(child, 10, 500, 500);
+    assert.equal(result.confirmed, true);
+    assert.equal(result.forced, true);
+    assert.equal(readFileSync(marker, "utf8"), "owned cleanup");
+    assert.equal(child.exitCode, 0);
+  } finally {
+    if (child.exitCode === null && child.signalCode === null)
+      child.kill("SIGKILL");
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("stalled controlled worker is killed and reaped without signalling another group", async () => {
+  const survivor = spawn(
+    process.execPath,
+    ["-e", "console.log('ready');setInterval(()=>{},1000)"],
+    { detached: true, stdio: ["pipe", "pipe", "pipe"] },
+  );
+  const child = spawn(
+    process.execPath,
+    [
+      "-e",
+      "process.on('SIGTERM',()=>{});console.log('ready');setInterval(()=>{},1000)",
+    ],
+    { detached: true, stdio: ["pipe", "pipe", "pipe"] },
+  );
+  try {
+    await Promise.all([
+      once(child.stdout, "data"),
+      once(survivor.stdout, "data"),
+    ]);
+    const started = Date.now();
+    const result = await reapOwnedProcessGroup(child, 10, 50, 500);
+    assert.equal(result.confirmed, true);
+    assert.equal(child.signalCode, "SIGKILL");
+    assert.ok(Date.now() - started < 2000);
+    process.kill(survivor.pid, 0);
+    assert.equal(survivor.exitCode, null);
+  } finally {
+    survivor.kill("SIGTERM");
+    await reapOwnedProcessGroup(survivor, 500, 100, 500);
+    if (child.exitCode === null && child.signalCode === null)
+      child.kill("SIGKILL");
+  }
+});

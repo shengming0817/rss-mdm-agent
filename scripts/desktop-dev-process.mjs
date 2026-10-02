@@ -94,3 +94,67 @@ export function runPreparation(command, args, cwd, environment = process.env) {
     });
   });
 }
+
+// The controlled service worker owns its backend and private authorization channel.
+// Give that owner time to clean up, then reap only its dedicated process group.
+export async function reapOwnedProcessGroup(
+  child,
+  graceMs = 120000,
+  terminateMs = 5000,
+  killMs = 1500,
+) {
+  const { setTimeout: delay } = await import("node:timers/promises");
+  const exited = () =>
+    !child.pid || child.exitCode !== null || child.signalCode !== null;
+  const alive = () => {
+    if (!child.pid) return false;
+    try {
+      process.kill(-child.pid, 0);
+      return true;
+    } catch (error) {
+      if (error.code === "ESRCH") return false;
+      if (error.code === "EPERM") return true;
+      throw error;
+    }
+  };
+  const send = (signal, group) => {
+    if (!child.pid) return;
+    try {
+      process.kill(group ? -child.pid : child.pid, signal);
+    } catch (error) {
+      if (error.code !== "ESRCH" && error.code !== "EPERM") throw error;
+    }
+  };
+  const wait = async (budget, group = false) => {
+    const deadline = performance.now() + budget;
+    while ((!exited() || (group && alive())) && performance.now() < deadline)
+      await delay(25);
+  };
+  let forced = false,
+    confirmed = false;
+  try {
+    await wait(graceMs);
+    if (!exited()) {
+      forced = true;
+      send("SIGTERM", false); // Python runs its finally while the backend still exists.
+      await wait(terminateMs);
+    }
+    if (alive()) {
+      forced = true;
+      send("SIGTERM", true);
+      await wait(terminateMs, true);
+    }
+    if (alive()) {
+      send("SIGKILL", true);
+      await wait(killMs, true);
+    }
+    confirmed = exited() && !alive();
+  } finally {
+    // A failed reap must not leave active pipe handles keeping this caller alive forever.
+    child.stdin?.destroy();
+    child.stdout?.destroy();
+    child.stderr?.destroy();
+    if (!confirmed) child.unref();
+  }
+  return { confirmed, forced };
+}

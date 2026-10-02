@@ -17,7 +17,10 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { cargoTargetDir } from "./cargo-target.mjs";
-import { runPreparation } from "./desktop-dev-process.mjs";
+import {
+  runPreparation,
+  reapOwnedProcessGroup,
+} from "./desktop-dev-process.mjs";
 import { randomBytes } from "node:crypto";
 import { createServer } from "node:net";
 import { DatabaseSync } from "node:sqlite";
@@ -150,6 +153,7 @@ for (const signal of ["SIGINT", "SIGTERM"])
     spawnError = new Error("native acceptance cancelled");
     // The dev wrapper owns Tauri/Vite/main and their bounded process-group shutdown.
     signalRoot("SIGTERM");
+    serviceWorker?.kill("SIGTERM");
   });
 const mark = (value) => {
   stage = value;
@@ -2044,14 +2048,22 @@ try {
         process.exitCode = 1;
       }
     }
+    console.log("[native] bounded controlled service owner cleanup");
     serviceWorker.stdin.end();
-    const deadline = Date.now() + 120000;
-    while (
-      serviceWorker.exitCode === null &&
-      serviceWorker.signalCode === null &&
-      Date.now() < deadline
-    )
-      await delay(250);
+    result.serviceWorkerCleanup = await reapOwnedProcessGroup(serviceWorker);
+    if (
+      !result.serviceWorkerCleanup.confirmed ||
+      result.serviceWorkerCleanup.forced
+    ) {
+      result.status = cancelled ? "cancelled" : "failed";
+      result.serviceFailure = {
+        stage,
+        code: "native_service_worker_cleanup_forced",
+        detail: "controlled service worker required bounded termination",
+      };
+      result.failure ??= result.serviceFailure;
+      process.exitCode = 1;
+    }
     const serviceReceipt =
       result.serviceEvidence && join(result.serviceEvidence, "receipt.json");
     if (serviceReceipt && existsSync(serviceReceipt))
