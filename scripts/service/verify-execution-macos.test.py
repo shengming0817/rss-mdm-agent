@@ -26,7 +26,7 @@ class BackendLifecycleTests(unittest.TestCase):
             endpoint=str(Path(directory)/'control')
             listener=socket.socket(socket.AF_UNIX);listener.bind(endpoint);listener.listen(1)
             programs={'setup':'raise PermissionError("protected input")',
-                      'cleanup':'print(json.dumps({"cleaned":True}))'}
+                      'cleanup':'import json\nprint(json.dumps({"cleaned":True}))'}
             failures=[]
             def run():
                 try: acceptance.authorized_steps(programs,endpoint,123,501,time.clock_gettime(time.CLOCK_MONOTONIC)+10)

@@ -363,7 +363,7 @@ try {
     console.log(JSON.stringify({receipt,launch:launches.value[0],scopeAbsent:true}));
 } finally {await port.close(budget());await store.close(budget());}
 """
-    result=run(shutil.which('node'),'--input-type=module','-',json.dumps(dict(root=str(root),
+    result=run(str(Path(frozen['runtime']['path'])/'bin/node'),'--input-type=module','-',json.dumps(dict(root=str(root),
         directory=str(directory),runtime=frozen['runtime']['path'])),input=source,timeout=45)
     evidence=json.loads(result.stdout)
     response=evidence['receipt']['responses'][2]
