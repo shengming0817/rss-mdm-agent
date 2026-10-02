@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import {
+  mkdtempSync,
+  writeFileSync,
+  rmSync,
+  mkdirSync,
+  copyFileSync,
+  readFileSync,
+  statSync,
+} from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
@@ -113,4 +121,100 @@ test("desktop and Agent consume the same env CA without embedding paths or priva
   const defaults = agentOrganizationConfiguration(root, template);
   assert.equal(defaults.ca, undefined);
   assert.equal(defaults.config.ca_file, null);
+});
+
+test("Agent origin normalization matches desktop DNS root-dot rules", (t) => {
+  const root = mkdtempSync(join(tmpdir(), "rss-origin-env-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const template = { version: 2, ipc_version: 6 };
+  const configure = (origin) =>
+    writeFileSync(
+      join(root, ".env"),
+      `RSS_MDM_ORIGIN=${origin}\nRSS_MDM_TENANT_ID=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\nRSS_MDM_ORGANIZATION_LABEL=Fixture\n`,
+    );
+  for (const origin of [
+    "https://MDM.EXAMPLE.:443/",
+    "https://example./",
+    "https://nested.mdm.example../",
+  ]) {
+    configure(origin);
+    assert.throws(
+      () => agentOrganizationConfiguration(root, template),
+      /real HTTPS/,
+    );
+  }
+  configure("https://MDM.fixture.test.:443/");
+  assert.equal(
+    agentOrganizationConfiguration(root, template).config.origin,
+    "https://mdm.fixture.test",
+  );
+});
+
+test("real Agent generator CLI preserves user-readable public inputs under restrictive umask", (t) => {
+  const root = mkdtempSync(join(tmpdir(), "rss-agent-cli-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  mkdirSync(join(root, "scripts"));
+  for (const name of ["agent-organization.mjs", "desktop-organization.mjs"])
+    copyFileSync(new URL(name, import.meta.url), join(root, "scripts", name));
+  const cert = join(root, "source-ca.pem"),
+    key = join(root, "source-ca.key");
+  execFileSync(
+    "openssl",
+    [
+      "req",
+      "-x509",
+      "-newkey",
+      "rsa:2048",
+      "-nodes",
+      "-days",
+      "1",
+      "-subj",
+      "/CN=RSS Test CA",
+      "-addext",
+      "basicConstraints=critical,CA:TRUE",
+      "-keyout",
+      key,
+      "-out",
+      cert,
+    ],
+    { stdio: "ignore" },
+  );
+  writeFileSync(
+    join(root, ".env"),
+    `RSS_MDM_ORIGIN=https://fixture.test\nRSS_MDM_TENANT_ID=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\nRSS_MDM_ORGANIZATION_LABEL=Fixture\nRSS_MDM_CA_FILE=${cert}\n`,
+  );
+  const template = join(root, "template.json"),
+    output = join(root, "execution.json"),
+    ca = join(root, "installed-ca.pem");
+  writeFileSync(
+    template,
+    JSON.stringify({ version: 2, ipc_version: 6, state_root: "/state" }),
+  );
+  const previousUmask =
+    process.platform === "win32" ? undefined : process.umask(0o077);
+  try {
+    execFileSync(
+      process.execPath,
+      [
+        join(root, "scripts", "agent-organization.mjs"),
+        "--config",
+        template,
+        "--output",
+        output,
+        "--ca-output",
+        ca,
+      ],
+      { stdio: "ignore" },
+    );
+  } finally {
+    if (previousUmask !== undefined) process.umask(previousUmask);
+  }
+  const config = JSON.parse(readFileSync(output, "utf8"));
+  assert.equal(config.ca_file, ca);
+  assert.equal(config.state_root, "/state");
+  assert.match(readFileSync(ca, "utf8"), /BEGIN CERTIFICATE/);
+  if (process.platform !== "win32") {
+    assert.equal(statSync(output).mode & 0o777, 0o644);
+    assert.equal(statSync(ca).mode & 0o777, 0o644);
+  }
 });

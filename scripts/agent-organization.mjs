@@ -11,6 +11,9 @@ export function agentOrganizationConfiguration(root, template, caOutput) {
       "Agent template must use current deployment and IPC versions",
     );
   const origin = new URL(organization.origin);
+  const hostname = origin.hostname.replace(/\.+$/u, "");
+  if (!hostname) throw new Error("Configure a real HTTPS RSS_MDM_ORIGIN");
+  if (!hostname.startsWith("[")) origin.hostname = hostname;
   if (
     origin.protocol !== "https:" ||
     !origin.hostname ||
@@ -85,11 +88,13 @@ if (
     if (ca) {
       writeFileSync(options["--ca-output"], ca, { flag: "wx", mode: 0o644 });
       createdCa = true;
+      chmodSync(options["--ca-output"], 0o644);
     }
     writeFileSync(options["--output"], JSON.stringify(config, null, 2) + "\n", {
       flag: "wx",
       mode: 0o600,
     });
+    chmodSync(options["--output"], 0o644);
   } catch (error) {
     if (createdCa) unlinkSync(options["--ca-output"]);
     throw error;
