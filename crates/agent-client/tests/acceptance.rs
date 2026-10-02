@@ -1478,6 +1478,32 @@ async fn acknowledged_v5_result_is_not_replaced_by_later_local_facts() {
 }
 
 #[tokio::test]
+async fn durable_claim_does_not_wait_for_an_unresolved_execution_to_release() {
+    let server = Server::new().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    let first = client.claim().await.unwrap().offer.unwrap();
+    client.received(&first).await.unwrap();
+    let materials = client.prepare(&first).await.unwrap();
+    client.request_start(&first, &materials).await.unwrap();
+    // Keep this original started task and its material references pending. A completed claim
+    // is independent of journal termination, including Unknown physical outcomes.
+    {
+        let mut data = server.data.lock().unwrap();
+        data.task = uuid::Uuid::new_v4();
+        data.script();
+    }
+    let second = client.claim().await.unwrap().offer.unwrap();
+    assert_ne!(first.task_id(), second.task_id());
+    let pending = client.pending_tasks(4).unwrap();
+    assert!(pending.contains(&first.task_id()));
+    assert!(pending.contains(&second.task_id()));
+    let operations = server.data.lock().unwrap().claim_ops.clone();
+    assert_ne!(operations[0], operations[1]);
+}
+
+#[tokio::test]
 async fn controlled_backend_issues_only_explicit_offers_bound_to_the_actual_claim_context() {
     let server = Server::new().await;
     server.data.lock().unwrap().explicit_offers = true;

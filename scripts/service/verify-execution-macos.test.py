@@ -39,6 +39,9 @@ class EvidenceTests(unittest.TestCase):
             self.assertNotIn('synthetic-admin-password',(root/'administrator-session.log').read_text())
             password.write_text('')
             with self.assertRaisesRegex(RuntimeError,'empty'): acceptance.read_authorization_password(password)
+            fifo=root/'fifo';os.mkfifo(fifo,0o600)
+            source='import os,stat\n'+inspect.getsource(acceptance.read_authorization_password)+f'\ntry:\n read_authorization_password({str(fifo)!r})\nexcept RuntimeError:\n pass\nelse:\n raise AssertionError("FIFO accepted")'
+            subprocess.run(['/usr/bin/python3','-I','-c',source],check=True,timeout=2)
 
     def test_candidate_copy_publishes_only_the_verified_read(self):
         with tempfile.TemporaryDirectory() as directory:

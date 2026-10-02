@@ -474,7 +474,8 @@ impl<S: SecretProvider, C: Clock> Client<S, C> {
         }
         Ok(())
     }
-    /// Receive one offer and cancellation page. Expired offers use a new claim operation.
+    /// Receive one offer and cancellation page. Transport failures retain the exact claim;
+    /// a verified response durably completes it independently of execution settlement.
     pub async fn claim(&mut self) -> Result<Claim, Error> {
         let now = self.now()?;
         let mut state = self.store.get::<ClaimState>("claim")?;
@@ -545,10 +546,7 @@ impl<S: SecretProvider, C: Clock> Client<S, C> {
                 "INSERT INTO tasks VALUES(?1,?2) ON CONFLICT(id) DO UPDATE SET body=excluded.body",
                 params![task, encode(&signed)?],
             )?;
-            tx.execute(
-                "INSERT INTO state VALUES('claim',?1) ON CONFLICT(key) DO UPDATE SET body=excluded.body",
-                [encode(&ClaimState { operation, profiles: state.profiles, execution_context: state.execution_context, recover_until: signed.payload.expires_at() })?],
-            )?;
+            tx.execute("DELETE FROM state WHERE key='claim'", [])?;
             tx.commit()?;
             Some(Offer { signed })
         } else {
@@ -844,7 +842,6 @@ impl<S: SecretProvider, C: Clock> Client<S, C> {
         tx.execute("DELETE FROM requests WHERE task=?1", [task.to_string()])?;
         tx.execute("DELETE FROM cache_refs WHERE task=?1", [task.to_string()])?;
         tx.execute("DELETE FROM tasks WHERE id=?1", [task.to_string()])?;
-        tx.execute("DELETE FROM state WHERE key='claim'", [])?;
         tx.execute(
             "DELETE FROM state WHERE key IN(?1,?2)",
             rusqlite::params![format!("binding/{task}"), format!("projection/{task}")],

@@ -53,7 +53,7 @@ class AuthorizationCancelled(RuntimeError):
 
 
 def read_authorization_password(path):
-    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    descriptor = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW | os.O_CLOEXEC)
     with os.fdopen(descriptor, 'rb') as stream:
         metadata = os.fstat(stream.fileno())
         if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.geteuid() or metadata.st_mode & 0o077:
@@ -627,6 +627,12 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
     except BaseException as error:
         receipt['status'] = 'cancelled' if isinstance(error, AuthorizationCancelled) else 'failed'
         receipt['error'] = str(error)
+        if installed:
+            try:
+                receipt['scenarios']['failure_snapshot'] = query()
+                receipt['scenarios']['failure_backend'] = command('status')
+            except BaseException:
+                pass # Preserve the primary failure if the authenticated owner is unavailable.
         if isinstance(error, subprocess.CalledProcessError):
             (lab / 'command-error.txt').write_text((error.stdout or '') + (error.stderr or ''))
         raise
