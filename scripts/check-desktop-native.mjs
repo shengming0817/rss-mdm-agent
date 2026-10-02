@@ -1327,15 +1327,17 @@ try {
     await permission(false);
     await text("完成 CANCEL_REJECT");
     assert.equal((await task()).snapshot.cancelRequested, false);
-    await prompt("GOLDEN_DENY 拒绝新的操作");
-    await permission(false);
-    await text("完成 DENY");
     assert.equal(
       (await serviceCall("query")).value.items.length +
         (await serviceCall("query")).preparations.length,
       1,
     );
+    mark("confirm the original prepared task through its product card");
+    await browser.execute(() => {
+      document.querySelector(".assistant-timeline").scrollTop = 0;
+    });
     await click("确认上述操作");
+    mark("observe the original request creating its first attempt");
     await wait(async () => (await task())?.snapshot.attempts === 1);
     await text("查看设备操作");
     await click("查看设备操作");
@@ -1359,7 +1361,6 @@ try {
     );
     result.checks.push(
       "first-send-single-session",
-      "execute-allow-reject",
       "cancel-allow-reject",
       "reads-without-approval",
       "rust-confirmation-separate",
@@ -1513,6 +1514,20 @@ try {
       ),
     );
     assert.equal((await task()).snapshot.attempts, 1);
+    mark(
+      "reject a distinct fixed task without creating another execution intent",
+    );
+    await prompt("GOLDEN_DENY 拒绝新的操作");
+    await permission(false);
+    await text("完成 DENY");
+    assert.notEqual(fixture.facts.deniedRequest, fixture.facts.request);
+    const afterRejection = await serviceCall("query");
+    assert.equal(
+      afterRejection.value.items.length + afterRejection.preparations.length,
+      1,
+    );
+    assert.equal((await task()).snapshot.attempts, 1);
+    result.checks.push("execute-allow-reject");
     const proposalsBeforeContext = fixture.facts.proposals.length;
     for (const [width, height] of [
       [1100, 760],

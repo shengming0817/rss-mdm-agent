@@ -162,6 +162,14 @@ export async function startModelFixture() {
         const task = taskFrom(output("tasks").output);
         assert.ok(task, "verified backend task unavailable");
         if (scenario === "INSTALL") facts.request = task.request;
+        if (scenario === "DENY") {
+          assert.notEqual(
+            task.request,
+            facts.request,
+            "deny must target a new fixed task",
+          );
+          facts.deniedRequest = task.request;
+        }
         if (!output("execute")) {
           const { request, attempt, revision } = task;
           return call("execute", "execution_execute", {
@@ -171,6 +179,11 @@ export async function startModelFixture() {
             revision,
           });
         }
+        if (scenario === "DENY")
+          assert.ok(
+            output("execute").output.includes("用户拒绝本次 AI 工具调用。"),
+            "new task must be rejected by the real Host permission owner",
+          );
       }
       if (scenario.startsWith("CANCEL") && !output("cancel"))
         return call("cancel", "execution_cancel", {
