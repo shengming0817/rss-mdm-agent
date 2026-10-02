@@ -1,4 +1,5 @@
-// ref: Munki installer/dmg.py and dmgutils.py; Apple copyfile.c, copyfile.h, renameatx_np(2).
+// ref: Munki installer/dmg.py and dmgutils.py; Apple copyfile.c, copyfile.h,
+// renameatx_np(2), rename(2) and fsync(2).
 use super::*;
 use std::{
     collections::VecDeque,
@@ -73,66 +74,146 @@ fn owned_root(request: &WorkerRequest) -> Result<File, Error> {
         .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
         .open(&request.resource_root)?)
 }
-fn state(request: &WorkerRequest) -> Result<ImageState, Error> {
-    let _root = owned_root(request)?;
-    let next = request.resource_root.join("owner.next");
-    if next.try_exists()? {
-        let mut file = OpenOptions::new()
-            .read(true)
-            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
-            .open(&next)?;
-        let metadata = file.metadata()?;
-        if metadata.uid() != unsafe { libc::geteuid() }
-            || metadata.mode() & 0o077 != 0
-            || metadata.nlink() != 1
-            || metadata.len() > 4 * 1024 * 1024
-        {
-            return Err(Error::Untrusted);
-        }
-        let mut bytes = Vec::new();
-        file.read_to_end(&mut bytes)?;
-        match serde_json::from_slice::<ImageState>(&bytes) {
-            Ok(next_state) if next_state.owner == owner(request)? => {
-                fs::rename(&next, request.resource_root.join("owner.json"))?;
-                _root.sync_all()?;
-            }
-            _ if request.resource_root.join("owner.json").try_exists()? => {
-                fs::remove_file(&next)?;
-                _root.sync_all()?;
-            }
-            _ => return Err(Error::Untrusted),
-        }
+fn present(path: &Path) -> Result<bool, Error> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error.into()),
     }
+}
+fn image_state_paths(request: &WorkerRequest) -> Result<(File, PathBuf, PathBuf), Error> {
+    let parent = request.resource_root.parent().ok_or(Error::Configuration)?;
+    let metadata = fs::symlink_metadata(parent)?;
+    if !metadata.is_dir()
+        || metadata.file_type().is_symlink()
+        || metadata.uid() != unsafe { libc::geteuid() }
+        || metadata.mode() & 0o022 != 0
+    {
+        return Err(Error::Untrusted);
+    }
+    let directory = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(parent)?;
+    let name = request
+        .resource_root
+        .file_name()
+        .ok_or(Error::Configuration)?;
+    let sidecar = |suffix: &str| {
+        let mut name = name.to_os_string();
+        name.push(suffix);
+        parent.join(name)
+    };
+    Ok((directory, sidecar(".owner.json"), sidecar(".owner.next")))
+}
+// An incomplete next file is never ownership proof. Only its exact protected name can
+// be discarded before the initial publication, when neither root nor current exists.
+fn read_image_state(request: &WorkerRequest, path: &Path) -> Result<Option<ImageState>, Error> {
     let file = OpenOptions::new()
         .read(true)
-        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
-        .open(request.resource_root.join("owner.json"))?;
-    if file.metadata()?.len() > 4 * 1024 * 1024 {
-        return Err(Error::Capacity);
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC)
+        .open(path)?;
+    let metadata = file.metadata()?;
+    if !metadata.is_file()
+        || metadata.uid() != unsafe { libc::geteuid() }
+        || metadata.mode() & 0o777 != 0o600
+        || metadata.nlink() != 1
+        || metadata.len() > 4 * 1024 * 1024
+    {
+        return Err(Error::Untrusted);
     }
     let mut bytes = Vec::new();
     file.take(4 * 1024 * 1024 + 1).read_to_end(&mut bytes)?;
-    let state: ImageState = serde_json::from_slice(&bytes).map_err(|_| Error::Untrusted)?;
+    let Ok(state) = serde_json::from_slice::<ImageState>(&bytes) else {
+        return Ok(None);
+    };
     if state.owner != owner(request)? {
         return Err(Error::Untrusted);
     }
-    Ok(state)
+    Ok(Some(state))
+}
+fn state(request: &WorkerRequest) -> Result<ImageState, Error> {
+    if present(&request.resource_root)? {
+        owned_root(request)?;
+    }
+    let (parent, current, next) = image_state_paths(request)?;
+    if present(&next)? {
+        if read_image_state(request, &next)?.is_some() {
+            if present(&current)? {
+                read_image_state(request, &current)?.ok_or(Error::Untrusted)?;
+            }
+            fs::rename(&next, &current)?;
+        } else {
+            read_image_state(request, &current)?.ok_or(Error::Untrusted)?;
+            fs::remove_file(&next)?;
+        }
+        parent.sync_all()?;
+    }
+    read_image_state(request, &current)?.ok_or(Error::Untrusted)
 }
 fn save(request: &WorkerRequest, state: &ImageState) -> Result<(), Error> {
-    let _root = owned_root(request)?;
+    let (parent, current, next) = image_state_paths(request)?;
+    if state.owner != owner(request)? {
+        return Err(Error::Untrusted);
+    }
+    if present(&current)? {
+        read_image_state(request, &current)?.ok_or(Error::Untrusted)?;
+    }
     let mut file = OpenOptions::new()
         .write(true)
         .create_new(true)
         .mode(0o600)
         .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
-        .open(request.resource_root.join("owner.next"))?;
+        .open(&next)?;
     file.write_all(&serde_json::to_vec(state).map_err(|_| Error::Protocol)?)?;
     file.sync_all()?;
-    fs::rename(
-        request.resource_root.join("owner.next"),
-        request.resource_root.join("owner.json"),
-    )?;
-    _root.sync_all()?;
+    fs::rename(next, current)?;
+    parent.sync_all()?;
+    Ok(())
+}
+fn create_image_root(request: &WorkerRequest, record: &ImageState) -> Result<(), Error> {
+    let (parent, current, next) = image_state_paths(request)?;
+    if present(&request.resource_root)? || present(&current)? || present(&next)? {
+        return Err(Error::Untrusted);
+    }
+    // Publish the sole ownership record before creating anything it must recover.
+    save(request, record)?;
+    fs::DirBuilder::new()
+        .mode(0o700)
+        .create(&request.resource_root)?;
+    owned_root(request)?.sync_all()?;
+    parent.sync_all()?;
+    Ok(())
+}
+fn discard_unpublished_image_state(request: &WorkerRequest) -> Result<bool, Error> {
+    let (parent, current, next) = image_state_paths(request)?;
+    if present(&request.resource_root)? || present(&current)? {
+        return Ok(false);
+    }
+    if present(&next)? {
+        if read_image_state(request, &next)?.is_some() {
+            return Ok(false);
+        }
+        fs::remove_file(next)?;
+        parent.sync_all()?;
+    }
+    Ok(true)
+}
+fn remove_image_root(request: &WorkerRequest) -> Result<(), Error> {
+    let (parent, current, next) = image_state_paths(request)?;
+    read_image_state(request, &current)?.ok_or(Error::Untrusted)?;
+    if present(&next)? {
+        return Err(Error::Untrusted);
+    }
+    if present(&request.resource_root)? {
+        owned_root(request)?;
+        fs::remove_dir(&request.resource_root)?;
+    }
+    // Keep ownership until the empty root removal is durable, including a restart
+    // after rmdir but before unlinking this same state record.
+    parent.sync_all()?;
+    fs::remove_file(current)?;
+    parent.sync_all()?;
     Ok(())
 }
 fn plist(bytes: &[u8]) -> Result<plist::Value, Error> {
@@ -150,14 +231,6 @@ fn native(
     )
 }
 fn attach(request: &WorkerRequest, dmg: &Dmg) -> Result<(i32, SoftwareWorkerResult), Error> {
-    let parent = request.resource_root.parent().ok_or(Error::Configuration)?;
-    let metadata = fs::symlink_metadata(parent)?;
-    if !metadata.is_dir() || metadata.file_type().is_symlink() || metadata.mode() & 0o022 != 0 {
-        return Err(Error::Untrusted);
-    }
-    fs::DirBuilder::new()
-        .mode(0o700)
-        .create(&request.resource_root)?;
     let mut record = ImageState {
         owner: owner(request)?,
         device: None,
@@ -166,7 +239,7 @@ fn attach(request: &WorkerRequest, dmg: &Dmg) -> Result<(i32, SoftwareWorkerResu
         partial_stage: false,
         group: unsafe { libc::getpgrp() },
     };
-    save(request, &record)?;
+    create_image_root(request, &record)?;
     let mount = request.resource_root.join("volume");
     fs::DirBuilder::new().mode(0o700).create(&mount)?;
     let image = request.material(&dmg.image)?;
@@ -1072,7 +1145,7 @@ fn remove_owned_stage(root: &Path, expected: &Tree, partial: bool) -> Result<(),
     unlink_tree(root, &remaining)
 }
 fn cleanup(request: &WorkerRequest, dmg: &Dmg) -> Result<(i32, SoftwareWorkerResult), Error> {
-    if !request.resource_root.try_exists()? {
+    if discard_unpublished_image_state(request)? {
         return Ok(result(0, None, String::new()));
     }
     let mut record = state(request)?;
@@ -1085,7 +1158,7 @@ fn cleanup(request: &WorkerRequest, dmg: &Dmg) -> Result<(i32, SoftwareWorkerRes
     record.group = unsafe { libc::getpgrp() };
     save(request, &record)?;
     let staged = request.resource_root.join("application.app");
-    if staged.try_exists()? {
+    if present(&staged)? {
         let candidates = record.stage.iter().chain(record.alternate.iter());
         let mut accepted = false;
         for expected in candidates {
@@ -1118,11 +1191,10 @@ fn cleanup(request: &WorkerRequest, dmg: &Dmg) -> Result<(i32, SoftwareWorkerRes
         }
     }
     let volume = request.resource_root.join("volume");
-    if volume.try_exists()? {
+    if present(&volume)? {
         fs::remove_dir(volume)?;
     }
-    fs::remove_file(request.resource_root.join("owner.json"))?;
-    fs::remove_dir(&request.resource_root)?;
+    remove_image_root(request)?;
     Ok(result(0, None, String::new()))
 }
 fn owns_device(request: &WorkerRequest, dmg: &Dmg, device: &str) -> Result<bool, Error> {
@@ -1182,7 +1254,9 @@ pub(super) fn execute(
         WorkerOperation::Cleanup => return cleanup(request, dmg),
         _ => (),
     }
-    if request.operation != WorkerOperation::Detect {
+    let standalone_removal = request.operation == WorkerOperation::Uninstall
+        && matches!(dmg.payload, Payload::ContainedPkg { .. });
+    if request.operation != WorkerOperation::Detect && !standalone_removal {
         let mut record = state(request)?;
         record.group = unsafe { libc::getpgrp() };
         save(request, &record)?;
@@ -1475,6 +1549,247 @@ fn owned_device(request: &WorkerRequest, dmg: &Dmg) -> Result<Option<String>, Er
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn material(path: &Path) -> SoftwareMaterial {
+        SoftwareMaterial {
+            path: path.to_str().unwrap().into(),
+            artifact: ExactArtifactRef {
+                resource: VersionedRef {
+                    id: Id::new("dmg-regression").unwrap(),
+                    revision: Id::new("1").unwrap(),
+                },
+                sha256: Digest::new(file_hash(path).unwrap()).unwrap(),
+            },
+        }
+    }
+    fn image_request() -> (PathBuf, WorkerRequest) {
+        let parent = std::env::temp_dir().join(format!("rss-dmg-owner-{}", uuid::Uuid::new_v4()));
+        fs::DirBuilder::new().mode(0o700).create(&parent).unwrap();
+        let image = parent.join("image.dmg");
+        let removal = parent.join("removal.pkg");
+        fs::write(&image, b"unmounted test image").unwrap();
+        fs::write(&removal, b"invalid removal package").unwrap();
+        let invocation = wire::SoftwareTaskInvocation {
+            run_as: wire::ExecutionIdentity::System,
+            arguments: Vec::new(),
+            environment: BTreeMap::new(),
+            timeout_seconds: 30,
+            output_bytes: 1_048_576,
+            exit_codes: wire::SoftwareTaskExitCodes {
+                success: [0].into(),
+                reboot: Default::default(),
+            },
+        };
+        let action = wire::SoftwareTaskAction {
+            package: "org.rss.dmg-regression".into(),
+            version: "1.0".into(),
+            behavior: wire::SoftwareTaskBehavior::Dmg(Dmg {
+                image: "image".into(),
+                volume: "RSS regression".into(),
+                scope: wire::SoftwareTaskScope::System,
+                invocation: invocation.clone(),
+                upgrade: wire::SoftwareTaskUpgrade::InPlace,
+                payload: Payload::ContainedPkg {
+                    path: "payload.pkg".into(),
+                    length: 1,
+                    sha256: [1; 32],
+                    receipt: format!("org.rss.dmg-regression.{}", uuid::Uuid::new_v4()),
+                    uninstall: Some(wire::SoftwareTaskRemoval {
+                        installer: "removal".into(),
+                        invocation,
+                    }),
+                },
+            }),
+            signatures: Vec::new(),
+            reboot: wire::SoftwareTaskReboot::Report,
+            downgrade: wire::SoftwareTaskDowngrade::Deny,
+            ownership: wire::SoftwareTaskOwnership::ManagedOnly,
+        };
+        let request = WorkerRequest {
+            native_output: Default::default(),
+            native_pending: Default::default(),
+            external_pending: Default::default(),
+            action,
+            operation: WorkerOperation::Cleanup,
+            materials: [
+                ("image".into(), material(&image)),
+                ("removal".into(), material(&removal)),
+            ]
+            .into(),
+            tools: [
+                ("hdiutil".into(), material(Path::new("/usr/bin/hdiutil"))),
+                ("pkgutil".into(), material(Path::new("/usr/sbin/pkgutil"))),
+            ]
+            .into(),
+            resource_root: parent.join("attempt"),
+            run_as: RunAs::System {
+                platform: Platform::Macos,
+            },
+            session: SessionRequirement::NotRequired {},
+            architecture: wire::TaskArchitecture::Aarch64,
+            output_bytes: 1_048_576,
+            step: 0,
+        };
+        (parent, request)
+    }
+    fn initial_state(request: &WorkerRequest) -> ImageState {
+        ImageState {
+            owner: owner(request).unwrap(),
+            device: None,
+            stage: None,
+            alternate: None,
+            partial_stage: false,
+            group: unsafe { libc::getpgrp() },
+        }
+    }
+    fn write_next(request: &WorkerRequest, bytes: &[u8]) {
+        let (_, _, next) = image_state_paths(request).unwrap();
+        OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(next)
+            .unwrap()
+            .write_all(bytes)
+            .unwrap();
+    }
+    fn assert_image_cleanup(request: &WorkerRequest) {
+        assert_eq!(execute(request, None).unwrap().0, 0);
+        let (_, current, next) = image_state_paths(request).unwrap();
+        assert!(!present(&request.resource_root).unwrap());
+        assert!(!present(&current).unwrap());
+        assert!(!present(&next).unwrap());
+    }
+    #[test]
+    fn standalone_pkg_uninstall_rechecks_receipt_and_frozen_package_without_image_state() {
+        let (parent, mut request) = image_request();
+        request.operation = WorkerOperation::Uninstall;
+        let mismatched = SoftwareState::Present {
+            version: package_value("1.0").unwrap(),
+        };
+        assert!(matches!(
+            execute(&request, Some(&mismatched)),
+            Err(Error::Conflict)
+        ));
+        assert_eq!(
+            request
+                .native_output
+                .load(std::sync::atomic::Ordering::Acquire),
+            0
+        );
+        // Real pkgutil rejects these invalid frozen bytes; no installer is available.
+        assert!(matches!(
+            execute(&request, Some(&SoftwareState::Absent {})),
+            Err(Error::Untrusted)
+        ));
+        assert!(
+            request
+                .native_output
+                .load(std::sync::atomic::Ordering::Acquire)
+                > 0
+        );
+        let (_, current, next) = image_state_paths(&request).unwrap();
+        assert!(!present(&request.resource_root).unwrap());
+        assert!(!present(&current).unwrap());
+        assert!(!present(&next).unwrap());
+        fs::remove_dir_all(parent).unwrap();
+    }
+    #[test]
+    fn unpublished_partial_next_cleanup_preserves_other_parent_names() {
+        let (parent, request) = image_request();
+        write_next(&request, b"{\"owner\":");
+        let unrelated = parent.join("other.owner.next");
+        fs::write(&unrelated, b"must remain").unwrap();
+        assert_image_cleanup(&request);
+        assert_eq!(fs::read(unrelated).unwrap(), b"must remain");
+        fs::remove_dir_all(parent).unwrap();
+    }
+    #[test]
+    fn published_ownership_reopens_before_root_creation_and_cleans_up() {
+        let (parent, request) = image_request();
+        let record = initial_state(&request);
+        save(&request, &record).unwrap();
+        let reopened = state(&request).unwrap();
+        assert_eq!(reopened.owner, record.owner);
+        assert_eq!(reopened.group, record.group);
+        assert_image_cleanup(&request);
+        fs::remove_dir_all(parent).unwrap();
+    }
+    #[test]
+    fn ownership_reopens_after_root_removal_before_state_unlink() {
+        let (parent, request) = image_request();
+        let record = initial_state(&request);
+        create_image_root(&request, &record).unwrap();
+        fs::remove_dir(&request.resource_root).unwrap();
+        assert_eq!(state(&request).unwrap().owner, record.owner);
+        assert_image_cleanup(&request);
+        fs::remove_dir_all(parent).unwrap();
+    }
+    #[test]
+    fn cleanup_preserves_unknown_root_entries_and_ownership_for_retry() {
+        let (parent, request) = image_request();
+        create_image_root(&request, &initial_state(&request)).unwrap();
+        let unknown = request.resource_root.join("unowned");
+        fs::write(&unknown, b"must remain").unwrap();
+        assert!(execute(&request, None).is_err());
+        assert_eq!(fs::read(&unknown).unwrap(), b"must remain");
+        assert_eq!(state(&request).unwrap().owner, owner(&request).unwrap());
+        fs::remove_file(unknown).unwrap();
+        assert_image_cleanup(&request);
+        fs::remove_dir_all(parent).unwrap();
+    }
+    #[test]
+    fn ownerless_root_is_never_adopted_even_with_partial_next() {
+        let (parent, request) = image_request();
+        fs::DirBuilder::new()
+            .mode(0o700)
+            .create(&request.resource_root)
+            .unwrap();
+        write_next(&request, b"{\"owner\":");
+        assert!(execute(&request, None).is_err());
+        assert!(create_image_root(&request, &initial_state(&request)).is_err());
+        let (_, _, next) = image_state_paths(&request).unwrap();
+        assert!(present(&next).unwrap());
+        assert!(present(&request.resource_root).unwrap());
+        fs::remove_dir_all(parent).unwrap();
+    }
+    #[test]
+    fn pending_next_reopens_only_exact_owner_and_preserves_partial_stage_proof() {
+        let (parent, request) = image_request();
+        let mut record = initial_state(&request);
+        create_image_root(&request, &record).unwrap();
+        record.partial_stage = true;
+        write_next(&request, &serde_json::to_vec(&record).unwrap());
+        assert!(state(&request).unwrap().partial_stage);
+        write_next(&request, b"{\"owner\":");
+        assert!(state(&request).unwrap().partial_stage);
+        record.owner = "wrong frozen request".into();
+        write_next(&request, &serde_json::to_vec(&record).unwrap());
+        assert!(matches!(state(&request), Err(Error::Untrusted)));
+        let (_, current, next) = image_state_paths(&request).unwrap();
+        assert!(present(&current).unwrap());
+        assert!(present(&next).unwrap());
+        fs::remove_file(next).unwrap();
+        assert_image_cleanup(&request);
+        fs::remove_dir_all(parent).unwrap();
+    }
+    #[test]
+    fn symlinked_next_or_root_is_rejected_without_touching_target() {
+        let (parent, request) = image_request();
+        let (_, _, next) = image_state_paths(&request).unwrap();
+        let target = parent.join("unowned");
+        fs::write(&target, b"must remain").unwrap();
+        std::os::unix::fs::symlink(&target, &next).unwrap();
+        assert!(execute(&request, None).is_err());
+        assert_eq!(fs::read(&target).unwrap(), b"must remain");
+        fs::remove_file(next).unwrap();
+        save(&request, &initial_state(&request)).unwrap();
+        std::os::unix::fs::symlink(&parent, &request.resource_root).unwrap();
+        assert!(matches!(state(&request), Err(Error::Untrusted)));
+        assert!(execute(&request, None).is_err());
+        fs::remove_file(&request.resource_root).unwrap();
+        assert_image_cleanup(&request);
+        fs::remove_dir_all(parent).unwrap();
+    }
     #[test]
     fn apfs_image_uses_physical_partition_disk_for_attach_and_cleanup() {
         let entity = |device: &str, hint: &str| {

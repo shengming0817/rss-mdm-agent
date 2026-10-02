@@ -371,6 +371,36 @@ pub struct RetainedMaterialLease {
     _file: std::fs::File,
     _path: crate::platform::PathLease,
 }
+/// Retain a private staging directory and its ancestors while owned child files are removed.
+pub struct StagedDirectoryLease {
+    _path: crate::platform::PathLease,
+}
+/// Use the current-account staging policy without granting producer-material authority.
+pub fn lease_staged_directory(
+    root: &Path,
+    run_as: &execution_contract::RunAs,
+    session: &execution_contract::SessionRequirement,
+) -> Result<StagedDirectoryLease, Error> {
+    verify_worker_identity(run_as, session)?;
+    if !root.is_absolute()
+        || root.components().any(|part| {
+            matches!(
+                part,
+                std::path::Component::ParentDir | std::path::Component::CurDir
+            )
+        })
+    {
+        return Err(Error::Denied);
+    }
+    let path = crate::platform::PathLease::source(root, false)?;
+    if !std::fs::symlink_metadata(root)
+        .map_err(|_| Error::Storage)?
+        .is_dir()
+    {
+        return Err(Error::Denied);
+    }
+    Ok(StagedDirectoryLease { _path: path })
+}
 /// Verify immutable bytes and retain the existing platform path lease.
 pub fn verify_retained(
     path: &std::path::Path,

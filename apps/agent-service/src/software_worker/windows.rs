@@ -1,4 +1,5 @@
-// ref: microsoft/windows-rs 0.61.3 Windows/Management/Deployment/mod.rs.
+// ref: microsoft/windows-rs 0.61.3 Windows/Management/Deployment/mod.rs;
+// Rust std os/windows/fs.rs (share_mode); tempfile 3.27.0 src/dir/mod.rs (explicit close).
 use super::*;
 use ::windows::{
     core::HSTRING,
@@ -10,7 +11,7 @@ use ::windows::{
     System::ProcessorArchitecture,
     Win32::System::WinRT::{RoInitialize, RoUninitialize, RO_INIT_MULTITHREADED},
 };
-use std::{fs, path::Path};
+use std::{fs, io::Read, path::Path};
 use wire::{
     SoftwareTaskMsix as Msix, SoftwareTaskMsixDeployment as Deployment,
     SoftwareTaskMsixIdentity as Identity,
@@ -518,122 +519,133 @@ fn deployment(
             }
         }
     }
-    let selected = selected_packages(request, msix)?;
-    for (path, identity) in &selected {
-        let url = url::Url::from_file_path(path).map_err(|_| Error::Protocol)?;
-        let uri = Uri::CreateUri(&HSTRING::from(url.as_str())).map_err(|_| Error::Protocol)?;
-        request
-            .native_pending
-            .store(true, std::sync::atomic::Ordering::Release);
-        let operation = match msix.deployment {
-            Deployment::DeviceProvisioning => {
-                let options = StagePackageOptions::new().map_err(|_| Error::Unsupported)?;
-                options
-                    .SetAllowUnsigned(false)
-                    .map_err(|_| Error::Unsupported)?;
-                manager.StagePackageByUriAsync(&uri, &options)
+    let selected = match selected_packages(request, msix) {
+        Ok(selected) => selected,
+        Err(failure) => {
+            let mut failed = result(1, None, failure.error.to_string());
+            failed.1.closed = failure.closed;
+            return Ok(failed);
+        }
+    };
+    let outcome = (|| {
+        for (path, _) in &selected.packages {
+            let url = url::Url::from_file_path(path).map_err(|_| Error::Protocol)?;
+            let uri = Uri::CreateUri(&HSTRING::from(url.as_str())).map_err(|_| Error::Protocol)?;
+            let operation = match msix.deployment {
+                Deployment::DeviceProvisioning => {
+                    let options = StagePackageOptions::new().map_err(|_| Error::Unsupported)?;
+                    options
+                        .SetAllowUnsigned(false)
+                        .map_err(|_| Error::Unsupported)?;
+                    request
+                        .native_pending
+                        .store(true, std::sync::atomic::Ordering::Release);
+                    manager.StagePackageByUriAsync(&uri, &options)
+                }
+                Deployment::TargetUserRegistration { .. } => {
+                    let options = AddPackageOptions::new().map_err(|_| Error::Unsupported)?;
+                    options
+                        .SetAllowUnsigned(msix.allow_unsigned)
+                        .map_err(|_| Error::Unsupported)?;
+                    options
+                        .SetForceUpdateFromAnyVersion(
+                            request.action.downgrade == wire::SoftwareTaskDowngrade::Allow,
+                        )
+                        .map_err(|_| Error::Unsupported)?;
+                    request
+                        .native_pending
+                        .store(true, std::sync::atomic::Ordering::Release);
+                    manager.AddPackageByUriAsync(&uri, &options)
+                }
             }
-            Deployment::TargetUserRegistration { .. } => {
-                let options = AddPackageOptions::new().map_err(|_| Error::Unsupported)?;
-                options
-                    .SetAllowUnsigned(msix.allow_unsigned)
-                    .map_err(|_| Error::Unsupported)?;
-                options
-                    .SetForceUpdateFromAnyVersion(
-                        request.action.downgrade == wire::SoftwareTaskDowngrade::Allow,
-                    )
-                    .map_err(|_| Error::Unsupported)?;
-                manager.AddPackageByUriAsync(&uri, &options)
+            .map_err(|_| Error::Unavailable)?;
+            let completion = operation.get().map_err(|_| Error::Unavailable)?;
+            request
+                .native_pending
+                .store(false, std::sync::atomic::Ordering::Release);
+            let finished = completed(completion)?;
+            if finished.0 != 0 {
+                return Ok(finished);
             }
         }
-        .map_err(|_| Error::Unavailable)?;
-        let completion = operation.get().map_err(|_| Error::Unavailable)?;
-        request
-            .native_pending
-            .store(false, std::sync::atomic::Ordering::Release);
-        let finished = completed(completion)?;
-        if finished.0 != 0 {
-            if matches!(
-                msix.container,
-                wire::SoftwareTaskMsixContainer::Bundle { .. }
-            ) {
-                remove_selected(request, msix)?;
-            }
-            return Ok(finished);
-        }
-        let _ = identity;
-    }
-    if msix.deployment == Deployment::DeviceProvisioning {
-        let staged = packages(&manager, msix, true)?
-            .into_iter()
-            .filter_map(|p| match matches(&p, &msix.identity, false) {
-                Ok(true) => Some(Ok(p)),
-                Ok(false) => None,
-                Err(e) => Some(Err(e)),
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let exact = staged
-            .iter()
-            .filter_map(|p| {
-                matches(p, &msix.identity, true)
-                    .ok()
-                    .filter(|m| *m)
-                    .map(|_| p)
-            })
-            .collect::<Vec<_>>();
-        if exact.len() != 1 {
-            return Err(Error::Untrusted);
-        }
-        for candidate in &staged {
-            let version = candidate
-                .Id()
-                .and_then(|id| id.Version())
-                .map_err(|_| Error::Unavailable)?;
-            if [
-                version.Major,
-                version.Minor,
-                version.Build,
-                version.Revision,
-            ] > msix.identity.version
-            {
+        if msix.deployment == Deployment::DeviceProvisioning {
+            let staged = packages(&manager, msix, true)?
+                .into_iter()
+                .filter_map(|p| match matches(&p, &msix.identity, false) {
+                    Ok(true) => Some(Ok(p)),
+                    Ok(false) => None,
+                    Err(e) => Some(Err(e)),
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let exact = staged
+                .iter()
+                .filter_map(|p| {
+                    matches(p, &msix.identity, true)
+                        .ok()
+                        .filter(|m| *m)
+                        .map(|_| p)
+                })
+                .collect::<Vec<_>>();
+            if exact.len() != 1 {
                 return Err(Error::Untrusted);
             }
-        }
-        let family = exact[0]
-            .Id()
-            .and_then(|id| id.FamilyName())
-            .map_err(|_| Error::Unavailable)?;
-        request
-            .native_pending
-            .store(true, std::sync::atomic::Ordering::Release);
-        let completion = manager
-            .ProvisionPackageForAllUsersAsync(&family)
-            .map_err(|_| Error::Unavailable)?
-            .get()
-            .map_err(|_| Error::Unavailable)?;
-        request
-            .native_pending
-            .store(false, std::sync::atomic::Ordering::Release);
-        let finished = completed(completion)?;
-        if finished.0 != 0 {
-            if matches!(
-                msix.container,
-                wire::SoftwareTaskMsixContainer::Bundle { .. }
-            ) {
-                remove_selected(request, msix)?;
+            for candidate in &staged {
+                let version = candidate
+                    .Id()
+                    .and_then(|id| id.Version())
+                    .map_err(|_| Error::Unavailable)?;
+                if [
+                    version.Major,
+                    version.Minor,
+                    version.Build,
+                    version.Revision,
+                ] > msix.identity.version
+                {
+                    return Err(Error::Untrusted);
+                }
             }
-            return Ok(finished);
+            let family = exact[0]
+                .Id()
+                .and_then(|id| id.FamilyName())
+                .map_err(|_| Error::Unavailable)?;
+            request
+                .native_pending
+                .store(true, std::sync::atomic::Ordering::Release);
+            let completion = manager
+                .ProvisionPackageForAllUsersAsync(&family)
+                .map_err(|_| Error::Unavailable)?
+                .get()
+                .map_err(|_| Error::Unavailable)?;
+            request
+                .native_pending
+                .store(false, std::sync::atomic::Ordering::Release);
+            let finished = completed(completion)?;
+            if finished.0 != 0 {
+                return Ok(finished);
+            }
+        }
+        Ok(result(0, None, String::new()))
+    })();
+    // A dispatch/.get failure leaves native activity unproven and its input layout retained.
+    // Known completion and errors before dispatch release leases before deleting owned files.
+    if !request
+        .native_pending
+        .load(std::sync::atomic::Ordering::Acquire)
+    {
+        if let Err(error) = selected.cleanup(request) {
+            let mut failed = outcome.unwrap_or_else(|failure| result(1, None, failure.to_string()));
+            failed.1.closed = false;
+            failed
+                .1
+                .diagnostics
+                .push_str("\nselected package cleanup failed: ");
+            failed.1.diagnostics.push_str(&error.to_string());
+            return Ok(failed);
         }
     }
-    // Selected bundle extraction is a private resource, never an installed package directory.
-    if matches!(
-        msix.container,
-        wire::SoftwareTaskMsixContainer::Bundle { .. }
-    ) {
-        remove_selected(request, msix)?;
-    }
-    Ok(result(0, None, String::new()))
+    outcome
 }
+
 fn completed(completion: DeploymentResult) -> Result<(i32, SoftwareWorkerResult), Error> {
     let code = completion
         .ExtendedErrorCode()
@@ -645,85 +657,148 @@ fn completed(completion: DeploymentResult) -> Result<(i32, SoftwareWorkerResult)
         .to_string();
     Ok(result(code, None, message))
 }
+struct SelectedPackages {
+    packages: Vec<(PathBuf, Identity)>,
+    leases: Vec<execution_runner::staging::RetainedMaterialLease>,
+    directory: Option<execution_runner::staging::StagedDirectoryLease>,
+    created: Vec<PathBuf>,
+    root: Option<PathBuf>,
+}
+struct SelectionFailure {
+    error: Error,
+    closed: bool,
+}
+impl SelectedPackages {
+    fn cleanup(mut self, request: &WorkerRequest) -> Result<(), Error> {
+        if request
+            .native_pending
+            .load(std::sync::atomic::Ordering::Acquire)
+        {
+            return Err(Error::Unavailable);
+        }
+        // Windows leases deny write/delete sharing. Close them only after native completion,
+        // before deleting the exact files created by this extraction, never foreign entries.
+        self.leases.clear();
+        for path in self.created.into_iter().rev() {
+            match fs::remove_file(path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
+        if let Some(root) = self.root {
+            // Keep the directory path stable while removing children, then release its own
+            // delete-sharing restriction before the nonrecursive directory removal.
+            drop(self.directory.take());
+            // Nonrecursive removal fails closed if an unowned entry remains.
+            fs::remove_dir(root)?;
+        }
+        Ok(())
+    }
+}
 fn selected_packages(
     request: &WorkerRequest,
     msix: &Msix,
-) -> Result<Vec<(PathBuf, Identity)>, Error> {
-    let installer = match &msix.container {
-        wire::SoftwareTaskMsixContainer::Package { installer }
-        | wire::SoftwareTaskMsixContainer::Bundle { installer, .. } => installer,
+) -> Result<SelectedPackages, SelectionFailure> {
+    let mut selected = SelectedPackages {
+        packages: Vec::new(),
+        leases: Vec::new(),
+        directory: None,
+        created: Vec::new(),
+        root: None,
     };
-    let source = request.material(installer)?;
-    match &msix.container {
-        wire::SoftwareTaskMsixContainer::Package { .. } => {
-            super::material::manifest(
-                fs::File::open(&source)?,
-                &msix.identity,
-                &msix.dependencies,
-            )?;
-            Ok(vec![(source, msix.identity.clone())])
-        }
-        wire::SoftwareTaskMsixContainer::Bundle { members, .. } => {
-            fs::create_dir(&request.resource_root)?;
-            let mut archive =
-                zip::ZipArchive::new(fs::File::open(source)?).map_err(|_| Error::Untrusted)?;
-            let mut selected = Vec::new();
-            for (index, member) in members.iter().enumerate() {
-                if !portable_path(&member.path)
-                    || archive.file_names().filter(|n| *n == member.path).count() != 1
-                {
-                    return Err(Error::Untrusted);
-                }
-                let entry = archive
-                    .by_name(&member.path)
-                    .map_err(|_| Error::Untrusted)?;
-                if entry.is_symlink()
-                    || entry.size() != member.length
-                    || member.length > 4 * 1024 * 1024 * 1024
-                {
-                    return Err(Error::Untrusted);
-                }
-                let path = request.resource_root.join(format!("member-{index}.msix"));
-                let mut file = fs::OpenOptions::new()
-                    .write(true)
-                    .create_new(true)
-                    .open(&path)?;
-                let mut bounded = entry.take(member.length + 1);
-                if std::io::copy(&mut bounded, &mut file)? != member.length {
-                    return Err(Error::Untrusted);
-                }
-                file.sync_all()?;
-                drop(file);
-                let digest =
-                    Digest::new(crate::plan::hex(&member.sha256)).map_err(|_| Error::Protocol)?;
-                execution_runner::staging::verify_staged(
-                    &path,
-                    &digest,
+    let preparation = (|| -> Result<(), Error> {
+        let installer = match &msix.container {
+            wire::SoftwareTaskMsixContainer::Package { installer }
+            | wire::SoftwareTaskMsixContainer::Bundle { installer, .. } => installer,
+        };
+        let source = request.material(installer)?;
+        match &msix.container {
+            wire::SoftwareTaskMsixContainer::Package { .. } => {
+                // The original immutable material already has a lease in software_worker::run.
+                super::material::manifest(
+                    fs::File::open(&source)?,
+                    &msix.identity,
+                    &msix.dependencies,
+                )?;
+                selected.packages.push((source, msix.identity.clone()));
+            }
+            wire::SoftwareTaskMsixContainer::Bundle { members, .. } => {
+                fs::create_dir(&request.resource_root)?;
+                selected.root = Some(request.resource_root.clone());
+                selected.directory = Some(execution_runner::staging::lease_staged_directory(
                     &request.resource_root,
                     &request.run_as,
                     &request.session,
-                )?;
-                super::material::manifest(
-                    fs::File::open(&path)?,
-                    &member.identity,
-                    &msix.dependencies,
-                )?;
-                selected.push((path, member.identity.clone()));
+                )?);
+                let mut archive =
+                    zip::ZipArchive::new(fs::File::open(source)?).map_err(|_| Error::Untrusted)?;
+                for (index, member) in members.iter().enumerate() {
+                    if !portable_path(&member.path)
+                        || archive.file_names().filter(|n| *n == member.path).count() != 1
+                    {
+                        return Err(Error::Untrusted);
+                    }
+                    let entry = archive
+                        .by_name(&member.path)
+                        .map_err(|_| Error::Untrusted)?;
+                    if entry.is_symlink()
+                        || entry.size() != member.length
+                        || member.length > 4 * 1024 * 1024 * 1024
+                    {
+                        return Err(Error::Untrusted);
+                    }
+                    let path = request.resource_root.join(format!("member-{index}.msix"));
+                    let mut file = fs::OpenOptions::new()
+                        .write(true)
+                        .create_new(true)
+                        .open(&path)?;
+                    // Record ownership immediately; copy/sync/verification may still fail.
+                    selected.created.push(path.clone());
+                    let mut bounded = entry.take(member.length + 1);
+                    if std::io::copy(&mut bounded, &mut file)? != member.length {
+                        return Err(Error::Untrusted);
+                    }
+                    file.sync_all()?;
+                    drop(file);
+                    let digest = Digest::new(crate::plan::hex(&member.sha256))
+                        .map_err(|_| Error::Protocol)?;
+                    selected
+                        .leases
+                        .push(execution_runner::staging::verify_staged(
+                            &path,
+                            &digest,
+                            &request.resource_root,
+                            &request.run_as,
+                            &request.session,
+                        )?);
+                    super::material::manifest(
+                        fs::File::open(&path)?,
+                        &member.identity,
+                        &msix.dependencies,
+                    )?;
+                    selected.packages.push((path, member.identity.clone()));
+                }
+                selected
+                    .packages
+                    .sort_by_key(|(_, identity)| !identity.resource_id.is_empty());
             }
-            selected.sort_by_key(|(_, identity)| !identity.resource_id.is_empty());
-            Ok(selected)
         }
+        Ok(())
+    })();
+    match preparation {
+        Ok(()) => Ok(selected),
+        Err(error) => match selected.cleanup(request) {
+            Ok(()) => Err(SelectionFailure {
+                error,
+                closed: true,
+            }),
+            Err(error) => Err(SelectionFailure {
+                error,
+                closed: false,
+            }),
+        },
     }
-}
-fn remove_selected(request: &WorkerRequest, msix: &Msix) -> Result<(), Error> {
-    let wire::SoftwareTaskMsixContainer::Bundle { members, .. } = &msix.container else {
-        return Err(Error::Protocol);
-    };
-    for index in 0..members.len() {
-        fs::remove_file(request.resource_root.join(format!("member-{index}.msix")))?;
-    }
-    fs::remove_dir(&request.resource_root)?;
-    Ok(())
 }
 fn portable_path(path: &str) -> bool {
     !path.is_empty()

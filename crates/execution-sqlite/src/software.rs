@@ -104,20 +104,24 @@ pub(crate) fn diagnostic(
                         step,
                         detected: Some(state),
                         ..
-                    } => Some(match (program.intent, state) {
-                        (
-                            execution_contract::SoftwareOperation::Uninstall,
-                            execution_contract::SoftwareState::Absent {},
-                        ) => true,
-                        (_, execution_contract::SoftwareState::Present { version }) => {
-                            version == &program.steps[*step as usize].version
-                        }
-                        _ => false,
-                    }),
+                    } => Some(program.satisfied(&program.steps[*step as usize], state)),
                     _ => None,
                 })
                 .unwrap_or(false);
-            if matched && !p.closed(plan) {
+            let activity_unknown = p.checkpoints.iter().any(|checkpoint| {
+                matches!(
+                    checkpoint,
+                    execution_contract::SoftwareCheckpoint::End { phase, quiescent: false, .. }
+                        if *phase != execution_contract::SoftwarePhase::Cleanup
+                )
+            }) || matches!(
+                p.checkpoints.last(),
+                Some(execution_contract::SoftwareCheckpoint::Begin { phase, .. })
+                    if *phase != execution_contract::SoftwarePhase::Cleanup
+            );
+            if activity_unknown && !p.closed(plan) {
+                SoftwareDiagnostic::DetectionUnavailable
+            } else if matched && !p.closed(plan) {
                 SoftwareDiagnostic::CleanupPending
             } else if matched {
                 SoftwareDiagnostic::DesiredStateObserved

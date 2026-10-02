@@ -281,8 +281,6 @@ pub(crate) fn compile(
     };
     let mut steps = Vec::new();
     let mut sources = Vec::new();
-    let mut timeout = 0u64;
-    let mut output = 0u64;
     for (index, step) in payload.steps.iter().enumerate() {
         let action = &step.action;
         if !action.signatures.is_empty()
@@ -510,21 +508,14 @@ pub(crate) fn compile(
                 files.extend(extra.clone());
             }
         }
-        let (mutation, mutation_budget) = match intent {
-            SoftwareOperation::Install => (Some(Box::new(install_source)), Some(&install)),
-            SoftwareOperation::Uninstall => (
-                removal.map(|(_, source, extra)| {
-                    files.extend(extra);
-                    Box::new(source)
-                }),
-                uninstall.as_ref(),
-            ),
-            SoftwareOperation::Detect => (None, None),
+        let mutation = match intent {
+            SoftwareOperation::Install => Some(Box::new(install_source)),
+            SoftwareOperation::Uninstall => removal.map(|(_, source, extra)| {
+                files.extend(extra);
+                Box::new(source)
+            }),
+            SoftwareOperation::Detect => None,
         };
-        if let Some(command) = mutation_budget {
-            timeout = timeout.saturating_add(command.timeout_ms);
-            output = output.saturating_add(command.output_bytes);
-        }
         let (detection, detector_source) = match commands.detection.ok_or(Error::Unsupported)? {
             wire::SoftwareTaskDetection::MsiProduct {
                 product_code,
@@ -552,8 +543,6 @@ pub(crate) fn compile(
                     &action.version,
                     &action.package,
                 )?;
-                timeout = timeout.saturating_add(invocation.timeout_ms);
-                output = output.saturating_add(invocation.output_bytes);
                 files.extend(extra);
                 (
                     SoftwareDetector::Script {
@@ -626,7 +615,7 @@ pub(crate) fn compile(
             files,
         });
     }
-    (timeout, output) = agent_client::software_budget(payload)?;
+    let (timeout, output) = agent_client::software_budget(payload)?;
     let mut controller = steps.first().ok_or(Error::Protocol)?.install.launch.clone();
     controller.interpreter.profile = reference("native-software-sequence", "1")?;
     let program = SoftwareProgram {

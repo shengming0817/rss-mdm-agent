@@ -2867,6 +2867,143 @@ fn managed_provenance_follows_committed_steps_and_is_lost_when_detection_changes
 }
 
 #[test]
+fn exe_uninstall_present_before_and_unknown_native_end_are_not_desired_or_cleanup() {
+    let db = Database::new();
+    let mut host = software_host();
+    let mut input = host.plan.spec().clone();
+    input.request.target.platform = Platform::Windows;
+    input.request.operation.action = id("software.uninstall");
+    input.run_as = RunAs::System {
+        platform: Platform::Windows,
+    };
+    input.launch.cwd = r"C:\workspace".into();
+    let ExecutionSpec::SoftwareProgram { program } = &mut input.execution else {
+        unreachable!()
+    };
+    program.intent = SoftwareOperation::Uninstall;
+    let step = &mut program.steps[0];
+    step.format = SoftwareFormat::Exe {
+        ownership: step.payload.sha256.clone(),
+        layout: [("installer.exe".into(), step.payload.clone())].into(),
+    };
+    step.install.run_as = RunAs::System {
+        platform: Platform::Windows,
+    };
+    step.install.launch.cwd = r"C:\workspace".into();
+    step.install.launch.interpreter.profile.id = id("native-software-worker");
+    step.uninstall = Some(step.install.clone());
+    step.upgrade = SoftwareUpgrade::Deny {};
+    step.detection = SoftwareDetector::MsiProduct {
+        product_code: "{12345678-1234-1234-1234-123456789abc}".into(),
+        version: step.version.clone(),
+    };
+    host.plan = FrozenExecution::freeze(input, &limits().input).unwrap();
+    let mut store = db.create();
+    host.prepare(&mut store);
+    store
+        .apply_command(
+            &operation("begin"),
+            &host.scope(),
+            &host.begin(),
+            &[],
+            &host,
+        )
+        .unwrap();
+    let attempt = AttemptId::new("attempt-1").unwrap();
+    let mut progress = SoftwareProgress {
+        attempt_id: attempt.clone(),
+        content_digest: host.plan.digest().clone(),
+        runner: id("test-runner"),
+        elapsed_ms: 10,
+        output_bytes: 0,
+        checkpoints: vec![
+            SoftwareCheckpoint::Begin {
+                step: 0,
+                phase: SoftwarePhase::Before,
+            },
+            SoftwareCheckpoint::End {
+                step: 0,
+                phase: SoftwarePhase::Before,
+                duration_ms: 1,
+                process: None,
+                detected: Some(SoftwareState::Present {
+                    version: PackageValue::new("1.0").unwrap(),
+                }),
+                quiescent: true,
+            },
+        ],
+    };
+    store
+        .record_software_progress(&host.scope(), &progress, &host)
+        .unwrap();
+    assert_eq!(
+        store
+            .execution_by_request(
+                &host.plan.spec().request.request_id,
+                ExecutionAccess::Result,
+                &host
+            )
+            .unwrap()
+            .software,
+        Some(SoftwareDiagnostic::DetectionUnavailable)
+    );
+    progress.checkpoints.extend([
+        SoftwareCheckpoint::Begin {
+            step: 0,
+            phase: SoftwarePhase::Mutation,
+        },
+        SoftwareCheckpoint::End {
+            step: 0,
+            phase: SoftwarePhase::Mutation,
+            duration_ms: 1,
+            detected: None,
+            quiescent: false,
+            process: Some(Box::new(ProcessEvidence {
+                attempt_id: attempt.clone(),
+                content_digest: host.plan.digest().clone(),
+                runner: id("test-runner"),
+                scope: ProcessScope::JobObject {
+                    name: "native-exe-attempt".into(),
+                    session: 0,
+                },
+                finished: true,
+                exit_code: Some(0),
+                end: ProcessEnd::Exited,
+                failure_kind: ProcessFailureKind::None,
+                quiescent: false,
+                stdout: vec![],
+                stderr: vec![],
+                total_output_bytes: 0,
+                quality: OutputQuality::Complete,
+            })),
+        },
+    ]);
+    store
+        .record_software_progress(&host.scope(), &progress, &host)
+        .unwrap();
+    drop(store);
+    let store = db.open();
+    assert_eq!(
+        store
+            .software_progress(&host.scope(), &attempt, &host)
+            .unwrap(),
+        Some(progress)
+    );
+    assert_eq!(
+        store
+            .execution_by_request(
+                &host.plan.spec().request.request_id,
+                ExecutionAccess::Result,
+                &host
+            )
+            .unwrap()
+            .software,
+        Some(SoftwareDiagnostic::DetectionUnavailable)
+    );
+    assert_eq!(db.count("software_claims"), 1);
+}
+
+#[test]
 fn failed_software_claims_require_resource_closure_even_after_reopen() {
     for image in [false, true] {
         let db = Database::new();
@@ -2997,7 +3134,13 @@ fn failed_software_claims_require_resource_closure_even_after_reopen() {
                 phase: SoftwarePhase::After,
                 duration_ms: 5,
                 process: None,
-                detected: Some(SoftwareState::Absent {}),
+                detected: Some(if image {
+                    SoftwareState::Present {
+                        version: PackageValue::new("1.0").unwrap(),
+                    }
+                } else {
+                    SoftwareState::Absent {}
+                }),
                 quiescent: true,
             },
         ]);
@@ -3030,6 +3173,17 @@ fn failed_software_claims_require_resource_closure_even_after_reopen() {
         let mut store = db.open();
         assert_eq!(db.count("software_claims"), if image { 1 } else { 0 });
         if image {
+            assert_eq!(
+                store
+                    .execution_by_request(
+                        &host.plan.spec().request.request_id,
+                        ExecutionAccess::Result,
+                        &host
+                    )
+                    .unwrap()
+                    .software,
+                Some(SoftwareDiagnostic::CleanupPending)
+            );
             let (step, sequence, timeout_ms, output_bytes) =
                 progress.cleanup_allowance(&host.plan).unwrap();
             progress.checkpoints.push(SoftwareCheckpoint::CleanupBegin {
@@ -3063,6 +3217,17 @@ fn failed_software_claims_require_resource_closure_even_after_reopen() {
                 db.count("software_claims"),
                 0,
                 "late cleanup must settle the already terminated attempt atomically"
+            );
+            assert_eq!(
+                store
+                    .execution_by_request(
+                        &host.plan.spec().request.request_id,
+                        ExecutionAccess::Result,
+                        &host
+                    )
+                    .unwrap()
+                    .software,
+                Some(SoftwareDiagnostic::DesiredStateObserved)
             );
         }
     }
