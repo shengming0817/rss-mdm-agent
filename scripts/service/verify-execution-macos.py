@@ -470,7 +470,7 @@ def root_refresh_security(root, binary, config, installer_source):
     for name in ['mode','symlink','acl','hash','cdhash','version','ipc_version','tenant','origin','state_root','registration','marker','journal','communication','secret']:
         changed=copy.deepcopy(document); actual=next_config
         next_config.write_text(json.dumps(changed));next_config.chmod(0o644)
-        held=None; held_source=None; copied_plist=None; unexpected=None
+        held=None; held_source=None; copied_plist=None; unexpected=None; paused=False
         try:
             if name=='mode': next_config.chmod(0o666)
             elif name=='symlink':
@@ -483,6 +483,10 @@ def root_refresh_security(root, binary, config, installer_source):
             elif name=='origin': changed['origin']='https://localhost:1/'
             elif name=='state_root': changed['state_root']=str(root/'other-state')
             elif name in ['marker','journal','communication','secret']:
+                # This registration owns only the isolated experiment copy. Prevent its
+                # live communication owner from observing the deliberate missing-file fault.
+                import signal
+                os.kill(pid,signal.SIGSTOP); paused=True
                 held_source=identity_paths[0] if name=='marker' else (
                     journal if name=='journal' else (
                         root/'state/communication/communication.sqlite' if name=='communication' else root/'state/secrets'))
@@ -507,6 +511,7 @@ def root_refresh_security(root, binary, config, installer_source):
                     unexpected=held_source.with_name(held_source.name+'.unexpected-'+uuid.uuid4().hex)
                     held_source.rename(unexpected)
                 held.rename(held_source)
+            if paused: os.kill(pid,signal.SIGCONT)
             if copied_plist: copied_plist.unlink(missing_ok=True)
             if actual!=next_config: actual.unlink(missing_ok=True)
             subprocess.run(['/bin/chmod','-N',str(next_config)],check=True)
@@ -765,6 +770,10 @@ def authorized_steps(programs, endpoint, expected_pid, expected_uid, deadline):
         except BaseException as error:
             raw = output.getvalue().strip()
             diagnostic = json.loads(raw) if raw.startswith('{') else None
+            if diagnostic is None:
+                import traceback
+                diagnostic={'ownerFrames':[{'function':frame.name,'line':frame.lineno} for frame in traceback.extract_tb(error.__traceback__)],
+                    'stderr':getattr(error,'stderr',None)}
             response = {'id':identity, 'ok':False, 'error':type(error).__name__, 'value':diagnostic}
         connection.sendall((json.dumps(response)+'\n').encode())
         return response['ok']
