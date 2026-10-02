@@ -119,7 +119,7 @@ int rss_execution_query(const uint8_t *request,size_t length,int system,uint8_t 
         id<RSSExecution> remote=[connection remoteObjectProxyWithErrorHandler:^(NSError *error){(void)error;finish(nil);}];
         [remote execute:[NSData dataWithBytes:request length:length] reply:^(NSData *bytes){finish(bytes);}];
         dispatch_semaphore_wait(done,dispatch_time(DISPATCH_TIME_NOW,5*NSEC_PER_SEC));
-        @synchronized(lock){finished=YES;BOOL peerOk=expectedUid==UINT32_MAX||connection.effectiveUserIdentifier==expectedUid;[connection invalidate];if(!result||!peerOk||result.length>*capacity)return -1;memcpy(output,result.bytes,result.length);*capacity=result.length;}
+        @synchronized(lock){finished=YES;BOOL peerOk=expectedUid==UINT32_MAX||connection.effectiveUserIdentifier==expectedUid;[connection invalidate];if(!result||!result.length||result.length>*capacity)return -1;if(!peerOk)return -2;memcpy(output,result.bytes,result.length);*capacity=result.length;}
         return 0;
     }
 }

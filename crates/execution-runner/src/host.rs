@@ -534,15 +534,17 @@ impl ServiceClient {
         if pin.version != DEPLOYMENT_VERSION || pin.ipc_version != IPC_VERSION {
             return Err(execution_app::Error::Configuration);
         }
-        pin.service
-            .verify(&pin.service.path)
-            .map_err(|_| execution_app::Error::Denied)?;
-        Self::new(PeerPolicy {
-            images: vec![pin.service],
-            subjects: vec![if cfg!(windows) { "S-1-5-18" } else { "0" }.into()],
-            interactive: false,
+        // The native request validates this protected image immediately before connecting.
+        // Avoid hashing the same installed image again while assembling each short-lived client.
+        Ok(Self {
+            server: PeerPolicy {
+                images: vec![pin.service],
+                subjects: vec![if cfg!(windows) { "S-1-5-18" } else { "0" }.into()],
+                interactive: false,
+            },
         })
     }
+
     /// Inspect installation and the same authenticated service without opening device storage.
     pub fn inspect() -> ServiceView {
         let Ok(path) = installation_security::deployment_path() else {

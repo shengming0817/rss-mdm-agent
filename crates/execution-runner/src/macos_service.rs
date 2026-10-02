@@ -255,7 +255,7 @@ pub fn query_trusted(bytes: &[u8], system: bool, server: &PeerPolicy) -> Result<
         .map_err(|_| Error::InvalidInput)?;
     let mut output = vec![0; host::FRAME_LIMIT];
     let mut size = output.len();
-    if unsafe {
+    let status = unsafe {
         rss_execution_query(
             bytes.as_ptr(),
             bytes.len(),
@@ -265,10 +265,12 @@ pub fn query_trusted(bytes: &[u8], system: bool, server: &PeerPolicy) -> Result<
             requirement.as_ptr(),
             uid,
         )
-    } != 0
-        || size > output.len()
-    {
+    };
+    if status == -2 {
         return Err(Error::Denied);
+    }
+    if status != 0 || size == 0 || size > output.len() {
+        return Err(Error::Unavailable);
     }
     output.truncate(size);
     Ok(output)
@@ -327,5 +329,39 @@ mod tests {
         .is_err());
         assert!(stop.load(Ordering::Acquire));
         assert!(handler.is_poisoned());
+    }
+    #[test]
+    #[ignore = "requires an isolated macOS login with no execution service registration"]
+    fn absent_service_transport_is_unavailable_without_claiming_identity_rejection() {
+        use sha2::{Digest as _, Sha256};
+        let status = std::process::Command::new("/bin/launchctl")
+            .args(["print", "system/com.rss-mdm.agent.execution"])
+            .output()
+            .unwrap();
+        assert_eq!(status.status.code(), Some(113));
+        let signature = std::process::Command::new("/usr/bin/codesign")
+            .args(["-d", "--verbose=4", "/bin/sh"])
+            .output()
+            .unwrap();
+        assert!(signature.status.success());
+        let description = String::from_utf8(signature.stderr).unwrap();
+        let cdhash = description
+            .lines()
+            .find_map(|line| line.strip_prefix("CDHash="))
+            .unwrap();
+        let policy = PeerPolicy {
+            images: vec![installation_security::Artifact {
+                path: "/bin/sh".into(),
+                sha256: format!("{:x}", Sha256::digest(std::fs::read("/bin/sh").unwrap())),
+                cdhash: Some(cdhash.into()),
+            }],
+            subjects: vec!["0".into()],
+            interactive: false,
+        };
+        let request = host::encode(host::Request::ServiceStatus {}).unwrap();
+        assert_eq!(
+            query_trusted(&request, true, &policy),
+            Err(Error::Unavailable)
+        );
     }
 }
