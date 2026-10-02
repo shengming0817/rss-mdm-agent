@@ -39,6 +39,41 @@ function Assert-Binary {
     }
     return $Item.FullName
 }
+# ref: Microsoft ScheduledTasks New-ScheduledTaskPrincipal/Get-ScheduledTaskInfo.
+# Persistent DPAPI inspection runs as the same LocalSystem identity as the service.
+# The caller has already verified the fixed protected image and current deployment pins.
+function Assert-SystemPersistent([string]$Image, [string]$Deployment) {
+    if (![IO.Path]::IsPathFullyQualified($Image) -or ![IO.Path]::IsPathFullyQualified($Deployment) -or $Image.Contains('"') -or $Deployment.Contains('"')) { throw 'Protected absolute validation candidate required' }
+    $DiagnosticTask = 'RssExecution-Validate-' + [guid]::NewGuid()
+    $Principal = New-ScheduledTaskPrincipal -UserId 'S-1-5-18' -LogonType ServiceAccount -RunLevel Highest
+    $Validation = New-ScheduledTaskAction -Execute $Image -Argument ('--config "' + $Deployment + '" --validate-persistent')
+    $Settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::FromSeconds(15)) -MultipleInstances IgnoreNew
+    $Registered = $false
+    $Completed = $false
+    try {
+        $null = Register-ScheduledTask -TaskName $DiagnosticTask -Action $Validation -Principal $Principal -Settings $Settings -ErrorAction Stop
+        $Registered = $true
+        $Before = (Get-ScheduledTaskInfo -TaskName $DiagnosticTask -ErrorAction Stop).LastRunTime
+        Start-ScheduledTask -TaskName $DiagnosticTask -ErrorAction Stop
+        $Deadline = [Diagnostics.Stopwatch]::StartNew()
+        while ($Deadline.Elapsed.TotalSeconds -lt 20) {
+            $Info = Get-ScheduledTaskInfo -TaskName $DiagnosticTask -ErrorAction Stop
+            $State = (Get-ScheduledTask -TaskName $DiagnosticTask -ErrorAction Stop).State
+            if ($Info.LastRunTime -gt $Before -and $State -eq 'Ready') {
+                $Completed = $true
+                if ($Info.LastTaskResult -ne 0) { throw 'System identity/storage validation failed; original service retained' }
+                return
+            }
+            Start-Sleep -Milliseconds 100
+        }
+        throw 'System identity/storage validation deadline exceeded; original service retained'
+    } finally {
+        if ($Registered) {
+            if (!$Completed) { Stop-ScheduledTask -TaskName $DiagnosticTask -ErrorAction Stop }
+            Unregister-ScheduledTask -TaskName $DiagnosticTask -Confirm:$false -ErrorAction Stop
+        }
+    }
+}
 function Assert-Refresh {
     $OriginalBinary=$Binary
     try { $null=Assert-Binary; $Binary=$CandidateBinary; $null=Assert-Binary } finally { $Binary=$OriginalBinary }
@@ -52,10 +87,8 @@ function Assert-Refresh {
         if (($Old.$Field | ConvertTo-Json -Depth 20 -Compress) -cne ($New.$Field | ConvertTo-Json -Depth 20 -Compress)) { throw 'Refresh cannot replace identity or persistent state' }
     }
     foreach ($Field in @('work_root','material_root')) { if ($Old.execution.$Field -cne $New.execution.$Field) { throw 'Refresh cannot replace unresolved task resources' } }
-    $null = & $Binary --config $Config --validate-persistent
-    if ($LASTEXITCODE -ne 0) { throw 'Current persistent identity/storage binding failed; service retained' }
-    $null = & $CandidateBinary --config $CandidateConfig --validate-persistent
-    if ($LASTEXITCODE -ne 0) { throw 'Candidate cannot access original identity/storage; service retained' }
+    Assert-SystemPersistent $Binary $Config
+    Assert-SystemPersistent $CandidateBinary $CandidateConfig
     return $New
 }
 function Publish-Config($Path, $Document) {
