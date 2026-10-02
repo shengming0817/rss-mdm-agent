@@ -1058,13 +1058,19 @@ impl ServiceHandle {
             Ok(v) => v,
             Err(_) => return execution_runner::host::Reply::Unavailable,
         };
-        runtime.block_on(async {
+        let started = std::time::Instant::now();
+        let reply = runtime.block_on(async {
             tokio::time::timeout(std::time::Duration::from_secs(3), receiver)
                 .await
                 .ok()
                 .and_then(Result::ok)
                 .unwrap_or(execution_runner::host::Reply::Unavailable)
-        })
+        });
+        let elapsed = started.elapsed().as_millis();
+        if elapsed > 1500 {
+            eprintln!("RSS_IPC_OWNER_TIMING elapsedMs={elapsed}");
+        }
+        reply
     }
 }
 impl execution_runner::host::Handler for ServiceHandle {

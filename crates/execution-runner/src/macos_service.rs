@@ -213,6 +213,7 @@ pub fn query_helper(
 }
 
 pub(crate) fn authenticate(peer: &Peer, policy: &PeerPolicy) -> Result<String, Error> {
+    let started = std::time::Instant::now();
     // The listener pins the union of desktop/helper images before receiving any message.
     // A specific operation may narrow that set; the live PID path must match its own pins.
     if REQUIREMENT.get().is_none() {
@@ -240,6 +241,10 @@ pub(crate) fn authenticate(peer: &Peer, policy: &PeerPolicy) -> Result<String, E
     let path = std::path::Path::new(std::str::from_utf8(&bytes[..end]).map_err(|_| Error::Denied)?);
     if !policy.images.iter().any(|image| image.verify(path).is_ok()) {
         return Err(Error::Denied);
+    }
+    let elapsed = started.elapsed().as_millis();
+    if elapsed > 200 {
+        eprintln!("RSS_IPC_AUTH_TIMING elapsedMs={elapsed}");
     }
     Ok(uid.to_string())
 }
