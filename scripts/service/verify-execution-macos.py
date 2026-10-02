@@ -426,7 +426,6 @@ def native_stale_helper_security(probe, matrix, query, command, protected, prior
 
 def complete_native_security(probe, matrix, query, command, package, package_receipt, completed, effect,
         protected, installer, binary, config, administrator):
-    native_offer_security(probe,matrix,query,command,package,package_receipt,completed,effect)
     native_restart_security(probe,matrix,command,administrator)
     prior=query()
     offset=(protected/'service-stderr.log').stat().st_size
@@ -441,6 +440,7 @@ def complete_native_security(probe, matrix, query, command, package, package_rec
     security_result(matrix,'refresh_after_stop',results['afterStop'])
     run('/usr/bin/python3',str(installer),'install','--scope','user','--binary',str(binary),'--config',str(config))
     query()
+    native_offer_security(probe,matrix,query,command,package,package_receipt,completed,effect)
     native_revocation_security(probe,matrix,query,command,package,package_receipt,protected)
 
 
@@ -910,12 +910,16 @@ def validate_desktop_completion(records, backend, effect, request):
         else:
             assert step['process'] == {'kind':'exited','code':0}, 'installer failed or did not run'
             assert process['end'] == 'exited' and process['exitCode'] == 0
-            assert step['diagnostics']['failure'] is None
+            failure=step['diagnostics']['failure']
+            if failure is not None:
+                assert failure=='capture_failed' and process.get('quiescent') is False
+                assert record['status']['phase']=='outcomeUnknown' and step['after']['state']=='unknown'
             assert step['after']['state'] in ('present','unknown')
     present = all(effect[key] is True for key in ('receiptPresent','payloadPresent','payloadMatches'))
     absent = all(effect[key] is False for key in ('receiptPresent','payloadPresent','payloadMatches'))
     assert present or (cancelled and absent), 'independent device effect conflicts with terminal result'
-    return {'request':request, 'record':record, 'backend':backend, 'effect':effect}
+    return {'request':request, 'record':record, 'backend':backend, 'effect':effect,
+        'executionUncertain':record['status'].get('phase')=='outcomeUnknown'}
 
 
 def journal_proof(path):

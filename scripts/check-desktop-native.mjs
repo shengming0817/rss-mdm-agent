@@ -432,6 +432,7 @@ const readWorkerScopes = async () => {
       };
     });
 };
+let faultScopeConfirmed = true;
 const verifyUnknownFence = () => {
   const source = `
     import assert from 'node:assert/strict';
@@ -2125,7 +2126,9 @@ try {
       await delay(150);
       await wait(() => absent(launch.scope));
       record("launcher_crash", { launch, scopeAbsent: true });
+      faultScopeConfirmed = false;
       const recovery = verifyUnknownFence();
+      faultScopeConfirmed = recovery.scopeAbsentAfterOwnedCleanup === true;
       assert.equal(
         fixture.facts.requests,
         requests,
@@ -2397,13 +2400,14 @@ try {
   }
   result.processScopeProof = {
     runtimeTreeSha256: scopeRuntime?.runtimeTreeSha256,
-    observationComplete: !scopeObservationFailed,
+    observationComplete: !scopeObservationFailed && faultScopeConfirmed,
     scopes: scopeCleanup,
   };
   const cleanupComplete =
     alive().length === 0 &&
     !rootAlive() &&
     !scopeObservationFailed &&
+    faultScopeConfirmed &&
     scopeCleanup.every((row) => row.confirmed);
   if (!cleanupComplete) {
     result.cleanup = "owned-processes-still-present";

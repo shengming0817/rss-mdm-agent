@@ -211,6 +211,25 @@ class EvidenceTests(unittest.TestCase):
         with self.assertRaises(AssertionError):
             acceptance.validate_desktop_completion([record], backend, {**absent,'receiptPresent':True}, 'request')
 
+    def test_known_macos_uncertainty_is_preserved_and_requires_independent_effect(self):
+        record={'action':{'initiator':{'kind':'backend','attempt':'a'}},'status':{
+            'operationRequestId':'r','attempts':1,'phase':'outcomeUnknown',
+            'process':{'finished':True,'end':'exited','exitCode':0,'quiescent':False}}}
+        event={'kind':'software_result','steps':[{'process':{'kind':'exited','code':0},
+            'diagnostics':{'failure':'capture_failed'},'after':{'state':'unknown'}}]}
+        backend={'startRequests':1,'results':{'op':{'attemptId':'a','event':event}},'acknowledged':['op']}
+        effect={key:True for key in ('receiptPresent','payloadPresent','payloadMatches')}
+        result=acceptance.validate_desktop_completion([record],backend,effect,'r')
+        self.assertTrue(result['executionUncertain'])
+        for change in ('phase','quiescent','effect','failure'):
+            r,b,e=copy.deepcopy(record),copy.deepcopy(backend),copy.deepcopy(effect)
+            if change=='phase': r['status']['phase']='completed'
+            elif change=='quiescent':r['status']['process']['quiescent']=True
+            elif change=='effect':e['payloadMatches']=False
+            else:b['results']['op']['event']['steps'][0]['diagnostics']['failure']='cancelled'
+            with self.subTest(change=change),self.assertRaises(AssertionError):
+                acceptance.validate_desktop_completion([r],b,e,'r')
+
     def test_journal_proof_reads_capture_for_the_original_attempt_not_snapshot_fields(self):
         with tempfile.TemporaryDirectory() as directory:
             path=Path(directory)/'journal.sqlite'
