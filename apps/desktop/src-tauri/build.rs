@@ -10,7 +10,7 @@ fn main() {
             .ok()
             .map(|input| {
                 serde_json::from_str::<organization_config::OrganizationConfiguration>(&input)
-            .expect("RSS_BUILD_MDM_ORGANIZATION must contain the three allowed connection fields")
+            .expect("RSS_BUILD_MDM_ORGANIZATION must contain the allowed connection fields and optional CA certificate")
             .normalize()
             .unwrap_or_else(|error| panic!("{error}"))
             });
