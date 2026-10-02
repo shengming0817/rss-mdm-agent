@@ -148,7 +148,7 @@ Agent wire 的唯一 producer 仍为 rss-mdm；`execution-contract` 是本地执
 
 每个后台 attempt 对应一个本地 intent；步骤 checkpoint、累计预算、取消与恢复都在同一 journal。Start 期限限制首次启动，已经启动的步骤继续受原许可内容及预算约束。未知步骤不得重跑或跳过。根进程退出、独立检测、整体静止与结果送达分别记录；退出零不是软件效果成功。
 
-包管理器使用自身协调机制，Agent 保留内部互斥和持久未决占用；不承诺排除所有外部写入者。检测变化、来源无法确认或安装活动结束状态未知时保持 Unknown。#2477/#2478 的历史 fixture 和编译证据不能替代 #2564 的生产组合验证；macOS 实际运行和 Windows 编译分别记录，不要求 Windows 实机测试。
+包管理器使用自身协调机制，Agent 保留内部互斥和持久未决占用；不承诺排除所有外部写入者。检测变化、来源无法确认或安装活动结束状态未知时保持 Unknown。#2477/#2478 的历史 fixture 和编译证据不能替代 #2564 的生产组合验证；只记录实际已运行平台的验证结果。开发机不执行 Windows 编译、测试、打包或真机验收；实现范围完成且本地必要验证通过后，issue 可关闭并注明 Windows 未验证，关闭规则见[验证范围](../rules/verification-scope.md#开发机平台验证与实现项关闭)。
 
 ### 4.7 安全与平台
 
@@ -307,7 +307,7 @@ C20必须证明选定AI宿主自身没有不受控原生工具旁路；做不到
 
 Native 与 Host 使用匿名继承管道及固定 Caller/generation 的 UI 通道；不监听文件系统 socket。worker 启动参数仅通过既有私有管道传递，不存参数快照或来源账号文件；主密钥不进入 worker。保留工具、hooks、plugins 和任意 MCP 的限制，既有配置不得开放旁路。Codex 验证使用 ephemeral 线程，Claude 使用不持久化的验证会话；仅恢复 RSS 记录的原生 ID，不管理用户其它 CLI 会话。
 
-[#2462](https://dev.azure.com/shengming0923/rss/_workitems/edit/2462) 经用户扩大为 macOS arm64 / Windows 11 x64 独立安全状态服务及桌面候选接线：历史服务仅 GetServiceStatus；该独立状态服务已退出，状态和执行现在由唯一生产服务持有，继续采用实际 OS 身份；不采用 HMAC、凭据票据或 worker grant，不接收 AI 密钥。该实现不包含真实脚本、软件安装或生产授权签发，双平台真实验证需独立提供证据。详见[安全服务架构](../architecture/local-service.md)与[实验室验收](../guides/local-service-lab.md)。AES-GCM 随机 IV 保留。测试注入主密钥 backend，不访问真实用户 Keychain。
+[#2462](https://dev.azure.com/shengming0923/rss/_workitems/edit/2462) 经用户扩大为 macOS arm64 / Windows 11 x64 独立安全状态服务及桌面候选接线：历史服务仅 GetServiceStatus；该独立状态服务已退出，状态和执行现在由唯一生产服务持有，继续采用实际 OS 身份；不采用 HMAC、凭据票据或 worker grant，不接收 AI 密钥。该实现不包含真实脚本、软件安装或生产授权签发。双平台支持声明须分别提供对应平台的实际证据；开发机不要求补齐 Windows 验证才能关闭已完成实现项，未运行的平台仍标记未验证。详见[安全服务架构](../architecture/local-service.md)与[实验室验收](../guides/local-service-lab.md)。AES-GCM 随机 IV 保留。测试注入主密钥 backend，不访问真实用户 Keychain。
 
 产品 Session 可在无凭据时创建和读取。首条输入懒创建 provider 阶段，后续连接选择先等待已接收队列按原阶段完成；切换等待期间拒绝新的普通输入。每个阶段固定连接及版本，一次仅有一个 live worker。原生 resume 与新上下文意图分别操作，原命令重试优先返回原回执，不触发新阶段。原生恢复失败不静默换上下文。
 

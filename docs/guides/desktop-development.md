@@ -78,7 +78,7 @@ macOS 的正式 `make ci` / `make ci-full` 对整个 Node 与 Rust 检查过程�
 
 定向 Rust 验证可用 `python3 scripts/build-run.py -- cargo test --locked -p <包名>` 复用同一槽位机制。直接运行 `cargo` 使用仓内 `target`；直接运行 `pnpm` 或 `cargo` 不取得 CI 的 worktree 租约，避免与同一 checkout 的正式 CI 同时修改仓内 Node 产物或运行回执。旧仓内 `target` 不自动迁移或删除。
 
-浏览器开发使用显式 fixture 装配；样本不作为真实桌面/AI 验收。真实模型与原生窗口验收仅覆盖 macOS arm64、manifest 固定的 Codex；不要求 Windows/Linux 或三个引擎完成同一 E2E。受控服务验收覆盖 macOS 固定候选的真实执行与效果；完整双平台安全矩阵、正式签名、公证、版本升级及 T3 企业身份另行验收。
+浏览器开发使用显式 fixture 装配；样本不作为真实桌面/AI 验收。真实模型与原生窗口验收仅覆盖 macOS arm64、manifest 固定的 Codex；不要求 Windows/Linux 或三个引擎完成同一 E2E。受控服务验收覆盖 macOS 固定候选的真实执行与效果；开发机不执行 Windows 编译、测试、打包或真机验收，已完成实现项按[验证规则](../rules/verification-scope.md#开发机平台验证与实现项关闭)关闭并记录 Windows 未验证。独立平台安全矩阵、正式签名、公证、版本升级及 T3 企业身份按对应 owner 的有效范围另行验收。
 
 来源：Tauri `crates/tauri/src/app.rs` / `webview/webview_window.rs` @ 2.11.2；runtime-wry `src/lib.rs` @ 2.11.4（最后窗口销毁与 ExitRequested）；rmcp `src/model/meta.rs` @ 3.4.0（request metadata）；MCP TypeScript SDK `client/index.ts` / `shared/stdio.ts` @ 1.30.0。
 
@@ -150,7 +150,7 @@ AI 文本不能覆盖设备任务事实；执行详情来自 Rust 的授权读�
 
 外观使用同一启用与实色回退策略：macOS 采用 Sidebar 原生材质，Windows 11 build 22621 及以上采用公开 DWM Mica，其余宿主实色。正文、输入和模态抽屉始终实色；减少透明度、减少动态、高对比、系统设置读取失败或材质调用失败均回退实色。窗口创建、获得焦点及系统主题变化立即核对，窗口存活期间每两秒刷新；材质失败不会阻止工作区使用。
 
-macOS 透明 WebView 启用了 Tauri 的 `macos-private-api`，该路径影响 Mac App Store 接受；当前企业桌面候选不承诺商店发布、签名或公证。`pnpm check:desktop-native` 仍限定 macOS arm64，分别记录真实 WebView 与模型/执行 fixture 的证据。Windows 交叉 `cargo check` 仅证明类型与编译接缝；真实材质、辅助设置、DPI、拖拽和最大化必须由 Windows 原生环境验证，未运行时不得标记通过。
+macOS 透明 WebView 启用了 Tauri 的 `macos-private-api`，该路径影响 Mac App Store 接受；当前企业桌面候选不承诺商店发布、签名或公证。`pnpm check:desktop-native` 仍限定 macOS arm64，分别记录真实 WebView 与模型/执行 fixture 的证据。开发机不运行 Windows 交叉 `cargo check` 或 Windows 原生验收，也不以这些检查作为实现 issue 的关闭门槛。真实材质、辅助设置、DPI、拖拽和最大化可在目标 Windows 环境按需验证；未运行时标记未验证，Windows 支持声明须有对应实际证据。
 
 ## 显式 fixture 装配
 
