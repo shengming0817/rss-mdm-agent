@@ -1003,11 +1003,20 @@ async fn run(
     let mut stderr = child.stderr.take().unwrap();
     let input = materialized.stdin.take();
     let stdin = child.stdin.take();
+    #[cfg(target_os = "macos")]
+    let payload_input = materialized.take_payload_input();
     let mut writer = tokio::spawn(async move {
-        if let (Some(mut pipe), Some(bytes)) = (stdin, input) {
-            pipe.write_all(bytes.bytes()).await?;
-            pipe.shutdown().await?;
-        }
+        let stdin_writer = async {
+            if let (Some(mut pipe), Some(bytes)) = (stdin, input) {
+                pipe.write_all(bytes.bytes()).await?;
+                pipe.shutdown().await?;
+            }
+            Ok::<(), std::io::Error>(())
+        };
+        #[cfg(target_os = "macos")]
+        tokio::try_join!(stdin_writer, platform::deliver_payload(payload_input))?;
+        #[cfg(not(target_os = "macos"))]
+        stdin_writer.await?;
         Ok::<(), std::io::Error>(())
     });
     let mut input_done = false;

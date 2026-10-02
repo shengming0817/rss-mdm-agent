@@ -9,11 +9,12 @@
 ```sh
 pnpm install --frozen-lockfile
 cp env.example .env      # 填写实际服务地址、租户 UUID 和组织名称
+pnpm dev --fixture       # 持续运行的真实原生 fixture；无需生产服务、组织配置或模型
 pnpm dev                 # 自动准备/复用开发 AI Host 后启动桌面
 pnpm desktop:build       # 自动打包 Node/依赖、stage、构建 .app
 ```
 
-开发与打包都要求仓库根 `.env`，无论命令从哪里运行；缺失或字段为空时立即停止。`RSS_MDM_ORIGIN` 填写真实 HTTPS origin，`RSS_MDM_TENANT_ID` 填写管理员提供的非零 UUID，`RSS_MDM_ORGANIZATION_LABEL` 填写组织名称。模板的 `https://mdm.example` 为占位地址，构建和手动组织保存都会在网络请求前拒绝 `.example` 域名。实际 `.env` 被 Git 忽略；不在其中配置账号密码、token 或设备注册秘密。
+真实模式开发与打包都要求仓库根 `.env`，无论命令从哪里运行；缺失或字段为空时立即停止。`RSS_MDM_ORIGIN` 填写真实 HTTPS origin，`RSS_MDM_TENANT_ID` 填写管理员提供的非零 UUID，`RSS_MDM_ORGANIZATION_LABEL` 填写组织名称。模板的 `https://mdm.example` 为占位地址，构建和手动组织保存都会在网络请求前拒绝 `.example` 域名。实际 `.env` 被 Git 忽略；不在其中配置账号密码、token 或设备注册秘密。
 
 这三个字段在构建时校验并编译进桌面原生程序，开发与发布使用同一条路径。修改 `.env` 后重新运行 `pnpm dev` 或 `pnpm desktop:build`；地址变化不重建 AI Host runtime。发布应用从 Finder 或开始菜单启动时不读取外部 env、工作目录配置或运行时环境变量；普通 Cargo 编译和单元测试可以没有部署配置，实际应用启动要求有效内置连接。原始 `.env` 不进入应用资源或前端 bundle。
 
@@ -49,11 +50,11 @@ pnpm desktop:build       # 自动打包 Node/依赖、stage、构建 .app
 
 桌面显示动作、来源、目标、运行身份、风险等级与内容摘要。确认有效期最长一分钟且不超过原执行有效期，等待不消耗进程运行预算。确认、取消及响应丢失均保留原请求身份，不重新创建任务；重启和 Unknown 只核实原 attempt。请求列表按原请求 ID 分页，每页最多 128 条，所选任务独立读取。
 
-正式装配使用本地执行 V5、IPC V5、SQLite schema 6；旧库明确拒绝并保持原文件，不迁移、清空或新建 journal 绕过未决任务。生产启动失败直接显示诊断，不引导切入测试目录。测试专用构建和 S1 样本不代表生产结果。
+正式装配使用远程 Agent V5、本机 IPC V6、helper V1、部署格式 2 和 SQLite schema 6；旧格式明确拒绝并保持原文件，不迁移、清空或新建 journal 绕过未决任务。生产启动失败直接显示诊断，不引导切入测试目录。测试专用构建和 S1 样本不代表生产结果。监听前完整核验固定候选；每次 IPC 再核验实际 OS 对等主体、会话与受保护映像。桌面执行端口串行使用原生通道，已有 16 个准入名额覆盖等待及活动读取；对话流式更新不重复启动同一任务读取。
 
 AI 来源由 Host metadata 与 Rust 当前用户绑定核验，不能通过工具参数改为 Human。UI 确认原请求时单独核验当前用户权限，执行来源保持不变。
 
-关闭窗口销毁视图并分离 ACP 连接，Rust owner 和模型工作继续。显示窗口/应用 Reopen 创建新视图并读取持久状态。明确“退出”先有界关闭 Node/worker/MCP，再停止 Rust owner，不隐式取消业务。异常退出后重新打开数据库只核实已有尝试；runner 历史丢失保留 Unknown。
+关闭窗口销毁视图并分离 ACP 连接，桌面 runtime 和模型工作继续。显示窗口/应用 Reopen 创建新视图并读取持久状态。明确“退出”有界关闭桌面 Node/worker/MCP 和 runtime；系统服务由系统管理，不随桌面退出停止或隐式取消设备任务。服务异常退出后恢复 journal 只核实已有尝试；runner 历史丢失保留 Unknown。
 
 Host 在发送工具操作前原子保存 delivery intent；回复丢失后按原业务 ID 和精确 plan 核实。`outcomeUnknown` 不生成完成回执；仅明确未提交才允许发送。交付可在 AI 本轮结束、provider 不可恢复或 Host 重启后继续；它不能改变模型命令或伪造 provider 结果。Rust 回执引用在 Host 落盘后才能确认。当前 MCP 查询不消费 Rust 结果日志，业务证据由 Rust 保留。
 
@@ -77,19 +78,19 @@ macOS 的正式 `make ci` / `make ci-full` 对整个 Node 与 Rust 检查过程�
 
 定向 Rust 验证可用 `python3 scripts/build-run.py -- cargo test --locked -p <包名>` 复用同一槽位机制。直接运行 `cargo` 使用仓内 `target`；直接运行 `pnpm` 或 `cargo` 不取得 CI 的 worktree 租约，避免与同一 checkout 的正式 CI 同时修改仓内 Node 产物或运行回执。旧仓内 `target` 不自动迁移或删除。
 
-浏览器未在 Tauri 环境运行时只显示明确的静态样本，写入口禁用。静态样本不作为真实桌面/AI 验收。真实模型与原生窗口验收仅覆盖 macOS arm64、manifest 固定的 Codex；不要求 Windows/Linux 或三个引擎完成同一 E2E。S2 真实平台执行、安装签名、公证、升级及 T3 企业身份仍在本次范围外。
+浏览器开发使用显式 fixture 装配；样本不作为真实桌面/AI 验收。真实模型与原生窗口验收仅覆盖 macOS arm64、manifest 固定的 Codex；不要求 Windows/Linux 或三个引擎完成同一 E2E。受控服务验收覆盖 macOS 固定候选的真实执行与效果；完整双平台安全矩阵、正式签名、公证、版本升级及 T3 企业身份另行验收。
 
 来源：Tauri `crates/tauri/src/app.rs` / `webview/webview_window.rs` @ 2.11.2；runtime-wry `src/lib.rs` @ 2.11.4（最后窗口销毁与 ExitRequested）；rmcp `src/model/meta.rs` @ 3.4.0（request metadata）；MCP TypeScript SDK `client/index.ts` / `shared/stdio.ts` @ 1.30.0。
 
-自动回归由本地 CI 的单元、协议、SQLite、adapter 和浏览器检查承担，不要求系统授权弹窗。`pnpm check:desktop-native --visual` 是额外的原生视觉验收，从仓库根启动 `pnpm dev`，加载产品 main 和真实 WKWebView。它复用既有 assistant fixture 装配同一个产品 App：资源快照和 AI Host 为显式测试来源，任务阶段、过程与效果取自 Rust 生成的测试投影，AI 关联为测试绑定。它不连接云端模型、不执行设备操作，不证明生产执行授权或效果。
+自动回归由本地 CI 的单元、协议、SQLite、adapter 和浏览器检查承担，不要求系统授权弹窗。`pnpm check:desktop-native --visual` 是额外的原生视觉验收，从仓库根启动 `pnpm dev --fixture`，加载产品 main 和真实 WKWebView。它复用既有 assistant fixture 装配同一个产品 App：资源快照和 AI Host 为显式测试来源，任务阶段、过程与效果取自 Rust 生成的测试投影，AI 关联为测试绑定。它不连接云端模型、不执行设备操作，不证明生产执行授权或效果。
 
 该路径限定 macOS arm64，需要已解锁桌面及 System Events 辅助功能权限；环境不满足直接失败。检查浅深主题、1100×760 / 1440×960 / 480×400、会话与资源布局、任务抽屉/并排、原生键盘与焦点、关闭重开。存在已启用的中文拼音输入源时，用物理键验证候选确认不发送及显式发送，并恢复原输入源；系统主题同样在结束后恢复。无实际入口或环境的缩放、其它显示比例及 Windows 项目明确标记未验证。
 
-脚本仍保留默认执行旅程，但它在生产执行服务接入后依赖已移除的桌面 S1 journal，尚不能作为通过的原生执行验收；迁移到独立受保护服务由 #2593 跟踪。原生视觉通过不替代该项。调试构建使用独立 macOS 文件钥匙串，退出后删除并核对默认钥匙串与搜索列表未改变；不访问个人登录钥匙串的应用主密钥。正式签名应用的钥匙串授权另行验收。
+真实执行旅程需要显式 `--controlled-service`，使用受保护固定候选、真实认证 IPC 和服务 journal；普通开发启动不会自动安装服务。调试构建的真实 AI 路径使用隔离 macOS 文件钥匙串，退出后删除并核对默认钥匙串与搜索列表未改变；fixture 路径不创建钥匙串。正式签名应用的钥匙串授权另行验收。
 
 驱动使用固定 `webdriverio@9.32.0` 与 `tauri-plugin-wdio-webdriver@1.4.0` 的标准 WebDriver 接口。`native-e2e` 只允许调试构建，并要求显式 nonce、动态 loopback 端口和隔离 `--test-data-dir`；release 携带该 feature 会编译失败。脚本核对主进程与监听端口归属；固定的 [本地上游补丁](../../vendor/tauri-plugin-wdio-webdriver/NOTICE.md) 对每个请求校验运行凭据，缺失或错误凭据一律拒绝，启动日志仅记录凭据摘要。脚本不调用 WebView 内部 IPC、不替换业务回复。视觉模式的关闭/重开通过 WebDriver 原生 `window.close()` 与应用“显示窗口”菜单验证；开发窗口的标题栏关闭按钮未向 AX 暴露，物理按钮点击单独标为未验证。Tab、Shift+Tab、Escape 和应用菜单操作由 macOS System Events 发出；WebDriver 键盘事件不能替代这些证据。不要在验收期间修改源码或并发启动同一 worktree 的开发服务。
 
-`.local-ci-runs/desktop-native.json` 记录实际模式、源码/锁文件/运行包摘要、进程归属与完成项，截图和脱敏日志在同目录。失败回执不能解释为通过。该路径证明真实 CLI、WebView 与 S1 接缝，不证明真实模型能力或设备 OS 效果。
+`.local-ci-runs/desktop-native.json` 记录实际模式、源码/锁文件/运行包摘要、进程归属与完成项，截图和脱敏日志在同目录。失败回执不能解释为通过。fixture 模式证明产品 WebView 与显式样本装配；controlled-service 模式分别保留真实服务 journal、后台回执及独立设备效果证据。本地模型响应仍是受控样本，不证明真实模型能力。
 
 发布资源验收使用 `pnpm bundle:ai-host && pnpm check:desktop-bundle`。入口构建带隔离应用标识和测试内置连接的实际 release `.app`，从无测试参数的生产 main 启动；核对 Host、内置组织不落盘及运行时配置不能覆盖默认连接，不主动登录。禁用 runtime override，不包含原生驱动，核验完整 runtime 树与 Native health 握手；结果写入 `.local-ci-runs/desktop-bundle.json`，绑定源码、锁文件和 runtime manifest。此 smoke 只证明启动与资源定位，使用隔离进程组清理，优雅退出由日常原生验收验证。
 
@@ -101,7 +102,7 @@ macOS 的正式 `make ci` / `make ci-full` 对整个 Node 与 Rust 检查过程�
 
 设置入口始终可达，未选择用户或 AI Host 不可用时仍可查看诊断与关于。账户区域区分网络不可用、限流、账号/授权失效及服务响应不兼容；成功进入新的账户后清除旧原因。首次路径是选择账户入口、保存配置、测试连接、发送首条消息；“开始对话”与“稍后配置”都只进入本地空白页，首条消息才创建产品会话。常规与通知仅说明已有行为，不提供无底层服务的开关。
 
-Native 长期持有用户、一个设备执行服务和应用主密钥访问 owner；Host 进程可以单独替换。启动前核验关键文件、平台和契约版本，配置、存储和恢复完成后的私有 health 应答才表示 ready。运行包不匹配直接拒绝；release 构建忽略开发 override。关闭/回收旧 Host 后才启动新代，worker fence 未解决时禁止重复 worker。
+Native 长期持有用户、设备执行 IPC 消费端口和应用主密钥访问 owner；Host 进程可以单独替换。启动前核验关键文件、平台和契约版本，配置、存储和恢复完成后的私有 health 应答才表示 ready。运行包不匹配直接拒绝；release 构建忽略开发 override。关闭/回收旧 Host 后才启动新代，worker fence 未解决时禁止重复 worker。
 
 Native 在每次启动前按打包端同一规则重算文件字节、权限和符号链接图摘要；`.app` 候选的预期摘要由 stage 后的 Native 构建绑定，改写资源目录中的 manifest 不能替换它。显式开发 override 校验其 manifest 与实际树一致，信任由开发者选择该路径建立。health 超时或不合法时先撤销 control/MCP，再有界停止并回收进程；回收未知保留原 owner 阻断新代。
 
@@ -150,3 +151,11 @@ AI 文本不能覆盖设备任务事实；执行详情来自 Rust 的授权读�
 外观使用同一启用与实色回退策略：macOS 采用 Sidebar 原生材质，Windows 11 build 22621 及以上采用公开 DWM Mica，其余宿主实色。正文、输入和模态抽屉始终实色；减少透明度、减少动态、高对比、系统设置读取失败或材质调用失败均回退实色。窗口创建、获得焦点及系统主题变化立即核对，窗口存活期间每两秒刷新；材质失败不会阻止工作区使用。
 
 macOS 透明 WebView 启用了 Tauri 的 `macos-private-api`，该路径影响 Mac App Store 接受；当前企业桌面候选不承诺商店发布、签名或公证。`pnpm check:desktop-native` 仍限定 macOS arm64，分别记录真实 WebView 与模型/执行 fixture 的证据。Windows 交叉 `cargo check` 仅证明类型与编译接缝；真实材质、辅助设置、DPI、拖拽和最大化必须由 Windows 原生环境验证，未运行时不得标记通过。
+
+## 显式 fixture 装配
+
+`pnpm dev --fixture` 打开真正的 Tauri main/WKWebView 并保持运行，支持产品前端热更新和主动退出。窗口中的“开发 fixture · 无真实设备执行”区域可选择连接诊断、待确认、拒绝、运行、取消中、Unknown 和完成场景；所有交互只影响隔离样本。确认引用同一个请求及 revision，取消意图与终止/效果分开展示。
+
+此模式复用浏览器 `pnpm dev:assistant-fixture` 的数据/服务 owner，不读取生产账户、凭据、服务或执行 journal，不准备独立 AI Host，也不要求自动视觉验收的 WebDriver/System Events 权限。正式构建不能启用 fixture，真实服务异常不会切换为样本。
+
+`pnpm check:desktop-native --visual` 自动使用同一 fixture 装配；`pnpm check:desktop-native --controlled-service` 明确请求固定候选的真实服务旅程与受控安装。两者回执分别记录 fixture 和真实执行事实。真实模式的候选、注册、可信配置和协议必须匹配；部署/刷新及管理员操作见[服务指南](local-service-lab.md#显式开发刷新)。

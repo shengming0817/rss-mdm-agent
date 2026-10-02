@@ -5,7 +5,7 @@ use execution_mcp::{ExecutionMcp, McpLimits};
 mod fixture;
 use fixture::FixtureService;
 use serde_json::json;
-use std::{io::Write, os::unix::fs::OpenOptionsExt, path::PathBuf, time::Duration};
+use std::{io::Write, path::PathBuf, time::Duration};
 use tokio_util::sync::CancellationToken;
 
 #[tokio::main]
@@ -24,37 +24,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     native_process::private_storage::directory(&user_root)?;
     let users_path = user_root.join("users.json");
     if !users_path.try_exists()? {
-        std::fs::OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .mode(0o600)
-            .open(&users_path)?
-            .write_all(
-                serde_json::to_vec(&json!({
+        native_process::private_storage::create_new(&users_path)?.write_all(
+            serde_json::to_vec(&json!({
+            "schemaVersion": 7,
+            "kind": "testUserPage",
+            "users": [{
                 "schemaVersion": 7,
-                "kind": "testUserPage",
-                "users": [{
+                "kind": "testUser",
+                "userId": "fixture-actor",
+                "displayName": "Fixture",
+                "nameKey": "fixture"
+            }],
+            "current": {
+                "schemaVersion": 7,
+                "kind": "userContext",
+                "user": {
                     "schemaVersion": 7,
                     "kind": "testUser",
                     "userId": "fixture-actor",
                     "displayName": "Fixture",
                     "nameKey": "fixture"
-                }],
-                "current": {
-                    "schemaVersion": 7,
-                    "kind": "userContext",
-                    "user": {
-                        "schemaVersion": 7,
-                        "kind": "testUser",
-                        "userId": "fixture-actor",
-                        "displayName": "Fixture",
-                        "nameKey": "fixture"
-                    },
-                    "generation": "fixture-generation"
-                }
-                }))?
-                .as_slice(),
-            )?;
+                },
+                "generation": "fixture-generation"
+            }
+            }))?
+            .as_slice(),
+        )?;
     }
     let users = rss_mdm_desktop::composition::users::Users::open(&user_root)?;
     let generation = users.current()?.generation.to_string();

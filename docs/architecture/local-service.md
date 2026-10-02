@@ -1,42 +1,11 @@
-# 本机安全服务与私有进程通道
+# 唯一生产执行服务与开发装配
 
-对应 [#2462](https://dev.azure.com/shengming0923/rss/_workitems/edit/2462)。本项扩展到 macOS 26.4 arm64、Windows 11 x64 的实验室候选实现及桌面接线。真实平台验证是独立完成门，不从交叉编译、S1 或 mock 推定完成。
+apps/agent-service 是唯一生产系统组合根，持有设备身份、执行 journal、恢复与结果送达。桌面和 AI Host 只消费认证 IPC，用户 helper 仅执行原登录会话的物理动作，不拥有注册、业务授权或账本。
 
-## 权威与信任
+installation-security 持有管理员固定映像、摘要/代码身份、受保护配置与目录检查。系统 IPC 继续使用真实 OS 对等身份及专属操作认证；本机 IPC V6 拒绝旧格式，不协商或回退。远程 Agent wire 和 helper 协议由各自原 owner 持有。
 
-管理员固定安装产物、允许查询的 OS 用户与服务账号。服务只有 GetServiceStatus，返回安装实例、构建与 statusOnly 能力。安装实例不是 rss-mdm Device/Registration，也没有业务批准、执行、凭据或 worker 接口。
+可信配置/pins 通过后，同一个监听器装配就绪执行 owner 或只读未就绪诊断。只有能证明从未初始化才报告待注册；损坏、身份冲突或未知残留不触发初始化、重置或重新注册。状态连接成功不表示任务获准或效果已发生。
 
-macOS 以非登录账号运行 LaunchDaemon，NSXPCConnection 对等代码 requirement 由 OS 执行；服务核对连接的 UID、audit session、PID 和受保护产物。Windows 以虚拟服务账号运行本机 Named Pipe，显式 DACL 不向客户端授予创建 pipe instance 的权利；客户端验证服务 SID/session/固定映像，服务在读取固定握手前缀后短暂 impersonate 核对真实进程及用户 token，返回后立即 RevertToSelf。PID 查询句柄保留到请求结束。任何证据缺失均拒绝。
+开发 fixture 在启动前选择，复用 tests/assistant、Rust 生成投影和产品 App。debug-only 的 dev-fixture 主程序只注册外观及装配标识，不启动生产账户、AI Host、钥匙串、服务 IPC 或 journal。App 显式消费该 owner 提供的身份、Host、状态及执行 ports，缺失任一项即拒绝启动；确认与撤销进入原请求及 revision。浏览器、原生人工开发和视觉验收使用同一个 fixture owner；正式构建禁止该装配，连接错误不会切换模式。
 
-保护对象是独立恶意进程、跨用户接入、假端点、错误或替换产物和旧消息。可信桌面已经被注入、本机管理员或内核失陷不在本批保证内。同用户 token、正文、路径或 PID 单独不构成身份。安装清单没有秘密，受管理员写权限保护。
-
-## 单次查询
-
-完成身份核验后生成 256-bit 随机 challenge，只存在于当前连接。查询必须携带同一个 challenge 和唯一版本/方法，五秒单调时钟预算覆盖接入与处理。先消费再处理，包括非法请求；第二次请求没有授权。客户端核对回包 challenge 和安装身份。
-
-无需长期 session、重放表、服务 epoch、续租或授权票据。停止服务使连接失效，重启不恢复 challenge。管理员撤销先停服及关闭连接，再原子替换清单，失败保持停服。新查询重新认证。认证结果与进程终止、业务任务成功是不同事实。
-
-| 候选机制 | 决定 | 证明范围 |
-| --- | --- | --- |
-| HMAC | 不采用 | 本机直接 OS IPC，双方身份与内核通道；不覆盖被接管的可信端主动改写 |
-| 协议 nonce | 一次性 challenge | 重复、跨连接、过期和服务重启的旧请求 |
-| 凭据票据 | 不采用 | 服务不接收、存储、解密、转发 AI 密钥 |
-| worker grant | 不采用 | worker 无服务查询权；不声称 provider 密钥具有服务端撤权 |
-
-篡改验收分别证明非法进程不能建立获准通道，以及非法字段/方法/版本/challenge 被拒绝。业务 command 幂等回执不能替代 IPC 重放证明。
-
-## 私有 AI 进程
-
-Native 唯一拥有 Host，Host 唯一拥有逻辑 worker。Native–Host 与 Host–bootstrap 两条 owner 链统一使用私有继承 stdin/stdout，stderr 为诊断；provider SDK/adapter 内部子进程保留其专属协议，不属于此承载。帧与 lane 由各自代码 owner 声明，不在文档维护另一份二进制格式。
-
-单 reader 只分帧分发，单 writer 优先控制队列，各 lane 独立限额；饱和或非法帧关闭连接。物理管道堵塞由 owner 的 OS 终止预算兜底。控制队列优先不等于任意输出期间都能及时交付。
-
-固定 launcher 从自身目录读取 manifest，校验 Node/bootstrap 摘要，不接收任意命令或入口路径。macOS 使用进程组，Windows 在恢复初始线程前加入 Job Object，禁止 breakaway，并启用 kill-on-close。launcher 监视 Host 的父进程生命周期。普通权限私有文件工具只检查当前用户的文件/ACL，不提供提权能力。
-
-launch fence 保存 namespace、launchId、provider artifact、runtimeDigest 和带平台标签的 scope；保留预留/登记两阶段，登记前禁止 activation。Windows scope 同时保存创建 session；跨 session 查询返回未知并阻断恢复。OS handle 不持久化。恢复只能只读确认范围已不存在；未知、权限不足、仍存活都阻断，禁止凭保存 PID/job 名称终止进程。
-
-## 直接替换
-
-不支持的旧启动入口、承载及 SQLite 格式拒绝，没有双读、迁移、alias 或自动降级。旧库原样保留，由实验室操作者选择新目录，不能删除旧库来冒充恢复成功。
-
-macOS 主密钥仍在 Keychain，Windows 采用当前用户 DPAPI 与专属 ACL，输入只返回 Native 保存操作。主密钥不进入 worker/WebView。官方 Codex/Claude 登录仍由官方组件负责。
+固定候选部署、显式刷新和真实平台边界见[实验室操作](../guides/local-service-lab.md)。历史 #2462 的一次性状态服务已退出；其必要 OS 保护机制保留，双平台安全验收由 #2559 消费最终统一候选。

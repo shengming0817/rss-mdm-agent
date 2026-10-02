@@ -2,10 +2,13 @@
 import { computed, nextTick, ref } from "vue";
 import type { AssistantController } from "../assistant/controller";
 import LocalService from "./LocalService.vue";
+import type { ServicePort } from "./native";
 import ConnectionSettings from "./ConnectionSettings.vue";
 import { diagnosticMessage, type HostSettings } from "./controller";
 const props = defineProps<{
   host: HostSettings;
+  servicePort?: ServicePort;
+  fixture?: boolean;
   active?: boolean;
   assistant?: AssistantController;
 }>();
@@ -73,7 +76,7 @@ function keys(event: KeyboardEvent) {
 <template>
   <section class="settings" aria-label="设置">
     <div :inert="confirming ? true : undefined">
-      <LocalService />
+      <LocalService :port="servicePort" :fixture="fixture" />
       <section class="settings-card">
         <h2>账户入口</h2>
         <p>选择企业登录、测试用户或不登录使用。各入口的数据独立保存。</p>
@@ -113,7 +116,7 @@ function keys(event: KeyboardEvent) {
           <dt>关闭窗口</dt>
           <dd>
             关闭视图后 AI Host
-            继续运行；应用菜单“退出”关闭应用进程。独立状态服务由系统管理。
+            继续运行；应用菜单“退出”关闭应用进程。系统执行服务由系统管理。
           </dd>
           <dt>通知</dt>
           <dd>应用内显示待回应计数；当前未提供系统通知和自动更新设置。</dd>

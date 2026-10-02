@@ -213,6 +213,7 @@ pub fn query_helper(
 }
 
 pub(crate) fn authenticate(peer: &Peer, policy: &PeerPolicy) -> Result<String, Error> {
+    let started = std::time::Instant::now();
     // The listener pins the union of desktop/helper images before receiving any message.
     // A specific operation may narrow that set; the live PID path must match its own pins.
     if REQUIREMENT.get().is_none() {
@@ -241,6 +242,10 @@ pub(crate) fn authenticate(peer: &Peer, policy: &PeerPolicy) -> Result<String, E
     if !policy.images.iter().any(|image| image.verify(path).is_ok()) {
         return Err(Error::Denied);
     }
+    let elapsed = started.elapsed().as_millis();
+    if elapsed > 200 {
+        eprintln!("RSS_IPC_AUTH_TIMING elapsedMs={elapsed}");
+    }
     Ok(uid.to_string())
 }
 
@@ -249,13 +254,15 @@ pub fn query_trusted(bytes: &[u8], system: bool, server: &PeerPolicy) -> Result<
     if bytes.len() > host::FRAME_LIMIT || server.subjects.len() != 1 {
         return Err(Error::InvalidInput);
     }
+    let started = std::time::Instant::now();
     let requirement = server.requirement()?;
+    let pins_ms = started.elapsed().as_millis();
     let uid = server.subjects[0]
         .parse()
         .map_err(|_| Error::InvalidInput)?;
     let mut output = vec![0; host::FRAME_LIMIT];
     let mut size = output.len();
-    if unsafe {
+    let status = unsafe {
         rss_execution_query(
             bytes.as_ptr(),
             bytes.len(),
@@ -265,10 +272,18 @@ pub fn query_trusted(bytes: &[u8], system: bool, server: &PeerPolicy) -> Result<
             requirement.as_ptr(),
             uid,
         )
-    } != 0
-        || size > output.len()
-    {
+    };
+    if status != 0 || started.elapsed().as_millis() > 1500 {
+        eprintln!(
+            "RSS_IPC_TIMING pinsMs={pins_ms} totalMs={} transport={status}",
+            started.elapsed().as_millis()
+        );
+    }
+    if status == -2 {
         return Err(Error::Denied);
+    }
+    if status != 0 || size == 0 || size > output.len() {
+        return Err(Error::Unavailable);
     }
     output.truncate(size);
     Ok(output)
@@ -322,10 +337,44 @@ mod tests {
             &handler,
             &stop,
             &peer,
-            br#"{"version":5,"request":{"method":"status","request":"r"}}"#
+            br#"{"version":6,"request":{"method":"status","request":"r"}}"#
         )
         .is_err());
         assert!(stop.load(Ordering::Acquire));
         assert!(handler.is_poisoned());
+    }
+    #[test]
+    #[ignore = "requires an isolated macOS login with no execution service registration"]
+    fn absent_service_transport_is_unavailable_without_claiming_identity_rejection() {
+        use sha2::{Digest as _, Sha256};
+        let status = std::process::Command::new("/bin/launchctl")
+            .args(["print", "system/com.rss-mdm.agent.execution"])
+            .output()
+            .unwrap();
+        assert_eq!(status.status.code(), Some(113));
+        let signature = std::process::Command::new("/usr/bin/codesign")
+            .args(["-d", "--verbose=4", "/bin/sh"])
+            .output()
+            .unwrap();
+        assert!(signature.status.success());
+        let description = String::from_utf8(signature.stderr).unwrap();
+        let cdhash = description
+            .lines()
+            .find_map(|line| line.strip_prefix("CDHash="))
+            .unwrap();
+        let policy = PeerPolicy {
+            images: vec![installation_security::Artifact {
+                path: "/bin/sh".into(),
+                sha256: format!("{:x}", Sha256::digest(std::fs::read("/bin/sh").unwrap())),
+                cdhash: Some(cdhash.into()),
+            }],
+            subjects: vec!["0".into()],
+            interactive: false,
+        };
+        let request = host::encode(host::Request::ServiceStatus {}).unwrap();
+        assert_eq!(
+            query_trusted(&request, true, &policy),
+            Err(Error::Unavailable)
+        );
     }
 }

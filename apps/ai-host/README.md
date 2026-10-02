@@ -35,7 +35,7 @@ worker 的 activation 数据通过既有私有管道传入，包含该次启动�
 
 历史预览只包含已完成用户输入和稳定助手文本；用户选择最近 N 轮或全部并确认。预览绑定目标配置版本、水位、命令/消息 ID 和内容哈希，不包含工具、系统指令或原始附件。设备任务始终保留冻结 actor；模型终态不等于设备业务完成。
 
-当前无历史数据升级要求，不实现旧凭据、账号或参数快照的兼容读取、迁移和清理流程。S2 状态服务与本应用凭据链隔离，见[安全服务架构](../../docs/architecture/local-service.md)。
+当前无历史数据升级要求，不实现旧凭据、账号或参数快照的兼容读取、迁移和清理流程。生产执行服务与本应用凭据链隔离，见[安全服务架构](../../docs/architecture/local-service.md)。
 
 ## 验证与来源
 
@@ -47,7 +47,7 @@ worker 的 activation 数据通过既有私有管道传入，包含该次启动�
 
 来源：Rust `std::os::unix::net::UnixStream::pair`；[Codex 0.155.0 config merge](https://github.com/openai/codex/blob/rust-v0.155.0/codex-rs/config/src/merge.rs) 与 [CLI profile 入口](https://github.com/openai/codex/blob/rust-v0.155.0/codex-rs/cli/src/main.rs)；Claude Agent SDK 0.3.277 `sdk.d.ts`；[Node `http.request` 自定义 `lookup`](https://nodejs.org/api/http.html#httprequestoptions-callback)；[OWASP SSRF DNS/redirect 防护](https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html)；[RustCrypto AES-GCM](https://github.com/RustCrypto/AEADs/blob/aes-gcm-v0.10.3/aes-gcm/src/lib.rs)；security-framework 3.5.1 `src/passwords.rs`、`src/random.rs`。没有复制上游认证实现。
 
-#2462 的独立状态服务采用 OS 双向身份与单次 challenge，与本应用的 AI 凭据链隔离。见[架构](../../docs/architecture/local-service.md)和[实验室指南](../../docs/guides/local-service-lab.md)。
+生产执行服务采用真实 OS 对等身份，与本应用的 AI 凭据链隔离。见[架构](../../docs/architecture/local-service.md)和[实验室指南](../../docs/guides/local-service-lab.md)。
 
 ## 能力与运行范围
 

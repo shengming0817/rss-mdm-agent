@@ -16,6 +16,7 @@ __pycache__/
 *.py[cod]
 .env
 .env.*
+.passwd
 !.env.example
 !.env.*.example
 *.profraw

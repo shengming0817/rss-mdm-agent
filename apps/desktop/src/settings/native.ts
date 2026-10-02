@@ -26,7 +26,8 @@ export function nativeHost() {
   };
 }
 
-export function nativeService() {
+export type ServicePort = { read(): Promise<ServiceView> };
+export function nativeService(): ServicePort | undefined {
   if (!isTauri()) return undefined;
-  return { read: () => invoke<ServiceView>("local_service_status") };
+  return { read: () => invoke<ServiceView>("execution_service_status") };
 }

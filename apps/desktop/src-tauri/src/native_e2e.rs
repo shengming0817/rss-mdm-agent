@@ -40,7 +40,7 @@ pub fn configure(
 // ref: security-framework 3.5.1 os/macos/passwords.rs temp_keychain_setup.
 // The real OS credential store belongs to this run, never to the developer's login keychain.
 // The harness deletes it through Security.framework after the owned process has exited.
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(feature = "dev-fixture")))]
 pub fn keychain(
     root: &Path,
 ) -> Result<impl rss_mdm_desktop::composition::credentials::KeyBackend, Box<dyn std::error::Error>>

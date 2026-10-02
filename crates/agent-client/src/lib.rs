@@ -12,6 +12,7 @@ pub use config::*;
 pub use content::{ContentFile, Materials};
 /// The protocol's single producer.
 pub use rss_mdm_agent_wire as wire;
+pub use store::inspect_registration;
 /// Closed errors, without secrets, response bodies or backend paths.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum Error {
@@ -80,6 +81,7 @@ impl From<execution_app::Error> for Error {
             E::Clock => Self::Clock,
             E::Conflict => Self::Conflict,
             E::Capacity => Self::Capacity,
+            E::Configuration => Self::Configuration,
             _ => Self::Storage,
         }
     }

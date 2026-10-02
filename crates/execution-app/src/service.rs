@@ -89,7 +89,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
         config: AppConfig,
         limits: execution_sqlite::Limits,
     ) -> Result<Self, Error> {
-        let config = Configuration::new(config)?;
+        let config = Configuration::new(config, limits.input)?;
         let binding = host.service_binding()?;
         if matches!(binding.authority, Authority::Test { .. })
             || runner.mode() != ExecutionMode::Real
@@ -125,7 +125,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
         runner: R,
         config: AppConfig,
     ) -> Result<Self, Error> {
-        let config = Configuration::new(config)?;
+        let config = Configuration::new(config, test_store_limits().input)?;
         let binding = host.service_binding()?;
         if !matches!(binding.authority, Authority::Test { .. })
             || runner.mode() != ExecutionMode::Test

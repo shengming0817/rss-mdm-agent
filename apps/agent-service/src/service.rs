@@ -32,7 +32,7 @@ pub struct ExecutionConfig {
 /// Administrator-pinned helpers; these select OS mechanisms, not enterprise authorization.
 #[derive(Clone)]
 pub struct UserResources {
-    pub image: local_service::Artifact,
+    pub image: installation_security::Artifact,
     pub work_roots: std::collections::BTreeMap<String, PathBuf>,
 }
 impl UserResources {
@@ -125,14 +125,7 @@ impl<S: SecretProvider> DeviceService<S> {
             startup,
             host.clone(),
             runner,
-            AppConfig {
-                revision: 1,
-                max_rules: 1,
-                max_profiles: 1,
-                max_capability_entries: 32,
-                max_timeout_ms: 86_400_000,
-                max_output_bytes: 16_777_216,
-            },
+            app_config(),
             plan::storage_limits(),
         )?;
         let output = client.output_policy()?;
@@ -608,7 +601,7 @@ impl<S: SecretProvider> DeviceService<S> {
             struct Finished(Arc<AtomicBool>);impl Drop for Finished{fn drop(&mut self){self.0.store(true,Ordering::Release);}}
             let _finished=Finished(done);
             let result=(||->Result<(),Error>{
-                let runtime=tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|_|Error::Unavailable)?;
+                let runtime=owner_runtime()?;
                 runtime.block_on(async{
                     let mut timer=tokio::time::interval(std::time::Duration::from_millis(50));
                     timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -792,6 +785,16 @@ impl Core {
         }
         let reply = (|| -> Result<Reply, Error> {
             match command.request {
+                LocalRequest::Operation(Request::ServiceStatus {}) => {
+                    let readiness = if self.host.revoked.load(Ordering::Acquire) {
+                        execution_runner::host::Readiness::NotReady
+                    } else {
+                        execution_runner::host::Readiness::Ready
+                    };
+                    Ok(Reply::ServiceStatus {
+                        value: execution_runner::host::ServiceStatus::new(readiness),
+                    })
+                }
                 LocalRequest::Stop => {
                     self.stopping = true;
                     Ok(Reply::Unavailable)
@@ -1005,16 +1008,16 @@ async fn network<T>(
     commands: &mut tokio::sync::mpsc::Receiver<Command>,
 ) -> Result<T, Error> {
     tokio::pin!(future);
-    let mut progress = tokio::time::interval(std::time::Duration::from_millis(50));
-    progress.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    // Native supervisors enforce process budgets independently. Reconcile between bounded
+    // network operations, so synchronous OS fact checks cannot starve an artifact stream.
     loop {
         tokio::select! {
+            biased;
             result=&mut future=>return result,
-            _=progress.tick()=>core.reconcile()?,
             command=commands.recv()=>{
                 if let Some(command)=command {core.handle(command);} else {core.stopping=true;}
                 if core.stopping{return Err(Error::Unavailable);}
-            }
+            },
         }
     }
 }
@@ -1055,13 +1058,19 @@ impl ServiceHandle {
             Ok(v) => v,
             Err(_) => return execution_runner::host::Reply::Unavailable,
         };
-        runtime.block_on(async {
+        let started = std::time::Instant::now();
+        let reply = runtime.block_on(async {
             tokio::time::timeout(std::time::Duration::from_secs(3), receiver)
                 .await
                 .ok()
                 .and_then(Result::ok)
                 .unwrap_or(execution_runner::host::Reply::Unavailable)
-        })
+        });
+        let elapsed = started.elapsed().as_millis();
+        if elapsed > 1500 {
+            eprintln!("RSS_IPC_OWNER_TIMING elapsedMs={elapsed}");
+        }
+        reply
     }
 }
 impl execution_runner::host::Handler for ServiceHandle {
@@ -1286,4 +1295,26 @@ pub(crate) fn login_id(context: &execution_runner::helper::UserContext) -> uuid:
     bytes[6] = (bytes[6] & 0x0f) | 0x50;
     bytes[8] = (bytes[8] & 0x3f) | 0x80;
     uuid::Uuid::from_bytes(bytes)
+}
+
+pub(crate) fn app_config() -> AppConfig {
+    let bounds = plan::storage_limits().input;
+    AppConfig {
+        revision: 1,
+        max_rules: 1,
+        max_profiles: 1,
+        max_capability_entries: 32,
+        max_timeout_ms: bounds.max_timeout_ms,
+        max_output_bytes: bounds.max_output_bytes,
+    }
+}
+
+pub(crate) fn owner_runtime() -> Result<tokio::runtime::Runtime, Error> {
+    // The block_on caller remains the only SQLite/journal owner. Two fixed reactor workers
+    // keep bounded transport alive while that caller performs synchronous OS fact checks.
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .map_err(|_| Error::Unavailable)
 }

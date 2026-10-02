@@ -24,8 +24,8 @@ export const steps = [
     [
       "--test",
       "scripts/ci-workspace.test.mjs",
-      "scripts/service-verification.test.mjs",
       "scripts/desktop-dev.test.mjs",
+      "tests/assistant/fixture.test.mjs",
       "scripts/desktop-organization.test.mjs",
       "scripts/runtime-integrity.test.mjs",
       "scripts/execution-evolution.test.mjs",

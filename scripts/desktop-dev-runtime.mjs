@@ -141,3 +141,9 @@ export function ensureDevelopmentRuntime(
     throw new Error("AI Host runtime provenance mismatch; rerun pnpm dev");
   return directory;
 }
+
+if (process.argv[2] === "--prepare") {
+  const [root, directory, kind] = process.argv.slice(3);
+  if (kind === "override") verifyDevelopmentRuntime(root, directory);
+  else ensureDevelopmentRuntime(root, directory);
+}

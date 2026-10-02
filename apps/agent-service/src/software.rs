@@ -383,19 +383,7 @@ pub(crate) fn compile(
             .get(action.behavior.installer())
             .cloned()
             .ok_or(Error::Untrusted)?;
-        if matches!(adapter, SoftwareKind::Homebrew | SoftwareKind::Winget) {
-            let name = if adapter == SoftwareKind::Homebrew {
-                let leaf = action.package.rsplit('/').next().ok_or(Error::Protocol)?;
-                if !leaf
-                    .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b"@+_.-".contains(&b))
-                {
-                    return Err(Error::Protocol);
-                }
-                format!("{leaf}.rb")
-            } else {
-                "manifest.yaml".into()
-            };
+        if let Some(name) = native_export_name(adapter, &action.package)? {
             primary.0 = execution_runner::staging::native_export(
                 &primary.0,
                 &primary.1.sha256,
@@ -670,6 +658,30 @@ fn bundle_directory(members: &BTreeMap<String, PathBuf>, entry: &str) -> Result<
     }
     Ok(root.to_path_buf())
 }
+// Native package managers require these filenames; the name never comes from a wire path.
+pub(crate) fn native_export_name(
+    adapter: SoftwareKind,
+    package: &str,
+) -> Result<Option<String>, Error> {
+    Ok(Some(match adapter {
+        SoftwareKind::Pkg => "package.pkg".into(),
+        SoftwareKind::Msi => "package.msi".into(),
+        SoftwareKind::Winget => "manifest.yaml".into(),
+        SoftwareKind::Homebrew => {
+            let leaf = package.rsplit('/').next().ok_or(Error::Protocol)?;
+            if leaf.is_empty()
+                || !leaf
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"@+_.-".contains(&b))
+            {
+                return Err(Error::Protocol);
+            }
+            format!("{leaf}.rb")
+        }
+        _ => return Ok(None),
+    }))
+}
+
 #[cfg(test)]
 mod review_tests {
     use super::*;

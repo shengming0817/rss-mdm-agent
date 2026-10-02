@@ -348,8 +348,8 @@ fn acknowledged_final_capture_releases_slots_without_evicting_live_owners() {
     }
 }
 
-#[test]
-fn opened_script_and_cwd_survive_path_replacement() {
+#[tokio::test]
+async fn opened_script_and_cwd_survive_path_replacement() {
     let f = fixture(
         "printf '%s' \"$1\"\n",
         vec![
@@ -370,7 +370,7 @@ fn opened_script_and_cwd_survive_path_replacement() {
         .get(f.plan.digest().as_str())
         .cloned()
         .unwrap();
-    let materialized = source
+    let mut materialized = source
         .prepare(
             &f.plan,
             &AttemptId::new("object-binding").unwrap(),
@@ -382,10 +382,14 @@ fn opened_script_and_cwd_survive_path_replacement() {
     let original = f.root.with_extension("original");
     std::fs::rename(&f.root, &original).unwrap();
     std::fs::create_dir(&f.root).unwrap();
-    let mut command = std::process::Command::new(&materialized.interpreter);
+    let mut command = tokio::process::Command::new(&materialized.interpreter);
     command.args(&materialized.args).env_clear();
-    materialized.configure(&mut command).unwrap();
-    let output = command.output().unwrap();
+    materialized.configure(command.as_std_mut()).unwrap();
+    let (output, ()) = tokio::try_join!(
+        command.output(),
+        platform::deliver_payload(materialized.take_payload_input())
+    )
+    .unwrap();
     assert_eq!(output.stdout, b"original");
     assert!(output.status.success());
     drop(materialized);

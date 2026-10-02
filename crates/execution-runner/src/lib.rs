@@ -1,6 +1,7 @@
 //! Product OS adapters. No production authority, transport credential or automatic retry.
 #![deny(missing_docs)]
 mod diagnostics;
+pub use diagnostics::record_startup_failure;
 /// Authenticated per-login process delegation, without a second journal.
 pub mod helper;
 /// Local IPC envelopes and the sole execution application adapter.

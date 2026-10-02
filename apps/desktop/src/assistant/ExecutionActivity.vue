@@ -50,12 +50,12 @@ async function refresh() {
   }
 }
 watch(
-  () => [
-    props.operationId,
-    props.recorded,
-    props.controller.state.selected,
-    props.controller.view.value?.generation,
-    props.visible,
+  [
+    () => props.operationId,
+    () => props.recorded,
+    () => props.controller.state.selected,
+    () => props.controller.view.value?.generation,
+    () => props.visible,
   ],
   (next, previous, cleanup) => {
     owner?.abort();

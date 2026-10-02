@@ -33,6 +33,6 @@
 
 本地文档描述稳定需求与追踪映射。进度、父子关系和滚动波次只在 Azure Boards 的 [EPIC #2392](https://dev.azure.com/shengming0923/rss/_workitems/edit/2392) 维护，不在仓内复制 backlog 状态。
 
-- [本机安全服务架构](architecture/local-service.md)与[实验室指南](guides/local-service-lab.md)：#2462 双平台候选、一次性查询、私有进程协议与平台验收边界。
+- [本机安全服务架构](architecture/local-service.md)与[实验室指南](guides/local-service-lab.md)：唯一系统服务、开发 fixture、显式候选刷新与平台验收边界。
 - [本机安全服务来源](reference/local-service.md)：固定上游 revision、公开平台接口和运行包校验来源。
 - [服务目录](../crates/service-catalog/README.md)：参数投影、精确资源绑定与后端边界。

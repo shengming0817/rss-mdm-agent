@@ -39,7 +39,6 @@ struct HostState {
     owner: Host,
 }
 pub struct DesktopRuntime {
-    pub appearance: super::appearance::Appearance,
     pub execution: ExecutionHandle,
     pub users: Arc<std::sync::Mutex<super::users::Users>>,
     switching: Mutex<()>,
@@ -100,7 +99,6 @@ impl DesktopRuntime {
         ));
         let execution = ExecutionHandle::new().with_trusted_users(users.clone());
         let runtime = Self {
-            appearance: super::appearance::Appearance::default(),
             execution,
             users,
             switching: Mutex::new(()),

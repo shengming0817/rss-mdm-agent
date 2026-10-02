@@ -26,4 +26,4 @@ provider activation 通过既有 worker 私有管道传递，不写快照或来�
 
 Native–Host 使用私有继承 stdin/stdout 的有界承载，native/execution 两条逻辑通道共用同一 owner；Native 用户注册表产生可信 Caller/generation，UI 只能在绑定逻辑通道内通信。Host 只从当前 Native 上下文生成 execution-origin，Rust MCP 逐调用核对 principal 与 generation，协议 metadata 不能自证身份。设备执行服务按 authority/device 绑定，用户操作显式携带 RequestContext，内部核对以任务冻结 actor 授权。仅一个队列、SQLite owner 和执行线程，无按用户服务池；无任务时阻塞等待。
 
-当前没有历史数据兼容或迁移。[#2462](https://dev.azure.com/shengming0923/rss/_workitems/edit/2462) 增加独立安全状态服务的一次性 challenge，不向 AI worker 分发服务凭据；HMAC、凭据票据与 worker grant 不采用。进程承载、恢复与实验室边界见[安全服务架构](local-service.md)。AES-GCM 随机 IV 保留。运行和验证边界见 [Host 应用](../../apps/ai-host/README.md)。
+当前没有历史数据兼容或迁移。[#2462](https://dev.azure.com/shengming0923/rss/_workitems/edit/2462) 的历史独立状态服务已经退出，统一生产执行服务使用真实 OS 对等身份，不向 AI worker 分发服务凭据；HMAC、凭据票据与 worker grant 不采用。进程承载、恢复与实验室边界见[安全服务架构](local-service.md)。AES-GCM 随机 IV 保留。运行和验证边界见 [Host 应用](../../apps/ai-host/README.md)。

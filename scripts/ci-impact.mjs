@@ -75,6 +75,7 @@ export const sourceEdges = [
   [npm("ai-contract"), "ai-session-contract"],
   ["ai-session-contract", npm("ai-contract")],
   ["execution-app", npm("desktop")],
+  ["execution-runner", npm("desktop")],
   ["execution-app", npm("ai-host-app")],
   ["execution-mcp", npm("ai-host-app")],
   ["execution-mcp", npm("execution-bindings")],
@@ -86,6 +87,9 @@ export const sourceEdges = [
 ];
 export const testOwners = [
   ["scripts/service/execution-macos.py", "agent-service"],
+  ["scripts/service/verify-execution-macos.py", "agent-service"],
+  ["scripts/service/verify-execution-macos.test.py", "agent-service"],
+  ["tests/assistant/service-fixtures.json", "execution-runner"],
   ["scripts/service/execution-windows.ps1", "agent-service"],
   ["scripts/service/execution-windows.test.ps1", "agent-service"],
   ["scripts/service/execution-macos.test.py", "agent-service"],

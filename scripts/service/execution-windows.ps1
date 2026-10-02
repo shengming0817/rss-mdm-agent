@@ -1,10 +1,12 @@
 # Install the sole production service and its per-login physical helper.
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory)][ValidateSet('Install','Remove','Status')][string]$Action,
+    [Parameter(Mandatory)][ValidateSet('Install','Refresh','Remove','Status')][string]$Action,
     [Parameter(Mandatory)][ValidateSet('System','User')][string]$Scope,
     [string]$Binary,
-    [string]$Config
+    [string]$Config,
+    [string]$CandidateBinary,
+    [string]$CandidateConfig
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -37,6 +39,69 @@ function Assert-Binary {
     }
     return $Item.FullName
 }
+# ref: Microsoft ScheduledTasks New-ScheduledTaskPrincipal/Get-ScheduledTaskInfo.
+# Persistent DPAPI inspection runs as the same LocalSystem identity as the service.
+# The caller has already verified the fixed protected image and current deployment pins.
+function Assert-SystemPersistent([string]$Image, [string]$Deployment) {
+    if (![IO.Path]::IsPathFullyQualified($Image) -or ![IO.Path]::IsPathFullyQualified($Deployment) -or $Image.Contains('"') -or $Deployment.Contains('"')) { throw 'Protected absolute validation candidate required' }
+    $DiagnosticTask = 'RssExecution-Validate-' + [guid]::NewGuid()
+    $Principal = New-ScheduledTaskPrincipal -UserId 'S-1-5-18' -LogonType ServiceAccount -RunLevel Highest
+    $Validation = New-ScheduledTaskAction -Execute $Image -Argument ('--config "' + $Deployment + '" --validate-persistent')
+    $Settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::FromSeconds(15)) -MultipleInstances IgnoreNew
+    $Registered = $false
+    $Completed = $false
+    try {
+        $null = Register-ScheduledTask -TaskName $DiagnosticTask -Action $Validation -Principal $Principal -Settings $Settings -ErrorAction Stop
+        $Registered = $true
+        $Before = (Get-ScheduledTaskInfo -TaskName $DiagnosticTask -ErrorAction Stop).LastRunTime
+        Start-ScheduledTask -TaskName $DiagnosticTask -ErrorAction Stop
+        $Deadline = [Diagnostics.Stopwatch]::StartNew()
+        while ($Deadline.Elapsed.TotalSeconds -lt 20) {
+            $Info = Get-ScheduledTaskInfo -TaskName $DiagnosticTask -ErrorAction Stop
+            $State = (Get-ScheduledTask -TaskName $DiagnosticTask -ErrorAction Stop).State
+            if ($Info.LastRunTime -gt $Before -and $State -eq 'Ready') {
+                $Completed = $true
+                if ($Info.LastTaskResult -ne 0) { throw 'System identity/storage validation failed; original service retained' }
+                return
+            }
+            Start-Sleep -Milliseconds 100
+        }
+        throw 'System identity/storage validation deadline exceeded; original service retained'
+    } finally {
+        if ($Registered) {
+            if (!$Completed) { Stop-ScheduledTask -TaskName $DiagnosticTask -ErrorAction Stop }
+            Unregister-ScheduledTask -TaskName $DiagnosticTask -Confirm:$false -ErrorAction Stop
+        }
+    }
+}
+function Assert-Refresh {
+    $OriginalBinary=$Binary
+    try { $null=Assert-Binary; $Binary=$CandidateBinary; $null=Assert-Binary } finally { $Binary=$OriginalBinary }
+    if (!$Config -or !$CandidateConfig -or !$CandidateBinary) { throw 'Refresh requires current and candidate binary/config' }
+    $Old = (& $Binary --config $Config --validate-installation | ConvertFrom-Json)
+    if ($LASTEXITCODE -ne 0) { throw 'Current candidate failed native validation' }
+    $New = (& $CandidateBinary --config $CandidateConfig --validate-installation | ConvertFrom-Json)
+    if ($LASTEXITCODE -ne 0) { throw 'New candidate failed native validation' }
+    if ($Old.version -ne 2 -or $New.version -ne 2 -or $Old.ipc_version -ne 6 -or $New.ipc_version -ne 6 -or $Old.service.path -cne $Binary -or $New.service.path -cne $CandidateBinary) { throw 'Current-format candidate/protocol required' }
+    foreach ($Field in @('origin','tenant','enrollment','registration_operation','state_root','helper_work_roots')) {
+        if (($Old.$Field | ConvertTo-Json -Depth 20 -Compress) -cne ($New.$Field | ConvertTo-Json -Depth 20 -Compress)) { throw 'Refresh cannot replace identity or persistent state' }
+    }
+    foreach ($Field in @('work_root','material_root')) { if ($Old.execution.$Field -cne $New.execution.$Field) { throw 'Refresh cannot replace unresolved task resources' } }
+    Assert-SystemPersistent $Binary $Config
+    Assert-SystemPersistent $CandidateBinary $CandidateConfig
+    return $New
+}
+function Publish-Config($Path, $Document) {
+    $Temporary=$Path+'.refresh'
+    $Data=[Text.Encoding]::UTF8.GetBytes(($Document | ConvertTo-Json -Depth 30))
+    $Created=$false
+    try {
+        $Stream=[IO.File]::Open($Temporary,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
+        $Created=$true
+        try { $Stream.Write($Data,0,$Data.Length); $Stream.Flush($true) } finally { $Stream.Dispose() }
+        [IO.File]::Replace($Temporary,$Path,$null)
+    } finally { if ($Created -and [IO.File]::Exists($Temporary)) { [IO.File]::Delete($Temporary) } }
+}
 if ($Scope -eq 'System') {
     $Service = Get-CimInstance Win32_Service -Filter "Name='$Name'"
     if ($Action -eq 'Status') { $Service | Select-Object Name,State,StartName,PathName; return }
@@ -46,6 +111,23 @@ if ($Scope -eq 'System') {
         Stop-Service -Name $Name -ErrorAction Stop
         & sc.exe delete $Name
         if ($LASTEXITCODE -ne 0) { throw 'SCM deletion failed' }
+        return
+    }
+    if ($Action -eq 'Refresh') {
+        if (!$Service -or $Service.PathName -cne ('"' + $Binary + '"' + $ConfigArgs) -or $Service.StartName -ne 'LocalSystem') { throw 'Refusing to refresh an unrelated service' }
+        $Next = Assert-Refresh
+        foreach ($Subject in $Next.helper_work_roots.PSObject.Properties.Name) {
+            if (Get-ScheduledTask -TaskName ("RssExecution-$Subject") -ErrorAction SilentlyContinue) { throw 'Remove matching helper from its actual login before system refresh' }
+        }
+        $Default=Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'RSS MDM Agent\execution.json'
+        if ($Default -cne $Config -and [IO.File]::Exists($Default)) { throw 'Refresh requires the default production config; custom controlled deployments use their installation owner' }
+        Stop-Service -Name $Name -ErrorAction Stop
+        (Get-Service -Name $Name).WaitForStatus('Stopped', [TimeSpan]::FromSeconds(10))
+        Publish-Config $Config $Next
+        & sc.exe config $Name binPath= ('"' + $CandidateBinary + '" --config "' + $Config + '"')
+        if ($LASTEXITCODE -ne 0) { throw 'SCM refresh failed; registration retained' }
+        Start-Service -Name $Name
+        Write-Output 'Registered current candidate; authenticated user readiness check required'
         return
     }
     if ($Service) { throw 'Service already exists; no overwrite or upgrade path' }
@@ -71,6 +153,7 @@ if ($Scope -eq 'System') {
         Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
         return
     }
+    if ($Action -eq 'Refresh') { throw 'Helper refresh uses Remove/Install in the actual login after administrator publication' }
     if ($Task) { throw 'User helper already exists; no overwrite or upgrade path' }
     $Path = Assert-Binary
     $Principal = New-ScheduledTaskPrincipal -UserId $Sid -LogonType Interactive -RunLevel Limited

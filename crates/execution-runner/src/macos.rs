@@ -225,17 +225,43 @@ pub(crate) fn encoding(encoding: ArtifactEncoding) -> Result<(), Error> {
 }
 pub(crate) fn payload(
     file: File,
-    _: &[u8],
+    bytes: &[u8],
     _: &Path,
     _: &AttemptId,
     _: &VersionedRef,
 ) -> Result<crate::materialize::Payload, Error> {
-    use std::os::fd::AsRawFd;
+    use std::os::fd::{AsRawFd, OwnedFd};
+    // A user-owned named snapshot would let another process of that UID retain a write FD.
+    // Pass only the verified bytes through an anonymous read-only pipe instead. The existing
+    // process input task feeds it after spawn, under the same cancellation and timeout owner.
+    // ref: rust-lang/rust library/std/src/io/pipe.rs (anonymous_pipe, stable since 1.87).
+    let (file, input) = if unsafe { libc::geteuid() } != 0 {
+        let (reader, writer) = std::io::pipe().map_err(|_| Error::Unavailable)?;
+        (
+            File::from(OwnedFd::from(reader)),
+            Some((writer, bytes.to_vec())),
+        )
+    } else {
+        (file, None)
+    };
     Ok(crate::materialize::Payload {
         path: format!("/dev/fd/{}", file.as_raw_fd()).into(),
         file: Some(file),
+        input,
         directory: None,
     })
+}
+// ref: tokio@1.53.1 src/net/unix/pipe.rs, Sender::from_owned_fd validates write access
+// and registers a nonblocking pipe; dropping the cancelled input future closes its writer.
+pub(crate) async fn deliver_payload(
+    input: Option<(std::io::PipeWriter, Vec<u8>)>,
+) -> std::io::Result<()> {
+    use tokio::io::AsyncWriteExt;
+    if let Some((writer, bytes)) = input {
+        let mut sender = tokio::net::unix::pipe::Sender::from_owned_fd(writer.into())?;
+        sender.write_all(&bytes).await?;
+    }
+    Ok(())
 }
 pub(crate) struct WorkingDirectory(File);
 impl WorkingDirectory {
@@ -288,6 +314,103 @@ impl PathLease {
 #[cfg(test)]
 mod path_tests {
     use super::*;
+    #[tokio::test]
+    async fn helper_script_pipe_has_no_name_and_ignores_retained_source_write_fds() {
+        use std::io::{Seek, Write};
+        use std::os::{
+            fd::AsRawFd,
+            unix::fs::{FileTypeExt, PermissionsExt},
+        };
+        let root = std::env::temp_dir()
+            .canonicalize()
+            .unwrap()
+            .join(format!("rss-script-pipe-{}", std::process::id()));
+        native_process::private_storage::directory(&root).unwrap();
+        let source = root.join("input");
+        // Larger than a pipe buffer: preparation must not preload and block before spawning.
+        let bytes = format!(
+            "{}printf 'exact-snapshot\\n'\n",
+            "# verified comment\n".repeat(100_000)
+        );
+        let mut original = File::create(&source).unwrap();
+        original.write_all(bytes.as_bytes()).unwrap();
+        let mut external_writer = original.try_clone().unwrap();
+        original
+            .set_permissions(std::fs::Permissions::from_mode(0o000))
+            .unwrap();
+        let profile = VersionedRef {
+            id: Id::new("native-posix-sh-file").unwrap(),
+            revision: Id::new("1").unwrap(),
+        };
+        let mut captured = payload(
+            original,
+            bytes.as_bytes(),
+            &root,
+            &AttemptId::new("pipe").unwrap(),
+            &profile,
+        )
+        .unwrap();
+        let descriptor = captured.file.as_ref().unwrap();
+        assert!(descriptor.metadata().unwrap().file_type().is_fifo());
+        assert_eq!(
+            unsafe { libc::fcntl(descriptor.as_raw_fd(), libc::F_GETFL) } & libc::O_ACCMODE,
+            libc::O_RDONLY
+        );
+        assert_eq!(
+            unsafe { libc::write(descriptor.as_raw_fd(), b"evil".as_ptr().cast(), 4) },
+            -1
+        );
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::EBADF)
+        );
+        assert_eq!(
+            std::fs::read_dir(&root).unwrap().count(),
+            1,
+            "no named snapshot may be exposed"
+        );
+        // Already acquired writable handles cannot change the verified byte stream.
+        external_writer.rewind().unwrap();
+        external_writer
+            .write_all(b"printf 'tampered\\n'\n")
+            .unwrap();
+        let mut command = tokio::process::Command::new("/bin/sh");
+        command.arg(&captured.path);
+        let cwd = WorkingDirectory::open(&root).unwrap();
+        cwd.configure(command.as_std_mut(), descriptor).unwrap();
+        let (output, ()) =
+            tokio::try_join!(command.output(), deliver_payload(captured.input.take())).unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(output.stdout, b"exact-snapshot\n");
+        assert_eq!(std::fs::metadata(&source).unwrap().mode() & 0o777, 0);
+        drop(captured);
+        drop(external_writer);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[tokio::test]
+    async fn full_unread_script_pipe_feed_can_be_cancelled_and_dropped() {
+        use std::os::fd::OwnedFd;
+        let (_reader, writer) = std::io::pipe().unwrap();
+        let mut feeding = tokio::spawn(deliver_payload(Some((writer, vec![b'#'; 1024 * 1024]))));
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(20), &mut feeding)
+                .await
+                .is_err()
+        );
+        feeding.abort();
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_secs(1), feeding)
+                .await
+                .unwrap()
+                .unwrap_err()
+                .is_cancelled()
+        );
+        let _reader = File::from(OwnedFd::from(_reader));
+    }
     #[test]
     fn read_only_acl_is_allowed_but_mutation_acl_is_rejected() {
         use std::os::unix::fs::PermissionsExt;

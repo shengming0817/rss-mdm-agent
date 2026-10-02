@@ -112,6 +112,7 @@ pub struct Data {
     pub cancellations: Vec<TaskCancellation>,
     pub result_hook: Option<Arc<dyn Fn() + Send + Sync>>,
     pub claim_failure: bool,
+    pub explicit_offers: bool,
     pub claim_ops: Vec<String>,
     pub claim_inputs: Vec<Value>,
     pub claims: BTreeMap<String, SignedTask>,
@@ -130,9 +131,7 @@ impl Data {
     }
     pub fn script(&mut self) {
         self.attempt = Uuid::new_v4();
-        self.started = false;
-        self.received = false;
-        self.start_permit = None;
+        self.reset_current_task();
         let spec = TaskSpec {
             wire_version: 5,
             tenant_id: self.tenant,
@@ -162,6 +161,7 @@ impl Data {
         self.offer = Some(self.signed(TaskPayload::Script(spec)));
     }
     pub fn software(&mut self, steps: usize, user: bool) {
+        self.reset_current_task();
         let command = SoftwareTaskInvocation {
             run_as: ExecutionIdentity::System,
             arguments: vec![],
@@ -228,6 +228,12 @@ impl Data {
         };
         self.offer = Some(self.signed(TaskPayload::Software(spec)));
     }
+    fn reset_current_task(&mut self) {
+        self.started = false;
+        self.received = false;
+        self.start_permit = None;
+        self.chunks.clear();
+    }
 }
 pub struct Server {
     pub url: url::Url,
@@ -278,6 +284,7 @@ impl Server {
             cancellations: Vec::new(),
             result_hook: None,
             claim_failure: false,
+            explicit_offers: false,
             claim_ops: vec![],
             claim_inputs: vec![],
             claims: BTreeMap::new(),
@@ -423,9 +430,26 @@ fn claim_response(d: &mut Data, value: Value) -> Response {
             .as_ref()
             .is_none_or(|v| v.payload.expires_at() <= d.time.now().unwrap())
         {
+            if d.explicit_offers {
+                return axum::Json(TaskClaimResponse::new(None, d.cancellations.clone()).unwrap())
+                    .into_response();
+            }
             d.script();
         }
-        let signed = d.offer.clone().unwrap();
+        let mut signed = d.offer.clone().unwrap();
+        if d.explicit_offers
+            && !d
+                .claims
+                .values()
+                .any(|v| v.payload.task_id() == signed.payload.task_id())
+        {
+            if let TaskPayload::Software(mut spec) = signed.payload.clone() {
+                spec.execution_context =
+                    serde_json::from_value(value["executionContext"].clone()).unwrap();
+                signed = d.signed(TaskPayload::Software(spec));
+                d.offer = Some(signed.clone());
+            }
+        }
         d.claims.insert(op, signed.clone());
         signed
     };

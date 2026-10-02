@@ -16,6 +16,11 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
+import { cargoTargetDir } from "./cargo-target.mjs";
+import {
+  runPreparation,
+  reapOwnedProcessGroup,
+} from "./desktop-dev-process.mjs";
 import { randomBytes } from "node:crypto";
 import { createServer } from "node:net";
 import { DatabaseSync } from "node:sqlite";
@@ -33,7 +38,44 @@ import { verifyRuntimeIntegrity } from "./ai-host-artifacts.mjs";
 
 const visualOnly = process.argv.includes("--visual");
 const baseline = process.argv.includes("--baseline");
-let visualFixture;
+const controlledService = process.argv.includes("--controlled-service");
+const passwordFileIndex = process.argv.indexOf("--authorization-password-file");
+const authorizationPasswordFile =
+  passwordFileIndex < 0 ? undefined : process.argv[passwordFileIndex + 1];
+assert.ok(
+  passwordFileIndex < 0 ||
+    (controlledService && authorizationPasswordFile?.startsWith("/")),
+  "authorization password file requires controlled service mode and an absolute path",
+);
+let serviceWorker,
+  serviceReady,
+  serviceOutput = "",
+  serviceSequence = 0;
+const servicePending = new Map();
+function serviceCall(method, input = {}) {
+  return new Promise((resolve, reject) => {
+    const id = ++serviceSequence;
+    const timer = setTimeout(
+      () => {
+        servicePending.delete(id);
+        reject(new Error(`service ${method} deadline exceeded`));
+      },
+      method === "completion" ? 90000 : 15000,
+    );
+    servicePending.set(id, {
+      resolve(value) {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      reject(error) {
+        clearTimeout(timer);
+        reject(error);
+      },
+    });
+    serviceWorker.stdin.write(JSON.stringify({ id, method, ...input }) + "\n");
+  });
+}
+let visualFixture, awake;
 const root = fileURLToPath(new URL("../", import.meta.url));
 const reports = join(root, ".local-ci-runs");
 const nonce = randomBytes(16).toString("hex");
@@ -45,7 +87,7 @@ const result = {
   credentials: "synthetic-loopback-only",
   provider: "codex-0.155.0",
   executor:
-    "installed execution service; legacy journal assertions require #2593 migration",
+    "authenticated unified service; service-owned journal and independent effects",
   keychain: "isolated noninteractive macOS file keychain",
   messageInput:
     "visible product submit button; physical Return delivery unverified on this interactive desktop",
@@ -111,6 +153,7 @@ for (const signal of ["SIGINT", "SIGTERM"])
     spawnError = new Error("native acceptance cancelled");
     // The dev wrapper owns Tauri/Vite/main and their bounded process-group shutdown.
     signalRoot("SIGTERM");
+    serviceWorker?.kill("SIGTERM");
   });
 const mark = (value) => {
   stage = value;
@@ -153,7 +196,13 @@ const key = (code, shift = false) => {
 };
 const menu = (label) =>
   native(
-    `click menu item "${label}" of menu 1 of menu bar item "RSS MDM Agent" of menu bar 1`,
+    `repeat with candidate in menu bar items of menu bar 1
+      if exists menu item "${label}" of menu 1 of candidate then
+        click menu item "${label}" of menu 1 of candidate
+        return
+      end if
+    end repeat
+    error "Owned application menu item missing: ${label}"`,
   );
 const click = async (name, scope = "") => {
   const el = await wait(async () => {
@@ -259,23 +308,32 @@ const dbRead = (file, action) => {
     db.close();
   }
 };
-const task = () =>
-  dbRead("execution.sqlite", (db) => {
-    const row = db
-      .prepare("SELECT plan,snapshot FROM executions WHERE request_id=?")
-      .get("native-golden-install");
-    return (
-      row && {
-        plan: JSON.parse(Buffer.from(row.plan).toString()),
-        snapshot: JSON.parse(Buffer.from(row.snapshot).toString()),
-      }
-    );
-  });
+const task = async () => {
+  const reply = await serviceCall("query");
+  const request = fixture.facts.request;
+  const existing = reply.value.items.find(
+    (row) => row.status.operationRequestId === request,
+  );
+  if (existing) return { plan: existing.action, snapshot: existing.status };
+  const pending = reply.preparations.find(
+    (row) => row.offer.request === request,
+  );
+  return (
+    pending && {
+      pending,
+      snapshot: { attempts: 0, cancelRequested: pending.state === "cancelled" },
+    }
+  );
+};
 try {
   result.source = sourceEvidence(root);
   assert.equal(process.platform, "darwin");
   assert.equal(process.arch, "arm64");
-  keychainState = systemKeychains();
+  if (!visualOnly && !controlledService)
+    throw new Error(
+      "real execution acceptance requires explicit --controlled-service; no service is installed by ordinary UI development",
+    );
+  keychainState = visualOnly ? undefined : systemKeychains();
   assert.equal(
     execFileSync(
       "/usr/bin/swift",
@@ -299,7 +357,14 @@ try {
     result.source.pnpm,
     packageManifest.packageManager.split("@")[1],
   );
-  fixture = await startModelFixture();
+  // Temporary assertion owned by this run; never changes lock settings or unlocks a desktop.
+  awake = spawn("/usr/bin/caffeinate", ["-diu", "-w", String(process.pid)], {
+    stdio: "ignore",
+  });
+  awake.on("error", (error) => {
+    spawnError = error;
+  });
+  fixture = visualOnly ? undefined : await startModelFixture();
   directory = realpathSync(mkdtempSync("/tmp/rss-native-"));
   const reserved = createServer();
   await new Promise((resolve) => reserved.listen(0, "127.0.0.1", resolve));
@@ -311,16 +376,12 @@ try {
   let webPort = webReserved.address().port;
   await new Promise((resolve) => webReserved.close(resolve));
   if (visualOnly) {
-    const { startFixture } = await import("../tests/assistant/server.mjs");
-    visualFixture = await startFixture();
-    await visualFixture.seed(2);
-    webPort = Number(new URL(visualFixture.url).port);
     result.mode = "pnpm-dev-main-visual";
     result.provider = "FakeHost renderer fixture";
     result.executor =
-      "none; read-only sample resources, Rust-generated execution projections";
+      "fixture-none; isolated interaction state and Rust-generated projections";
     result.productionExecution =
-      "unverified; installed execution service unavailable in baseline";
+      "absent in fixture assembly; real service evidence is separate";
   }
   const baseConfig = JSON.parse(
     readFileSync(join(root, "apps/desktop/src-tauri/tauri.conf.json"), "utf8"),
@@ -328,7 +389,7 @@ try {
   const nativeConfig = {
     build: {
       devUrl: visualFixture?.url ?? `http://127.0.0.1:${webPort}`,
-      beforeDevCommand: visualOnly ? "" : `pnpm dev:web --port ${webPort}`,
+      beforeDevCommand: `pnpm dev:web --port ${webPort}`,
     },
     app: {
       security: {
@@ -346,25 +407,157 @@ try {
     RSS_NATIVE_E2E_PORT: String(port),
     RSS_NATIVE_E2E_WEB_PORT: String(webPort),
   };
+  if (visualOnly)
+    visualFixture = {
+      async delivery() {
+        const reply = await fetch(
+          `http://127.0.0.1:${webPort}/__fixture/visual-delivery`,
+          { method: "POST" },
+        );
+        assert.equal(reply.ok, true);
+      },
+    };
   delete env.RSS_AI_HOST_RUNTIME;
   delete env.CODEX_HOME;
-  mark("launch root pnpm dev");
-  child = spawn(
-    "pnpm",
-    [
-      "dev",
-      "--no-watch",
-      "--config",
-      JSON.stringify(nativeConfig),
-      "--features",
-      "native-e2e",
-      "--",
-      "--",
-      "--test-data-dir",
-      directory,
-    ],
-    { cwd: root, env, detached: true, stdio: ["ignore", "pipe", "pipe"] },
-  );
+  if (visualOnly) {
+    mark("launch root pnpm dev");
+    child = spawn(
+      "pnpm",
+      [
+        "dev",
+        ...(visualOnly ? ["--fixture"] : []),
+        "--no-watch",
+        "--config",
+        JSON.stringify(nativeConfig),
+        "--features",
+        "native-e2e",
+        "--",
+        "--",
+        "--test-data-dir",
+        directory,
+      ],
+      { cwd: root, env, detached: true, stdio: ["ignore", "pipe", "pipe"] },
+    );
+  } else {
+    mark("prepare fixed native production candidate");
+    for (const [command, args] of [
+      ["pnpm", ["build:ai-access"]],
+      ["pnpm", ["--filter", "@rss-mdm-agent/desktop", "build"]],
+      [
+        process.execPath,
+        [
+          join(root, "scripts/desktop-dev-runtime.mjs"),
+          "--prepare",
+          root,
+          join(root, ".local-ci-runs/ai-host-dev-runtime"),
+          "build",
+        ],
+      ],
+      ["pnpm", ["desktop:build", "--native-acceptance"]],
+      [
+        "cargo",
+        [
+          "build",
+          "--locked",
+          "--release",
+          "-p",
+          "agent-service",
+          "--example",
+          "controlled-backend",
+          "--bin",
+          "rss-execution-service",
+        ],
+      ],
+    ])
+      assert.equal(
+        await runPreparation(command, args, root, env),
+        0,
+        "native candidate preparation failed",
+      );
+    mark(
+      "explicit controlled installation; native administrator authorization",
+    );
+    const serviceEvidence = join(
+      reports,
+      `native-service-${nonce.slice(0, 8)}`,
+    );
+    result.serviceEvidence = serviceEvidence;
+    serviceWorker = spawn(
+      "/usr/bin/python3",
+      [
+        join(root, "scripts/service/verify-execution-macos.py"),
+        "--binary",
+        join(cargoTargetDir(root), "release/rss-execution-service"),
+        "--backend",
+        join(cargoTargetDir(root), "release/examples/controlled-backend"),
+        "--desktop",
+        join(cargoTargetDir(root), "debug/rss-mdm-desktop"),
+        "--output",
+        serviceEvidence,
+        ...(authorizationPasswordFile
+          ? ["--authorization-password-file", authorizationPasswordFile]
+          : []),
+      ],
+      { cwd: root, detached: true, stdio: ["pipe", "pipe", "pipe"] },
+    );
+    serviceWorker.on("error", (error) => {
+      spawnError = error;
+    });
+    serviceWorker.stdin.on("error", (error) => {
+      for (const pending of servicePending.values()) pending.reject(error);
+      servicePending.clear();
+    });
+    serviceWorker.on("exit", () => {
+      for (const pending of servicePending.values())
+        pending.reject(new Error("controlled service owner exited"));
+      servicePending.clear();
+    });
+    serviceWorker.stdout.setEncoding("utf8");
+    serviceWorker.stdout.on("data", (chunk) => {
+      serviceOutput += chunk;
+      for (let newline; (newline = serviceOutput.indexOf("\n")) >= 0; ) {
+        const line = serviceOutput.slice(0, newline);
+        serviceOutput = serviceOutput.slice(newline + 1);
+        try {
+          const value = JSON.parse(line);
+          if (value.kind === "desktopService") serviceReady = value;
+          else {
+            servicePending.get(value.id)?.resolve(value.value);
+            servicePending.delete(value.id);
+          }
+        } catch {
+          logs += line + "\n";
+        }
+      }
+    });
+    serviceWorker.stderr.on("data", (chunk) => {
+      logs += chunk;
+      process.stderr.write(chunk);
+    });
+    await wait(() => {
+      assert.equal(serviceWorker.exitCode, null, logs.slice(-3000));
+      return serviceReady;
+    }, 180000);
+    result.serviceArtifact = serviceReady.service;
+    const probe = JSON.parse(
+      execFileSync(serviceReady.desktop, ["--service-probe"], {
+        encoding: "utf8",
+      }),
+    );
+    assert.equal(probe.phase, "connected");
+    assert.equal(probe.status.readiness.phase, "ready");
+    assert.equal((await serviceCall("status")).startRequests, 0);
+    env.RSS_AI_HOST_RUNTIME = join(root, ".local-ci-runs/ai-host-dev-runtime");
+    mark("launch protected fixed production main as the actual login user");
+    child = spawn(serviceReady.desktop, ["--test-data-dir", directory], {
+      cwd: root,
+      env,
+      detached: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    result.mode = "protected-fixed-main";
+    result.protectedDesktop = serviceReady.desktop;
+  }
   result.devPid = child.pid;
   writeReport();
   child.on("error", (error) => {
@@ -383,6 +576,11 @@ try {
       for (let newline; (newline = buffer.indexOf("\n")) >= 0; ) {
         const line = buffer.slice(0, newline);
         buffer = buffer.slice(newline + 1);
+        process.stderr.write(
+          line
+            .replaceAll(nonce, "[redacted-capability]")
+            .replaceAll(fixture?.secret ?? "<none>", "[redacted]") + "\n",
+        );
         if (line.startsWith("RSS_NATIVE_E2E "))
           receipt = JSON.parse(line.slice(15));
         if (line.startsWith("RSS_AI_HOST_STATUS "))
@@ -392,19 +590,26 @@ try {
   }
   await wait(() => {
     assert.equal(child.exitCode, null, logs.slice(-3000));
-    return receipt && hostStatus;
+    return receipt && (visualOnly || hostStatus);
   }, 600000);
   assert.equal(receipt.nonceSha256, sha256(nonce));
   assert.equal(receipt.port, port);
   assert.equal(receipt.dataRootSha256, sha256(directory));
-  assert.equal(hostStatus.phase, "ready");
-  assert.equal(hostStatus.source, "development_override");
-  assert.ok(
-    ["native-e2e.keychain", "native-e2e.keychain-db"].some((name) =>
-      existsSync(join(directory, name)),
-    ),
-    "native acceptance must own an isolated OS keychain",
-  );
+  if (!visualOnly) {
+    assert.equal(hostStatus.phase, "ready");
+    assert.equal(hostStatus.source, "development_override");
+    assert.ok(
+      ["native-e2e.keychain", "native-e2e.keychain-db"].some((name) =>
+        existsSync(join(directory, name)),
+      ),
+      "native acceptance must own an isolated OS keychain",
+    );
+  } else {
+    assert.equal(existsSync(join(directory, "execution.sqlite")), false);
+    result.hostPreparation = "not-required";
+    result.keychain = "not-accessed";
+    result.productionIPC = "absent";
+  }
   await wait(() => {
     try {
       return (
@@ -419,14 +624,17 @@ try {
     }
   });
   const artifact = join(root, ".local-ci-runs/ai-host-dev-runtime");
-  const manifest = JSON.parse(readFileSync(join(artifact, "manifest.json")));
-  assert.equal(manifest.kind, "development");
-  assert.equal(manifest.status, "passed");
-  assert.equal(manifest.developmentFingerprint, developmentFingerprint(root));
-  verifyRuntimeIntegrity(artifact, manifest.runtimeTreeSha256);
-  result.runtimeManifestSha256 = sha256(
-    readFileSync(join(artifact, "manifest.json")),
-  );
+  let manifest;
+  if (!visualOnly) {
+    manifest = JSON.parse(readFileSync(join(artifact, "manifest.json")));
+    assert.equal(manifest.kind, "development");
+    assert.equal(manifest.status, "passed");
+    assert.equal(manifest.developmentFingerprint, developmentFingerprint(root));
+    verifyRuntimeIntegrity(artifact, manifest.runtimeTreeSha256);
+    result.runtimeManifestSha256 = sha256(
+      readFileSync(join(artifact, "manifest.json")),
+    );
+  }
   const processField = (pid, field) =>
     execFileSync("/bin/ps", ["-p", String(pid), "-o", field + "="], {
       encoding: "utf8",
@@ -437,7 +645,7 @@ try {
   assert.equal(
     ancestor,
     child.pid,
-    "driver main must descend from this root pnpm dev",
+    "driver main must descend from this run owner",
   );
   const hostPid = () => {
     let children;
@@ -457,13 +665,13 @@ try {
     assert.ok(hosts.length <= 1, "one owned AI Host process");
     return hosts[0];
   };
-  const initialHostPid = hostPid();
-  assert.ok(initialHostPid);
+  const initialHostPid = visualOnly ? undefined : hostPid();
+  if (!visualOnly) assert.ok(initialHostPid);
   result.owner = {
     mainPid: receipt.pid,
     hostPid: initialHostPid,
     mainBinarySha256: sha256(readFileSync(processField(receipt.pid, "comm"))),
-    hostGeneration: hostStatus.generation,
+    hostGeneration: hostStatus?.generation,
     dataRootSha256: receipt.dataRootSha256,
     driverPort: port,
   };
@@ -512,9 +720,7 @@ try {
   result.checks.push("webdriver-per-request-authentication");
   if (visualOnly) {
     mark("visual fixture in the product main WKWebView");
-    await browser.$('[aria-label="测试用户名"]').setValue("Visual Alice");
-    await click("进入");
-    await wait(() => browser.$('[aria-label="测试用户名"]').isEnabled());
+    await text("开发 fixture · 无真实设备执行");
     await navigate("AI 助手");
     await wait(() => browser.$(".composer textarea").isDisplayed());
     await browser.$(".new-conversation").click();
@@ -636,25 +842,8 @@ try {
         await navigate("AI 助手");
         // This is a real product submission to the explicit FakeHost renderer fixture.
         await prompt("原生视觉验收：解释当前任务记录");
-        const sessions = unwrap(
-          await visualFixture.host.store.listSessions(visualFixture.caller, {
-            limit: 20,
-          }),
-        );
-        const sessionId = sessions.items.find((row) =>
-          row.title.startsWith("原生视觉验收"),
-        ).namespace.sessionId;
-        const command = await visualFixture.command(sessionId);
-        await visualFixture.executionDelivery(sessionId, command.commandId);
+        await visualFixture.delivery();
         await wait(() => browser.$(".execution-activity").isDisplayed());
-        unwrap(
-          await visualFixture.host.advance(
-            visualFixture.caller,
-            sessionId,
-            command.commandId,
-            [{ type: "terminal", outcome: "completed" }],
-          ),
-        );
         await text("设备状态由独立执行记录呈现。S1 测试投影不代表设备变更。");
         for (const dark of [false, true]) {
           const theme = dark ? "dark" : "light";
@@ -1051,12 +1240,16 @@ try {
     const sidebar = await browser.execute(() => {
       const el = document.querySelector(".shell aside");
       const style = getComputedStyle(el);
+      const solid = document.createElement("span");
+      solid.style.backgroundColor = "var(--rss-color-navigation)";
+      el.append(solid);
+      const solidBackground = getComputedStyle(solid).backgroundColor;
+      solid.remove();
       return {
         width: el.getBoundingClientRect().width,
         padding: style.padding,
         background: style.backgroundColor,
-        solidBackground: getComputedStyle(document.querySelector(".shell main"))
-          .backgroundColor,
+        solidBackground,
       };
     });
     await click("开始对话");
@@ -1128,47 +1321,42 @@ try {
       : "explicit-selection-fallback";
     result.checks.push("native-copy-or-explicit-fallback");
 
-    await text("等待用户确认本次动作");
+    await text("等待本人确认");
     assert.equal(
-      task().snapshot.attempts,
+      (await task()).snapshot.attempts,
       0,
       "AI permission cannot replace Rust action confirmation",
     );
+    await prompt("GOLDEN_CANCEL_REJECT 拒绝取消");
+    await permission(false);
+    await text("完成 CANCEL_REJECT");
+    assert.equal((await task()).snapshot.cancelRequested, false);
+    assert.equal(
+      (await serviceCall("query")).value.items.length +
+        (await serviceCall("query")).preparations.length,
+      1,
+    );
+    mark("confirm the original prepared task through its product card");
+    await browser.execute(() => {
+      document.querySelector(".assistant-timeline").scrollTop = 0;
+    });
+    await click("确认上述操作");
+    mark("observe the original request creating its first attempt");
+    await wait(async () => (await task())?.snapshot.attempts === 1);
+    await text("查看设备操作");
     await click("查看设备操作");
-    await text("等待用户确认本次动作");
-    // Native Escape must close dialog and return focus to its trigger.
+    await wait(() => browser.$("dialog[open]").isDisplayed());
+    // Native Escape closes the actual execution inspector and restores its trigger.
     key(53);
     await wait(async () => !(await browser.$("dialog[open]").isExisting()));
     assert.equal(
       await browser.execute(() => document.activeElement?.textContent?.trim()),
       "查看设备操作",
     );
-    await prompt("GOLDEN_CANCEL_REJECT 拒绝取消");
-    await permission(false);
-    await text("完成 CANCEL_REJECT");
-    assert.equal(task().snapshot.cancelRequested, false);
-    await prompt("GOLDEN_DENY 拒绝新的操作");
-    await permission(false);
-    await text("完成 DENY");
-    assert.equal(
-      dbRead(
-        "execution.sqlite",
-        (db) => db.prepare("SELECT count(*) n FROM executions").get().n,
-      ),
-      1,
-    );
-    await click("查看设备操作");
-    await click("前往任务确认动作");
-    await wait(async () => !(await browser.$("dialog[open]").isExisting()));
-    await click("刷新任务");
-    await browser.$(".task-list .task-row").click();
-    await click("确认并执行");
-    await wait(() => task()?.snapshot.attempts === 1);
-    await navigate("AI 助手");
     await prompt("GOLDEN_CANCEL_ALLOW 允许取消请求");
     await permission(true);
     await text("完成 CANCEL_ALLOW");
-    await wait(() => task()?.snapshot.cancelRequested === true);
+    await wait(async () => (await task())?.snapshot.cancelRequested === true);
     await prompt("GOLDEN_READ 读取状态");
     await text("完成 READ");
     assert.equal(
@@ -1177,7 +1365,6 @@ try {
     );
     result.checks.push(
       "first-send-single-session",
-      "execute-allow-reject",
       "cancel-allow-reject",
       "reads-without-approval",
       "rust-confirmation-separate",
@@ -1322,6 +1509,29 @@ try {
       "all first-chat operations share one session",
     );
     mark("resource context in the same native conversation at three sizes");
+    // The first offer belongs to its original journal request. Publish a new fixed signed
+    // offer for catalogue interaction, without executing it or replacing that first request.
+    result.catalogOffer = await serviceCall("catalog");
+    await wait(async () =>
+      (await serviceCall("query")).available.some(
+        (offer) => offer.task === result.catalogOffer.task,
+      ),
+    );
+    assert.equal((await task()).snapshot.attempts, 1);
+    mark(
+      "reject a distinct fixed task without creating another execution intent",
+    );
+    await prompt("GOLDEN_DENY 拒绝新的操作");
+    await permission(false);
+    await text("完成 DENY");
+    assert.notEqual(fixture.facts.deniedRequest, fixture.facts.request);
+    const afterRejection = await serviceCall("query");
+    assert.equal(
+      afterRejection.value.items.length + afterRejection.preparations.length,
+      1,
+    );
+    assert.equal((await task()).snapshot.attempts, 1);
+    result.checks.push("execute-allow-reject");
     const proposalsBeforeContext = fixture.facts.proposals.length;
     for (const [width, height] of [
       [1100, 760],
@@ -1357,6 +1567,7 @@ try {
       await click("继续到所选会话");
       await wait(() => browser.$(".resource-context").isDisplayed());
       if (width < 1440) {
+        mark(`resource context ${width}×${height}: native diagnostic focus`);
         await browser.$(".connection-trigger").click();
         await wait(() =>
           browser.$('.context-panel [aria-label="AI 连接选择"]').isDisplayed(),
@@ -1405,6 +1616,7 @@ try {
         ),
         1,
       );
+      mark(`resource context ${width}×${height}: explicit provider context`);
       await browser
         .$(".composer textarea")
         .setValue("GOLDEN_CONTEXT 解释这个软件的版本与限制");
@@ -1661,10 +1873,22 @@ try {
       1,
     );
     assert.equal(sessions[0].stages[0].binding.providerVersion, "0.155.0");
-    assert.equal(task().snapshot.attempts, 1);
+    assert.equal((await task()).snapshot.attempts, 1);
+    result.completion = await serviceCall("completion", {
+      request: fixture.facts.request,
+    });
+    assert.equal(result.completion.request, fixture.facts.request);
+    assert.equal(result.completion.record.status.process.finished, true);
+    result.backend = result.completion.backend;
+    result.deviceEffect = result.completion.effect;
+    result.checks.push(
+      "service-terminal-process",
+      "backend-result-acknowledged",
+      "independent-device-effect",
+    );
     result.facts = {
       sessions: sessions.length,
-      attempts: task().snapshot.attempts,
+      attempts: (await task()).snapshot.attempts,
       model: fixture.facts,
     };
     result.checks.push("native-menu-quit", "host-processes-reaped");
@@ -1741,6 +1965,7 @@ try {
   }
   process.exitCode = 1;
 } finally {
+  awake?.kill("SIGTERM");
   if (browser && !cancelled)
     await Promise.race([browser.deleteSession().catch(() => {}), delay(5000)]);
   if (rootAlive()) {
@@ -1761,7 +1986,7 @@ try {
     }
   }
   await Promise.race([fixture?.close(), delay(2000)]);
-  await Promise.race([visualFixture?.close(), delay(2000)]);
+  await Promise.race([visualFixture?.close?.(), delay(2000)]);
   const owned = [
     receipt?.pid,
     result.owner?.hostPid,
@@ -1787,7 +2012,7 @@ try {
     process.exitCode = 1;
   }
   let keychainClean = cleanupComplete;
-  if (directory && cleanupComplete) {
+  if (!visualOnly && directory && cleanupComplete) {
     try {
       const path = ["native-e2e.keychain", "native-e2e.keychain-db"]
         .map((name) => join(directory, name))
@@ -1805,6 +2030,81 @@ try {
       result.cleanup = "isolated-keychain-cleanup-unconfirmed";
       result.status = cancelled ? "cancelled" : "failed";
       process.exitCode = 1;
+    }
+  }
+  if (serviceWorker) {
+    if (
+      serviceReady &&
+      serviceWorker.exitCode === null &&
+      serviceWorker.signalCode === null
+    ) {
+      try {
+        await serviceCall("finish", {
+          status: result.status,
+          request: fixture?.facts.request,
+        });
+      } catch {
+        result.status = "failed";
+        process.exitCode = 1;
+      }
+    }
+    console.log("[native] bounded controlled service owner cleanup");
+    serviceWorker.stdin.end();
+    result.serviceWorkerCleanup = await reapOwnedProcessGroup(serviceWorker);
+    if (
+      !result.serviceWorkerCleanup.confirmed ||
+      result.serviceWorkerCleanup.forced
+    ) {
+      result.status = cancelled ? "cancelled" : "failed";
+      result.serviceFailure = {
+        stage,
+        code: "native_service_worker_cleanup_forced",
+        detail: "controlled service worker required bounded termination",
+      };
+      result.failure ??= result.serviceFailure;
+      process.exitCode = 1;
+    }
+    const serviceReceipt =
+      result.serviceEvidence && join(result.serviceEvidence, "receipt.json");
+    if (serviceReceipt && existsSync(serviceReceipt))
+      result.serviceReceipt = JSON.parse(readFileSync(serviceReceipt, "utf8"));
+    result.serviceCleanup =
+      result.serviceReceipt?.cleanup === "complete"
+        ? result.serviceReceipt.installationCreated
+          ? "owned registration and default pin removed; persistent service state retained"
+          : "no owned system registration created; preparation resources cleaned"
+        : "unconfirmed; retained installation evidence";
+    if (serviceWorker.exitCode !== 0) {
+      result.status =
+        result.serviceReceipt?.status === "cancelled" || cancelled
+          ? "cancelled"
+          : "failed";
+      if (result.serviceReceipt?.error)
+        result.serviceFailure = {
+          stage,
+          code: "native_service_journey_incomplete",
+          detail: result.serviceReceipt.error,
+        };
+      result.failure ??= result.serviceFailure;
+      process.exitCode = 1;
+    } else {
+      if (!visualOnly && result.status === "passed") {
+        const records = result.serviceReceipt.journalProof.records.filter(
+          (row) => row.request === fixture.facts.request,
+        );
+        assert.equal(records.length, 1);
+        assert.equal(records[0].snapshot.attempts, 1);
+        assert.equal(records[0].process.finished, true);
+        assert.equal(
+          records[0].process.attemptId,
+          result.completion.record.status.attemptId,
+        );
+        assert.equal(
+          records[0].process.exitCode,
+          result.completion.record.status.process.exitCode,
+        );
+        assert.equal(result.serviceReceipt.status, "passed");
+      }
     }
   }
   writeReport();

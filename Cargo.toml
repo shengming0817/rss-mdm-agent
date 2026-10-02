@@ -1,5 +1,5 @@
 [workspace]
-members = ["apps/agent-service", "crates/agent-client", "crates/execution-runner", "crates/native-process", "crates/local-service", "apps/desktop/src-tauri", "crates/execution-contract", "crates/ai-session-contract", "crates/execution-interaction", "crates/execution-capability", "crates/execution-admission", "crates/service-catalog", "crates/execution-approval", "crates/execution-lifecycle", "crates/script-plan", "crates/execution-mcp", "crates/execution-sqlite", "crates/execution-app"]
+members = ["apps/agent-service", "crates/agent-client", "crates/execution-runner", "crates/native-process", "crates/installation-security", "apps/desktop/src-tauri", "crates/execution-contract", "crates/ai-session-contract", "crates/execution-interaction", "crates/execution-capability", "crates/execution-admission", "crates/service-catalog", "crates/execution-approval", "crates/execution-lifecycle", "crates/script-plan", "crates/execution-mcp", "crates/execution-sqlite", "crates/execution-app"]
 exclude = ["vendor/tauri-plugin-wdio-webdriver"]
 resolver = "2"
 
@@ -25,3 +25,8 @@ tokio = { version = "=1.53.1", default-features = false, features = ["rt", "macr
 tokio-util = { version = "=0.7.19", features = ["codec"] }
 futures-util = "=0.3.34"
 rusqlite = { version = "=0.32.1", default-features = false, features = ["bundled"] }
+
+# Native development still verifies complete protected images on every IPC request.
+# Keep hashing throughput close to the production profile without weakening those checks.
+[profile.dev.package.sha2]
+opt-level = 3

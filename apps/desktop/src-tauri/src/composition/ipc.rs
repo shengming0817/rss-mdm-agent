@@ -223,10 +223,18 @@ pub async fn ai_export_diagnostics<R: tauri::Runtime>(
 }
 
 #[tauri::command]
-pub async fn local_service_status() -> local_service::ServiceView {
-    tokio::task::spawn_blocking(local_service::inspect)
+pub fn development_assembly() -> &'static str {
+    if cfg!(feature = "dev-fixture") {
+        "fixture"
+    } else {
+        "production"
+    }
+}
+#[tauri::command]
+pub async fn execution_service_status() -> execution_runner::host::ServiceView {
+    tokio::task::spawn_blocking(execution_runner::host::ServiceClient::inspect)
         .await
-        .unwrap_or(local_service::ServiceView::Unavailable)
+        .unwrap_or(execution_runner::host::ServiceView::Unavailable)
 }
 #[tauri::command]
 pub async fn appearance_snapshot<R: tauri::Runtime>(
@@ -237,13 +245,14 @@ pub async fn appearance_snapshot<R: tauri::Runtime>(
 pub fn register<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
     builder.invoke_handler(tauri::generate_handler![
         appearance_snapshot,
+        development_assembly,
         select_guest,
         account_logout,
         account_status,
         account_organizations,
         account_save_organization,
         account_login,
-        local_service_status,
+        execution_service_status,
         ai_host_status,
         ai_restart_host,
         ai_export_diagnostics,
@@ -341,7 +350,7 @@ mod tests {
         }
         let service = call(
             &main,
-            "local_service_status",
+            "execution_service_status",
             "tauri://localhost",
             serde_json::json!({}),
         )
@@ -356,7 +365,7 @@ mod tests {
             "account_login",
             "account_organizations",
             "account_save_organization",
-            "local_service_status",
+            "execution_service_status",
             "appearance_snapshot",
             "ai_host_status",
             "ai_restart_host",
@@ -408,4 +417,12 @@ mod tests {
         tauri::async_runtime::block_on(app.state::<DesktopRuntime>().shutdown());
         std::fs::remove_dir_all(root).unwrap();
     }
+}
+
+#[cfg(feature = "dev-fixture")]
+pub fn register_fixture<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
+    builder.invoke_handler(tauri::generate_handler![
+        appearance_snapshot,
+        development_assembly
+    ])
 }

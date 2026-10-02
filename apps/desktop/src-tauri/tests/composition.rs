@@ -2,7 +2,6 @@ use execution_mcp::ExecutionServicePort;
 use rss_mdm_desktop::composition::{execution::ExecutionHandle, users::Users};
 use std::{path::PathBuf, sync::Arc};
 fn directory() -> PathBuf {
-    use std::os::unix::fs::DirBuilderExt;
     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
     let p = std::env::temp_dir().join(format!(
         "rss-composition-{}-{}-{}",
@@ -10,7 +9,7 @@ fn directory() -> PathBuf {
         rss_mdm_desktop::composition::execution::now().unwrap(),
         NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     ));
-    std::fs::DirBuilder::new().mode(0o700).create(&p).unwrap();
+    native_process::private_storage::directory(&p).unwrap();
     p.canonicalize().unwrap()
 }
 #[test]

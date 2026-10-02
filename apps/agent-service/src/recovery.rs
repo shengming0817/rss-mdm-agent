@@ -149,10 +149,26 @@ pub(crate) fn materials(
             .map(|i| &i.run_as)
             .find(|r| matches!(r, RunAs::User { .. }))
             .unwrap_or(&p.run_as);
-        let mut files = vec![(
-            content(config, account, &step.payload.sha256),
-            step.payload.clone(),
-        )];
+        let original = content(config, account, &step.payload.sha256);
+        let payload =
+            match crate::software::native_export_name(step.adapter, step.package.as_str())? {
+                Some(name) => {
+                    let export = original
+                        .parent()
+                        .ok_or(Error::Configuration)?
+                        .join(format!("export-{}", step.payload.sha256.as_str()))
+                        .join(name);
+                    retained_payload(
+                        original,
+                        export,
+                        std::iter::once(&step.install)
+                            .chain(step.uninstall.iter())
+                            .flat_map(|c| c.launch.argv.iter()),
+                    )
+                }
+                None => original,
+            };
+        let mut files = vec![(payload, step.payload.clone())];
         for command in std::iter::once(&step.install).chain(step.uninstall.iter()) {
             for manager in &config.managers {
                 if command.launch.argv.iter().any(|a| matches!(a, LaunchArg::Literal { value } if Some(value.as_str()) == manager.image.path.to_str())) {
@@ -184,4 +200,57 @@ pub(crate) fn materials(
         work_root: config.work_root.clone(),
         controlled_input: None,
     })
+}
+
+// The protected journal keeps the original invocation coordinates. Current compilation rules
+// never rewrite them, and filesystem availability never chooses a replacement payload.
+fn retained_payload<'a>(
+    original: PathBuf,
+    export: PathBuf,
+    argv: impl Iterator<Item = &'a LaunchArg>,
+) -> PathBuf {
+    if argv.into_iter().any(|arg| matches!(arg, LaunchArg::Literal { value } if Some(value.as_str()) == export.to_str())) {
+        export
+    } else {
+        original
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn recovery_keeps_frozen_package_coordinates_when_exports_differ() {
+        let root =
+            std::env::temp_dir().join(format!("rss-retained-payload-{}", std::process::id()));
+        std::fs::create_dir(&root).unwrap();
+        let original = root.join("original-digest");
+        std::fs::write(&original, b"retained package").unwrap();
+        for leaf in ["package.pkg", "package.msi"] {
+            let export = root.join("export-digest").join(leaf);
+            let old = [LaunchArg::Literal {
+                value: original.to_str().unwrap().into(),
+            }];
+            let new = [LaunchArg::Literal {
+                value: export.to_str().unwrap().into(),
+            }];
+            assert!(!export.exists());
+            assert_eq!(
+                retained_payload(original.clone(), export.clone(), old.iter()),
+                original
+            );
+            assert_eq!(
+                retained_payload(original.clone(), export.clone(), new.iter()),
+                export
+            );
+            std::fs::create_dir_all(export.parent().unwrap()).unwrap();
+            std::fs::hard_link(&original, &export).unwrap();
+            // Publication of a new filename does not change an already frozen invocation.
+            assert_eq!(
+                retained_payload(original.clone(), export, old.iter()),
+                original
+            );
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }

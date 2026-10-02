@@ -16,6 +16,7 @@ use std::{
 #[serde(deny_unknown_fields)]
 pub struct Deployment {
     pub version: u32,
+    pub ipc_version: u8,
     pub origin: String,
     pub tenant: uuid::Uuid,
     pub signing_keys: BTreeMap<String, String>,
@@ -23,24 +24,62 @@ pub struct Deployment {
     pub enrollment: uuid::Uuid,
     pub registration_operation: uuid::Uuid,
     pub state_root: PathBuf,
-    pub service: local_service::Artifact,
+    pub service: installation_security::Artifact,
     pub clients: PeerPolicy,
     pub execution: ExecutionConfig,
     pub helper_work_roots: BTreeMap<String, PathBuf>,
 }
 impl Deployment {
+    /// Assemble the one authenticated listener without creating device identity on startup.
+    pub fn assemble(self) -> Result<Box<dyn execution_runner::host::Handler>, Error> {
+        use execution_runner::host::Readiness;
+        self.require_service()?;
+        let never_initialized = match never_initialized(&self.state_root) {
+            Ok(value) => value,
+            Err(error) => {
+                execution_runner::record_startup_failure(startup_failure(error));
+                return Ok(Box::new(Diagnostic {
+                    policy: self.clients,
+                    readiness: Readiness::NotReady,
+                }));
+            }
+        };
+        let readiness = if never_initialized {
+            Readiness::RegistrationRequired
+        } else {
+            match self.open() {
+                Ok(service) => {
+                    let helper_policy = if self.helper_work_roots.is_empty() {
+                        None
+                    } else {
+                        Some(PeerPolicy {
+                            images: vec![self.service.clone()],
+                            subjects: self.helper_work_roots.keys().cloned().collect(),
+                            interactive: true,
+                        })
+                    };
+                    return Ok(Box::new(service.spawn(self.clients, helper_policy)?));
+                }
+                Err(error) => {
+                    execution_runner::record_startup_failure(startup_failure(error));
+                    Readiness::NotReady
+                }
+            }
+        };
+        Ok(Box::new(Diagnostic {
+            policy: self.clients,
+            readiness,
+        }))
+    }
     pub fn default_path() -> Result<PathBuf, Error> {
-        let path = local_service::policy_path().map_err(|_| Error::Configuration)?;
-        Ok(path
-            .parent()
-            .and_then(Path::parent)
-            .ok_or(Error::Configuration)?
-            .join("execution.json"))
+        installation_security::deployment_path().map_err(|_| Error::Configuration)
     }
     pub fn load(path: &Path) -> Result<Self, Error> {
-        let bytes = local_service::read_protected(path).map_err(|_| Error::Configuration)?;
+        let bytes =
+            installation_security::read_protected(path).map_err(|_| Error::Configuration)?;
         let value: Self = serde_json::from_slice(&bytes).map_err(|_| Error::Configuration)?;
-        if value.version != 1
+        if value.version != execution_runner::host::DEPLOYMENT_VERSION
+            || value.ipc_version != execution_runner::host::IPC_VERSION
             || value.enrollment.is_nil()
             || value.registration_operation.is_nil()
             || !value.state_root.is_absolute()
@@ -145,7 +184,7 @@ impl Deployment {
             ca_pem: self
                 .ca_file
                 .as_ref()
-                .map(|p| local_service::read_protected(p).map_err(|_| Error::Configuration))
+                .map(|p| installation_security::read_protected(p).map_err(|_| Error::Configuration))
                 .transpose()?,
             limits: Limits {
                 pending_reports: 128,
@@ -186,10 +225,10 @@ impl Deployment {
         {
             return Err(Error::Storage);
         }
-        local_service::protected(self.state_root.parent().ok_or(Error::Configuration)?)
+        installation_security::protected(self.state_root.parent().ok_or(Error::Configuration)?)
             .map_err(|_| Error::Storage)?;
         native_process::private_storage::directory(&self.state_root)?;
-        local_service::protected(&self.state_root).map_err(|_| Error::Storage)?;
+        installation_security::protected(&self.state_root).map_err(|_| Error::Storage)?;
         if marker.exists() {
             if native_process::private_storage::read(&marker, 128)? != namespace.as_bytes() {
                 return Err(Error::Identity);
@@ -262,10 +301,33 @@ impl Deployment {
         }
         Ok(())
     }
+    /// Read-only refresh preflight while the current service remains running.
+    /// No identity initialization, journal recovery or secret import is allowed here.
+    pub fn validate_persistent(&self) -> Result<(), Error> {
+        self.require_service()?;
+        let namespace = self.namespace()?;
+        installation_security::protected(&self.state_root).map_err(|_| Error::Storage)?;
+        validate_markers(&self.state_root, &namespace)?;
+        let secrets = DeviceSecrets::open(&self.state_root.join("secrets"), &namespace)?;
+        secrets.verify_storage(&self.state_root)?;
+        let network = self.network()?;
+        let registration =
+            agent_client::inspect_registration(&self.state_root.join("communication"), &network)?;
+        let (binding, _) =
+            crate::plan::context(network.origin.as_str(), network.tenant, &registration)?;
+        execution_sqlite::Store::validate_existing(
+            &self.state_root.join("execution.sqlite"),
+            &binding.authority,
+            crate::plan::storage_limits(),
+        )
+        .map_err(|_| Error::Storage)?;
+        native_process::private_storage::validate(&self.execution.work_root)?;
+        Ok(())
+    }
     pub fn open(&self) -> Result<DeviceService, Error> {
         self.require_service()?;
         let namespace = self.namespace()?;
-        local_service::protected(&self.state_root).map_err(|_| Error::Storage)?;
+        installation_security::protected(&self.state_root).map_err(|_| Error::Storage)?;
         if native_process::private_storage::read(&self.state_root.join("identity-binding"), 128)?
             != namespace.as_bytes()
         {
@@ -346,18 +408,125 @@ impl Deployment {
     }
 }
 
+fn startup_failure(error: Error) -> execution_contract::ProcessFailureKind {
+    use execution_contract::ProcessFailureKind as K;
+    match error {
+        Error::Identity => K::Unbound,
+        Error::Denied | Error::Untrusted => K::Denied,
+        Error::Protocol | Error::Configuration => K::InvalidInput,
+        Error::Schema | Error::Unsupported => K::Unsupported,
+        Error::Capacity => K::Capacity,
+        Error::Conflict => K::Conflict,
+        Error::Storage | Error::Unavailable | Error::Clock | Error::Expired => K::Unavailable,
+    }
+}
+
+fn validate_markers(root: &Path, namespace: &str) -> Result<(), Error> {
+    for name in ["identity-binding", "execution-initialized"] {
+        if native_process::private_storage::read(&root.join(name), 128)? != namespace.as_bytes() {
+            return Err(Error::Identity);
+        }
+    }
+    Ok(())
+}
+
+fn never_initialized(root: &Path) -> Result<bool, Error> {
+    match std::fs::symlink_metadata(root) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            installation_security::protected(root.parent().ok_or(Error::Configuration)?)
+                .map_err(|_| Error::Storage)?;
+            Ok(true)
+        }
+        Err(_) => Err(Error::Storage),
+        Ok(_) => {
+            installation_security::protected(root).map_err(|_| Error::Storage)?;
+            Ok(std::fs::read_dir(root)?.next().is_none())
+        }
+    }
+}
+
+struct Diagnostic {
+    policy: PeerPolicy,
+    readiness: execution_runner::host::Readiness,
+}
+impl execution_runner::host::Handler for Diagnostic {
+    fn peer_policy(&self) -> Option<PeerPolicy> {
+        Some(self.policy.clone())
+    }
+    fn handle(
+        &mut self,
+        peer: &execution_runner::host::Peer,
+        request: execution_runner::host::Request,
+    ) -> execution_runner::host::Reply {
+        use execution_runner::host::{Reply, Request, ServiceStatus};
+        if peer.authenticate(&self.policy).is_err() {
+            return Reply::Rejected;
+        }
+        match request {
+            Request::ServiceStatus {} => Reply::ServiceStatus {
+                value: ServiceStatus::new(self.readiness.clone()),
+            },
+            _ => Reply::Rejected,
+        }
+    }
+    fn tick(&mut self) -> Result<(), execution_app::Error> {
+        Ok(())
+    }
+    fn stop(&mut self) -> Result<(), execution_app::Error> {
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
+    fn startup_failure_mapping_is_closed_and_retains_identity_schema_storage_distinctions() {
+        use execution_contract::ProcessFailureKind as K;
+        assert_eq!(startup_failure(Error::Identity), K::Unbound);
+        assert_eq!(startup_failure(Error::Schema), K::Unsupported);
+        assert_eq!(startup_failure(Error::Storage), K::Unavailable);
+        assert_eq!(startup_failure(Error::Configuration), K::InvalidInput);
+        assert_eq!(startup_failure(Error::Untrusted), K::Denied);
+    }
+    #[test]
+    fn refresh_requires_both_original_markers_without_initializing_missing_state() {
+        let root = std::env::temp_dir()
+            .canonicalize()
+            .unwrap()
+            .join(format!("refresh-markers-{}", uuid::Uuid::new_v4()));
+        native_process::private_storage::directory(&root).unwrap();
+        assert!(validate_markers(&root, "original").is_err());
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 0);
+        native_process::private_storage::write_new(&root.join("identity-binding"), b"original")
+            .unwrap();
+        assert!(validate_markers(&root, "original").is_err());
+        native_process::private_storage::write_new(
+            &root.join("execution-initialized"),
+            b"original",
+        )
+        .unwrap();
+        validate_markers(&root, "original").unwrap();
+        assert!(matches!(
+            validate_markers(&root, "other"),
+            Err(Error::Identity)
+        ));
+        assert_eq!(
+            native_process::private_storage::read(&root.join("identity-binding"), 128).unwrap(),
+            b"original"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
     fn review_regression_native_capability_requires_its_interpreter() {
-        let image = local_service::Artifact {
+        let image = installation_security::Artifact {
             path: "/unused".into(),
             sha256: "a".repeat(64),
             cdhash: None,
         };
         let mut deployment = Deployment {
-            version: 1,
+            version: execution_runner::host::DEPLOYMENT_VERSION,
+            ipc_version: execution_runner::host::IPC_VERSION,
             origin: String::new(),
             tenant: uuid::Uuid::new_v4(),
             signing_keys: Default::default(),

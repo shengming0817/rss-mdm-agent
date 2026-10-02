@@ -5,6 +5,34 @@ use uuid::Uuid;
 mod support;
 
 #[tokio::test]
+async fn refresh_inspection_reads_live_binding_without_locking_or_creating_state() {
+    let server = Server::new().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    let cfg = client.configuration().clone();
+    let before = std::fs::read(root.path.join("communication.sqlite")).unwrap();
+    let registration = agent_client::inspect_registration(&root.path, &cfg).unwrap();
+    assert_eq!(
+        registration.registration_id,
+        client.registration().unwrap().registration_id
+    );
+    let mut wrong = cfg.clone();
+    wrong.tenant = Uuid::new_v4();
+    assert!(matches!(
+        agent_client::inspect_registration(&root.path, &wrong),
+        Err(Error::Identity)
+    ));
+    assert_eq!(
+        before,
+        std::fs::read(root.path.join("communication.sqlite")).unwrap()
+    );
+    let empty = Root::new();
+    assert!(agent_client::inspect_registration(&empty.path, &cfg).is_err());
+    assert_eq!(std::fs::read_dir(&empty.path).unwrap().count(), 0);
+}
+
+#[tokio::test]
 async fn expired_lost_claim_recovers_after_restart_with_new_operation() {
     let server = Server::new().await;
     let root = Root::new();
@@ -1447,6 +1475,102 @@ async fn acknowledged_v5_result_is_not_replaced_by_later_local_facts() {
         .status(&caller, &plan.spec().request.request_id)
         .unwrap();
     assert!(status.process.unwrap().quiescent);
+}
+
+#[tokio::test]
+async fn controlled_factory_software_start_never_reuses_a_prior_script_permit() {
+    let server = Server::new().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    let first = client.claim().await.unwrap().offer.unwrap();
+    client.received(&first).await.unwrap();
+    let materials = client.prepare(&first).await.unwrap();
+    client.request_start(&first, &materials).await.unwrap();
+    {
+        let mut data = server.data.lock().unwrap();
+        data.task = uuid::Uuid::new_v4();
+        data.attempt = uuid::Uuid::new_v4();
+        data.software(1, false);
+    }
+    let second = client.claim().await.unwrap().offer.unwrap();
+    client.received(&second).await.unwrap();
+    let materials = client.prepare(&second).await.unwrap();
+    let started = client.request_start(&second, &materials).await.unwrap();
+    assert!(matches!(started.payload(), TaskPayload::Software(_)));
+    assert_eq!(started.payload().attempt_id(), second.attempt_id());
+}
+
+#[tokio::test]
+async fn durable_claim_does_not_wait_for_an_unresolved_execution_to_release() {
+    let server = Server::new().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    let first = client.claim().await.unwrap().offer.unwrap();
+    client.received(&first).await.unwrap();
+    let materials = client.prepare(&first).await.unwrap();
+    client.request_start(&first, &materials).await.unwrap();
+    // Keep this original started task and its material references pending. A completed claim
+    // is independent of journal termination, including Unknown physical outcomes.
+    {
+        let mut data = server.data.lock().unwrap();
+        data.task = uuid::Uuid::new_v4();
+        data.script();
+    }
+    let second = client.claim().await.unwrap().offer.unwrap();
+    assert_ne!(first.task_id(), second.task_id());
+    let pending = client.pending_tasks(4).unwrap();
+    assert!(pending.contains(&first.task_id()));
+    assert!(pending.contains(&second.task_id()));
+    let operations = server.data.lock().unwrap().claim_ops.clone();
+    assert_ne!(operations[0], operations[1]);
+}
+
+#[tokio::test]
+async fn controlled_backend_issues_only_explicit_offers_bound_to_the_actual_claim_context() {
+    let server = Server::new().await;
+    server.data.lock().unwrap().explicit_offers = true;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    assert!(client.claim().await.unwrap().offer.is_none());
+    let mut context = client.execution_context().unwrap();
+    context.os_version = [26, 4, 0, 0];
+    client.set_execution_context(context).unwrap();
+    server.data.lock().unwrap().software(1, true);
+    let offered = client.claim().await.unwrap().offer.unwrap();
+    let TaskPayload::Software(spec) = offered.payload() else {
+        panic!("software")
+    };
+    assert_eq!(spec.execution_context, client.execution_context().unwrap());
+    server.time.set(spec.expires_at);
+    assert!(client.claim().await.unwrap().offer.is_none());
+    assert!(server.data.lock().unwrap().start_ops.is_empty());
+}
+
+#[tokio::test]
+async fn controlled_backend_keeps_an_issued_software_offer_frozen_across_context_changes() {
+    let server = Server::new().await;
+    server.data.lock().unwrap().explicit_offers = true;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    server.data.lock().unwrap().software(1, true);
+    let original = client.claim().await.unwrap().offer.unwrap();
+    client.received(&original).await.unwrap();
+    let mut observed = client.execution_context().unwrap();
+    observed.os_version = [26, 4, 0, 0];
+    client.set_execution_context(observed).unwrap();
+    let repeated = client.claim().await.unwrap().offer.unwrap();
+    assert_eq!(repeated.payload(), original.payload());
+    let materials = client.prepare(&original).await.unwrap();
+    let started = client
+        .start_user_initiated(&original, &materials)
+        .await
+        .unwrap();
+    assert!(matches!(started.payload(), TaskPayload::Software(_)));
+    assert_eq!(started.payload().attempt_id(), original.attempt_id());
 }
 
 #[tokio::test]

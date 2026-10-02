@@ -20,7 +20,7 @@ const assistantCommands = [
   "execution_task_details",
 ];
 const settingsCommands = [
-  "local_service_status",
+  "execution_service_status",
   "ai_host_status",
   "ai_restart_host",
   "ai_export_diagnostics",
@@ -41,8 +41,10 @@ const compositionCommands = [
   ...userCommands,
   ...settingsCommands,
   "appearance_snapshot",
+  "development_assembly",
 ];
 const nativeAdapters = new Map([
+  ["apps/desktop/src/assembly.ts", ["development_assembly"]],
   ["apps/desktop/src/appearance.ts", ["appearance_snapshot"]],
   ["apps/desktop/src/settings/native.ts", settingsCommands],
   ["apps/desktop/src/test-users.ts", userCommands],
@@ -229,7 +231,7 @@ export function checkSource(file, source) {
     if (file === "apps/desktop/src/assistant/clipboard.ts")
       globals.add("navigator");
     if (desktop)
-      for (const value of ["Object", "String", "Map", "Date"])
+      for (const value of ["Object", "String", "Map", "Date", "Error"])
         globals.add(value);
     if (
       [
@@ -379,7 +381,8 @@ export function checkSource(file, source) {
             parent.name === node) ||
           (ts.isBindingElement(parent) && parent.propertyName === node) ||
           ts.isImportSpecifier(parent) ||
-          ts.isExportSpecifier(parent);
+          ts.isExportSpecifier(parent) ||
+          ts.isMetaProperty(parent);
         const symbol = ts.isShorthandPropertyAssignment(parent)
           ? checker.getShorthandAssignmentValueSymbol(parent)
           : checker.getSymbolAtLocation(node);
@@ -436,9 +439,27 @@ export function checkSource(file, source) {
           node.expression.kind === ts.SyntaxKind.ImportKeyword ||
           node.expression.getText(ast) === "require"
         ) {
-          errors.push(
-            `${file}: dynamic module loading is not a presentation dependency`,
-          );
+          let guardedFixture = false;
+          if (
+            file === "apps/desktop/src/main.ts" &&
+            node.expression.kind === ts.SyntaxKind.ImportKeyword &&
+            node.arguments.length === 1 &&
+            ts.isStringLiteral(node.arguments[0]) &&
+            node.arguments[0].text === "../../../tests/assistant/main"
+          ) {
+            for (let parent = node.parent; parent; parent = parent.parent) {
+              if (
+                ts.isIfStatement(parent) &&
+                parent.expression.getText(ast) ===
+                  "import.meta.env.DEV && fixtureSelected"
+              )
+                guardedFixture = true;
+            }
+          }
+          if (!guardedFixture)
+            errors.push(
+              `${file}: dynamic module loading is not a presentation dependency`,
+            );
         }
       }
       const member = ts.isPropertyAccessExpression(node)
@@ -621,7 +642,7 @@ export function checkTree(treeRoot = root) {
       [
         'ai-session-contract = { path = "../../../crates/ai-session-contract" }',
         'native-process = { path = "../../../crates/native-process" }',
-        'local-service = { path = "../../../crates/local-service" }',
+        'installation-security = { path = "../../../crates/installation-security" }',
         'windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_System_Threading"] }',
         'aes-gcm = { version = "=0.10.3", features = ["zeroize"] }',
         'zeroize = "=1.8.2"',
@@ -710,7 +731,7 @@ export function checkTree(treeRoot = root) {
       nativeManifest,
     ) ||
     !/#\[cfg\(feature = "native-e2e"\)\]\s*mod native_e2e;/.test(main) ||
-    !/#\[cfg\(feature = "native-e2e"\)\]\s*let builder = native_e2e::configure\(builder, data_root\.as_deref\(\)\)\?;/.test(
+    !/#\[cfg\(feature = "native-e2e"\)\]\s*let builder = native_e2e::configure\(builder, _data_root\.as_deref\(\)\)\?;/.test(
       main,
     ) ||
     !/#\[cfg\(all\(feature = "native-e2e", not\(debug_assertions\)\)\)\]\s*compile_error!/.test(
@@ -735,8 +756,8 @@ export function checkTree(treeRoot = root) {
   if (
     JSON.stringify(commands.toSorted()) !==
       JSON.stringify(selfServiceCommands.toSorted()) ||
-    (main.match(/app\.manage\(/g) ?? []).length !== 1 ||
-    (ipc.match(/\.invoke_handler\(/g) ?? []).length !== 1
+    (main.match(/app\.manage\(/g) ?? []).length !== 2 ||
+    (ipc.match(/\.invoke_handler\(/g) ?? []).length !== 2
   )
     errors.push(
       "composition must register its exact command set and one state owner",

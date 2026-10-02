@@ -13,7 +13,7 @@ use std::{
 pub fn initialize(root: &Path) -> Result<(), Error> {
     require_system()?;
     let parent = root.parent().ok_or(Error::Configuration)?;
-    local_service::protected(parent).map_err(|_| Error::Denied)?;
+    installation_security::protected(parent).map_err(|_| Error::Denied)?;
     if !root.exists() {
         #[cfg(target_os = "macos")]
         {

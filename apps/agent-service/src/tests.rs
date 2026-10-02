@@ -7,6 +7,58 @@ use execution_admission::AuthorityVerifier;
 use execution_contract::*;
 use sha2::{Digest as _, Sha256};
 
+#[test]
+fn production_network_io_progresses_while_the_owner_checks_synchronous_native_facts() {
+    use std::io::{Read, Write};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let (release, waiting) = std::sync::mpsc::channel();
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        stream
+            .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+            .unwrap();
+        stream.read_exact(&mut [0u8; 4]).unwrap();
+        waiting
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .unwrap();
+        stream.write_all(b"ack").unwrap();
+    });
+    let sent = Arc::new(AtomicBool::new(false));
+    let completed = Arc::new(AtomicBool::new(false));
+    let progressed = crate::service::owner_runtime().unwrap().block_on(async {
+        let ready = sent.clone();
+        let acknowledged = completed.clone();
+        let network = tokio::spawn(async move {
+            let mut stream = tokio::net::TcpStream::connect(address).await.unwrap();
+            stream.write_all(b"body").await.unwrap();
+            ready.store(true, Ordering::Release);
+            stream.read_exact(&mut [0u8; 3]).await.unwrap();
+            acknowledged.store(true, Ordering::Release);
+        });
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while !sent.load(Ordering::Acquire) {
+                tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .unwrap();
+        release.send(()).unwrap();
+        // A real NSXPC fact check is synchronous on this sole SQLite/journal owner.
+        std::thread::sleep(std::time::Duration::from_millis(250));
+        let progressed = completed.load(Ordering::Acquire);
+        network.await.unwrap();
+        progressed
+    });
+    server.join().unwrap();
+    assert!(
+        progressed,
+        "network reactor was blocked by native fact reconciliation"
+    );
+}
+
 #[tokio::test]
 async fn signed_start_compiles_exactly_and_never_creates_a_local_enterprise_approval() {
     let server = protocol::Server::new().await;
@@ -21,7 +73,7 @@ async fn signed_start_compiles_exactly_and_never_creates_a_local_enterprise_appr
         plan::context(server.url.as_str(), server.config().tenant, &receipt).unwrap();
     let interpreters = [Interpreter {
         profile: wire::ExecutorProfile::PosixSh,
-        image: local_service::Artifact {
+        image: installation_security::Artifact {
             path: "/bin/sh".into(),
             sha256: format!("{:x}", Sha256::digest(std::fs::read("/bin/sh").unwrap())),
             cdhash: None,
@@ -72,6 +124,18 @@ async fn signed_start_compiles_exactly_and_never_creates_a_local_enterprise_appr
     assert!(execution_app::AppHost::approval_bindings(&host, &frozen)
         .unwrap()
         .is_empty());
+    // Journal reconciliation survives a later dispatch or process restart without granting
+    // a new attempt. The short-lived backend Start remains mandatory for admission.
+    let original_grant = host.current.lock().unwrap().take().unwrap();
+    let snapshot = execution_app::AppHost::trusted_snapshot(&host, &frozen).unwrap();
+    assert!(snapshot.fresh_until_unix_ms > host.clock.millis().unwrap());
+    assert!(snapshot.approvals.is_empty());
+    assert!(host.verify(&frozen, &attempt).is_err());
+    let mut foreign = frozen.spec().clone();
+    foreign.request.actor = ActorId::new("foreign-registration").unwrap();
+    let foreign = FrozenExecution::freeze(foreign, &plan::storage_limits().input).unwrap();
+    assert!(execution_app::AppHost::trusted_snapshot(&host, &foreign).is_err());
+    *host.current.lock().unwrap() = Some(original_grant);
     for change in 0..7 {
         let mut changed = payload.clone();
         match change {
@@ -138,7 +202,7 @@ async fn osquery_compiler_revalidates_the_signed_query_and_uses_only_literal_arg
         let executable = std::path::PathBuf::from("/bin/sh");
         let interpreters = [Interpreter {
             profile: wire::ExecutorProfile::Osquery,
-            image: local_service::Artifact {
+            image: installation_security::Artifact {
                 sha256: format!("{:x}", Sha256::digest(std::fs::read(&executable).unwrap())),
                 path: executable,
                 cdhash: None,
@@ -167,16 +231,64 @@ async fn osquery_compiler_revalidates_the_signed_query_and_uses_only_literal_arg
     }
 }
 
-#[test]
-fn production_storage_budgets_open_with_large_output_capture_limits() {
+#[cfg(unix)]
+#[tokio::test]
+async fn production_service_creates_and_reopens_journal_with_its_actual_budgets() {
+    let server = protocol::Server::new().await;
     let root = protocol::Root::new();
-    let authority = Authority::Test {
-        id: Id::new("collection-storage").unwrap(),
-    };
+    let clock = SystemClock::new().unwrap();
+    server.time.set(clock.now().unwrap());
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    drop(client);
     let limits = plan::storage_limits();
     assert_eq!(limits.input.max_output_bytes, 16_777_216);
-    execution_sqlite::Store::initialize_test(&root.path.join("budget.sqlite"), authority, limits)
+    let image = installation_security::Artifact {
+        path: "/bin/sh".into(),
+        sha256: format!("{:x}", Sha256::digest(std::fs::read("/bin/sh").unwrap())),
+        cdhash: None,
+    };
+    let config = ExecutionConfig {
+        work_root: root.path.clone(),
+        material_root: root.path.join("materials"),
+        interpreters: vec![Interpreter {
+            profile: wire::ExecutorProfile::PosixSh,
+            image: image.clone(),
+        }],
+        managers: vec![],
+        processes: 1,
+    };
+    let journal = root.path.join("execution.sqlite");
+    // Exercise the production owner, NativeRunner and Enterprise authority. The loopback
+    // backend supplies registration only; this test neither dispatches nor proves root IPC.
+    for startup in [
+        execution_app::ProductionStartup::Create,
+        execution_app::ProductionStartup::Open,
+    ] {
+        let client = agent_client::Client::open(
+            &root.path,
+            server.config(),
+            OpenMode::Existing,
+            server.secrets.clone(),
+            clock.clone(),
+        )
         .unwrap();
+        drop(
+            DeviceService::open(
+                client,
+                &journal,
+                startup,
+                config.clone(),
+                clock.clone(),
+                UserResources {
+                    image: image.clone(),
+                    work_roots: Default::default(),
+                },
+            )
+            .unwrap(),
+        );
+    }
+    assert!(journal.is_file());
 }
 
 #[tokio::test]
@@ -212,7 +324,7 @@ async fn current_software_steps_compile_from_exact_prefixed_artifacts() {
         let materials = client.prepare(&offer).await.unwrap();
         let (binding, actor) =
             plan::context(server.url.as_str(), server.config().tenant, &receipt).unwrap();
-        let executable = local_service::Artifact {
+        let executable = installation_security::Artifact {
             path: "/bin/sh".into(),
             sha256: format!("{:x}", Sha256::digest(std::fs::read("/bin/sh").unwrap())),
             cdhash: None,

@@ -1,35 +1,56 @@
-// @generated from local-service::ServiceView. Do not edit.
+// @generated from execution-runner::host::ServiceView. Do not edit.
 
 /**
- * Native-only projection. Connected is not an authorization to execute work.
+ * Closed presentation combining local installation checks and authenticated service facts.
  */
 export type ServiceView =
   | {
       phase: "notInstalled";
-      [k: string]: unknown;
+    }
+  | {
+      phase: "configurationRequired";
     }
   | {
       phase: "rejected";
-      [k: string]: unknown;
     }
   | {
       phase: "unavailable";
-      [k: string]: unknown;
+    }
+  | {
+      phase: "mismatch";
     }
   | {
       phase: "connected";
-      status: Status;
-      [k: string]: unknown;
+      status: ServiceStatus;
     };
-export type Capability = "statusOnly";
 
 /**
- * A service statement, never an execution authorization or device receipt.
+ * Safe system owner facts.
  */
-export interface Status {
+export interface ServiceStatus {
+  /**
+   * Actual binary build version.
+   */
   build: string;
-  capability: Capability;
-  installation: string;
+  /**
+   * Native service platform.
+   */
   platform: string;
-  version: number;
+  /**
+   * Actual local IPC version.
+   */
+  protocol: number;
+  /**
+   * Independent readiness, not authorization or an effect receipt.
+   */
+  readiness:
+    | {
+        phase: "ready";
+      }
+    | {
+        phase: "registrationRequired";
+      }
+    | {
+        phase: "notReady";
+      };
 }
