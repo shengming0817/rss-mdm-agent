@@ -1,7 +1,7 @@
 import { activeStage } from "../../packages/ai-contract/dist/index.js";
 import { randomUUID } from "node:crypto";
-import { spawn } from "node:child_process";
-import { appendFileSync, readFileSync } from "node:fs";
+import { spawn, execFileSync } from "node:child_process";
+import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fixtureSession } from "../../packages/ai-contract/dist/testing/index.js";
 import { workspaceIdentity } from "../../packages/ai-contract/dist/session.js";
@@ -26,6 +26,37 @@ export async function createProvider({ configuration, tools }) {
       }) + "\n",
     );
   trace("activate");
+  if (scenario === "direct_service_probe") {
+    const input = JSON.parse(
+      readFileSync(join(configuration.workingDirectory, "probe-input.json")),
+    );
+    const commands =
+      [
+        { kind: "open", connection: "worker" },
+        { kind: "send", connection: "worker", payload: input.payload },
+        { kind: "close", connection: "worker" },
+        { kind: "stop" },
+      ]
+        .map((value) => JSON.stringify(value))
+        .join("\n") + "\n";
+    const responses = execFileSync(input.binary, ["--config", input.config], {
+      input: commands,
+      encoding: "utf8",
+      timeout: 15000,
+      stdio: ["pipe", "pipe", "pipe"],
+    })
+      .trim()
+      .split("\n")
+      .map(JSON.parse);
+    writeFileSync(
+      join(configuration.workingDirectory, "probe-receipt.json"),
+      JSON.stringify({
+        workerPid: process.pid,
+        workerParent: process.ppid,
+        responses,
+      }),
+    );
+  }
   const earlyTool = async () => {
     if (scenario !== "early_tool") return;
     const result = await tools.propose(

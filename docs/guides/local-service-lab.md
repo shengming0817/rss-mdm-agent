@@ -95,3 +95,38 @@ Windows 11 x64 目标通过固定 pnpm 环境执行 `pnpm exec pwsh -File script
 RefreshSystem 还要求 CurrentBinary/CurrentConfig，复用安装 owner 的持久身份检查。
 该入口只证明已运行的阶段；远程/同名管道、跨用户/会话、秘密作用域、旧连接撤销和真实桌面进程链仍须补齐目标环境矩阵。
 开发机不运行 Windows 入口。回执明确区分成功、失败和未执行；#2559 仍以两平台全部适用场景通过为关闭条件。
+
+### macOS 安全矩阵
+
+继续使用本页的服务安装和原生桌面入口。构建
+`cargo build --locked --release -p execution-runner --example macos-security-probe`
+后，将 probe 签名并准备另一份不同代码身份的同工具副本；二者均在冻结前完成，
+分别通过 `--security-probe` 和 `--untrusted-probe` 加入现有 candidate。
+只有获准 probe 被加入实验安装的客户端 pins，错误身份副本保持未获准。
+生产系统服务不提供测试命令或授权旁路。
+
+向现有 `verify-execution-macos.py` 或
+`pnpm check:desktop-native --controlled-service --candidate <candidate.json>` 增加 `--security`，
+执行原生非法字段/方法/版本、大小限制、重复与过期、错误代码身份、假服务、helper/worker
+边界、刷新与撤销。完整桌面旅程还覆盖真实 WKWebView、manifest 固定 Codex、
+Host/launcher 故障、保留后代和未知 scope。模型端仍是确定性协议样本，
+在线模型能力由既有 smoke 单独验证。
+
+管理员授权使用 `--authorization-password-file <主仓库绝对路径/.passwd>`。
+文件必须是当前用户拥有、权限 600 的普通文件；不支持 symlink。
+该文件由 `/.passwd` 忽略，不复制进 worktree、回执或命令参数中的秘密字段。
+
+回执用 `journeyStatus` 表示本次旅程结果，用 `security.scenarios` 逐项记录
+`passed / failed / notApplicable / notExecuted`，完整矩阵由 `security.status` 汇总。
+旅程通过但矩阵未完成时顶层为 `partial`。旧 `unexecutedSecurity` 字段直接退出，不双读旧回执。
+五秒 challenge 不属于 IPC V7，记录为有依据的不适用；连接寿命和业务 offer 有效期分别实测。
+未安装、未就绪、超时及未连接到攻击端点不能作为身份攻击被拒绝的证据。
+
+跨用户和登录世代在专用可重置 macOS 环境执行，保留原实验服务、backend 和固定候选。
+同一脚本提供 `--login-phase prepare|cross-user|resume`、
+`--deployment-config <受保护配置>`、`--login-state <checkpoint.json>`，并使用新 `--output` 目录。
+prepare 要求有效期至少五分钟的 user-initiated offer，保存需要确认的原请求与真实 UID/ASID；
+随后由操作员切换第二真实 GUI 用户执行 cross-user，或注销/重新登录原用户执行 resume。
+检查点含请求关联数据，按测试主体受控交接；不含授权秘密。resume 要求 offer 仍未过期。
+脚本不创建账户、不自动注销，不使用 sudo 切 UID 代替 GUI 登录。缺环境时保留未执行，
+不得把这两个场景或 Windows 计为通过。

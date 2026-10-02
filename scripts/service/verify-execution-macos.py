@@ -100,7 +100,10 @@ class NativeProbe:
         reply = self.exchange.command('send', connection=connection,
             payload=base64.b64encode(payload).decode(), **values)
         if 'error' in reply: raise RuntimeError('native probe control failed')
-        reply['payloadSha256'] = hashlib.sha256(payload).hexdigest()
+        actual=payload
+        if 'length' in values:
+            length=values['length'];actual=payload[:length]+b'\0'*max(0,length-len(payload))
+        reply['payloadSha256'] = hashlib.sha256(actual).hexdigest()
         if reply.get('transport') == 'reply' and reply.get('bytes'):
             raw = base64.b64decode(reply['replyBase64'], validate=True)
             try: reply['envelope'] = json.loads(raw)
@@ -381,7 +384,7 @@ def complete_native_security(probe, matrix, query, command, package, package_rec
 
 def root_refresh_security(root, binary, config, installer_source):
     # This whole program is frozen before elevation; only the owned experiment is modified.
-    import contextlib, copy, hashlib, io, json, os, plistlib, re, subprocess, time, uuid
+    import contextlib, copy, hashlib, io, json, os, plistlib, re, sqlite3, subprocess, time, uuid
     from pathlib import Path
     root,binary,config=Path(root),Path(binary),Path(config)
     namespace={'__name__':'acceptance_owner'}
@@ -394,14 +397,18 @@ def root_refresh_security(root, binary, config, installer_source):
     identity_paths.extend(p for p in (root/'state/secrets').rglob('*') if p.is_file())
     identities={str(p):hashlib.sha256(p.read_bytes()).hexdigest() for p in identity_paths}
     before_config=config.read_bytes()
+    journal=root/'state/execution.sqlite'
+    journal_before=journal_proof(journal)
+    original_attempts={row['request']:(row['snapshot']['attempts'],(row['snapshot'].get('attempt') or {}).get('id'))
+        for row in journal_before['records']}
     endpoint='system/com.rss-mdm.agent.execution'
     pid=namespace['verify_registered'](endpoint,args)
     next_config=root/'refresh-candidate.json'
     rows=[]
-    for name in ['mode','symlink','acl','hash','cdhash','version','ipc_version','tenant','origin','state_root','registration','marker']:
+    for name in ['mode','symlink','acl','hash','cdhash','version','ipc_version','tenant','origin','state_root','registration','marker','journal','communication','secret']:
         changed=copy.deepcopy(document); actual=next_config
         next_config.write_text(json.dumps(changed));next_config.chmod(0o644)
-        held=None; copied_plist=None
+        held=None; held_source=None; copied_plist=None; unexpected=None
         try:
             if name=='mode': next_config.chmod(0o666)
             elif name=='symlink':
@@ -413,8 +420,11 @@ def root_refresh_security(root, binary, config, installer_source):
             elif name=='tenant': changed['tenant']=str(uuid.uuid4())
             elif name=='origin': changed['origin']='https://localhost:1/'
             elif name=='state_root': changed['state_root']=str(root/'other-state')
-            elif name=='marker':
-                held=identity_paths[0].with_suffix('.held');identity_paths[0].rename(held)
+            elif name in ['marker','journal','communication','secret']:
+                held_source=identity_paths[0] if name=='marker' else (
+                    journal if name=='journal' else (
+                        root/'state/communication/communication.sqlite' if name=='communication' else root/'state/secrets'))
+                held=held_source.with_suffix('.held');held_source.rename(held)
             if name not in ['mode','symlink','acl']: next_config.write_text(json.dumps(changed))
             target_plist=plist
             if name=='registration':
@@ -430,11 +440,16 @@ def root_refresh_security(root, binary, config, installer_source):
                 rows.append(dict(case=name,error=str(error),stderr=getattr(error,'stderr',None)))
             else: raise AssertionError('refresh negative unexpectedly admitted: '+name)
         finally:
-            if held: held.rename(identity_paths[0])
+            if held:
+                if held_source.exists():
+                    unexpected=held_source.with_name(held_source.name+'.unexpected-'+uuid.uuid4().hex)
+                    held_source.rename(unexpected)
+                held.rename(held_source)
             if copied_plist: copied_plist.unlink(missing_ok=True)
             if actual!=next_config: actual.unlink(missing_ok=True)
             subprocess.run(['/bin/chmod','-N',str(next_config)],check=True)
             next_config.unlink(missing_ok=True)
+            if unexpected: raise AssertionError('preflight recreated state; both original and unexpected facts retained: '+str(unexpected))
         assert namespace['verify_registered'](endpoint,args)==pid
         assert plist.read_bytes()==original and config.read_bytes()==before_config
         assert all(hashlib.sha256(Path(p).read_bytes()).hexdigest()==digest for p,digest in identities.items())
@@ -453,6 +468,8 @@ def root_refresh_security(root, binary, config, installer_source):
         else: raise AssertionError('post-stop negative did not stop the original process')
         result=subprocess.run([str(binary),'--config',str(config),'--query'],capture_output=True,text=True)
         assert result.returncode!=0 or json.loads(result.stdout)['reply']['kind']!='tasks'
+        lookup=subprocess.run(['/bin/launchctl','print',endpoint],capture_output=True,text=True)
+        assert not re.search(r'^\s*pid = [0-9]+\s*$',lookup.stdout,re.MULTILINE), 'candidate unexpectedly running'
         assert config.read_bytes()==before_config
         assert all(hashlib.sha256(Path(p).read_bytes()).hexdigest()==digest for p,digest in identities.items())
         after_stop=dict(failure=failure,oldPidAbsent=pid,diagnostic=result.stderr,
@@ -463,7 +480,11 @@ def root_refresh_security(root, binary, config, installer_source):
         else: assert lookup.returncode==113
         plist.write_bytes(original);plist.chmod(0o600)
         subprocess.run(['/bin/launchctl','bootstrap','system',str(plist)],check=True)
-    return dict(preflight=preflight,afterStop=after_stop,driverDiagnostics=(root/'service-stderr.log').read_text())
+    journal_after=journal_proof(journal)
+    assert {row['request']:(row['snapshot']['attempts'],(row['snapshot'].get('attempt') or {}).get('id'))
+        for row in journal_after['records']}==original_attempts, 'refresh changed durable request/attempt facts'
+    return dict(preflight=preflight,afterStop=after_stop,journalBefore=journal_before,journalAfter=journal_after,
+        driverDiagnostics=(root/'service-stderr.log').read_text())
 
 
 def login_security(args, frozen):
@@ -1062,7 +1083,7 @@ print(json.dumps(dict(label=label,plist=str(plist),helperGuard=result.stderr)))
 """ % frozen_installer(installer_source,['refresh','--scope','system','--binary',str(binary),
                     '--config',str(config),'--candidate-binary',str(binary),'--candidate-config',str(config)])))
             refresh=lab/'refresh-security.py'
-            refresh.write_text(inspect.getsource(root_refresh_security)+"\nimport json\nprint(json.dumps(root_refresh_security(%r,%r,%r,%r)))\n" %
+            refresh.write_text("import json,sqlite3\n"+inspect.getsource(journal_proof)+inspect.getsource(root_refresh_security)+"\nprint(json.dumps(root_refresh_security(%r,%r,%r,%r)))\n" %
                 (str(protected),str(binary),str(config),installer_source))
         cleanup = lab / 'remove.py'
         cleanup.write_text(inspect.getsource(journal_proof) + """import json,sqlite3,subprocess

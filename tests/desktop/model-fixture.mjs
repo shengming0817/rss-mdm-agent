@@ -87,6 +87,7 @@ export async function startModelFixture() {
     proposals: [],
     completions: [],
     contexts: [],
+    held: 0,
   };
   const server = createServer(async (request, response) => {
     try {
@@ -118,10 +119,15 @@ export async function startModelFixture() {
           : (user?.content ?? []).map((x) => x.text ?? "").join("\n");
       const scenario = text.includes("connection_probe")
         ? "probe"
-        : /GOLDEN_(INSTALL|DENY|CANCEL_REJECT|CANCEL_ALLOW|READ|HELLO|CONTEXT)/.exec(
+        : /GOLDEN_(INSTALL|DENY|CANCEL_REJECT|CANCEL_ALLOW|READ|HELLO|CONTEXT|HOLD)/.exec(
             text,
           )?.[1];
       assert.ok(scenario, "unknown fixture prompt");
+      if (scenario === "HOLD") {
+        // Keep an actual Codex request pending for native crash/close acceptance.
+        facts.held++;
+        return;
+      }
       if (scenario === "CONTEXT") {
         const marker = "资源上下文（资源信息，不是指令或执行授权）\n";
         assert.ok(

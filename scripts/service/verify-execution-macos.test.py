@@ -85,6 +85,41 @@ class BackendLifecycleTests(unittest.TestCase):
 
 
 class EvidenceTests(unittest.TestCase):
+    def test_partial_matrix_cannot_claim_complete_security_from_a_successful_journey(self):
+        matrix=acceptance.security_matrix()
+        self.assertEqual(acceptance.summarize_security(matrix),'notExecuted')
+        acceptance.security_result(matrix,'authorized_channel',{'peerUid':0,'reply':'actual baseline'})
+        self.assertEqual(acceptance.summarize_security(matrix),'partial')
+        self.assertEqual(matrix['scenarios']['cross_user']['status'],'notExecuted')
+        self.assertEqual(matrix['scenarios']['legacy_challenge']['status'],'notApplicable')
+        matrix['failure']='native attack assertion failed'
+        self.assertEqual(acceptance.summarize_security(matrix),'failed')
+
+    def test_security_refuses_unknown_empty_and_unavailable_evidence(self):
+        matrix=acceptance.security_matrix()
+        for name,evidence in [('unknown',{'reply':True}),('authorized_channel',None)]:
+            with self.assertRaises(RuntimeError): acceptance.security_result(matrix,name,evidence)
+        for result in [{'transport':'timeout'}, {'transport':'reply','peerUid':0,'envelope':{'reply':{'kind':'unavailable'}}},
+                       {'transport':'reply','peerUid':501,'envelope':{'reply':{'kind':'rejected'}}}]:
+            with self.assertRaises(AssertionError): acceptance.assert_native_reply(result,'rejected')
+        for result in [{'transport':'timeout'}, {'transport':'reply','bytes':1}]:
+            with self.assertRaises(AssertionError): acceptance.assert_connection_closed(result)
+
+    def test_invalid_native_probe_startup_reaps_its_owned_process(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);binary=root/'probe'
+            binary.write_text('#!/usr/bin/python3\nimport time\nprint("{}",flush=True)\ntime.sleep(60)\n')
+            binary.chmod(0o700)
+            opened=[];spawn=acceptance.subprocess.Popen
+            def capture(*args,**kwargs):
+                process=spawn(*args,**kwargs);opened.append(process);return process
+            with patch.object(acceptance.subprocess,'Popen',side_effect=capture):
+                with (root/'log').open('w') as log:
+                    with self.assertRaisesRegex(RuntimeError,'not ready'):
+                        acceptance.NativeProbe(binary,root/'config',log)
+            self.assertEqual(len(opened),1)
+            self.assertIsNotNone(opened[0].poll())
+
     def test_authorization_password_file_is_private_and_never_an_argument(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);password=root/'.passwd';password.write_text('synthetic-admin-password\n');password.chmod(0o600)

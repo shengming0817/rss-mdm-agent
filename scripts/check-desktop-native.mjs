@@ -36,10 +36,16 @@ import {
 import { developmentFingerprint } from "./desktop-dev-runtime.mjs";
 import { verifyCandidate } from "./native-candidate.mjs";
 import { verifyRuntimeIntegrity } from "./ai-host-artifacts.mjs";
+import { scopeAbsentWithin } from "../packages/ai-host/dist/process.js";
 
 const visualOnly = process.argv.includes("--visual");
 const baseline = process.argv.includes("--baseline");
 const controlledService = process.argv.includes("--controlled-service");
+const security = process.argv.includes("--security");
+assert.ok(
+  !security || controlledService,
+  "security requires controlled-service mode",
+);
 const candidateIndex = process.argv.indexOf("--candidate");
 const candidatePath =
   candidateIndex < 0 ? undefined : process.argv[candidateIndex + 1];
@@ -456,6 +462,10 @@ try {
         candidate.binaries.desktop && candidate.runtime,
         "desktop and runtime candidate required",
       );
+    assert.ok(
+      !security || candidate?.binaries.securityProbe,
+      "security requires a frozen native probe",
+    );
     result.candidate = candidate;
     mark(
       candidate
@@ -522,6 +532,7 @@ try {
         "--output",
         serviceEvidence,
         ...(candidatePath ? ["--candidate", candidatePath] : []),
+        ...(security ? ["--security"] : []),
         ...(authorizationPasswordFile
           ? ["--authorization-password-file", authorizationPasswordFile]
           : []),
@@ -1825,6 +1836,164 @@ try {
       "host-restart-credential-reuse",
       "new-provider-session-after-restart",
     );
+    if (security) {
+      const runtime = {
+        launcher: join(artifact, "bin/rss-ai-worker-launcher"),
+        manifestDigest: sha256(
+          readFileSync(join(artifact, "worker-manifest.json")),
+        ),
+      };
+      const fences = () =>
+        dbRead("ai.sqlite", (db) =>
+          db
+            .prepare("SELECT json FROM worker_launches")
+            .all()
+            .map((row) => JSON.parse(row.json)),
+        );
+      const absent = (scope) =>
+        scopeAbsentWithin(runtime, scope, {
+          timeoutMs: 1000,
+          signal: new AbortController().signal,
+        });
+      const proof = {
+        runtimeTreeSha256: manifest.runtimeTreeSha256,
+        scenarios: {},
+      };
+      const restart = async () => {
+        const previous = hostPid();
+        await navigate("设置");
+        await click("重启 AI Host");
+        await click("确认重启");
+        await wait(() => hostPid() && hostPid() !== previous);
+        if (previous)
+          await wait(() => {
+            try {
+              process.kill(previous, 0);
+              return false;
+            } catch (error) {
+              if (error.code === "ESRCH") return true;
+              throw error;
+            }
+          });
+        await text("AI Host：已就绪");
+        result.owner.restartedHostPid = hostPid();
+      };
+      const held = async () => {
+        await navigate("AI 助手");
+        await browser.$(".conversation-list .new-conversation").click();
+        const previous = fixture.facts.held;
+        await prompt("GOLDEN_HOLD 安全验收：保持请求等待");
+        await wait(() => fixture.facts.held > previous);
+        const rows = fences().filter((row) => row.phase === "registered");
+        assert.equal(rows.length, 1, "one actual live Codex worker scope");
+        assert.equal(rows[0].scope.kind, "processGroup");
+        assert.equal(await absent(rows[0].scope), false);
+        return rows[0];
+      };
+      const record = (name, evidence) => {
+        proof.scenarios[name] = evidence;
+        result.checks.push(name);
+      };
+      mark("security: unresponsive actual launcher, bounded Host close");
+      let launch = await held();
+      const closeStart = performance.now();
+      process.kill(launch.scope.root, "SIGSTOP");
+      await restart();
+      await wait(() => absent(launch.scope));
+      record("close_timeout", {
+        launch,
+        stoppedLauncher: true,
+        elapsedMs: performance.now() - closeStart,
+        scopeAbsent: true,
+      });
+
+      mark(
+        "security: kill launcher, retain descendant and block unknown restore",
+      );
+      launch = await held();
+      const requests = fixture.facts.requests;
+      process.kill(launch.scope.root, "SIGKILL");
+      await delay(150);
+      assert.equal(
+        await absent(launch.scope),
+        false,
+        "launcher exit alone is not scope absence",
+      );
+      await restart();
+      assert.ok(
+        fences().some((row) => row.launchId === launch.launchId),
+        "unknown old scope fence retained",
+      );
+      assert.equal(
+        fixture.facts.requests,
+        requests,
+        "restart cannot redispatch the held model request",
+      );
+      const retained = {
+        launch,
+        requests,
+        retainedFence: true,
+        scopeAbsent: false,
+      };
+      record("launcher_crash", retained);
+      record("retained_descendant", retained);
+      record("unknown_scope", retained);
+      // The experiment still owns the observed live group; clear it explicitly only after proving retention.
+      process.kill(-launch.scope.root, "SIGKILL");
+      await wait(() => absent(launch.scope));
+      await restart();
+
+      mark("security: actual Host crash and owned worker group termination");
+      launch = await held();
+      const crashedHost = hostPid();
+      assert.equal(Number(processField(crashedHost, "ppid")), receipt.pid);
+      process.kill(crashedHost, "SIGKILL");
+      await wait(() => absent(launch.scope));
+      await restart();
+      record("host_crash", { hostPid: crashedHost, launch, scopeAbsent: true });
+
+      mark(
+        "security: reject durable scope registration before spawning a provider",
+      );
+      await navigate("AI 助手");
+      await browser.$(".conversation-list .new-conversation").click();
+      const beforeRequests = fixture.facts.requests;
+      const beforeFences = fences();
+      const database = new DatabaseSync(join(directory, "ai.sqlite"), {
+        timeout: 1000,
+      });
+      try {
+        database.exec(
+          "CREATE TRIGGER security_refuse_launch BEFORE INSERT ON worker_launches BEGIN SELECT RAISE(ABORT, 'security registration failure'); END",
+        );
+        await prompt("GOLDEN_HOLD 登记失败不能启动");
+        await wait(() =>
+          dbRead("ai.sqlite", (db) =>
+            db
+              .prepare("SELECT json FROM commands")
+              .all()
+              .some((row) => {
+                const command = JSON.parse(row.json);
+                return (
+                  command.command?.input?.text?.includes("登记失败") &&
+                  command.state === "terminal"
+                );
+              }),
+          ),
+        );
+        assert.equal(fixture.facts.requests, beforeRequests);
+        assert.deepEqual(fences(), beforeFences);
+        record("registration_failure", {
+          providerRequestsUnchanged: true,
+          launchFencesUnchanged: true,
+        });
+      } finally {
+        database.exec("DROP TRIGGER IF EXISTS security_refuse_launch");
+        database.close();
+      }
+      await serviceCall("processSecurity", { proof });
+      result.processSecurity = proof;
+    }
     mark("caller isolation and credential deletion");
     await navigate("设置");
     await browser.$('[aria-label="测试用户名"]').setValue("Golden Bob");
@@ -1900,7 +2069,7 @@ try {
         .all()
         .map((row) => JSON.parse(row.json)),
     );
-    assert.equal(sessions.length, 2);
+    assert.ok(security ? sessions.length >= 2 : sessions.length === 2);
     assert.equal(
       new Set(sessions.map((session) => session.namespace.principalId)).size,
       1,
@@ -2076,6 +2245,7 @@ try {
         await serviceCall("finish", {
           status: result.status,
           request: fixture?.facts.request,
+          processScopeEmpty: cleanupComplete,
         });
       } catch {
         result.status = "failed";
@@ -2137,9 +2307,17 @@ try {
           records[0].process.exitCode,
           result.completion.record.status.process.exitCode,
         );
-        assert.equal(result.serviceReceipt.status, "passed");
+        assert.equal(result.serviceReceipt.journeyStatus, "passed");
       }
     }
+  }
+  result.journeyStatus = result.status;
+  if (
+    result.status === "passed" &&
+    result.serviceReceipt?.security.status !== "passed" &&
+    controlledService
+  ) {
+    result.status = "partial";
   }
   writeReport();
   writeFileSync(

@@ -38,6 +38,8 @@ test(
       service: binary,
       backend: binary,
       desktop: binary,
+      securityProbe: binary,
+      untrustedProbe: binary,
       runtime,
     });
     const file = join(root, "candidate.json");
@@ -45,6 +47,10 @@ test(
     assert.equal(
       verifyCandidate(process.cwd(), file).binaries.service.sha256,
       candidate.binaries.service.sha256,
+    );
+    assert.equal(
+      verifyCandidate(process.cwd(), file).binaries.securityProbe.sha256,
+      candidate.binaries.securityProbe.sha256,
     );
     const manifest = JSON.stringify({
       runtimeTreeSha256: runtimeTreeSha256(runtime),
