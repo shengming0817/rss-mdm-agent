@@ -159,7 +159,11 @@ def native_transport_security(probe, matrix, query, command):
         connection = probe.open()
         try:
             response = probe.send(connection, payload)
-            assert_native_reply(response, 'rejected')
+            matrix['scenarios'][name]=dict(status='failed',evidence=response,reason='native boundary assertion pending')
+            if name=='malformed_empty':
+                assert_connection_closed(response)
+                response['boundary']='native FFI null/empty NSData guard; no business dispatch'
+            else: assert_native_reply(response, 'rejected')
             security_result(matrix, name, response)
         finally: probe.close_connection(connection)
     for name, length in [('system_wire_limit', 65537), ('native_frame_limit', 8*1024*1024+1)]:
@@ -360,7 +364,19 @@ try {
     assert.equal(receipt.workerParent,launches.value[0].scope.root);
     const closed=await port.close(budget());assert.equal(closed.ok,true,JSON.stringify(closed));
     assert.equal(await scopeAbsentWithin(runtime,launches.value[0].scope,budget()),true);
-    console.log(JSON.stringify({receipt,launch:launches.value[0],scopeAbsent:true}));
+    let rejectedReservation=false;
+    const rejectingStore=new Proxy(store,{get(target,key){
+        if(key==='reserveLaunch')return async()=>{rejectedReservation=true;return {ok:false,error:{code:'storage_failure',retry:'never'}}};
+        const value=Reflect.get(target,key,target);return typeof value==='function'?value.bind(target):value;
+    }});
+    const failedPort=new WorkerPort(runtime,rejectingStore,namespace,pathToFileURL(join(input.root,'tests/ai-host/provider.mjs')).href);
+    const rejected=await failedPort.start({namespace,provider:'fake',config:{id:'security',revision:'1'},
+        workingDirectory:input.directory,permissions:'tools_disabled'},budget());
+    assert.equal(rejectedReservation,true);assert.equal(rejected.ok,false);
+    assert.deepEqual((await store.launches()).value,[]);
+    await failedPort.close(budget());
+    console.log(JSON.stringify({receipt,launch:launches.value[0],scopeAbsent:true,
+        reservationFailure:{injection:'existing launch-fence port before spawn',result:rejected,launches:[]}}));
 } finally {await port.close(budget());await store.close(budget());}
 """
     result=run(str(Path(frozen['runtime']['path'])/'bin/node'),'--input-type=module','-',json.dumps(dict(root=str(root),
@@ -369,6 +385,7 @@ try {
     response=evidence['receipt']['responses'][2]
     assert_connection_closed(response)
     security_result(matrix,'worker_direct_access',evidence)
+    security_result(matrix,'registration_failure',evidence['reservationFailure'])
 
 
 def native_stale_helper_security(probe, matrix, query, command, protected, prior, log_offset):
@@ -1295,7 +1312,7 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
                 elif method == 'processSecurity':
                     proof=request['proof']
                     assert frozen and proof['runtimeTreeSha256']==frozen['runtime']['sha256'], 'process proof candidate mismatch'
-                    for name in ['host_crash','launcher_crash','retained_descendant','registration_failure','close_timeout','unknown_scope']:
+                    for name in ['host_crash','launcher_crash','retained_descendant','close_timeout','unknown_scope']:
                         security_result(receipt['security'],name,proof['scenarios'][name])
                     value=dict(recorded=True)
                 elif method == 'catalog':

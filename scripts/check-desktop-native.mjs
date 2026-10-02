@@ -2045,45 +2045,6 @@ try {
       await restart();
       record("host_crash", { hostPid: crashedHost, launch, scopeAbsent: true });
 
-      mark(
-        "security: reject durable scope registration before spawning a provider",
-      );
-      await navigate("AI 助手");
-      await browser.$(".conversation-list .new-conversation").click();
-      const beforeRequests = fixture.facts.requests;
-      const beforeFences = fences();
-      const database = new DatabaseSync(join(directory, "ai.sqlite"), {
-        timeout: 1000,
-      });
-      try {
-        database.exec(
-          "CREATE TRIGGER security_refuse_launch BEFORE INSERT ON worker_launches BEGIN SELECT RAISE(ABORT, 'security registration failure'); END",
-        );
-        await prompt("GOLDEN_HOLD 登记失败不能启动");
-        await wait(() =>
-          dbRead("ai.sqlite", (db) =>
-            db
-              .prepare("SELECT json FROM commands")
-              .all()
-              .some((row) => {
-                const command = JSON.parse(row.json);
-                return (
-                  command.command?.input?.text?.includes("登记失败") &&
-                  command.state === "terminal"
-                );
-              }),
-          ),
-        );
-        assert.equal(fixture.facts.requests, beforeRequests);
-        assert.deepEqual(fences(), beforeFences);
-        record("registration_failure", {
-          providerRequestsUnchanged: true,
-          launchFencesUnchanged: true,
-        });
-      } finally {
-        database.exec("DROP TRIGGER IF EXISTS security_refuse_launch");
-        database.close();
-      }
       await serviceCall("processSecurity", { proof });
       result.processSecurity = proof;
     }
