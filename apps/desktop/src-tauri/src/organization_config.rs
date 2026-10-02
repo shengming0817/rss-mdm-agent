@@ -8,6 +8,9 @@ pub struct OrganizationConfiguration {
     pub origin: String,
     pub tenant: String,
     pub label: String,
+    /// Optional deployment CA public certificate, embedded only in the native binary.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ca_pem: Option<String>,
 }
 
 #[derive(Debug)]
@@ -78,6 +81,7 @@ mod tests {
             origin: "https://MDM.fixture.test:443/".into(),
             tenant: "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA".into(),
             label: " Organization ".into(),
+            ca_pem: None,
         }
     }
     #[test]
