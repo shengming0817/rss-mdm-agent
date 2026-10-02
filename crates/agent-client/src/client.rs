@@ -94,7 +94,7 @@ pub struct ResumedStart {
     pub materials: Materials,
 }
 /// Explicitly driven V5 client; SQLite transactions never cross HTTP awaits.
-/// A private-root lease permits one driving owner, with one driving owner; bounded HTTP tasks never access its state.
+/// A private-root lease permits one driving owner; bounded HTTP tasks never access its state.
 pub struct Client<S, C> {
     pub(crate) store: Store,
     pub(crate) http: reqwest::Client,

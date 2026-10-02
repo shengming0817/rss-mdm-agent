@@ -9,6 +9,7 @@ from pathlib import Path
 import plistlib
 import stat
 import subprocess
+import time
 
 
 def registered(endpoint):
@@ -65,6 +66,22 @@ def verify_registered(endpoint, program):
     for field, expected in [('uid=', str(expected_uid)), ('comm=', program[0]), ('args=', ' '.join(program))]:
         actual = subprocess.run(['/bin/ps', '-p', pid, '-o', field], check=True, capture_output=True, text=True).stdout.strip()
         if actual != expected: raise RuntimeError('registered process does not match this installation')
+    return int(pid)
+
+def wait_stopped(endpoint, pid):
+    deadline = time.monotonic() + 15
+    while True:
+        loaded = registered(endpoint)
+        try:
+            os.kill(pid, 0)
+            alive = True
+        except ProcessLookupError:
+            alive = False
+        if not loaded and not alive:
+            return
+        if time.monotonic() >= deadline:
+            raise RuntimeError('old registration/process stop was not confirmed')
+        time.sleep(.1)
 
 def refresh(plist, label, domain, endpoint, program, config, next_binary, next_config):
     if domain != 'system':
@@ -99,10 +116,9 @@ def refresh(plist, label, domain, endpoint, program, config, next_binary, next_c
             targets.append(default)
     if not registered(endpoint):
         raise RuntimeError('refresh requires the verified current registration to be loaded')
-    verify_registered(endpoint, program)
+    pid = verify_registered(endpoint, program)
     subprocess.run(['/bin/launchctl', 'bootout', endpoint], check=True)
-    if registered(endpoint):
-        raise RuntimeError('old registration stop was not confirmed')
+    wait_stopped(endpoint, pid)
     # Use an exclusive sibling and atomic replace; failed restart retains inspectable registration.
     publication = plist.with_suffix('.refresh')
     next_program = [str(next_binary), '--config', str(config)]

@@ -123,7 +123,7 @@ class Installation(unittest.TestCase):
                         if failure=='restart': raise module.subprocess.CalledProcessError(5,args)
                         loaded=True
                     return SimpleNamespace(returncode=0)
-                with patch.object(module,'candidate',side_effect=[old,new]), patch.object(module,'verify_registered'), patch.object(module,'publish_config') as published:
+                with patch.object(module,'candidate',side_effect=[old,new]), patch.object(module,'verify_registered',return_value=42), patch.object(module.os,'kill',side_effect=ProcessLookupError), patch.object(module,'publish_config') as published:
                     with patch.object(module.subprocess,'run',side_effect=run):
                         call=lambda: module.refresh(plist,label,'system',f'system/{label}',program,Path('/old/config'),Path('/new/service'),Path('/new/config'))
                         if failure:
@@ -137,6 +137,22 @@ class Installation(unittest.TestCase):
                 else: published.assert_called_once_with(Path('/old/config'),new)
                 if failure=='restart':
                     self.assertEqual(plistlib.loads(plist.read_bytes())['ProgramArguments'],['/new/service','--config','/old/config'])
+
+    def test_refresh_waits_for_both_registration_and_original_process_exit(self):
+        with patch.object(module, 'registered', side_effect=[True, False, False]), patch.object(module.os, 'kill', side_effect=[None, None, ProcessLookupError]) as signal, patch.object(module.time, 'sleep') as sleep:
+            module.wait_stopped('system/owned', 42)
+        self.assertEqual(signal.call_count, 3)
+        signal.assert_called_with(42, 0)
+        self.assertEqual(sleep.call_count, 2)
+
+    def test_refresh_stop_timeout_or_unknown_lookup_cannot_be_success(self):
+        with patch.object(module, 'registered', return_value=False), patch.object(module.os, 'kill'), patch.object(module.time, 'monotonic', side_effect=[0, 16]):
+            with self.assertRaisesRegex(RuntimeError, 'stop was not confirmed'):
+                module.wait_stopped('system/owned', 42)
+        with patch.object(module, 'registered', side_effect=module.subprocess.CalledProcessError(5, ['launchctl'])), patch.object(module.os, 'kill') as signal:
+            with self.assertRaises(module.subprocess.CalledProcessError):
+                module.wait_stopped('system/owned', 42)
+            signal.assert_not_called()
 
     def test_failed_exclusive_publication_preserves_existing_evidence(self):
         with tempfile.TemporaryDirectory() as directory:
