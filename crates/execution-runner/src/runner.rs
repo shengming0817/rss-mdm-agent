@@ -14,7 +14,7 @@ use std::{
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 pub(crate) mod invocation;
-mod program;
+pub(crate) mod program;
 mod progress;
 
 struct Record {
@@ -414,11 +414,28 @@ impl RunnerPort for NativeRunner {
         let detected = if !phase.is_observation() {
             None
         } else {
-            Some(program::script_detection(&facts))
+            Some(program::invocation_detection(
+                plan.spec()
+                    .execution
+                    .software_program()
+                    .and_then(|p| p.invocation(*step as usize, *phase))
+                    .ok_or(Error::Unbound)?,
+                &facts,
+            ))
         };
         let mut next = previous.clone();
         next.output_bytes = next.output_bytes.saturating_add(facts.total_output_bytes);
         next.checkpoints.push(SoftwareCheckpoint::End {
+            duration_ms: next.elapsed_ms.saturating_sub(
+                previous
+                    .checkpoints
+                    .iter()
+                    .filter_map(|c| match c {
+                        SoftwareCheckpoint::End { duration_ms, .. } => Some(*duration_ms),
+                        _ => None,
+                    })
+                    .sum::<u64>(),
+            ),
             step: *step,
             phase: *phase,
             quiescent: facts.quiescent,
@@ -1021,6 +1038,9 @@ async fn run(
     let mut stop_at = None;
     let mut killed = false;
     let mut exited = false;
+    // A software installer may finish its root while child installation work is still active.
+    // Job completion is awaited naturally; cancellation/timeout still owns termination.
+    let software = invocation.is_some();
     let mut next_session_check = Instant::now();
     loop {
         let clock = Instant::now();
@@ -1066,10 +1086,14 @@ async fn run(
                     facts.exit_code = status.code();
                     if stop_at.is_none() {
                         facts.end = ProcessEnd::Exited;
-                        stop_at = Some(clock)
+                        if !software {
+                            stop_at = Some(clock);
+                        }
                     }
-                    owner.terminate();
-                    killed = true;
+                    if !software {
+                        owner.terminate();
+                        killed = true;
+                    }
                 }
                 Err(_) => {
                     fail_running(
@@ -1082,7 +1106,12 @@ async fn run(
                 Ok(None) => {}
             }
         }
-        if exited && out_done && err_done && input_done {
+        if exited
+            && out_done
+            && err_done
+            && input_done
+            && (!software || cfg!(target_os = "macos") || owner.quiescent())
+        {
             break;
         }
         let mut event = None;
@@ -1151,7 +1180,26 @@ async fn run(
         fault(&mut facts, ProcessFailureKind::Supervision);
     }
     facts.finished = true;
-    facts.quiescent = exited && out_done && err_done && owner.quiescent();
+    let native_worker = recipe.launch.interpreter.profile.id.as_str() == "native-software-worker";
+    if native_worker {
+        if let Ok(result) = serde_json::from_slice::<SoftwareWorkerResult>(&facts.stdout) {
+            facts.total_output_bytes = facts
+                .total_output_bytes
+                .saturating_add(result.native_output_bytes);
+            if facts.total_output_bytes > cap {
+                facts.end = ProcessEnd::OutputLimit;
+            }
+        }
+    }
+    let operation_closed = native_worker
+        && facts.end == ProcessEnd::Exited
+        && facts.failure_kind == ProcessFailureKind::None
+        && serde_json::from_slice::<SoftwareWorkerResult>(&facts.stdout).is_ok_and(|r| r.closed);
+    facts.quiescent = exited
+        && out_done
+        && err_done
+        && ((owner.quiescent() && (!native_worker || operation_closed))
+            || (cfg!(target_os = "macos") && operation_closed));
     facts.quality = if facts.total_output_bytes > cap || facts.end == ProcessEnd::OutputLimit {
         OutputQuality::Truncated
     } else if !out_done || !err_done {
@@ -1159,7 +1207,11 @@ async fn run(
     } else if input_failed
         || facts.failure_kind != ProcessFailureKind::None
         || facts.end != ProcessEnd::Exited
-        || facts.exit_code != Some(0)
+        || !facts.exit_code.is_some_and(|code| {
+            invocation.as_ref().map_or(code == 0, |i| {
+                i.exit_codes.success.contains(&code) || i.exit_codes.reboot.contains(&code)
+            })
+        })
     {
         OutputQuality::Failed
     } else {

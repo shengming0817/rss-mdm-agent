@@ -10,6 +10,12 @@ extern "C" fn stopped(_: i32) {
 }
 fn run() -> Result<(), Error> {
     let mut args = std::env::args_os().skip(1).collect::<Vec<_>>();
+    if let [mode, path] = args.as_slice() {
+        if mode == "--software-worker" {
+            let code = agent_service::software_worker::run(std::path::Path::new(path))?;
+            std::process::exit(code);
+        }
+    }
     let path = if args.first().is_some_and(|a| a == "--config") {
         if args.len() < 2 {
             return Err(Error::Configuration);

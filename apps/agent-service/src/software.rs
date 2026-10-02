@@ -8,6 +8,8 @@ use execution_contract::*;
 use execution_runner::{Artifacts, SoftwareStepArtifacts};
 use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 
+mod native;
+
 fn package(value: &str) -> Result<PackageValue, Error> {
     PackageValue::new(value).map_err(|_| Error::Protocol)
 }
@@ -95,17 +97,6 @@ impl Compiler<'_> {
             }
             CommandKind::Script(wire::SoftwareTaskInterpreter::Bash) => wire::ExecutorProfile::Bash,
         };
-        let expected_reboot = if adapter == SoftwareKind::Msi {
-            [3010, 1641].into_iter().collect()
-        } else {
-            Default::default()
-        };
-        if command.exit_codes.success != [0].into_iter().collect()
-            || (!command.exit_codes.reboot.is_empty()
-                && command.exit_codes.reboot != expected_reboot)
-        {
-            return Err(Error::Unsupported);
-        }
         let interpreter = self
             .config
             .interpreters
@@ -294,7 +285,14 @@ pub(crate) fn compile(
     let mut output = 0u64;
     for (index, step) in payload.steps.iter().enumerate() {
         let action = &step.action;
-        if !action.signatures.is_empty() {
+        if !action.signatures.is_empty()
+            && !matches!(
+                action.behavior,
+                wire::SoftwareTaskBehavior::Exe(_)
+                    | wire::SoftwareTaskBehavior::Msix(_)
+                    | wire::SoftwareTaskBehavior::Dmg(_)
+            )
+        {
             return Err(Error::Unsupported);
         }
         if !matches!(step.export, wire::SoftwareTaskExport::Direct) {
@@ -313,6 +311,26 @@ pub(crate) fn compile(
             _ => return Err(Error::Identity),
         }
 
+        if matches!(
+            action.behavior,
+            wire::SoftwareTaskBehavior::Exe(_)
+                | wire::SoftwareTaskBehavior::Msix(_)
+                | wire::SoftwareTaskBehavior::Dmg(_)
+        ) {
+            let (compiled, source) = native::compile(
+                step,
+                index,
+                payload,
+                materials,
+                config,
+                helper.clone(),
+                intent,
+                &architecture,
+            )?;
+            steps.push(compiled);
+            sources.push(source);
+            continue;
+        }
         let commands = agent_client::software_commands(action)?;
         let (adapter, native) = match &action.behavior {
             wire::SoftwareTaskBehavior::Msi(n) => {
@@ -338,11 +356,6 @@ pub(crate) fn compile(
             ),
             _ => return Err(Error::Unsupported),
         };
-        if native.is_some_and(|(_, n)| {
-            n.upgrade != wire::SoftwareTaskUpgrade::InPlace || n.upgrade_invocation != n.install
-        }) {
-            return Err(Error::Unsupported);
-        }
         let install_command = if let Some(script) = commands.install_script {
             CommandKind::script(script)
         } else {
@@ -466,10 +479,33 @@ pub(crate) fn compile(
         } else {
             None
         };
+        let upgrade = if let Some(command) = commands.upgrade {
+            Some(compiler.command(
+                if let Some(script) = commands.install_script {
+                    CommandKind::script(script)
+                } else {
+                    (
+                        CommandKind::Native(native.ok_or(Error::Unsupported)?.0),
+                        None,
+                        command,
+                    )
+                },
+                adapter,
+                &primary,
+                SoftwareOperation::Install,
+                &action.version,
+                &action.package,
+            )?)
+        } else {
+            None
+        };
         let uninstall = removal.as_ref().map(|(command, _, _)| command.clone());
         let mut physical_sources = BTreeMap::new();
         if intent == SoftwareOperation::Install {
-            physical_sources.insert(SoftwarePhase::Upgrade, Box::new(install_source.clone()));
+            if let Some((_, source, extra)) = &upgrade {
+                physical_sources.insert(SoftwarePhase::Upgrade, Box::new(source.clone()));
+                files.extend(extra.clone());
+            }
             if let Some((_, source, extra)) = &removal {
                 physical_sources.insert(SoftwarePhase::Removal, Box::new(source.clone()));
                 files.extend(extra.clone());
@@ -490,7 +526,7 @@ pub(crate) fn compile(
             timeout = timeout.saturating_add(command.timeout_ms);
             output = output.saturating_add(command.output_bytes);
         }
-        let (detection, detector_source) = match commands.detection {
+        let (detection, detector_source) = match commands.detection.ok_or(Error::Unsupported)? {
             wire::SoftwareTaskDetection::MsiProduct {
                 product_code,
                 version,
@@ -560,8 +596,14 @@ pub(crate) fn compile(
                 })
                 .collect::<Result<_, Error>>()?,
             signatures: Vec::new(),
-            upgrade: SoftwareUpgrade::InPlace {
-                invocation: Box::new(install.clone()),
+            upgrade: match commands.upgrade_policy {
+                wire::SoftwareTaskUpgrade::InPlace => SoftwareUpgrade::InPlace {
+                    invocation: Box::new(upgrade.ok_or(Error::Unsupported)?.0),
+                },
+                wire::SoftwareTaskUpgrade::UninstallThenInstall => {
+                    SoftwareUpgrade::UninstallThenInstall {}
+                }
+                wire::SoftwareTaskUpgrade::Deny => SoftwareUpgrade::Deny {},
             },
             install,
             auxiliary: Default::default(),
@@ -585,8 +627,7 @@ pub(crate) fn compile(
             files,
         });
     }
-    timeout = timeout.clamp(1000, 86_400_000);
-    output = output.clamp(1024, 1_048_576);
+    (timeout, output) = agent_client::software_budget(payload)?;
     let mut controller = steps.first().ok_or(Error::Protocol)?.install.launch.clone();
     controller.interpreter.profile = reference("native-software-sequence", "1")?;
     let program = SoftwareProgram {

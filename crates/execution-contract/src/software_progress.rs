@@ -15,6 +15,8 @@ pub enum SoftwarePhase {
     Mutation,
     /// Explicit removal before installation, in the original attempt.
     Removal,
+    /// Independent proof that the explicit removal ended in absence.
+    RemovalAfter,
     /// Distinct approved update command.
     Upgrade,
     /// Acquire the exact read-only image mount and record its ownership.
@@ -39,6 +41,8 @@ pub enum SoftwareCheckpoint {
     },
     /// Physical facts, independent of effect and delivery.
     End {
+        /// Actual duration of this physical operation, retained across recovery.
+        duration_ms: u64,
         /// Zero-based backend step.
         step: u32,
         /// Matches the preceding Begin exactly.
@@ -102,6 +106,7 @@ impl SoftwareProgress {
         let mut quiet = true;
         let mut succeeded = true;
         let mut output = 0u64;
+        let mut duration = 0u64;
         for checkpoint in &self.checkpoints {
             let Some(step) = program.steps.get(index) else {
                 return false;
@@ -132,8 +137,16 @@ impl SoftwareProgress {
                     process,
                     detected,
                     quiescent,
+                    duration_ms,
                 } => {
                     if *i as usize != index || pending != Some(*phase) {
+                        return false;
+                    }
+                    let Some(total) = duration.checked_add(*duration_ms) else {
+                        return false;
+                    };
+                    duration = total;
+                    if duration > self.elapsed_ms {
                         return false;
                     }
                     let invocation = program.invocation(index, *phase);
@@ -164,7 +177,16 @@ impl SoftwareProgress {
                     }
                     if phase.is_observation() {
                         let Some(state) = detected else { return false };
-                        can_complete = quiet && succeeded && program.satisfied(step, state);
+                        can_complete = *phase != SoftwarePhase::RemovalAfter
+                            && quiet
+                            && succeeded
+                            && program.satisfied(step, state);
+                        if *phase == SoftwarePhase::RemovalAfter
+                            && !matches!(state, SoftwareState::Absent {})
+                        {
+                            return std::ptr::eq(checkpoint, self.checkpoints.last().unwrap())
+                                && output == self.output_bytes;
+                        }
                         if *phase == SoftwarePhase::Before && !can_complete {
                             phases.extend(program.mutation_phases(step, state));
                             if program.intent != SoftwareOperation::Detect {
@@ -293,6 +315,6 @@ impl SoftwareProgress {
 impl SoftwarePhase {
     /// Whether this phase independently observes installed state without mutation.
     pub fn is_observation(self) -> bool {
-        matches!(self, Self::Before | Self::After)
+        matches!(self, Self::Before | Self::RemovalAfter | Self::After)
     }
 }

@@ -127,6 +127,28 @@ pub(crate) fn not_downgrade(step: &SoftwareProgramStep, state: &SoftwareState) -
     if version == &step.version {
         return true;
     }
+    if let SoftwareFormat::Msix { identity, .. } = &step.format {
+        let old = version
+            .as_str()
+            .split('.')
+            .map(str::parse::<u16>)
+            .collect::<Result<Vec<_>, _>>();
+        return old
+            .ok()
+            .and_then(|v| <[u16; 4]>::try_from(v).ok())
+            .is_some_and(|old| old <= identity.version);
+    }
+    if matches!(step.format, SoftwareFormat::DmgApp { .. }) {
+        let parse = |v: &str| -> Option<[u64; 3]> {
+            let values = v
+                .split('.')
+                .map(str::parse::<u64>)
+                .collect::<Result<Vec<_>, _>>()
+                .ok()?;
+            values.try_into().ok()
+        };
+        return matches!((parse(version.as_str()),parse(step.version.as_str())),(Some(old),Some(new)) if old <= new);
+    }
     if !matches!(step.detection, SoftwareDetector::MsiProduct { .. }) {
         return false;
     }

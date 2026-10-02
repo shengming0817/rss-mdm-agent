@@ -119,7 +119,11 @@ fn unknown_detector_activity_keeps_real_exit_and_cannot_skip_to_mutation() {
             ..
         }
     )));
-    assert!(progress.checkpoints.iter().any(|c| matches!(c, SoftwareCheckpoint::End { process: Some(p), quiescent: false, .. } if p.exit_code == Some(0))));
+    assert!(progress
+        .checkpoints
+        .iter()
+        .any(|c| matches!(c, SoftwareCheckpoint::End {
+ duration_ms: 0, process: Some(p), quiescent: false, .. } if p.exit_code == Some(0))));
     assert!(!progress.complete(&plan));
     assert_eq!(carrier.1.load(Ordering::SeqCst), 1);
     let sqlite = rusqlite::Connection::open(f.root.join("software.sqlite")).unwrap();

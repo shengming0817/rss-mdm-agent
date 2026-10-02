@@ -22,11 +22,20 @@ fn recipe(
     run_as: &RunAs,
     session: &SessionRequirement,
 ) -> Result<Artifacts, Error> {
-    let image = config
-        .interpreters
-        .iter()
-        .find(|p| p.image.sha256 == launch.interpreter.artifact.sha256.as_str())
-        .ok_or(Error::Configuration)?;
+    let interpreter = if launch.interpreter.profile.id.as_str() == "native-software-worker" {
+        let image = std::env::current_exe()?;
+        execution_runner::staging::verify_retained(&image, &launch.interpreter.artifact.sha256)?;
+        image
+    } else {
+        config
+            .interpreters
+            .iter()
+            .find(|p| p.image.sha256 == launch.interpreter.artifact.sha256.as_str())
+            .ok_or(Error::Configuration)?
+            .image
+            .path
+            .clone()
+    };
     let delegate = match (run_as, session) {
         (RunAs::User { account }, SessionRequirement::ActiveUser { session, .. }) => {
             let expected_binding = session.clone();
@@ -68,7 +77,7 @@ fn recipe(
     Ok(Artifacts {
         program: vec![],
         delegate,
-        interpreter: image.image.path.clone(),
+        interpreter,
         content: content(config, run_as, &launch.artifact.sha256),
         work_root,
         controlled_input: None,

@@ -111,6 +111,8 @@ pub enum SoftwareFormat {
     },
     /// Full offline executable, including exact sidecar layout.
     Exe {
+        /// Stable native detector selector, excluding desired version and artifact bytes.
+        ownership: Digest,
         /// Portable relative paths to exact immutable artifacts.
         layout: BTreeMap<String, ExactArtifactRef>,
     },
@@ -240,7 +242,7 @@ impl SoftwareFormat {
                     && limits.depth > 0
                     && limits.depth <= 32
             }
-            Self::Exe { layout } => {
+            Self::Exe { layout, .. } => {
                 let keys = layout
                     .keys()
                     .map(|p| p.to_ascii_lowercase())

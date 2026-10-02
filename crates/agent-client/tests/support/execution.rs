@@ -92,6 +92,7 @@ impl execution_app::RunnerPort for CapturingRunner {
                 phase: SoftwarePhase::Before,
             },
             SoftwareCheckpoint::End {
+                duration_ms: 0,
                 step: 0,
                 phase: SoftwarePhase::Before,
                 process: None,

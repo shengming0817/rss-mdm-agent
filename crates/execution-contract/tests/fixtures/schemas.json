@@ -2212,10 +2212,15 @@
                 },
                 "description": "Portable relative paths to exact immutable artifacts.",
                 "type": "object"
+              },
+              "ownership": {
+                "$ref": "#/$defs/Digest",
+                "description": "Stable native detector selector, excluding desired version and artifact bytes."
               }
             },
             "required": [
               "kind",
+              "ownership",
               "layout"
             ],
             "type": "object"

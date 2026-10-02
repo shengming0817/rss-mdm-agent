@@ -82,6 +82,7 @@ pub(super) fn execute(input: ProgramRun) {
                 if failed_mutation && !phase.is_observation() && phase != SoftwarePhase::Cleanup {
                     continue;
                 }
+                let phase_started = Instant::now();
                 let command = program.invocation(index, phase);
                 let recorded = prior.checkpoints.iter().find_map(|c| match c {
                     SoftwareCheckpoint::End {
@@ -90,22 +91,24 @@ pub(super) fn execute(input: ProgramRun) {
                         process,
                         detected,
                         quiescent,
-                    } if *step as usize == index && *p == phase => {
-                        Some((process.as_deref().cloned(), detected.clone(), *quiescent))
-                    }
+                        duration_ms,
+                    } if *step as usize == index && *p == phase => Some((
+                        process.as_deref().cloned(),
+                        detected.clone(),
+                        *quiescent,
+                        *duration_ms,
+                    )),
                     _ => None,
                 });
                 let replayed = recorded.is_some();
                 let (facts, detected, quiet) = if let Some(recorded) = recorded {
                     if phase.is_observation() {
-                        // Original checkpoint waits and observations already consumed time.
-                        // Conservatively debit all prior elapsed time; recovery cannot replenish it.
-                        detector_elapsed = prior.elapsed_ms;
+                        detector_elapsed = detector_elapsed.saturating_add(recorded.3);
                         detector_output = detector_output.saturating_add(
                             recorded.0.as_ref().map_or(0, |p| p.total_output_bytes),
                         );
                     }
-                    recorded
+                    (recorded.0, recorded.1, recorded.2)
                 } else {
                     if cancel.load(Ordering::Acquire)
                         || Instant::now() >= deadline
@@ -168,6 +171,7 @@ pub(super) fn execute(input: ProgramRun) {
                             (index as u32, phase),
                             (invocation_deadline, cap, first.take()),
                             cancel.clone(),
+                            before.clone(),
                         )?;
                         if phase.is_observation() {
                             detector_elapsed = detector_elapsed.saturating_add(
@@ -185,7 +189,7 @@ pub(super) fn execute(input: ProgramRun) {
                         let detection = if !phase.is_observation() {
                             None
                         } else {
-                            Some(script_detection(&facts))
+                            Some(invocation_detection(command, &facts))
                         };
                         let quiet = facts.quiescent;
                         (Some(facts), detection, quiet)
@@ -239,6 +243,10 @@ pub(super) fn execute(input: ProgramRun) {
                 }
                 if !replayed {
                     journal.checkpoints.push(SoftwareCheckpoint::End {
+                        duration_ms: phase_started
+                            .elapsed()
+                            .as_millis()
+                            .min(u128::from(u64::MAX)) as u64,
                         step: index as u32,
                         phase,
                         process: facts.clone().map(Box::new),
@@ -274,7 +282,13 @@ pub(super) fn execute(input: ProgramRun) {
                     if matches!(state, SoftwareState::Unknown { .. }) {
                         return Err(Error::OutcomeUnknown);
                     }
-                    let satisfied = program.satisfied(step, &state);
+                    if phase == SoftwarePhase::RemovalAfter
+                        && !matches!(state, SoftwareState::Absent {})
+                    {
+                        return Err(Error::OutcomeUnknown);
+                    }
+                    let satisfied =
+                        phase != SoftwarePhase::RemovalAfter && program.satisfied(step, &state);
                     if satisfied && step_quiescent && mutation_succeeded {
                         journal
                             .checkpoints
@@ -310,11 +324,16 @@ pub(super) fn execute(input: ProgramRun) {
                     if phase == SoftwarePhase::After {
                         return Err(Error::OutcomeUnknown);
                     }
-                    if matches!(state, SoftwareState::Present { .. }) {
+                    if phase == SoftwarePhase::Before
+                        && matches!(state, SoftwareState::Present { .. })
+                    {
                         let managed = ownership
                             .iter()
                             .any(|o| o.step as usize == index && o.state == state);
-                        if (step.existing != ExistingSoftware::AllowUserExisting && !managed)
+                        if (program.intent == SoftwareOperation::Uninstall
+                            && matches!(step.format, SoftwareFormat::DmgApp { .. })
+                            && !managed)
+                            || (step.existing != ExistingSoftware::AllowUserExisting && !managed)
                             || (program.intent == SoftwareOperation::Install
                                 && !step.allow_downgrade
                                 && !crate::software::native_detection::not_downgrade(step, &state))
@@ -391,6 +410,7 @@ fn invoke(
     (step, phase): (u32, SoftwarePhase),
     (deadline, cap, first_start): (Instant, u64, Option<u64>),
     cancel: Arc<AtomicBool>,
+    before: Option<SoftwareState>,
 ) -> Result<ProcessEvidence, Error> {
     if let Some(connection) = &material.delegate {
         use crate::helper::{Command, Reply};
@@ -409,6 +429,7 @@ fn invoke(
             timeout_ms: remaining,
             output_bytes: cap,
             first_start,
+            before: before.clone(),
         });
         if let Err(error @ (Error::Denied | Error::Capacity)) = submitted {
             let mut facts = rejected(plan, attempt, runner, ProcessEnd::Rejected);
@@ -470,6 +491,17 @@ fn invoke(
         deadline,
         cancelled: cancel.clone(),
     };
+    let mut material = material.clone();
+    if matches!(invocation.launch.stdin, StandardInput::Controlled { .. })
+        && invocation.launch.interpreter.profile.id.as_str() == "native-software-worker"
+    {
+        material.controlled_input = Some(Arc::new(BeforeInput {
+            digest: plan.digest().clone(),
+            attempt: attempt.clone(),
+            step,
+            state: before.ok_or(Error::Denied)?,
+        }));
+    }
     let prepared =
         material.prepare_recipe(plan, attempt, Recipe::invocation(invocation), &control)?;
     runtime.block_on(run(
@@ -489,4 +521,58 @@ fn invoke(
         .clone()
         .ok_or(Error::OutcomeUnknown)?;
     Ok(facts)
+}
+
+pub(super) fn invocation_detection(
+    invocation: &SoftwareInvocation,
+    facts: &ProcessEvidence,
+) -> SoftwareState {
+    if invocation.launch.interpreter.profile.id.as_str() == "native-software-worker" {
+        if facts.end == ProcessEnd::Exited
+            && facts.exit_code == Some(0)
+            && facts.quality == OutputQuality::Complete
+        {
+            if let Ok(result) = serde_json::from_slice::<SoftwareWorkerResult>(&facts.stdout) {
+                if result.closed {
+                    if let Some(state) = result.detected {
+                        return state;
+                    }
+                }
+            }
+        }
+        return SoftwareState::Unknown {
+            reason: SoftwareDetectionFailure::Unavailable,
+        };
+    }
+    script_detection(facts)
+}
+
+pub(crate) struct BeforeInput {
+    pub(crate) digest: Digest,
+    pub(crate) attempt: AttemptId,
+    pub(crate) step: u32,
+    pub(crate) state: SoftwareState,
+}
+impl crate::InputResolver for BeforeInput {
+    fn resolve(
+        &self,
+        plan: &FrozenExecution,
+        attempt: &AttemptId,
+        reference: &VersionedRef,
+        max_bytes: u64,
+    ) -> Result<crate::InputBytes, Error> {
+        if plan.digest() != &self.digest
+            || attempt != &self.attempt
+            || reference.id.as_str() != "software-before"
+            || reference.revision.as_str() != self.step.to_string()
+            || matches!(self.state, SoftwareState::Unknown { .. })
+        {
+            return Err(Error::Denied);
+        }
+        let bytes = serde_json::to_vec(&self.state).map_err(|_| Error::InvalidInput)?;
+        if bytes.len() as u64 > max_bytes {
+            return Err(Error::Capacity);
+        }
+        Ok(crate::InputBytes::new(bytes))
+    }
 }

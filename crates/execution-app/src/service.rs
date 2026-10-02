@@ -653,6 +653,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
                         .and_then(|progress| {
                             progress.checkpoints.iter().rev().find_map(|c| match c {
                                 execution_contract::SoftwareCheckpoint::End {
+                                    duration_ms: 0,
                                     process: Some(facts),
                                     ..
                                 } => {

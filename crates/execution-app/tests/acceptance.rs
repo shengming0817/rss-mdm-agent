@@ -1600,6 +1600,7 @@ fn completed_step_cannot_become_sequence_exit_after_restart() {
                 phase: SoftwarePhase::Before,
             },
             SoftwareCheckpoint::End {
+                duration_ms: 0,
                 step: 0,
                 phase: SoftwarePhase::Before,
                 process: None,
@@ -1611,6 +1612,7 @@ fn completed_step_cannot_become_sequence_exit_after_restart() {
                 phase: SoftwarePhase::Mutation,
             },
             SoftwareCheckpoint::End {
+                duration_ms: 0,
                 step: 0,
                 phase: SoftwarePhase::Mutation,
                 process: Some(Box::new(ProcessEvidence {
@@ -1636,6 +1638,7 @@ fn completed_step_cannot_become_sequence_exit_after_restart() {
                 phase: SoftwarePhase::After,
             },
             SoftwareCheckpoint::End {
+                duration_ms: 0,
                 step: 0,
                 phase: SoftwarePhase::After,
                 process: None,

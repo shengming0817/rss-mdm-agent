@@ -147,6 +147,7 @@ impl AppHost for EnterpriseHost {
                     vec![]
                 }),
                 launch_io: inventory(vec![
+                    LaunchIoCapability::ControlledStdin(TextEncoding::Utf8),
                     LaunchIoCapability::CapturedText(TextEncoding::Utf8),
                     LaunchIoCapability::CapturedText(TextEncoding::Utf16Le),
                 ]),

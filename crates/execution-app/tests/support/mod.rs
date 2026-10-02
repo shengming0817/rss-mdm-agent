@@ -297,8 +297,8 @@ impl AppHost for TestHost {
                         .map(|p| {
                             let mut kinds = vec![];
                             for s in &p.steps {
-                                if !kinds.contains(&s.adapter) {
-                                    kinds.push(s.adapter);
+                                if !kinds.contains(&s.format.adapter()) {
+                                    kinds.push(s.format.adapter());
                                 }
                             }
                             kinds

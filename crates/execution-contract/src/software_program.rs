@@ -132,7 +132,7 @@ impl SoftwareProgram {
                 SoftwareOperation::Uninstall => step.uninstall.as_ref(),
                 SoftwareOperation::Detect => None,
             },
-            SoftwarePhase::Removal => step.uninstall.as_ref(),
+            SoftwarePhase::Removal => step.auxiliary.get(&phase).or(step.uninstall.as_ref()),
             SoftwarePhase::Upgrade => match &step.upgrade {
                 SoftwareUpgrade::InPlace { invocation } => Some(invocation),
                 _ => None,
@@ -140,10 +140,12 @@ impl SoftwareProgram {
             SoftwarePhase::Attach | SoftwarePhase::Stage | SoftwarePhase::Cleanup => {
                 step.auxiliary.get(&phase)
             }
-            SoftwarePhase::Before | SoftwarePhase::After => match &step.detection {
-                SoftwareDetector::Script { invocation } => Some(invocation),
-                _ => None,
-            },
+            SoftwarePhase::Before | SoftwarePhase::RemovalAfter | SoftwarePhase::After => {
+                match &step.detection {
+                    SoftwareDetector::Script { invocation } => Some(invocation),
+                    _ => None,
+                }
+            }
         }
     }
     /// Desired effect, evaluated independently of installer process exits.
@@ -174,7 +176,8 @@ impl SoftwareProgram {
         }
         let mut phases = Vec::new();
         if step.auxiliary.contains_key(&SoftwarePhase::Attach)
-            && self.intent == SoftwareOperation::Install
+            && (self.intent == SoftwareOperation::Install
+                || matches!(step.format, SoftwareFormat::DmgApp { .. }))
         {
             phases.push(SoftwarePhase::Attach);
             if step.auxiliary.contains_key(&SoftwarePhase::Stage) {
@@ -183,6 +186,7 @@ impl SoftwareProgram {
         }
         if updating && matches!(step.upgrade, SoftwareUpgrade::UninstallThenInstall {}) {
             phases.push(SoftwarePhase::Removal);
+            phases.push(SoftwarePhase::RemovalAfter);
         }
         phases.push(
             if updating && matches!(step.upgrade, SoftwareUpgrade::InPlace { .. }) {
@@ -192,7 +196,8 @@ impl SoftwareProgram {
             },
         );
         if step.auxiliary.contains_key(&SoftwarePhase::Cleanup)
-            && self.intent == SoftwareOperation::Install
+            && (self.intent == SoftwareOperation::Install
+                || matches!(step.format, SoftwareFormat::DmgApp { .. }))
         {
             phases.push(SoftwarePhase::Cleanup);
         }
@@ -232,16 +237,68 @@ impl SoftwareProgramStep {
     /// Stable native resource identity across version updates, independent of display aliases.
     pub fn ownership_key(&self, operation: SoftwareOperation) -> String {
         use sha2::{Digest as _, Sha256};
-        let detector = match &self.detection {
-            SoftwareDetector::MsiProduct { product_code, .. } => product_code.clone(),
-            SoftwareDetector::PkgReceipt { receipt, .. } => receipt.clone(),
-            SoftwareDetector::Script { invocation } => format!(
-                "{:x}",
-                Sha256::digest(
-                    serde_json_canonicalizer::to_vec(&(&invocation.launch, &invocation.run_as))
-                        .expect("closed detector")
-                )
+        let native_identity = match &self.format {
+            SoftwareFormat::Exe { ownership, .. } => {
+                Some(serde_json::to_vec(ownership).expect("closed identity"))
+            }
+            SoftwareFormat::Msix {
+                identity,
+                deployment,
+                ..
+            } => Some(
+                serde_json::to_vec(&(
+                    identity.name.as_str(),
+                    identity.publisher.as_str(),
+                    identity.resource_id.as_str(),
+                    identity.architecture.as_str(),
+                    deployment,
+                ))
+                .expect("closed identity"),
             ),
+            SoftwareFormat::DmgApp {
+                bundle_id,
+                target_name,
+                ..
+            } => Some(
+                serde_json::to_vec(&(
+                    bundle_id.as_str(),
+                    target_name,
+                    self.signatures
+                        .iter()
+                        .map(|s| match s {
+                            SoftwareSignature::AppleDeveloperId { publisher, .. } => {
+                                ("apple", publisher.as_str())
+                            }
+                            SoftwareSignature::Authenticode { publisher, .. } => {
+                                ("authenticode", publisher.as_str())
+                            }
+                            SoftwareSignature::Msix { publisher, .. } => {
+                                ("msix", publisher.as_str())
+                            }
+                        })
+                        .collect::<Vec<_>>(),
+                ))
+                .expect("closed identity"),
+            ),
+            SoftwareFormat::DmgPkg { receipt, .. } => {
+                Some(serde_json::to_vec(receipt).expect("closed identity"))
+            }
+            _ => None,
+        };
+        let detector = if let Some(identity) = native_identity {
+            format!("{:x}", Sha256::digest(identity))
+        } else {
+            match &self.detection {
+                SoftwareDetector::MsiProduct { product_code, .. } => product_code.clone(),
+                SoftwareDetector::PkgReceipt { receipt, .. } => receipt.clone(),
+                SoftwareDetector::Script { invocation } => format!(
+                    "{:x}",
+                    Sha256::digest(
+                        serde_json_canonicalizer::to_vec(&(&invocation.launch, &invocation.run_as))
+                            .expect("closed detector")
+                    )
+                ),
+            }
         };
         let context = if operation == SoftwareOperation::Uninstall {
             self.uninstall.as_ref().unwrap_or(&self.install)
@@ -289,4 +346,18 @@ pub struct SoftwareMaterial {
     pub path: String,
     /// Exact declared bytes.
     pub artifact: ExactArtifactRef,
+}
+
+/// Facts from fixed operations; these describe native completion, never inferred installation.
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SoftwareWorkerResult {
+    /// Bytes observed by native tools, including output consumed for independent checks.
+    pub native_output_bytes: u64,
+    /// Independent observation for a detector only.
+    pub detected: Option<SoftwareState>,
+    /// Native operation completion is known; a process group alone cannot prove this on macOS.
+    pub closed: bool,
+    /// Captured native tool diagnostics within the original budget.
+    pub diagnostics: String,
 }

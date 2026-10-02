@@ -94,7 +94,9 @@ pub(crate) fn diagnostic(
                     _ => None,
                 })
                 .unwrap_or(false);
-            if matched {
+            if matched && !p.closed(plan) {
+                SoftwareDiagnostic::CleanupPending
+            } else if matched {
                 SoftwareDiagnostic::DesiredStateObserved
             } else {
                 SoftwareDiagnostic::DetectionUnavailable

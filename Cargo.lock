@@ -94,6 +94,8 @@ dependencies = [
  "installation-security",
  "libc",
  "native-process",
+ "plist",
+ "quick-xml",
  "ring",
  "rusqlite",
  "serde",
@@ -103,7 +105,9 @@ dependencies = [
  "tokio",
  "url",
  "uuid",
+ "windows",
  "zeroize",
+ "zip",
 ]
 
 [[package]]

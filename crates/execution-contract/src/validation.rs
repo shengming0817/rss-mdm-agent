@@ -547,7 +547,7 @@ fn software(p: &ExecutionInput, limits: &ExecutionLimits) -> Result<(), Contract
                 return Err(invalid());
             }
             invocation(&step.install)?;
-            let expected = match &step.format {
+            let mut expected = match &step.format {
                 crate::SoftwareFormat::DmgApp { .. } => vec![
                     crate::SoftwarePhase::Attach,
                     crate::SoftwarePhase::Stage,
@@ -558,6 +558,15 @@ fn software(p: &ExecutionInput, limits: &ExecutionLimits) -> Result<(), Contract
                 }
                 _ => Vec::new(),
             };
+            if step.auxiliary.contains_key(&crate::SoftwarePhase::Removal) {
+                if !matches!(
+                    step.upgrade,
+                    crate::SoftwareUpgrade::UninstallThenInstall {}
+                ) {
+                    return Err(invalid());
+                }
+                expected.push(crate::SoftwarePhase::Removal);
+            }
             if step.auxiliary.len() != expected.len()
                 || expected.iter().any(|p| !step.auxiliary.contains_key(p))
             {

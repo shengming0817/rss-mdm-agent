@@ -108,6 +108,7 @@ fn journal_history_cannot_skip_unknown_steps_or_rewrite_exits() {
     assert!(progress.valid_for(&plan));
     let begun = progress.clone();
     progress.checkpoints.push(SoftwareCheckpoint::End {
+        duration_ms: 0,
         step: 0,
         phase: SoftwarePhase::Before,
         process: None,
@@ -201,6 +202,7 @@ fn msi_reboot_completion_requires_permission_detection_and_quiescence() {
                                     phase: SoftwarePhase::Before,
                                 },
                                 SoftwareCheckpoint::End {
+                                    duration_ms: 0,
                                     step: 0,
                                     phase: SoftwarePhase::Before,
                                     process: None,
@@ -212,6 +214,7 @@ fn msi_reboot_completion_requires_permission_detection_and_quiescence() {
                                     phase: SoftwarePhase::Mutation,
                                 },
                                 SoftwareCheckpoint::End {
+                                    duration_ms: 0,
                                     step: 0,
                                     phase: SoftwarePhase::Mutation,
                                     process: Some(Box::new(facts)),
@@ -223,6 +226,7 @@ fn msi_reboot_completion_requires_permission_detection_and_quiescence() {
                                     phase: SoftwarePhase::After,
                                 },
                                 SoftwareCheckpoint::End {
+                                    duration_ms: 0,
                                     step: 0,
                                     phase: SoftwarePhase::After,
                                     process: None,
@@ -288,4 +292,140 @@ fn approved_exit_policy_and_update_invocation_are_frozen_and_closed() {
     old["schemaVersion"] = 6.into();
     old["execution"]["program"]["steps"][0]["adapter"] = "exe".into();
     assert!(decode_execution(&serde_json::to_vec(&old).unwrap(), &limits()).is_err());
+}
+
+#[test]
+fn removal_updates_require_independent_absence_and_keep_failed_work_closed() {
+    use execution_contract::*;
+    let mut input = decode_execution(include_bytes!("fixtures/software.json"), &limits()).unwrap();
+    let ExecutionSpec::SoftwareProgram { program } = &mut input.execution else {
+        unreachable!()
+    };
+    program.steps.truncate(1);
+    let step = &mut program.steps[0];
+    step.uninstall = Some(step.install.clone());
+    step.upgrade = SoftwareUpgrade::UninstallThenInstall {};
+    let before = SoftwareState::Present {
+        version: PackageValue::new("0.9").unwrap(),
+    };
+    assert_eq!(
+        program.mutation_phases(&program.steps[0], &before),
+        vec![
+            SoftwarePhase::Removal,
+            SoftwarePhase::RemovalAfter,
+            SoftwarePhase::Mutation
+        ]
+    );
+    let plan = FrozenExecution::freeze(input, &limits()).unwrap();
+    let attempt = AttemptId::new("same-attempt").unwrap();
+    let runner = Id::new("native").unwrap();
+    let facts = |code| ProcessEvidence {
+        content_digest: plan.digest().clone(),
+        attempt_id: attempt.clone(),
+        runner: runner.clone(),
+        scope: ProcessScope::NotStarted {},
+        finished: true,
+        exit_code: Some(code),
+        end: ProcessEnd::Exited,
+        failure_kind: ProcessFailureKind::None,
+        quiescent: true,
+        stdout: vec![],
+        stderr: vec![],
+        total_output_bytes: 0,
+        quality: OutputQuality::Complete,
+    };
+    let mut progress = SoftwareProgress {
+        attempt_id: attempt.clone(),
+        content_digest: plan.digest().clone(),
+        runner: runner.clone(),
+        elapsed_ms: 40,
+        output_bytes: 0,
+        checkpoints: vec![
+            SoftwareCheckpoint::Begin {
+                step: 0,
+                phase: SoftwarePhase::Before,
+            },
+            SoftwareCheckpoint::End {
+                step: 0,
+                phase: SoftwarePhase::Before,
+                process: None,
+                detected: Some(before),
+                quiescent: true,
+                duration_ms: 5,
+            },
+            SoftwareCheckpoint::Begin {
+                step: 0,
+                phase: SoftwarePhase::Removal,
+            },
+            SoftwareCheckpoint::End {
+                step: 0,
+                phase: SoftwarePhase::Removal,
+                process: Some(Box::new(facts(0))),
+                detected: None,
+                quiescent: true,
+                duration_ms: 10,
+            },
+        ],
+    };
+    assert!(progress.valid_for(&plan) && progress.resumable(&plan));
+    let durable = progress.clone();
+    // Successful removal exit cannot dispatch installation without an absence observation.
+    progress.checkpoints.push(SoftwareCheckpoint::Begin {
+        step: 0,
+        phase: SoftwarePhase::Mutation,
+    });
+    assert!(!progress.valid_for(&plan));
+    progress = durable;
+    progress.checkpoints.extend([
+        SoftwareCheckpoint::Begin {
+            step: 0,
+            phase: SoftwarePhase::RemovalAfter,
+        },
+        SoftwareCheckpoint::End {
+            step: 0,
+            phase: SoftwarePhase::RemovalAfter,
+            process: None,
+            detected: Some(SoftwareState::Absent {}),
+            quiescent: true,
+            duration_ms: 5,
+        },
+        SoftwareCheckpoint::Begin {
+            step: 0,
+            phase: SoftwarePhase::Mutation,
+        },
+        SoftwareCheckpoint::End {
+            step: 0,
+            phase: SoftwarePhase::Mutation,
+            process: Some(Box::new(facts(7))),
+            detected: None,
+            quiescent: true,
+            duration_ms: 10,
+        },
+        SoftwareCheckpoint::Begin {
+            step: 0,
+            phase: SoftwarePhase::After,
+        },
+        SoftwareCheckpoint::End {
+            step: 0,
+            phase: SoftwarePhase::After,
+            process: None,
+            detected: Some(SoftwareState::Absent {}),
+            quiescent: true,
+            duration_ms: 5,
+        },
+    ]);
+    assert!(progress.valid_for(&plan));
+    assert!(progress.closed(&plan));
+    assert!(!progress.complete(&plan));
+    let known_failure = progress.clone();
+    progress.checkpoints.pop();
+    assert!(progress.valid_for(&plan));
+    assert!(!progress.closed(&plan));
+    assert!(!progress.resumable(&plan));
+    progress = known_failure;
+    progress.elapsed_ms = 34;
+    assert!(
+        !progress.valid_for(&plan),
+        "recovery cannot drop already consumed operation time"
+    );
 }

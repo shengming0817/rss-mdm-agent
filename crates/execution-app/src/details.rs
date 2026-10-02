@@ -89,6 +89,11 @@ impl FrozenExecutionSummary {
                             .iter()
                             .map(|step| SoftwareStepSummary {
                                 adapter: step.format.adapter(),
+                                deployment: match step.format {
+                                    execution_contract::SoftwareFormat::Msix { deployment: execution_contract::MsixDeployment::DeviceProvisioning {},.. } => Some(SoftwareDeploymentSummary::FutureUsers),
+                                    execution_contract::SoftwareFormat::Msix { deployment: execution_contract::MsixDeployment::TargetUserRegistration {},.. } => Some(SoftwareDeploymentSummary::TargetUser),
+                                    _ => None,
+                                },
                                 package: step.package.clone(),
                                 version: step.version.clone(),
                                 run_as: if program.intent
@@ -191,6 +196,8 @@ pub enum ExecutionSummary {
 pub struct SoftwareStepSummary {
     /// Selected closed adapter.
     pub adapter: execution_contract::SoftwareKind,
+    /// Native MSIX effect, separately from OS account used to execute it.
+    pub deployment: Option<SoftwareDeploymentSummary>,
     /// Exact backend package.
     pub package: execution_contract::PackageValue,
     /// Fixed package version.
@@ -213,4 +220,14 @@ pub enum BackendTaskView {
         /// Real frozen input projection and lifecycle facts.
         value: Box<ExecutionTaskDetails>,
     },
+}
+
+/// Safe native package effect for task details.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum SoftwareDeploymentSummary {
+    /// Registration for the exact bound user.
+    TargetUser,
+    /// Provisioning for future users; existing registrations are unchanged.
+    FutureUsers,
 }

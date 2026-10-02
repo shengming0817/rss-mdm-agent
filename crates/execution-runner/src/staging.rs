@@ -364,3 +364,71 @@ fn verify(path: &Path, expected: &Digest, length: u64) -> Result<(), Error> {
     }
     Ok(())
 }
+
+/// Lease exact protected material while a fixed software worker uses its native path.
+/// This is physical input verification and grants no dispatch authority.
+pub struct RetainedMaterialLease {
+    _file: std::fs::File,
+    _path: crate::platform::PathLease,
+}
+/// Verify immutable bytes and retain the existing platform path lease.
+pub fn verify_retained(
+    path: &std::path::Path,
+    digest: &execution_contract::Digest,
+) -> Result<RetainedMaterialLease, execution_app::Error> {
+    let (file, lease) = crate::materialize::verify_material(path, digest)?;
+    Ok(RetainedMaterialLease {
+        _file: file,
+        _path: lease,
+    })
+}
+/// Read the protected, bounded input already pinned by the parent runner's launch recipe.
+pub fn read_worker_input(
+    path: &std::path::Path,
+    limit: u64,
+) -> Result<Vec<u8>, execution_app::Error> {
+    use std::io::Read;
+    #[cfg(target_os = "macos")]
+    let file = if path
+        .to_str()
+        .and_then(|p| p.strip_prefix("/dev/fd/"))
+        .is_some_and(|fd| {
+            !fd.is_empty()
+                && fd.bytes().all(|b| b.is_ascii_digit())
+                && fd.parse::<u32>().is_ok_and(|n| n >= 3)
+        }) {
+        // The existing runner hands this worker a retained read-only file/anonymous pipe.
+        std::fs::File::open(path).map_err(|_| execution_app::Error::Unavailable)?
+    } else {
+        crate::platform::protected_path(path, false)?;
+        crate::platform::open_file(path)?
+    };
+    #[cfg(not(target_os = "macos"))]
+    let file = {
+        crate::platform::protected_path(path, false)?;
+        crate::platform::open_file(path)?
+    };
+    if file
+        .metadata()
+        .map_err(|_| execution_app::Error::Unavailable)?
+        .len()
+        > limit
+    {
+        return Err(execution_app::Error::Capacity);
+    }
+    let mut bytes = Vec::new();
+    file.take(limit + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| execution_app::Error::Unavailable)?;
+    if bytes.len() as u64 > limit {
+        return Err(execution_app::Error::Capacity);
+    }
+    Ok(bytes)
+}
+/// Recheck the original execution account and authenticated login in the physical worker.
+pub fn verify_worker_identity(
+    run_as: &execution_contract::RunAs,
+    session: &execution_contract::SessionRequirement,
+) -> Result<(), execution_app::Error> {
+    crate::platform::identity(run_as, session)
+}

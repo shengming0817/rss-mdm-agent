@@ -29,6 +29,7 @@ pub(crate) enum Command {
         timeout_ms: u64,
         output_bytes: u64,
         first_start: Option<u64>,
+        before: Option<SoftwareState>,
     },
     InvocationEvidence {
         input: Box<ExecutionInput>,
@@ -197,6 +198,7 @@ impl Helper {
                 timeout_ms,
                 output_bytes,
                 first_start,
+                before,
             } => {
                 let (plan, invocation) = self.invocation(*input, step, phase)?;
                 let now = std::time::SystemTime::now()
@@ -235,10 +237,22 @@ impl Helper {
                 {
                     return Err(Error::Capacity);
                 }
+                let mut source = self.artifacts(interpreter, content);
+                if matches!(invocation.launch.stdin, StandardInput::Controlled { .. })
+                    && invocation.launch.interpreter.profile.id.as_str() == "native-software-worker"
+                {
+                    source.controlled_input =
+                        Some(std::sync::Arc::new(crate::runner::program::BeforeInput {
+                            digest: plan.digest().clone(),
+                            attempt: attempt.clone(),
+                            step,
+                            state: before.ok_or(Error::Denied)?,
+                        }));
+                }
                 let owner = crate::runner::invocation::PhysicalInvocation::start(
                     plan,
                     attempt,
-                    self.artifacts(interpreter, content),
+                    source,
                     invocation,
                     timeout_ms,
                     output_bytes,

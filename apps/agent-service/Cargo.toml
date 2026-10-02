@@ -32,6 +32,14 @@ tokio = { workspace = true, features = ["rt-multi-thread", "net"] }
 uuid = { version = "=1.26.0", features = ["v4", "serde"] }
 base64 = "=0.23.1"
 zeroize = "=1.8.2"
+zip = { version = "=8.6.0", default-features = false, features = ["deflate"] }
+quick-xml = "=0.42.0"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "=0.61.3", features = ["ApplicationModel", "Foundation", "Management_Deployment", "System", "Win32_System_WinRT", "Win32_System_Registry", "Win32_System_JobObjects"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+plist = "=1.10.1"
 
 [target.'cfg(unix)'.dependencies]
 libc = "=0.2.189"

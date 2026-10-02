@@ -97,4 +97,4 @@ mod chunk_recovery;
 mod test_support;
 
 mod software;
-pub use software::{software_commands, SoftwareCommands};
+pub use software::{software_budget, software_commands, SoftwareCommands};
