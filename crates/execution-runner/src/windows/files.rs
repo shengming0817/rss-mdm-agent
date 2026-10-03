@@ -93,6 +93,9 @@ fn check(file: &File, immutable: bool, leaf: bool, current: &str) -> Result<(), 
     }
     Ok(())
 }
+pub(crate) fn capacity_error(error: &std::io::Error) -> bool {
+    error.raw_os_error() == Some(ERROR_TOO_MANY_OPEN_FILES as i32)
+}
 pub(crate) fn protected_file(file: &File) -> Result<(), Error> {
     check(file, true, true, &token_identity()?.0)
 }
@@ -200,10 +203,20 @@ pub(crate) struct WorkingDirectory {
 }
 impl WorkingDirectory {
     pub(crate) fn open(path: &Path) -> Result<Self, Error> {
-        protected_path(path, true)?;
+        let guard = PathLease::open(path, false)?;
+        if !guard
+            .0
+            .last()
+            .ok_or(Error::Denied)?
+            .metadata()
+            .map_err(|_| Error::Unavailable)?
+            .is_dir()
+        {
+            return Err(Error::Denied);
+        }
         Ok(Self {
             path: path.into(),
-            _guard: PathLease::open(path, false)?,
+            _guard: guard,
         })
     }
     pub(crate) fn configure(

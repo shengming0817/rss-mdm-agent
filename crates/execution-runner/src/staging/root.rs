@@ -536,6 +536,88 @@ mod tests {
         std::fs::remove_dir_all(path).unwrap();
     }
     #[test]
+    fn bundle_members_share_quota_and_reclaim_with_their_digest_sources() {
+        let (mut root, path) = fixture();
+        let bytes = b"printf bundle";
+        let member_digest: [u8; 32] = Sha256::digest(bytes).into();
+        let manifest = execution_contract::BundleManifest {
+            schema: execution_contract::V1,
+            platform: execution_contract::Platform::Macos,
+            architecture: execution_contract::PackageValue::new("aarch64").unwrap(),
+            entries: BTreeMap::from([(
+                "nested/install.sh".into(),
+                execution_contract::BundleFile {
+                    length: bytes.len() as u64,
+                    sha256: member_digest,
+                },
+            )]),
+        };
+        let mut archive = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        archive.start_file("manifest.json", options).unwrap();
+        archive
+            .write_all(&serde_json::to_vec(&manifest).unwrap())
+            .unwrap();
+        archive.start_file("nested/install.sh", options).unwrap();
+        archive.write_all(bytes).unwrap();
+        let archive = archive.finish().unwrap().into_inner();
+        let (source, archive_digest) = publish(&mut root, &archive);
+        let members = root
+            .bundle(None, &source, &archive_digest, &manifest)
+            .unwrap();
+        let member = members["nested/install.sh"].clone();
+        let digest = digest(bytes);
+        let base = path.join("system").join(digest.as_str());
+        root.quota(
+            MAX_BYTES - 64 - archive.len() as u64 - bytes.len() as u64,
+            0,
+        )
+        .unwrap();
+        let candidates = BTreeMap::from([
+            (source, archive_digest),
+            (base, digest.clone()),
+            (member, digest),
+        ]);
+        let result = root.reclaim(&candidates, &BTreeSet::new()).unwrap();
+        assert_eq!(
+            (result.files, result.bytes),
+            (3, archive.len() as u64 + bytes.len() as u64)
+        );
+        root.quota(MAX_BYTES - 64, MAX_ENTRIES - 1).unwrap();
+        drop(root);
+        std::fs::remove_dir_all(path).unwrap();
+    }
+    #[test]
+    fn physical_quota_refuses_publication_and_settlement_restores_capacity() {
+        let (mut root, path) = fixture();
+        let (source, old_digest) = publish(&mut root, b"old material");
+        let filler = path.join("unknown-sparse-object");
+        File::create(&filler)
+            .unwrap()
+            .set_len(MAX_BYTES - 64 - 12)
+            .unwrap();
+        let fresh = digest(b"new");
+        assert!(matches!(
+            root.publish(None, b"new".as_slice(), &fresh, 3),
+            Err(Error::Capacity)
+        ));
+        assert!(!path.join("system").join(fresh.as_str()).exists());
+        assert_eq!(
+            root.reclaim(&BTreeMap::from([(source, old_digest)]), &BTreeSet::new())
+                .unwrap()
+                .bytes,
+            12
+        );
+        assert!(
+            filler.exists(),
+            "unknown-origin bytes cannot be reclaimed to evade the limit"
+        );
+        root.publish(None, b"new".as_slice(), &fresh, 3).unwrap();
+        drop(root);
+        std::fs::remove_dir_all(path).unwrap();
+    }
+    #[test]
     fn unknown_origin_and_unenumerated_links_are_preserved() {
         let (mut root, path) = fixture();
         let (source, digest) = publish(&mut root, b"settled");

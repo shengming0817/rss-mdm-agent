@@ -40,7 +40,7 @@ pub(crate) async fn submit<S: SecretProvider>(
     };
     let delegate = if needs_user { login.clone() } else { None };
     let (preview, artifacts) = compile(
-        &service.core,
+        &mut service.core,
         &offer,
         &materials,
         offer.payload(),
@@ -107,8 +107,13 @@ pub(crate) async fn submit<S: SecretProvider>(
     } else {
         None
     };
-    let (mut plan, artifacts) =
-        compile(&service.core, &offer, &materials, start.payload(), delegate)?;
+    let (mut plan, artifacts) = compile(
+        &mut service.core,
+        &offer,
+        &materials,
+        start.payload(),
+        delegate,
+    )?;
     if let Some(selection) = selection {
         let mut input = plan.spec().clone();
         let execution_contract::Initiator::Backend { trigger, .. } = &mut input.request.initiator
@@ -204,7 +209,7 @@ pub(crate) async fn submit<S: SecretProvider>(
     result
 }
 fn compile(
-    core: &Core,
+    core: &mut Core,
     offer: &Offer,
     materials: &Materials,
     payload: &wire::TaskPayload,
@@ -224,7 +229,7 @@ fn compile(
             payload,
             &core.host.binding,
             &core.host.actor,
-            &core.config,
+            (&core.config, &mut core.material_root),
             delegate,
         ),
         wire::TaskPayload::Script(payload) => {
@@ -232,15 +237,16 @@ fn compile(
                 .as_ref()
                 .map_or(&core.config.work_root, |h| &h.context().work_root);
             let file = materials.files().first().ok_or(Error::Untrusted)?;
-            let content = execution_runner::staging::publish(
-                &core.config.material_root,
-                delegate.as_ref().map(|h| h.context().subject.as_str()),
-                file.reader()?,
-                &execution_contract::Digest::new(plan::hex(&payload.content.sha256))
-                    .map_err(|_| Error::Protocol)?,
-                payload.content.length,
-            )
-            .map_err(crate::error::app_error)?;
+            let content = core
+                .material_root
+                .publish(
+                    delegate.as_ref().map(|h| h.context().subject.as_str()),
+                    file.reader()?,
+                    &execution_contract::Digest::new(plan::hex(&payload.content.sha256))
+                        .map_err(|_| Error::Protocol)?,
+                    payload.content.length,
+                )
+                .map_err(crate::error::app_error)?;
             plan::script(
                 offer,
                 materials,

@@ -413,7 +413,7 @@ pub fn read_worker_input(
 ) -> Result<Vec<u8>, execution_app::Error> {
     use std::io::Read;
     #[cfg(target_os = "macos")]
-    let file = if path
+    let (file, _lease) = if path
         .to_str()
         .and_then(|p| p.strip_prefix("/dev/fd/"))
         .is_some_and(|fd| {
@@ -422,15 +422,18 @@ pub fn read_worker_input(
                 && fd.parse::<u32>().is_ok_and(|n| n >= 3)
         }) {
         // The existing runner hands this worker a retained read-only file/anonymous pipe.
-        std::fs::File::open(path).map_err(|_| execution_app::Error::Unavailable)?
+        (
+            std::fs::File::open(path).map_err(|_| execution_app::Error::Unavailable)?,
+            None,
+        )
     } else {
-        crate::platform::protected_path(path, false)?;
-        crate::platform::open_file(path)?
+        let (file, lease) = crate::platform::PathLease::source(path, false)?.into_file()?;
+        (file, Some(lease))
     };
     #[cfg(not(target_os = "macos"))]
-    let file = {
-        crate::platform::protected_path(path, false)?;
-        crate::platform::open_file(path)?
+    let (file, _lease) = {
+        let (file, lease) = crate::platform::PathLease::source(path, false)?.into_file()?;
+        (file, Some(lease))
     };
     if file
         .metadata()

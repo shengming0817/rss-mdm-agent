@@ -594,23 +594,7 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
         let status = app
             .status(caller, binding.request())
             .map_err(map_app_error)?;
-        if status.phase == TaskPhase::Verified
-            && !matches!(
-                status.assessment,
-                Some(
-                    execution_lifecycle::EffectAssessment::Satisfied
-                        | execution_lifecycle::EffectAssessment::NoEffect
-                )
-            )
-        {
-            return Err(Error::Conflict);
-        }
-        let terminal = matches!(
-            status.phase,
-            TaskPhase::Verified | TaskPhase::Cancelled | TaskPhase::FailedBeforeDispatch
-        ) || (status.phase == TaskPhase::AdmissionDenied
-            && status.attempt_id.is_none());
-        if !terminal
+        if !settled(&status)
             || !app
                 .service_delivery(binding.request(), &self.consumer, 1)
                 .map_err(map_app_error)?
@@ -623,6 +607,22 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
             .ok_or(Error::Conflict)?;
         client.release_result(ack)
     }
+}
+/// Shared proof of safe terminal state; Unknown and an unquiesced attempt remain retained.
+pub(crate) fn settled(status: &execution_app::ExecutionStatus) -> bool {
+    (status.phase == TaskPhase::Verified
+        && matches!(
+            status.assessment,
+            Some(
+                execution_lifecycle::EffectAssessment::Satisfied
+                    | execution_lifecycle::EffectAssessment::NoEffect
+            )
+        ))
+        || matches!(
+            status.phase,
+            TaskPhase::Cancelled | TaskPhase::FailedBeforeDispatch
+        )
+        || (status.phase == TaskPhase::AdmissionDenied && status.attempt_id.is_none())
 }
 fn bound(mut value: String) -> String {
     value.retain(|v| v != '\0');

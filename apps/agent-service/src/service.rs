@@ -98,12 +98,38 @@ pub struct DeviceService<S: SecretProvider = DeviceSecrets> {
 impl<S: SecretProvider> DeviceService<S> {
     /// Open an already registered device. Create/open selection never follows an error fallback.
     pub fn open(
+        client: Client<S, SystemClock>,
+        journal: &Path,
+        startup: ProductionStartup,
+        config: ExecutionConfig,
+        clock: SystemClock,
+        helpers: UserResources,
+    ) -> Result<Self, Error> {
+        Self::assemble(
+            client,
+            journal,
+            startup,
+            config,
+            clock,
+            helpers,
+            execution_runner::staging::MaterialRoot::open,
+        )
+    }
+    // The only production caller supplies MaterialRoot::open. Unit preparation fixtures
+    // select an explicit fixture constructor without changing dispatch or journal ownership.
+    fn assemble(
         mut client: Client<S, SystemClock>,
         journal: &Path,
         startup: ProductionStartup,
         config: ExecutionConfig,
         clock: SystemClock,
         helpers: UserResources,
+        open_materials: fn(
+            &Path,
+            &execution_contract::Digest,
+            &Path,
+        )
+            -> Result<execution_runner::staging::MaterialRoot, execution_app::Error>,
     ) -> Result<Self, Error> {
         if config.interpreters.is_empty()
             || config.interpreters.len() > 8
@@ -153,6 +179,17 @@ impl<S: SecretProvider> DeviceService<S> {
             plan::storage_limits(),
         )
         .map_err(crate::error::app_error)?;
+        use sha2::{Digest as _, Sha256};
+        let owner = execution_contract::Digest::new(format!(
+            "{:x}",
+            Sha256::digest(
+                serde_json::to_vec(&(&host.binding.authority, &host.binding.device))
+                    .map_err(|_| Error::Configuration)?
+            )
+        ))
+        .map_err(|_| Error::Configuration)?;
+        let material_root = open_materials(&config.material_root, &owner, journal)
+            .map_err(crate::error::app_error)?;
         let output = client.output_policy()?;
         Ok(Self {
             client,
@@ -160,6 +197,7 @@ impl<S: SecretProvider> DeviceService<S> {
                 app,
                 host,
                 config,
+                material_root,
                 helpers,
                 available: None,
                 available_risk: None,
@@ -214,6 +252,7 @@ impl<S: SecretProvider> DeviceService<S> {
                 let selection = self.core.selected.take();
                 self.core
                     .transition(&request, BackendRequestState::Submitting, None)?;
+                self.reclaim_materials()?;
                 let result = backend::submit(self, offer, materials, selection, commands).await;
                 self.core.available = None;
                 self.core.available_risk = None;
@@ -332,6 +371,7 @@ impl<S: SecretProvider> DeviceService<S> {
             }
         }
         self.recovering = false;
+        self.reclaim_materials()?;
         let reports = 16.min(self.client.configuration().limits.pending_reports);
         network(self.client.flush_reports(reports), &mut self.core, commands).await?;
         let mut context = self.client.execution_context()?;
@@ -519,6 +559,7 @@ pub(crate) struct Core {
     pub(crate) app: ExecutionApp<EnterpriseHost, NativeRunner, execution_sqlite::Store>,
     pub(crate) host: EnterpriseHost,
     pub(crate) config: ExecutionConfig,
+    pub(crate) material_root: execution_runner::staging::MaterialRoot,
     pub(crate) helpers: UserResources,
     pub(crate) available: Option<execution_contract::BackendTask>,
     pub(crate) available_risk: Option<backend::gate::TrustedRisk>,
@@ -534,25 +575,9 @@ impl Core {
             .map_err(crate::error::app_error)?;
         for item in &page.items {
             let request = &item.status.operation_request_id;
-            let status = self
-                .app
+            self.app
                 .reconcile(request)
                 .map_err(crate::error::app_error)?;
-            if matches!(
-                status.phase,
-                execution_app::TaskPhase::Verified
-                    | execution_app::TaskPhase::Cancelled
-                    | execution_app::TaskPhase::FailedBeforeDispatch
-            ) {
-                let input = self
-                    .app
-                    .frozen_input(&self.caller(), request)
-                    .map_err(crate::error::app_error)?;
-                match self.host.materials.retire(&input) {
-                    Ok(()) | Err(execution_app::Error::Conflict) => (),
-                    Err(error) => return Err(map_app_error(error)),
-                }
-            }
         }
         self.recovery_cursor = page.next;
         Ok(())

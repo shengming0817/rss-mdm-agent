@@ -9,7 +9,7 @@ pub(crate) mod host;
 mod offer;
 pub(crate) mod plan;
 pub(crate) mod software;
-pub(crate) use bridge::ExecutionBridge;
+pub(crate) use bridge::{settled, ExecutionBridge};
 pub(crate) use dispatch::submit;
 pub(crate) use offer::offered;
 

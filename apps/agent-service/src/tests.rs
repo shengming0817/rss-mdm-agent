@@ -398,7 +398,21 @@ async fn current_software_steps_compile_from_exact_prefixed_artifacts() {
             panic!("software")
         };
         // Pins and compiles actual material; it does not pretend /bin/sh is a real installer.
-        let compiled = software::compile(&offer, &materials, spec, &binding, &actor, &config, None);
+        let journal = root.path.join("material-journal");
+        platform_private_storage::write_new(&journal, b"journal fixture").unwrap();
+        let owner = execution_contract::Digest::new("a".repeat(64)).unwrap();
+        let mut material_root =
+            execution_runner::staging::MaterialRoot::open(&config.material_root, &owner, &journal)
+                .unwrap();
+        let compiled = software::compile(
+            &offer,
+            &materials,
+            spec,
+            &binding,
+            &actor,
+            (&config, &mut material_root),
+            None,
+        );
         if supported_codes {
             let (plan, _) = compiled.unwrap();
             assert_eq!(

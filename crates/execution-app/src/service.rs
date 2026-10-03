@@ -1009,6 +1009,36 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
             .input()
             .clone())
     }
+    /// Sole device-owner read of the original frozen recovery input. No UI/model transport
+    /// may expose this value; access is checked against the current service binding.
+    pub fn service_frozen_input(&self, request: &RequestId) -> Result<FrozenExecution, Error> {
+        Ok(self
+            .load(None, request, ExecutionAccess::RunnerFact)?
+            .input()
+            .clone())
+    }
+    /// Complete journal-owner scan for reclamation. Validate original rows before selecting
+    /// a device: a corrupt plan must not disappear behind a serialized device filter.
+    /// Any foreign binding or unreadable row aborts the page; no UI/model endpoint exists.
+    pub fn service_journal_tasks(
+        &self,
+        after: Option<&RequestId>,
+        limit: usize,
+    ) -> Result<crate::TaskPage, Error> {
+        let requests = self
+            .journal
+            .service_requests(after, limit, &self.adapter(None, None))?;
+        let next = if requests.len() == limit {
+            requests.last().cloned()
+        } else {
+            None
+        };
+        let items = requests
+            .iter()
+            .map(|id| self.details_for(None, id, ExecutionAccess::RunnerFact))
+            .collect::<Result<_, _>>()?;
+        Ok(crate::TaskPage { items, next })
+    }
     /// Internal device-owner recovery page; never exposed as a UI/model operation.
     pub fn service_tasks(
         &self,

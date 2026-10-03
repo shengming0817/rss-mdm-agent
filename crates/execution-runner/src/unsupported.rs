@@ -99,3 +99,7 @@ pub(crate) fn journal_identity(_: &Path) -> Result<(u64, u64), Error> {
 pub(crate) fn storage_links(_: &File) -> Result<u64, Error> {
     Err(Error::Unsupported)
 }
+
+pub(crate) fn capacity_error(_: &std::io::Error) -> bool {
+    false
+}

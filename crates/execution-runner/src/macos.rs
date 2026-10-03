@@ -10,10 +10,14 @@ use std::{
 // and subsequently resolve it again for cwd: every component is relative to its retained parent.
 // ref: apple-oss-distributions/Libc@71bbe350ab79eef58113991d817ccc6165061a64
 // posix1e/acl_file.c; terminal FDs pin the verified object after the walk.
+pub(crate) fn capacity_error(error: &std::io::Error) -> bool {
+    matches!(error.raw_os_error(), Some(libc::EMFILE | libc::ENFILE))
+}
 fn open_error(error: std::io::Error) -> Error {
-    match error.raw_os_error() {
-        Some(libc::EMFILE | libc::ENFILE) => Error::Capacity,
-        _ => Error::Denied,
+    if capacity_error(&error) {
+        Error::Capacity
+    } else {
+        Error::Denied
     }
 }
 fn check_fd(file: &File, immutable: bool, directory: Option<bool>) -> Result<(), Error> {
@@ -195,7 +199,13 @@ pub(crate) struct Owner {
 }
 impl Owner {
     pub(crate) fn prepare(command: &mut tokio::process::Command) -> Result<Self, Error> {
-        let group = native_process::AttemptGroup::new().map_err(open_error)?;
+        let group = native_process::AttemptGroup::new().map_err(|e| {
+            if capacity_error(&e) {
+                Error::Capacity
+            } else {
+                Error::Unavailable
+            }
+        })?;
         group.configure(command.as_std_mut());
         // No shell or inherited terminal; user switching belongs to the launchd user helper.
         Ok(Self { group })
@@ -237,7 +247,13 @@ pub(crate) fn payload(
     // process input task feeds it after spawn, under the same cancellation and timeout owner.
     // ref: rust-lang/rust library/std/src/io/pipe.rs (anonymous_pipe, stable since 1.87).
     let (file, input) = if unsafe { libc::geteuid() } != 0 {
-        let (reader, writer) = std::io::pipe().map_err(open_error)?;
+        let (reader, writer) = std::io::pipe().map_err(|e| {
+            if capacity_error(&e) {
+                Error::Capacity
+            } else {
+                Error::Unavailable
+            }
+        })?;
         (
             File::from(OwnedFd::from(reader)),
             Some((writer, bytes.to_vec())),

@@ -70,7 +70,7 @@ fn identity(
     }
 }
 fn command(
-    compiler: &Compiler<'_>,
+    compiler: &mut Compiler<'_>,
     mut request: WorkerRequest,
     command: &wire::SoftwareTaskInvocation,
     image: &SoftwareMaterial,
@@ -84,14 +84,15 @@ fn command(
     use sha2::{Digest as _, Sha256};
     let hash: [u8; 32] = Sha256::digest(&bytes).into();
     let content_ref = artifact(&hash)?;
-    let content = execution_runner::staging::publish(
-        &compiler.config.material_root,
-        delegate.as_ref().map(|h| h.context().subject.as_str()),
-        std::io::Cursor::new(&bytes),
-        &content_ref.sha256,
-        bytes.len() as u64,
-    )
-    .map_err(crate::error::app_error)?;
+    let content = compiler
+        .root
+        .publish(
+            delegate.as_ref().map(|h| h.context().subject.as_str()),
+            std::io::Cursor::new(&bytes),
+            &content_ref.sha256,
+            bytes.len() as u64,
+        )
+        .map_err(crate::error::app_error)?;
     let invocation = SoftwareInvocation {
         launch: LaunchSpec {
             artifact: content_ref,
@@ -175,7 +176,10 @@ pub(super) fn compile(
     (step, index): (&wire::SoftwareTaskStep, usize),
     payload: &wire::SoftwareTaskSpec,
     materials: &Materials,
-    config: &ExecutionConfig,
+    (config, root): (
+        &ExecutionConfig,
+        &mut execution_runner::staging::MaterialRoot,
+    ),
     helper: Option<Arc<execution_ipc::helper::Connection>>,
     intent: SoftwareOperation,
     architecture: &PackageValue,
@@ -200,6 +204,7 @@ pub(super) fn compile(
 
     let mut compiler = Compiler {
         config,
+        root,
         helper: helper.clone(),
         files: BTreeMap::new(),
         bundle_root: None,
@@ -211,14 +216,15 @@ pub(super) fn compile(
             .find(|f| f.key() == declared.key)
             .ok_or(Error::Untrusted)?;
         let reference = artifact(&declared.sha256)?;
-        let path = execution_runner::staging::publish(
-            &config.material_root,
-            helper.as_ref().map(|h| h.context().subject.as_str()),
-            file.reader()?,
-            &reference.sha256,
-            declared.length,
-        )
-        .map_err(crate::error::app_error)?;
+        let path = compiler
+            .root
+            .publish(
+                helper.as_ref().map(|h| h.context().subject.as_str()),
+                file.reader()?,
+                &reference.sha256,
+                declared.length,
+            )
+            .map_err(crate::error::app_error)?;
         let key = declared
             .key
             .strip_prefix(&format!("{index}/"))
@@ -269,14 +275,15 @@ pub(super) fn compile(
                 use sha2::{Digest as _, Sha256};
                 let digest: [u8; 32] = Sha256::digest(script).into();
                 let reference = artifact(&digest)?;
-                let path = execution_runner::staging::publish(
-                    &config.material_root,
-                    helper.as_ref().map(|h| h.context().subject.as_str()),
-                    std::io::Cursor::new(script),
-                    &reference.sha256,
-                    script.len() as u64,
-                )
-                .map_err(crate::error::app_error)?;
+                let path = compiler
+                    .root
+                    .publish(
+                        helper.as_ref().map(|h| h.context().subject.as_str()),
+                        std::io::Cursor::new(script),
+                        &reference.sha256,
+                        script.len() as u64,
+                    )
+                    .map_err(crate::error::app_error)?;
                 tools.insert(
                     "authenticode".into(),
                     SoftwareMaterial {
@@ -399,16 +406,20 @@ pub(super) fn compile(
         output_bytes: u64::from(source_command.output_bytes),
         step: index.try_into().map_err(|_| Error::Protocol)?,
     };
-    let build = |operation, invocation| {
+    let build = |compiler: &mut Compiler<'_>, operation, invocation| {
         let mut request = request.clone();
         request.operation = operation;
-        command(&compiler, request, invocation, &image)
+        command(compiler, request, invocation, &image)
     };
-    let (install, install_source) = build(O::Install, commands.install)?;
-    let (update, update_source) = build(O::Upgrade, commands.upgrade.unwrap_or(commands.install))?;
+    let (install, install_source) = build(&mut compiler, O::Install, commands.install)?;
+    let (update, update_source) = build(
+        &mut compiler,
+        O::Upgrade,
+        commands.upgrade.unwrap_or(commands.install),
+    )?;
     let removal = commands
         .uninstall
-        .map(|c| build(O::Uninstall, c))
+        .map(|c| build(&mut compiler, O::Uninstall, c))
         .transpose()?;
     let uninstall = removal.as_ref().map(|(c, _)| c.clone());
     let mut auxiliary = BTreeMap::new();
@@ -433,7 +444,7 @@ pub(super) fn compile(
             }
         };
         for (phase, operation) in phases {
-            let (mut command, source) = build(operation, source_command)?;
+            let (mut command, source) = build(&mut compiler, operation, source_command)?;
             if phase == SoftwarePhase::Cleanup {
                 // Reserve closure within the original source invocation before any image effect.
                 command.timeout_ms = (command.timeout_ms / 4).min(30_000);
@@ -456,7 +467,7 @@ pub(super) fn compile(
             mutations.insert(SoftwarePhase::Upgrade, Box::new(update_source));
             if commands.upgrade_policy == wire::SoftwareTaskUpgrade::UninstallThenInstall {
                 let c = commands.uninstall.ok_or(Error::Unsupported)?;
-                let (removal, source) = build(O::RemovePrevious, c)?;
+                let (removal, source) = build(&mut compiler, O::RemovePrevious, c)?;
                 auxiliary.insert(SoftwarePhase::Removal, removal);
                 mutations.insert(SoftwarePhase::Removal, Box::new(source));
             }
@@ -469,13 +480,15 @@ pub(super) fn compile(
     }
     let (detection, detector_source) =
         if let Some(wire::SoftwareTaskDetection::Script { command: script }) = commands.detection {
+            let primary = compiler
+                .files
+                .get(action.behavior.installer())
+                .cloned()
+                .ok_or(Error::Untrusted)?;
             let (command, source, _) = compiler.command(
                 CommandKind::script(script),
                 format.adapter(),
-                compiler
-                    .files
-                    .get(action.behavior.installer())
-                    .ok_or(Error::Untrusted)?,
+                &primary,
                 SoftwareOperation::Detect,
                 &action.version,
                 &action.package,
@@ -487,7 +500,7 @@ pub(super) fn compile(
                 source,
             )
         } else {
-            let (mut detector, source) = build(O::Detect, commands.install)?;
+            let (mut detector, source) = build(&mut compiler, O::Detect, commands.install)?;
             detector.exit_codes = SoftwareExitCodes {
                 success: [0].into(),
                 reboot: Default::default(),
