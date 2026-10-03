@@ -128,7 +128,7 @@ pub struct Artifacts {
     pub work_root: PathBuf,
     /// Trusted per-attempt input resolver; absent means controlled stdin is refused.
     pub controlled_input: Option<Arc<dyn InputResolver>>,
-    // Only the unit-test binary accepts caller-owned fixture sources; no production switch exists.
+    // Only the unit-test binary accepts caller-owned pinned fixture artifacts; no production switch exists.
     #[cfg(test)]
     pub(crate) fixture_owned: bool,
 }
@@ -349,13 +349,13 @@ impl Artifacts {
         let work_lease = super::platform::PathLease::source(&self.work_root, false)?;
         let content_path = &self.content;
         #[cfg(not(test))]
-        let content_immutable = true;
+        let source_immutable = true;
         #[cfg(test)]
-        let content_immutable = !self.fixture_owned;
+        let source_immutable = !self.fixture_owned;
         let mut leases = vec![
             work_lease,
-            super::platform::PathLease::source(&self.interpreter, true)?,
-            super::platform::PathLease::source(content_path, content_immutable)?,
+            super::platform::PathLease::source(&self.interpreter, source_immutable)?,
+            super::platform::PathLease::source(content_path, source_immutable)?,
         ];
         let (interpreter, _) = exact(
             &self.interpreter,

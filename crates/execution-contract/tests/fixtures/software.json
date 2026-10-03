@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 6,
+  "schemaVersion": 7,
   "request": {
     "schemaVersion": 1,
     "requestId": "request-1",
@@ -178,7 +178,7 @@
             "receipt": "org.rss.fixture",
             "version": "1.0"
           },
-          "existing": "managedOnly",
+
           "allowDowngrade": false,
           "allowReboot": false,
           "format": {

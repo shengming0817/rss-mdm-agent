@@ -136,7 +136,7 @@ impl Data {
         self.attempt = Uuid::new_v4();
         self.reset_current_task();
         let spec = TaskSpec {
-            wire_version: 5,
+            wire_version: 6,
             tenant_id: self.tenant,
             device_id: "device-1".into(),
             platform: TaskPlatform::Macos,
@@ -196,7 +196,6 @@ impl Data {
                     signatures: vec![],
                     reboot: SoftwareTaskReboot::Report,
                     downgrade: SoftwareTaskDowngrade::Deny,
-                    ownership: SoftwareTaskOwnership::ManagedOnly,
                 },
                 artifacts: vec![SoftwareTaskArtifact {
                     key: format!("{i}/package"),
@@ -209,7 +208,7 @@ impl Data {
             .collect();
         let spec = SoftwareTaskSpec {
             execution_context: execution_context(),
-            wire_version: 5,
+            wire_version: 6,
             tenant_id: self.tenant,
             device_id: "device-1".into(),
             platform: TaskPlatform::Macos,
@@ -345,9 +344,9 @@ impl Server {
                 "password",
                 "credential",
                 vec![
-                    Capability::InventoryCollectionV5,
-                    Capability::TaskExecuteV5,
-                    Capability::SoftwarePkgSystemV5,
+                    Capability::InventoryCollectionV6,
+                    Capability::TaskExecuteV6,
+                    Capability::SoftwarePkgSystemV6,
                 ],
             )
             .await
@@ -379,7 +378,7 @@ async fn handler(
     }
     let mut d = data.lock().unwrap();
     let path = uri.path();
-    if path != "/api/agent/v5/registrations"
+    if path != "/api/agent/v6/registrations"
         && (d.denied
             || headers.get("authorization").and_then(|v| v.to_str().ok())
                 != d.credential
@@ -418,7 +417,7 @@ fn registration_response(d: &mut Data, value: Value) -> Response {
     if std::mem::take(&mut d.registration_failure) {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     }
-    (StatusCode::CREATED,axum::Json(json!({"wireVersion":5,"operationId":operation,"deviceId":"device-1","registrationId":d.registration,"generation":1,"source":"agent.builtin","epoch":d.epoch,"capabilities":value["capabilities"],"collections":collections()}))).into_response()
+    (StatusCode::CREATED,axum::Json(json!({"wireVersion":6,"operationId":operation,"deviceId":"device-1","registrationId":d.registration,"generation":1,"source":"agent.builtin","epoch":d.epoch,"capabilities":value["capabilities"],"collections":collections()}))).into_response()
 }
 fn report_response(d: &mut Data, value: Value) -> Response {
     let id = value["reportId"].as_str().unwrap().to_owned();
@@ -431,7 +430,7 @@ fn report_response(d: &mut Data, value: Value) -> Response {
     if std::mem::take(&mut d.report_failure) {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     }
-    (StatusCode::ACCEPTED,axum::Json(json!({"wireVersion":5,"reportId":if d.bad_ack{Uuid::new_v4().to_string()}else{id},"receivedAt":1,"intake":"durable"}))).into_response()
+    (StatusCode::ACCEPTED,axum::Json(json!({"wireVersion":6,"reportId":if d.bad_ack{Uuid::new_v4().to_string()}else{id},"receivedAt":1,"intake":"durable"}))).into_response()
 }
 fn claim_response(d: &mut Data, value: Value) -> Response {
     let _: TaskClaimRequest = serde_json::from_value(value.clone()).unwrap();

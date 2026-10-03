@@ -68,17 +68,12 @@ pub trait AppHost: AuthorityVerifier {
 /// let _: execution_app::AuthorizedDispatch = serde_json::from_str("{}").unwrap();
 /// ```
 pub struct AuthorizedDispatch {
-    pub(crate) ownership: Vec<execution_contract::SoftwareOwnership>,
     pub(crate) action: DispatchAction,
     pub(crate) plan: FrozenExecution,
     pub(crate) allowance: execution_lifecycle::DispatchAllowance,
     pub(crate) issued: std::time::Instant,
 }
 impl AuthorizedDispatch {
-    /// Previously completed package states from the same protected journal.
-    pub fn software_ownership(&self) -> Vec<execution_contract::SoftwareOwnership> {
-        self.ownership.clone()
-    }
     /// Inspect the authorized immutable plan to select the host's runner implementation.
     /// Reading it cannot clone or reconstruct first-dispatch authority.
     pub fn input(&self) -> &FrozenExecution {
@@ -185,7 +180,6 @@ pub trait RunnerPort {
 
 /// Journal-derived continuation of an original software sequence; never a first-start permit.
 pub struct SoftwareResume {
-    pub(crate) ownership: Vec<execution_contract::SoftwareOwnership>,
     pub(crate) plan: FrozenExecution,
     pub(crate) progress: execution_contract::SoftwareProgress,
     pub(crate) allowance: execution_lifecycle::DispatchAllowance,
@@ -198,10 +192,9 @@ impl SoftwareResume {
             FrozenExecution,
             execution_contract::SoftwareProgress,
             execution_lifecycle::DispatchAllowance,
-            Vec<execution_contract::SoftwareOwnership>,
         ) -> T,
     ) -> T {
-        run(self.plan, self.progress, self.allowance, self.ownership)
+        run(self.plan, self.progress, self.allowance)
     }
 }
 

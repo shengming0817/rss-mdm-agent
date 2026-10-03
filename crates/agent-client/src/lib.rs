@@ -1,4 +1,4 @@
-//! Agent V5 communication and bounded content delivery; execution remains journal-owned.
+//! Agent V6 communication and bounded content delivery; execution remains journal-owned.
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 mod delivery;

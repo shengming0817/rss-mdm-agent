@@ -126,7 +126,7 @@ Agent wire 的唯一 producer 仍为 rss-mdm；`execution-contract` 是本地执
 | CLI-EX04 | 原生 PS/sh/Bash 作为产物执行，无需 JS/Rust 字符串包装 | C10 只生成固定解释器/argv/cwd/env 描述；参数不拼接进任意 shell 命令 |
 | CLI-EX05 | 任意脚本的声明和静态分析不证明其只读或安全 | 沙箱/权限约束必须在实际平台强制；特权新脚本需精确授权 |
 | CLI-EX06 | 禁止把收到、排队、进程退出、目标已核实合并成成功 | 无真实进程的测试 runner 只能返回 test evidence，不能形成真实 Applied/Converged |
-| CLI-SW01 | 安装计划消费明确期望、检测事实、安装器能力与软件所有权 | 精确 source/package/version/arch/variant，禁止公共同名包或latest隐式回退 |
+| CLI-SW01 | 软件计划消费受信任务、明确期望、当前目标检测事实与原生安装器能力 | 精确 source/package/version/arch/variant；安装和卸载不以本地历史安装记录为资格。普通卸载核对声明版本；RemovePrevious 在同一尝试内独立核实旧对象、卸载后核实缺席，再安装新版本；禁止公共同名包或latest隐式回退 |
 | CLI-SW02 | 保留包生态的版本、依赖与安装语义 | 不用统一 SemVer 替代 MSI/WinGet/Brew/APT/DNF 的实际版本比较规则 |
 | CLI-SW03 | 安装/升级/卸载/等待/重启/检测独立建模 | 退出0不等于版本满足，用户已有/依赖引入/组织托管不被混同 |
 | CLI-SW04 | 同一资源写 owner 与包管理器互斥在实际安装阶段强制 | 多来源请求不重复改同一资源；取消安装未知时不能换通道重跑 |
@@ -144,7 +144,7 @@ Agent wire 的唯一 producer 仍为 rss-mdm；`execution-contract` 是本地执
 
 #2564 生产执行边界：后台唯一决定企业任务授权、来源和批准；客户端验证签名、设备/注册世代、attempt、固定材料及真实 OS 上下文。企业批准走 `NotRequired`，不增加客户端企业审批、Grant 表或离线授权系统。人工动作是否显示确认由前端决定，后端不强制本人确认；AI 产品确认和 OS 授权独立保留。
 
-系统服务是唯一生产组合根和执行 journal owner；用户 helper 只承担原登录会话的物理执行。V5 有序软件步骤直接进入本地执行输入 V5；系统 IPC V6、SQLite schema 6 同步切换。旧格式原样保留并拒绝，不提供兼容解析、自动迁移、重新注册或换 journal 的回退。远程 Agent 协议统一为 V5。
+系统服务是唯一生产组合根和执行 journal owner；用户 helper 只承担原登录会话的物理执行。V6 有序软件步骤直接进入本地执行输入 V7；系统 IPC V9、SQLite schema 9 同步切换。旧格式原样保留并拒绝，不提供兼容解析、自动迁移、重新注册或换 journal 的回退。远程 Agent 协议统一为 V6，通信 SQLite schema 为 4。
 
 每个后台 attempt 对应一个本地 intent；步骤 checkpoint、累计预算、取消与恢复都在同一 journal。Start 期限限制首次启动，已经启动的步骤继续受原许可内容及预算约束。未知步骤不得重跑或跳过。根进程退出、独立检测、整体静止与结果送达分别记录；退出零不是软件效果成功。
 

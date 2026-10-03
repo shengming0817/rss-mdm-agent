@@ -2,7 +2,7 @@
 use execution_contract::{Digest, Id, RequestId, VersionedRef};
 use serde::{Deserialize, Serialize};
 /// Current desktop/system IPC. No negotiation or legacy parser exists.
-pub const IPC_VERSION: u8 = 8;
+pub const IPC_VERSION: u8 = 9;
 /// Current protected installation document format.
 pub const DEPLOYMENT_VERSION: u32 = 2;
 
@@ -706,8 +706,8 @@ mod tests {
     fn client_never_decodes_legacy_or_wrong_version_replies() {
         for bytes in [
             br#"{"kind":"unavailable"}"#.as_slice(),
-            br#"{"version":5,"reply":{"kind":"unavailable"}}"#,
-            br#"{"version":6,"reply":{"kind":"unavailable"},"authority":"fake"}"#,
+            br#"{"version":8,"reply":{"kind":"unavailable"}}"#,
+            br#"{"version":9,"reply":{"kind":"unavailable"},"authority":"fake"}"#,
         ] {
             assert!(decode_reply(bytes).is_err());
         }

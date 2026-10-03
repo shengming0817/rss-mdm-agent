@@ -514,7 +514,7 @@ export interface FrozenExecutionSummary {
   /**
    * Version of the frozen execution plan, independent of the AI wire version.
    */
-  schemaVersion: 6;
+  schemaVersion: 7;
   /**
    * Required target user session.
    */

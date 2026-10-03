@@ -88,7 +88,7 @@ async fn main() {
                             } else { wire::SoftwareTaskDmgPayload::AppCopy {
                                 application: wire::SoftwareTaskMacApplication {
                                     path: command["application"].as_str().unwrap().into(),bundle_id: action.package.clone(),version: action.version.clone(),
-                                    material_sha256: [0;32],target_name: command["target"].as_str().unwrap().into(),
+                                    target_name: command["target"].as_str().unwrap().into(),
                                 },uninstall: true,
                             } },
                         });

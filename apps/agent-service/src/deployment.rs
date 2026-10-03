@@ -360,7 +360,7 @@ impl Deployment {
     fn capabilities(&self) -> Vec<wire::Capability> {
         use crate::SoftwareManagerKind as M;
         use wire::Capability as C;
-        let mut values = vec![C::InventoryCollectionV5, C::TaskExecuteV5];
+        let mut values = vec![C::InventoryCollectionV6, C::TaskExecuteV6];
         let has = |profile| {
             self.execution
                 .interpreters
@@ -370,12 +370,12 @@ impl Deployment {
         for manager in &self.execution.managers {
             match manager.executor {
                 M::Msi if cfg!(windows) && has(wire::ExecutorProfile::PowerShell7) => {
-                    values.extend([C::SoftwareMsiSystemV5, C::SoftwareMsiUserV5])
+                    values.extend([C::SoftwareMsiSystemV6, C::SoftwareMsiUserV6])
                 }
                 M::PackageInstaller
                     if cfg!(target_os = "macos") && has(wire::ExecutorProfile::PosixSh) =>
                 {
-                    values.push(C::SoftwarePkgSystemV5)
+                    values.push(C::SoftwarePkgSystemV6)
                 }
 
                 _ => (),
@@ -394,19 +394,19 @@ impl Deployment {
         {
             values.extend(if cfg!(windows) {
                 [
-                    C::SoftwareBundleWindowsSystemV5,
-                    C::SoftwareBundleWindowsUserV5,
+                    C::SoftwareBundleWindowsSystemV6,
+                    C::SoftwareBundleWindowsUserV6,
                 ]
             } else {
-                [C::SoftwareBundleMacosSystemV5, C::SoftwareBundleMacosUserV5]
+                [C::SoftwareBundleMacosSystemV6, C::SoftwareBundleMacosUserV6]
             });
         }
         if cfg!(windows) && has(wire::ExecutorProfile::PowerShell7) {
             values.extend([
-                C::SoftwareExeSystemV5,
-                C::SoftwareExeUserV5,
-                C::SoftwareMsixRegistrationUserV5,
-                C::SoftwareMsixProvisioningSystemV5,
+                C::SoftwareExeSystemV6,
+                C::SoftwareExeUserV6,
+                C::SoftwareMsixRegistrationUserV6,
+                C::SoftwareMsixProvisioningSystemV6,
             ]);
         }
         if cfg!(target_os = "macos")
@@ -421,14 +421,14 @@ impl Deployment {
             .iter()
             .all(|p| installation_security::protected(std::path::Path::new(p)).is_ok())
         {
-            values.extend([C::SoftwareDmgAppSystemV5, C::SoftwareDmgAppUserV5]);
+            values.extend([C::SoftwareDmgAppSystemV6, C::SoftwareDmgAppUserV6]);
             if self
                 .execution
                 .managers
                 .iter()
                 .any(|m| m.executor == M::PackageInstaller)
             {
-                values.push(C::SoftwareDmgPkgSystemV5);
+                values.push(C::SoftwareDmgPkgSystemV6);
             }
         }
         values.sort();
@@ -600,9 +600,9 @@ mod tests {
             image,
         });
         assert!(deployment.capabilities().contains(&if cfg!(windows) {
-            wire::Capability::SoftwareMsiSystemV5
+            wire::Capability::SoftwareMsiSystemV6
         } else {
-            wire::Capability::SoftwarePkgSystemV5
+            wire::Capability::SoftwarePkgSystemV6
         }));
     }
 }

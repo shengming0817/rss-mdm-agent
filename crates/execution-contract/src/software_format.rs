@@ -111,8 +111,6 @@ pub enum SoftwareFormat {
     },
     /// Full offline executable, including exact sidecar layout.
     Exe {
-        /// Stable native detector selector, excluding desired version and artifact bytes.
-        ownership: Digest,
         /// Portable relative paths to exact immutable artifacts.
         layout: BTreeMap<String, ExactArtifactRef>,
     },

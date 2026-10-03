@@ -9,11 +9,12 @@ import {
 } from "node:fs";
 import { isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
+import { IPC_VERSION } from "../packages/execution-bindings/src/service-version.mjs";
 import { organizationConfiguration } from "./desktop-organization.mjs";
 
 export function agentOrganizationConfiguration(root, template, caOutput) {
   const organization = organizationConfiguration(root);
-  if (template.version !== 2 || template.ipc_version !== 6)
+  if (template.version !== 2 || template.ipc_version !== IPC_VERSION)
     throw new Error(
       "Agent template must use current deployment and IPC versions",
     );

@@ -1,12 +1,12 @@
 # Agent 通信与内容客户端
 
-本 crate 消费 rss-mdm 服务端产品唯一持有的 Agent V5，提供注册、报告补传、签名任务、可信内容缓存及执行结果交付。只支持当前协议和通信数据库格式；不兼容旧协议、不转换旧执行库，不用测试身份补救生产身份失败。
+本 crate 消费 rss-mdm 服务端产品唯一持有的 Agent V6，提供注册、报告补传、签名任务、可信内容缓存及执行结果交付。只支持当前协议和通信数据库格式；不兼容旧协议、不转换旧执行库，不用测试身份补救生产身份失败。
 
 ## 宿主接入
 
 设备 owner 提供可靠 UTC、实际平台/架构、固定 HTTPS origin/tenant、可信公钥、受保护秘密 provider 和显式预算。秘密 provider 在首次注册前生成并保护随机 credential，同一引用在重试期间不可换值。注册回执不包含 tenant，不能用收到的任务自证身份。
 
-这里的注册是 Agent 与 rss-mdm 服务端之间的设备身份注册。wire 的 `MdmEnrollmentV5` 指操作系统标准 MDM enrollment（由 OS/用户批准的管理注册入口），由 producer 定义；当前客户端明确拒绝该能力，不能以 Agent 注册或任务领取代替。
+这里的注册是 Agent 与 rss-mdm 服务端之间的设备身份注册。wire 的 `MdmEnrollmentV6` 指操作系统标准 MDM enrollment（由 OS/用户批准的管理注册入口），由 producer 定义；当前客户端明确拒绝该能力，不能以 Agent 注册或任务领取代替。
 
 首次初始化和重开数据库是不同操作，根目录必须已存在且私有。同一通信根只有一个驱动 owner；API 不启动常驻 worker。正常路径为：
 
@@ -24,7 +24,7 @@ client 的 CredentialRedactor 从受保护秘密 provider 获取实际设备与�
 
 ## 验证
 
-本 crate 的 acceptance 使用实际 loopback socket、通信 SQLite 和文件系统验证协议与材料接缝；服务内部 backend 测试另以真实 HTTP、通信库及执行 journal 验证执行关联和结果交付。共享 HTTP fixture 只有一份；Test host/runner 仅由服务测试持有。服务内 `backend::live_mdm` 是隔离测试环境中的真实服务端联调入口：连接正式 `rss-mdm serve` 实现与真实 PostgreSQL，验证注册、报告、任务、下载和结果确认。名称中的 live 表示连接实际服务端实现，不表示生产环境；执行器仍是明确的 Test runner。
+本 crate 的 acceptance 使用实际 loopback socket、通信 SQLite 和文件系统验证协议与材料接缝；服务内部 backend 测试另以真实 HTTP、通信库及执行 journal 验证执行关联和结果交付。共享 HTTP fixture 只有一份；Test host/runner 仅由服务测试持有。服务内 `backend::live_mdm` 是隔离测试环境中的真实服务端联调入口：连接正式 `rss-mdm serve` 实现与真实 PostgreSQL，验证注册、报告、任务、下载和结果确认；通过独立发布的 installed 软件采集任务验证 Group 成员重算，软件任务结果本身不产生完整库存。名称中的 live 表示连接实际服务端实现，不表示生产环境；执行器仍是明确的 Test runner。
 
 准备隔离服务环境、正式 HTTPS 网关、内容目录及任务签名配置后，在私有配置文件中提供 origin、tenant、ca_file、admin_login、admin_password_file、key_id 和 public_key。配置不入库；管理员须拥有授权管理权，测试经公开 API 配置业务授权、资源、Scope 和 Policy。真实联调操作只允许针对可丢弃测试环境。
 

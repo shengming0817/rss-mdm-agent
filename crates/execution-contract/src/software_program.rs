@@ -14,15 +14,6 @@ pub enum SoftwareOperation {
     /// Execute each explicit removal in the supplied order.
     Uninstall,
 }
-/// Source-authorized handling of existing installations; this is not local approval.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub enum ExistingSoftware {
-    /// Existing installations require provenance in this device journal.
-    ManagedOnly,
-    /// The backend explicitly permits modifying an existing user installation.
-    AllowUserExisting,
-}
 /// Exact invocation of a fixed native profile or a declared script.
 #[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -97,8 +88,6 @@ pub struct SoftwareProgramStep {
     pub uninstall: Option<SoftwareInvocation>,
     /// Independent detector used under one shared observation budget.
     pub detection: SoftwareDetector,
-    /// Permission to change existing user installations, supplied by the backend.
-    pub existing: ExistingSoftware,
     /// Permission for an exact downgrade; unknown comparisons do not imply permission.
     pub allow_downgrade: bool,
     /// Whether a required reboot may be reported for separately authorized handling.
@@ -176,8 +165,7 @@ impl SoftwareProgram {
         }
         let mut phases = Vec::new();
         if step.auxiliary.contains_key(&SoftwarePhase::Attach)
-            && (self.intent == SoftwareOperation::Install
-                || matches!(step.format, SoftwareFormat::DmgApp { .. }))
+            && self.intent == SoftwareOperation::Install
         {
             phases.push(SoftwarePhase::Attach);
             if step.auxiliary.contains_key(&SoftwarePhase::Stage) {
@@ -195,13 +183,20 @@ impl SoftwareProgram {
                 SoftwarePhase::Mutation
             },
         );
-        if step.auxiliary.contains_key(&SoftwarePhase::Cleanup)
-            && (self.intent == SoftwareOperation::Install
-                || matches!(step.format, SoftwareFormat::DmgApp { .. }))
-        {
+        if step.auxiliary.contains_key(&SoftwarePhase::Cleanup) {
             phases.push(SoftwarePhase::Cleanup);
         }
         phases
+    }
+    /// The original phase may acquire resources that only its frozen Cleanup can close.
+    pub(crate) fn acquires_resources(&self, step: u32, phase: SoftwarePhase) -> bool {
+        phase == SoftwarePhase::Attach
+            || (phase == SoftwarePhase::Mutation
+                && self.intent == SoftwareOperation::Uninstall
+                && self.steps.get(step as usize).is_some_and(|s| {
+                    matches!(s.format, SoftwareFormat::DmgApp { .. })
+                        && s.auxiliary.contains_key(&SoftwarePhase::Cleanup)
+                }))
     }
     /// Agent serialization keys, deliberately independent of tenant and package-name aliases.
     /// These claims never promise exclusion of unrelated OS writers.
@@ -222,98 +217,6 @@ impl SoftwareProgram {
             ));
         }
         keys.into_iter().collect()
-    }
-}
-
-/// Same-journal provenance, never a caller-supplied ownership or approval declaration.
-#[derive(Clone)]
-pub struct SoftwareOwnership {
-    /// Step whose logical package/context matches the previously completed installation.
-    pub step: u32,
-    /// Last independently verified state; any different observation invalidates this provenance.
-    pub state: SoftwareState,
-}
-impl SoftwareProgramStep {
-    /// Stable native resource identity across version updates, independent of display aliases.
-    pub fn ownership_key(&self, operation: SoftwareOperation) -> String {
-        use sha2::{Digest as _, Sha256};
-        let native_identity = match &self.format {
-            SoftwareFormat::Exe { ownership, .. } => {
-                Some(serde_json::to_vec(ownership).expect("closed identity"))
-            }
-            SoftwareFormat::Msix {
-                identity,
-                deployment,
-                ..
-            } => Some(
-                serde_json::to_vec(&(
-                    identity.name.as_str(),
-                    identity.publisher.as_str(),
-                    identity.resource_id.as_str(),
-                    identity.architecture.as_str(),
-                    deployment,
-                ))
-                .expect("closed identity"),
-            ),
-            SoftwareFormat::DmgApp {
-                bundle_id,
-                target_name,
-                ..
-            } => Some(
-                serde_json::to_vec(&(
-                    bundle_id.as_str(),
-                    target_name,
-                    self.signatures
-                        .iter()
-                        .map(|s| match s {
-                            SoftwareSignature::AppleDeveloperId { publisher, .. } => {
-                                ("apple", publisher.as_str())
-                            }
-                            SoftwareSignature::Authenticode { publisher, .. } => {
-                                ("authenticode", publisher.as_str())
-                            }
-                            SoftwareSignature::Msix { publisher, .. } => {
-                                ("msix", publisher.as_str())
-                            }
-                        })
-                        .collect::<Vec<_>>(),
-                ))
-                .expect("closed identity"),
-            ),
-            SoftwareFormat::DmgPkg { receipt, .. } => {
-                Some(serde_json::to_vec(receipt).expect("closed identity"))
-            }
-            _ => None,
-        };
-        let detector = if let Some(identity) = native_identity {
-            format!("{:x}", Sha256::digest(identity))
-        } else {
-            match &self.detection {
-                SoftwareDetector::MsiProduct { product_code, .. } => product_code.clone(),
-                SoftwareDetector::PkgReceipt { receipt, .. } => receipt.clone(),
-                SoftwareDetector::Script { invocation } => format!(
-                    "{:x}",
-                    Sha256::digest(
-                        serde_json_canonicalizer::to_vec(&(&invocation.launch, &invocation.run_as))
-                            .expect("closed detector")
-                    )
-                ),
-            }
-        };
-        let context = if operation == SoftwareOperation::Uninstall {
-            self.uninstall.as_ref().unwrap_or(&self.install)
-        } else {
-            &self.install
-        };
-        let bytes = serde_json_canonicalizer::to_vec(&(
-            self.format.adapter(),
-            &self.package,
-            &self.architecture,
-            &context.run_as,
-            detector,
-        ))
-        .expect("closed package identity");
-        format!("{:x}", Sha256::digest(bytes))
     }
 }
 

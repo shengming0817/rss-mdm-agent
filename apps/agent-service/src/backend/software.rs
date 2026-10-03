@@ -1,4 +1,4 @@
-//! Deterministic V6 compiler. The backend has already selected sources and ordered dependencies.
+//! Deterministic V7 compiler. The backend has already selected sources and ordered dependencies.
 use crate::{
     backend::plan::{self, hex, id, reference},
     ExecutionConfig, SoftwareManagerKind,
@@ -594,12 +594,6 @@ pub(crate) fn compile(
             auxiliary: Default::default(),
             uninstall,
             detection,
-            existing: match action.ownership {
-                wire::SoftwareTaskOwnership::ManagedOnly => ExistingSoftware::ManagedOnly,
-                wire::SoftwareTaskOwnership::AllowUserExisting => {
-                    ExistingSoftware::AllowUserExisting
-                }
-            },
             allow_downgrade: action.downgrade == wire::SoftwareTaskDowngrade::Allow,
             allow_reboot: action.reboot == wire::SoftwareTaskReboot::Report,
         });
@@ -622,7 +616,7 @@ pub(crate) fn compile(
         steps,
     };
     let input = ExecutionInput {
-        schema_version: V6,
+        schema_version: V7,
         request: ExecutionRequest {
             schema_version: V1,
             request_id: crate::backend::request_id(offer)?,

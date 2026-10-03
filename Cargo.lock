@@ -3779,12 +3779,12 @@ dependencies = [
 [[package]]
 name = "rss-contract"
 version = "0.1.0"
-source = "git+https://dev.azure.com/shengming0923/rss/_git/rss?rev=7c1ece8ce104f59ba06af5480a3386caabb974ac#7c1ece8ce104f59ba06af5480a3386caabb974ac"
+source = "git+https://dev.azure.com/shengming0923/rss/_git/rss?rev=c83978d9b43d40f6663dc923c3e2afb3e9f51895#c83978d9b43d40f6663dc923c3e2afb3e9f51895"
 
 [[package]]
 name = "rss-mdm-agent-wire"
-version = "5.0.0"
-source = "git+https://dev.azure.com/shengming0923/rss/_git/rss-mdm?rev=574d11eec526f31fbc6ccc7a24d5fccddd6df8db#574d11eec526f31fbc6ccc7a24d5fccddd6df8db"
+version = "6.0.0"
+source = "git+https://dev.azure.com/shengming0923/rss/_git/rss-mdm?rev=50d3390eabf396c74fb6d6339936821efe85ed45#50d3390eabf396c74fb6d6339936821efe85ed45"
 dependencies = [
  "base64 0.22.1",
  "ring",
@@ -3849,7 +3849,7 @@ dependencies = [
 [[package]]
 name = "rss-mdm-inventory"
 version = "0.1.0"
-source = "git+https://dev.azure.com/shengming0923/rss/_git/rss-mdm?rev=574d11eec526f31fbc6ccc7a24d5fccddd6df8db#574d11eec526f31fbc6ccc7a24d5fccddd6df8db"
+source = "git+https://dev.azure.com/shengming0923/rss/_git/rss-mdm?rev=50d3390eabf396c74fb6d6339936821efe85ed45#50d3390eabf396c74fb6d6339936821efe85ed45"
 dependencies = [
  "ordered-float",
  "rss-contract",
@@ -3862,7 +3862,7 @@ dependencies = [
 [[package]]
 name = "rss-mdm-resource"
 version = "0.1.0"
-source = "git+https://dev.azure.com/shengming0923/rss/_git/rss-mdm?rev=574d11eec526f31fbc6ccc7a24d5fccddd6df8db#574d11eec526f31fbc6ccc7a24d5fccddd6df8db"
+source = "git+https://dev.azure.com/shengming0923/rss/_git/rss-mdm?rev=50d3390eabf396c74fb6d6339936821efe85ed45#50d3390eabf396c74fb6d6339936821efe85ed45"
 dependencies = [
  "jsonschema",
  "rss-contract",
@@ -3876,7 +3876,7 @@ dependencies = [
 [[package]]
 name = "rss-observation"
 version = "0.1.0"
-source = "git+https://dev.azure.com/shengming0923/rss/_git/rss?rev=7c1ece8ce104f59ba06af5480a3386caabb974ac#7c1ece8ce104f59ba06af5480a3386caabb974ac"
+source = "git+https://dev.azure.com/shengming0923/rss/_git/rss?rev=c83978d9b43d40f6663dc923c3e2afb3e9f51895#c83978d9b43d40f6663dc923c3e2afb3e9f51895"
 dependencies = [
  "rss-contract",
  "rss-redact",
@@ -3890,7 +3890,7 @@ dependencies = [
 [[package]]
 name = "rss-redact"
 version = "0.1.0"
-source = "git+https://dev.azure.com/shengming0923/rss/_git/rss?rev=7c1ece8ce104f59ba06af5480a3386caabb974ac#7c1ece8ce104f59ba06af5480a3386caabb974ac"
+source = "git+https://dev.azure.com/shengming0923/rss/_git/rss?rev=c83978d9b43d40f6663dc923c3e2afb3e9f51895#c83978d9b43d40f6663dc923c3e2afb3e9f51895"
 dependencies = [
  "hmac",
  "icu_properties",
@@ -3905,7 +3905,7 @@ dependencies = [
 [[package]]
 name = "rss-request-context"
 version = "0.1.0"
-source = "git+https://dev.azure.com/shengming0923/rss/_git/rss?rev=7c1ece8ce104f59ba06af5480a3386caabb974ac#7c1ece8ce104f59ba06af5480a3386caabb974ac"
+source = "git+https://dev.azure.com/shengming0923/rss/_git/rss?rev=c83978d9b43d40f6663dc923c3e2afb3e9f51895#c83978d9b43d40f6663dc923c3e2afb3e9f51895"
 dependencies = [
  "thiserror 2.0.20",
  "uuid",

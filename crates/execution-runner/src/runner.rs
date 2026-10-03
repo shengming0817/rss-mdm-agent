@@ -151,24 +151,13 @@ impl NativeRunner {
                 remaining_output_bytes,
             },
             Some(start_before_ms),
-            Vec::new(),
         )
     }
-    #[cfg(test)]
     fn launch(
         &self,
         plan: &FrozenExecution,
         attempt: &AttemptId,
         allowance: DispatchAllowance,
-    ) -> Result<DispatchOutcome, Error> {
-        self.launch_owned(plan, attempt, allowance, Vec::new())
-    }
-    fn launch_owned(
-        &self,
-        plan: &FrozenExecution,
-        attempt: &AttemptId,
-        allowance: DispatchAllowance,
-        ownership: Vec<SoftwareOwnership>,
     ) -> Result<DispatchOutcome, Error> {
         let start_before = if matches!(plan.spec().request.initiator, Initiator::Backend { .. }) {
             let expiry = plan
@@ -188,7 +177,7 @@ impl NativeRunner {
         } else {
             None
         };
-        self.launch_bounded(plan, attempt, allowance, start_before, ownership)
+        self.launch_bounded(plan, attempt, allowance, start_before)
     }
     fn launch_bounded(
         &self,
@@ -196,7 +185,6 @@ impl NativeRunner {
         attempt: &AttemptId,
         allowance: DispatchAllowance,
         start_before: Option<u64>,
-        ownership: Vec<SoftwareOwnership>,
     ) -> Result<DispatchOutcome, Error> {
         let received = Instant::now();
         let mut records = self.records.lock().map_err(|_| Error::Unavailable)?;
@@ -273,7 +261,6 @@ impl NativeRunner {
                             capture: facts,
                             progress,
                             previous: None,
-                            ownership,
                         }),
                         None => publish(
                             &facts,
@@ -516,7 +503,7 @@ impl RunnerPort for NativeRunner {
         Ok(Some(next))
     }
     fn resume_software(&self, resume: execution_app::SoftwareResume) -> Result<(), Error> {
-        resume.resume(|plan, journal, allowance, ownership| {
+        resume.resume(|plan, journal, allowance| {
             let mut records = self.records.lock().map_err(|_| Error::Unavailable)?;
             if let Some(record) = records.get(&journal.attempt_id) {
                 return if record.plan.digest() == plan.digest() {
@@ -577,7 +564,6 @@ impl RunnerPort for NativeRunner {
                         capture: facts,
                         progress,
                         previous: Some(journal),
-                        ownership,
                     });
                 })
                 .is_err()
@@ -621,7 +607,6 @@ impl RunnerPort for NativeRunner {
     }
     fn dispatch(&self, permit: AuthorizedDispatch) -> Result<DispatchOutcome, Error> {
         let allowance = permit.allowance();
-        let ownership = permit.software_ownership();
         permit.dispatch(|plan, action| {
             if action.mode() != ExecutionMode::Real
                 || matches!(plan.spec().request.authority, Authority::Test { .. })
@@ -631,7 +616,7 @@ impl RunnerPort for NativeRunner {
             {
                 return Err(Error::Denied);
             }
-            self.launch_owned(plan, action.attempt_id(), allowance, ownership)
+            self.launch(plan, action.attempt_id(), allowance)
         })
     }
     fn acknowledge_capture(

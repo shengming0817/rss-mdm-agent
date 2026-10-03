@@ -1152,21 +1152,6 @@
           }
         ]
       },
-      "ExistingSoftware": {
-        "description": "Source-authorized handling of existing installations; this is not local approval.",
-        "oneOf": [
-          {
-            "const": "managedOnly",
-            "description": "Existing installations require provenance in this device journal.",
-            "type": "string"
-          },
-          {
-            "const": "allowUserExisting",
-            "description": "The backend explicitly permits modifying an existing user installation.",
-            "type": "string"
-          }
-        ]
-      },
       "Id": {
         "description": "Opaque local reference identifier; syntax validity is not authenticity.",
         "maxLength": 128,
@@ -1510,8 +1495,8 @@
         "const": 1,
         "type": "integer"
       },
-      "LocalContractV6": {
-        "const": 6,
+      "LocalContractV7": {
+        "const": 7,
         "type": "integer"
       },
       "MsixContainer": {
@@ -2212,15 +2197,10 @@
                 },
                 "description": "Portable relative paths to exact immutable artifacts.",
                 "type": "object"
-              },
-              "ownership": {
-                "$ref": "#/$defs/Digest",
-                "description": "Stable native detector selector, excluding desired version and artifact bytes."
               }
             },
             "required": [
               "kind",
-              "ownership",
               "layout"
             ],
             "type": "object"
@@ -2503,10 +2483,6 @@
             "$ref": "#/$defs/SoftwareDetector",
             "description": "Independent detector used under one shared observation budget."
           },
-          "existing": {
-            "$ref": "#/$defs/ExistingSoftware",
-            "description": "Permission to change existing user installations, supplied by the backend."
-          },
           "format": {
             "$ref": "#/$defs/SoftwareFormat",
             "description": "Closed native material semantics; adapter identity is derived."
@@ -2569,7 +2545,6 @@
           "install",
           "auxiliary",
           "detection",
-          "existing",
           "allowDowngrade",
           "allowReboot"
         ],
@@ -2907,8 +2882,8 @@
         "description": "Requested target execution identity, separate from actor and originating login."
       },
       "schemaVersion": {
-        "$ref": "#/$defs/LocalContractV6",
-        "description": "Required current V6 discriminator; absent or unsupported versions are rejected."
+        "$ref": "#/$defs/LocalContractV7",
+        "description": "Required current V7 discriminator; absent or unsupported versions are rejected."
       },
       "sessionRequirement": {
         "$ref": "#/$defs/SessionRequirement",

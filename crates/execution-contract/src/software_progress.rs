@@ -269,13 +269,18 @@ impl SoftwareProgress {
             return false;
         }
         let mut pending = false;
-        let mut mounts = std::collections::BTreeSet::new();
+        let mut resources = std::collections::BTreeSet::new();
         for checkpoint in &self.checkpoints {
             match checkpoint {
                 SoftwareCheckpoint::Begin { step, phase } => {
                     pending = true;
-                    if *phase == SoftwarePhase::Attach {
-                        mounts.insert(*step);
+                    if plan
+                        .spec()
+                        .execution
+                        .software_program()
+                        .is_some_and(|p| p.acquires_resources(*step, *phase))
+                    {
+                        resources.insert(*step);
                     }
                 }
                 SoftwareCheckpoint::End {
@@ -293,7 +298,7 @@ impl SoftwareProgress {
                                 && p.failure_kind == ProcessFailureKind::None
                         })
                     {
-                        mounts.remove(step);
+                        resources.remove(step);
                     }
                 }
                 SoftwareCheckpoint::CleanupBegin { .. } => pending = true,
@@ -303,14 +308,14 @@ impl SoftwareProgress {
                     ..
                 } => {
                     if *resources_closed {
-                        mounts.remove(step);
+                        resources.remove(step);
                         pending = !self.original_activity_ended();
                     }
                 }
                 SoftwareCheckpoint::Complete { .. } => (),
             }
         }
-        !pending && mounts.is_empty()
+        !pending && resources.is_empty()
     }
     /// Resume only across durably ended physical operations. Pending or unknown work is never replayed.
     pub fn resumable(&self, plan: &FrozenExecution) -> bool {
@@ -347,10 +352,11 @@ impl SoftwareProgress {
             .iter()
             .rev()
             .find_map(|checkpoint| match checkpoint {
-                SoftwareCheckpoint::Begin {
-                    step,
-                    phase: SoftwarePhase::Attach,
-                } => Some(*step),
+                SoftwareCheckpoint::Begin { step, phase }
+                    if program.acquires_resources(*step, *phase) =>
+                {
+                    Some(*step)
+                }
                 _ => None,
             })?;
         let command = program.invocation(step as usize, SoftwarePhase::Cleanup)?;

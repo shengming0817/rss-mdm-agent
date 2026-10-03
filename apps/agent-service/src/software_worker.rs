@@ -17,7 +17,7 @@ pub enum WorkerOperation {
     Upgrade,
     /// Execute only the explicit removal.
     Uninstall,
-    /// Remove the exact previously observed managed version before installing.
+    /// Remove the exact previously observed version before installing.
     RemovePrevious,
     /// Acquire the exact read-only disk image.
     Attach,

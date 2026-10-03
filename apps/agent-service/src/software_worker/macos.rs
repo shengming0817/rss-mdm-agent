@@ -1,6 +1,7 @@
 // ref: Munki installer/dmg.py and dmgutils.py; Apple copyfile.c, copyfile.h,
 // renameatx_np(2), rename(2) and fsync(2).
 use super::*;
+mod removal;
 use std::{
     collections::VecDeque,
     ffi::{CStr, CString, OsStr, OsString},
@@ -45,6 +46,7 @@ struct ImageState {
     alternate: Option<Tree>,
     partial_stage: bool,
     group: i32,
+    removal: Option<removal::RemovalState>,
 }
 fn owner(request: &WorkerRequest) -> Result<String, Error> {
     use sha2::{Digest as _, Sha256};
@@ -153,6 +155,11 @@ fn state(request: &WorkerRequest) -> Result<ImageState, Error> {
 }
 fn save(request: &WorkerRequest, state: &ImageState) -> Result<(), Error> {
     let (parent, current, next) = image_state_paths(request)?;
+    let bytes = serde_json::to_vec(state).map_err(|_| Error::Protocol)?;
+    // The durable record must remain readable before publishing any resource effect.
+    if bytes.len() > 4 * 1024 * 1024 {
+        return Err(Error::Capacity);
+    }
     if state.owner != owner(request)? {
         return Err(Error::Untrusted);
     }
@@ -165,7 +172,7 @@ fn save(request: &WorkerRequest, state: &ImageState) -> Result<(), Error> {
         .mode(0o600)
         .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
         .open(&next)?;
-    file.write_all(&serde_json::to_vec(state).map_err(|_| Error::Protocol)?)?;
+    file.write_all(&bytes)?;
     file.sync_all()?;
     fs::rename(next, current)?;
     parent.sync_all()?;
@@ -238,6 +245,7 @@ fn attach(request: &WorkerRequest, dmg: &Dmg) -> Result<(i32, SoftwareWorkerResu
         alternate: None,
         partial_stage: false,
         group: unsafe { libc::getpgrp() },
+        removal: None,
     };
     create_image_root(request, &record)?;
     let mount = request.resource_root.join("volume");
@@ -475,8 +483,13 @@ fn target(request: &WorkerRequest, dmg: &Dmg, application: &Application) -> Resu
                 .to_str()
                 .map_err(|_| Error::Identity)?;
             let root = PathBuf::from(home).join("Applications");
-            // A missing Applications directory is not created by read-only detection.
-            if !root.exists() && request.operation != WorkerOperation::Detect {
+            // Only installation preparation creates a missing Applications directory.
+            if !root.exists()
+                && matches!(
+                    request.operation,
+                    WorkerOperation::Install | WorkerOperation::Upgrade | WorkerOperation::Stage
+                )
+            {
                 fs::DirBuilder::new().mode(0o700).create(&root)?;
             }
             root
@@ -522,11 +535,31 @@ fn bundle(
         }
         _ => (),
     }
-    let metadata = path.join("Contents/Info.plist");
-    let mut file = OpenOptions::new()
+    let root = OpenOptions::new()
         .read(true)
-        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
-        .open(metadata)?;
+        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(path)?;
+    bundle_from(request, path, application, &root)
+}
+fn bundle_from(
+    request: &WorkerRequest,
+    path: &Path,
+    application: &Application,
+    root: &File,
+) -> Result<SoftwareState, Error> {
+    let contents = open_at(
+        root,
+        OsStr::new("Contents"),
+        libc::O_DIRECTORY | libc::O_NOFOLLOW,
+    )?;
+    let mut file = open_at(
+        &contents,
+        OsStr::new("Info.plist"),
+        libc::O_NOFOLLOW | libc::O_NONBLOCK,
+    )?;
+    if !file.metadata()?.is_file() {
+        return Err(Error::Untrusted);
+    }
     if file.metadata()?.len() > 1024 * 1024 {
         return Err(Error::Capacity);
     }
@@ -547,7 +580,6 @@ fn bundle(
         .get("CFBundleShortVersionString")
         .and_then(plist::Value::as_string)
         .ok_or(Error::Protocol)?;
-    verify_code(request, path, "execute", None)?;
     let executable = dictionary
         .get("CFBundleExecutable")
         .and_then(plist::Value::as_string)
@@ -555,6 +587,28 @@ fn bundle(
     if !relative_path(executable) || executable.contains('/') {
         return Err(Error::Untrusted);
     }
+    let macos = open_at(
+        &contents,
+        OsStr::new("MacOS"),
+        libc::O_DIRECTORY | libc::O_NOFOLLOW,
+    )?;
+    let executable_file = open_at(
+        &macos,
+        OsStr::new(executable),
+        libc::O_NOFOLLOW | libc::O_NONBLOCK,
+    )?;
+    if !executable_file.metadata()?.is_file() {
+        return Err(Error::Untrusted);
+    }
+    let recheck = || -> Result<(), Error> {
+        removal::same_path(path, root)?;
+        removal::same_entry(root, OsStr::new("Contents"), &contents)?;
+        removal::same_entry(&contents, OsStr::new("Info.plist"), &file)?;
+        removal::same_entry(&contents, OsStr::new("MacOS"), &macos)?;
+        removal::same_entry(&macos, OsStr::new(executable), &executable_file)
+    };
+    recheck()?;
+    verify_code(request, path, "execute", None)?;
     let binary = path.join("Contents/MacOS").join(executable);
     let (code, architecture, _) = native(request, "lipo", &["-archs", text(&binary)?])?;
     let expected = match request.architecture {
@@ -569,6 +623,7 @@ fn bundle(
     {
         return Err(Error::Untrusted);
     }
+    recheck()?;
     Ok(SoftwareState::Present {
         version: package_value(version)?,
     })
@@ -1041,12 +1096,6 @@ fn rename(source: &Path, target: &Path, swap: bool) -> Result<(), Error> {
     target_parent.sync_all()?;
     Ok(())
 }
-fn remove_tree(root: &Path, expected: &Tree) -> Result<(), Error> {
-    if inventory(root)? != *expected {
-        return Err(Error::Untrusted);
-    }
-    unlink_tree(root, expected)
-}
 fn unlink_tree(root: &Path, expected: &Tree) -> Result<(), Error> {
     let root_file = OpenOptions::new()
         .read(true)
@@ -1251,11 +1300,18 @@ pub(super) fn execute(
     };
     match request.operation {
         WorkerOperation::Attach => return attach(request, dmg),
-        WorkerOperation::Cleanup => return cleanup(request, dmg),
+        WorkerOperation::Cleanup => {
+            if discard_unpublished_image_state(request)? {
+                return Ok(result(0, None, String::new()));
+            }
+            if matches!(dmg.payload, Payload::AppCopy { .. }) && removal::is_removal(request)? {
+                return removal::cleanup(request, dmg);
+            }
+            return cleanup(request, dmg);
+        }
         _ => (),
     }
-    let standalone_removal = request.operation == WorkerOperation::Uninstall
-        && matches!(dmg.payload, Payload::ContainedPkg { .. });
+    let standalone_removal = request.operation == WorkerOperation::Uninstall;
     if request.operation != WorkerOperation::Detect && !standalone_removal {
         let mut record = state(request)?;
         record.group = unsafe { libc::getpgrp() };
@@ -1273,6 +1329,15 @@ pub(super) fn execute(
                     Some(bundle(request, &installed, application)?),
                     String::new(),
                 ));
+            }
+            if matches!(
+                request.operation,
+                WorkerOperation::Uninstall | WorkerOperation::RemovePrevious
+            ) {
+                if !uninstall {
+                    return Err(Error::Unsupported);
+                }
+                return removal::execute(request, dmg, application, before);
             }
             let payload = selected(request, &application.path)?;
             let staged = request.resource_root.join("application.app");
@@ -1313,23 +1378,6 @@ pub(super) fn execute(
             }
             if Some(&observed) != before {
                 return Err(Error::Untrusted);
-            }
-            if matches!(
-                request.operation,
-                WorkerOperation::Uninstall | WorkerOperation::RemovePrevious
-            ) {
-                if !uninstall {
-                    return Err(Error::Unsupported);
-                }
-                let actual = inventory(&installed)?;
-                // Exact-version removal compares complete bytes/links to the approved read-only image.
-                if request.operation == WorkerOperation::Uninstall
-                    && actual != inventory_from(&payload.file)?
-                {
-                    return Err(Error::Untrusted);
-                }
-                remove_tree(&installed, &actual)?;
-                return Ok(result(0, None, String::new()));
             }
             let new = inventory(&staged)?;
             if new != inventory_from(&payload.file)? {
@@ -1568,7 +1616,7 @@ mod tests {
             },
         }
     }
-    fn image_request() -> (PathBuf, WorkerRequest) {
+    pub(super) fn image_request() -> (PathBuf, WorkerRequest) {
         let parent = std::env::temp_dir().join(format!("rss-dmg-owner-{}", uuid::Uuid::new_v4()));
         fs::DirBuilder::new().mode(0o700).create(&parent).unwrap();
         let image = parent.join("image.dmg");
@@ -1609,7 +1657,6 @@ mod tests {
             signatures: Vec::new(),
             reboot: wire::SoftwareTaskReboot::Report,
             downgrade: wire::SoftwareTaskDowngrade::Deny,
-            ownership: wire::SoftwareTaskOwnership::ManagedOnly,
         };
         let request = WorkerRequest {
             native_output: Default::default(),
@@ -1638,7 +1685,7 @@ mod tests {
         };
         (parent, request)
     }
-    fn initial_state(request: &WorkerRequest) -> ImageState {
+    pub(super) fn initial_state(request: &WorkerRequest) -> ImageState {
         ImageState {
             owner: owner(request).unwrap(),
             device: None,
@@ -1646,6 +1693,7 @@ mod tests {
             alternate: None,
             partial_stage: false,
             group: unsafe { libc::getpgrp() },
+            removal: None,
         }
     }
     fn write_next(request: &WorkerRequest, bytes: &[u8]) {
@@ -1917,15 +1965,15 @@ mod tests {
         rename(&stage, &installed, true).unwrap();
         assert_eq!(inventory(&installed).unwrap(), tree);
         assert_eq!(inventory(&stage).unwrap(), old);
-        remove_tree(&stage, &old).unwrap();
-        remove_tree(&installed, &tree).unwrap();
+        remove_owned_stage(&stage, &old, false).unwrap();
+        remove_owned_stage(&installed, &tree, false).unwrap();
         std::os::unix::fs::symlink("/tmp", retained_source.join("escape")).unwrap();
         assert!(inventory_from(&source_file).is_err());
         fs::remove_file(retained_source.join("escape")).unwrap();
         std::os::unix::fs::symlink("../source.app", retained_source.join("escape")).unwrap();
         assert!(inventory_from(&source_file).is_err());
         fs::remove_file(retained_source.join("escape")).unwrap();
-        remove_tree(&retained_source, &tree).unwrap();
+        remove_owned_stage(&retained_source, &tree, false).unwrap();
         fs::remove_file(source.join("replacement")).unwrap();
         fs::remove_dir(source).unwrap();
         fs::remove_dir(root).unwrap();
@@ -1950,7 +1998,7 @@ mod tests {
         copy_tree(&source, &stage, &tree).unwrap();
         fs::remove_file(stage.join("Contents/first")).unwrap();
         remove_owned_stage(&stage, &tree, false).unwrap();
-        remove_tree(&source, &tree).unwrap();
+        remove_owned_stage(&source, &tree, false).unwrap();
         fs::remove_dir(root).unwrap();
     }
 }

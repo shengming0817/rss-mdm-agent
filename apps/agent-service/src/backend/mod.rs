@@ -34,7 +34,7 @@ pub(crate) fn request_id(offer: &Offer) -> Result<execution_contract::RequestId,
         ))?,
         _ => return Err(Error::Unsupported),
     };
-    execution_contract::RequestId::new(format!("agent-v5-{:x}", sha2::Sha256::digest(&bytes)))
+    execution_contract::RequestId::new(format!("agent-v6-{:x}", sha2::Sha256::digest(&bytes)))
         .map_err(|_| Error::Protocol)
 }
 

@@ -675,9 +675,35 @@ fn actual_sqlite_full_rolls_back_and_preserves_existing_authority() {
 #[test]
 fn prior_schema_is_rejected_without_modifying_the_database() {
     let db = Database::new();
-    drop(db.create());
+    let host = software_host();
+    let mut store = db.create();
+    host.prepare(&mut store);
+    store
+        .apply_command(
+            &operation("begin"),
+            &host.scope(),
+            &host.begin(),
+            &[],
+            &host,
+        )
+        .unwrap();
+    let progress = SoftwareProgress {
+        attempt_id: AttemptId::new("attempt-1").unwrap(),
+        content_digest: host.plan.digest().clone(),
+        runner: id("test-runner"),
+        checkpoints: vec![SoftwareCheckpoint::Begin {
+            step: 0,
+            phase: SoftwarePhase::Before,
+        }],
+        elapsed_ms: 1,
+        output_bytes: 0,
+    };
+    store
+        .record_software_progress(&host.scope(), &progress, &host)
+        .unwrap();
+    drop(store);
     let conn = db.sql();
-    conn.pragma_update(None, "user_version", 7).unwrap();
+    conn.pragma_update(None, "user_version", 8).unwrap();
     conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
         .unwrap();
     drop(conn);
@@ -685,11 +711,20 @@ fn prior_schema_is_rejected_without_modifying_the_database() {
     assert!(matches!(
         Store::open(&db.path, &plan().spec().request.authority, limits()),
         Ok(OpenOutcome::UnsupportedSchema {
-            found: 7,
-            supported: 8
+            found: 8,
+            supported: 9
         })
     ));
+    assert!(Store::initialize_test(
+        &db.path,
+        host.plan.spec().request.authority.clone(),
+        limits()
+    )
+    .is_err());
     assert_eq!(std::fs::read(&db.path).unwrap(), before);
+    assert_eq!(db.count("attempts"), 1);
+    assert_eq!(db.count("software_claims"), 1);
+    assert_eq!(db.count("software_progress"), 1);
 }
 
 #[test]
@@ -706,7 +741,7 @@ fn newer_schema_is_diagnostics_only_and_corrupt_database_is_never_reinitialized(
         Store::open(&db.path, &plan().spec().request.authority, limits()).unwrap(),
         OpenOutcome::UnsupportedSchema {
             found: 99,
-            supported: 8
+            supported: 9
         }
     ));
     assert_eq!(std::fs::read(&db.path).unwrap(), before);
@@ -2797,7 +2832,7 @@ fn simultaneous_software_requests_have_one_committed_resource_owner() {
 }
 
 #[test]
-fn managed_provenance_follows_committed_steps_and_is_lost_when_detection_changes() {
+fn committed_steps_preserve_reboot_facts_and_claims_when_detection_changes() {
     let db = Database::new();
     let mut host = software_host();
     let mut input = host.plan.spec().clone();
@@ -2896,13 +2931,6 @@ fn managed_provenance_follows_committed_steps_and_is_lost_when_detection_changes
             .software,
         Some(SoftwareDiagnostic::RestartPending)
     );
-    assert_eq!(
-        store
-            .software_ownership(&host.scope(), &host)
-            .unwrap()
-            .len(),
-        2
-    );
     progress.checkpoints.push(SoftwareCheckpoint::Begin {
         step: 1,
         phase: SoftwarePhase::Before,
@@ -2910,7 +2938,6 @@ fn managed_provenance_follows_committed_steps_and_is_lost_when_detection_changes
     store
         .record_software_progress(&host.scope(), &progress, &host)
         .unwrap();
-    assert_eq!(db.count("software_ownership"), 1);
     progress.checkpoints.push(SoftwareCheckpoint::End {
         duration_ms: 20,
         step: 1,
@@ -2924,14 +2951,9 @@ fn managed_provenance_follows_committed_steps_and_is_lost_when_detection_changes
     store
         .record_software_progress(&host.scope(), &progress, &host)
         .unwrap();
-    assert!(store
-        .software_ownership(&host.scope(), &host)
-        .unwrap()
-        .is_empty());
     store
         .record_software_progress(&host.scope(), &progress, &host)
         .unwrap();
-    assert_eq!(db.count("software_ownership"), 0);
     assert_eq!(db.count("software_claims"), 1);
 }
 
@@ -2952,7 +2974,6 @@ fn exe_uninstall_present_before_and_unknown_native_end_are_not_desired_or_cleanu
     program.intent = SoftwareOperation::Uninstall;
     let step = &mut program.steps[0];
     step.format = SoftwareFormat::Exe {
-        ownership: step.payload.sha256.clone(),
         layout: [("installer.exe".into(), step.payload.clone())].into(),
     };
     step.install.run_as = RunAs::System {
@@ -3072,31 +3093,109 @@ fn exe_uninstall_present_before_and_unknown_native_end_are_not_desired_or_cleanu
     assert_eq!(db.count("software_claims"), 1);
 }
 
-#[test]
-fn failed_software_claims_require_resource_closure_even_after_reopen() {
-    for image in [false, true] {
-        let db = Database::new();
-        let mut host = software_host();
-        if image {
-            let mut input = host.plan.spec().clone();
-            let ExecutionSpec::SoftwareProgram { program } = &mut input.execution else {
-                unreachable!()
-            };
-            let step = &mut program.steps[0];
-            step.format = SoftwareFormat::DmgPkg {
+fn resource_closure_host(mode: u8) -> TestHost {
+    let ordinary_uninstall = mode == 2;
+    let mut host = software_host();
+    if mode != 0 {
+        let mut input = host.plan.spec().clone();
+        let ExecutionSpec::SoftwareProgram { program } = &mut input.execution else {
+            unreachable!()
+        };
+        let step = &mut program.steps[0];
+        step.format = if ordinary_uninstall {
+            SoftwareFormat::DmgApp {
+                volume: PackageValue::new("Approved").unwrap(),
+                path: "Target.app".into(),
+                bundle_id: step.package.clone(),
+                version: step.version.clone(),
+                target_name: "Target.app".into(),
+            }
+        } else {
+            SoftwareFormat::DmgPkg {
                 volume: PackageValue::new("Approved").unwrap(),
                 path: "fixed.pkg".into(),
                 length: 1,
                 sha256: step.payload.sha256.clone(),
                 receipt: PackageValue::new("org.rss.fixture").unwrap(),
-            };
+            }
+        };
+        if ordinary_uninstall {
+            step.uninstall = Some(step.install.clone());
+            program.intent = SoftwareOperation::Uninstall;
+            input.request.operation.action = id("software.uninstall");
+        } else {
             step.auxiliary
                 .insert(SoftwarePhase::Attach, step.install.clone());
-            let mut cleanup = step.install.clone();
-            cleanup.launch.interpreter.profile.id = id("native-software-worker");
-            step.auxiliary.insert(SoftwarePhase::Cleanup, cleanup);
-            host.plan = FrozenExecution::freeze(input, &limits().input).unwrap();
         }
+        let mut cleanup = step.install.clone();
+        cleanup.launch.interpreter.profile.id = id("native-software-worker");
+        step.auxiliary.insert(SoftwarePhase::Cleanup, cleanup);
+        host.plan = FrozenExecution::freeze(input, &limits().input).unwrap();
+    }
+    host
+}
+
+#[test]
+fn ordinary_dmg_uninstall_requires_cleanup_and_rejects_install_image_phases() {
+    let host = resource_closure_host(2);
+    let mut input = host.plan.spec().clone();
+    let ExecutionSpec::SoftwareProgram { program } = &mut input.execution else {
+        unreachable!()
+    };
+    let step = &mut program.steps[0];
+    assert_eq!(
+        step.auxiliary.keys().copied().collect::<Vec<_>>(),
+        [SoftwarePhase::Cleanup]
+    );
+    step.auxiliary
+        .insert(SoftwarePhase::Attach, step.install.clone());
+    step.auxiliary
+        .insert(SoftwarePhase::Stage, step.install.clone());
+    assert!(FrozenExecution::freeze(input, &limits().input).is_err());
+}
+
+#[test]
+fn standalone_image_detection_and_pkg_removal_have_no_image_resource_phases() {
+    for (mode, intent) in [
+        (1, SoftwareOperation::Uninstall),
+        (1, SoftwareOperation::Detect),
+        (2, SoftwareOperation::Detect),
+    ] {
+        let host = resource_closure_host(mode);
+        let mut input = host.plan.spec().clone();
+        let ExecutionSpec::SoftwareProgram { program } = &mut input.execution else {
+            unreachable!()
+        };
+        program.intent = intent;
+        let step = &mut program.steps[0];
+        step.uninstall = Some(step.install.clone());
+        step.auxiliary.clear();
+        input.request.operation.action = id(if intent == SoftwareOperation::Uninstall {
+            "software.uninstall"
+        } else {
+            "software.detect"
+        });
+        let plan = FrozenExecution::freeze(input, &limits().input).unwrap();
+        let mut old = plan.spec().clone();
+        let ExecutionSpec::SoftwareProgram { program } = &mut old.execution else {
+            unreachable!()
+        };
+        let step = &mut program.steps[0];
+        step.auxiliary
+            .insert(SoftwarePhase::Attach, step.install.clone());
+        step.auxiliary
+            .insert(SoftwarePhase::Cleanup, step.install.clone());
+        assert!(FrozenExecution::freeze(old, &limits().input).is_err());
+    }
+}
+
+#[test]
+fn failed_software_claims_require_resource_closure_even_after_reopen() {
+    for mode in 0..3 {
+        let image = mode != 0;
+        let ordinary_uninstall = mode == 2;
+        let db = Database::new();
+        let host = resource_closure_host(mode);
         let mut store = db.create();
         host.prepare(&mut store);
         store
@@ -3142,12 +3241,18 @@ fn failed_software_claims_require_resource_closure_even_after_reopen() {
                     phase: SoftwarePhase::Before,
                     duration_ms: 5,
                     process: None,
-                    detected: Some(SoftwareState::Absent {}),
+                    detected: Some(if ordinary_uninstall {
+                        SoftwareState::Present {
+                            version: PackageValue::new("1.0").unwrap(),
+                        }
+                    } else {
+                        SoftwareState::Absent {}
+                    }),
                     quiescent: true,
                 },
             ],
         };
-        if image {
+        if image && !ordinary_uninstall {
             progress.checkpoints.extend([
                 SoftwareCheckpoint::Begin {
                     step: 0,
@@ -3203,7 +3308,7 @@ fn failed_software_claims_require_resource_closure_even_after_reopen() {
                 phase: SoftwarePhase::After,
                 duration_ms: 5,
                 process: None,
-                detected: Some(if image {
+                detected: Some(if image && !ordinary_uninstall {
                     SoftwareState::Present {
                         version: PackageValue::new("1.0").unwrap(),
                     }
@@ -3339,4 +3444,76 @@ fn moved_application_identity_reopens_v7_and_replays_without_dispatch_authority(
     assert_eq!(replay.receipt(), &original);
     assert_eq!(host.calls.get(), calls);
     assert_eq!(db.count("attempts"), 1);
+}
+
+#[test]
+fn current_satisfied_targets_complete_without_inventing_mutation_facts_in_sqlite() {
+    for uninstall in [false, true] {
+        let db = Database::new();
+        let mut host = software_host();
+        let mut input = host.plan.spec().clone();
+        let ExecutionSpec::SoftwareProgram { program } = &mut input.execution else {
+            unreachable!()
+        };
+        program.steps.truncate(1);
+        if uninstall {
+            program.intent = SoftwareOperation::Uninstall;
+            program.steps[0].uninstall = Some(program.steps[0].install.clone());
+            input.request.operation.action = id("software.uninstall");
+        }
+        let observed = if uninstall {
+            SoftwareState::Absent {}
+        } else {
+            SoftwareState::Present {
+                version: program.steps[0].version.clone(),
+            }
+        };
+        host.plan = FrozenExecution::freeze(input, &limits().input).unwrap();
+        let mut store = db.create();
+        host.prepare(&mut store);
+        store
+            .apply_command(
+                &operation("begin"),
+                &host.scope(),
+                &host.begin(),
+                &[],
+                &host,
+            )
+            .unwrap();
+        let progress = SoftwareProgress {
+            attempt_id: AttemptId::new("attempt-1").unwrap(),
+            content_digest: host.plan.digest().clone(),
+            runner: id("test-runner"),
+            elapsed_ms: 10,
+            output_bytes: 0,
+            checkpoints: vec![
+                SoftwareCheckpoint::Begin {
+                    step: 0,
+                    phase: SoftwarePhase::Before,
+                },
+                SoftwareCheckpoint::End {
+                    step: 0,
+                    phase: SoftwarePhase::Before,
+                    duration_ms: 5,
+                    process: None,
+                    detected: Some(observed),
+                    quiescent: true,
+                },
+                SoftwareCheckpoint::Complete { step: 0 },
+            ],
+        };
+        store
+            .record_software_progress(&host.scope(), &progress, &host)
+            .unwrap();
+        drop(store);
+        let stored = db
+            .open()
+            .software_progress(&host.scope(), &progress.attempt_id, &host)
+            .unwrap()
+            .unwrap();
+        assert!(stored.complete(&host.plan) && stored.closed(&host.plan));
+        assert_eq!(stored.checkpoints.len(), 3);
+        assert_eq!(db.count("process_evidence"), 0);
+        assert_eq!(db.count("attempts"), 1);
+    }
 }

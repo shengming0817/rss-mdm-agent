@@ -875,7 +875,7 @@ async fn root_exit_is_delivered_while_overall_quiescence_stays_unknown() {
 }
 
 #[tokio::test]
-async fn acknowledged_v5_result_is_not_replaced_by_later_local_facts() {
+async fn acknowledged_v6_result_is_not_replaced_by_later_local_facts() {
     use execution_app::*;
     let server = Server::new().await;
     let root = Root::new();

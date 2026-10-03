@@ -31,6 +31,14 @@ const service = spawnSync(
   { encoding: "utf8" },
 );
 if (service.status !== 0) throw new Error(service.stderr);
+const serviceSchema = JSON.parse(service.stdout);
+const versionPath = "packages/execution-bindings/src/service-version.mjs";
+const versionText = `// @generated from execution-ipc::host::IPC_VERSION. Do not edit.\nexport const IPC_VERSION = ${serviceSchema["x-rss-ipc-version"]};\n`;
+if (process.argv.includes("--check")) {
+  if (readFileSync(versionPath, "utf8") !== versionText)
+    throw new Error("service version drift");
+} else writeFileSync(versionPath, versionText);
+
 const servicePath = "apps/desktop/src/settings/service-contract.ts";
 const serviceText = await format(
   await compile(JSON.parse(service.stdout), "ServiceView", {
