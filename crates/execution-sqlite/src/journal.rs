@@ -3,7 +3,6 @@ use crate::*;
 use execution_contract::{EventId, Id};
 use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 use serde::{de::DeserializeOwned, Serialize};
-use sha2::{Digest as _, Sha256};
 
 pub(crate) fn encode(value: &impl Serialize, max: usize) -> Result<Vec<u8>, Error> {
     let bytes = serde_json_canonicalizer::to_vec(value).map_err(|_| Error::Corrupt)?;
@@ -19,16 +18,13 @@ pub(crate) fn decode<T: DeserializeOwned>(bytes: &[u8], max: usize) -> Result<T,
     serde_json::from_slice(bytes).map_err(|_| Error::Corrupt)
 }
 pub(crate) fn hash(value: &impl Serialize) -> Result<String, Error> {
-    let bytes = serde_json_canonicalizer::to_vec(value).map_err(|_| Error::Corrupt)?;
-    let domain = format!("execution-sqlite/v{}\0", crate::database::SCHEMA_VERSION);
-    let digest = Sha256::digest([domain.as_bytes(), &bytes].concat());
-    Ok(format!("{digest:x}"))
+    execution_app::journal_fingerprint(value).map_err(Into::into)
 }
 pub(crate) fn integer(value: u64) -> Result<i64, Error> {
     i64::try_from(value).map_err(|_| Error::Capacity)
 }
 pub(crate) fn authorize(
-    host: &impl Host,
+    host: &impl JournalHost,
     access: Access,
     scope: &Scope,
     consumer: Option<&Id>,
@@ -39,6 +35,7 @@ pub(crate) fn authorize(
         consumer,
         interaction: None,
     })
+    .map_err(Into::into)
 }
 pub(crate) enum Start<'a> {
     Replay(Receipt),
@@ -56,12 +53,12 @@ pub(crate) struct Write<'a> {
 impl Store {
     /// Read unconfirmed events and their evidence in one SQLite snapshot. Deliver and
     /// RunnerFact are independently authorized; ordinary result access is insufficient.
-    pub fn delivery_evidence(
+    pub(crate) fn sql_delivery_evidence(
         &self,
         scope: &Scope,
         consumer: &Id,
         limit: usize,
-        host: &impl Host,
+        host: &impl JournalHost,
     ) -> Result<Vec<DeliveryEvidence>, Error> {
         if limit == 0 || limit > self.limits.max_batch {
             return Err(Error::InvalidInput);
@@ -94,7 +91,7 @@ impl Store {
         {
             return Err(Error::Corrupt);
         }
-        let admission:Option<Vec<u8>>=tx.query_row(&format!("SELECT {} FROM receipts WHERE scope=?1 AND kind='admission' ORDER BY sequence DESC LIMIT 1",bounded_blob("body",self.limits.max_record_bytes)),[scope.key()],|r|r.get(0)).optional()?;
+        let admission:Option<Vec<u8>>=tx.query_row(&format!("SELECT {} FROM receipts WHERE scope=?1 AND kind='admission' ORDER BY sequence DESC LIMIT 1",bounded_blob("body",self.limits.max_record_bytes)),[scope.interaction_subject().as_str()],|r|r.get(0)).optional()?;
         let denied = admission
             .map(|b| decode::<Receipt>(&b, self.limits.max_record_bytes))
             .transpose()?
@@ -137,9 +134,14 @@ impl Store {
             ORDER BY r.sequence LIMIT ?3", bounded_blob("r.body", self.limits.max_record_bytes));
         let mut statement = tx.prepare(&sql)?;
         let receipts = statement
-            .query_map(params![scope.key(), consumer.as_str(), limit as i64], |r| {
-                r.get::<_, Vec<u8>>(0)
-            })?
+            .query_map(
+                params![
+                    scope.interaction_subject().as_str(),
+                    consumer.as_str(),
+                    limit as i64
+                ],
+                |r| r.get::<_, Vec<u8>>(0),
+            )?
             .map(|r| decode::<Receipt>(&r?, self.limits.max_record_bytes))
             .collect::<Result<Vec<_>, Error>>()?;
         receipts
@@ -171,7 +173,7 @@ impl Store {
         scope: &Scope,
         access: Access,
         consumer: Option<&Id>,
-        host: &impl Host,
+        host: &impl JournalHost,
     ) -> Result<Transaction<'_>, Error> {
         self.check_scope(scope)?;
         authorize(host, access, scope, consumer)?;
@@ -186,7 +188,7 @@ impl Store {
         kind: OperationKind,
         content: &impl Serialize,
         access: Access,
-        host: &impl Host,
+        host: &impl JournalHost,
     ) -> Result<Start<'a>, Error> {
         self.check_scope(scope)?;
         // Hash normalized intent, not timestamps, verification responses or mutable state.
@@ -218,7 +220,7 @@ impl Store {
                 Err(Error::Denied) => authorize(host, Access::ReadResult, scope, None)?,
                 other => other?,
             }
-            if old_scope != scope.key() || old_hash != fingerprint {
+            if old_scope != scope.interaction_subject().as_str() || old_hash != fingerprint {
                 return Err(Error::Conflict);
             }
             return Ok(Start::Replay(decode(&bytes, self.limits.max_record_bytes)?));
@@ -249,7 +251,7 @@ impl Store {
         &self,
         scope: &Scope,
         operation: &OperationRequestId,
-        host: &impl Host,
+        host: &impl JournalHost,
     ) -> Result<Option<Receipt>, Error> {
         let tx = self.read(scope, Access::ReadResult, None, host)?;
         let bytes: Option<Vec<u8>> = tx
@@ -258,7 +260,7 @@ impl Store {
                     "SELECT {} FROM receipts WHERE operation_id=?1 AND scope=?2",
                     bounded_blob("body", self.limits.max_record_bytes)
                 ),
-                params![operation.as_str(), scope.key()],
+                params![operation.as_str(), scope.interaction_subject().as_str()],
                 |r| r.get(0),
             )
             .optional()?;
@@ -268,12 +270,12 @@ impl Store {
     }
     /// Pull the oldest unconfirmed results for one authorized scope/consumer.
     /// Only durable confirmation advances delivery; partial or out-of-order processing cannot skip a result.
-    pub fn pull_results(
+    pub(crate) fn sql_pull_results(
         &self,
         scope: &Scope,
         consumer: &Id,
         limit: usize,
-        host: &impl Host,
+        host: &impl JournalHost,
     ) -> Result<Vec<Receipt>, Error> {
         let tx = self.read(scope, Access::Deliver, Some(consumer), host)?;
         if limit == 0 || limit > self.limits.max_batch {
@@ -283,21 +285,25 @@ impl Store {
             &format!("SELECT {} FROM receipts r WHERE r.scope=?1 AND r.kind!='trust'
              AND NOT EXISTS(SELECT 1 FROM confirmations c WHERE c.scope=r.scope AND c.consumer=?2 AND c.sequence=r.sequence)
              ORDER BY r.sequence LIMIT ?3", bounded_blob("r.body", self.limits.max_record_bytes)))?;
-        let rows = statement
-            .query_map(params![scope.key(), consumer.as_str(), limit as i64], |r| {
-                r.get::<_, Vec<u8>>(0)
-            })?;
+        let rows = statement.query_map(
+            params![
+                scope.interaction_subject().as_str(),
+                consumer.as_str(),
+                limit as i64
+            ],
+            |r| r.get::<_, Vec<u8>>(0),
+        )?;
         rows.map(|r| decode(&r?, self.limits.max_record_bytes))
             .collect()
     }
     /// Idempotently confirm exactly one delivered event. Confirmation creates no delivery event.
     /// Consumers persist their own effect/result before acknowledging; delivery is at least once.
-    pub fn confirm(
+    pub(crate) fn sql_confirm(
         &mut self,
         scope: &Scope,
         consumer: &Id,
         event: &EventId,
-        host: &impl Host,
+        host: &impl JournalHost,
     ) -> Result<(), Error> {
         self.check_scope(scope)?;
         authorize(host, Access::Deliver, scope, Some(consumer))?;
@@ -307,42 +313,42 @@ impl Store {
         crate::database::ensure_current(&tx, &self.authority, self.limits)?;
         let sequence: i64 = tx.query_row(
             "SELECT sequence FROM receipts WHERE scope=?1 AND event_id=?2 AND kind!='trust'",
-            params![scope.key(), event.as_str()],
+            params![scope.interaction_subject().as_str(), event.as_str()],
             |r| r.get(0),
         )?;
         let known: bool = tx.query_row(
             "SELECT EXISTS(SELECT 1 FROM confirmations WHERE scope=?1 AND consumer=?2)",
-            params![scope.key(), consumer.as_str()],
+            params![scope.interaction_subject().as_str(), consumer.as_str()],
             |r| r.get(0),
         )?;
         let consumers: u32 = tx.query_row(
             "SELECT count(DISTINCT consumer) FROM confirmations WHERE scope=?1",
-            [scope.key()],
+            [scope.interaction_subject().as_str()],
             |r| r.get(0),
         )?;
         if !known && consumers >= self.limits.max_consumers {
             return Err(Error::Capacity);
         }
         tx.execute("INSERT INTO confirmations(scope,consumer,sequence) VALUES(?1,?2,?3) ON CONFLICT(scope,consumer,sequence) DO NOTHING",
-            params![scope.key(), consumer.as_str(), sequence])?;
+            params![scope.interaction_subject().as_str(), consumer.as_str(), sequence])?;
         tx.commit().map_err(|_| Error::ConfirmationCommitUnknown)
     }
     /// Read full audit using a separate current authorization; ordinary result access is insufficient.
-    pub fn audit(
+    pub(crate) fn sql_audit(
         &self,
         scope: &Scope,
         operation: &OperationRequestId,
-        host: &impl Host,
+        host: &impl JournalHost,
     ) -> Result<AuditRecord, Error> {
         let tx = self.read(scope, Access::ReadAudit, None, host)?;
         let bytes: Vec<u8> = tx.query_row(
             &format!("SELECT {} FROM audits a JOIN receipts r ON r.sequence=a.sequence WHERE r.scope=?1 AND r.operation_id=?2", bounded_blob("a.body", self.limits.max_record_bytes)),
-            params![scope.key(), operation.as_str()], |r| r.get(0))?;
+            params![scope.interaction_subject().as_str(), operation.as_str()], |r| r.get(0))?;
         decode(&bytes, self.limits.max_record_bytes)
     }
 }
 impl Write<'_> {
-    pub fn refresh_time(&mut self, host: &impl Host) -> Result<(), Error> {
+    pub fn refresh_time(&mut self, host: &impl JournalHost) -> Result<(), Error> {
         let now = host.reliable_now()?;
         if now < self.now {
             return Err(Error::Clock);
@@ -414,7 +420,7 @@ impl Write<'_> {
             "result"
         };
         self.tx.execute("INSERT INTO receipts(operation_id,event_id,scope,fingerprint,kind,body) VALUES(?1,?2,?3,?4,?5,X'')",
-            params![self.op.as_str(), event_id.as_str(), self.scope.key(), self.fingerprint, kind])?;
+            params![self.op.as_str(), event_id.as_str(), self.scope.interaction_subject().as_str(), self.fingerprint, kind])?;
         let sequence = u64::try_from(self.tx.last_insert_rowid()).map_err(|_| Error::Capacity)?;
         let receipt = Receipt {
             sequence,
@@ -490,7 +496,7 @@ pub(crate) fn load_plan(
             "SELECT {},digest FROM executions WHERE scope=?1",
             bounded_blob("plan", limits.input.max_input_bytes)
         ),
-        [scope.key()],
+        [scope.interaction_subject().as_str()],
         |r| Ok((r.get(0)?, r.get(1)?)),
     )?;
     let spec =

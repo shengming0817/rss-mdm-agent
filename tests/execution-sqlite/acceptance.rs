@@ -1,8 +1,9 @@
 mod support;
+use execution_app::*;
 use execution_contract::*;
 use execution_interaction as interaction;
 use execution_lifecycle as lifecycle;
-use execution_sqlite::*;
+use execution_sqlite::{OpenOutcome, Store};
 use std::sync::{Arc, Barrier};
 use support::*;
 
@@ -66,12 +67,12 @@ fn execution_by_request_restores_exact_plan_and_checks_current_reader() {
     denied.read = false;
     assert!(matches!(
         store.execution_by_request(request, ExecutionAccess::Result, &denied),
-        Err(Error::Denied)
+        Err(JournalError::Denied)
     ));
     denied.denied.push(Access::ManageTrust);
     assert_eq!(
         store.trust_revision(&host.scope(), &denied),
-        Err(Error::Denied)
+        Err(JournalError::Denied)
     );
     assert!(matches!(
         store.execution_by_request(
@@ -79,7 +80,7 @@ fn execution_by_request_restores_exact_plan_and_checks_current_reader() {
             ExecutionAccess::Result,
             &host
         ),
-        Err(Error::NotFound)
+        Err(JournalError::NotFound)
     ));
     db.sql()
         .execute(
@@ -89,7 +90,7 @@ fn execution_by_request_restores_exact_plan_and_checks_current_reader() {
         .unwrap();
     assert!(matches!(
         store.execution_by_request(request, ExecutionAccess::Result, &host),
-        Err(Error::Corrupt)
+        Err(JournalError::Corrupt)
     ));
 }
 
@@ -164,7 +165,11 @@ fn first_commit_consumes_all_approvals_once_and_replay_never_reauthorizes_or_dis
     assert_eq!(replay.receipt(), &receipt);
     assert_eq!(host.calls.get(), 1);
     assert_eq!(
-        store.execution(&host.scope(), &host).unwrap().phase(),
+        store
+            .execution(&host.scope(), &host)
+            .map_err(JournalError::from)
+            .unwrap()
+            .phase(),
         lifecycle::Phase::Starting
     );
     host.audit = false;
@@ -172,14 +177,15 @@ fn first_commit_consumes_all_approvals_once_and_replay_never_reauthorizes_or_dis
         store
             .audit(&host.scope(), &operation("start"), &host)
             .unwrap_err(),
-        Error::Denied
+        JournalError::Denied
     );
     host.read = false;
     assert_eq!(
         store
             .receipt(&host.scope(), &operation("start"), &host)
+            .map_err(JournalError::from)
             .unwrap_err(),
-        Error::Denied
+        JournalError::Denied
     );
 }
 #[test]
@@ -200,7 +206,7 @@ fn second_approval_write_failure_rolls_back_first_consumption_intent_state_and_a
                 &host
             )
             .unwrap_err(),
-        Error::Conflict
+        JournalError::Conflict
     );
     assert_eq!(
         db.sql()
@@ -216,6 +222,7 @@ fn second_approval_write_failure_rolls_back_first_consumption_intent_state_and_a
     assert_eq!(
         store
             .execution(&host.scope(), &host)
+            .map_err(JournalError::from)
             .unwrap()
             .snapshot()
             .revision,
@@ -294,7 +301,7 @@ fn content_and_subject_conflicts_do_not_mutate_and_historical_event_ids_cannot_b
         store
             .apply_command(&operation("prepare"), &host.scope(), &changed, &[], &host)
             .unwrap_err(),
-        Error::Conflict
+        JournalError::Conflict
     );
     assert_eq!(
         store
@@ -306,7 +313,7 @@ fn content_and_subject_conflicts_do_not_mutate_and_historical_event_ids_cannot_b
                 &host
             )
             .unwrap_err(),
-        Error::Conflict
+        JournalError::Conflict
     );
     let mut other = host.clone();
     let mut spec = other.plan.spec().clone();
@@ -316,12 +323,13 @@ fn content_and_subject_conflicts_do_not_mutate_and_historical_event_ids_cannot_b
         store
             .open_execution(&operation("open"), &other.plan, &other)
             .unwrap_err(),
-        Error::Conflict
+        JournalError::Conflict
     );
     assert_eq!(db.count("executions"), 1);
     assert_eq!(
         store
             .execution(&host.scope(), &host)
+            .map_err(JournalError::from)
             .unwrap()
             .snapshot()
             .revision,
@@ -427,7 +435,7 @@ fn refresh_cannot_rewrite_definition_refund_usage_or_resurrect_old_trust_revisio
         store
             .refresh_trust(&operation("rewrite"), &host.scope(), Some(2), &host)
             .unwrap_err(),
-        Error::Conflict
+        JournalError::Conflict
     );
     host.entries[0].definition.max_uses = 1;
     host.approval.revision = id("1");
@@ -435,7 +443,7 @@ fn refresh_cannot_rewrite_definition_refund_usage_or_resurrect_old_trust_revisio
         store
             .refresh_trust(&operation("old-revision"), &host.scope(), Some(2), &host)
             .unwrap_err(),
-        Error::Conflict
+        JournalError::Conflict
     );
 }
 #[test]
@@ -503,7 +511,11 @@ fn interaction_answers_race_with_one_winner_and_unchanged_outcomes_replay() {
         .unwrap();
     assert_eq!(replay.receipt(), early.receipt());
     assert_eq!(
-        store.execution(&host.scope(), &host).unwrap().phase(),
+        store
+            .execution(&host.scope(), &host)
+            .map_err(JournalError::from)
+            .unwrap()
+            .phase(),
         lifecycle::Phase::Prepared
     );
 }
@@ -528,6 +540,7 @@ fn lost_result_and_confirmation_responses_recover_without_new_events() {
     let mut store = db.open();
     let receipt = store
         .receipt(&host.scope(), &operation("start"), &host)
+        .map_err(JournalError::from)
         .unwrap()
         .unwrap();
     let consumer = id("execution-app");
@@ -559,6 +572,7 @@ fn lost_result_and_confirmation_responses_recover_without_new_events() {
     assert_eq!(
         store
             .receipt(&host.scope(), &operation("start"), &host)
+            .map_err(JournalError::from)
             .unwrap(),
         Some(receipt)
     );
@@ -585,7 +599,7 @@ fn busy_and_clock_rollback_fail_without_partial_writes() {
                 &host
             )
             .unwrap_err(),
-        Error::Busy
+        JournalError::Busy
     );
     blocker.execute_batch("ROLLBACK").unwrap();
     host.now.set(999);
@@ -599,7 +613,7 @@ fn busy_and_clock_rollback_fail_without_partial_writes() {
                 &host
             )
             .unwrap_err(),
-        Error::Clock
+        JournalError::Clock
     );
     assert_eq!(db.count("attempts"), 0);
     host.now.set(1000);
@@ -638,7 +652,7 @@ fn actual_sqlite_full_rolls_back_and_preserves_existing_authority() {
                 &host
             )
             .unwrap_err(),
-        Error::Capacity
+        JournalError::Capacity
     );
     assert_eq!(db.count("receipts"), before);
     assert_eq!(db.count("attempts"), 0);
@@ -650,7 +664,11 @@ fn actual_sqlite_full_rolls_back_and_preserves_existing_authority() {
         0
     );
     assert_eq!(
-        store.execution(&host.scope(), &host).unwrap().phase(),
+        store
+            .execution(&host.scope(), &host)
+            .map_err(JournalError::from)
+            .unwrap()
+            .phase(),
         lifecycle::Phase::Prepared
     );
 }
@@ -714,7 +732,7 @@ fn existing_writer_is_fenced_when_schema_changes_after_open() {
                 &host
             )
             .unwrap_err(),
-        Error::Schema
+        JournalError::Schema
     );
     assert_eq!(db.count("attempts"), 0);
 }
@@ -754,7 +772,7 @@ fn reserved_terminal_receipts_survive_exhausted_normal_capacity() {
                 &host
             )
             .unwrap_err(),
-        Error::Capacity
+        JournalError::Capacity
     );
     let cancel = event("cancel", 2, lifecycle::Command::Cancel);
     store
@@ -812,6 +830,7 @@ fn reserved_terminal_receipts_survive_exhausted_normal_capacity() {
     assert_eq!(
         store
             .execution(&host.scope(), &host)
+            .map_err(JournalError::from)
             .unwrap()
             .directive(1000)
             .unwrap(),
@@ -881,7 +900,10 @@ fn subprocess_committed_intent_cannot_regain_first_dispatch_after_restart() {
             .unwrap(),
         CommitOutcome::AlreadyCommitted(_)
     ));
-    let state = store.execution(&host.scope(), &host).unwrap();
+    let state = store
+        .execution(&host.scope(), &host)
+        .map_err(JournalError::from)
+        .unwrap();
     assert_eq!(state.phase(), lifecycle::Phase::Starting);
     assert_eq!(
         state.directive(1000).unwrap(),
@@ -897,7 +919,11 @@ fn subprocess_committed_intent_cannot_regain_first_dispatch_after_restart() {
         )
         .unwrap();
     assert_eq!(
-        store.execution(&host.scope(), &host).unwrap().phase(),
+        store
+            .execution(&host.scope(), &host)
+            .map_err(JournalError::from)
+            .unwrap()
+            .phase(),
         lifecycle::Phase::OutcomeUnknown
     );
     assert_eq!(db.count("attempts"), 1);
@@ -1069,6 +1095,7 @@ fn old_schema_handle_cannot_read_or_ack_after_upgrade() {
     host.prepare(&mut store);
     let receipt = store
         .receipt(&host.scope(), &operation("open"), &host)
+        .map_err(JournalError::from)
         .unwrap()
         .unwrap();
     let conn = db.sql();
@@ -1081,30 +1108,33 @@ fn old_schema_handle_cannot_read_or_ack_after_upgrade() {
     assert_eq!(
         store
             .receipt(&host.scope(), &operation("open"), &host)
+            .map_err(JournalError::from)
             .unwrap_err(),
-        Error::Schema
+        JournalError::Schema
     );
     assert_eq!(
         store
             .audit(&host.scope(), &operation("open"), &host)
             .unwrap_err(),
-        Error::Schema
+        JournalError::Schema
     );
     assert!(matches!(
-        store.execution(&host.scope(), &host),
-        Err(Error::Schema)
+        store
+            .execution(&host.scope(), &host)
+            .map_err(JournalError::from),
+        Err(JournalError::Schema)
     ));
     assert_eq!(
         store
             .pull_results(&host.scope(), &id("ui"), 10, &host)
             .unwrap_err(),
-        Error::Schema
+        JournalError::Schema
     );
     assert_eq!(
         store
             .confirm(&host.scope(), &id("ui"), &receipt.event_id, &host)
             .unwrap_err(),
-        Error::Schema
+        JournalError::Schema
     );
 }
 
@@ -1118,7 +1148,7 @@ fn time_is_rechecked_after_trust_and_answer_verification() {
         store
             .refresh_trust(&operation("expired-snapshot"), &host.scope(), None, &host)
             .unwrap_err(),
-        Error::Trust
+        JournalError::Trust
     );
     assert_eq!(db.count("trust_heads"), 0);
     assert_eq!(db.count("receipts"), 0);
@@ -1225,14 +1255,14 @@ fn each_endpoint_requires_its_exact_access_and_delivery_consumer() {
         store
             .refresh_trust(&operation("blocked-trust"), &host.scope(), Some(1), &host)
             .unwrap_err(),
-        Error::Denied
+        JournalError::Denied
     );
     host.denied = vec![Access::Create];
     assert_eq!(
         store
             .open_execution(&operation("blocked-open"), &host.plan, &host)
             .unwrap_err(),
-        Error::Denied
+        JournalError::Denied
     );
     host.denied = vec![Access::Execute];
     assert_eq!(
@@ -1245,7 +1275,7 @@ fn each_endpoint_requires_its_exact_access_and_delivery_consumer() {
                 &host
             )
             .unwrap_err(),
-        Error::Denied
+        JournalError::Denied
     );
     host.denied = vec![Access::RunnerFact];
     assert_eq!(
@@ -1258,7 +1288,7 @@ fn each_endpoint_requires_its_exact_access_and_delivery_consumer() {
                 &host
             )
             .unwrap_err(),
-        Error::Denied
+        JournalError::Denied
     );
     host.denied = vec![Access::Interact];
     assert_eq!(
@@ -1270,7 +1300,7 @@ fn each_endpoint_requires_its_exact_access_and_delivery_consumer() {
                 &host
             )
             .unwrap_err(),
-        Error::Denied
+        JournalError::Denied
     );
     assert_eq!(
         store
@@ -1282,25 +1312,26 @@ fn each_endpoint_requires_its_exact_access_and_delivery_consumer() {
                 &host
             )
             .unwrap_err(),
-        Error::Denied
+        JournalError::Denied
     );
     assert_eq!(db.count("receipts"), initial);
     host.denied = vec![Access::Deliver];
     let receipt = store
         .receipt(&host.scope(), &operation("open"), &host)
+        .map_err(JournalError::from)
         .unwrap()
         .unwrap();
     assert_eq!(
         store
             .pull_results(&host.scope(), &id("ui"), 1, &host)
             .unwrap_err(),
-        Error::Denied
+        JournalError::Denied
     );
     assert_eq!(
         store
             .confirm(&host.scope(), &id("ui"), &receipt.event_id, &host)
             .unwrap_err(),
-        Error::Denied
+        JournalError::Denied
     );
     host.denied.clear();
     host.consumer = Some(id("authorized"));
@@ -1308,13 +1339,13 @@ fn each_endpoint_requires_its_exact_access_and_delivery_consumer() {
         store
             .pull_results(&host.scope(), &id("other"), 1, &host)
             .unwrap_err(),
-        Error::Denied
+        JournalError::Denied
     );
     assert_eq!(
         store
             .confirm(&host.scope(), &id("other"), &receipt.event_id, &host)
             .unwrap_err(),
-        Error::Denied
+        JournalError::Denied
     );
     assert_eq!(
         store
@@ -1372,7 +1403,7 @@ fn replay_accepts_original_action_or_independent_result_permission() {
         store
             .refresh_trust(&operation("new-write"), &host.scope(), Some(1), &host)
             .unwrap_err(),
-        Error::Denied
+        JournalError::Denied
     );
     assert_eq!(db.count("receipts"), 1);
 }
@@ -1448,6 +1479,7 @@ fn quota_accepts_uncertain_and_manual_review_before_final_evidence() {
                 assert_eq!(
                     store
                         .execution(&host.scope(), &host)
+                        .map_err(JournalError::from)
                         .unwrap()
                         .directive(1000)
                         .unwrap(),
@@ -1459,6 +1491,7 @@ fn quota_accepts_uncertain_and_manual_review_before_final_evidence() {
         assert_eq!(
             store
                 .execution(&host.scope(), &host)
+                .map_err(JournalError::from)
                 .unwrap()
                 .directive(1000)
                 .unwrap(),
@@ -1663,7 +1696,7 @@ fn submit_runner_record(
     host: &TestHost,
     record: &lifecycle::EventRecord,
     observer: &TestEvidence,
-) -> Result<CommitOutcome, Error> {
+) -> Result<CommitOutcome, JournalError> {
     match record {
         lifecycle::EventRecord::Command(e) => {
             store.apply_command(&operation("runner-op"), &host.scope(), e, &[], host)
@@ -1754,6 +1787,7 @@ fn rejected_and_stale_runner_events_retain_submitted_attempt_on_replay() {
             assert_eq!(
                 store
                     .receipt(&host.scope(), &operation("runner-op"), &host)
+                    .map_err(JournalError::from)
                     .unwrap(),
                 Some(receipt.clone())
             );
@@ -1819,7 +1853,7 @@ fn oversized_approval_definition_is_corrupt_before_refresh_comparison() {
         store
             .refresh_trust(&operation("refresh"), &host.scope(), Some(1), &host)
             .unwrap_err(),
-        Error::Corrupt
+        JournalError::Corrupt
     );
     assert_eq!(db.count("receipts"), 3);
 }
@@ -1828,7 +1862,7 @@ fn oversized_approval_definition_is_corrupt_before_refresh_comparison() {
 fn invalid_call_input_is_not_storage_configuration() {
     assert_eq!(
         OperationRequestId::new("").unwrap_err(),
-        Error::InvalidInput
+        JournalError::InvalidInput
     );
     let db = Database::new();
     let host = TestHost::new(0);
@@ -1839,7 +1873,7 @@ fn invalid_call_input_is_not_storage_configuration() {
             store
                 .pull_results(&host.scope(), &id("input"), limit, &host)
                 .unwrap_err(),
-            Error::InvalidInput
+            JournalError::InvalidInput
         );
     }
     let mut invalid = spec(&host);
@@ -1848,7 +1882,7 @@ fn invalid_call_input_is_not_storage_configuration() {
         store
             .open_interaction(&operation("invalid"), &host.scope(), &invalid, &host)
             .unwrap_err(),
-        Error::InvalidInput
+        JournalError::InvalidInput
     );
     assert_eq!(db.count("interactions"), 0);
     assert_eq!(db.count("receipts"), 3);
@@ -1871,7 +1905,7 @@ fn confirmation_commit_failure_has_its_own_recovery_and_is_retryable() {
     let error = store
         .confirm(&host.scope(), &consumer, &receipt.event_id, &host)
         .unwrap_err();
-    assert_eq!(error, Error::ConfirmationCommitUnknown);
+    assert_eq!(error, JournalError::ConfirmationCommitUnknown);
     assert_eq!(db.count("confirmations"), 0);
     db.sql()
         .execute_batch("DROP TRIGGER fail_confirm;")
@@ -1939,12 +1973,17 @@ fn oversized_protected_records_fail_closed_at_every_read_entry() {
                 [maximum + 1],
             )
             .unwrap();
-        let check = |error| assert_eq!(error, Error::Corrupt, "{table}.{column}");
+        let check = |error| assert_eq!(error, JournalError::Corrupt, "{table}.{column}");
         match table {
             "metadata" => {
-                check(store.execution(&host.scope(), &host).unwrap_err());
+                check(
+                    store
+                        .execution(&host.scope(), &host)
+                        .map_err(JournalError::from)
+                        .unwrap_err(),
+                );
                 match Store::open(&db.path, &host.scope().authority, limits()) {
-                    Err(error) => check(error),
+                    Err(error) => check(error.into()),
                     Ok(_) => panic!("oversized authority opened"),
                 }
             }
@@ -1952,6 +1991,7 @@ fn oversized_protected_records_fail_closed_at_every_read_entry() {
                 check(
                     store
                         .receipt(&host.scope(), &operation("open"), &host)
+                        .map_err(JournalError::from)
                         .unwrap_err(),
                 );
                 check(
@@ -1970,7 +2010,12 @@ fn oversized_protected_records_fail_closed_at_every_read_entry() {
                     .audit(&host.scope(), &operation("open"), &host)
                     .unwrap_err(),
             ),
-            "executions" => check(store.execution(&host.scope(), &host).unwrap_err()),
+            "executions" => check(
+                store
+                    .execution(&host.scope(), &host)
+                    .map_err(JournalError::from)
+                    .unwrap_err(),
+            ),
             "interactions" => check(
                 store
                     .interaction(&host.scope(), &interaction.id, &host)
@@ -2012,10 +2057,11 @@ fn operation_commit_failure_retains_operation_recovery_without_dispatch() {
                 &host
             )
             .unwrap_err(),
-        Error::OperationCommitUnknown
+        JournalError::OperationCommitUnknown
     );
     assert!(store
         .receipt(&host.scope(), &operation("start"), &host)
+        .map_err(JournalError::from)
         .unwrap()
         .is_none());
     assert_eq!(db.count("attempts"), 0);
@@ -2059,7 +2105,7 @@ fn invalid_store_limits_remain_configuration_errors() {
     invalid.max_batch = 0;
     assert!(matches!(
         Store::initialize_test(&db.path, plan().spec().request.authority.clone(), invalid),
-        Err(Error::Configuration)
+        Err(execution_sqlite::Error::Configuration)
     ));
     assert!(!db.path.exists());
 }
@@ -2109,6 +2155,7 @@ fn observations_have_separate_authority_and_replay_without_resolving_evidence() 
     assert_eq!(verifier.calls.get(), 1);
     let snapshot = store
         .execution(&host.scope(), &host)
+        .map_err(JournalError::from)
         .unwrap()
         .snapshot()
         .clone();
@@ -2126,7 +2173,11 @@ fn observations_have_separate_authority_and_replay_without_resolving_evidence() 
     drop(store);
     let mut store = db.open();
     assert_eq!(
-        store.execution(&host.scope(), &host).unwrap().snapshot(),
+        store
+            .execution(&host.scope(), &host)
+            .map_err(JournalError::from)
+            .unwrap()
+            .snapshot(),
         &snapshot
     );
 
@@ -2140,7 +2191,11 @@ fn observations_have_separate_authority_and_replay_without_resolving_evidence() 
     assert_eq!(replay.receipt(), &receipt);
     assert_eq!(verifier.calls.get(), 1);
     assert_eq!(
-        store.execution(&host.scope(), &host).unwrap().snapshot(),
+        store
+            .execution(&host.scope(), &host)
+            .map_err(JournalError::from)
+            .unwrap()
+            .snapshot(),
         &snapshot
     );
 }
@@ -2162,6 +2217,7 @@ fn rejected_and_stale_observations_do_not_resolve_evidence_or_mutate_execution()
         .unwrap();
     let snapshot = store
         .execution(&host.scope(), &host)
+        .map_err(JournalError::from)
         .unwrap()
         .snapshot()
         .clone();
@@ -2187,7 +2243,7 @@ fn rejected_and_stale_observations_do_not_resolve_evidence_or_mutate_execution()
                 &verifier
             )
             .unwrap_err(),
-        Error::Denied
+        JournalError::Denied
     );
     host.denied.clear();
     input.id = EventId::new("stale-observation").unwrap();
@@ -2216,7 +2272,7 @@ fn rejected_and_stale_observations_do_not_resolve_evidence_or_mutate_execution()
                 &verifier
             )
             .unwrap_err(),
-        Error::Conflict
+        JournalError::Conflict
     );
     input.id = EventId::new("wrong-attempt").unwrap();
     input.expected_revision = 2;
@@ -2237,7 +2293,11 @@ fn rejected_and_stale_observations_do_not_resolve_evidence_or_mutate_execution()
     );
     assert_eq!(verifier.calls.get(), 0);
     assert_eq!(
-        store.execution(&host.scope(), &host).unwrap().snapshot(),
+        store
+            .execution(&host.scope(), &host)
+            .map_err(JournalError::from)
+            .unwrap()
+            .snapshot(),
         &snapshot
     );
 }
@@ -2297,6 +2357,7 @@ fn process_capture_is_scope_bound_durable_monotonic_and_never_releases_dispatch(
     assert_eq!(
         store
             .process_evidence(&host.scope(), &attempt, &host)
+            .map_err(JournalError::from)
             .unwrap(),
         Some(facts.clone())
     );
@@ -2330,8 +2391,10 @@ fn process_capture_is_scope_bound_durable_monotonic_and_never_releases_dispatch(
     let mut denied = host.clone();
     denied.audit = false;
     assert!(matches!(
-        store.process_evidence(&host.scope(), &attempt, &denied),
-        Err(Error::Denied)
+        store
+            .process_evidence(&host.scope(), &attempt, &denied)
+            .map_err(JournalError::from),
+        Err(JournalError::Denied)
     ));
 }
 
@@ -2377,14 +2440,17 @@ fn full_output_budget_is_binary_bounded_and_requires_privileged_read() {
     assert_eq!(
         store
             .process_evidence(&host.scope(), &facts.attempt_id, &host)
+            .map_err(JournalError::from)
             .unwrap(),
         Some(facts.clone())
     );
     assert!(!format!("{facts:?}").contains(&format!("{:?}", facts.stdout)));
     host.audit = false;
     assert!(matches!(
-        store.process_evidence(&host.scope(), &facts.attempt_id, &host),
-        Err(Error::Denied)
+        store
+            .process_evidence(&host.scope(), &facts.attempt_id, &host)
+            .map_err(JournalError::from),
+        Err(JournalError::Denied)
     ));
     let ordinary = store
         .execution_by_request(
@@ -2441,12 +2507,13 @@ fn process_failure_kind_is_required_durable_and_cannot_be_rewritten() {
         facts.failure_kind = kind;
         assert_eq!(
             store.record_process(&host.scope(), &facts, &host),
-            Err(Error::Conflict)
+            Err(JournalError::Conflict)
         );
     }
     assert_eq!(
         store
             .process_evidence(&host.scope(), &attempt, &host)
+            .map_err(JournalError::from)
             .unwrap()
             .unwrap()
             .summary()
@@ -2467,8 +2534,10 @@ fn process_failure_kind_is_required_durable_and_cannot_be_rewritten() {
     .unwrap();
     drop(sql);
     assert!(matches!(
-        db.open().process_evidence(&host.scope(), &attempt, &host),
-        Err(Error::Corrupt)
+        db.open()
+            .process_evidence(&host.scope(), &attempt, &host)
+            .map_err(JournalError::from),
+        Err(JournalError::Corrupt)
     ));
 }
 
@@ -2514,7 +2583,7 @@ fn software_checkpoints_commit_atomically_and_survive_reopen_without_replay() {
     db.sql().execute_batch("CREATE TABLE progress_fault(id INTEGER REFERENCES receipts(sequence) DEFERRABLE INITIALLY DEFERRED); CREATE TRIGGER fail_progress AFTER INSERT ON software_progress BEGIN INSERT INTO progress_fault VALUES(-1); END;").unwrap();
     assert!(matches!(
         store.record_software_progress(&host.scope(), &progress, &host),
-        Err(Error::OperationCommitUnknown)
+        Err(JournalError::OperationCommitUnknown)
     ));
     assert_eq!(db.count("software_progress"), 0);
     db.sql()
@@ -2523,7 +2592,7 @@ fn software_checkpoints_commit_atomically_and_survive_reopen_without_replay() {
     let receipt = store
         .record_software_progress(&host.scope(), &progress, &host)
         .unwrap();
-    assert_eq!(receipt.facts(), &progress);
+    assert_eq!(receipt, progress);
     drop(store);
     let mut store = db.open();
     assert_eq!(
@@ -2549,14 +2618,14 @@ fn software_checkpoints_commit_atomically_and_survive_reopen_without_replay() {
         .unwrap();
     assert!(matches!(
         store.record_software_progress(&host.scope(), &old, &host),
-        Err(Error::Conflict)
+        Err(JournalError::Conflict)
     ));
     progress
         .checkpoints
         .push(SoftwareCheckpoint::Complete { step: 0 });
     assert!(matches!(
         store.record_software_progress(&host.scope(), &progress, &host),
-        Err(Error::InvalidInput)
+        Err(JournalError::InvalidInput)
     ));
     assert_eq!(db.count("attempts"), 1);
     assert_eq!(db.count("software_claims"), 1);
@@ -2586,7 +2655,7 @@ fn software_checkpoint_rejects_other_attempt_and_bounded_corrupt_body() {
     };
     assert!(matches!(
         store.record_software_progress(&host.scope(), &progress, &host),
-        Err(Error::InvalidInput)
+        Err(JournalError::InvalidInput)
     ));
     progress.attempt_id = AttemptId::new("attempt-1").unwrap();
     store
@@ -2650,7 +2719,7 @@ fn second_software_request_cannot_steal_unresolved_claim() {
     );
     assert!(matches!(
         other.apply_command(&operation("begin2"), &next.scope(), &begin, &[], &next),
-        Err(Error::Busy)
+        Err(JournalError::Busy)
     ));
     assert_eq!(db.count("attempts"), 1);
     assert_eq!(db.count("software_claims"), 1);
@@ -2719,7 +2788,7 @@ fn simultaneous_software_requests_have_one_committed_resource_owner() {
     assert_eq!(
         results
             .iter()
-            .filter(|r| matches!(r, Err(Error::Busy)))
+            .filter(|r| matches!(r, Err(JournalError::Busy)))
             .count(),
         1
     );
@@ -3231,4 +3300,43 @@ fn failed_software_claims_require_resource_closure_even_after_reopen() {
             );
         }
     }
+}
+
+#[test]
+fn moved_application_identity_reopens_v7_and_replays_without_dispatch_authority() {
+    let db = Database::new();
+    let host = TestHost::new(0);
+    let scope = host.scope();
+    // Fixed identities from the pre-refactor V7 canonical encoding, independent of Rust owner.
+    assert_eq!(
+        scope.interaction_subject().as_str(),
+        "99067cdd0ad2a17d2e877ff170f147a0f77746d87f7fa66b19d756497763000b"
+    );
+    assert_eq!(
+        journal_fingerprint(&("fixed-op", "fixed-fingerprint")).unwrap(),
+        "474208109b435bef8000ebc087513c355cde5caf32614199d520cf60f4fc5cbd"
+    );
+    let mut journal = db.create();
+    host.prepare(&mut journal);
+    let first = journal
+        .apply_command(&operation("v7-begin"), &scope, &host.begin(), &[], &host)
+        .unwrap();
+    let original = first.receipt().clone();
+    assert!(matches!(
+        first,
+        CommitOutcome::Applied {
+            first_dispatch: Some(_),
+            ..
+        }
+    ));
+    drop(journal);
+    let mut journal = db.open();
+    let calls = host.calls.get();
+    let replay = journal
+        .apply_command(&operation("v7-begin"), &scope, &host.begin(), &[], &host)
+        .unwrap();
+    assert!(matches!(replay, CommitOutcome::AlreadyCommitted(_)));
+    assert_eq!(replay.receipt(), &original);
+    assert_eq!(host.calls.get(), calls);
+    assert_eq!(db.count("attempts"), 1);
 }

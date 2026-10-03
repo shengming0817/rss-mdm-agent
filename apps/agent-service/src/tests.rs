@@ -265,8 +265,8 @@ async fn production_service_creates_and_reopens_journal_with_its_actual_budgets(
     // Exercise the production owner, NativeRunner and Enterprise authority. The loopback
     // backend supplies registration only; this test neither dispatches nor proves root IPC.
     for startup in [
-        execution_app::ProductionStartup::Create,
-        execution_app::ProductionStartup::Open,
+        crate::ProductionStartup::Create,
+        crate::ProductionStartup::Open,
     ] {
         let client = agent_client::Client::open(
             &root.path,

@@ -10,7 +10,6 @@ publish = false
 rss-mdm-agent-wire = { git = "https://dev.azure.com/shengming0923/rss/_git/rss-mdm", rev = "574d11eec526f31fbc6ccc7a24d5fccddd6df8db", version = "=5.0.0" }
 execution-app = { path = "../execution-app" }
 execution-contract = { path = "../execution-contract" }
-execution-sqlite = { path = "../execution-sqlite" }
 execution-lifecycle = { path = "../execution-lifecycle" }
 platform-private-storage = { path = "../platform-private-storage" }
 reqwest = { version = "=0.13.5", default-features = false, features = ["rustls", "json", "query", "stream"] }
@@ -30,6 +29,7 @@ fs2 = "=0.4.3"
 libc = "=0.2.189"
 
 [dev-dependencies]
+execution-sqlite = { path = "../execution-sqlite" }
 axum = "=0.8.9"
 ring = "=0.17.14"
 base64 = "=0.23.1"

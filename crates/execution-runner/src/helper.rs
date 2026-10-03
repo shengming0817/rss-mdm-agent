@@ -660,7 +660,7 @@ mod shutdown_tests {
             retired: Default::default(),
             clock_watermark: 0,
             capacity: 2,
-            limits: execution_app::test_store_limits().input,
+            limits: execution_app::test_execution_limits(),
             policy: host::PeerPolicy {
                 images: vec![],
                 subjects: vec![],

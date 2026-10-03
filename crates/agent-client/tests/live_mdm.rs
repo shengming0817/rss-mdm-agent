@@ -1,5 +1,6 @@
 //! Real-server integration against isolated rss-mdm serve and PostgreSQL.
 //! The live_mdm target uses a controlled Test runner; it does not run against production.
+use support::execution::local::create_app;
 mod support;
 use agent_client::wire::*;
 use agent_client::*;
@@ -182,9 +183,7 @@ impl Admin {
 #[tokio::test]
 #[ignore = "requires AGENT_LIVE_CONFIG for an isolated real rss-mdm serve environment"]
 async fn real_https_registration_reports_script_software_and_journal_results() {
-    use execution_app::{
-        AppConfig, DeterministicTestRunner, ExecutionApp, RequestContext, Startup, TestScenario,
-    };
+    use execution_app::{AppConfig, DeterministicTestRunner, RequestContext, TestScenario};
     let path = std::env::var("AGENT_LIVE_CONFIG").expect("AGENT_LIVE_CONFIG is required");
     let fixture: LiveConfig = serde_json::from_slice(
         &platform_private_storage::read(std::path::Path::new(&path), 16384).unwrap(),
@@ -380,14 +379,8 @@ async fn real_https_registration_reports_script_software_and_journal_results() {
             ready: Default::default(),
             capture: Default::default(),
         };
-        let mut app = ExecutionApp::start(
-            &db.path,
-            Startup::CreateTest,
-            host,
-            runner.clone(),
-            AppConfig::test_defaults(1),
-        )
-        .unwrap();
+        let mut app =
+            create_app(&db.path, host, runner.clone(), AppConfig::test_defaults(1)).unwrap();
         let caller = RequestContext {
             actor: plan.spec().request.actor.clone(),
         };

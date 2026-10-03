@@ -1,11 +1,12 @@
 use execution_admission::Rule;
 use execution_admission::*;
+use execution_app::*;
 use execution_approval::{evaluate, ApprovalLimits, ApprovalVerifier, ProfileApproval};
 use execution_contract::*;
 use execution_lifecycle::{
     self as lifecycle, Observation, ObservationError, ObservationFacts, ObservationVerifier,
 };
-use execution_sqlite::*;
+use execution_sqlite::{Limits, OpenOutcome, Store};
 use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -217,15 +218,15 @@ impl TestHost {
         )
     }
 }
-impl Host for TestHost {
-    fn authorize(&self, request: AccessRequest<'_>) -> Result<(), Error> {
+impl JournalHost for TestHost {
+    fn authorize(&self, request: AccessRequest<'_>) -> Result<(), JournalError> {
         self.access_calls.borrow_mut().push((
             request.access,
             request.consumer.cloned(),
             request.interaction.is_some(),
         ));
         if self.denied.contains(&request.access) {
-            return Err(Error::Denied);
+            return Err(JournalError::Denied);
         }
         if request.access == Access::Deliver
             && self
@@ -233,10 +234,10 @@ impl Host for TestHost {
                 .as_ref()
                 .is_some_and(|c| request.consumer != Some(c))
         {
-            return Err(Error::Denied);
+            return Err(JournalError::Denied);
         }
         if *request.scope != self.scope() {
-            return Err(Error::Denied);
+            return Err(JournalError::Denied);
         }
         if request.interaction.is_some() {
             if let Some(now) = self.answer_clock {
@@ -244,8 +245,8 @@ impl Host for TestHost {
             }
         }
         match request.access {
-            Access::ReadResult | Access::Deliver if !self.read => Err(Error::Denied),
-            Access::ReadAudit if !self.audit => Err(Error::Denied),
+            Access::ReadResult | Access::Deliver if !self.read => Err(JournalError::Denied),
+            Access::ReadAudit if !self.audit => Err(JournalError::Denied),
             Access::Create
             | Access::Execute
             | Access::RunnerFact
@@ -253,15 +254,15 @@ impl Host for TestHost {
             | Access::ManageTrust
                 if !self.write =>
             {
-                Err(Error::Denied)
+                Err(JournalError::Denied)
             }
             _ => Ok(()),
         }
     }
-    fn reliable_now(&self) -> Result<u64, Error> {
+    fn reliable_now(&self) -> Result<u64, JournalError> {
         Ok(self.now.get())
     }
-    fn trusted_snapshot(&self, _: &Scope) -> Result<TrustSnapshot, Error> {
+    fn trusted_snapshot(&self, _: &Scope) -> Result<TrustSnapshot, JournalError> {
         if let Some(now) = self.snapshot_clock {
             self.now.set(now);
         }
@@ -279,7 +280,7 @@ impl Host for TestHost {
         bindings: &[ProfileApproval],
         approvals: &dyn ApprovalVerifier,
         _: u64,
-    ) -> Result<AdmissionGate, Error> {
+    ) -> Result<AdmissionGate, JournalError> {
         self.calls.set(self.calls.get() + 1);
         let admission = decide(plan, attempt, self, AdmissionLimits { max_rules: 32 });
         let approval = evaluate(

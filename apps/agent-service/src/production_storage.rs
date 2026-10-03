@@ -1,8 +1,11 @@
 //! Storage-boundary tests only; these hosts do not prove OS identity or execution.
+#[path = "../../../crates/execution-app/tests/support/mod.rs"]
 mod support;
+use crate::service::{assemble_journal, ProductionStartup};
 use execution_app::*;
 use execution_contract::*;
 use execution_lifecycle::{ExecutionMode, ObservationFacts};
+use execution_sqlite::test_store_limits;
 use support::*;
 
 struct NoDispatch;
@@ -46,15 +49,15 @@ fn host(tenant: &str) -> TestHost {
         id: id("registered-device-authority"),
         tenant: id(tenant),
     };
-    host.template = FrozenExecution::freeze(spec, &test_store_limits().input).unwrap();
+    host.template = FrozenExecution::freeze(spec, &test_execution_limits()).unwrap();
     host
 }
 fn start(
     db: &Database,
     mode: ProductionStartup,
     tenant: &str,
-) -> Result<ExecutionApp<TestHost, NoDispatch>, Error> {
-    ExecutionApp::start_production(
+) -> Result<ExecutionApp<TestHost, NoDispatch, execution_sqlite::Store>, Error> {
+    assemble_journal(
         &db.path,
         mode,
         host(tenant),
@@ -81,7 +84,7 @@ fn production_journal_requires_explicit_create_and_preserves_identity_on_reopen(
 fn production_rejects_test_identity_and_test_runner_before_touching_storage() {
     let db = Database::new();
     assert!(matches!(
-        ExecutionApp::start_production(
+        assemble_journal(
             &db.path,
             ProductionStartup::Create,
             TestHost::new(),
@@ -93,7 +96,7 @@ fn production_rejects_test_identity_and_test_runner_before_touching_storage() {
     ));
     let runner = DeterministicTestRunner::new(id("fixture"), TestScenario::Complete, 1).unwrap();
     assert!(matches!(
-        ExecutionApp::start_production(
+        assemble_journal(
             &db.path,
             ProductionStartup::Create,
             host("tenant-a"),
@@ -134,4 +137,53 @@ fn production_preserves_unsupported_schema_without_migration_or_recreation() {
         Err(Error::UnsupportedSchema { found: 999, .. })
     ));
     assert_eq!(original, std::fs::read(&db.path).unwrap());
+}
+
+#[test]
+fn invalid_production_inputs_leave_existing_journal_untouched() {
+    let db = Database::new();
+    drop(start(&db, ProductionStartup::Create, "tenant-a").unwrap());
+    let original = std::fs::read(&db.path).unwrap();
+    for startup in [ProductionStartup::Create, ProductionStartup::Open] {
+        let mut config = AppConfig::test_defaults(1);
+        config.max_rules = 0;
+        assert!(matches!(
+            assemble_journal(
+                &db.path,
+                startup,
+                host("tenant-a"),
+                NoDispatch,
+                config,
+                test_store_limits()
+            ),
+            Err(Error::Configuration)
+        ));
+        let h = host("tenant-a");
+        h.state.lock().unwrap().bound = false;
+        assert!(matches!(
+            assemble_journal(
+                &db.path,
+                startup,
+                h,
+                NoDispatch,
+                AppConfig::test_defaults(1),
+                test_store_limits()
+            ),
+            Err(Error::Unbound)
+        ));
+        let h = host("tenant-a");
+        h.state.lock().unwrap().clock_error = true;
+        assert!(matches!(
+            assemble_journal(
+                &db.path,
+                startup,
+                h,
+                NoDispatch,
+                AppConfig::test_defaults(1),
+                test_store_limits()
+            ),
+            Err(Error::Clock)
+        ));
+        assert_eq!(original, std::fs::read(&db.path).unwrap());
+    }
 }

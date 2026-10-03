@@ -1220,6 +1220,7 @@ name = "execution-sqlite"
 version = "0.1.0"
 dependencies = [
  "execution-admission",
+ "execution-app",
  "execution-approval",
  "execution-contract",
  "execution-interaction",

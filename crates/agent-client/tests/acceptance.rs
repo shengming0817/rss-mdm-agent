@@ -1,4 +1,5 @@
 use agent_client::{Config, Error, Limits, Transport};
+use support::execution::local::{create_app, reopen_app};
 use url::Url;
 use uuid::Uuid;
 
@@ -65,14 +66,7 @@ async fn mismatched_and_unsubmitted_started_offers_settle_without_journal_or_cac
     let host = local::TestHost::new();
     let runner =
         DeterministicTestRunner::new(local::id("test-runner"), TestScenario::Wait, 16).unwrap();
-    let app = ExecutionApp::start(
-        &db.path,
-        Startup::CreateTest,
-        host,
-        runner.clone(),
-        AppConfig::test_defaults(1),
-    )
-    .unwrap();
+    let app = create_app(&db.path, host, runner.clone(), AppConfig::test_defaults(1)).unwrap();
     let bridge = ExecutionBridge::new(local::id("agent-consumer"), FixtureOutput);
     let plan = adapted_plan(true, "device-1", &offer);
     let caller = RequestContext {
@@ -119,9 +113,8 @@ async fn denied_admission_without_attempt_delivers_and_releases() {
     host.template = plan.clone();
     let runner =
         DeterministicTestRunner::new(local::id("test-runner"), TestScenario::Complete, 16).unwrap();
-    let mut app = ExecutionApp::start(
+    let mut app = create_app(
         &db.path,
-        Startup::CreateTest,
         host.clone(),
         runner.clone(),
         AppConfig::test_defaults(1),
@@ -174,9 +167,8 @@ async fn reserved_binding_without_journal_can_settle_after_permission_revocation
     host.template = plan.clone();
     let runner =
         DeterministicTestRunner::new(local::id("test-runner"), TestScenario::Complete, 16).unwrap();
-    let mut app = ExecutionApp::start(
+    let mut app = create_app(
         &db.path,
-        Startup::CreateTest,
         host.clone(),
         runner.clone(),
         AppConfig::test_defaults(1),
@@ -190,7 +182,7 @@ async fn reserved_binding_without_journal_can_settle_after_permission_revocation
         .prepare(&offer, &materials, &app, &caller, &plan)
         .unwrap();
     let start = client.request_start(&offer, &materials).await.unwrap();
-    host.state.lock().unwrap().accesses = Some(vec![execution_sqlite::Access::ReadResult]);
+    host.state.lock().unwrap().accesses = Some(vec![execution_app::Access::ReadResult]);
     assert!(bridge
         .dispatch(&mut client, start, &materials, &mut app, prepared)
         .is_err());
@@ -205,14 +197,7 @@ async fn reserved_binding_without_journal_can_settle_after_permission_revocation
     drop(client);
     server.time.set(72);
     host.state.lock().unwrap().accesses = None;
-    let app = ExecutionApp::start(
-        &db.path,
-        Startup::OpenTest,
-        host,
-        runner.clone(),
-        AppConfig::test_defaults(1),
-    )
-    .unwrap();
+    let app = reopen_app(&db.path, host, runner.clone(), AppConfig::test_defaults(1)).unwrap();
     let mut client = server.client(&root, OpenMode::Existing);
     bridge
         .abandon(&mut client, offer.task_id(), &app)
@@ -249,9 +234,8 @@ async fn no_process_terminal(cancel: bool) {
         16,
     )
     .unwrap();
-    let mut app = ExecutionApp::start(
+    let mut app = create_app(
         &db.path,
-        Startup::CreateTest,
         host.clone(),
         runner.clone(),
         AppConfig::test_defaults(1),
@@ -327,9 +311,8 @@ async fn accepted_remote_result_with_failed_local_confirmation_never_resends() {
         ready: Default::default(),
         capture: Default::default(),
     };
-    let mut app = ExecutionApp::start(
+    let mut app = create_app(
         &db.path,
-        Startup::CreateTest,
         host.clone(),
         runner.clone(),
         AppConfig::test_defaults(1),
@@ -349,7 +332,7 @@ async fn accepted_remote_result_with_failed_local_confirmation_never_resends() {
     app.reconcile(&plan.spec().request.request_id).unwrap();
     let changed = host.clone();
     server.data.lock().unwrap().result_hook = Some(std::sync::Arc::new(move || {
-        changed.state.lock().unwrap().accesses = Some(vec![execution_sqlite::Access::RunnerFact]);
+        changed.state.lock().unwrap().accesses = Some(vec![execution_app::Access::RunnerFact]);
     }));
     assert_eq!(
         bridge
@@ -358,7 +341,7 @@ async fn accepted_remote_result_with_failed_local_confirmation_never_resends() {
         Err(Error::Denied)
     );
     assert_eq!(server.data.lock().unwrap().result_calls, 1);
-    host.state.lock().unwrap().accesses = Some(vec![execution_sqlite::Access::Deliver]);
+    host.state.lock().unwrap().accesses = Some(vec![execution_app::Access::Deliver]);
     assert_eq!(
         bridge
             .flush(&mut client, offer.task_id(), &mut app, 1)
@@ -534,9 +517,8 @@ async fn exercise_bridge(software: bool) {
         ready: Default::default(),
         capture: Default::default(),
     };
-    let mut app = ExecutionApp::start(
+    let mut app = create_app(
         &db.path,
-        Startup::CreateTest,
         host.clone(),
         runner.clone(),
         AppConfig::test_defaults(1),
@@ -580,9 +562,8 @@ async fn exercise_bridge(software: bool) {
     .unwrap();
     drop(conn);
     let mut client = server.client(&root, OpenMode::Existing);
-    let mut app = ExecutionApp::start(
+    let mut app = reopen_app(
         &db.path,
-        Startup::OpenTest,
         host.clone(),
         runner.clone(),
         AppConfig::test_defaults(1),
@@ -835,9 +816,8 @@ async fn partial_cache_reopens_and_checks_range_etag_and_reference_cleanup() {
         16,
     )
     .unwrap();
-    let app = execution_app::ExecutionApp::start(
+    let app = create_app(
         &db.path,
-        execution_app::Startup::CreateTest,
         host,
         runner,
         execution_app::AppConfig::test_defaults(1),
@@ -1011,13 +991,17 @@ async fn check_frozen_delivery_permissions(
     host: &local::TestHost,
     bridge: &ExecutionBridge<FixtureOutput>,
     client: &mut Client<Secrets, Time>,
-    app: &mut execution_app::ExecutionApp<local::TestHost, CapturingRunner>,
+    app: &mut execution_app::ExecutionApp<
+        local::TestHost,
+        CapturingRunner,
+        execution_sqlite::Store,
+    >,
     task: Uuid,
 ) {
-    host.state.lock().unwrap().accesses = Some(vec![execution_sqlite::Access::RunnerFact]);
+    host.state.lock().unwrap().accesses = Some(vec![execution_app::Access::RunnerFact]);
     assert_eq!(bridge.flush(client, task, app, 1).await, Err(Error::Denied));
     assert_eq!(server.data.lock().unwrap().result_calls, 1);
-    host.state.lock().unwrap().accesses = Some(vec![execution_sqlite::Access::Deliver]);
+    host.state.lock().unwrap().accesses = Some(vec![execution_app::Access::Deliver]);
     assert_eq!(bridge.flush(client, task, app, 1).await, Err(Error::Denied));
     assert_eq!(server.data.lock().unwrap().result_calls, 1);
     host.state.lock().unwrap().accesses = None;
@@ -1028,7 +1012,7 @@ async fn check_frozen_delivery_permissions(
 async fn drain_delivery<R: execution_app::RunnerPort>(
     bridge: &ExecutionBridge<FixtureOutput>,
     client: &mut Client<Secrets, Time>,
-    app: &mut execution_app::ExecutionApp<local::TestHost, R>,
+    app: &mut execution_app::ExecutionApp<local::TestHost, R, execution_sqlite::Store>,
     task: Uuid,
 ) {
     for _ in 0..32 {
@@ -1059,9 +1043,8 @@ async fn expired_offers_retire_received_requests_with_one_task_budget_after_rest
         16,
     )
     .unwrap();
-    let app = execution_app::ExecutionApp::start(
+    let app = create_app(
         &db.path,
-        execution_app::Startup::CreateTest,
         host,
         runner,
         execution_app::AppConfig::test_defaults(1),
@@ -1225,8 +1208,7 @@ async fn check_encoded_result(
     let mut spec = original.spec().clone();
     spec.launch.output.stdout = encoding;
     spec.launch.output.stderr = encoding;
-    let plan =
-        execution_contract::FrozenExecution::freeze(spec, &test_store_limits().input).unwrap();
+    let plan = execution_contract::FrozenExecution::freeze(spec, &test_execution_limits()).unwrap();
     let db = local::Database::new();
     let mut host = local::TestHost::new();
     host.template = plan.clone();
@@ -1242,14 +1224,7 @@ async fn check_encoded_result(
             end,
         }))),
     };
-    let mut app = ExecutionApp::start(
-        &db.path,
-        Startup::CreateTest,
-        host,
-        runner.clone(),
-        AppConfig::test_defaults(1),
-    )
-    .unwrap();
+    let mut app = create_app(&db.path, host, runner.clone(), AppConfig::test_defaults(1)).unwrap();
     let caller = RequestContext {
         actor: plan.spec().request.actor.clone(),
     };
@@ -1295,20 +1270,13 @@ async fn start_window_does_not_replace_the_signed_runtime_budget() {
     input.validity.expires_at_unix_ms =
         start.payload().expires_at() as u64 * 1000 + input.budget.total_timeout_ms;
     let plan =
-        execution_contract::FrozenExecution::freeze(input, &test_store_limits().input).unwrap();
+        execution_contract::FrozenExecution::freeze(input, &test_execution_limits()).unwrap();
     let mut host = local::TestHost::new();
     host.template = plan.clone();
     let runner =
         DeterministicTestRunner::new(local::id("test-runner"), TestScenario::Wait, 16).unwrap();
     let db = local::Database::new();
-    let mut app = ExecutionApp::start(
-        &db.path,
-        Startup::CreateTest,
-        host,
-        runner.clone(),
-        AppConfig::test_defaults(1),
-    )
-    .unwrap();
+    let mut app = create_app(&db.path, host, runner.clone(), AppConfig::test_defaults(1)).unwrap();
     let caller = RequestContext {
         actor: plan.spec().request.actor.clone(),
     };
@@ -1349,14 +1317,7 @@ async fn root_exit_is_delivered_while_overall_quiescence_stays_unknown() {
             end: execution_contract::ProcessEnd::Exited,
         }))),
     };
-    let mut app = ExecutionApp::start(
-        &db.path,
-        Startup::CreateTest,
-        host,
-        runner.clone(),
-        AppConfig::test_defaults(1),
-    )
-    .unwrap();
+    let mut app = create_app(&db.path, host, runner.clone(), AppConfig::test_defaults(1)).unwrap();
     let caller = RequestContext {
         actor: plan.spec().request.actor.clone(),
     };
@@ -1416,14 +1377,7 @@ async fn acknowledged_v5_result_is_not_replaced_by_later_local_facts() {
             end: execution_contract::ProcessEnd::Unknown,
         }))),
     };
-    let mut app = ExecutionApp::start(
-        &db.path,
-        Startup::CreateTest,
-        host,
-        runner.clone(),
-        AppConfig::test_defaults(1),
-    )
-    .unwrap();
+    let mut app = create_app(&db.path, host, runner.clone(), AppConfig::test_defaults(1)).unwrap();
     let caller = RequestContext {
         actor: plan.spec().request.actor.clone(),
     };

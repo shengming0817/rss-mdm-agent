@@ -58,9 +58,9 @@ pub enum Error {
     #[error("confirmation commit outcome unknown; retry the same event confirmation")]
     ConfirmationUnknown,
 }
-impl From<execution_sqlite::Error> for Error {
-    fn from(error: execution_sqlite::Error) -> Self {
-        use execution_sqlite::Error as S;
+impl From<crate::JournalError> for Error {
+    fn from(error: crate::JournalError) -> Self {
+        use crate::JournalError as S;
         match error {
             S::Configuration => Self::Configuration,
             S::InvalidInput => Self::InvalidInput,
@@ -72,7 +72,7 @@ impl From<execution_sqlite::Error> for Error {
             S::Capacity => Self::Capacity,
             S::OperationCommitUnknown => Self::OutcomeUnknown,
             S::ConfirmationCommitUnknown => Self::ConfirmationUnknown,
-            S::Corrupt | S::Schema | S::Storage | S::BootstrapUnpublished => Self::Storage,
+            S::Corrupt | S::Schema | S::Storage => Self::Storage,
         }
     }
 }
@@ -99,25 +99,6 @@ impl CommandId {
     pub fn as_str(&self) -> &str {
         self.0.as_str()
     }
-}
-
-/// Explicit bootstrap selection. Test initialization never happens as an error fallback.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Startup {
-    /// Create a new Test authority database in an existing private directory.
-    CreateTest,
-    /// Open an existing Test authority database, preserving every task and receipt.
-    OpenTest,
-}
-
-/// Production storage lifecycle, selected explicitly by the trusted service owner.
-/// Neither opening failure nor registration failure creates a new journal.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ProductionStartup {
-    /// Publish a new journal without replacing an existing path.
-    Create,
-    /// Open exactly the existing authority and supported schema.
-    Open,
 }
 
 /// Safe presentation of C09 facts, not a second persisted state machine.
@@ -175,7 +156,7 @@ pub struct ExecutionStatus {
     /// Sticky cancellation request, independently of termination.
     pub cancel_requested: bool,
     /// Latest durable, value-only admission decision, independent of prior attempt facts.
-    pub admission: Option<execution_sqlite::AdmissionStatus>,
+    pub admission: Option<crate::AdmissionStatus>,
     /// First-delivery diagnosis; never evidence that execution had no effect.
     pub dispatch_cause: Option<execution_lifecycle::DispatchCause>,
     /// Last stop request response; independent of termination/effect evidence.

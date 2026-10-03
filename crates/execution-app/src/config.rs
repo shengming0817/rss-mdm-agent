@@ -144,33 +144,17 @@ impl Configuration {
     }
 }
 
-/// Fixed S1 protected-storage envelope. These bootstrap values are never hot-replaced.
-pub fn test_store_limits() -> execution_sqlite::Limits {
-    execution_sqlite::Limits {
-        input: execution_contract::ExecutionLimits {
-            max_input_bytes: 65_536,
-            max_depth: 32,
-            max_nodes: 4096,
-            max_string_bytes: 4096,
-            max_collection_items: 128,
-            max_timeout_ms: 60_000,
-            max_output_bytes: 65_536,
-            max_stdin_bytes: 65_536,
-            max_attempts: 3,
-        },
-        lifecycle: execution_lifecycle::Limits {
-            max_snapshot_bytes: 16_384,
-        },
-        interaction: execution_interaction::Limits {
-            max_snapshot_bytes: 16_384,
-            max_lifetime_ms: 60_000,
-        },
-        max_approvals: 128,
-        max_record_bytes: 131_072,
-        max_receipts: 10_000,
-        max_database_pages: 32_768,
-        max_consumers: 8,
-        max_batch: 64,
-        busy_timeout_ms: 1000,
+/// Explicit S1 execution envelope used by fixture plans and the test runner.
+pub fn test_execution_limits() -> ExecutionLimits {
+    execution_contract::ExecutionLimits {
+        max_input_bytes: 65_536,
+        max_depth: 32,
+        max_nodes: 4096,
+        max_string_bytes: 4096,
+        max_collection_items: 128,
+        max_timeout_ms: 60_000,
+        max_output_bytes: 65_536,
+        max_stdin_bytes: 65_536,
+        max_attempts: 3,
     }
 }

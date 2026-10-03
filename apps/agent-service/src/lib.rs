@@ -11,7 +11,7 @@ pub use agent_client::wire;
 use agent_client::{Clock, Error, SecretProvider};
 use base64::Engine;
 pub use plan::{Interpreter, SoftwareManager, SoftwareManagerKind};
-pub use service::{DeviceService, ExecutionConfig, UserResources};
+pub use service::{DeviceService, ExecutionConfig, ProductionStartup, UserResources};
 use std::{
     path::Path,
     sync::{Arc, Mutex},
@@ -107,3 +107,6 @@ mod tests;
 
 mod os_version;
 mod secrets;
+
+#[cfg(test)]
+mod production_storage;

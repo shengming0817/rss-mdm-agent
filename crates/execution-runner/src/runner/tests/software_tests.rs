@@ -48,7 +48,7 @@ fn unknown_detector_activity_keeps_real_exit_and_cannot_skip_to_mutation() {
             }],
         }),
     };
-    let limits = execution_app::test_store_limits();
+    let limits = execution_sqlite::test_store_limits();
     let plan = FrozenExecution::freeze(p, &limits.input).unwrap();
     let source = || Artifacts {
         program: vec![],
@@ -81,9 +81,8 @@ fn unknown_detector_activity_keeps_real_exit_and_cannot_skip_to_mutation() {
         actor: plan.spec().request.actor.clone(),
     };
     let request = plan.spec().request.request_id.clone();
-    let mut app = execution_app::ExecutionApp::start(
+    let mut app = create_app(
         &f.root.join("software.sqlite"),
-        execution_app::Startup::CreateTest,
         host,
         carrier.clone(),
         execution_app::AppConfig::test_defaults(1),

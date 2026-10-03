@@ -1,9 +1,8 @@
 use crate::{host::Host, service::operation, *};
 use execution_contract::{EventId, Id, RequestId};
 use execution_interaction::{Command, Interaction, Kind, Reference, Spec};
-use execution_sqlite::{AuditRecord, ExecutionAccess, OperationRequestId, Receipt, Scope};
 
-impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
+impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
     /// Trusted device-owner presence lookup for an unsubmitted remote task. This is not
     /// exposed to UI/AI and absence is meaningful only in this bound authoritative journal.
     pub fn has_service_execution(
@@ -17,7 +16,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
         if &self.binding.device != device {
             return Err(Error::Denied);
         }
-        Ok(self.store.contains_request(request)?)
+        Ok(self.journal.contains_request(request)?)
     }
     /// Device-owner delivery with independent evidence permission. Not a UI/AI endpoint.
     pub fn service_delivery(
@@ -25,9 +24,9 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
         request: &RequestId,
         consumer: &Id,
         limit: usize,
-    ) -> Result<Vec<execution_sqlite::DeliveryEvidence>, Error> {
+    ) -> Result<Vec<crate::DeliveryEvidence>, Error> {
         let execution = self.load(None, request, ExecutionAccess::Delivery(consumer))?;
-        let result = self.store.delivery_evidence(
+        let result = self.journal.delivery_evidence(
             &Scope::from_input(execution.input()),
             consumer,
             limit,
@@ -45,7 +44,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
     ) -> Result<(), Error> {
         let execution = self.load(None, request, ExecutionAccess::Delivery(consumer))?;
         let host = Host::new(&self.host, &self.binding, &self.config, None);
-        Ok(self.store.confirm(
+        Ok(self.journal.confirm(
             &Scope::from_input(execution.input()),
             consumer,
             event,
@@ -76,7 +75,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
         let host =
             Host::new(&self.host, &self.binding, &self.config, context).with_input(Some(plan));
         Ok(self
-            .store
+            .journal
             .open_interaction(&op, &scope, &spec, &host)?
             .receipt()
             .clone())
@@ -90,7 +89,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
     ) -> Result<Interaction, Error> {
         let context = Some(caller);
         let execution = self.load(context, request, ExecutionAccess::Result)?;
-        Ok(self.store.interaction(
+        Ok(self.journal.interaction(
             &Scope::from_input(execution.input()),
             id,
             &self.adapter(context, None),
@@ -113,7 +112,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
         let host =
             Host::new(&self.host, &self.binding, &self.config, context).with_input(Some(plan));
         Ok(self
-            .store
+            .journal
             .apply_interaction(&op, &Scope::from_input(plan), id, command, &host)?
             .receipt()
             .clone())
@@ -128,7 +127,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
     ) -> Result<Vec<Receipt>, Error> {
         let context = Some(caller);
         let execution = self.load(context, request, ExecutionAccess::Delivery(consumer))?;
-        Ok(self.store.pull_results(
+        Ok(self.journal.pull_results(
             &Scope::from_input(execution.input()),
             consumer,
             limit,
@@ -147,7 +146,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
         let context = Some(caller);
         let execution = self.load(context, request, ExecutionAccess::Delivery(consumer))?;
         let host = Host::new(&self.host, &self.binding, &self.config, context);
-        Ok(self.store.confirm(
+        Ok(self.journal.confirm(
             &Scope::from_input(execution.input()),
             consumer,
             event,
@@ -164,7 +163,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
     ) -> Result<AuditRecord, Error> {
         let context = Some(caller);
         let execution = self.load(context, request, ExecutionAccess::Audit)?;
-        Ok(self.store.audit(
+        Ok(self.journal.audit(
             &Scope::from_input(execution.input()),
             operation,
             &self.adapter(context, None),

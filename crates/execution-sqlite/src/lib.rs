@@ -1,7 +1,9 @@
 //! Protected SQLite execution journal; no runner, model, UI or background worker.
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
+mod adapter;
 mod backend_requests;
+mod config;
 mod database;
 mod execution;
 mod interaction;
@@ -11,8 +13,7 @@ mod process;
 mod software;
 mod software_progress;
 mod trust;
+pub use config::test_store_limits;
 pub use database::{OpenOutcome, Store};
-pub use model::*;
-pub use software_progress::CommittedSoftwareProgress;
-
-pub use interaction::execution_confirmation;
+use execution_app::*;
+pub use model::{Error, Limits};

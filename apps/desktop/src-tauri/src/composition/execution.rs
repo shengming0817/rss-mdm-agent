@@ -191,7 +191,7 @@ fn operation(s: ExecutionStatus) -> mcp::OperationStatus {
         cancel_requested: s.cancel_requested,
         operation_request_id: s.operation_request_id,
         content_digest: s.content_digest,
-        phase: if s.admission == Some(execution_sqlite::AdmissionStatus::Denied) {
+        phase: if s.admission == Some(execution_app::AdmissionStatus::Denied) {
             mcp::OperationPhase::Failed
         } else {
             match s.phase {

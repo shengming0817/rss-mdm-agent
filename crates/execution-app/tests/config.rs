@@ -4,7 +4,7 @@ use execution_contract::ActorId;
 #[test]
 fn config_replace_is_atomic_audited_and_fail_closed() {
     let first = AppConfig::test_defaults(1);
-    let mut state = Configuration::new(first, execution_app::test_store_limits().input).unwrap();
+    let mut state = Configuration::new(first, execution_app::test_execution_limits()).unwrap();
     let actor = ActorId::new("test-admin").unwrap();
     let mut changes = Vec::<ConfigChange>::new();
     let mut next = AppConfig::test_defaults(2);
@@ -48,7 +48,7 @@ fn config_replace_is_atomic_audited_and_fail_closed() {
 
 #[test]
 fn configuration_never_outgrows_the_immutable_store_envelope() {
-    let mut bounds = execution_app::test_store_limits().input;
+    let mut bounds = execution_app::test_execution_limits();
     let mut production = AppConfig::test_defaults(1);
     production.max_timeout_ms = 86_400_000;
     production.max_output_bytes = 16_777_216;

@@ -1,5 +1,6 @@
 //! Real local OS mechanics; no production AppHost or test authority is promoted.
 #![cfg(target_os = "macos")]
+use super::support::{create_app, reopen_app};
 use super::*;
 use sha2::{Digest as _, Sha256};
 use std::{os::unix::fs::PermissionsExt, path::PathBuf, sync::atomic::AtomicU64};
@@ -445,7 +446,7 @@ fn controlled_input_is_bound_once_and_partial_delivery_is_failed() {
         encoding: TextEncoding::Utf8,
         max_bytes: 1_048_576,
     };
-    let mut limits = execution_app::test_store_limits().input;
+    let mut limits = execution_app::test_execution_limits();
     limits.max_stdin_bytes = 1_048_576;
     f.plan = FrozenExecution::freeze(spec, &limits).unwrap();
     f.runner
@@ -463,7 +464,7 @@ fn controlled_input_is_bound_once_and_partial_delivery_is_failed() {
 fn replan(f: &mut Fixture, change: impl FnOnce(&mut ExecutionInput)) {
     let mut spec = f.plan.spec().clone();
     change(&mut spec);
-    let plan = FrozenExecution::freeze(spec, &execution_app::test_store_limits().input).unwrap();
+    let plan = FrozenExecution::freeze(spec, &execution_app::test_execution_limits()).unwrap();
     let artifacts = f
         .runner
         .artifacts
@@ -483,7 +484,7 @@ fn replan(f: &mut Fixture, change: impl FnOnce(&mut ExecutionInput)) {
 use super::support::{self as app_support, TestCarrier};
 #[test]
 fn macos_capture_is_durable_and_reopened_attempt_does_not_launch() {
-    use execution_app::{AppConfig, ExecutionApp, RequestContext, Startup};
+    use execution_app::{AppConfig, RequestContext};
     let mut f = fixture(
         "printf durable",
         vec![LaunchArg::ArtifactPath {}],
@@ -511,9 +512,8 @@ fn macos_capture_is_durable_and_reopened_attempt_does_not_launch() {
     };
     let request = &f.plan.spec().request.request_id;
     let database = f.root.join("execution.sqlite");
-    let mut app = ExecutionApp::start(
+    let mut app = create_app(
         &database,
-        Startup::CreateTest,
         host.clone(),
         carrier.clone(),
         AppConfig::test_defaults(1),
@@ -557,14 +557,7 @@ fn macos_capture_is_durable_and_reopened_attempt_does_not_launch() {
         ),
         Arc::new(std::sync::atomic::AtomicUsize::new(0)),
     );
-    let mut app = ExecutionApp::start(
-        &database,
-        Startup::OpenTest,
-        host,
-        empty.clone(),
-        AppConfig::test_defaults(1),
-    )
-    .unwrap();
+    let mut app = reopen_app(&database, host, empty.clone(), AppConfig::test_defaults(1)).unwrap();
     let recovered = app.request_execution(&caller, &f.plan).unwrap();
     assert_eq!(recovered.attempts, 1);
     assert_eq!(
@@ -691,7 +684,7 @@ fn input_binding_limit_encoding_and_platform_guards_refuse_before_spawn() {
 }
 #[test]
 fn application_cancel_captures_real_process_and_reopen_does_not_dispatch() {
-    use execution_app::{AppConfig, ExecutionApp, RequestContext, Startup};
+    use execution_app::{AppConfig, RequestContext};
     let mut f = fixture(
         "printf started; exec sleep 30",
         vec![LaunchArg::ArtifactPath {}],
@@ -714,9 +707,8 @@ fn application_cancel_captures_real_process_and_reopen_does_not_dispatch() {
     };
     let request = &f.plan.spec().request.request_id;
     let database = f.root.join("cancel.sqlite");
-    let mut app = ExecutionApp::start(
+    let mut app = create_app(
         &database,
-        Startup::CreateTest,
         host.clone(),
         carrier.clone(),
         AppConfig::test_defaults(1),
@@ -761,14 +753,7 @@ fn application_cancel_captures_real_process_and_reopen_does_not_dispatch() {
         ),
         Arc::new(std::sync::atomic::AtomicUsize::new(0)),
     );
-    let mut app = ExecutionApp::start(
-        &database,
-        Startup::OpenTest,
-        host,
-        empty.clone(),
-        AppConfig::test_defaults(1),
-    )
-    .unwrap();
+    let mut app = reopen_app(&database, host, empty.clone(), AppConfig::test_defaults(1)).unwrap();
     assert_eq!(app.request_execution(&caller, &f.plan).unwrap().attempts, 1);
     assert_eq!(
         app.status(&caller, request).unwrap().process.unwrap().end,
@@ -814,7 +799,7 @@ fn cancellation_remains_the_end_reason_when_blocked_stdin_breaks() {
         encoding: TextEncoding::Utf8,
         max_bytes: 1_048_576,
     };
-    let mut limits = execution_app::test_store_limits().input;
+    let mut limits = execution_app::test_execution_limits();
     limits.max_stdin_bytes = 1_048_576;
     f.plan = FrozenExecution::freeze(spec, &limits).unwrap();
     f.runner
@@ -886,7 +871,7 @@ fn material_registry_is_bounded_immutable_and_retains_live_leases() {
     let mut input = f.plan.spec().clone();
     input.launch.artifact.sha256 = input.launch.interpreter.artifact.sha256.clone();
     let plan =
-        FrozenExecution::freeze(input.clone(), &execution_app::test_store_limits().input).unwrap();
+        FrozenExecution::freeze(input.clone(), &execution_app::test_execution_limits()).unwrap();
     let source = || Artifacts {
         program: Vec::new(),
         delegate: None,
@@ -900,7 +885,7 @@ fn material_registry_is_bounded_immutable_and_retains_live_leases() {
     registry.register(&plan, source()).unwrap();
     assert_eq!(registry.register(&plan, source()), Err(Error::Conflict));
     input.request.request_id = RequestId::new("other-material").unwrap();
-    let other = FrozenExecution::freeze(input, &execution_app::test_store_limits().input).unwrap();
+    let other = FrozenExecution::freeze(input, &execution_app::test_execution_limits()).unwrap();
     assert_eq!(registry.register(&other, source()), Err(Error::Capacity));
     let lease = registry.get(plan.digest().as_str()).unwrap().unwrap();
     assert_eq!(registry.retire(&plan), Err(Error::Conflict));

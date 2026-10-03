@@ -7,10 +7,10 @@ use execution_contract::BackendRequest;
 use rusqlite::{params, OptionalExtension, TransactionBehavior};
 impl Store {
     /// List bounded preparation records without creating another task queue.
-    pub fn backend_requests(
+    pub(crate) fn sql_backend_requests(
         &self,
         actor: &execution_contract::ActorId,
-        host: &impl Host,
+        host: &impl JournalHost,
     ) -> Result<Vec<BackendRequest>, Error> {
         crate::database::ensure_current(&self.conn, &self.authority, self.limits)?;
         let mut query = self.conn.prepare(
@@ -29,26 +29,27 @@ impl Store {
                     request_id: execution_contract::RequestId::new(id)
                         .map_err(|_| Error::Corrupt)?,
                 };
-                self.backend_request(&scope, host)?.ok_or(Error::Corrupt)
+                self.sql_backend_request(&scope, host)?
+                    .ok_or(Error::Corrupt)
             })
             .collect()
     }
     /// Read a pre-execution intent from the same protected journal and actor namespace.
-    pub fn backend_request(
+    pub(crate) fn sql_backend_request(
         &self,
         scope: &Scope,
-        host: &impl Host,
+        host: &impl JournalHost,
     ) -> Result<Option<BackendRequest>, Error> {
         let tx = self.read(scope, Access::ReadResult, None, host)?;
-        read(&tx, &scope.key(), self.limits)
+        read(&tx, &scope.interaction_subject().as_str(), self.limits)
     }
     /// Compare-and-append a preparation transition; it creates no execution attempt or grant.
-    pub fn record_backend_request(
+    pub(crate) fn sql_record_backend_request(
         &mut self,
         scope: &Scope,
         expected: Option<&BackendRequest>,
         next: &BackendRequest,
-        host: &impl Host,
+        host: &impl JournalHost,
     ) -> Result<(), Error> {
         self.check_scope(scope)?;
         let tx = self
@@ -79,15 +80,15 @@ impl Store {
         {
             return Err(Error::InvalidInput);
         }
-        let key = scope.key();
-        let previous = read(&tx, &key, self.limits)?;
+        let key = scope.interaction_subject();
+        let previous = read(&tx, key.as_str(), self.limits)?;
         if previous.as_ref() != expected {
             return Err(Error::Conflict);
         }
         if expected.is_some_and(|p| p.offer != next.offer || p.trigger != next.trigger) {
             return Err(Error::Conflict);
         }
-        tx.execute("INSERT INTO backend_requests VALUES(?1,?2,?3,?4) ON CONFLICT(scope) DO UPDATE SET body=excluded.body", params![key, scope.actor.as_str(), scope.request_id.as_str(), encode(next, self.limits.max_record_bytes)?])?;
+        tx.execute("INSERT INTO backend_requests VALUES(?1,?2,?3,?4) ON CONFLICT(scope) DO UPDATE SET body=excluded.body", params![key.as_str(), scope.actor.as_str(), scope.request_id.as_str(), encode(next, self.limits.max_record_bytes)?])?;
         tx.commit().map_err(|_| Error::OperationCommitUnknown)
     }
 }

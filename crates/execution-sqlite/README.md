@@ -1,6 +1,6 @@
 # execution-sqlite
 
-将执行、交互、批准消费与可靠结果放入同一受保护 SQLite authority。当前只提供 Test authority 初始化，AI ledger 与生产平台身份分别由各自 owner 持有。
+实现 execution-app 的原子 JournalPort，将执行、交互、批准消费与可靠结果放入同一受保护 SQLite authority。访问、trust、准入和回执类型由应用声明；数据库初始化和打开由服务组合根显式选择，AI ledger 与生产平台身份分别由各自 owner 持有。
 
 存储读取当前状态并调用核心，不接受调用方自造快照或批准计数。原子事务同时复核授权新鲜度与精确绑定，提交批准消费、intent、状态、审计和回执；只有首次提交释放派发动作。重放读取原回执，未知结果转核实，不再造执行。
 
