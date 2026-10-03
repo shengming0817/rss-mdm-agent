@@ -1208,7 +1208,9 @@ async fn revoked_and_expired_unknown_keeps_original_execution_and_association() 
         end: execution_contract::ProcessEnd::Exited,
     });
     let request = case.plan.spec().request.request_id.clone();
-    case.app.reconcile(&request).unwrap();
+    let before = case.app.reconcile(&request).unwrap();
+    let attempt = before.attempt_id.clone().unwrap();
+    let association = case.client.association(case.task).unwrap().unwrap();
     case.server.time.set(75);
     case.server.data.lock().unwrap().denied = true;
     case.client
@@ -1221,6 +1223,8 @@ async fn revoked_and_expired_unknown_keeps_original_execution_and_association() 
         )
         .unwrap();
     assert_eq!(case.client.flush_reports(1).await, Err(Error::Identity));
+    // drive_error stops original execution on identity revocation; a stop reply is no proof.
+    case.app.stop_active(128).unwrap();
     case.app.reconcile(&request).unwrap();
     let status = case
         .app
@@ -1231,7 +1235,9 @@ async fn revoked_and_expired_unknown_keeps_original_execution_and_association() 
             &request,
         )
         .unwrap();
-    assert_ne!(status.phase, execution_app::TaskPhase::Verified);
+    assert_eq!(status.phase, execution_app::TaskPhase::OutcomeUnknown);
+    assert_eq!(status.attempt_id.as_ref(), Some(&attempt));
+    assert!(!status.process.as_ref().unwrap().quiescent);
     assert!(case
         .bridge
         .finish(
@@ -1243,7 +1249,34 @@ async fn revoked_and_expired_unknown_keeps_original_execution_and_association() 
             }
         )
         .is_err());
-    assert!(case.client.association(case.task).unwrap().is_some());
+    let retained = case.client.association(case.task).unwrap().unwrap();
+    assert_eq!(retained.task(), association.task());
+    assert_eq!(retained.attempt(), association.attempt());
+    assert_eq!(retained.request(), association.request());
+    assert_eq!(retained.digest(), case.plan.digest());
+    assert_eq!(retained.local_attempt(), Some(&attempt));
+    // Revocation blocks fresh communication, while later facts may settle this same journal.
+    case.runner
+        .capture
+        .lock()
+        .unwrap()
+        .as_mut()
+        .unwrap()
+        .quiescent = true;
+    case.runner
+        .ready
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let later = case.app.reconcile(&request).unwrap();
+    assert!(later.process.unwrap().quiescent);
+    assert_eq!(later.attempt_id.as_ref(), Some(&attempt));
+    assert_eq!(
+        case.client
+            .association(case.task)
+            .unwrap()
+            .unwrap()
+            .digest(),
+        case.plan.digest()
+    );
     assert_eq!(case.runner.inner.dispatch_count(), 1);
 }
 
@@ -1370,7 +1403,7 @@ async fn software_restart_projects_each_steps_own_committed_facts() {
     );
     let data = server.data.lock().unwrap();
     let result = data.results.values().next().unwrap();
-    let steps = result["event"]["result"]["steps"].as_array().unwrap();
+    let steps = result["event"]["steps"].as_array().unwrap();
     assert_eq!(steps.len(), 2);
     assert_eq!(steps[0]["index"], 0);
     assert_eq!(steps[1]["index"], 1);
