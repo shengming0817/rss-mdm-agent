@@ -176,7 +176,12 @@ async fn terminal_waiting_releases_capacity_without_changing_the_original_reques
         assert!(c.service.core.available_risk.is_none());
         assert!(c.service.core.selected.is_none());
         assert_eq!(c.record(), original);
-        assert!(c.service.client.pending_tasks(64).unwrap().is_empty());
+        assert!(c
+            .service
+            .client
+            .pending_tasks(c.service.client.configuration().limits.pending_tasks)
+            .unwrap()
+            .is_empty());
         assert!(c
             .service
             .core
@@ -237,7 +242,10 @@ async fn failed_abandonment_retries_the_same_attempt_after_releasing_waiting() {
     assert!(c.service.core.selected.is_none());
     assert_eq!(c.record(), original);
     assert_eq!(
-        c.service.client.pending_tasks(64).unwrap(),
+        c.service
+            .client
+            .pending_tasks(c.service.client.configuration().limits.pending_tasks)
+            .unwrap(),
         vec![c.offer.task_id()]
     );
     let results = c._server.data.lock().unwrap().results.clone();
@@ -248,7 +256,12 @@ async fn failed_abandonment_retries_the_same_attempt_after_releasing_waiting() {
     );
     c.service.next_network = std::time::Instant::now();
     c.service.drive(&mut commands).await.unwrap();
-    assert!(c.service.client.pending_tasks(64).unwrap().is_empty());
+    assert!(c
+        .service
+        .client
+        .pending_tasks(c.service.client.configuration().limits.pending_tasks)
+        .unwrap()
+        .is_empty());
     assert!(c.service.waiting.is_none());
     assert_eq!(c.record(), original);
     assert!(c
