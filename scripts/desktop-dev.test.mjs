@@ -16,7 +16,12 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { test } from "node:test";
 import { waitForAppearance } from "./native-evidence.mjs";
-import { reapOwnedProcessGroup } from "./desktop-dev-process.mjs";
+import {
+  reapOwnedProcessGroup,
+  processField,
+  processChildren,
+  runOwnedScopeProbe,
+} from "./desktop-dev-process.mjs";
 import {
   developmentFingerprint,
   ensureDevelopmentRuntime,
@@ -671,5 +676,128 @@ test("stalled controlled worker is killed and reaped without signalling another 
     await reapOwnedProcessGroup(survivor, 500, 100, 500);
     if (child.exitCode === null && child.signalCode === null)
       child.kill("SIGKILL");
+  }
+});
+
+test("process observation distinguishes absence from failure", () => {
+  const missing = Object.assign(Error("no matches"), {
+    status: 1,
+    stdout: "",
+    stderr: "",
+  });
+  const deny = Object.assign(Error("query denied"), {
+    status: 1,
+    stdout: "",
+    stderr: "permission denied",
+  });
+  const unavailable = Object.assign(Error("tool unavailable"), {
+    code: "ENOENT",
+  });
+  assert.equal(
+    processField(99, "comm", () => {
+      throw missing;
+    }),
+    undefined,
+  );
+  assert.deepEqual(
+    processChildren(99, () => {
+      throw missing;
+    }),
+    [],
+  );
+  for (const error of [deny, unavailable]) {
+    assert.throws(
+      () =>
+        processField(99, "comm", () => {
+          throw error;
+        }),
+      error,
+    );
+    assert.throws(
+      () =>
+        processChildren(99, () => {
+          throw error;
+        }),
+      error,
+    );
+  }
+  assert.equal(
+    processField(99, "comm", () => "/frozen/node\n"),
+    "/frozen/node",
+  );
+  assert.deepEqual(
+    processChildren(99, () => "101\n102\n"),
+    [101, 102],
+  );
+});
+
+test("outer scope owner reaps detached descendants after timeout or inner close failure", async () => {
+  if (process.platform !== "darwin") return;
+  const source = `
+    import {spawn,execFileSync} from 'node:child_process';
+    import {once} from 'node:events';
+    import {createInterface} from 'node:readline';
+    const input=JSON.parse(process.argv[1]);
+    const parent=spawn(process.execPath,['-e',"const {spawn}=require('node:child_process');const child=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'});child.once('spawn',()=>console.log(child.pid));setInterval(()=>{},1000)"],{detached:true,stdio:['ignore','pipe','ignore']});
+    const lines=createInterface({input:parent.stdout});
+    const child=Number((await once(lines,'line'))[0]);
+    const start=execFileSync('/bin/ps',['-p',String(child),'-o','lstart='],{encoding:'utf8'}).trim();
+    process.send({scope:{kind:'processGroup',root:parent.pid},anchor:{pid:child,start}});
+    await once(process,'message');parent.kill('SIGKILL');
+    if(input.fail) throw Error('fixture resource close failed');
+    await new Promise(()=>{setInterval(()=>{},1000)});
+  `;
+  const survivor = spawn(
+    process.execPath,
+    ["-e", "console.log('ready');setInterval(()=>{},1000)"],
+    { detached: true, stdio: ["ignore", "pipe", "pipe"] },
+  );
+  try {
+    await once(survivor.stdout, "data");
+    for (const fail of [false, true]) {
+      let entry,
+        cleaned = false;
+      await assert.rejects(
+        runOwnedScopeProbe(
+          process.execPath,
+          source,
+          { fail },
+          (proof, owner) => {
+            assert.equal(Number(processField(proof.scope.root, "ppid")), owner);
+            assert.equal(
+              processField(proof.anchor.pid, "lstart"),
+              proof.anchor.start,
+            );
+            assert.equal(
+              Number(processField(proof.anchor.pid, "pgid")),
+              proof.scope.root,
+            );
+            entry = proof;
+          },
+          async () => {
+            assert.ok(entry, "scope handed off before fault");
+            assert.equal(
+              processField(entry.anchor.pid, "lstart"),
+              entry.anchor.start,
+            );
+            process.kill(-entry.scope.root, "SIGKILL");
+            const deadline = Date.now() + 2000;
+            while (processField(entry.anchor.pid, "lstart")) {
+              assert.ok(Date.now() < deadline);
+              await new Promise((resolve) => setTimeout(resolve, 10));
+            }
+            cleaned = true;
+          },
+          undefined,
+          2000,
+        ),
+        fail ? /fixture resource close failed/ : /deadline exceeded/,
+      );
+      assert.equal(cleaned, true);
+      process.kill(survivor.pid, 0);
+    }
+  } finally {
+    survivor.kill("SIGTERM");
+    await reapOwnedProcessGroup(survivor, 500, 100, 500);
   }
 });

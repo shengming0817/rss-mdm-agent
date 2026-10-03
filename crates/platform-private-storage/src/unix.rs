@@ -78,6 +78,7 @@ pub fn sqlite_file(path: &Path) -> io::Result<()> {
     let path = normalized(path)?;
     let _parent = directory(path.parent().ok_or(io::ErrorKind::InvalidInput)?, false)?;
     let before = std::fs::symlink_metadata(&path)?;
+    // SAFETY: geteuid reads only the current process kernel identity.
     if !before.is_file() || before.uid() != unsafe { libc::geteuid() } || before.mode() & 0o077 != 0
     {
         return Err(io::Error::other("private SQLite file required"));
@@ -90,6 +91,9 @@ pub fn sqlite_file(path: &Path) -> io::Result<()> {
         let name = text(path.as_os_str())?;
         // ref: macOS SDK sys/acl.h acl_get_link_np. Metadata-only and no symlink following;
         // opening a second data descriptor would destroy the caller's POSIX SQLite locks.
+        // SAFETY: name is a live NUL-terminated CString and acl_get_link_np does not
+        // retain it. ACL_TYPE_EXTENDED is the SDK constant; acl_value takes ownership
+        // of the returned ACL allocation and frees it, including rejection paths.
         let raw = unsafe { acl_get_link_np(name.as_ptr(), 0x100) };
         acl_value(raw, true)?;
     }

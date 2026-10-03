@@ -140,7 +140,8 @@ impl ExecutionHandle {
         }
     }
     async fn select(&self, input: BackendSelection) -> Result<TaskSubmission, Error> {
-        match self
+        let expected = input.clone();
+        let reply = self
             .request(Request::StartTask {
                 request: input.request,
                 task: input.task,
@@ -148,18 +149,8 @@ impl ExecutionHandle {
                 revision: input.revision,
                 origin: self.origin.clone(),
             })
-            .await?
-        {
-            Reply::Queued {
-                request,
-                confirmation_required,
-                ..
-            } => Ok(TaskSubmission {
-                request,
-                confirmation_required,
-            }),
-            _ => Err(Error::OutcomeUnknown),
-        }
+            .await?;
+        selection_reply(&expected, reply)
     }
     pub async fn execute_ui(&self, input: BackendSelection) -> ui::Result<TaskSubmission> {
         self.select(input).await.map_err(bad)
@@ -316,6 +307,31 @@ impl mcp::ExecutionServicePort for ExecutionHandle {
     }
 }
 
+fn selection_reply(input: &BackendSelection, reply: Reply) -> Result<TaskSubmission, Error> {
+    match reply {
+        Reply::Queued {
+            request,
+            confirmation_required,
+            ..
+        } if request == input.request => Ok(TaskSubmission {
+            request,
+            confirmation_required,
+        }),
+        Reply::Pending { value }
+            if value.offer.request == input.request
+                && value.offer.task == input.task
+                && value.offer.attempt == input.attempt
+                && value.offer.revision == input.revision =>
+        {
+            Ok(TaskSubmission {
+                request: value.offer.request,
+                confirmation_required: value.state == BackendRequestState::Proposed,
+            })
+        }
+        _ => Err(Error::OutcomeUnknown),
+    }
+}
+
 fn pending_operation(value: execution_contract::BackendRequest) -> mcp::OperationStatus {
     use execution_contract::BackendRequestState;
     mcp::OperationStatus {
@@ -332,5 +348,78 @@ fn pending_operation(value: execution_contract::BackendRequest) -> mcp::Operatio
         },
         attempt_id: None,
         evidence: vec![],
+    }
+}
+
+#[cfg(test)]
+mod selection_tests {
+    use super::*;
+
+    #[test]
+    fn lost_selection_reply_recovers_original_request_and_confirmation() {
+        let selection = BackendSelection {
+            request: RequestId::new("original-request").unwrap(),
+            task: Id::new("original-task").unwrap(),
+            attempt: Id::new("original-attempt").unwrap(),
+            revision: Digest::new("a".repeat(64)).unwrap(),
+        };
+        let original = BackendRequest {
+            offer: BackendTask {
+                request: selection.request.clone(),
+                task: selection.task.clone(),
+                attempt: selection.attempt.clone(),
+                revision: selection.revision.clone(),
+                title: "original".into(),
+                expires_at: 100,
+                user_initiated: true,
+                summary: BackendTaskSummary::Script {
+                    identity: BackendIdentity::System,
+                },
+            },
+            trigger: BackendTrigger::Automatic {},
+            revision: 1,
+            state: BackendRequestState::Proposed,
+            failure: None,
+        };
+        for state in [
+            BackendRequestState::Proposed,
+            BackendRequestState::Selected,
+            BackendRequestState::Submitting,
+            BackendRequestState::Failed,
+            BackendRequestState::Cancelled,
+        ] {
+            let value = BackendRequest {
+                state,
+                ..original.clone()
+            };
+            let submission = selection_reply(
+                &selection,
+                Reply::Pending {
+                    value: Box::new(value),
+                },
+            )
+            .unwrap();
+            assert_eq!(submission.request, selection.request);
+            assert_eq!(
+                submission.confirmation_required,
+                state == BackendRequestState::Proposed
+            );
+        }
+        for field in 0..4 {
+            let mut value = original.clone();
+            match field {
+                0 => value.offer.request = RequestId::new("other-request").unwrap(),
+                1 => value.offer.task = Id::new("other-task").unwrap(),
+                2 => value.offer.attempt = Id::new("other-attempt").unwrap(),
+                _ => value.offer.revision = Digest::new("b".repeat(64)).unwrap(),
+            }
+            assert!(selection_reply(
+                &selection,
+                Reply::Pending {
+                    value: Box::new(value)
+                }
+            )
+            .is_err());
+        }
     }
 }

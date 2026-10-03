@@ -10,6 +10,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
     let fake = args == ["--fake-service"];
     let requirement = if fake {
+        // SAFETY: geteuid reads this process kernel identity and accepts no pointers.
         if unsafe { libc::geteuid() } != 0 {
             return Err("fake service requires the isolated administrator installation".into());
         }
@@ -34,17 +35,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Healthy wire comes from the production owner, not a second probe schema.
     let baseline =
         execution_runner::host::encode(execution_runner::host::Request::ServiceStatus {})?;
+    // SAFETY: both calls read process/session state without caller-provided pointers.
+    let uid = unsafe { libc::geteuid() };
+    // SAFETY: native GUI inspection owns its Foundation objects and takes no pointers.
+    let gui_active = unsafe { rss_execution_gui_active() } == 1;
     println!(
         "{}",
         serde_json::json!({
-            "ready": true, "uid": unsafe { libc::geteuid() },
+            "ready": true, "uid": uid,
             "pid": std::process::id(), "session": execution_runner::host::current_session()?,
             "binding": execution_runner::host::current_session_binding()?,
-            "guiActive": unsafe { rss_execution_gui_active() } == 1,
+            "guiActive": gui_active,
             "baseline": serde_json::from_slice::<serde_json::Value>(&baseline)?,
         })
     );
     let empty = CString::new("")?;
+    // SAFETY: the selected CString is NUL terminated and remains alive for the whole
+    // synchronous native loop; native copies the requirement before retaining connections.
+    // The fake flag is the closed 0/1 selector and no borrowed pointer escapes this call.
     let code = unsafe {
         rss_security_probe_main(
             requirement.as_ref().unwrap_or(&empty).as_ptr(),

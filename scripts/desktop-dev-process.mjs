@@ -1,6 +1,125 @@
 // ref: Node.js lib/child_process.js@v24.14.1
-import { spawn } from "node:child_process";
+import { spawn, execFileSync } from "node:child_process";
 import { join } from "node:path";
+
+const noMatch = (error) =>
+  error.status === 1 &&
+  !error.signal &&
+  !String(error.stdout ?? "").trim() &&
+  !String(error.stderr ?? "").trim();
+export function processField(pid, field, run = execFileSync) {
+  try {
+    const value = run("/bin/ps", ["-p", String(pid), "-o", field + "="], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 2000,
+    }).trim();
+    if (!value) throw Error("empty process identity observation");
+    return value;
+  } catch (error) {
+    if (noMatch(error)) return undefined;
+    throw error;
+  }
+}
+export function processChildren(pid, run = execFileSync) {
+  try {
+    const values = run("/usr/bin/pgrep", ["-P", String(pid)], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 2000,
+    })
+      .trim()
+      .split(/\s+/)
+      .map(Number);
+    if (values.some((pid) => !Number.isSafeInteger(pid) || pid <= 0))
+      throw Error("invalid process enumeration");
+    return values;
+  } catch (error) {
+    if (noMatch(error)) return [];
+    throw error;
+  }
+}
+
+// The timeout owner receives each detached actor before allowing the fault to proceed.
+export async function runOwnedScopeProbe(
+  node,
+  source,
+  input,
+  register,
+  cleanup,
+  signal,
+  timeoutMs = 30000,
+) {
+  const child = spawn(
+    node,
+    ["--input-type=module", "-e", source, JSON.stringify(input)],
+    {
+      detached: true,
+      stdio: ["ignore", "pipe", "pipe", "ipc"],
+    },
+  );
+  let timer,
+    stdout = "",
+    stderr = "",
+    registered = false;
+  const stop = () => child.kill("SIGTERM");
+  try {
+    return await new Promise((resolve, reject) => {
+      timer = setTimeout(() => {
+        stop();
+        reject(Error("owned scope probe deadline exceeded"));
+      }, timeoutMs);
+      const abort = () => {
+        stop();
+        reject(Error("owned scope probe cancelled"));
+      };
+      signal?.addEventListener("abort", abort, { once: true });
+      child.once("close", (code) => {
+        signal?.removeEventListener("abort", abort);
+        if (code !== 0) reject(Error("owned scope probe failed: " + stderr));
+        else {
+          try {
+            if (!registered) throw Error("scope handoff absent");
+            resolve(JSON.parse(stdout));
+          } catch (error) {
+            reject(error);
+          }
+        }
+      });
+      child.once("error", reject);
+      child.stdout.on("data", (bytes) => {
+        stdout += bytes;
+        if (stdout.length > 1024 * 1024) {
+          stop();
+          reject(Error("scope probe output bound"));
+        }
+      });
+      child.stderr.on("data", (bytes) => {
+        stderr = (stderr + bytes).slice(-65536);
+      });
+      child.on("message", async (proof) => {
+        try {
+          if (registered) throw Error("duplicate scope handoff");
+          await register(proof, child.pid);
+          registered = true;
+          child.send({ scopeRecorded: true });
+        } catch (error) {
+          stop();
+          reject(error);
+        }
+      });
+      if (signal?.aborted) abort();
+    });
+  } finally {
+    clearTimeout(timer);
+    try {
+      if (!(await reapOwnedProcessGroup(child, 0, 500, 1500)).confirmed)
+        throw Error("owned scope executor cleanup unconfirmed");
+    } finally {
+      await cleanup();
+    }
+  }
+}
 
 // Tauri, Vite and the app share a dedicated group, including when an IDE only
 // signals this wrapper. Reap the leader and bound cleanup of remaining children.

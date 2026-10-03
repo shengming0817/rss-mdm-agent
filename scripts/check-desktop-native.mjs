@@ -20,6 +20,9 @@ import { cargoTargetDir } from "./cargo-target.mjs";
 import {
   runPreparation,
   reapOwnedProcessGroup,
+  processField,
+  processChildren,
+  runOwnedScopeProbe,
 } from "./desktop-dev-process.mjs";
 import { randomBytes } from "node:crypto";
 import { createServer } from "node:net";
@@ -141,16 +144,7 @@ let directory,
   keychainState;
 let scopeRuntime;
 const ownedWorkerScopes = new Map();
-const processIdentity = (pid, field) => {
-  try {
-    return execFileSync("/bin/ps", ["-p", String(pid), "-o", field + "="], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
-  } catch {
-    return undefined;
-  }
-};
+const processIdentity = processField;
 const rememberScopes = (rows, host) => {
   for (const row of rows) {
     if (row.scope?.kind !== "processGroup") continue;
@@ -162,21 +156,12 @@ const rememberScopes = (rows, host) => {
       processIdentity(scope.root, "comm") === scopeRuntime.launcher &&
       Number(processIdentity(scope.root, "ppid")) === host
     ) {
-      try {
-        const children = execFileSync(
-          "/usr/bin/pgrep",
-          ["-P", String(scope.root)],
-          { encoding: "utf8" },
-        )
-          .trim()
-          .split(/\s+/)
-          .map(Number);
-        const pid = children.find(
-          (child) => processIdentity(child, "comm") === scopeRuntime.node,
-        );
-        if (pid && Number(processIdentity(pid, "pgid")) === scope.root)
-          anchor = { pid, start: processIdentity(pid, "lstart") };
-      } catch {}
+      const children = processChildren(scope.root);
+      const pid = children.find(
+        (child) => processIdentity(child, "comm") === scopeRuntime.node,
+      );
+      if (pid && Number(processIdentity(pid, "pgid")) === scope.root)
+        anchor = { pid, start: processIdentity(pid, "lstart") };
     }
     ownedWorkerScopes.set(scope.root, {
       scope,
@@ -226,10 +211,12 @@ const rootAlive = () => {
     return false;
   }
 };
+const faultAbort = new AbortController();
 let cancelled = false;
 for (const signal of ["SIGINT", "SIGTERM"])
   process.on(signal, () => {
     cancelled = true;
+    faultAbort.abort();
     spawnError = new Error("native acceptance cancelled");
     // The dev wrapper owns Tauri/Vite/main and their bounded process-group shutdown.
     signalRoot("SIGTERM");
@@ -391,32 +378,13 @@ const dbRead = (file, action) => {
 // The live store is exclusive. Observe the actual fixed native launcher, not its locked database.
 const readWorkerScopes = async () => {
   if (!scopeRuntime || !receipt?.pid) return [];
-  let children;
-  try {
-    children = execFileSync("/usr/bin/pgrep", ["-P", String(receipt.pid)], {
-      encoding: "utf8",
-    })
-      .trim()
-      .split(/\s+/)
-      .map(Number);
-  } catch {
-    return [];
-  }
+  let children = processChildren(receipt.pid);
   const hosts = children.filter(
     (pid) => processIdentity(pid, "comm") === scopeRuntime.node,
   );
   assert.ok(hosts.length <= 1, "one actual owned Host");
   if (!hosts.length) return [];
-  try {
-    children = execFileSync("/usr/bin/pgrep", ["-P", String(hosts[0])], {
-      encoding: "utf8",
-    })
-      .trim()
-      .split(/\s+/)
-      .map(Number);
-  } catch {
-    return [];
-  }
+  children = processChildren(hosts[0]);
   return children
     .filter((pid) => processIdentity(pid, "comm") === scopeRuntime.launcher)
     .map((pid) => {
@@ -433,7 +401,7 @@ const readWorkerScopes = async () => {
     });
 };
 let faultScopeConfirmed = true;
-const verifyUnknownFence = () => {
+const verifyUnknownFence = async () => {
   const source = `
     import assert from 'node:assert/strict';
     import {spawn,execFileSync} from 'node:child_process';
@@ -442,14 +410,14 @@ const verifyUnknownFence = () => {
     import {randomUUID} from 'node:crypto';
     import {pathToFileURL} from 'node:url';
     import {join} from 'node:path';
-    const input=JSON.parse(process.argv[2]);
+    const input=JSON.parse(process.argv[1]);
     const {openSqliteStore}=await import(pathToFileURL(join(input.root,'packages/ai-store-sqlite/dist/index.js')));
     const {createHost}=await import(pathToFileURL(join(input.root,'packages/ai-host/dist/index.js')));
     const {scopeAbsentWithin}=await import(pathToFileURL(join(input.root,'packages/ai-host/dist/process.js')));
     const {fixtureSession,acceptance}=await import(pathToFileURL(join(input.root,'packages/ai-contract/dist/testing/index.js')));
     const {fixturePersistence}=await import(pathToFileURL(join(input.root,'tests/ai-host/harness.mjs')));
     const budget=()=>({timeoutMs:5000,signal:new AbortController().signal});
-    const field=(pid,name)=>execFileSync('/bin/ps',['-p',String(pid),'-o',name+'='],{encoding:'utf8'}).trim();
+    const {processField:field}=await import(pathToFileURL(join(input.root,'scripts/desktop-dev-process.mjs')));
     const unwrap=(result)=>{assert.equal(result.ok,true,JSON.stringify(result));return result.value};
     // Existing launch-fence fault seam, isolated from the UI's credential namespace.
     const parent=spawn(process.execPath,['-e',
@@ -462,6 +430,8 @@ const verifyUnknownFence = () => {
       const ready=await Promise.race([once(lines,'line'),new Promise((_,reject)=>setTimeout(()=>reject(Error('fault actor readiness deadline')),2000))]);
       child=JSON.parse(ready[0]).pid;birth=field(child,'lstart');
       assert.equal(Number(field(child,'pgid')),scope.root);
+      process.send({kind:'ownedScope',scope,anchor:{pid:child,start:birth}});
+      assert.deepEqual((await once(process,'message'))[0],{scopeRecorded:true});
       store=unwrap(openSqliteStore({path:input.path,mode:'create'}));
       const session=fixtureSession();unwrap(await store.create(session));unwrap(await store.accept(acceptance(session)));
       const launchId=randomUUID();
@@ -484,32 +454,68 @@ const verifyUnknownFence = () => {
       console.log(JSON.stringify({actor:'existing launch-fence fault seam',retained,resolveCalls:resolves,
         descendantObserved:true,originalParentExited:true,scopeAbsentAfterOwnedCleanup:true}));
     } finally {
-      lines.close();await host?.close(budget());await store?.close(budget());
-      if(parent.exitCode===null&&parent.signalCode===null)parent.kill('SIGKILL');
-      if(child&&birth){try{if(field(child,'lstart')===birth&&Number(field(child,'pgid'))===scope.root)process.kill(-scope.root,'SIGKILL')}catch{}}
+      lines.close();
+      try {await host?.close(budget());}
+      finally {try {await store?.close(budget());}
+        finally {
+          if(parent.exitCode===null&&parent.signalCode===null)process.kill(-scope.root,'SIGKILL');
+          else if(child&&birth&&field(child,'lstart')===birth&&Number(field(child,'pgid'))===scope.root)process.kill(-scope.root,'SIGKILL');
+        }
+      }
     }
   `;
-  return JSON.parse(
-    execFileSync(
-      scopeRuntime.node,
-      [
-        "--input-type=module",
-        "-",
-        JSON.stringify({
-          root,
-          path: join(directory, "scope-fault.sqlite"),
-          runtime: scopeRuntime,
-        }),
-      ],
-      {
-        input: source,
-        encoding: "utf8",
-        timeout: 30000,
-        stdio: ["pipe", "pipe", "pipe"],
-      },
-    ),
+  let entry;
+  return runOwnedScopeProbe(
+    scopeRuntime.node,
+    source,
+    {
+      root,
+      path: join(directory, "scope-fault.sqlite"),
+      runtime: scopeRuntime,
+    },
+    async (proof, executorPid) => {
+      assert.equal(proof.kind, "ownedScope");
+      assert.equal(proof.scope.kind, "processGroup");
+      assert.ok(Number.isSafeInteger(proof.scope.root) && proof.scope.root > 1);
+      assert.ok(Number.isSafeInteger(proof.anchor.pid) && proof.anchor.pid > 1);
+      entry = {
+        scope: proof.scope,
+        anchor: proof.anchor,
+        launchId: "fault-" + nonce,
+      };
+      ownedWorkerScopes.set(entry.scope.root, entry);
+      assert.equal(
+        processIdentity(proof.scope.root, "comm"),
+        scopeRuntime.node,
+      );
+      assert.equal(
+        Number(processIdentity(proof.scope.root, "ppid")),
+        executorPid,
+      );
+      assert.equal(
+        processIdentity(proof.anchor.pid, "lstart"),
+        proof.anchor.start,
+      );
+      assert.equal(
+        Number(processIdentity(proof.anchor.pid, "pgid")),
+        proof.scope.root,
+      );
+    },
+    async () => {
+      if (!entry) return;
+      const absent = () =>
+        scopeAbsentWithin(scopeRuntime, entry.scope, {
+          timeoutMs: 1000,
+          signal: new AbortController().signal,
+        });
+      if (!(await absent())) terminateObservedScope(entry);
+      await wait(absent);
+      faultScopeConfirmed = true;
+    },
+    faultAbort.signal,
   );
 };
+
 const task = async () => {
   const reply = await serviceCall("query");
   const request = fixture.facts.request;
@@ -2143,7 +2149,7 @@ try {
       });
       await serviceCall("processSecurityBegin", { name: "unknown_scope" });
       faultScopeConfirmed = false;
-      const recovery = verifyUnknownFence();
+      const recovery = await verifyUnknownFence();
       faultScopeConfirmed = recovery.scopeAbsentAfterOwnedCleanup === true;
       assert.equal(
         fixture.facts.requests,
@@ -2402,14 +2408,19 @@ try {
         timeoutMs: 1000,
         signal: new AbortController().signal,
       });
-    let confirmed = await absent();
-    if (!confirmed && terminateObservedScope(entry)) {
-      const deadline = Date.now() + 7000;
-      do {
-        confirmed = await absent();
-        if (confirmed) break;
-        await delay(100);
-      } while (Date.now() < deadline);
+    let confirmed = false;
+    try {
+      confirmed = await absent();
+      if (!confirmed && terminateObservedScope(entry)) {
+        const deadline = Date.now() + 7000;
+        do {
+          confirmed = await absent();
+          if (confirmed) break;
+          await delay(100);
+        } while (Date.now() < deadline);
+      }
+    } catch {
+      scopeObservationFailed = true;
     }
     scopeCleanup.push({
       scope: entry.scope,
