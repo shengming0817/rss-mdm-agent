@@ -1,4 +1,5 @@
 //! The sole production execution service. Initialization is explicit and never a startup fallback.
+mod error;
 use agent_client::{wire, Error};
 use agent_service::deployment::Deployment;
 use execution_ipc::host::Request;
@@ -68,8 +69,10 @@ fn run() -> Result<(), Error> {
         _ => return Err(Error::Configuration),
     };
     if let Some(request) = request {
-        let reply = execution_ipc::host::ServiceClient::new(deployment.server_policy())?
-            .request(request)?;
+        let reply = execution_ipc::host::ServiceClient::new(deployment.server_policy())
+            .map_err(error::app_error)?
+            .request(request)
+            .map_err(error::app_error)?;
         println!(
             "{}",
             std::str::from_utf8(&execution_ipc::host::encode_reply(reply))
@@ -88,10 +91,10 @@ fn serve(handler: Box<dyn execution_ipc::host::Handler>, system: bool) -> Result
             libc::signal(libc::SIGTERM, stopped as *const () as usize);
             libc::signal(libc::SIGINT, stopped as *const () as usize);
         }
-        execution_ipc::host::run(handler, &STOP)?;
+        execution_ipc::host::run(handler, &STOP).map_err(error::app_error)?;
     }
     #[cfg(windows)]
-    execution_ipc::windows_service::run(handler, &STOP, system)?;
+    execution_ipc::windows_service::run(handler, &STOP, system).map_err(error::app_error)?;
     Ok(())
 }
 

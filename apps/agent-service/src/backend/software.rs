@@ -1,6 +1,6 @@
 //! Deterministic V6 compiler. The backend has already selected sources and ordered dependencies.
 use crate::{
-    plan::{self, hex, id, reference},
+    backend::plan::{self, hex, id, reference},
     ExecutionConfig, SoftwareManagerKind,
 };
 use agent_client::{wire, Error, Materials, Offer};
@@ -139,7 +139,8 @@ impl Compiler<'_> {
                 std::io::Cursor::new(wrapper),
                 &reference.sha256,
                 wrapper.len() as u64,
-            )?;
+            )
+            .map_err(crate::error::app_error)?;
             arguments.extend([
                 manager
                     .image
@@ -165,7 +166,8 @@ impl Compiler<'_> {
                     std::fs::File::open(path)?,
                     &reference.sha256,
                     length,
-                )?;
+                )
+                .map_err(crate::error::app_error)?;
                 (path, reference)
             }
         };
@@ -320,7 +322,7 @@ pub(crate) fn compile(
             sources.push(source);
             continue;
         }
-        let commands = agent_client::software_commands(action)?;
+        let commands = crate::backend::commands::software_commands(action)?;
         let (adapter, native) = match &action.behavior {
             wire::SoftwareTaskBehavior::Msi(n) => {
                 (SoftwareKind::Msi, Some((SoftwareManagerKind::Msi, n)))
@@ -374,7 +376,8 @@ pub(crate) fn compile(
                 file.reader()?,
                 &reference.sha256,
                 declared.length,
-            )?;
+            )
+            .map_err(crate::error::app_error)?;
             compiler.files.insert(
                 declared
                     .key
@@ -395,7 +398,8 @@ pub(crate) fn compile(
                 &primary.1.sha256,
                 &name,
                 helper.as_ref().map(|h| h.context().subject.as_str()),
-            )?;
+            )
+            .map_err(crate::error::app_error)?;
         }
         let bundle = action.behavior.bundle().map(|b| BundleManifest {
             schema: V1,
@@ -422,7 +426,8 @@ pub(crate) fn compile(
                 &primary.0,
                 &primary.1.sha256,
                 manifest,
-            )?;
+            )
+            .map_err(crate::error::app_error)?;
             compiler.bundle_root = Some(bundle_directory(
                 &members,
                 &commands.install_script.ok_or(Error::Protocol)?.entry,
@@ -607,7 +612,7 @@ pub(crate) fn compile(
             files,
         });
     }
-    let (timeout, output) = agent_client::software_budget(payload)?;
+    let (timeout, output) = crate::backend::commands::software_budget(payload)?;
     let mut controller = steps.first().ok_or(Error::Protocol)?.install.launch.clone();
     controller.interpreter.profile = reference("native-software-sequence", "1")?;
     let program = SoftwareProgram {
@@ -620,7 +625,7 @@ pub(crate) fn compile(
         schema_version: V6,
         request: ExecutionRequest {
             schema_version: V1,
-            request_id: offer.request_id()?,
+            request_id: crate::backend::request_id(offer)?,
             authority: binding.authority.clone(),
             actor: actor.clone(),
             initiator: Initiator::Backend {

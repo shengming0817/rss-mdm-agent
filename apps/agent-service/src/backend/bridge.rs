@@ -1,45 +1,27 @@
-use crate::{
-    client::same_input,
-    store::{decode, encode, hash},
-    wire, Client, Clock, Error, Materials, SecretProvider, Start,
-};
+use super::request_id;
+use crate::error::app_error as map_app_error;
+use agent_client::{wire, Client, Clock, Error, Materials, Offer, SecretProvider, Start};
+fn encode(value: &impl serde::Serialize) -> Result<Vec<u8>, Error> {
+    serde_json_canonicalizer::to_vec(value).map_err(|_| Error::Protocol)
+}
 use execution_app::{
     AppHost, ExecutionApp, ExecutionStatus, RequestContext, RunnerPort, TaskPhase,
 };
-use execution_contract::{EventId, FrozenExecution, Id, OutputQuality, ProcessEnd, RequestId};
-use rusqlite::{params, OptionalExtension};
-use serde::{Deserialize, Serialize};
+use execution_contract::{FrozenExecution, Id, OutputQuality, ProcessEnd, RequestId};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
-#[derive(Serialize, Deserialize)]
-pub(crate) struct Binding {
-    task: Uuid,
-    attempt: Uuid,
-    pub(crate) request: RequestId,
-    digest: execution_contract::Digest,
-    actor: execution_contract::ActorId,
-    local_attempt: Option<execution_contract::AttemptId>,
+/// Local preparation plus an opaque frozen transport or durable acknowledgement.
+pub(crate) struct PendingDelivery {
+    result: Option<agent_client::FrozenResult>,
+    ack: Option<agent_client::ResultAck>,
 }
-/// Frozen result delivery prepared synchronously from the authoritative journal.
-pub struct PendingDelivery {
-    task: Uuid,
-    key: String,
-    request: wire::TaskEventRequest,
-    events: Vec<EventId>,
-    binding: Binding,
-    accepted: bool,
-}
-/// An unsubmitted offer whose absence was checked against the authoritative journal.
-pub struct PendingAbandonment {
-    task: Uuid,
-    key: String,
-    event: wire::TaskEventRequest,
+pub(crate) struct PendingAbandonment {
+    transport: Option<agent_client::FrozenAbandonment>,
+    ack: Option<agent_client::AbandonmentAck>,
     request: RequestId,
     device: execution_contract::DeviceId,
-    accepted: bool,
 }
 impl PendingAbandonment {
-    /// Original request checked against the journal, including before an execution exists.
     pub fn request_id(&self) -> &RequestId {
         &self.request
     }
@@ -55,16 +37,9 @@ pub trait OutputPolicy {
     /// Remove secrets before structured output and diagnostic streams become wire values.
     fn redact(&self, text: &str) -> Result<String, Error>;
 }
-/// Redacts the communication owner's actual credentials while preserving task output.
-/// The secret list is private and never serialized or printed.
-pub struct CredentialRedactor(pub(crate) Vec<wire::Secret>);
-impl OutputPolicy for CredentialRedactor {
+impl OutputPolicy for agent_client::CredentialRedactor {
     fn redact(&self, text: &str) -> Result<String, Error> {
-        let mut value = text.to_owned();
-        for secret in &self.0 {
-            value = value.replace(secret.expose(), "[redacted]");
-        }
-        Ok(value)
+        self.redact(text)
     }
 }
 /// Concrete bridge into the existing execution service, never a second executor/journal.
@@ -81,13 +56,13 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
     /// Scripts and ordered software each bind to one immutable local intent.
     pub fn prepare<H: AppHost, R: RunnerPort, J: execution_app::JournalPort>(
         &self,
-        offer: &crate::Offer,
+        offer: &Offer,
         materials: &Materials,
         app: &ExecutionApp<H, R, J>,
         caller: &RequestContext,
         plan: &FrozenExecution,
     ) -> Result<PreparedExecution, Error> {
-        materials.validate(offer)?;
+        materials.validate_offer(offer)?;
         let (device, platform, run_as, timeout, output) = match offer.payload() {
             wire::TaskPayload::Script(v)
                 if matches!(
@@ -119,7 +94,7 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
                 {
                     return Err(Error::Untrusted);
                 }
-                let (timeout, output) = crate::software::software_budget(v)?;
+                let (timeout, output) = super::commands::software_budget(v)?;
                 (
                     &v.device_id,
                     v.platform,
@@ -135,7 +110,7 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
             wire::TaskPlatform::Windows => execution_contract::Platform::Windows,
         };
         let p = plan.spec();
-        if p.request.request_id != offer.request_id()? {
+        if p.request.request_id != request_id(offer)? {
             return Err(Error::Untrusted);
         }
         let matches_run_as = matches!(
@@ -156,7 +131,7 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
         {
             return Err(Error::Untrusted);
         }
-        app.prepare_execution(caller, plan)?;
+        app.prepare_execution(caller, plan).map_err(map_app_error)?;
         Ok(PreparedExecution {
             plan: plan.clone(),
             caller: caller.clone(),
@@ -187,7 +162,7 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
         let plan = &plan;
         let caller = &caller;
         client.validate_start(&start)?;
-        if !same_input(&input, start.payload()) {
+        if !start.matches_payload(&input) {
             return Err(Error::Untrusted);
         }
         let expiry = u64::try_from(start.payload().expires_at())
@@ -203,51 +178,23 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
         {
             return Err(Error::Expired);
         }
-        let original: wire::TaskPayload = decode(&materials.input)?;
-        if !same_input(&original, start.payload())
-            || materials.task != start.payload().task_id()
-            || materials.attempt != start.payload().attempt_id()
-        {
-            return Err(Error::Untrusted);
-        }
-        for file in materials.files() {
-            file.verify()?;
-        }
+        materials.validate_start(&start)?;
         if caller.actor != plan.spec().request.actor {
             return Err(Error::Denied);
         }
-        let mut binding = Binding {
-            task: start.payload().task_id(),
-            attempt: start.payload().attempt_id(),
-            request: plan.spec().request.request_id.clone(),
-            digest: plan.digest().clone(),
-            actor: caller.actor.clone(),
-            local_attempt: None,
-        };
-        let key = format!("binding/{}", binding.task);
-        if let Some(old) = client.store.get::<Binding>(&key)? {
-            if old.attempt != binding.attempt
-                || old.request != binding.request
-                || old.digest != binding.digest
-                || old.actor != binding.actor
-            {
-                return Err(Error::Conflict);
-            }
-            binding.local_attempt = old.local_attempt;
-        } else {
-            client.store.put(&key, &binding)?;
-        }
+        let binding = client.reserve_association(
+            &start,
+            &plan.spec().request.request_id,
+            plan.digest(),
+            &caller.actor,
+        )?;
         // The only first dispatch is still created by local admission and the execution journal.
         let status = app.request_execution(caller, plan).map_err(|error| {
             // Closed error variants identify the journal boundary without exposing input.
             eprintln!("agent_dispatch: {error:?}");
-            Error::from(error)
+            map_app_error(error)
         })?;
-        if binding.local_attempt.is_some() && binding.local_attempt != status.attempt_id {
-            return Err(Error::Conflict);
-        }
-        binding.local_attempt = status.attempt_id.clone();
-        client.store.put(&key, &binding)?;
+        client.bind_local_attempt(&binding, status.attempt_id.as_ref())?;
         Ok(status)
     }
     /// Repair only the transport association after an interrupted commit hand-off.
@@ -264,39 +211,36 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
         task: Uuid,
         app: &ExecutionApp<H, R, J>,
     ) -> Result<bool, Error> {
-        let key = format!("binding/{task}");
-        let mut binding: Binding = client.store.get(&key)?.ok_or(Error::Conflict)?;
+        let binding = client.association(task)?.ok_or(Error::Conflict)?;
         let device = execution_contract::DeviceId::new(client.registration()?.device_id)
             .map_err(|_| Error::Identity)?;
-        if !app.has_service_execution(&binding.request, &device)? {
-            if binding.local_attempt.is_some() {
+        if !app
+            .has_service_execution(binding.request(), &device)
+            .map_err(map_app_error)?
+        {
+            if binding.local_attempt().is_some() {
                 return Err(Error::Conflict);
             }
             return Ok(false);
         }
-        if binding.local_attempt.is_some() {
-            return Ok(true);
-        }
         let caller = RequestContext {
-            actor: binding.actor.clone(),
+            actor: binding.actor().clone(),
         };
-        let plan = app.frozen_input(&caller, &binding.request)?;
-        let offer = client.stored_offer(task)?;
-        if plan.digest() != &binding.digest
-            || binding.task != task
-            || binding.attempt != offer.attempt_id()
-            || binding.request != offer.request_id()?
+        let plan = app
+            .frozen_input(&caller, binding.request())
+            .map_err(map_app_error)?;
+        let offer = client.retained_offer(task)?;
+        if plan.digest() != binding.digest()
+            || binding.task() != task
+            || binding.attempt() != offer.attempt_id()
+            || binding.request() != &request_id(&offer)?
         {
             return Err(Error::Conflict);
         }
-        let status = app.status(&caller, &binding.request)?;
-        if binding.local_attempt.is_some() && binding.local_attempt != status.attempt_id {
-            return Err(Error::Conflict);
-        }
-        if binding.local_attempt != status.attempt_id {
-            binding.local_attempt = status.attempt_id;
-            client.store.put(&key, &binding)?;
-        }
+        let status = app
+            .status(&caller, binding.request())
+            .map_err(map_app_error)?;
+        client.bind_local_attempt(&binding, status.attempt_id.as_ref())?;
         Ok(true)
     }
     /// Settle an offer that never entered this authoritative journal. Cancellation ACK
@@ -313,41 +257,29 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
         task: Uuid,
         app: &ExecutionApp<H, R, J>,
     ) -> Result<PendingAbandonment, Error> {
-        let offer = client.stored_offer(task)?;
-        let request = offer.request_id()?;
+        let offer = client.retained_offer(task)?;
+        let request = request_id(&offer)?;
         let device = execution_contract::DeviceId::new(client.registration()?.device_id)
             .map_err(|_| Error::Unsupported)?;
-        if let Some(binding) = client.store.get::<Binding>(&format!("binding/{task}"))? {
-            if binding.task != task
-                || binding.attempt != offer.attempt_id()
-                || binding.request != request
+        if let Some(binding) = client.association(task)? {
+            if binding.task() != task
+                || binding.attempt() != offer.attempt_id()
+                || binding.request() != &request
             {
                 return Err(Error::Conflict);
             }
         }
-        if app.has_service_execution(&request, &device)? {
+        if app
+            .has_service_execution(&request, &device)
+            .map_err(map_app_error)?
+        {
             return Err(Error::Conflict);
         }
-        let key = format!("abandon/{task}/{}", offer.attempt_id());
-        let event = client.event_request(
-            &key,
-            task,
-            offer.attempt_id(),
-            wire::TaskEvent::Cancelled,
-            None,
-        )?;
-        let accepted: bool = client.store.conn.query_row(
-            "SELECT accepted FROM requests WHERE key=?1",
-            [&key],
-            |r| r.get(0),
-        )?;
         Ok(PendingAbandonment {
-            task,
-            key,
-            event,
+            transport: Some(client.freeze_abandonment(task)?),
+            ack: None,
             request,
             device,
-            accepted,
         })
     }
     /// Send only transport work, leaving the execution owner free to reconcile and cancel.
@@ -356,16 +288,8 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
         client: &mut Client<S, C>,
         pending: &mut PendingAbandonment,
     ) -> Result<(), Error> {
-        if !pending.accepted {
-            let ack = client.send_event(pending.task, &pending.event).await?;
-            if ack.permit().is_some() {
-                return Err(Error::Protocol);
-            }
-            client.store.conn.execute(
-                "UPDATE requests SET accepted=1 WHERE key=?1",
-                [&pending.key],
-            )?;
-            pending.accepted = true;
+        if let Some(transport) = pending.transport.take() {
+            pending.ack = Some(client.send_abandonment(transport).await?);
         }
         Ok(())
     }
@@ -382,12 +306,16 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
         pending: PendingAbandonment,
         app: &ExecutionApp<H, R, J>,
     ) -> Result<(), Error> {
-        if !pending.accepted || app.has_service_execution(&pending.request, &pending.device)? {
+        if app
+            .has_service_execution(&pending.request, &pending.device)
+            .map_err(map_app_error)?
+        {
             return Err(Error::Conflict);
         }
-        client.release(pending.task)
+        client.release_abandonment(pending.ack.ok_or(Error::Conflict)?)
     }
     /// Convenience for callers that do not own a concurrent execution loop.
+    #[cfg(test)]
     pub async fn abandon<
         S: SecretProvider,
         C: Clock,
@@ -418,15 +346,15 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
         app: &mut ExecutionApp<H, R, J>,
         caller: &RequestContext,
     ) -> Result<ExecutionStatus, Error> {
-        let binding: Binding = client
-            .store
-            .get(&format!("binding/{}", cancel.task_id()))?
+        let binding = client
+            .association(cancel.task_id())?
             .ok_or(Error::Conflict)?;
-        if binding.attempt != cancel.attempt_id() || binding.actor != caller.actor {
+        if binding.attempt() != cancel.attempt_id() || binding.actor() != &caller.actor {
             return Err(Error::Denied);
         }
-        app.cancel(caller, &binding.request)?;
-        Ok(app.reconcile(&binding.request)?)
+        app.cancel(caller, binding.request())
+            .map_err(map_app_error)?;
+        app.reconcile(binding.request()).map_err(map_app_error)
     }
     /// Send one frozen result and precisely confirm its source events after durable remote ACK.
     /// Lost confirmations never cause another HTTP result request or runner dispatch.
@@ -443,82 +371,58 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
         app: &mut ExecutionApp<H, R, J>,
         limit: usize,
     ) -> Result<Option<PendingDelivery>, Error> {
-        client.active()?;
-        client.now()?;
+        client.check_delivery()?;
         if !self.recover_binding(client, task, app)? {
             return Err(Error::Conflict);
         }
-        let binding: Binding = client
-            .store
-            .get(&format!("binding/{task}"))?
-            .ok_or(Error::Conflict)?;
-        let pending:Option<(String,Vec<u8>,String,bool)>=client.store.conn.query_row(
-            "SELECT key,CASE WHEN typeof(body)='blob' AND length(body)<=1114112 THEN body END,source,accepted FROM requests WHERE task=?1 AND source IS NOT NULL ORDER BY rowid LIMIT 1",
-            [task.to_string()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional()?;
-        let (key, request, events, accepted) = if let Some((key, body, source, accepted)) = pending
-        {
-            (
-                key,
-                decode::<wire::TaskEventRequest>(&body)?,
-                decode::<Vec<EventId>>(source.as_bytes())?,
-                accepted,
-            )
-        } else {
-            let items = app.service_delivery(&binding.request, &self.consumer, limit)?;
-            if items.is_empty() {
-                return Ok(None);
+        let binding = client.association(task)?.ok_or(Error::Conflict)?;
+        if let Some(result) = client.pending_result(&binding)? {
+            if let Some(ack) = client.frozen_result_ack(&result)? {
+                return Ok(Some(PendingDelivery {
+                    result: None,
+                    ack: Some(ack),
+                }));
             }
-            if items.iter().any(|v| v.input.digest() != &binding.digest) {
-                return Err(Error::Conflict);
-            }
-            let offer_body:Vec<u8>=client.store.conn.query_row(
-                "SELECT CASE WHEN typeof(body)='blob' AND length(body)<=16777216 THEN body END FROM tasks WHERE id=?1",[task.to_string()],|r|r.get(0))?;
-            let offer: wire::SignedTask = decode(&offer_body)?;
-            if offer.payload.attempt_id() != binding.attempt {
-                return Err(Error::Conflict);
-            }
-            let candidate = items.iter().rev().find(|v| {
-                v.current_attempt == binding.local_attempt
-                    && (v.terminal.is_some() || v.process.as_ref().is_some_and(|p| p.finished))
-            });
-            let Some(candidate) = candidate else {
-                return Ok(None);
-            };
-            let Some(event) = self.project(&offer.payload, candidate)? else {
-                return Ok(None);
-            };
-            let events: Vec<_> = items.iter().map(|v| v.receipt.event_id.clone()).collect();
-            // V5 accepts one terminal result per attempt. Later independent local facts
-            // remain in the execution journal but cannot replace an acknowledged wire result.
-            if client
-                .store
-                .get::<String>(&format!("projection/{task}"))?
-                .is_some()
-            {
-                for id in events {
-                    app.service_confirm(&binding.request, &self.consumer, &id)?;
-                }
-                return Ok(None);
-            }
-            let key = format!("result/{task}/{}", candidate.receipt.event_id.as_str());
-            let source = String::from_utf8(encode(&events)?).map_err(|_| Error::Protocol)?;
-            let request = client.delivery_request(&key, task, binding.attempt, event, &source)?;
-            (key, request, events, false)
-        };
-        if request.attempt_id() != binding.attempt {
+            app.service_delivery(binding.request(), &self.consumer, 1)
+                .map_err(map_app_error)?;
+            return Ok(Some(PendingDelivery {
+                result: Some(result),
+                ack: None,
+            }));
+        }
+        let items = app
+            .service_delivery(binding.request(), &self.consumer, limit)
+            .map_err(map_app_error)?;
+        if items.is_empty() {
+            return Ok(None);
+        }
+        if items.iter().any(|v| v.input.digest() != binding.digest()) {
             return Err(Error::Conflict);
         }
-        // Authorization is checked immediately before handing the frozen request to transport.
-        if !accepted {
-            app.service_delivery(&binding.request, &self.consumer, 1)?;
+        if let Some(ack) = client.acknowledged_result(&binding)? {
+            client.validate_result_ack(&ack)?;
+            for item in items {
+                app.service_confirm(binding.request(), &self.consumer, &item.receipt.event_id)
+                    .map_err(map_app_error)?;
+            }
+            return Ok(None);
         }
+        let offer = client.retained_offer(task)?;
+        let candidate = items.iter().rev().find(|v| {
+            v.current_attempt.as_ref() == binding.local_attempt()
+                && (v.terminal.is_some() || v.process.as_ref().is_some_and(|p| p.finished))
+        });
+        let Some(candidate) = candidate else {
+            return Ok(None);
+        };
+        let Some(event) = self.project(offer.payload(), candidate)? else {
+            return Ok(None);
+        };
+        let events: Vec<_> = items.iter().map(|v| v.receipt.event_id.clone()).collect();
+        let result = client.freeze_result(&binding, &candidate.receipt.event_id, &events, event)?;
         Ok(Some(PendingDelivery {
-            task,
-            key,
-            request,
-            events,
-            accepted,
-            binding,
+            result: Some(result),
+            ack: None,
         }))
     }
     /// Perform bounded HTTP delivery without borrowing the execution application.
@@ -527,28 +431,8 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
         client: &mut Client<S, C>,
         pending: &mut PendingDelivery,
     ) -> Result<(), Error> {
-        if !pending.accepted {
-            client
-                .send_output_chunks(pending.task, &pending.request)
-                .await?;
-            let ack = client.send_event(pending.task, &pending.request).await?;
-            if ack.permit().is_some() {
-                return Err(Error::Protocol);
-            }
-            let tx = client.store.conn.unchecked_transaction()?;
-            tx.execute(
-                "UPDATE requests SET accepted=1 WHERE key=?1",
-                [&pending.key],
-            )?;
-            tx.execute(
-                "INSERT INTO state VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET body=excluded.body",
-                params![
-                    format!("projection/{}", pending.task),
-                    encode(&hash(&encode(pending.request.event())?))?
-                ],
-            )?;
-            tx.commit()?;
-            pending.accepted = true;
+        if let Some(result) = pending.result.take() {
+            pending.ack = Some(client.send_result(result).await?);
         }
         Ok(())
     }
@@ -565,24 +449,17 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
         pending: PendingDelivery,
         app: &mut ExecutionApp<H, R, J>,
     ) -> Result<usize, Error> {
-        if !pending.accepted {
-            return Err(Error::Conflict);
+        let ack = pending.ack.ok_or(Error::Conflict)?;
+        client.validate_result_ack(&ack)?;
+        for id in ack.events() {
+            app.service_confirm(ack.association().request(), &self.consumer, id)
+                .map_err(map_app_error)?;
         }
-        for id in &pending.events {
-            app.service_confirm(&pending.binding.request, &self.consumer, id)?;
-        }
-        let prefix = format!("chunk/{}/{}/", pending.task, pending.request.attempt_id());
-        client.store.conn.execute(
-            "DELETE FROM requests WHERE task=?1 AND substr(key,1,length(?2))=?2",
-            params![pending.task.to_string(), prefix],
-        )?;
-        client
-            .store
-            .conn
-            .execute("DELETE FROM requests WHERE key=?1", [pending.key])?;
+        client.retire_result(ack)?;
         Ok(1)
     }
     /// Deliver synchronously for consumers without a concurrent execution-owner loop.
+    #[cfg(test)]
     pub async fn flush<
         S: SecretProvider,
         C: Clock,
@@ -710,14 +587,13 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
         app: &ExecutionApp<H, R, J>,
         caller: &RequestContext,
     ) -> Result<(), Error> {
-        let binding: Binding = client
-            .store
-            .get(&format!("binding/{task}"))?
-            .ok_or(Error::Conflict)?;
-        if binding.actor != caller.actor {
+        let binding = client.association(task)?.ok_or(Error::Conflict)?;
+        if binding.actor() != &caller.actor {
             return Err(Error::Denied);
         }
-        let status = app.status(caller, &binding.request)?;
+        let status = app
+            .status(caller, binding.request())
+            .map_err(map_app_error)?;
         if status.phase == TaskPhase::Verified
             && !matches!(
                 status.assessment,
@@ -736,12 +612,16 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
             && status.attempt_id.is_none());
         if !terminal
             || !app
-                .service_delivery(&binding.request, &self.consumer, 1)?
+                .service_delivery(binding.request(), &self.consumer, 1)
+                .map_err(map_app_error)?
                 .is_empty()
         {
             return Err(Error::Conflict);
         }
-        client.release(task)
+        let ack = client
+            .acknowledged_result(&binding)?
+            .ok_or(Error::Conflict)?;
+        client.release_result(ack)
     }
 }
 fn bound(mut value: String) -> String {
@@ -882,7 +762,7 @@ fn software_result(
                 diagnostic: "native observation unavailable".into(),
             },
         };
-        let commands = crate::software::software_commands(&step.action)?;
+        let commands = super::commands::software_commands(&step.action)?;
         let policy_for = |phase| match phase {
             P::Upgrade => commands.upgrade.unwrap_or(commands.install),
             P::Removal => commands.uninstall.unwrap_or(commands.install),
@@ -1075,7 +955,7 @@ mod result_tests {
     }
     #[tokio::test]
     async fn review_regression_step_results_never_borrow_another_steps_facts() {
-        let server = crate::test_support::Server::new().await;
+        let server = crate::protocol_test_support::Server::new().await;
         let spec = {
             let mut data = server.data.lock().unwrap();
             data.software(2, false);

@@ -22,7 +22,8 @@ fn pin(path: &Path) -> Result<SoftwareMaterial, Error> {
     }
     let digest: [u8; 32] = hash.finalize().into();
     let reference = artifact(&digest)?;
-    execution_runner::staging::verify_retained(path, &reference.sha256)?;
+    execution_runner::staging::verify_retained(path, &reference.sha256)
+        .map_err(crate::error::app_error)?;
     Ok(SoftwareMaterial {
         path: path.to_str().ok_or(Error::Configuration)?.into(),
         artifact: reference,
@@ -89,7 +90,8 @@ fn command(
         std::io::Cursor::new(&bytes),
         &content_ref.sha256,
         bytes.len() as u64,
-    )?;
+    )
+    .map_err(crate::error::app_error)?;
     let invocation = SoftwareInvocation {
         launch: LaunchSpec {
             artifact: content_ref,
@@ -179,7 +181,7 @@ pub(super) fn compile(
     architecture: &PackageValue,
 ) -> Result<(SoftwareProgramStep, SoftwareStepArtifacts), Error> {
     let action = &step.action;
-    let commands = agent_client::software_commands(action)?;
+    let commands = crate::backend::commands::software_commands(action)?;
     if let wire::SoftwareTaskBehavior::Exe(exe) = &action.behavior {
         if intent != SoftwareOperation::Detect {
             let key = if intent == SoftwareOperation::Uninstall {
@@ -215,7 +217,8 @@ pub(super) fn compile(
             file.reader()?,
             &reference.sha256,
             declared.length,
-        )?;
+        )
+        .map_err(crate::error::app_error)?;
         let key = declared
             .key
             .strip_prefix(&format!("{index}/"))
@@ -272,7 +275,8 @@ pub(super) fn compile(
                     std::io::Cursor::new(script),
                     &reference.sha256,
                     script.len() as u64,
-                )?;
+                )
+                .map_err(crate::error::app_error)?;
                 tools.insert(
                     "authenticode".into(),
                     SoftwareMaterial {

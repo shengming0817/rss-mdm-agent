@@ -1,4 +1,4 @@
-use super::SystemClock;
+use crate::SystemClock;
 use execution_admission::{
     AuthorityFacts, AuthorityVerifier, Rule, RuleEffect, SubjectFacts, VerificationError,
 };
@@ -11,12 +11,12 @@ use execution_contract::*;
 use execution_runner::MaterialRegistry;
 use std::sync::{Arc, Mutex};
 
-pub(super) struct BackendPermit {
+pub(crate) struct BackendPermit {
     pub plan: FrozenExecution,
     pub start: agent_client::Start,
 }
 #[derive(Clone)]
-pub(super) struct EnterpriseHost {
+pub(crate) struct EnterpriseHost {
     pub binding: ServiceBinding,
     pub actor: ActorId,
     pub clock: SystemClock,

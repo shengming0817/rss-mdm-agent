@@ -113,6 +113,8 @@ pub struct Data {
     pub cancellations: Vec<TaskCancellation>,
     pub result_hook: Option<Arc<dyn Fn() + Send + Sync>>,
     pub claim_failure: bool,
+    pub claim_pause: Option<Arc<tokio::sync::Notify>>,
+    pub claim_waiting: bool,
     pub explicit_offers: bool,
     pub claim_ops: Vec<String>,
     pub claim_inputs: Vec<Value>,
@@ -286,6 +288,8 @@ impl Server {
             cancellations: Vec::new(),
             result_hook: None,
             claim_failure: false,
+            claim_pause: None,
+            claim_waiting: false,
             explicit_offers: false,
             claim_ops: vec![],
             claim_inputs: vec![],
@@ -361,6 +365,18 @@ async fn handler(
     headers: HeaderMap,
     bytes: Bytes,
 ) -> Response {
+    let pause = {
+        let mut d = data.lock().unwrap();
+        if uri.path().ends_with("/claim") && d.claim_pause.is_some() {
+            d.claim_waiting = true;
+            d.claim_pause.clone()
+        } else {
+            None
+        }
+    };
+    if let Some(pause) = pause {
+        pause.notified().await;
+    }
     let mut d = data.lock().unwrap();
     let path = uri.path();
     if path != "/api/agent/v5/registrations"
@@ -595,8 +611,6 @@ fn content_response(d: &mut Data, headers: HeaderMap) -> Response {
         .body(Body::from(d.bytes[start..].to_vec()))
         .unwrap()
 }
-
-pub mod execution;
 
 pub fn collections() -> Vec<agent_client::wire::CollectionDefinition> {
     let fields:Vec<_>=["device.model","device.os.version"].into_iter().map(|key|json!({

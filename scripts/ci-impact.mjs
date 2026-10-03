@@ -88,6 +88,8 @@ export const sourceEdges = [
   [npm("ai-client"), npm("ai-host-app")],
 ];
 export const testOwners = [
+  ["tests/agent-protocol", "agent-client"],
+  ["tests/agent-protocol", "agent-service"],
   ["scripts/service/execution-macos.py", "agent-service"],
   ["scripts/service/verify-execution-macos.py", "agent-service"],
   ["scripts/service/verify-execution-macos.test.py", "agent-service"],

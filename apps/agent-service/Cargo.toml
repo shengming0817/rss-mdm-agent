@@ -29,6 +29,7 @@ native-process = { path = "../../crates/native-process" }
 installation-security = { path = "../../crates/installation-security" }
 serde.workspace = true
 serde_json.workspace = true
+serde_json_canonicalizer.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
 url.workspace = true
@@ -50,6 +51,7 @@ plist = "=1.10.1"
 libc = "=0.2.189"
 
 [dev-dependencies]
+reqwest = { version = "=0.13.5", default-features = false, features = ["rustls", "json"] }
 axum = "=0.8.9"
 ring = "=0.17.14"
 rusqlite.workspace = true

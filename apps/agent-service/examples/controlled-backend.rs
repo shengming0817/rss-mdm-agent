@@ -1,6 +1,6 @@
 //! Controlled signed protocol participant for the installed-service macOS acceptance harness.
 //! Only test targets include this fixture; it is never a production transport mode.
-#[path = "../../../crates/agent-client/tests/support/mod.rs"]
+#[path = "../../../tests/agent-protocol/mod.rs"]
 mod protocol;
 use agent_client::wire;
 use base64::Engine;

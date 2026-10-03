@@ -64,10 +64,25 @@ impl Materials {
     pub fn files(&self) -> &[ContentFile] {
         &self.files
     }
-    pub(crate) fn validate(&self, offer: &Offer) -> Result<(), Error> {
+    /// Reverify all materials against one exact original Offer.
+    pub fn validate_offer(&self, offer: &Offer) -> Result<(), Error> {
         if self.task != offer.task_id()
             || self.attempt != offer.attempt_id()
             || self.input != encode(offer.payload())?
+        {
+            return Err(Error::Untrusted);
+        }
+        for file in &self.files {
+            file.verify()?;
+        }
+        Ok(())
+    }
+    /// Reverify the original material payload against a verified Start without exposing fields.
+    pub fn validate_start(&self, start: &crate::Start) -> Result<(), Error> {
+        let original: wire::TaskPayload = crate::store::decode(&self.input)?;
+        if self.task != start.payload().task_id()
+            || self.attempt != start.payload().attempt_id()
+            || !crate::client::same_input(&original, start.payload())
         {
             return Err(Error::Untrusted);
         }

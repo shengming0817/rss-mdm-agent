@@ -93,7 +93,7 @@ impl Deployment {
         {
             return Err(Error::Configuration);
         }
-        value.clients.validate()?;
+        value.clients.validate().map_err(crate::error::app_error)?;
         value
             .service
             .verify(&value.service.path)
@@ -117,21 +117,26 @@ impl Deployment {
         self.service
             .verify(&std::env::current_exe()?)
             .map_err(|_| Error::Identity)?;
-        let subject = current_subject()?;
+        let subject = current_subject().map_err(crate::error::app_error)?;
         let root = self
             .helper_work_roots
             .get(&subject)
             .ok_or(Error::Identity)?
             .clone();
-        Ok(execution_runner::helper::Helper::new(
+        execution_runner::helper::Helper::new(
             self.server_policy(),
             root,
             self.execution.processes,
-            crate::plan::storage_limits().input,
-        )?)
+            crate::backend::plan::storage_limits().input,
+        )
+        .map_err(crate::error::app_error)
     }
     fn require_service(&self) -> Result<(), Error> {
-        if !self.server_policy().subjects.contains(&current_subject()?) {
+        if !self
+            .server_policy()
+            .subjects
+            .contains(&current_subject().map_err(crate::error::app_error)?)
+        {
             return Err(Error::Identity);
         }
         self.service
@@ -248,7 +253,8 @@ impl Deployment {
         for path in [&communication, &secrets, &self.execution.work_root] {
             platform_private_storage::directory(path)?;
         }
-        execution_runner::staging::initialize(&self.execution.material_root)?;
+        execution_runner::staging::initialize(&self.execution.material_root)
+            .map_err(crate::error::app_error)?;
         let secrets = DeviceSecrets::open(&secrets, &namespace)?;
         secrets.bind_storage(&self.state_root)?;
         secrets.import_enrollment("enrollment", password)?;
@@ -313,11 +319,11 @@ impl Deployment {
         let registration =
             agent_client::inspect_registration(&self.state_root.join("communication"), &network)?;
         let (binding, _) =
-            crate::plan::context(network.origin.as_str(), network.tenant, &registration)?;
+            crate::backend::plan::context(network.origin.as_str(), network.tenant, &registration)?;
         execution_sqlite::Store::validate_existing(
             &self.state_root.join("execution.sqlite"),
             &binding.authority,
-            crate::plan::storage_limits(),
+            crate::backend::plan::storage_limits(),
         )
         .map_err(|_| Error::Storage)?;
         platform_private_storage::validate(&self.execution.work_root)?;
