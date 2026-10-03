@@ -2,7 +2,9 @@
 
 组合能力、授权、批准、生命周期与应用拥有的原子 JournalPort，桌面和 AI 共用此服务。SQLite 实现该端口；应用接收已打开的 journal，生产开库由 agent-service 组合根负责。应用由设备 owner 持有，窗口与模型只持请求/响应；切换用户不重绑定已冻结任务。
 
-当前显式使用 Test authority 和测试 runner，不执行真实脚本或安装。测试 runner 丢失内存历史后保留 Unknown，不根据计划合成成功。生产身份与真实效果须由平台 owner 接线验证。
+默认公共面供生产装配消费；确定性测试 runner 和 fixture 配置仅通过非默认 `test-support` 提供。测试与生产使用同一应用和规则核心，测试 runner 丢失内存历史后保留 Unknown，不根据计划合成成功。生产身份和真实 runner 由 agent-service 与平台 adapter 装配；即使测试支持被显式启用，生产启动仍在接触存储前拒绝 Test authority 和非 Real runner。
+
+测试消费者在 dev 依赖中显式开启支持；`cargo test --workspace --locked` 保留现有测试。生成测试 fixture 时使用 `cargo run --locked -p execution-app --example task-details-fixtures --features test-support`。Cargo 会合并 feature，测试或 example 构建不证明生产依赖未启用测试支持；生产构建使用默认 feature，由现有边界检查核验实际 normal/build 依赖闭包。
 
 提交重放保持原请求及冻结内容；显式新尝试才重新准入和消费批准。提交或回答响应丢失时保留原命令，内容改变不能复用键。核实不派发，取消不证明停止或回滚；停止请求失败仍需观察终止和效果。
 
