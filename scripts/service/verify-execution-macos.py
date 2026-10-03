@@ -255,24 +255,14 @@ def native_offer_security(probe, matrix, query, command, package, receipt, compl
         while query()['available']:
             assert time.monotonic()<deadline, 'previous unselected catalog offer did not withdraw'
             time.sleep(.1)
-    import zipfile
-    counter=protected/'security-replay-count'
-    assert not counter.exists(), 'replay effect must begin absent'
-    entries={
-        'install.sh': ('#!/bin/sh\nset -eu\numask 022\nprintf x >> '+shlex.quote(str(counter))+"\nprintf '{\"fixture\":\"replay\"}\\n'\n").encode(),
-        'detect.sh': ('#!/bin/sh\nif [ -e '+shlex.quote(str(counter))+" ]; then printf '{\"kind\":\"present\",\"version\":\"1.0\"}\\n'; else printf '{\"kind\":\"absent\"}\\n'; fi\n").encode(),
-    }
-    manifest=dict(schema=1,platform='macos',architecture='aarch64',entries={name:
-        dict(length=len(body),sha256=list(hashlib.sha256(body).digest())) for name,body in entries.items()})
-    archive=Path(package).parent/'security-replay.zip'
-    with zipfile.ZipFile(archive,'w',compression=zipfile.ZIP_STORED) as bundle:
-        for name,body in entries.items():
-            info=zipfile.ZipInfo(name);info.external_attr=(stat.S_IFREG|0o600)<<16
-            bundle.writestr(info,body)
-        bundle.writestr('manifest.json',json.dumps(manifest))
-    task = command('bundle', path=str(archive), manifest=manifest)
-    offer = await_offer(query, task['task'])
+    offer = matrix.pop('replayOffer')
     request = offer_request(offer)
+    task=dict(task=offer['task'],attempt=offer['attempt'])
+    original=[r for r in query()['value']['items'] if r['action']['initiator'].get('attempt')==task['attempt']]
+    assert len(original)==1 and original[0]['status']['attempts']==1
+    payload_file=protected/'package-payload/fixed.txt'
+    before=dict(effect=effect(),bytes=payload_file.read_bytes(),mtime=payload_file.stat().st_mtime_ns)
+    assert before['effect']['receiptPresent'] and before['effect']['payloadMatches']
     baseline = command('status')['startRequests']
     tampered=[]
     for field, replacement in [('request', 'foreign-request'), ('attempt', str(uuid.uuid4())), ('revision', 'a'*64)]:
@@ -281,17 +271,19 @@ def native_offer_security(probe, matrix, query, command, package, receipt, compl
         tampered.append(dict(field=field,response=response))
     assert command('status')['startRequests'] == baseline
     security_result(matrix, 'offer_tamper', dict(offer=offer, startRequests=baseline,rejections=tampered))
-    # Exact replay before dispatch is consumed is admitted idempotently; observe both native replies.
-    first = probe.request(request); assert_native_reply(first, 'queued')
+    # Replay the signed offer consumed by the actual journey; retain its original facts.
+    first = probe.request(request); assert_native_reply(first, 'pending')
     second = probe.request(request)
     assert second.get('transport')=='reply' and second.get('peerUid')==0
     assert second.get('envelope',{}).get('reply',{}).get('kind') in ('queued','pending','status')
     remote = completed(task['attempt'], 90)
     matching = [r for r in query()['value']['items'] if r['action']['initiator'].get('attempt') == task['attempt']]
     assert len(matching) == 1 and matching[0]['status']['attempts'] == 1
-    assert remote['startRequests'] == baseline+1
-    outcome=dict(counter=counter.read_text(),exactlyOnce=counter.read_text()=='x')
-    assert outcome['exactlyOnce']
+    assert remote['startRequests'] == baseline
+    assert matching == original, 'replay changed the original execution facts'
+    outcome=effect()
+    assert outcome==before['effect'] and payload_file.read_bytes()==before['bytes']
+    assert payload_file.stat().st_mtime_ns==before['mtime'], 'replay rewrote the device effect'
     security_result(matrix, 'offer_replay', dict(first=first, second=second, record=matching[0],
         backend=remote, effect=outcome))
     expiring = command('package', path=str(package), receipt=receipt, user=True, validitySeconds=6)
@@ -1370,6 +1362,7 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
             run('/usr/bin/pkgbuild', '--root', str(payload), '--identifier', package_receipt,
                 '--version', '1.0', '--install-location', str(protected / 'package-payload'), str(pkg))
             offered = command('package', path=str(pkg), receipt=package_receipt, user=True)
+            if native_probe: receipt['security']['replayOffer']=await_offer(query,offered['task'])
             print(json.dumps({'kind': 'desktopService', 'desktop': str(protected / 'rss-mdm-desktop'),
                 'service': receipt['artifact'], 'config': str(default_config), 'task': offered, 'journalOwner': 'agent-service'}), flush=True)
             def effect():
@@ -1467,7 +1460,11 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
             assert not (protected/'contained-package-payload/fixed.txt').exists()
             assert subprocess.run(['/usr/sbin/pkgutil','--pkg-info-plist',contained_receipt],capture_output=True).returncode != 0
             receipt['scenarios']['dmg_contained_pkg_unsigned_rejected'] = pkg_remote
-        third = command('package', path=str(pkg), receipt=package_receipt)
+        third = command('package', path=str(pkg), receipt=package_receipt, user=bool(native_probe))
+        if native_probe:
+            offer=await_offer(query,third['task'])
+            receipt['security']['replayOffer']=offer
+            assert_native_reply(native_probe.request(offer_request(offer)), 'queued')
         package = completed(third['attempt'], 60)
         event = acknowledged_result(package, third['attempt'])
         assert event['kind'] == 'software_result' and len(event['steps']) == 1
