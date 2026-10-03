@@ -3,7 +3,7 @@ use super::*;
 use crate::software_worker::{WorkerOperation as O, WorkerRequest};
 use std::{io::Read, path::Path};
 
-fn pin(path: &Path) -> Result<SoftwareMaterial, Error> {
+pub(super) fn pin(path: &Path) -> Result<SoftwareMaterial, Error> {
     installation_security::protected(path).map_err(|_| Error::Untrusted)?;
     let file = std::fs::File::open(path)?;
     if file.metadata()?.len() > 256 * 1024 * 1024 {
@@ -182,7 +182,7 @@ pub(super) fn compile(
     ),
     helper: Option<Arc<execution_ipc::helper::Connection>>,
     intent: SoftwareOperation,
-    architecture: &PackageValue,
+    (architecture, image): (&PackageValue, SoftwareMaterial),
 ) -> Result<(SoftwareProgramStep, SoftwareStepArtifacts), Error> {
     let action = &step.action;
     let commands = crate::backend::commands::software_commands(action)?;
@@ -232,7 +232,6 @@ pub(super) fn compile(
             .to_owned();
         compiler.files.insert(key, (path, reference));
     }
-    let image = pin(&std::env::current_exe()?)?;
     let mut tools = BTreeMap::new();
     match &action.behavior {
         wire::SoftwareTaskBehavior::Dmg(d) => {
@@ -412,11 +411,16 @@ pub(super) fn compile(
         command(compiler, request, invocation, &image)
     };
     let (install, install_source) = build(&mut compiler, O::Install, commands.install)?;
-    let (update, update_source) = build(
-        &mut compiler,
-        O::Upgrade,
-        commands.upgrade.unwrap_or(commands.install),
-    )?;
+    // Only InPlace freezes an upgrade invocation. Never publish an unjournaled input.
+    let update = if commands.upgrade_policy == wire::SoftwareTaskUpgrade::InPlace {
+        Some(build(
+            &mut compiler,
+            O::Upgrade,
+            commands.upgrade.unwrap_or(commands.install),
+        )?)
+    } else {
+        None
+    };
     let removal = commands
         .uninstall
         .map(|c| build(&mut compiler, O::Uninstall, c))
@@ -464,7 +468,9 @@ pub(super) fn compile(
     match intent {
         SoftwareOperation::Install => {
             mutations.insert(SoftwarePhase::Mutation, Box::new(install_source));
-            mutations.insert(SoftwarePhase::Upgrade, Box::new(update_source));
+            if let Some((_, source)) = &update {
+                mutations.insert(SoftwarePhase::Upgrade, Box::new(source.clone()));
+            }
             if commands.upgrade_policy == wire::SoftwareTaskUpgrade::UninstallThenInstall {
                 let c = commands.uninstall.ok_or(Error::Unsupported)?;
                 let (removal, source) = build(&mut compiler, O::RemovePrevious, c)?;
@@ -565,7 +571,7 @@ pub(super) fn compile(
             detection,
             upgrade: match commands.upgrade_policy {
                 wire::SoftwareTaskUpgrade::InPlace => SoftwareUpgrade::InPlace {
-                    invocation: Box::new(update),
+                    invocation: Box::new(update.ok_or(Error::Protocol)?.0),
                 },
                 wire::SoftwareTaskUpgrade::UninstallThenInstall => {
                     SoftwareUpgrade::UninstallThenInstall {}
@@ -584,4 +590,231 @@ pub(super) fn compile(
                 .collect(),
         },
     ))
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod gc_tests {
+    use super::*;
+    use crate::{backend::test_support::local, protocol_test_support as protocol};
+    use agent_client::OpenMode;
+    use execution_app::{AppConfig, ExecutionApp, RequestContext};
+    use std::collections::BTreeSet;
+
+    #[tokio::test]
+    async fn native_compiler_reclaims_all_frozen_inputs_across_intents_and_upgrade_strategies() {
+        let db = local::Database::new();
+        let root_path = db.path.parent().unwrap().join("materials");
+        platform_private_storage::directory(&root_path).unwrap();
+        let journal = execution_sqlite::Store::initialize_test(
+            &db.path,
+            local::plan().spec().request.authority.clone(),
+            plan::storage_limits(),
+        )
+        .unwrap();
+        let mut root = execution_runner::staging::MaterialRoot::open_fixture(
+            &root_path,
+            &Digest::new("a".repeat(64)).unwrap(),
+            &db.path,
+        )
+        .unwrap();
+        let config = ExecutionConfig {
+            work_root: db.path.parent().unwrap().into(),
+            material_root: root_path,
+            interpreters: vec![],
+            managers: vec![],
+            processes: 1,
+        };
+        let mut app = None;
+        let mut journal = Some(journal);
+        let consumer = id("native-gc-results").unwrap();
+        // Real native input compilation, material publication and SQLite; no native worker
+        // is dispatched. /bin/sh is a protected image fixture, not a worker execution proof.
+        for (index, (intent, policy)) in [
+            (SoftwareOperation::Detect, wire::SoftwareTaskUpgrade::Deny),
+            (SoftwareOperation::Detect, wire::SoftwareTaskUpgrade::Deny),
+            (
+                SoftwareOperation::Uninstall,
+                wire::SoftwareTaskUpgrade::Deny,
+            ),
+            (
+                SoftwareOperation::Install,
+                wire::SoftwareTaskUpgrade::UninstallThenInstall,
+            ),
+            (
+                SoftwareOperation::Detect,
+                wire::SoftwareTaskUpgrade::InPlace,
+            ),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let server = protocol::Server::new().await;
+            let cache = protocol::Root::new();
+            let mut client = server.client(&cache, OpenMode::Create);
+            server.register(&mut client).await;
+            {
+                let mut data = server.data.lock().unwrap();
+                data.software(1, false);
+                let wire::TaskPayload::Software(mut payload) =
+                    data.offer.as_ref().unwrap().payload.clone()
+                else {
+                    panic!("software")
+                };
+                let wire::SoftwareTaskBehavior::Pkg(pkg) = &payload.steps[0].action.behavior else {
+                    panic!("pkg")
+                };
+                payload.steps[0].action.behavior =
+                    wire::SoftwareTaskBehavior::Dmg(wire::SoftwareTaskDmg {
+                        image: "package".into(),
+                        volume: "GC fixture".into(),
+                        scope: wire::SoftwareTaskScope::System,
+                        invocation: pkg.install.clone(),
+                        upgrade: policy,
+                        payload: wire::SoftwareTaskDmgPayload::AppCopy {
+                            application: wire::SoftwareTaskMacApplication {
+                                path: "Example.app".into(),
+                                bundle_id: "example.gc".into(),
+                                version: "1.0".into(),
+                                target_name: "Example.app".into(),
+                            },
+                            uninstall: true,
+                        },
+                    });
+                payload.intent = match intent {
+                    SoftwareOperation::Detect => wire::SoftwareTaskIntent::Detect,
+                    SoftwareOperation::Uninstall => wire::SoftwareTaskIntent::Uninstall,
+                    SoftwareOperation::Install => wire::SoftwareTaskIntent::Install,
+                };
+                use sha2::{Digest as _, Sha256};
+                payload.definition_digest =
+                    Sha256::digest(serde_json::to_vec(&payload.steps).unwrap()).into();
+                data.offer = Some(data.signed(wire::TaskPayload::Software(payload)));
+            }
+            let offer = client.claim().await.unwrap().offer.unwrap();
+            let materials = client.prepare(&offer).await.unwrap();
+            let wire::TaskPayload::Software(payload) = offer.payload() else {
+                panic!("software")
+            };
+            let (step, _) = compile(
+                (&payload.steps[0], 0),
+                payload,
+                &materials,
+                (&config, &mut root),
+                None,
+                intent,
+                (
+                    &package("aarch64").unwrap(),
+                    pin(Path::new("/bin/sh")).unwrap(),
+                ),
+            )
+            .unwrap();
+            let mut spec = local::plan().spec().clone();
+            spec.request.request_id = RequestId::new(format!("native-gc-{index}")).unwrap();
+            spec.request.target.platform = Platform::Macos;
+            spec.request.target.scope = TargetScope::Device {};
+            spec.request.operation.action = id(match intent {
+                SoftwareOperation::Detect => "software.detect",
+                SoftwareOperation::Install => "software.install",
+                SoftwareOperation::Uninstall => "software.uninstall",
+            })
+            .unwrap();
+            spec.request.parameters.clear();
+            spec.run_as = RunAs::System {
+                platform: Platform::Macos,
+            };
+            spec.session_requirement = SessionRequirement::NotRequired {};
+            spec.launch = step.install.launch.clone();
+            spec.launch.interpreter.profile = reference("native-software-sequence", "1").unwrap();
+            spec.execution = ExecutionSpec::SoftwareProgram {
+                program: Box::new(SoftwareProgram {
+                    definition_digest: Digest::new(hex(&payload.definition_digest)).unwrap(),
+                    intent,
+                    steps: vec![step],
+                }),
+            };
+            let input = FrozenExecution::freeze(spec, &plan::storage_limits().input).unwrap();
+            if app.is_none() {
+                let mut host = local::TestHost::new();
+                host.template = input.clone();
+                host.state.lock().unwrap().allow = false;
+                let runner = execution_app::DeterministicTestRunner::new(
+                    id("no-native-dispatch").unwrap(),
+                    execution_app::TestScenario::Wait,
+                    8,
+                )
+                .unwrap();
+                app = Some(
+                    ExecutionApp::new(
+                        journal.take().unwrap(),
+                        host,
+                        runner,
+                        AppConfig::test_defaults(1),
+                    )
+                    .unwrap(),
+                );
+            }
+            let app = app.as_mut().unwrap();
+            let caller = RequestContext {
+                actor: input.spec().request.actor.clone(),
+            };
+            let _ = app.request_execution(&caller, &input); // Registers before capability/admission checks.
+            let status = app
+                .cancel(&caller, &input.spec().request.request_id)
+                .unwrap();
+            assert!(crate::backend::settled(&status));
+            assert_eq!(status.attempts, 0);
+            let original = app
+                .service_frozen_input(&input.spec().request.request_id)
+                .unwrap();
+            assert_eq!(original.digest(), input.digest());
+            let refs = crate::recovery::references(&original, &config).unwrap();
+            let mut existing = root.existing_files().unwrap();
+            existing.remove(&config.material_root.join(".owner"));
+            assert!(
+                existing.iter().all(|path| refs.contains_key(path)),
+                "every publication must have original journal proof"
+            );
+            let inputs: Vec<_> = crate::recovery::software_invocations(
+                &original.spec().execution.software_program().unwrap().steps[0],
+            )
+            .collect();
+            let has_upgrade = inputs.iter().any(|c| {
+                let path = config
+                    .material_root
+                    .join("system")
+                    .join(c.launch.artifact.sha256.as_str());
+                serde_json::from_slice::<WorkerRequest>(&std::fs::read(path).unwrap())
+                    .is_ok_and(|r| r.operation == O::Upgrade)
+            });
+            assert_eq!(has_upgrade, policy == wire::SoftwareTaskUpgrade::InPlace);
+            let pending = app
+                .service_delivery(&input.spec().request.request_id, &consumer, 64)
+                .unwrap();
+            assert!(!pending.is_empty());
+            assert_eq!(
+                root.reclaim(&refs, &refs.keys().cloned().collect::<BTreeSet<_>>())
+                    .unwrap()
+                    .files,
+                0
+            );
+            for item in pending {
+                app.service_confirm(
+                    &input.spec().request.request_id,
+                    &consumer,
+                    &item.receipt.event_id,
+                )
+                .unwrap();
+            }
+            assert!(app
+                .service_delivery(&input.spec().request.request_id, &consumer, 1)
+                .unwrap()
+                .is_empty());
+            root.reclaim(&refs, &BTreeSet::new()).unwrap();
+            assert_eq!(
+                root.existing_files().unwrap(),
+                BTreeSet::from([config.material_root.join(".owner")])
+            );
+            assert_eq!(root.reclaim(&refs, &BTreeSet::new()).unwrap().files, 0);
+        }
+    }
 }

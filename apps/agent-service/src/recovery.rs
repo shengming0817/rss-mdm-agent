@@ -204,6 +204,24 @@ pub(crate) fn materials(
     })
 }
 
+/// Every frozen software input, including commands not selected by this intent or state.
+/// Material ownership follows declarations; executable phase selection is a separate concern.
+pub(crate) fn software_invocations(
+    step: &SoftwareProgramStep,
+) -> impl Iterator<Item = &SoftwareInvocation> {
+    std::iter::once(&step.install)
+        .chain(step.auxiliary.values())
+        .chain(step.uninstall.iter())
+        .chain(match &step.upgrade {
+            SoftwareUpgrade::InPlace { invocation } => Some(invocation.as_ref()),
+            _ => None,
+        })
+        .chain(match &step.detection {
+            SoftwareDetector::Script { invocation } => Some(invocation.as_ref()),
+            _ => None,
+        })
+}
+
 /// Pure reference projection of the original frozen input. Never reconnect a helper or
 /// compile a replacement recipe while determining which physical objects must be retained.
 pub(crate) fn references(
@@ -233,44 +251,33 @@ pub(crate) fn references(
     };
     let p = plan.spec();
     if let Some(program) = p.execution.software_program() {
-        for (index, step) in program.steps.iter().enumerate() {
+        for step in &program.steps {
             for material in &step.materials {
                 insert(PathBuf::from(&material.path), &material.artifact.sha256)?;
             }
-            for phase in [
-                SoftwarePhase::Before,
-                SoftwarePhase::After,
-                SoftwarePhase::Mutation,
-                SoftwarePhase::Upgrade,
-                SoftwarePhase::Removal,
-                SoftwarePhase::Attach,
-                SoftwarePhase::Stage,
-                SoftwarePhase::Cleanup,
-            ] {
-                if let Some(invocation) = program.invocation(index, phase) {
-                    let bundle = step.format.bundle().map(|(manifest, _)| manifest);
-                    let member = bundle.and_then(|manifest| {
-                        manifest.entries.iter().find(|(_, member)| {
-                            crate::backend::plan::hex(&member.sha256)
-                                == invocation.launch.artifact.sha256.as_str()
-                        })
-                    });
-                    let path = if let Some((name, _)) = member {
-                        PathBuf::from(&invocation.launch.cwd).join(name)
-                    } else {
-                        content(
-                            config,
-                            &invocation.run_as,
-                            &invocation.launch.artifact.sha256,
-                        )
-                    };
-                    insert(path, &invocation.launch.artifact.sha256)?;
-                    if let Some(manifest) = bundle {
-                        for (name, member) in &manifest.entries {
-                            let digest = Digest::new(crate::backend::plan::hex(&member.sha256))
-                                .map_err(|_| Error::Untrusted)?;
-                            insert(PathBuf::from(&invocation.launch.cwd).join(name), &digest)?;
-                        }
+            for invocation in software_invocations(step) {
+                let bundle = step.format.bundle().map(|(manifest, _)| manifest);
+                let member = bundle.and_then(|manifest| {
+                    manifest.entries.iter().find(|(_, member)| {
+                        crate::backend::plan::hex(&member.sha256)
+                            == invocation.launch.artifact.sha256.as_str()
+                    })
+                });
+                let path = if let Some((name, _)) = member {
+                    PathBuf::from(&invocation.launch.cwd).join(name)
+                } else {
+                    content(
+                        config,
+                        &invocation.run_as,
+                        &invocation.launch.artifact.sha256,
+                    )
+                };
+                insert(path, &invocation.launch.artifact.sha256)?;
+                if let Some(manifest) = bundle {
+                    for (name, member) in &manifest.entries {
+                        let digest = Digest::new(crate::backend::plan::hex(&member.sha256))
+                            .map_err(|_| Error::Untrusted)?;
+                        insert(PathBuf::from(&invocation.launch.cwd).join(name), &digest)?;
                     }
                 }
             }

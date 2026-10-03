@@ -476,11 +476,13 @@ mod path_tests {
             rlim_cur: 0,
             rlim_max: 0,
         };
+        // SAFETY: limit is valid writable storage for the process-local resource query.
         assert_eq!(
             unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) },
             0
         );
         limit.rlim_cur = 256;
+        // SAFETY: this isolated child passes a valid rlimit and lowers only its own soft limit.
         assert_eq!(unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &limit) }, 0);
         let root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join(format!("../../.cache/bounded-fd-{}", std::process::id()));

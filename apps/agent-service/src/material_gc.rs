@@ -83,28 +83,17 @@ impl<S: SecretProvider> DeviceService<S> {
                             .to_owned(),
                     );
                     if let Some(program) = input.spec().execution.software_program() {
-                        for index in 0..program.steps.len() {
-                            for phase in [
-                                execution_contract::SoftwarePhase::Before,
-                                execution_contract::SoftwarePhase::After,
-                                execution_contract::SoftwarePhase::Mutation,
-                                execution_contract::SoftwarePhase::Upgrade,
-                                execution_contract::SoftwarePhase::Removal,
-                                execution_contract::SoftwarePhase::Attach,
-                                execution_contract::SoftwarePhase::Stage,
-                                execution_contract::SoftwarePhase::Cleanup,
-                            ] {
-                                if let Some(invocation) = program.invocation(index, phase) {
-                                    interpreter_digests.insert(
-                                        invocation
-                                            .launch
-                                            .interpreter
-                                            .artifact
-                                            .sha256
-                                            .as_str()
-                                            .to_owned(),
-                                    );
-                                }
+                        for step in &program.steps {
+                            for invocation in crate::recovery::software_invocations(step) {
+                                interpreter_digests.insert(
+                                    invocation
+                                        .launch
+                                        .interpreter
+                                        .artifact
+                                        .sha256
+                                        .as_str()
+                                        .to_owned(),
+                                );
                             }
                         }
                     }
