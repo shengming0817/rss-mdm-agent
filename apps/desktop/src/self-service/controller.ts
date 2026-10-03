@@ -67,6 +67,7 @@ export function createController(
   }
   async function submit(item: BackendTask | null, confirmation: boolean) {
     if (!port || !item || state.busy || state.uncertain) return;
+    state.taskId = item.request;
     state.busy = true;
     state.error = "";
     try {

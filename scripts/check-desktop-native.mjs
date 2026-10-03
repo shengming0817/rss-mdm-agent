@@ -2016,7 +2016,7 @@ try {
     await wait(() => browser.$(".composer textarea").isDisplayed());
     await wait(async () => !(await visibleText("正在读取或切换账户…")));
     await navigate("AI 助手");
-    await text("GOLDEN_INSTALL 安装办公套件");
+    await text("GOLDEN_HELLO 查看办公套件");
     mark("restart Host through settings");
     rememberScopes(await readWorkerScopes(), hostPid());
     await navigate("设置");
@@ -2039,7 +2039,7 @@ try {
     await text("Golden Codex · Codex · 可用");
     mark("restore history and create a new provider session after restart");
     await navigate("AI 助手");
-    await text("GOLDEN_INSTALL 安装办公套件");
+    await text("GOLDEN_HELLO 查看办公套件");
     await browser.$(".conversation-list .new-conversation").click();
     await prompt("GOLDEN_HELLO 重启后新对话");
     await text("完成 HELLO");
@@ -2194,7 +2194,7 @@ try {
     await navigate("设置");
     await text("个人 AI 连接（0）");
     await click("稍后配置，前往 AI");
-    assert.equal(await visibleText("GOLDEN_INSTALL 安装办公套件"), false);
+    assert.equal(await visibleText("GOLDEN_HELLO 查看办公套件"), false);
     await navigate("设置");
     await browser.$('[aria-label="测试用户名"]').setValue("Golden Alice");
     await click("进入");

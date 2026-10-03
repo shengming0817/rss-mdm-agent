@@ -69,6 +69,7 @@ fn main() {
         tauri_build::AppManifest::new().commands(&[
             "self_service_snapshot",
             "self_service_execute",
+            "self_service_confirm",
             "self_service_cancel",
             "execution_task_details",
             "save_connection",

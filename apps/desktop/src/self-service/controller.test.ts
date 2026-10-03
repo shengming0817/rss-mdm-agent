@@ -66,6 +66,24 @@ describe("backend task selection", () => {
     });
     expect(port.execute).not.toHaveBeenCalled();
   });
+  it("recovers a lost AI confirmation reply by querying its original request", async () => {
+    const { c, port, value } = fixture();
+    await c.refresh();
+    const task = value.available[0]!;
+    port.confirm.mockRejectedValueOnce(new Error("reply lost"));
+    await c.confirmPreparation(task);
+    expect(c.state.taskId).toBe(task.request);
+    expect(c.state.uncertain).toBe(true);
+    expect(port.snapshot).toHaveBeenLastCalledWith({
+      after: null,
+      selected: task.request,
+    });
+    value.selected = { kind: "execution", value: executionTask() };
+    await c.refresh();
+    expect(c.state.uncertain).toBe(false);
+    expect(port.confirm).toHaveBeenCalledTimes(1);
+    expect(port.execute).not.toHaveBeenCalled();
+  });
   it("keeps an ambiguous original submission and does not create a replacement", async () => {
     const { c, port, value } = fixture();
     port.execute.mockRejectedValueOnce(new Error("lost reply"));

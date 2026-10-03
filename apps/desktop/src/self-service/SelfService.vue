@@ -281,6 +281,26 @@ function failureLabel(value: string) {
           :key="pending.offer.request"
         >
           <strong>{{ pending.offer.title }}</strong>
+          <template v-if="pending.offer.summary.kind === 'software'">
+            <p>操作：{{ operationLabel(pending.offer.summary.intent) }}</p>
+            <ol>
+              <li
+                v-for="(step, index) in pending.offer.summary.steps"
+                :key="index"
+              >
+                {{ step.package }} {{ step.version }} ·
+                {{ step.identity === "system" ? "系统账号" : "当前用户" }}
+              </li>
+            </ol>
+          </template>
+          <p v-else>
+            后台固定脚本 ·
+            {{
+              pending.offer.summary.identity === "system"
+                ? "系统账号"
+                : "当前用户"
+            }}
+          </p>
           <p v-if="pending.trigger.kind === 'ai'">
             AI 风险：{{ pending.risk?.level ?? "后台未提供" }}
           </p>
