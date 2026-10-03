@@ -1448,6 +1448,14 @@ fn software_application_commits_boundaries_before_ack_and_never_replays_unknown_
     });
     app.reconcile(&plan.spec().request.request_id).unwrap();
     assert!(pending.lock().unwrap().is_none());
+    let persisted_progress = || {
+        let body: Vec<u8> = db
+            .sql()
+            .query_row("SELECT body FROM software_progress", [], |row| row.get(0))
+            .unwrap();
+        serde_json::from_slice::<SoftwareProgress>(&body).unwrap()
+    };
+    let original_progress = persisted_progress();
     let attempt = status.attempt_id.unwrap();
     *live.lock().unwrap() = Some(ProcessEvidence {
         content_digest: plan.digest().clone(),
@@ -1492,21 +1500,24 @@ fn software_application_commits_boundaries_before_ack_and_never_replays_unknown_
         Err(Error::Conflict)
     );
     assert_eq!(pending.lock().unwrap().as_ref(), Some(&requested));
-    assert_eq!(db.count("software_progress"), 0);
+    assert_eq!(db.count("software_progress"), 1);
+    assert_eq!(persisted_progress(), original_progress);
     assert_eq!(db.count("software_claims"), 1);
-    db.sql().execute_batch("DROP TRIGGER fail_progress_write; CREATE TABLE progress_fault(id INTEGER REFERENCES receipts(sequence) DEFERRABLE INITIALLY DEFERRED); CREATE TRIGGER fail_progress_commit AFTER INSERT ON software_progress BEGIN INSERT INTO progress_fault VALUES(-1); END;").unwrap();
+    db.sql().execute_batch("DROP TRIGGER fail_progress_write; CREATE TABLE progress_fault(id INTEGER REFERENCES receipts(sequence) DEFERRABLE INITIALLY DEFERRED); CREATE TRIGGER fail_progress_commit AFTER UPDATE ON software_progress BEGIN INSERT INTO progress_fault VALUES(-1); END;").unwrap();
     assert_eq!(
         app.reconcile(&plan.spec().request.request_id),
         Err(Error::OutcomeUnknown)
     );
     assert_eq!(pending.lock().unwrap().as_ref(), Some(&requested));
-    assert_eq!(db.count("software_progress"), 0);
+    assert_eq!(db.count("software_progress"), 1);
+    assert_eq!(persisted_progress(), original_progress);
     assert_eq!(db.count("software_claims"), 1);
     db.sql()
         .execute_batch("DROP TRIGGER fail_progress_commit")
         .unwrap();
     let boundary = app.reconcile(&plan.spec().request.request_id).unwrap();
     assert!(pending.lock().unwrap().is_none());
+    assert_eq!(persisted_progress(), requested);
     assert!(boundary.assessment.is_none());
     assert!(!boundary
         .evidence
