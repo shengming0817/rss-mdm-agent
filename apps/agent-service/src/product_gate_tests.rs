@@ -22,11 +22,13 @@ impl Case {
         let root = protocol::Root::new();
         let clock = SystemClock::new().unwrap();
         server.time.set(clock.now().unwrap());
-        server.data.lock().unwrap().software(1, true);
+        {
+            let mut data = server.data.lock().unwrap();
+            data.software(1, true);
+            data.explicit_offers = true;
+        }
         let mut client = server.client(&root, OpenMode::Create);
         server.register(&mut client).await;
-        let offer = client.claim().await.unwrap().offer.unwrap();
-        let view = offered(&offer).unwrap();
         drop(client);
         let image = installation_security::Artifact {
             path: "/bin/sh".into(),
@@ -62,7 +64,14 @@ impl Case {
             },
         )
         .unwrap();
-        service.core.available = Some(view.clone());
+        let (_sender, mut commands) = tokio::sync::mpsc::channel(1);
+        service.drive(&mut commands).await.unwrap();
+        let offer = service
+            .client
+            .retained_offer(server.data.lock().unwrap().task)
+            .unwrap();
+        let view = offered(&offer).unwrap();
+        assert!(service.waiting.is_some());
         service.core.available_risk = level.map(|level| {
             TrustedRisk::fixture(
                 &offer,
@@ -122,6 +131,138 @@ impl Case {
             .unwrap()
             .unwrap()
     }
+}
+
+#[tokio::test]
+async fn terminal_waiting_releases_capacity_without_changing_the_original_request() {
+    for cause in 0..4 {
+        let mut c = Case::new(match cause {
+            0 => None,
+            1 => Some(RiskLevel::Three),
+            _ => Some(RiskLevel::Two),
+        })
+        .await;
+        if cause == 2 {
+            c.service.core.available_risk = Some(TrustedRisk::fixture(
+                &c.offer,
+                BackendRiskDecision {
+                    level: RiskLevel::Two,
+                    policy: plan::reference("backend-risk-policy", "1").unwrap(),
+                    expires_at_unix_ms: c.service.core.host.clock.millis().unwrap() - 1,
+                },
+            ));
+        }
+        let ai = c.selection(false);
+        c.service.core.start_task(ai).unwrap();
+        if cause == 3 {
+            c.service
+                .core
+                .transition(
+                    &c.selection.request,
+                    BackendRequestState::Cancelled,
+                    Some(BackendRequestFailure::Interrupted),
+                )
+                .unwrap();
+        }
+        let original = c.record();
+        assert!(matches!(
+            original.state,
+            BackendRequestState::Failed | BackendRequestState::Cancelled
+        ));
+        let (_sender, mut commands) = tokio::sync::mpsc::channel(1);
+        c.service.drive(&mut commands).await.unwrap();
+        assert!(c.service.waiting.is_none());
+        assert!(c.service.core.available.is_none());
+        assert!(c.service.core.available_risk.is_none());
+        assert!(c.service.core.selected.is_none());
+        assert_eq!(c.record(), original);
+        assert!(c.service.client.pending_tasks(64).unwrap().is_empty());
+        assert!(c
+            .service
+            .core
+            .app
+            .service_tasks(None, 64)
+            .unwrap()
+            .items
+            .is_empty());
+        assert!(c._server.data.lock().unwrap().start_ops.is_empty());
+        let replay = c.selection(false);
+        c.service.core.start_task(replay).unwrap();
+        assert_eq!(c.record(), original);
+        assert!(c.service.core.selected.is_none());
+
+        {
+            let mut data = c._server.data.lock().unwrap();
+            data.task = uuid::Uuid::new_v4();
+            data.attempt = uuid::Uuid::new_v4();
+            data.software(1, true);
+        }
+        c.service.next_network = std::time::Instant::now();
+        c.service.drive(&mut commands).await.unwrap();
+        let next = c.service.core.available.as_ref().unwrap().clone();
+        assert_ne!(next.request, original.offer.request);
+        assert!(c.service.waiting.is_some());
+        let mut human = c.selection(true);
+        human.request = next.request;
+        human.task = next.task;
+        human.attempt = next.attempt;
+        human.revision = next.revision;
+        assert!(matches!(
+            c.service.core.start_task(human).unwrap(),
+            Reply::Queued {
+                confirmation_required: false,
+                ..
+            }
+        ));
+        assert_eq!(c.record(), original);
+        assert!(c._server.data.lock().unwrap().start_ops.is_empty());
+    }
+}
+
+#[tokio::test]
+async fn failed_abandonment_retries_the_same_attempt_after_releasing_waiting() {
+    let mut c = Case::new(None).await;
+    let ai = c.selection(false);
+    c.service.core.start_task(ai).unwrap();
+    let original = c.record();
+    c._server.data.lock().unwrap().result_failure = true;
+    let (_sender, mut commands) = tokio::sync::mpsc::channel(1);
+    assert_eq!(
+        c.service.drive(&mut commands).await,
+        Err(Error::Unavailable)
+    );
+    assert!(c.service.waiting.is_none());
+    assert!(c.service.core.available.is_none());
+    assert!(c.service.core.available_risk.is_none());
+    assert!(c.service.core.selected.is_none());
+    assert_eq!(c.record(), original);
+    assert_eq!(
+        c.service.client.pending_tasks(64).unwrap(),
+        vec![c.offer.task_id()]
+    );
+    let results = c._server.data.lock().unwrap().results.clone();
+    assert_eq!(results.len(), 1);
+    assert_eq!(
+        results.values().next().unwrap()["attemptId"],
+        c.offer.attempt_id().to_string()
+    );
+    c.service.next_network = std::time::Instant::now();
+    c.service.drive(&mut commands).await.unwrap();
+    assert!(c.service.client.pending_tasks(64).unwrap().is_empty());
+    assert!(c.service.waiting.is_none());
+    assert_eq!(c.record(), original);
+    assert!(c
+        .service
+        .core
+        .app
+        .service_tasks(None, 64)
+        .unwrap()
+        .items
+        .is_empty());
+    let data = c._server.data.lock().unwrap();
+    assert_eq!(data.result_calls, 2);
+    assert_eq!(data.results, results);
+    assert!(data.start_ops.is_empty());
 }
 
 #[tokio::test]

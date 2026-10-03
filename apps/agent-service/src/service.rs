@@ -196,12 +196,15 @@ impl<S: SecretProvider> DeviceService<S> {
                 .app
                 .backend_request(&self.core.caller(), &request)
                 .map_err(crate::error::app_error)?
-                .is_some_and(|p| p.state == BackendRequestState::Cancelled)
+                .is_some_and(|p| {
+                    matches!(
+                        p.state,
+                        BackendRequestState::Cancelled | BackendRequestState::Failed
+                    )
+                })
             {
                 let task = offer.task_id();
-                self.waiting = None;
-                self.core.available = None;
-                self.core.selected = None;
+                self.release_waiting();
                 self.abandon(task, commands).await?;
             }
         }
@@ -213,6 +216,7 @@ impl<S: SecretProvider> DeviceService<S> {
                     .transition(&request, BackendRequestState::Submitting, None)?;
                 let result = backend::submit(self, offer, materials, selection, commands).await;
                 self.core.available = None;
+                self.core.available_risk = None;
                 if let Err(error) = result {
                     self.core.transition(
                         &request,
@@ -243,9 +247,7 @@ impl<S: SecretProvider> DeviceService<S> {
                     Some(BackendRequestFailure::Expired),
                 )?;
             }
-            self.waiting = None;
-            self.core.available = None;
-            self.core.selected = None;
+            self.release_waiting();
         }
         let pending = self
             .client
@@ -365,9 +367,7 @@ impl<S: SecretProvider> DeviceService<S> {
             } else if self.waiting.as_ref().is_some_and(|(offer, _)| {
                 offer.task_id() == cancel.task_id() && offer.attempt_id() == cancel.attempt_id()
             }) {
-                self.waiting = None;
-                self.core.available = None;
-                self.core.selected = None;
+                self.release_waiting();
                 // Withdrawal has no execution effect; the original request remains queryable.
                 let pending = self.bridge.prepare_abandonment(
                     &mut self.client,
@@ -405,8 +405,15 @@ impl<S: SecretProvider> DeviceService<S> {
             }
             backend::submit(self, offer, materials, None, commands).await?;
             self.core.available = None;
+            self.core.available_risk = None;
         }
         Ok(())
+    }
+    fn release_waiting(&mut self) {
+        self.waiting = None;
+        self.core.available = None;
+        self.core.available_risk = None;
+        self.core.selected = None;
     }
     async fn abandon(
         &mut self,
@@ -483,8 +490,7 @@ impl<S: SecretProvider> DeviceService<S> {
             if let Err(error) = self.core.revoke_preparations() {
                 eprintln!("agent_revoke_preparation: {error}");
             }
-            self.core.available = None;
-            self.core.selected = None;
+            self.release_waiting();
             if let Err(error) = self.core.app.stop_active(128) {
                 eprintln!("agent_revoke_stop: {error}");
             }
