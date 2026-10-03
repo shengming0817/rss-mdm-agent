@@ -5,12 +5,14 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 publish = false
-description = "Deterministic native script compilation into the sole frozen execution plan"
+description = "Pure literal script invocation compilation into the canonical launch description"
 
 [dependencies]
 execution-contract = { path = "../execution-contract" }
-serde_json.workspace = true
 thiserror.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
 
 [lints.clippy]
 cognitive_complexity = "warn"

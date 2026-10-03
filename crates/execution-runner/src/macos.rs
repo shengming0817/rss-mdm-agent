@@ -1,5 +1,6 @@
 use execution_app::Error;
 use execution_contract::*;
+use script_plan::ScriptProfile;
 use std::{
     fs::{File, OpenOptions},
     os::unix::fs::{MetadataExt, OpenOptionsExt},
@@ -122,19 +123,19 @@ pub(crate) fn identity(run_as: &RunAs, session: &SessionRequirement) -> Result<(
     Ok(())
 }
 pub(crate) fn profile(profile: &VersionedRef) -> Result<(), Error> {
-    if profile.revision.as_str() != "1"
-        || ![
-            "native-posix-sh-file",
-            "native-bash-file",
-            "native-osquery-template",
-            "native-software-worker",
-        ]
-        .contains(&profile.id.as_str())
+    if profile.revision.as_str() == "1"
+        && (matches!(
+            ScriptProfile::from_reference(profile),
+            Ok(ScriptProfile::PosixSh | ScriptProfile::Bash)
+        ) || ["native-osquery-template", "native-software-worker"]
+            .contains(&profile.id.as_str()))
     {
-        return Err(Error::Unsupported);
+        Ok(())
+    } else {
+        Err(Error::Unsupported)
     }
-    Ok(())
 }
+
 pub(crate) fn arguments(
     profile: &VersionedRef,
     args: &[String],
@@ -155,15 +156,13 @@ pub(crate) fn arguments(
             Err(Error::Denied)
         };
     }
-    let prefix: &[&str] = match profile.id.as_str() {
-        "native-posix-sh-file" => &[path],
-        "native-bash-file" => &["--noprofile", "--norc", path],
-        _ => return Err(Error::Unsupported),
-    };
-    if args.len() < prefix.len() || !args.iter().zip(prefix).all(|(a, b)| a == b) {
-        return Err(Error::Denied);
+    self::profile(profile)?;
+    let convention = ScriptProfile::from_reference(profile).map_err(|_| Error::Unsupported)?;
+    if convention.matches_materialized_file_argv(args, path) {
+        Ok(())
+    } else {
+        Err(Error::Denied)
     }
-    Ok(())
 }
 pub(crate) struct Owner {
     group: native_process::AttemptGroup,

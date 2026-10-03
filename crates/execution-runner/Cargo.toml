@@ -7,6 +7,7 @@ license.workspace = true
 publish = false
 
 [dependencies]
+script-plan = { path = "../script-plan" }
 rss-mdm-resource = { git = "https://dev.azure.com/shengming0923/rss/_git/rss-mdm", rev = "574d11eec526f31fbc6ccc7a24d5fccddd6df8db", version = "=0.1.0" }
 zip = { version = "=8.6.0", default-features = false, features = ["deflate"] }
 zeroize = "=1.8.2"
@@ -36,7 +37,6 @@ execution-approval = { path = "../execution-approval" }
 execution-capability = { path = "../execution-capability" }
 execution-sqlite = { path = "../execution-sqlite" }
 rusqlite.workspace = true
-script-plan = { path = "../script-plan" }
 
 [build-dependencies]
 cc = "=1.4.5"

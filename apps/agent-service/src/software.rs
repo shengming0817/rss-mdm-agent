@@ -6,6 +6,7 @@ use crate::{
 use agent_client::{wire, Error, Materials, Offer};
 use execution_contract::*;
 use execution_runner::{Artifacts, SoftwareStepArtifacts};
+use script_plan::{compile_invocation, ScriptInvocationInput};
 use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 
 mod native;
@@ -169,25 +170,13 @@ impl Compiler<'_> {
             }
         };
         arguments.extend(command.arguments.clone());
-        let (profile_name, prefix) = match profile {
-            wire::ExecutorProfile::PowerShell7 => (
-                "native-pwsh7-file",
-                vec!["-NoLogo", "-NoProfile", "-NonInteractive", "-File"],
-            ),
-            wire::ExecutorProfile::PosixSh => ("native-posix-sh-file", vec![]),
-            wire::ExecutorProfile::Bash => ("native-bash-file", vec!["--noprofile", "--norc"]),
-            _ => return Err(Error::Unsupported),
-        };
-        let argv = prefix
-            .into_iter()
-            .map(|s| LaunchArg::Literal { value: s.into() })
-            .chain(Some(LaunchArg::ArtifactPath {}))
-            .chain(
-                arguments
-                    .into_iter()
-                    .map(|value| LaunchArg::Literal { value }),
-            )
-            .collect();
+        let launch = script_launch(
+            command,
+            interpreter,
+            content_ref,
+            arguments,
+            self.bundle_root.as_ref().unwrap_or(&work_root),
+        )?;
         let invocation = SoftwareInvocation {
             run_as,
             session_requirement: session,
@@ -197,44 +186,7 @@ impl Compiler<'_> {
                 success: command.exit_codes.success.clone(),
                 reboot: command.exit_codes.reboot.clone(),
             },
-            launch: LaunchSpec {
-                artifact: content_ref,
-                interpreter: InterpreterRef {
-                    profile: reference(profile_name, "1")?,
-                    artifact: ExactArtifactRef {
-                        resource: reference(profile_name, &interpreter.image.sha256)?,
-                        sha256: Digest::new(&interpreter.image.sha256)
-                            .map_err(|_| Error::Configuration)?,
-                    },
-                },
-                argv,
-                artifact_encoding: ArtifactEncoding::Utf8,
-                stdin: StandardInput::Closed {},
-                output: OutputSpec {
-                    format: OutputFormat::Text {},
-                    stdout: TextEncoding::Utf8,
-                    stderr: TextEncoding::Utf8,
-                },
-                cwd: self
-                    .bundle_root
-                    .as_ref()
-                    .unwrap_or(&work_root)
-                    .to_str()
-                    .ok_or(Error::Configuration)?
-                    .into(),
-                env: command
-                    .environment
-                    .iter()
-                    .map(|(key, value)| {
-                        Ok((
-                            EnvironmentKey::new(key).map_err(|_| Error::Protocol)?,
-                            InputValue::Literal {
-                                value: serde_json::Value::String(value.clone()),
-                            },
-                        ))
-                    })
-                    .collect::<Result<_, Error>>()?,
-            },
+            launch,
         };
         Ok((
             invocation,
@@ -249,6 +201,46 @@ impl Compiler<'_> {
             files,
         ))
     }
+}
+// Wire arguments have already been expanded and signed. This conversion has no staging IO.
+fn script_launch(
+    command: &wire::SoftwareTaskInvocation,
+    interpreter: &crate::Interpreter,
+    artifact: ExactArtifactRef,
+    arguments: Vec<String>,
+    cwd: &std::path::Path,
+) -> Result<LaunchSpec, Error> {
+    compile_invocation(
+        ScriptInvocationInput {
+            platform: plan::platform()?,
+            profile: plan::script_profile(interpreter.profile)?,
+            artifact,
+            interpreter: plan::script_interpreter(interpreter)?,
+            arguments,
+            artifact_encoding: ArtifactEncoding::Utf8,
+            stdin: StandardInput::Closed {},
+            output: OutputSpec {
+                format: OutputFormat::Text {},
+                stdout: TextEncoding::Utf8,
+                stderr: TextEncoding::Utf8,
+            },
+            cwd: cwd.to_str().ok_or(Error::Configuration)?.into(),
+            env: command
+                .environment
+                .iter()
+                .map(|(key, value)| {
+                    Ok((
+                        EnvironmentKey::new(key).map_err(|_| Error::Protocol)?,
+                        InputValue::Literal {
+                            value: serde_json::Value::String(value.clone()),
+                        },
+                    ))
+                })
+                .collect::<Result<_, Error>>()?,
+        },
+        &plan::storage_limits().input,
+    )
+    .map_err(|_| Error::Unsupported)
 }
 pub(crate) fn compile(
     offer: &Offer,
@@ -748,6 +740,108 @@ pub(crate) fn native_export_name(
 #[cfg(test)]
 mod review_tests {
     use super::*;
+    #[cfg(any(target_os = "macos", windows))]
+    #[test]
+    fn signed_software_and_wrapper_arguments_keep_original_calling_facts() {
+        for (profile, name, prefix) in [
+            (
+                wire::ExecutorProfile::PowerShell7,
+                "native-pwsh7-file",
+                vec!["-NoLogo", "-NoProfile", "-NonInteractive", "-File"],
+            ),
+            (
+                wire::ExecutorProfile::PosixSh,
+                "native-posix-sh-file",
+                vec![],
+            ),
+            (
+                wire::ExecutorProfile::Bash,
+                "native-bash-file",
+                vec!["--noprofile", "--norc"],
+            ),
+        ] {
+            if cfg!(windows) && profile != wire::ExecutorProfile::PowerShell7 {
+                continue;
+            }
+            let interpreter = crate::Interpreter {
+                profile,
+                image: installation_security::Artifact {
+                    path: "host-pinned-interpreter".into(),
+                    sha256: "12".repeat(32),
+                    cdhash: None,
+                },
+            };
+            let command = wire::SoftwareTaskInvocation {
+                run_as: wire::ExecutionIdentity::System,
+                arguments: vec![
+                    "".into(),
+                    "-Name:".into(),
+                    "true".into(),
+                    " a; $(x) ".into(),
+                ],
+                environment: [("RSS_PARAM_VALUE".into(), " literal ; $(x) ".into())].into(),
+                timeout_seconds: 30,
+                output_bytes: 4096,
+                exit_codes: wire::SoftwareTaskExitCodes {
+                    success: [0].into(),
+                    reboot: [3010].into(),
+                },
+            };
+            for wrapper in [false, true] {
+                let mut arguments = if wrapper {
+                    vec![
+                        "/exact/manager".into(),
+                        "/exact/payload".into(),
+                        "package".into(),
+                        "version".into(),
+                    ]
+                } else {
+                    vec![]
+                };
+                arguments.extend(command.arguments.clone());
+                let material = artifact(&[3; 32]).unwrap();
+                let cwd = if cfg!(windows) {
+                    std::path::Path::new(r"C:\work")
+                } else {
+                    std::path::Path::new("/work")
+                };
+                let launch = script_launch(
+                    &command,
+                    &interpreter,
+                    material.clone(),
+                    arguments.clone(),
+                    cwd,
+                )
+                .unwrap();
+                let expected_argv: Vec<_> = prefix
+                    .iter()
+                    .map(|s| LaunchArg::Literal { value: (*s).into() })
+                    .chain(Some(LaunchArg::ArtifactPath {}))
+                    .chain(
+                        arguments
+                            .into_iter()
+                            .map(|value| LaunchArg::Literal { value }),
+                    )
+                    .collect();
+                assert_eq!(launch.argv, expected_argv);
+                assert_eq!(launch.interpreter.profile, reference(name, "1").unwrap());
+                assert_eq!(
+                    launch.interpreter.artifact.resource,
+                    reference(name, &interpreter.image.sha256).unwrap()
+                );
+                assert_eq!(launch.artifact, material);
+                assert_eq!(launch.cwd, cwd.to_str().unwrap());
+                assert_eq!(
+                    launch.env[&EnvironmentKey::new("RSS_PARAM_VALUE").unwrap()],
+                    InputValue::Literal {
+                        value: serde_json::json!(" literal ; $(x) ")
+                    }
+                );
+                assert_eq!(launch.stdin, StandardInput::Closed {});
+                assert_eq!(launch.output.format, OutputFormat::Text {});
+            }
+        }
+    }
     #[test]
     fn review_regression_declared_bundle_entry_determines_its_root() {
         let root = std::env::temp_dir().join("bundle-directory-proof");

@@ -7,6 +7,7 @@ pub(crate) use execution_ipc::windows_identity::{identity, wide};
 use execution_ipc::windows_identity::{nonce, own, raw, security, sid, token_identity, Local};
 pub(crate) use files::*;
 pub(crate) use process::{spawn, Owner};
+use script_plan::ScriptProfile;
 use std::{
     os::windows::{
         ffi::OsStrExt,
@@ -21,18 +22,18 @@ use windows_sys::Win32::{
 };
 pub(crate) fn profile(profile: &VersionedRef) -> Result<(), Error> {
     if profile.revision.as_str() == "1"
-        && [
-            "native-pwsh7-file",
-            "native-osquery-template",
-            "native-software-worker",
-        ]
-        .contains(&profile.id.as_str())
+        && (matches!(
+            ScriptProfile::from_reference(profile),
+            Ok(ScriptProfile::PowerShell7)
+        ) || ["native-osquery-template", "native-software-worker"]
+            .contains(&profile.id.as_str()))
     {
         Ok(())
     } else {
         Err(Error::Unsupported)
     }
 }
+
 pub(crate) fn encoding(_: ArtifactEncoding) -> Result<(), Error> {
     Ok(())
 }
@@ -56,12 +57,11 @@ pub(crate) fn arguments(
             Err(Error::Denied)
         };
     }
-    let prefix: &[&str] = match profile.id.as_str() {
-        "native-pwsh7-file" => &["-NoLogo", "-NoProfile", "-NonInteractive", "-File", path],
-        _ => return Err(Error::Unsupported),
-    };
-    if args.len() < prefix.len() || !args.iter().zip(prefix).all(|(a, b)| a == b) {
-        return Err(Error::Denied);
+    self::profile(profile)?;
+    let convention = ScriptProfile::from_reference(profile).map_err(|_| Error::Unsupported)?;
+    if convention.matches_materialized_file_argv(args, path) {
+        Ok(())
+    } else {
+        Err(Error::Denied)
     }
-    Ok(())
 }

@@ -1,6 +1,7 @@
 use agent_client::{wire, Error, Materials, Offer};
 use execution_contract::*;
 use execution_runner::Artifacts;
+use script_plan::{compile_invocation, ScriptInvocationInput, ScriptProfile};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
@@ -69,6 +70,21 @@ pub(crate) fn context(
         },
         ActorId::new(format!("registration:{}", r.registration_id)).map_err(|_| Error::Protocol)?,
     ))
+}
+pub(crate) fn script_profile(profile: wire::ExecutorProfile) -> Result<ScriptProfile, Error> {
+    match profile {
+        wire::ExecutorProfile::PowerShell7 => Ok(ScriptProfile::PowerShell7),
+        wire::ExecutorProfile::PosixSh => Ok(ScriptProfile::PosixSh),
+        wire::ExecutorProfile::Bash => Ok(ScriptProfile::Bash),
+        wire::ExecutorProfile::Osquery => Err(Error::Unsupported),
+    }
+}
+pub(crate) fn script_interpreter(interpreter: &Interpreter) -> Result<ExactArtifactRef, Error> {
+    let profile = script_profile(interpreter.profile)?.reference();
+    Ok(ExactArtifactRef {
+        resource: reference(profile.id.as_str(), &interpreter.image.sha256)?,
+        sha256: Digest::new(&interpreter.image.sha256).map_err(|_| Error::Configuration)?,
+    })
 }
 /// The service's explicit, bounded storage envelope; not fixture defaults.
 pub fn storage_limits() -> execution_sqlite::Limits {
@@ -183,33 +199,6 @@ pub(crate) fn script(
     } else {
         None
     };
-    let (profile, prefix) = match payload.profile {
-        wire::ExecutorProfile::PowerShell7 => (
-            "native-pwsh7-file",
-            vec!["-NoLogo", "-NoProfile", "-NonInteractive", "-File"],
-        ),
-        wire::ExecutorProfile::PosixSh => ("native-posix-sh-file", vec![]),
-        wire::ExecutorProfile::Bash => ("native-bash-file", vec!["--noprofile", "--norc"]),
-        wire::ExecutorProfile::Osquery => (execution_runner::osquery::PROFILE, vec![]),
-    };
-    let mut argv = prefix
-        .into_iter()
-        .map(|s| LaunchArg::Literal { value: s.into() })
-        .collect::<Vec<_>>();
-    if let Some(args) = query_arguments {
-        argv = args
-            .into_iter()
-            .map(|value| LaunchArg::Literal { value })
-            .collect();
-    } else {
-        argv.push(LaunchArg::ArtifactPath {});
-    }
-    argv.extend(
-        payload
-            .arguments
-            .iter()
-            .map(|s| LaunchArg::Literal { value: s.clone() }),
-    );
     let env = payload
         .environment
         .iter()
@@ -222,6 +211,58 @@ pub(crate) fn script(
             ))
         })
         .collect::<Result<BTreeMap<_, _>, Error>>()?;
+    let output = OutputSpec {
+        format: OutputFormat::Json {
+            max_rows: payload.max_rows,
+        },
+        stdout: TextEncoding::Utf8,
+        stderr: TextEncoding::Utf8,
+    };
+    let cwd = work_root.to_str().ok_or(Error::Configuration)?.into();
+    let launch = if let Some(arguments) = query_arguments {
+        // Osquery retains its template semantics and independent execution validation.
+        LaunchSpec {
+            artifact,
+            interpreter: InterpreterRef {
+                artifact: ExactArtifactRef {
+                    resource: reference(
+                        execution_runner::osquery::PROFILE,
+                        &interpreter.image.sha256,
+                    )?,
+                    sha256: Digest::new(&interpreter.image.sha256)
+                        .map_err(|_| Error::Configuration)?,
+                },
+                profile: reference(execution_runner::osquery::PROFILE, "1")?,
+            },
+            argv: arguments
+                .into_iter()
+                .chain(payload.arguments.iter().cloned())
+                .map(|value| LaunchArg::Literal { value })
+                .collect(),
+            artifact_encoding: ArtifactEncoding::Utf8,
+            stdin: StandardInput::Closed {},
+            output,
+            cwd,
+            env,
+        }
+    } else {
+        compile_invocation(
+            ScriptInvocationInput {
+                platform,
+                profile: script_profile(payload.profile)?,
+                artifact,
+                interpreter: script_interpreter(interpreter)?,
+                arguments: payload.arguments.clone(),
+                artifact_encoding: ArtifactEncoding::Utf8,
+                stdin: StandardInput::Closed {},
+                output,
+                cwd,
+                env,
+            },
+            &storage_limits().input,
+        )
+        .map_err(|_| Error::Unsupported)?
+    };
     let session_requirement = match &run_as {
         RunAs::User { account } => SessionRequirement::ActiveUser {
             account: account.clone(),
@@ -260,29 +301,7 @@ pub(crate) fn script(
                 },
                 parameters,
             },
-            launch: LaunchSpec {
-                artifact,
-                interpreter: InterpreterRef {
-                    artifact: ExactArtifactRef {
-                        resource: reference(profile, &interpreter.image.sha256)?,
-                        sha256: Digest::new(&interpreter.image.sha256)
-                            .map_err(|_| Error::Configuration)?,
-                    },
-                    profile: reference(profile, "1")?,
-                },
-                argv,
-                artifact_encoding: ArtifactEncoding::Utf8,
-                stdin: StandardInput::Closed {},
-                output: OutputSpec {
-                    format: OutputFormat::Json {
-                        max_rows: payload.max_rows,
-                    },
-                    stdout: TextEncoding::Utf8,
-                    stderr: TextEncoding::Utf8,
-                },
-                cwd: work_root.to_str().ok_or(Error::Configuration)?.into(),
-                env,
-            },
+            launch,
             run_as,
             session_requirement,
             constraints: IsolationPolicy::OsIdentity {},

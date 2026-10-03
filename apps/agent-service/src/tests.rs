@@ -66,6 +66,22 @@ async fn signed_start_compiles_exactly_and_never_creates_a_local_enterprise_appr
     server.time.set(clock.now().unwrap());
     let mut client = server.client(&root, OpenMode::Create);
     let receipt = server.register(&mut client).await;
+    {
+        let mut data = server.data.lock().unwrap();
+        data.script();
+        let wire::TaskPayload::Script(mut spec) = data.offer.as_ref().unwrap().payload.clone()
+        else {
+            panic!("script")
+        };
+        spec.arguments = vec![
+            "".into(),
+            "-Name:".into(),
+            "true".into(),
+            " a b; $(x) ".into(),
+        ];
+        spec.environment = [("RSS_PARAM_VALUE".into(), " literal ; $(x) ".into())].into();
+        data.offer = Some(data.signed(wire::TaskPayload::Script(spec)));
+    }
     let offer = client.claim().await.unwrap().offer.unwrap();
     let materials = client.prepare(&offer).await.unwrap();
     let (binding, actor) =
@@ -113,6 +129,28 @@ async fn signed_start_compiles_exactly_and_never_creates_a_local_enterprise_appr
         panic!("script")
     };
     let (frozen, _) = compile(payload).unwrap();
+    // Expected pre-refactor calling fields are explicit; the compiler is the production entry.
+    let expected_argv: Vec<_> = Some(LaunchArg::ArtifactPath {})
+        .into_iter()
+        .chain(payload.arguments.iter().map(|value| LaunchArg::Literal {
+            value: value.clone(),
+        }))
+        .collect();
+    assert_eq!(frozen.spec().launch.argv, expected_argv);
+    assert_eq!(
+        frozen.spec().launch.interpreter.profile,
+        plan::reference("native-posix-sh-file", "1").unwrap()
+    );
+    assert_eq!(
+        frozen.spec().launch.interpreter.artifact.resource,
+        plan::reference("native-posix-sh-file", &interpreters[0].image.sha256).unwrap()
+    );
+    assert_eq!(
+        frozen.spec().launch.env[&EnvironmentKey::new("RSS_PARAM_VALUE").unwrap()],
+        InputValue::Literal {
+            value: serde_json::json!(" literal ; $(x) ")
+        }
+    );
     assert_eq!(frozen.digest(), compile(payload).unwrap().0.digest());
     assert_eq!(frozen.spec().budget.max_attempts, 1);
     *host.current.lock().unwrap() = Some(Arc::new(host::BackendPermit {
