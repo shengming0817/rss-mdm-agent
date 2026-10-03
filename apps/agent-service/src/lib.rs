@@ -105,6 +105,10 @@ impl Clock for SystemClock {
 #[cfg(all(test, target_os = "macos"))]
 mod tests;
 
+#[cfg(all(test, target_os = "macos"))]
+#[path = "../../../crates/agent-client/tests/support/mod.rs"]
+mod protocol_test_support;
+
 mod os_version;
 mod secrets;
 

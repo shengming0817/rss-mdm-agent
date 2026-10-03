@@ -1,7 +1,6 @@
 //! Real HTTP/signatures/SQLite feeding the production compiler; OS execution is separately tested.
-#[path = "../../../crates/agent-client/tests/support/mod.rs"]
-mod protocol;
 use super::*;
+use crate::protocol_test_support as protocol;
 use agent_client::OpenMode;
 use execution_admission::AuthorityVerifier;
 use execution_contract::*;

@@ -41,7 +41,7 @@ impl Store {
         host: &impl JournalHost,
     ) -> Result<Option<BackendRequest>, Error> {
         let tx = self.read(scope, Access::ReadResult, None, host)?;
-        read(&tx, &scope.interaction_subject().as_str(), self.limits)
+        read(&tx, scope.interaction_subject().as_str(), self.limits)
     }
     /// Compare-and-append a preparation transition; it creates no execution attempt or grant.
     pub(crate) fn sql_record_backend_request(

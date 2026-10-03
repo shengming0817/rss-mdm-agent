@@ -1,6 +1,9 @@
 //! Storage-boundary tests only; these hosts do not prove OS identity or execution.
+#[cfg(not(target_os = "macos"))]
 #[path = "../../../crates/execution-app/tests/support/mod.rs"]
 mod support;
+#[cfg(target_os = "macos")]
+use crate::protocol_test_support::execution::local as support;
 use crate::service::{assemble_journal, ProductionStartup};
 use execution_app::*;
 use execution_contract::*;
