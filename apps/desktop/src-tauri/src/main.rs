@@ -124,15 +124,12 @@ fn main() -> std::process::ExitCode {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
     #[cfg(not(feature = "dev-fixture"))]
     if args.len() == 1 && args[0] == "--service-probe" {
-        let status = execution_runner::host::ServiceClient::inspect();
+        let status = execution_ipc::host::ServiceClient::inspect();
         println!(
             "{}",
             serde_json::to_string(&status).expect("closed service projection")
         );
-        return if matches!(
-            status,
-            execution_runner::host::ServiceView::Connected { .. }
-        ) {
+        return if matches!(status, execution_ipc::host::ServiceView::Connected { .. }) {
             std::process::ExitCode::SUCCESS
         } else {
             std::process::ExitCode::FAILURE

@@ -50,7 +50,7 @@ pub fn initialize(root: &Path) -> Result<(), Error> {
 }
 fn require_system() -> Result<(), Error> {
     let expected = if cfg!(windows) { "S-1-5-18" } else { "0" };
-    if crate::host::current_subject()? != expected {
+    if execution_ipc::host::current_subject()? != expected {
         return Err(Error::Denied);
     }
     Ok(())

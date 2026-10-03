@@ -88,6 +88,7 @@ dependencies = [
  "execution-capability",
  "execution-contract",
  "execution-interaction",
+ "execution-ipc",
  "execution-lifecycle",
  "execution-runner",
  "execution-sqlite",
@@ -1155,6 +1156,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "execution-ipc"
+version = "0.1.0"
+dependencies = [
+ "cc",
+ "execution-app",
+ "execution-contract",
+ "installation-security",
+ "libc",
+ "schemars 1.2.2",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "execution-lifecycle"
 version = "0.1.0"
 dependencies = [
@@ -1194,6 +1212,7 @@ dependencies = [
  "execution-approval",
  "execution-capability",
  "execution-contract",
+ "execution-ipc",
  "execution-lifecycle",
  "execution-sqlite",
  "installation-security",
@@ -1203,7 +1222,6 @@ dependencies = [
  "plist",
  "rss-mdm-resource",
  "rusqlite",
- "schemars 1.2.2",
  "script-plan",
  "serde",
  "serde_json",
@@ -3795,9 +3813,9 @@ dependencies = [
  "execution-capability",
  "execution-contract",
  "execution-interaction",
+ "execution-ipc",
  "execution-lifecycle",
  "execution-mcp",
- "execution-runner",
  "execution-sqlite",
  "futures-util",
  "installation-security",

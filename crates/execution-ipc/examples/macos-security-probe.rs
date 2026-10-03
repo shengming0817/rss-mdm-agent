@@ -25,7 +25,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let config: serde_json::Value = serde_json::from_slice(
             &installation_security::read_protected(std::path::Path::new(path))?,
         )?;
-        if config["ipc_version"] != execution_runner::host::IPC_VERSION {
+        if config["ipc_version"] != execution_ipc::host::IPC_VERSION {
             return Err("deployment protocol mismatch".into());
         }
         let service: Artifact = serde_json::from_value(config["service"].clone())?;
@@ -33,8 +33,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(service.requirement()?)
     };
     // Healthy wire comes from the production owner, not a second probe schema.
-    let baseline =
-        execution_runner::host::encode(execution_runner::host::Request::ServiceStatus {})?;
+    let baseline = execution_ipc::host::encode(execution_ipc::host::Request::ServiceStatus {})?;
     // SAFETY: both calls read process/session state without caller-provided pointers.
     let uid = unsafe { libc::geteuid() };
     // SAFETY: native GUI inspection owns its Foundation objects and takes no pointers.
@@ -43,8 +42,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "{}",
         serde_json::json!({
             "ready": true, "uid": uid,
-            "pid": std::process::id(), "session": execution_runner::host::current_session()?,
-            "binding": execution_runner::host::current_session_binding()?,
+            "pid": std::process::id(), "session": execution_ipc::host::current_session()?,
+            "binding": execution_ipc::host::current_session_binding()?,
             "guiActive": gui_active,
             "baseline": serde_json::from_slice::<serde_json::Value>(&baseline)?,
         })

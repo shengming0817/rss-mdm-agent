@@ -46,8 +46,8 @@ fn recipe(
                 .ok_or(Error::Protocol)?
                 .parse::<u32>()
                 .map_err(|_| Error::Protocol)?;
-            let connection = execution_runner::helper::Connection::connect(
-                execution_runner::host::PeerPolicy {
+            let connection = execution_ipc::helper::Connection::connect(
+                execution_ipc::host::PeerPolicy {
                     images: vec![helpers.image.clone()],
                     subjects: vec![account.subject.as_str().into()],
                     interactive: true,

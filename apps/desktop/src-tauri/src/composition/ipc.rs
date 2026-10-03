@@ -231,10 +231,10 @@ pub fn development_assembly() -> &'static str {
     }
 }
 #[tauri::command]
-pub async fn execution_service_status() -> execution_runner::host::ServiceView {
-    tokio::task::spawn_blocking(execution_runner::host::ServiceClient::inspect)
+pub async fn execution_service_status() -> execution_ipc::host::ServiceView {
+    tokio::task::spawn_blocking(execution_ipc::host::ServiceClient::inspect)
         .await
-        .unwrap_or(execution_runner::host::ServiceView::Unavailable)
+        .unwrap_or(execution_ipc::host::ServiceView::Unavailable)
 }
 #[tauri::command]
 pub async fn appearance_snapshot<R: tauri::Runtime>(

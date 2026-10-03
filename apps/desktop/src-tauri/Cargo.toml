@@ -34,7 +34,7 @@ sha2.workspace = true
 constant_time_eq = "=0.4.2"
 execution-contract = { path = "../../../crates/execution-contract" }
 execution-app = { path = "../../../crates/execution-app" }
-execution-runner = { path = "../../../crates/execution-runner" }
+execution-ipc = { path = "../../../crates/execution-ipc" }
 execution-mcp = { path = "../../../crates/execution-mcp" }
 execution-lifecycle = { path = "../../../crates/execution-lifecycle" }
 tokio = { workspace = true, features = ["process", "net", "rt-multi-thread"] }

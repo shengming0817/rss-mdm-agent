@@ -119,7 +119,7 @@ pub struct Artifacts {
     /// Ordered physical recipes for a software program; empty for a single process.
     pub program: Vec<SoftwareStepArtifacts>,
     /// Optional exact user-session mechanism; the system runner retains journal ownership.
-    pub delegate: Option<Arc<crate::helper::Connection>>,
+    pub delegate: Option<Arc<execution_ipc::helper::Connection>>,
     /// Absolute protected interpreter artifact; its exact bytes must match the plan digest.
     pub interpreter: PathBuf,
     /// Absolute protected content artifact, never an arbitrary command or download URL.
@@ -260,7 +260,21 @@ impl Artifacts {
             return Ok(());
         }
         if let Some(delegate) = &self.delegate {
-            return delegate.inspect(plan, self);
+            let context = delegate.context();
+            if !matches!(&plan.spec().run_as, RunAs::User { account } if account.subject.as_str() == context.subject)
+                || !matches!(&plan.spec().session_requirement, SessionRequirement::ActiveUser { session, .. } if session == &context.binding)
+                || self.work_root != context.work_root
+            {
+                return Err(Error::Denied);
+            }
+            return match delegate.exchange(execution_ipc::helper::Command::Inspect {
+                input: Box::new(plan.spec().clone()),
+                interpreter: self.interpreter.clone(),
+                content: self.content.clone(),
+            })? {
+                execution_ipc::helper::Reply::Prepared => Ok(()),
+                _ => Err(Error::InvalidInput),
+            };
         }
         let p = plan.spec();
         super::platform::identity(&p.run_as, &p.session_requirement)?;

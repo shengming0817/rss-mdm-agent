@@ -1,8 +1,14 @@
 //! SCM and per-session helper transport. The transport supplies native facts, never authority.
-use super::*;
 use crate::diagnostics::{record, Stage};
 use crate::host::{self, Handler, Peer};
+use crate::windows_identity::*;
+use execution_app::Error;
+use execution_contract::*;
 use std::os::windows::io::IntoRawHandle;
+use std::{
+    ffi::c_void,
+    ptr::{null, null_mut},
+};
 use std::{
     sync::{
         atomic::{AtomicBool, AtomicPtr, Ordering},
@@ -14,6 +20,7 @@ use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::windows::named_pipe::{ClientOptions, NamedPipeServer},
 };
+use windows_sys::Win32::{Foundation::*, Security::*, System::Threading::*};
 use windows_sys::Win32::{
     Storage::FileSystem::*,
     System::{Console::*, Pipes::*, Services::*},
@@ -211,14 +218,14 @@ fn peer_token(peer: &crate::host::Peer) -> Result<std::os::windows::io::OwnedHan
     own(handle)
 }
 pub(crate) fn session_binding(peer: &crate::host::Peer) -> Result<Id, Error> {
-    super::token_session_binding(raw(&peer_token(peer)?))
+    crate::windows_identity::token_session_binding(raw(&peer_token(peer)?))
 }
 pub(crate) fn authenticate(
     peer: &crate::host::Peer,
     policy: &crate::host::PeerPolicy,
 ) -> Result<String, Error> {
     let token = peer_token(peer)?;
-    let (subject, session) = super::token_subject(raw(&token))?;
+    let (subject, session) = crate::windows_identity::token_subject(raw(&token))?;
     if !policy.subjects.contains(&subject)
         || session != peer.session()
         || (policy.interactive && session == 0)
@@ -551,7 +558,7 @@ fn query_at(
                 return Err(Error::Denied);
             }
             let token = own(handle)?;
-            let (subject, session) = super::token_subject(raw(&token))?;
+            let (subject, session) = crate::windows_identity::token_subject(raw(&token))?;
             if !policy.subjects.contains(&subject)
                 || expected_session.is_some_and(|expected| session != expected)
             {

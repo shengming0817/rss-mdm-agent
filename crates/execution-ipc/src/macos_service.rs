@@ -222,7 +222,7 @@ pub(crate) fn authenticate(peer: &Peer, policy: &PeerPolicy) -> Result<String, E
     let uid = peer.uid().ok_or(Error::Denied)?;
     if !policy.subjects.contains(&uid.to_string())
         || (policy.interactive
-            && (uid == 0 || peer.session() == 0 || !crate::macos::console_user(uid)))
+            && (uid == 0 || peer.session() == 0 || !crate::macos_identity::console_user(uid)))
     {
         return Err(Error::Denied);
     }

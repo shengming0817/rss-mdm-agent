@@ -2,8 +2,8 @@
 use crate::self_service as ui;
 use execution_app::{BackendTaskView, Error, ExecutionStatus, TaskPhase};
 use execution_contract::*;
+use execution_ipc::host::{ClientOrigin, Reply, Request, ServiceClient};
 use execution_mcp as mcp;
-use execution_runner::host::{ClientOrigin, Reply, Request, ServiceClient};
 use std::{
     sync::{Arc, Mutex},
     time::{SystemTime, UNIX_EPOCH},

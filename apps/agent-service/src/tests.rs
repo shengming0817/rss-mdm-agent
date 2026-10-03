@@ -98,7 +98,7 @@ async fn signed_start_compiles_exactly_and_never_creates_a_local_enterprise_appr
         actor: actor.clone(),
         clock,
         materials: execution_runner::MaterialRegistry::new(4).unwrap(),
-        subject: execution_runner::host::current_subject().unwrap(),
+        subject: execution_ipc::host::current_subject().unwrap(),
         current: Arc::new(Mutex::new(None)),
         revoked: Default::default(),
     };

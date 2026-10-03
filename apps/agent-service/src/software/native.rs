@@ -32,11 +32,11 @@ type NativeIdentity = (
     RunAs,
     SessionRequirement,
     PathBuf,
-    Option<Arc<execution_runner::helper::Connection>>,
+    Option<Arc<execution_ipc::helper::Connection>>,
 );
 fn identity(
     config: &ExecutionConfig,
-    helper: Option<&Arc<execution_runner::helper::Connection>>,
+    helper: Option<&Arc<execution_ipc::helper::Connection>>,
     command: &wire::SoftwareTaskInvocation,
 ) -> Result<NativeIdentity, Error> {
     match command.run_as {
@@ -174,7 +174,7 @@ pub(super) fn compile(
     payload: &wire::SoftwareTaskSpec,
     materials: &Materials,
     config: &ExecutionConfig,
-    helper: Option<Arc<execution_runner::helper::Connection>>,
+    helper: Option<Arc<execution_ipc::helper::Connection>>,
     intent: SoftwareOperation,
     architecture: &PackageValue,
 ) -> Result<(SoftwareProgramStep, SoftwareStepArtifacts), Error> {

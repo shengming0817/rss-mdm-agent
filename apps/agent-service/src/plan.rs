@@ -111,7 +111,7 @@ pub(crate) fn script(
     (binding, actor): (&execution_app::ServiceBinding, &ActorId),
     interpreters: &[Interpreter],
     (work_root, content_path): (&Path, &Path),
-    delegate: Option<std::sync::Arc<execution_runner::helper::Connection>>,
+    delegate: Option<std::sync::Arc<execution_ipc::helper::Connection>>,
 ) -> Result<(FrozenExecution, Artifacts), Error> {
     let wire::TaskPayload::Script(original) = offer.payload() else {
         return Err(Error::Unsupported);

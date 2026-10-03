@@ -1,4 +1,4 @@
-use execution_runner::host::*;
+use execution_ipc::host::*;
 fn sample(readiness: Readiness) -> ServiceStatus {
     ServiceStatus {
         build: env!("CARGO_PKG_VERSION").into(),

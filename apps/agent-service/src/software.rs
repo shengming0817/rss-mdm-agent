@@ -42,7 +42,7 @@ type CompiledCommand = (
 );
 struct Compiler<'a> {
     config: &'a ExecutionConfig,
-    helper: Option<Arc<execution_runner::helper::Connection>>,
+    helper: Option<Arc<execution_ipc::helper::Connection>>,
     files: BTreeMap<String, (PathBuf, ExactArtifactRef)>,
     bundle_root: Option<PathBuf>,
 }
@@ -257,7 +257,7 @@ pub(crate) fn compile(
     binding: &execution_app::ServiceBinding,
     actor: &ActorId,
     config: &ExecutionConfig,
-    helper: Option<Arc<execution_runner::helper::Connection>>,
+    helper: Option<Arc<execution_ipc::helper::Connection>>,
 ) -> Result<(FrozenExecution, Artifacts), Error> {
     let wire::TaskPayload::Software(original) = offer.payload() else {
         return Err(Error::Untrusted);

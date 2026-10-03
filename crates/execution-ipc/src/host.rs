@@ -117,7 +117,7 @@ pub fn current_subject() -> Result<String, execution_app::Error> {
     }
     #[cfg(windows)]
     {
-        crate::windows::token_identity().map(|v| v.0)
+        crate::windows_identity::token_identity().map(|v| v.0)
     }
     #[cfg(not(any(target_os = "macos", windows)))]
     {
@@ -137,7 +137,7 @@ pub fn current_session() -> Result<u32, execution_app::Error> {
     }
     #[cfg(windows)]
     {
-        crate::windows::token_identity().map(|v| v.1)
+        crate::windows_identity::token_identity().map(|v| v.1)
     }
     #[cfg(not(any(target_os = "macos", windows)))]
     {
@@ -151,14 +151,14 @@ pub fn current_session_binding() -> Result<Id, execution_app::Error> {
     {
         Id::new(format!(
             "{}/{}",
-            crate::platform::boot_generation()?.as_str(),
+            crate::macos_identity::boot_generation()?.as_str(),
             current_session()?
         ))
         .map_err(|_| execution_app::Error::Unbound)
     }
     #[cfg(windows)]
     {
-        crate::windows::current_session_binding()
+        crate::windows_identity::current_session_binding()
     }
     #[cfg(not(any(target_os = "macos", windows)))]
     {
@@ -195,12 +195,12 @@ pub fn monotonic_millis() -> Result<u64, execution_app::Error> {
 pub fn active_user_session() -> Result<(String, u32), execution_app::Error> {
     #[cfg(target_os = "macos")]
     {
-        let uid = crate::macos::console_account()?;
+        let uid = crate::macos_identity::console_account()?;
         Ok((uid.to_string(), crate::macos_service::helper_session(uid)?))
     }
     #[cfg(windows)]
     {
-        crate::windows::active_user_session()
+        crate::windows_identity::active_user_session()
     }
     #[cfg(not(any(target_os = "macos", windows)))]
     {
@@ -219,7 +219,7 @@ pub fn active_login() -> bool {
     }
     #[cfg(windows)]
     {
-        let Ok((subject, _)) = crate::windows::token_identity() else {
+        let Ok((subject, _)) = crate::windows_identity::token_identity() else {
             return false;
         };
         let Ok(account) = Id::new(subject).map(|subject| execution_contract::OsAccountRef {
@@ -231,7 +231,7 @@ pub fn active_login() -> bool {
         let Ok(session) = current_session_binding() else {
             return false;
         };
-        crate::windows::identity(
+        crate::windows_identity::identity(
             &execution_contract::RunAs::User {
                 account: account.clone(),
             },
@@ -296,14 +296,14 @@ impl Peer {
         {
             Id::new(format!(
                 "{}/{}",
-                crate::platform::boot_generation()?.as_str(),
+                crate::macos_identity::boot_generation()?.as_str(),
                 self.session
             ))
             .map_err(|_| execution_app::Error::Unbound)
         }
         #[cfg(windows)]
         {
-            crate::windows::service::session_binding(self)
+            crate::windows_service::session_binding(self)
         }
         #[cfg(not(any(target_os = "macos", windows)))]
         {
@@ -314,12 +314,12 @@ impl Peer {
 
 /// A live native connection authenticated as the pinned system service. This permits only
 /// delegated process handling; enterprise authorization and the journal remain in that service.
-pub(crate) struct SystemConnection<'a> {
+pub struct SystemConnection<'a> {
     _peer: &'a Peer,
 }
 impl Peer {
     /// Authenticate a system-service call before decoding its delegated process input.
-    pub(crate) fn system_connection<'a>(
+    pub fn system_connection<'a>(
         &'a self,
         policy: &PeerPolicy,
     ) -> Result<SystemConnection<'a>, execution_app::Error> {
@@ -404,7 +404,7 @@ pub enum ClientOrigin {
         tool_call: Id,
     },
 }
-/// Local IPC V6 carries backend task references, never executable plans or authority claims.
+/// Local IPC V7 carries backend task references, never executable plans or authority claims.
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(
     tag = "method",
@@ -600,7 +600,7 @@ impl ServiceClient {
         }
         Ok(Self { server })
     }
-    /// Send a bounded V6 request over a mutually authenticated native connection.
+    /// Send a bounded V7 request over a mutually authenticated native connection.
     /// Transport failure does not mean a submitted selection or cancellation failed.
     pub fn request(&self, request: Request) -> Result<Reply, execution_app::Error> {
         let bytes = encode(request)?;
@@ -633,7 +633,7 @@ pub trait Handler: Send {
     /// Process one bounded request serially; a lost reply does not prove no mutation.
     fn handle(&mut self, peer: &Peer, request: Request) -> Reply;
     /// Native framing seam for the separately authenticated helper protocol. The system
-    /// service uses this default, which accepts only task-reference IPC V6.
+    /// service uses this default, which accepts only task-reference IPC V7.
     fn handle_wire(&mut self, peer: &Peer, bytes: &[u8]) -> Vec<u8> {
         let reply = if bytes.len() > 65536 {
             Reply::Rejected
