@@ -1,3 +1,4 @@
+use crate::delivery::Binding;
 use crate::{
     client::same_input,
     store::{decode, encode, hash},
@@ -8,18 +9,8 @@ use execution_app::{
 };
 use execution_contract::{EventId, FrozenExecution, Id, OutputQuality, ProcessEnd, RequestId};
 use rusqlite::{params, OptionalExtension};
-use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
-#[derive(Serialize, Deserialize)]
-pub(crate) struct Binding {
-    task: Uuid,
-    attempt: Uuid,
-    pub(crate) request: RequestId,
-    digest: execution_contract::Digest,
-    actor: execution_contract::ActorId,
-    local_attempt: Option<execution_contract::AttemptId>,
-}
 /// Frozen result delivery prepared synchronously from the authoritative journal.
 pub struct PendingDelivery {
     task: Uuid,
@@ -55,16 +46,9 @@ pub trait OutputPolicy {
     /// Remove secrets before structured output and diagnostic streams become wire values.
     fn redact(&self, text: &str) -> Result<String, Error>;
 }
-/// Redacts the communication owner's actual credentials while preserving task output.
-/// The secret list is private and never serialized or printed.
-pub struct CredentialRedactor(pub(crate) Vec<wire::Secret>);
-impl OutputPolicy for CredentialRedactor {
+impl OutputPolicy for crate::CredentialRedactor {
     fn redact(&self, text: &str) -> Result<String, Error> {
-        let mut value = text.to_owned();
-        for secret in &self.0 {
-            value = value.replace(secret.expose(), "[redacted]");
-        }
-        Ok(value)
+        self.redact(text)
     }
 }
 /// Concrete bridge into the existing execution service, never a second executor/journal.
@@ -87,7 +71,7 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
         caller: &RequestContext,
         plan: &FrozenExecution,
     ) -> Result<PreparedExecution, Error> {
-        materials.validate(offer)?;
+        materials.validate_offer(offer)?;
         let (device, platform, run_as, timeout, output) = match offer.payload() {
             wire::TaskPayload::Script(v)
                 if matches!(

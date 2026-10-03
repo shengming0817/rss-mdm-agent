@@ -2,6 +2,10 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 mod bridge;
+mod delivery;
+mod redaction;
+pub use delivery::{AbandonmentAck, Association, FrozenAbandonment, FrozenResult, ResultAck};
+pub use redaction::CredentialRedactor;
 mod client;
 mod config;
 mod content;

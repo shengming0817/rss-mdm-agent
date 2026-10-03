@@ -101,6 +101,7 @@ pub struct Client<S, C> {
     pub(crate) secrets: S,
     pub(crate) clock: C,
     profiles: Vec<wire::ExecutorProfile>,
+    pub(crate) delivery_owner: Uuid,
 }
 impl<S: SecretProvider, C: Clock> Client<S, C> {
     /// Set current configured executors for future polls; a pending retry retains its exact input.
@@ -164,7 +165,7 @@ impl<S: SecretProvider, C: Clock> Client<S, C> {
         task: Uuid,
     ) -> Result<Option<execution_contract::RequestId>, Error> {
         self.store
-            .get::<crate::bridge::Binding>(&format!("binding/{task}"))
+            .get::<crate::delivery::Binding>(&format!("binding/{task}"))
             .map(|v| v.map(|b| b.request))
     }
     /// Create or recover exactly one fixed endpoint/tenant communication namespace.
@@ -190,6 +191,7 @@ impl<S: SecretProvider, C: Clock> Client<S, C> {
         }
         let http = builder.build().map_err(|_| Error::Configuration)?;
         Ok(Self {
+            delivery_owner: Uuid::new_v4(),
             store: Store::open(root, config, mode)?,
             http,
             secrets,
@@ -763,7 +765,7 @@ impl<S: SecretProvider, C: Clock> Client<S, C> {
         } else {
             self.verify(&offer.signed, wire::TaskPermit::Offer)?;
         }
-        materials.validate(offer)?;
+        materials.validate_offer(offer)?;
         let received = format!("received/{}/{}", offer.task_id(), offer.attempt_id());
         let ok: bool = self.store.conn.query_row(
             "SELECT EXISTS(SELECT 1 FROM requests WHERE key=?1 AND accepted=1)",
