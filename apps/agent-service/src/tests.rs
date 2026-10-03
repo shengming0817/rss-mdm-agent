@@ -61,6 +61,11 @@ fn production_network_io_progresses_while_the_owner_checks_synchronous_native_fa
 #[tokio::test]
 async fn signed_start_compiles_exactly_and_never_creates_a_local_enterprise_approval() {
     let server = protocol::Server::new().await;
+    let root = protocol::Root::new();
+    let clock = SystemClock::new().unwrap();
+    server.time.set(clock.now().unwrap());
+    let mut client = server.client(&root, OpenMode::Create);
+    let receipt = server.register(&mut client).await;
     {
         let mut data = server.data.lock().unwrap();
         let wire::TaskPayload::Script(mut spec) = data.offer.as_ref().unwrap().payload.clone()
@@ -76,11 +81,6 @@ async fn signed_start_compiles_exactly_and_never_creates_a_local_enterprise_appr
         spec.environment = [("VALUE".into(), " literal ; $(x) ".into())].into();
         data.offer = Some(data.signed(wire::TaskPayload::Script(spec)));
     }
-    let root = protocol::Root::new();
-    let clock = SystemClock::new().unwrap();
-    server.time.set(clock.now().unwrap());
-    let mut client = server.client(&root, OpenMode::Create);
-    let receipt = server.register(&mut client).await;
     let offer = client.claim().await.unwrap().offer.unwrap();
     let materials = client.prepare(&offer).await.unwrap();
     let (binding, actor) =
