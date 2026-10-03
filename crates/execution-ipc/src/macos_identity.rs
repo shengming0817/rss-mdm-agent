@@ -1,6 +1,6 @@
 use execution_app::Error;
 use execution_contract::Id;
-pub fn console_account() -> Result<u32, Error> {
+pub(crate) fn console_account() -> Result<u32, Error> {
     #[link(name = "SystemConfiguration", kind = "framework")]
     extern "C" {
         fn SCDynamicStoreCopyConsoleUser(
@@ -29,11 +29,12 @@ pub fn console_account() -> Result<u32, Error> {
         }
     }
 }
+/// Whether this UID owns the current non-root GUI console login.
 pub fn console_user(uid: u32) -> bool {
     console_account() == Ok(uid)
 }
 // ref: Apple XNU bsd/kern/kern_mib.c, kern.bootsessionuuid (kernel boot generation).
-pub fn boot_generation() -> Result<Id, Error> {
+pub(crate) fn boot_generation() -> Result<Id, Error> {
     let mut bytes = [0u8; 128];
     let mut length = bytes.len();
     if unsafe {

@@ -275,7 +275,8 @@ impl Peer {
         }
     }
     /// Borrowed native connection identity; valid only during this handler call.
-    pub fn native_handle(&self) -> usize {
+    #[cfg(windows)]
+    pub(crate) fn native_handle(&self) -> usize {
         self.native
     }
     /// Kernel peer process identity, never accepted from request bytes.

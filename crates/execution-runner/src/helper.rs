@@ -3,7 +3,7 @@ use crate::{Artifacts, MaterialRegistry, NativeRunner};
 use execution_app::{DispatchOutcome, Error, RunnerPort};
 use execution_contract::*;
 use execution_ipc::{
-    helper::{Command, Envelope, Reply},
+    helper::{Command, Envelope, Reply, VERSION},
     host,
 };
 use std::path::PathBuf;
@@ -357,7 +357,7 @@ impl host::Handler for Helper {
             let connection = peer.system_connection(&policy)?;
             let envelope: Envelope =
                 serde_json::from_slice(bytes).map_err(|_| Error::InvalidInput)?;
-            if envelope.version != 2 {
+            if envelope.version != VERSION {
                 return Err(Error::InvalidInput);
             }
             self.command(&connection, envelope.command)

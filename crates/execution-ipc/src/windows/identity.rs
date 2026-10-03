@@ -14,6 +14,7 @@ use windows_sys::Win32::{
     System::{RemoteDesktop::*, Threading::*},
 };
 
+/// Encode an OS string as a NUL-terminated UTF-16 argument for Win32.
 pub fn wide(value: impl AsRef<OsStr>) -> Vec<u16> {
     value.as_ref().encode_wide().chain(Some(0)).collect()
 }
@@ -29,6 +30,7 @@ pub unsafe fn own(handle: HANDLE) -> Result<OwnedHandle, Error> {
         Ok(unsafe { OwnedHandle::from_raw_handle(handle) })
     }
 }
+/// Borrow a native handle without transferring its ownership.
 pub fn raw(handle: &OwnedHandle) -> HANDLE {
     handle.as_raw_handle()
 }
@@ -76,6 +78,7 @@ pub unsafe fn sid(sid: PSID) -> Result<String, Error> {
     String::from_utf16(unsafe { std::slice::from_raw_parts(text, len) })
         .map_err(|_| Error::InvalidInput)
 }
+/// Observe the current process token's SID and native session number.
 pub fn token_identity() -> Result<(String, u32), Error> {
     let mut handle = null_mut();
     if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut handle) } == 0 {
@@ -117,7 +120,7 @@ pub(crate) fn token_subject(token: HANDLE) -> Result<(String, u32), Error> {
     }
     Ok((subject, session))
 }
-pub fn current_session_binding() -> Result<Id, Error> {
+pub(crate) fn current_session_binding() -> Result<Id, Error> {
     let mut handle = null_mut();
     if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut handle) } == 0 {
         return Err(Error::Unbound);
@@ -151,6 +154,7 @@ pub(crate) fn token_session_binding(token: HANDLE) -> Result<Id, Error> {
     ))
     .map_err(|_| Error::Unbound)
 }
+/// Parse an SDDL descriptor into an allocation retained until its owner is dropped.
 pub fn security(text: &str) -> Result<Local, Error> {
     let mut value = null_mut();
     if unsafe {
@@ -167,6 +171,7 @@ pub fn security(text: &str) -> Result<Local, Error> {
     // SAFETY: the successful OS call allocated this pointer for LocalFree, once.
     Ok(unsafe { Local::from_raw(value) })
 }
+/// Generate a random native resource-name suffix using the system RNG.
 pub fn nonce() -> Result<String, Error> {
     let mut bytes = [0u8; 16];
     if unsafe {
@@ -182,7 +187,7 @@ pub fn nonce() -> Result<String, Error> {
     }
     Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
 }
-pub fn active_user_session() -> Result<(String, u32), Error> {
+pub(crate) fn active_user_session() -> Result<(String, u32), Error> {
     let mut sessions = null_mut();
     let mut count = 0;
     if unsafe { WTSEnumerateSessionsW(WTS_CURRENT_SERVER_HANDLE, 0, 1, &mut sessions, &mut count) }
@@ -221,6 +226,7 @@ pub fn active_user_session() -> Result<(String, u32), Error> {
     }
     Ok(identity)
 }
+/// Validate the runner's subject and required active login against the current OS token.
 pub fn identity(run_as: &RunAs, session: &SessionRequirement) -> Result<(), Error> {
     let (subject, current) = token_identity()?;
     match run_as {
@@ -268,7 +274,7 @@ pub fn identity(run_as: &RunAs, session: &SessionRequirement) -> Result<(), Erro
 }
 // ref: System Informer phnt/ntexapi.h, SYSTEM_BOOT_ENVIRONMENT_INFORMATION (class 90).
 // The kernel GUID survives service restarts and is not derived from adjustable wall time.
-pub fn boot_generation() -> Result<Id, Error> {
+pub(crate) fn boot_generation() -> Result<Id, Error> {
     #[repr(C)]
     struct BootEnvironment {
         identifier: windows_sys::core::GUID,

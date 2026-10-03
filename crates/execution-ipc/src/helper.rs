@@ -4,12 +4,18 @@ use execution_app::Error;
 use execution_contract::*;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+/// Current helper wire version; older envelopes are rejected without negotiation.
+pub const VERSION: u8 = 2;
+/// One command from the authenticated system service to a pinned user helper.
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Envelope {
+    /// Exact helper protocol version.
     pub version: u8,
+    /// Physical operation; enterprise admission remains in the system service.
     pub command: Command,
 }
+/// Physical helper operations within one authenticated native login.
 #[derive(Serialize, Deserialize)]
 #[serde(
     tag = "method",
@@ -18,68 +24,121 @@ pub struct Envelope {
     deny_unknown_fields
 )]
 pub enum Command {
+    /// Start one step of an admitted software program.
     Invoke {
+        /// Frozen execution specification from the system service.
         input: Box<ExecutionInput>,
+        /// Original attempt identity, reused for recovery and deduplication.
         attempt: AttemptId,
+        /// Ordered software step index.
         step: u32,
+        /// Execute, verify or cleanup phase of this step.
         phase: SoftwarePhase,
+        /// Bounded cleanup retry sequence; zero for the initial invocation.
         cleanup_sequence: u32,
+        /// Protected interpreter artifact path.
         interpreter: PathBuf,
+        /// Protected content artifact path.
         content: PathBuf,
+        /// Maximum physical execution duration.
         timeout_ms: u64,
+        /// Maximum captured output bytes.
         output_bytes: u64,
+        /// Optional first-start deadline in device-wide monotonic milliseconds.
         first_start: Option<u64>,
+        /// Independent pre-execution software state for controlled worker input.
         before: Option<SoftwareState>,
     },
+    /// Read physical evidence for an existing software-step invocation.
     InvocationEvidence {
+        /// Frozen specification used to validate the invocation digest.
         input: Box<ExecutionInput>,
+        /// Existing attempt identity.
         attempt: AttemptId,
+        /// Ordered software step index.
         step: u32,
+        /// Invocation phase.
         phase: SoftwarePhase,
+        /// Cleanup sequence that identifies the invocation.
         cleanup_sequence: u32,
     },
+    /// Request cancellation of an existing software-step invocation.
     InvocationStop {
+        /// Frozen specification used to validate the invocation digest.
         input: Box<ExecutionInput>,
+        /// Existing attempt identity.
         attempt: AttemptId,
+        /// Ordered software step index.
         step: u32,
+        /// Invocation phase.
         phase: SoftwarePhase,
+        /// Cleanup sequence that identifies the invocation.
         cleanup_sequence: u32,
     },
+    /// Retire a completed software invocation after the service captures its evidence.
     InvocationAck {
+        /// Frozen specification used to validate the invocation digest.
         input: Box<ExecutionInput>,
+        /// Existing attempt identity.
         attempt: AttemptId,
+        /// Ordered software step index.
         step: u32,
+        /// Invocation phase.
         phase: SoftwarePhase,
+        /// Cleanup sequence that identifies the invocation.
         cleanup_sequence: u32,
     },
+    /// Observe the helper's active login and private working directory.
     Ready,
+    /// Validate physical artifacts before admitting a process.
     Inspect {
+        /// Frozen execution specification.
         input: Box<ExecutionInput>,
+        /// Protected interpreter artifact path.
         interpreter: PathBuf,
+        /// Protected content artifact path.
         content: PathBuf,
     },
+    /// Start a single admitted process, deduplicated by its original attempt.
     Start {
+        /// Frozen execution specification.
         input: Box<ExecutionInput>,
+        /// Protected interpreter artifact path.
         interpreter: PathBuf,
+        /// Protected content artifact path.
         content: PathBuf,
+        /// Original attempt identity.
         attempt: AttemptId,
+        /// Maximum physical execution duration.
         timeout_ms: u64,
+        /// Latest permitted start in device-wide monotonic milliseconds.
         start_before_ms: u64,
+        /// Maximum captured output bytes.
         output_bytes: u64,
     },
+    /// Read evidence for a single-process attempt without dispatching it again.
     Evidence {
+        /// Frozen specification used to validate the attempt digest.
         input: Box<ExecutionInput>,
+        /// Existing attempt identity.
         attempt: AttemptId,
     },
+    /// Release captured process resources after the service journals their evidence.
     Acknowledge {
+        /// Frozen specification used to validate captured evidence.
         input: Box<ExecutionInput>,
+        /// Evidence already captured by the service.
         process: Box<ProcessEvidence>,
     },
+    /// Request cancellation of an existing single-process attempt.
     Stop {
+        /// Frozen specification used to validate the attempt digest.
         input: Box<ExecutionInput>,
+        /// Existing attempt identity.
         attempt: AttemptId,
     },
 }
+/// Bounded physical facts or acknowledgement; no durable application state is owned here.
 #[derive(Serialize, Deserialize)]
 #[serde(
     tag = "kind",
@@ -88,21 +147,35 @@ pub enum Command {
     deny_unknown_fields
 )]
 pub enum Reply {
+    /// Facts of the helper's current native login.
     Ready {
+        /// Actual OS subject.
         subject: String,
+        /// Native login session number.
         session: u32,
+        /// Kernel boot and authentication-session identity.
         binding: Id,
+        /// Validated private working directory.
         work_root: PathBuf,
     },
+    /// Physical artifact validation succeeded.
     Prepared,
+    /// Request accepted; this does not assert process completion.
     Submitted,
+    /// Observed physical process state, if an owner is still available.
     Evidence {
+        /// Facts retained for the original attempt.
         process: Option<Box<ProcessEvidence>>,
     },
+    /// Evidence acknowledged and retained resources eligible for retirement.
     Acknowledged,
+    /// Cancellation requested; this does not assert process exit.
     StopRequested,
+    /// Malformed, unauthorized or inconsistent request.
     Rejected,
+    /// Physical ownership or retained-evidence limit reached.
     Capacity,
+    /// Outcome cannot be confirmed; query the original attempt.
     Unavailable,
 }
 /// Observed login and private work directory of a pinned helper; no enterprise permission.
@@ -192,9 +265,10 @@ impl Connection {
             _ => Err(Error::Unbound),
         }
     }
+    /// Send a bounded command to the same pinned helper and classify its physical reply.
     pub fn exchange(&self, command: Command) -> Result<Reply, Error> {
         let bytes = serde_json::to_vec(&Envelope {
-            version: 2,
+            version: VERSION,
             command,
         })
         .map_err(|_| Error::InvalidInput)?;
