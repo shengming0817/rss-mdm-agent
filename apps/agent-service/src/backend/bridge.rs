@@ -110,7 +110,7 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
             wire::TaskPlatform::Windows => execution_contract::Platform::Windows,
         };
         let p = plan.spec();
-        if p.request.request_id != request_id(&offer)? {
+        if p.request.request_id != request_id(offer)? {
             return Err(Error::Untrusted);
         }
         let matches_run_as = matches!(

@@ -22,7 +22,7 @@ async fn mismatched_and_unsubmitted_started_offers_settle_without_journal_or_cac
         DeterministicTestRunner::new(local::id("test-runner"), TestScenario::Wait, 16).unwrap();
     let app = create_app(&db.path, host, runner.clone(), AppConfig::test_defaults(1)).unwrap();
     let bridge = ExecutionBridge::new(local::id("agent-consumer"), FixtureOutput);
-    let plan = adapted_plan(true, "device-1", &offer);
+    let plan = adapted_plan(true, "foreign-device", &offer);
     let caller = RequestContext {
         actor: plan.spec().request.actor.clone(),
     };
@@ -302,7 +302,11 @@ async fn accepted_remote_result_with_failed_local_confirmation_never_resends() {
         Err(Error::Denied)
     );
     assert_eq!(server.data.lock().unwrap().result_calls, 1);
-    host.state.lock().unwrap().accesses = Some(vec![execution_app::Access::Deliver]);
+    host.state.lock().unwrap().accesses = Some(vec![
+        execution_app::Access::Deliver,
+        execution_app::Access::ReadResult,
+        execution_app::Access::RunnerFact,
+    ]);
     assert_eq!(
         bridge
             .flush(&mut client, offer.task_id(), &mut app, 1)
@@ -1263,11 +1267,10 @@ async fn revoked_and_expired_unknown_keeps_original_execution_and_association() 
         .as_mut()
         .unwrap()
         .quiescent = true;
-    case.runner
-        .ready
-        .store(true, std::sync::atomic::Ordering::SeqCst);
     let later = case.app.reconcile(&request).unwrap();
-    assert!(later.process.unwrap().quiescent);
+    assert_eq!(later.phase, execution_app::TaskPhase::Verified);
+    // The independent termination observation settles lifecycle without rewriting frozen exit.
+    assert!(!later.process.unwrap().quiescent);
     assert_eq!(later.attempt_id.as_ref(), Some(&attempt));
     assert_eq!(
         case.client

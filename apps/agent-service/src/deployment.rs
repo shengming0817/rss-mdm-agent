@@ -123,13 +123,13 @@ impl Deployment {
             .get(&subject)
             .ok_or(Error::Identity)?
             .clone();
-        Ok(execution_runner::helper::Helper::new(
+        execution_runner::helper::Helper::new(
             self.server_policy(),
             root,
             self.execution.processes,
             crate::backend::plan::storage_limits().input,
         )
-        .map_err(crate::error::app_error)?)
+        .map_err(crate::error::app_error)
     }
     fn require_service(&self) -> Result<(), Error> {
         if !self

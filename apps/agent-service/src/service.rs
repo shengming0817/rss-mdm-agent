@@ -189,7 +189,7 @@ impl<S: SecretProvider> DeviceService<S> {
             return Ok(());
         }
         if let Some((offer, _)) = &self.waiting {
-            let request = backend::request_id(&offer)?;
+            let request = backend::request_id(offer)?;
             if self
                 .core
                 .app
@@ -237,7 +237,7 @@ impl<S: SecretProvider> DeviceService<S> {
         }) {
             if let Some((offer, _)) = &self.waiting {
                 self.core.transition(
-                    &backend::request_id(&offer)?,
+                    &backend::request_id(offer)?,
                     BackendRequestState::Failed,
                     Some(BackendRequestFailure::Expired),
                 )?;
@@ -490,11 +490,10 @@ impl<S: SecretProvider> DeviceService<S> {
     }
     /// Stop accepted work. Stopping never claims process termination or effect rollback.
     pub fn stop(&mut self) -> Result<(), Error> {
-        Ok(self
-            .core
+        self.core
             .app
             .stop_active(128)
-            .map_err(crate::error::app_error)?)
+            .map_err(crate::error::app_error)
     }
 }
 
@@ -938,7 +937,7 @@ pub(crate) struct Command {
 /// Synchronous owner work selected while transport remains pending.
 pub(crate) enum NetworkEvent {
     Reconcile,
-    Command(Command),
+    Command(Box<Command>),
     Closed,
 }
 pub(crate) async fn network<T>(
@@ -949,7 +948,7 @@ pub(crate) async fn network<T>(
     network_loop(future, commands, |event| {
         match event {
             NetworkEvent::Reconcile => core.reconcile()?,
-            NetworkEvent::Command(command) => core.handle(command),
+            NetworkEvent::Command(command) => core.handle(*command),
             NetworkEvent::Closed => core.stopping = true,
         }
         Ok(core.stopping)
@@ -971,7 +970,7 @@ pub(crate) async fn network_loop<T>(
         let event = tokio::select! {
             result = &mut future => return result,
             command = commands.recv() => match command {
-                Some(command) => NetworkEvent::Command(command),
+                Some(command) => NetworkEvent::Command(Box::new(command)),
                 None => NetworkEvent::Closed,
             },
             _ = timer.tick() => NetworkEvent::Reconcile,
