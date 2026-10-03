@@ -389,10 +389,7 @@ impl MaterialRoot {
                     if matches!(
                         e.kind(),
                         std::io::ErrorKind::NotFound | std::io::ErrorKind::DirectoryNotEmpty
-                    ) =>
-                {
-                    ()
-                }
+                    ) => {}
                 Err(_) => return Err(Error::Storage),
             }
         }
@@ -461,15 +458,16 @@ fn pending_name(root: &Path, path: &Path) -> bool {
 mod tests {
     use super::*;
     fn fixture() -> (MaterialRoot, PathBuf) {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(format!(
-            "../../.cache/material-{}-{}",
+        let cache = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.cache");
+        std::fs::create_dir_all(&cache).unwrap();
+        let path = cache.canonicalize().unwrap().join(format!(
+            "material-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_nanos()
         ));
-        std::fs::create_dir_all(&path).unwrap();
         platform_private_storage::directory(&path).unwrap();
         let path = path.canonicalize().unwrap();
         (

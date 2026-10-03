@@ -530,6 +530,7 @@ async fn material_gc_scans_every_journal_page_and_waits_for_delivery_confirmatio
                 })
                 .collect();
             spec.request.parameters.clear();
+            spec.request.operation.action = plan::id("software.install").unwrap();
             spec.launch.interpreter.profile =
                 plan::reference("native-software-sequence", "1").unwrap();
             spec.execution = ExecutionSpec::SoftwareProgram {
@@ -778,4 +779,66 @@ async fn material_owner_rejects_a_replaced_journal_and_keeps_original_material()
     ));
     assert!(root.join(".owner").exists());
     drop(saved_root);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn service_assembly_creates_and_reopens_journal_with_its_actual_budgets() {
+    let server = protocol::Server::new().await;
+    let root = protocol::Root::new();
+    let clock = SystemClock::new().unwrap();
+    server.time.set(clock.now().unwrap());
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    drop(client);
+    let limits = plan::storage_limits();
+    assert_eq!(limits.input.max_output_bytes, 16_777_216);
+    let image = installation_security::Artifact {
+        path: "/bin/sh".into(),
+        sha256: format!("{:x}", Sha256::digest(std::fs::read("/bin/sh").unwrap())),
+        cdhash: None,
+    };
+    let config = ExecutionConfig {
+        work_root: root.path.clone(),
+        material_root: root.path.join("materials"),
+        interpreters: vec![Interpreter {
+            profile: wire::ExecutorProfile::PosixSh,
+            image: image.clone(),
+        }],
+        managers: vec![],
+        processes: 1,
+    };
+    platform_private_storage::directory(&config.material_root).unwrap();
+    let journal = root.path.join("execution.sqlite");
+    // Exercise the actual journal, NativeRunner and Enterprise authority, selecting only
+    // explicit unprivileged material storage. This does not prove root ownership or IPC.
+    for startup in [
+        crate::ProductionStartup::Create,
+        crate::ProductionStartup::Open,
+    ] {
+        let client = agent_client::Client::open(
+            &root.path,
+            server.config(),
+            OpenMode::Existing,
+            server.secrets.clone(),
+            clock.clone(),
+        )
+        .unwrap();
+        drop(
+            DeviceService::assemble(
+                client,
+                &journal,
+                startup,
+                config.clone(),
+                clock.clone(),
+                UserResources {
+                    image: image.clone(),
+                    work_roots: Default::default(),
+                },
+                execution_runner::staging::MaterialRoot::open_fixture,
+            )
+            .unwrap(),
+        );
+    }
+    assert!(journal.is_file());
 }
