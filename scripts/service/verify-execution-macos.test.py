@@ -21,6 +21,46 @@ spec.loader.exec_module(acceptance)
 
 
 class BackendLifecycleTests(unittest.TestCase):
+    def test_fixed_operation_cancellation_reaps_child_and_restores_before_cleanup(self):
+        for disconnect in (False,True):
+          with self.subTest(disconnect=disconnect), tempfile.TemporaryDirectory(dir='/private/tmp') as directory:
+            root=Path(directory);endpoint=str(root/'control');pid_file=root/'pid';restored=root/'restored';cleaned=root/'cleaned'
+            listener=socket.socket(socket.AF_UNIX);listener.bind(endpoint);listener.listen(1)
+            setup="import subprocess\nfrom pathlib import Path\ntry:\n subprocess.run(['/bin/sh','-c',%r],timeout=%r)\nfinally:\n Path(%r).write_text('restored')" % (
+                'echo $$ > '+str(pid_file)+'; exec /bin/sleep 60',10 if disconnect else .3,str(restored))
+            programs={'setup':setup,'cleanup':"from pathlib import Path\nPath(%r).write_text('cleaned')" % str(cleaned)}
+            failures=[]
+            def run():
+                try: acceptance.authorized_steps(programs,endpoint,123,501,time.clock_gettime(time.CLOCK_MONOTONIC)+10)
+                except BaseException as error: failures.append(error)
+            with patch.object(acceptance,'peer_identity',return_value=(123,501)):
+                worker=threading.Thread(target=run);worker.start()
+                connection,_=listener.accept();connection.settimeout(3)
+                connection.sendall(b'{"id":0,"operation":"setup"}\n')
+                end=time.monotonic()+2
+                while not pid_file.exists():
+                    self.assertLess(time.monotonic(),end);time.sleep(.01)
+                if disconnect: connection.close()
+                else:
+                    with connection,connection.makefile('rb') as reader:
+                        result=json.loads(reader.readline());self.assertFalse(result['ok'])
+                        self.assertEqual(result['value']['reason'],'operation budget exceeded')
+                        connection.sendall(b'{"id":1,"operation":"cleanup"}\n')
+                        self.assertTrue(json.loads(reader.readline())['ok'])
+                worker.join(3);self.assertFalse(worker.is_alive())
+                self.assertTrue(restored.exists());self.assertTrue(cleaned.exists())
+                with self.assertRaises(ProcessLookupError): os.kill(int(pid_file.read_text()),0)
+            listener.close()
+
+    def test_started_security_failure_is_distinct_from_unexecuted_scenario(self):
+        matrix=acceptance.security_matrix()
+        acceptance.security_begin(matrix,'offer_replay')
+        self.assertEqual(matrix['scenarios']['offer_replay']['status'],'failed')
+        self.assertEqual(matrix['scenarios']['offer_expiry']['status'],'notExecuted')
+        self.assertEqual(acceptance.summarize_security(matrix),'failed')
+        acceptance.security_result(matrix,'offer_replay',{'actual':'evidence'})
+        self.assertEqual(matrix['scenarios']['offer_replay']['status'],'passed')
+
     def test_failed_setup_keeps_only_the_fixed_cleanup_channel_available(self):
         with tempfile.TemporaryDirectory(dir='/private/tmp') as directory:
             endpoint=str(Path(directory)/'control')
@@ -147,6 +187,12 @@ class EvidenceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);password=root/'.passwd';password.write_text('synthetic-admin-password\n');password.chmod(0o600)
             self.assertEqual(acceptance.read_authorization_password(password),'synthetic-admin-password')
+            subprocess.run(['/bin/chmod','+a','everyone allow read,write',str(password)],check=True)
+            try:
+                self.assertEqual(password.stat().st_mode & 0o777,0o600)
+                with self.assertRaisesRegex(RuntimeError,'extended ACL'):
+                    acceptance.read_authorization_password(password)
+            finally: subprocess.run(['/bin/chmod','-N',str(password)],check=True)
             password.chmod(0o644)
             with self.assertRaisesRegex(RuntimeError,'private'): acceptance.read_authorization_password(password)
             password.chmod(0o600);link=root/'link';link.symlink_to(password)

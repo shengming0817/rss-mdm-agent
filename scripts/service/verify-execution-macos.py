@@ -61,6 +61,11 @@ def security_matrix():
     return dict(platform='macOS', scenarios=rows, status='notExecuted')
 
 
+def security_begin(matrix, name):
+    if name not in matrix['scenarios']: raise RuntimeError('unknown security scenario')
+    matrix['scenarios'][name]=dict(status='failed',reason='scenario started; complete boundary evidence absent')
+
+
 def security_result(matrix, name, evidence):
     if name not in matrix['scenarios'] or not evidence:
         raise RuntimeError('security result requires a known scenario and actual evidence')
@@ -145,6 +150,7 @@ def assert_connection_closed(result):
 
 
 def native_transport_security(probe, matrix, query, command, administrator):
+    security_begin(matrix,'authorized_channel')
     baseline = probe.request(dict(method='serviceStatus'))
     assert_native_reply(baseline, 'serviceStatus')
     security_result(matrix, 'authorized_channel', dict(identity=probe.identity, response=baseline))
@@ -157,6 +163,7 @@ def native_transport_security(probe, matrix, query, command, administrator):
         unknown_field=json.dumps(dict(probe.identity['baseline'], unknown=True)).encode(),
     )
     for name, payload in attacks.items():
+        security_begin(matrix,name)
         connection = probe.open()
         try:
             response = probe.send(connection, payload)
@@ -168,6 +175,7 @@ def native_transport_security(probe, matrix, query, command, administrator):
             security_result(matrix, name, response)
         finally: probe.close_connection(connection)
     for name, length in [('system_wire_limit', 65537), ('native_frame_limit', 8*1024*1024+1)]:
+        security_begin(matrix,name)
         connection = probe.open()
         try:
             response = probe.send(connection, b' ', length=length)
@@ -175,6 +183,7 @@ def native_transport_security(probe, matrix, query, command, administrator):
             else: assert_connection_closed(response)
             security_result(matrix, name, response)
         finally: probe.close_connection(connection)
+    security_begin(matrix,'connection_repeat')
     payload = json.dumps(probe.identity['baseline']).encode()
     connection = probe.open(establish=True)
     try:
@@ -182,6 +191,7 @@ def native_transport_security(probe, matrix, query, command, administrator):
         second = probe.send(connection, payload); assert_connection_closed(second)
         security_result(matrix, 'connection_repeat', dict(first=first, second=second))
     finally: probe.close_connection(connection)
+    security_begin(matrix,'connection_expiry')
     log_before=administrator.command('diagnostics')['log']
     connection = probe.open(establish=True)
     try:
@@ -210,12 +220,14 @@ def native_transport_security(probe, matrix, query, command, administrator):
         security_result(matrix, 'connection_expiry', response)
     finally: probe.close_connection(connection)
     for stale, name in [(False, 'helper_wrong_identity')]:
+        security_begin(matrix,name)
         connection = probe.open()
         try:
             response = probe.exchange.command('registerHelper', connection=connection, stale=stale)
             assert response.get('transport') == 'reply' and response.get('accepted') is False
             security_result(matrix, name, response)
         finally: probe.close_connection(connection)
+    security_begin(matrix,'fake_server')
     # First prove the fake endpoint is actually reachable. The system lookup target is never unpinned.
     connection = probe.open(target='fake', untrusted=True)
     try:
@@ -265,6 +277,7 @@ def native_offer_security(probe, matrix, query, command, package, receipt, compl
     assert before['effect']['receiptPresent'] and before['effect']['payloadMatches']
     baseline = command('status')['startRequests']
     first = probe.request(request); assert_native_reply(first, 'pending')
+    security_begin(matrix,'offer_tamper')
     tampered=[]
     for field, replacement in [('request', 'foreign-request'), ('attempt', str(uuid.uuid4())), ('revision', 'a'*64)]:
         changed = dict(request, **{field: replacement})
@@ -276,6 +289,7 @@ def native_offer_security(probe, matrix, query, command, package, receipt, compl
         tampered.append(dict(field=field,response=response))
     assert command('status')['startRequests'] == baseline
     security_result(matrix, 'offer_tamper', dict(offer=offer, startRequests=baseline,rejections=tampered))
+    security_begin(matrix,'offer_replay')
     # Replay the signed offer consumed by the actual journey; retain its original facts.
     second = probe.request(request)
     assert second.get('transport')=='reply' and second.get('peerUid')==0
@@ -290,6 +304,7 @@ def native_offer_security(probe, matrix, query, command, package, receipt, compl
     assert payload_file.stat().st_mtime_ns==before['mtime'], 'replay rewrote the device effect'
     security_result(matrix, 'offer_replay', dict(first=first, second=second, record=matching[0],
         backend=remote, effect=outcome))
+    security_begin(matrix,'offer_expiry')
     expiring = command('package', path=str(package), receipt=receipt, user=True, validitySeconds=6)
     offer = await_offer(query, expiring['task']); request = offer_request(offer)
     starts = command('status')['startRequests']
@@ -305,6 +320,7 @@ def native_offer_security(probe, matrix, query, command, package, receipt, compl
 
 
 def native_revocation_security(probe, matrix, query, command, package, receipt, protected):
+    security_begin(matrix,'revocation_active_process')
     marker, tail = protected/'revoke-started', protected/'revoke-tail'
     active = command('script', timeout=60,
         body="umask 022; printf '%s' \"$$\" > "+shlex.quote(str(marker))+
@@ -316,6 +332,7 @@ def native_revocation_security(probe, matrix, query, command, package, receipt, 
     task = command('package', path=str(package), receipt=receipt, user=True)
     offer = await_offer(query, task['task']); request = offer_request(offer)
     starts = command('status')['startRequests']
+    security_begin(matrix,'revocation_preopened')
     connection = probe.open(establish=True)
     started = time.monotonic()
     command('revoke')
@@ -331,6 +348,7 @@ def native_revocation_security(probe, matrix, query, command, package, receipt, 
         assert_native_reply(response, 'rejected')
         security_result(matrix,'revocation_preopened',dict(response=response,readiness=status))
     finally: probe.close_connection(connection)
+    security_begin(matrix,'revocation_new_connection')
     response = probe.request(request); assert_native_reply(response, 'rejected')
     security_result(matrix,'revocation_new_connection',response)
     assert command('status')['startRequests']==starts, 'revoked caller created another attempt'
@@ -350,6 +368,7 @@ def native_revocation_security(probe, matrix, query, command, package, receipt, 
 
 
 def native_restart_security(probe,matrix,command,administrator):
+    security_begin(matrix,'restart_old_connection')
     connection=probe.open(establish=True)
     starts=command('status')['startRequests']
     administrator.command('restart')
@@ -368,6 +387,8 @@ def native_worker_security(probe, matrix, frozen, lab, untrusted_binary, config)
     if not frozen.get('runtime'):
         matrix['scenarios']['worker_direct_access']['reason']='fixed private worker runtime required'
         return
+    security_begin(matrix,'worker_direct_access')
+    security_begin(matrix,'registration_failure')
     directory=lab/'worker-attack';directory.mkdir(mode=0o700)
     (directory/'probe-input.json').write_text(json.dumps(dict(binary=str(untrusted_binary),config=str(config),
         payload=base64.b64encode(json.dumps(probe.identity['baseline']).encode()).decode())))
@@ -423,6 +444,7 @@ try {
 
 
 def native_stale_helper_security(probe, matrix, query, command, protected, prior, log_offset, package, package_receipt):
+    security_begin(matrix,'helper_stale_endpoint')
     payload_file=protected/'package-payload/fixed.txt'
     before=(payload_file.read_bytes(),payload_file.stat().st_mtime_ns)
     starts=command('status')['startRequests']
@@ -451,6 +473,7 @@ def complete_native_security(probe, matrix, query, command, package, package_rec
     offset=(protected/'service-stderr.log').stat().st_size
     run('/usr/bin/python3',str(installer),'remove','--scope','user','--binary',str(binary),'--config',str(config))
     native_stale_helper_security(probe,matrix,query,command,protected,prior,offset,package,package_receipt)
+    security_begin(matrix,'refresh_preflight')
     preflight=administrator.command('refresh_preflight')
     healthy=probe.request(dict(method='serviceStatus'));assert_native_reply(healthy,'serviceStatus')
     assert healthy['envelope']['reply']['value']['readiness']['phase']=='ready', 'preflight changed service readiness'
@@ -461,6 +484,7 @@ def complete_native_security(probe, matrix, query, command, package, package_rec
     assert 'RSS_HELPER_ENDPOINT_INVALID' in diagnostics, 'stale endpoint refusal boundary not observed'
     security_result(matrix,'helper_stale_endpoint',dict(pending,diagnostic=diagnostics))
     security_result(matrix,'refresh_preflight',dict(preflight['preflight'],healthy=healthy))
+    security_begin(matrix,'refresh_after_stop')
     results=administrator.command('refresh')
     security_result(matrix,'refresh_after_stop',results['afterStop'])
     run('/usr/bin/python3',str(installer),'install','--scope','user','--binary',str(binary),'--config',str(config))
@@ -474,7 +498,7 @@ def root_refresh_security(root, binary, config, installer_source, phase):
     import contextlib, copy, hashlib, io, json, os, plistlib, re, sqlite3, subprocess, time, uuid
     from pathlib import Path
     root,binary,config=Path(root),Path(binary),Path(config)
-    namespace={'__name__':'acceptance_owner'}
+    namespace={'__name__':'acceptance_owner','__builtins__':__builtins__}
     exec(compile(installer_source,'<fixed installation owner>','exec'),namespace)
     plist=Path('/Library/LaunchDaemons/com.rss-mdm.agent.execution.plist')
     original=plist.read_bytes(); document=json.loads(config.read_text())
@@ -763,6 +787,23 @@ def read_authorization_password(path):
         metadata = os.fstat(stream.fileno())
         if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.geteuid() or metadata.st_mode & 0o077:
             raise RuntimeError('authorization password file must be private and owned by the login user')
+        # ref: macOS SDK sys/acl.h. Inspect the opened inode, not a replaceable path.
+        import ctypes, errno
+        library=ctypes.CDLL('/usr/lib/libSystem.B.dylib',use_errno=True)
+        library.acl_get_fd_np.argtypes=[ctypes.c_int,ctypes.c_int]
+        library.acl_get_fd_np.restype=ctypes.c_void_p
+        library.acl_get_entry.argtypes=[ctypes.c_void_p,ctypes.c_int,ctypes.POINTER(ctypes.c_void_p)]
+        library.acl_free.argtypes=[ctypes.c_void_p]
+        acl=library.acl_get_fd_np(stream.fileno(),0x100)
+        if not acl and ctypes.get_errno()!=errno.ENOENT:
+            raise RuntimeError('authorization password file ACL unavailable')
+        if acl:
+          try:
+            entry=ctypes.c_void_p()
+            result=library.acl_get_entry(acl,0,ctypes.byref(entry))
+            if result!=-1 or ctypes.get_errno()!=errno.EINVAL:
+                raise RuntimeError('authorization password file must be private without extended ACL')
+          finally: library.acl_free(acl)
         data = stream.read(4097)
     if len(data)>4096:
         raise RuntimeError('authorization password file exceeds its bound')
@@ -783,6 +824,7 @@ def peer_identity(connection):
 
 
 def authorized_steps(programs, endpoint, expected_pid, expected_uid, deadline):
+    import builtins, subprocess, types, os, signal
     # This test owner has only frozen setup/initialize/restart/cleanup operations.
     connection = socket.socket(socket.AF_UNIX)
     cleaned = False
@@ -791,8 +833,49 @@ def authorized_steps(programs, endpoint, expected_pid, expected_uid, deadline):
     def perform(operation):
         nonlocal output
         output = io.StringIO()
+        operation_deadline=time.monotonic()+45
+        recovering=operation=='cleanup'
+        class OperationAborted(BaseException): pass
+        def bounded_run(*args, **kwargs):
+            nonlocal recovering, operation_deadline
+            check=kwargs.pop('check',False); input_data=kwargs.pop('input',None)
+            limit=min(kwargs.pop('timeout',15),15,max(.01,operation_deadline-time.monotonic()))
+            if kwargs.pop('capture_output',False):
+                kwargs['stdout']=subprocess.PIPE;kwargs['stderr']=subprocess.PIPE
+            if input_data is not None: kwargs['stdin']=subprocess.PIPE
+            kwargs['start_new_session']=True
+            process=subprocess.Popen(*args,**kwargs)
+            end=time.monotonic()+limit
+            try:
+                while True:
+                    if not recovering:
+                        import select
+                        try: disconnected=bool(select.select([connection],[],[],0)[0]) and connection.recv(1,socket.MSG_PEEK|socket.MSG_DONTWAIT)==b''
+                        except BlockingIOError: disconnected=False
+                        if disconnected: raise OperationAborted('parent disconnected')
+                    if time.monotonic()>=end: raise OperationAborted('operation budget exceeded')
+                    try:
+                        stdout,stderr=process.communicate(input_data,timeout=min(.2,end-time.monotonic()))
+                        break
+                    except subprocess.TimeoutExpired: input_data=None
+                result=subprocess.CompletedProcess(process.args,process.returncode,stdout,stderr)
+                if check and result.returncode: raise subprocess.CalledProcessError(result.returncode,result.args,stdout,stderr)
+                return result
+            except BaseException as error:
+                if process.poll() is None:
+                    os.killpg(process.pid,signal.SIGKILL)
+                    process.communicate(timeout=3)
+                if isinstance(error,OperationAborted):
+                    recovering=True;operation_deadline=time.monotonic()+15
+                raise
+        original_import=builtins.__import__
+        controlled_subprocess=types.SimpleNamespace(**vars(subprocess))
+        controlled_subprocess.run=bounded_run
+        def controlled_import(name,*args,**kwargs):
+            return controlled_subprocess if name=='subprocess' else original_import(name,*args,**kwargs)
+        environment={'__name__':'__main__','__builtins__':dict(vars(builtins),__import__=controlled_import)}
         with contextlib.redirect_stdout(output):
-            exec(compile(programs[operation], '<fixed acceptance operation>', 'exec'), {'__name__':'__main__'})
+            exec(compile(programs[operation], '<fixed acceptance operation>', 'exec'), environment)
         raw = output.getvalue().strip()
         return json.loads(raw) if raw else None
     def reply(identity, operation):
@@ -806,7 +889,9 @@ def authorized_steps(programs, endpoint, expected_pid, expected_uid, deadline):
             diagnostic = json.loads(raw) if raw.startswith('{') else None
             if diagnostic is None:
                 import traceback
-                diagnostic={'ownerFrames':[{'function':frame.name,'line':frame.lineno} for frame in traceback.extract_tb(error.__traceback__)],
+                diagnostic={'operation':operation,'classification':type(error).__name__,
+                    'reason':str(error) if isinstance(error,(AssertionError,RuntimeError)) or type(error).__name__=='OperationAborted' else None,
+                    'ownerFrames':[{'function':frame.name,'line':frame.lineno} for frame in traceback.extract_tb(error.__traceback__)],
                     'stderr':getattr(error,'stderr',None)}
             response = {'id':identity, 'ok':False, 'error':type(error).__name__, 'value':diagnostic}
         connection.sendall((json.dumps(response)+'\n').encode())
@@ -907,10 +992,11 @@ class AdministratorSession:
         if self.reader:self.reader.close()
         if self.connection:self.connection.close()
         self.listener.close()
-        try:self.process.wait(timeout=15)
+        # Includes the fixed operation's 45s budget, fault restoration and final cleanup.
+        try:self.process.wait(timeout=120)
         except subprocess.TimeoutExpired:raise RuntimeError('administrator cleanup process exit unconfirmed')
-        finally:
-            self.log.close(); self.endpoint.unlink(missing_ok=True); self.directory.rmdir()
+        finally:self.log.close()
+        self.endpoint.unlink(missing_ok=True); self.directory.rmdir()
 
 
 def acknowledged_result(status, attempt):
@@ -1351,6 +1437,7 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
             native_probe = NativeProbe(probe_binary, config, probe_log)
             rejected_probe=NativeProbe(untrusted_binary,config,probe_log)
             try:
+                security_begin(receipt['security'],'wrong_code_identity')
                 response=rejected_probe.request(dict(method='serviceStatus'))
                 assert_connection_closed(response)
                 before=native_probe.request(dict(method='serviceStatus'));assert_native_reply(before,'serviceStatus')
@@ -1380,11 +1467,15 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
                 method = request['method']
                 if method == 'query': value = query()
                 elif method == 'security':
+                    security_begin(receipt['security'],'wrong_image_same_uid')
                     value = rejected_image_probe(args.binary,binary,config)
                     receipt['scenarios']['wrong_image_same_uid'] = value
                     security_result(receipt['security'], 'wrong_image_same_uid', value)
                     if native_probe: native_transport_security(native_probe, receipt['security'], query, command, administrator_session)
                 elif method == 'status': value = command('status')
+                elif method == 'processSecurityBegin':
+                    assert request['name'] in ('host_crash','launcher_crash','retained_descendant','close_timeout','unknown_scope','process_scope_empty')
+                    security_begin(receipt['security'],request['name']);value=dict(started=True)
                 elif method == 'processSecurity':
                     proof=request['proof']
                     assert frozen and proof['runtimeTreeSha256']==frozen['runtime']['sha256'], 'process proof candidate mismatch'
@@ -1431,6 +1522,7 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
             print(json.dumps(dict(id=finish['id'],value=dict(journeyStatus='passed'))),flush=True)
             return
         receipt['scenarios']['authenticated_ipc'] = query()
+        security_begin(receipt['security'],'wrong_image_same_uid')
         receipt['scenarios']['wrong_image_same_uid'] = rejected_image_probe(args.binary, binary, config)
         security_result(receipt['security'], 'wrong_image_same_uid', receipt['scenarios']['wrong_image_same_uid'])
         system = completed(first['attempt'])
@@ -1607,7 +1699,10 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
     except BaseException as error:
         receipt['status'] = 'cancelled' if isinstance(error, (AuthorizationCancelled, InterruptedError)) else 'failed'
         receipt['error'] = str(error)
-        if args.security: receipt['security']['failure'] = str(error)
+        if args.security:
+            receipt['security']['failure'] = str(error)
+            for row in receipt['security']['scenarios'].values():
+                if row['status']=='failed': row['reason']=str(error)
         if installed:
             try:
                 receipt['scenarios']['failure_snapshot'] = query()

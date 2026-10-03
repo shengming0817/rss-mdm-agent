@@ -94,7 +94,7 @@ Windows 11 x64 目标通过固定 pnpm 环境执行 `pnpm exec pwsh -File script
 先由既有部署 owner 准备真实注册与受控配置；系统阶段在管理员会话执行，VerifyUser 在原非提升登录会话执行。
 RefreshSystem 还要求 CurrentBinary/CurrentConfig，复用安装 owner 的持久身份检查。
 该入口只证明已运行的阶段；远程/同名管道、跨用户/会话、秘密作用域、旧连接撤销和真实桌面进程链仍须补齐目标环境矩阵。
-开发机不运行 Windows 入口。回执明确区分成功、失败和未执行；#2559 仍以两平台全部适用场景通过为关闭条件。
+开发机不运行 Windows 入口。回执明确区分成功、失败和未执行；本轮验收范围为 macOS；Windows 未验证项继续留在 #2559，工单保持开放。
 
 ### macOS 安全矩阵
 

@@ -2099,6 +2099,7 @@ try {
         result.checks.push(name);
       };
       mark("security: unresponsive actual launcher, bounded Host close");
+      await serviceCall("processSecurityBegin", { name: "close_timeout" });
       let launch = await held();
       const closeStart = performance.now();
       process.kill(launch.scope.root, "SIGSTOP");
@@ -2114,18 +2115,23 @@ try {
       mark(
         "security: kill launcher, retain descendant and block unknown restore",
       );
+      await serviceCall("processSecurityBegin", { name: "launcher_crash" });
       launch = await held();
       const requests = fixture.facts.requests;
-      const stoppedHost = hostPid();
-      assert.equal(Number(processIdentity(stoppedHost, "ppid")), receipt.pid);
-      // Keep descendants running: orphaning a stopped group sends HUP/CONT on macOS.
-      process.kill(stoppedHost, "SIGSTOP");
+      const survivingHost = hostPid();
+      assert.equal(Number(processIdentity(survivingHost, "ppid")), receipt.pid);
       process.kill(launch.scope.root, "SIGKILL");
-      process.kill(stoppedHost, "SIGKILL");
-      await wait(() => !processIdentity(stoppedHost, "comm"));
-      await delay(150);
       await wait(() => absent(launch.scope));
-      record("launcher_crash", { launch, scopeAbsent: true });
+      assert.ok(
+        processIdentity(survivingHost, "comm"),
+        "Host must survive launcher failure",
+      );
+      assert.equal(hostPid(), survivingHost);
+      record("launcher_crash", { launch, survivingHost, scopeAbsent: true });
+      await serviceCall("processSecurityBegin", {
+        name: "retained_descendant",
+      });
+      await serviceCall("processSecurityBegin", { name: "unknown_scope" });
       faultScopeConfirmed = false;
       const recovery = verifyUnknownFence();
       faultScopeConfirmed = recovery.scopeAbsentAfterOwnedCleanup === true;
@@ -2139,6 +2145,7 @@ try {
       await restart();
 
       mark("security: actual Host crash and owned worker group termination");
+      await serviceCall("processSecurityBegin", { name: "host_crash" });
       launch = await held();
       const crashedHost = hostPid();
       assert.equal(Number(processIdentity(crashedHost, "ppid")), receipt.pid);
