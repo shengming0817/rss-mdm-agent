@@ -119,6 +119,7 @@ int rss_security_probe_main(const char *requirement,int fake) {
                     NSUInteger requested=[command[@"length"] unsignedIntegerValue];
                     if(requested>8*1024*1024+1){emit(@{@"error":@"probe payload bound"});continue;}
                     NSMutableData *expanded=[NSMutableData dataWithLength:requested];
+                    if(command[@"padding"])memset(expanded.mutableBytes,[command[@"padding"] unsignedCharValue],requested);
                     memcpy(expanded.mutableBytes,request.bytes,MIN(request.length,requested));request=expanded;
                 }
                 double started=elapsed();

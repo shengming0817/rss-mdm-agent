@@ -114,7 +114,7 @@ class NativeProbe:
         reply['establishment']=self.open_evidence[connection]
         actual=payload
         if 'length' in values:
-            length=values['length'];actual=payload[:length]+b'\0'*max(0,length-len(payload))
+            length=values['length'];actual=payload[:length]+bytes([values.get('padding',0)])*max(0,length-len(payload))
         reply['payloadSha256'] = hashlib.sha256(actual).hexdigest()
         if reply.get('transport') == 'reply' and reply.get('bytes'):
             raw = base64.b64decode(reply['replyBase64'], validate=True)
@@ -189,7 +189,7 @@ def native_transport_security(probe, matrix, query, command, administrator):
     security_begin(matrix,'native_frame_limit')
     connection=probe.open()
     try:
-        response=probe.send(connection,wire+b' '*(8*1024*1024+1-len(wire)))
+        response=probe.send(connection,wire,length=8*1024*1024+1,padding=32)
         assert_connection_closed(response)
         security_result(matrix,'native_frame_limit',response)
     finally: probe.close_connection(connection)
