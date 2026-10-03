@@ -77,6 +77,25 @@ fn emit(stage: Stage, kind: ProcessFailureKind) {
     #[cfg(not(any(windows, target_os = "macos")))]
     eprintln!("{}", line(stage, kind, "unsupported"));
 }
+fn classify(error: Error) -> ProcessFailureKind {
+    match error {
+        Error::Denied => ProcessFailureKind::Denied,
+        Error::Unbound => ProcessFailureKind::Unbound,
+        Error::Capability | Error::Degraded => ProcessFailureKind::Capability,
+        Error::Unsupported => ProcessFailureKind::Unsupported,
+        Error::InvalidInput | Error::Configuration => ProcessFailureKind::InvalidInput,
+        Error::Capacity => ProcessFailureKind::Capacity,
+        Error::Conflict => ProcessFailureKind::Conflict,
+        Error::NotFound
+        | Error::Clock
+        | Error::Unavailable
+        | Error::Storage
+        | Error::UnsupportedSchema { .. }
+        | Error::OutcomeUnknown
+        | Error::ConfirmationUnknown => ProcessFailureKind::Unavailable,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -94,24 +113,5 @@ mod tests {
             line(Stage::Ingress, ProcessFailureKind::Unbound, "user"),
             "rss-execution stage=Ingress failure=Unbound mode=user"
         );
-    }
-}
-
-fn classify(error: Error) -> ProcessFailureKind {
-    match error {
-        Error::Denied => ProcessFailureKind::Denied,
-        Error::Unbound => ProcessFailureKind::Unbound,
-        Error::Capability | Error::Degraded => ProcessFailureKind::Capability,
-        Error::Unsupported => ProcessFailureKind::Unsupported,
-        Error::InvalidInput | Error::Configuration => ProcessFailureKind::InvalidInput,
-        Error::Capacity => ProcessFailureKind::Capacity,
-        Error::Conflict => ProcessFailureKind::Conflict,
-        Error::NotFound
-        | Error::Clock
-        | Error::Unavailable
-        | Error::Storage
-        | Error::UnsupportedSchema { .. }
-        | Error::OutcomeUnknown
-        | Error::ConfirmationUnknown => ProcessFailureKind::Unavailable,
     }
 }

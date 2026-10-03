@@ -46,7 +46,7 @@ fn fixture(script: &str, argv: Vec<LaunchArg>, budget: u64, timeout: u64) -> Fix
     ))
     .unwrap();
     value["request"]["target"] = serde_json::json!({"device":"mechanism-device","platform":"windows","scope":{"kind":"device"}});
-    value["runAs"] = serde_json::json!({"kind":"user","account":{"platform":"windows","subject":crate::windows::token_identity().unwrap().0}});
+    value["runAs"] = serde_json::json!({"kind":"user","account":{"platform":"windows","subject":execution_ipc::host::current_subject().unwrap()}});
     value["sessionRequirement"] = serde_json::json!({"kind":"activeUser", "account":value["runAs"]["account"].clone(), "session":execution_ipc::host::current_session_binding().unwrap()});
     value["constraints"] = serde_json::json!({"kind":"osIdentity"});
     value["launch"]["artifact"]["sha256"] =

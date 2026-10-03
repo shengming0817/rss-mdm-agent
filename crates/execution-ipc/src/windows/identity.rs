@@ -85,7 +85,7 @@ pub fn token_identity() -> Result<(String, u32), Error> {
     let token = unsafe { own(handle) }?;
     token_subject(raw(&token))
 }
-pub fn token_subject(token: HANDLE) -> Result<(String, u32), Error> {
+pub(crate) fn token_subject(token: HANDLE) -> Result<(String, u32), Error> {
     let mut buffer = vec![0usize; 128];
     let mut size = 0;
     if unsafe {
@@ -101,7 +101,7 @@ pub fn token_subject(token: HANDLE) -> Result<(String, u32), Error> {
         return Err(Error::Unbound);
     }
     // SAFETY: the successful native query owns the readable SID storage through this call.
-    let subject = unsafe { sid({ (*(buffer.as_ptr() as *const TOKEN_USER)).User.Sid }) }?;
+    let subject = unsafe { sid((*(buffer.as_ptr() as *const TOKEN_USER)).User.Sid) }?;
     let mut session = 0u32;
     if unsafe {
         GetTokenInformation(
@@ -126,7 +126,7 @@ pub fn current_session_binding() -> Result<Id, Error> {
     let token = unsafe { own(handle) }?;
     token_session_binding(raw(&token))
 }
-pub fn token_session_binding(token: HANDLE) -> Result<Id, Error> {
+pub(crate) fn token_session_binding(token: HANDLE) -> Result<Id, Error> {
     let mut statistics: TOKEN_STATISTICS = unsafe { std::mem::zeroed() };
     let mut size = 0u32;
     if unsafe {

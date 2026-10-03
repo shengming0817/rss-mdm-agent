@@ -312,7 +312,6 @@ test("IPC sources and fixtures select native service and desktop consumers", () 
     for (const path of [
       "crates/execution-ipc/src/host.rs",
       "tests/assistant/service-fixtures.json",
-      "scripts/native-candidate.mjs",
     ]) {
       const baseRef = f.run("rev-parse", "HEAD");
       f.change(path);
@@ -321,6 +320,18 @@ test("IPC sources and fixtures select native service and desktop consumers", () 
       assert.deepEqual(result.rustPackages, [...rust].sort());
       assert.deepEqual(result.nodePackages, node);
     }
+    assert.deepEqual(
+      graph.roots
+        .filter(([path]) => path === "scripts/native-candidate.mjs")
+        .map(([, owner]) => owner)
+        .sort(),
+      ["execution-ipc", "execution-runner"],
+    );
+    const baseRef = f.run("rev-parse", "HEAD");
+    f.change("scripts/native-candidate.mjs");
+    const candidate = f.select({ baseRef, graph: () => graph });
+    assert.equal(candidate.full, true);
+    assert.deepEqual(candidate.reasons, ["global-input"]);
   } finally {
     f.close();
   }

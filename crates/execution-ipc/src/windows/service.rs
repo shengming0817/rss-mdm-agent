@@ -234,8 +234,13 @@ pub(crate) fn authenticate(
         return Err(Error::Denied);
     }
     // SAFETY: this OS call returns a fresh owned handle; this is its only owner.
-    let process =
-        unsafe { own({ OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, peer.pid()) }) }?;
+    let process = unsafe {
+        own(OpenProcess(
+            PROCESS_QUERY_LIMITED_INFORMATION,
+            0,
+            peer.pid(),
+        ))
+    }?;
     let mut path = vec![0u16; 32768];
     let mut size = path.len() as u32;
     if unsafe { QueryFullProcessImageNameW(raw(&process), 0, path.as_mut_ptr(), &mut size) } == 0 {
@@ -266,18 +271,16 @@ fn listener(name: &str, sddl: &str) -> Result<NamedPipeServer, Error> {
     };
     // SAFETY: this OS call returns a fresh owned handle; this is its only owner.
     let handle = unsafe {
-        own({
-            CreateNamedPipeW(
-                wide(name).as_ptr(),
-                PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED | FILE_FLAG_FIRST_PIPE_INSTANCE,
-                PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
-                1,
-                65536,
-                65536,
-                5000,
-                &attributes,
-            )
-        })
+        own(CreateNamedPipeW(
+            wide(name).as_ptr(),
+            PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED | FILE_FLAG_FIRST_PIPE_INSTANCE,
+            PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
+            1,
+            65536,
+            65536,
+            5000,
+            &attributes,
+        ))
     }?;
     unsafe { NamedPipeServer::from_raw_handle(handle.into_raw_handle()) }
         .map_err(|_| Error::Unavailable)
@@ -396,7 +399,7 @@ async fn call(pipe: &mut NamedPipeServer, owner: &OwnerThread) -> Result<(), Err
         return Err(Error::Denied);
     }
     // SAFETY: this OS call returns a fresh owned handle; this is its only owner.
-    let process = unsafe { own({ OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) }) }?;
+    let process = unsafe { own(OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid)) }?;
     let mut connection = null_mut();
     if unsafe {
         DuplicateHandle(
@@ -561,8 +564,7 @@ fn query_at(
                 return Err(Error::Denied);
             }
             // SAFETY: this OS call returns a fresh owned handle; this is its only owner.
-            let process =
-                unsafe { own({ OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) }) }?;
+            let process = unsafe { own(OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid)) }?;
             let mut handle = null_mut();
             if unsafe { OpenProcessToken(raw(&process), TOKEN_QUERY, &mut handle) } == 0 {
                 return Err(Error::Denied);
