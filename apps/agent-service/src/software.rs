@@ -779,7 +779,7 @@ mod review_tests {
                     "true".into(),
                     " a; $(x) ".into(),
                 ],
-                environment: [("VALUE".into(), " literal ; $(x) ".into())].into(),
+                environment: [("RSS_PARAM_VALUE".into(), " literal ; $(x) ".into())].into(),
                 timeout_seconds: 30,
                 output_bytes: 4096,
                 exit_codes: wire::SoftwareTaskExitCodes {
@@ -832,7 +832,7 @@ mod review_tests {
                 assert_eq!(launch.artifact, material);
                 assert_eq!(launch.cwd, cwd.to_str().unwrap());
                 assert_eq!(
-                    launch.env[&EnvironmentKey::new("VALUE").unwrap()],
+                    launch.env[&EnvironmentKey::new("RSS_PARAM_VALUE").unwrap()],
                     InputValue::Literal {
                         value: serde_json::json!(" literal ; $(x) ")
                     }

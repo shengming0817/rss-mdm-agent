@@ -79,7 +79,7 @@ async fn signed_start_compiles_exactly_and_never_creates_a_local_enterprise_appr
             "true".into(),
             " a b; $(x) ".into(),
         ];
-        spec.environment = [("VALUE".into(), " literal ; $(x) ".into())].into();
+        spec.environment = [("RSS_PARAM_VALUE".into(), " literal ; $(x) ".into())].into();
         data.offer = Some(data.signed(wire::TaskPayload::Script(spec)));
     }
     let offer = client.claim().await.unwrap().offer.unwrap();
@@ -146,7 +146,7 @@ async fn signed_start_compiles_exactly_and_never_creates_a_local_enterprise_appr
         plan::reference("native-posix-sh-file", &interpreters[0].image.sha256).unwrap()
     );
     assert_eq!(
-        frozen.spec().launch.env[&EnvironmentKey::new("VALUE").unwrap()],
+        frozen.spec().launch.env[&EnvironmentKey::new("RSS_PARAM_VALUE").unwrap()],
         InputValue::Literal {
             value: serde_json::json!(" literal ; $(x) ")
         }
