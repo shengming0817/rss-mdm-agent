@@ -167,7 +167,10 @@ def native_connection_capacity_security(probe, matrix, administrator):
         log_full=administrator.command('diagnostics')['log']
         evidence=log_full[len(log_before):]
         assert held and rejected is not None and 'RSS_IPC_SLOT_LIMIT active=8' in evidence, 'actual native capacity refusal required'
-        assert 'RSS_IPC_EXPIRED' not in evidence, 'slots expired before capacity was observed'
+        opened_serials=set(re.findall(r'RSS_IPC_OPEN id=(\d+) clientPid='+str(probe.process.pid)+r'\b',evidence))
+        expired_serials=set(re.findall(r'RSS_IPC_EXPIRED id=(\d+) clientPid='+str(probe.process.pid)+r'\b',evidence))
+        assert len(opened_serials)==len(held), 'each held connection needs its actual server identity'
+        assert not opened_serials & expired_serials, 'held slots expired before capacity was observed'
         probe.close_connection(held.pop())
         deadline=time.monotonic()+1
         while True:

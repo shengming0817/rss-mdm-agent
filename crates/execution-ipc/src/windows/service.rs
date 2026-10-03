@@ -4,7 +4,7 @@ use crate::host::{self, Handler, Peer};
 use crate::windows_identity::*;
 use execution_app::Error;
 use execution_contract::*;
-use std::os::windows::io::IntoRawHandle;
+use std::os::windows::io::{AsRawHandle, IntoRawHandle, OwnedHandle};
 use std::{
     ffi::c_void,
     ptr::{null, null_mut},
