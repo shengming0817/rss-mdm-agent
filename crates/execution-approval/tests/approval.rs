@@ -46,7 +46,7 @@ impl AuthorityVerifier for Policy {
         let s = self.0.spec();
         Ok(AuthorityFacts {
             verified_origin: s.request.initiator.clone(),
-            risk: Some(execution_admission::RiskLevel::One),
+            risk: Some(execution_contract::RiskLevel::One),
             subject: SubjectFacts {
                 authority: s.request.authority.clone(),
                 actor: s.request.actor.clone(),

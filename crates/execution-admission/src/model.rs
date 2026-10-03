@@ -1,5 +1,5 @@
 use execution_contract::{
-    ActorId, AttemptId, Authority, ExecutionBudget, FrozenExecution, Id, ValidityWindow,
+    ActorId, AttemptId, Authority, ExecutionBudget, FrozenExecution, Id, RiskLevel, ValidityWindow,
     VersionedRef,
 };
 
@@ -117,19 +117,6 @@ pub struct AdmissionLimits {
     pub max_rules: usize,
 }
 
-/// Protected policy classification; never accepted as a request field.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum RiskLevel {
-    /// Pure computation without external effects.
-    Zero = 0,
-    /// Bounded non-sensitive read.
-    One = 1,
-    /// Explicitly permitted bounded side effects; AI requires user confirmation.
-    Two = 2,
-    /// Destructive or security-sensitive effects; AI is blocked.
-    Three = 3,
-}
 /// Product interaction gate, separate from base authorization and OS consent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExecutionGate {

@@ -337,7 +337,7 @@ fn newer_schema_retains_read_only_startup_diagnostic() {
     };
     assert_eq!(
         format!("{error:?}"),
-        "UnsupportedSchema { found: 999, supported: 7 }"
+        "UnsupportedSchema { found: 999, supported: 8 }"
     );
     assert_eq!(std::fs::read(&db.path).unwrap(), before);
     assert_eq!(runner.dispatch_count(), 0);
@@ -2130,69 +2130,64 @@ fn completed_step_cannot_become_sequence_exit_after_restart() {
 
 #[test]
 fn exact_action_confirmation_is_durable_and_does_not_change_origin() {
-    for ai in [false, true] {
-        let db = Database::new();
-        let mut host = TestHost::new();
-        let mut spec = execution_contract::decode_execution(
-            include_bytes!("../../execution-contract/tests/fixtures/plan.json"),
-            &test_execution_limits(),
-        )
-        .unwrap();
-        if ai {
-            let Initiator::Human { os_session } = spec.request.initiator.clone() else {
-                panic!("fixture")
-            };
-            spec.request.initiator = Initiator::Ai {
-                os_session,
-                provider: id("provider"),
-                config: reference("config"),
-                conversation: id("conversation"),
-                tool_call: id("call"),
-            };
-        }
-        let p = FrozenExecution::freeze(spec, &test_execution_limits()).unwrap();
-        host.template = p.clone();
-        host.state.lock().unwrap().risk = Some(execution_admission::RiskLevel::Two);
-        let runner =
-            DeterministicTestRunner::new(id("test-runner"), TestScenario::Wait, 16).unwrap();
-        let r = &p.spec().request.request_id;
-        let mut app = open(&db, host.clone(), runner.clone(), false);
-        assert_eq!(app.request_execution(&caller(), &p).unwrap().attempts, 0);
-        assert_eq!(app.request_execution(&caller(), &p).unwrap().attempts, 0);
-        assert_eq!(runner.dispatch_count(), 0);
-        assert_eq!(db.count("interactions"), 1);
-        drop(app);
-        let mut app = open(&db, host, runner.clone(), true);
-        let wrong = Digest::new("0".repeat(64)).unwrap();
-        assert!(app.confirm_execution(&caller(), r, &wrong, true).is_err());
-        assert_eq!(
-            app.confirm_execution(&caller(), r, p.digest(), true)
-                .unwrap()
-                .attempts,
-            1
-        );
-        assert_eq!(
-            app.confirm_execution(&caller(), r, p.digest(), true)
-                .unwrap()
-                .attempts,
-            1
-        );
-        assert_eq!(runner.dispatch_count(), 1);
-        assert_eq!(
-            app.task_details(&caller(), r).unwrap().action.initiator,
-            p.spec().request.initiator
-        );
-    }
+    let db = Database::new();
+    let mut host = TestHost::new();
+    let mut spec = execution_contract::decode_execution(
+        include_bytes!("../../execution-contract/tests/fixtures/plan.json"),
+        &test_execution_limits(),
+    )
+    .unwrap();
+    let Initiator::Human { os_session } = spec.request.initiator.clone() else {
+        panic!("fixture")
+    };
+    spec.request.initiator = Initiator::Ai {
+        os_session,
+        provider: id("provider"),
+        config: reference("config"),
+        conversation: id("conversation"),
+        tool_call: id("call"),
+    };
+    let p = FrozenExecution::freeze(spec, &test_execution_limits()).unwrap();
+    host.template = p.clone();
+    host.state.lock().unwrap().risk = Some(execution_contract::RiskLevel::Two);
+    let runner = DeterministicTestRunner::new(id("test-runner"), TestScenario::Wait, 16).unwrap();
+    let r = &p.spec().request.request_id;
+    let mut app = open(&db, host.clone(), runner.clone(), false);
+    assert_eq!(app.request_execution(&caller(), &p).unwrap().attempts, 0);
+    assert_eq!(app.request_execution(&caller(), &p).unwrap().attempts, 0);
+    assert_eq!(runner.dispatch_count(), 0);
+    assert_eq!(db.count("interactions"), 1);
+    drop(app);
+    let mut app = open(&db, host, runner.clone(), true);
+    let wrong = Digest::new("0".repeat(64)).unwrap();
+    assert!(app.confirm_execution(&caller(), r, &wrong, true).is_err());
+    assert_eq!(
+        app.confirm_execution(&caller(), r, p.digest(), true)
+            .unwrap()
+            .attempts,
+        1
+    );
+    assert_eq!(
+        app.confirm_execution(&caller(), r, p.digest(), true)
+            .unwrap()
+            .attempts,
+        1
+    );
+    assert_eq!(runner.dispatch_count(), 1);
+    assert_eq!(
+        app.task_details(&caller(), r).unwrap().action.initiator,
+        p.spec().request.initiator
+    );
 }
 
 #[test]
 fn ai_risk_and_confirmation_failure_matrix_never_dispatches_without_a_current_gate() {
     for risk in [
         None,
-        Some(execution_admission::RiskLevel::Zero),
-        Some(execution_admission::RiskLevel::One),
-        Some(execution_admission::RiskLevel::Two),
-        Some(execution_admission::RiskLevel::Three),
+        Some(execution_contract::RiskLevel::Zero),
+        Some(execution_contract::RiskLevel::One),
+        Some(execution_contract::RiskLevel::Two),
+        Some(execution_contract::RiskLevel::Three),
     ] {
         for failure in ["none", "decline", "expire", "revoke", "changed"] {
             let db = Database::new();
@@ -2221,10 +2216,10 @@ fn ai_risk_and_confirmation_failure_matrix_never_dispatches_without_a_current_ga
             let r = &p.spec().request.request_id;
             let result = app.request_execution(&caller(), &p).unwrap();
             match risk {
-                Some(
-                    execution_admission::RiskLevel::Zero | execution_admission::RiskLevel::One,
-                ) => assert_eq!(result.attempts, 1),
-                Some(execution_admission::RiskLevel::Two) => {
+                Some(execution_contract::RiskLevel::Zero | execution_contract::RiskLevel::One) => {
+                    assert_eq!(result.attempts, 1)
+                }
+                Some(execution_contract::RiskLevel::Two) => {
                     assert_eq!(result.phase, TaskPhase::ConfirmationRequired);
                     match failure {
                         "expire" => host.state.lock().unwrap().now = 2000,
@@ -2266,10 +2261,21 @@ fn confirmations_of_two_requests_in_one_journal_do_not_collide() {
     .unwrap();
     for (index, existing) in [(0, false), (1, true)] {
         let mut input = original.clone();
+        let Initiator::Human { os_session } = input.request.initiator.clone() else {
+            panic!("fixture")
+        };
+        input.request.initiator = Initiator::Ai {
+            os_session,
+            provider: id("provider"),
+            config: reference("config"),
+            conversation: id("chat"),
+            tool_call: id("call"),
+        };
         input.request.request_id = request(&format!("human-{index}"));
         let p = FrozenExecution::freeze(input, &test_execution_limits()).unwrap();
         let mut host = TestHost::new();
         host.template = p.clone();
+        host.state.lock().unwrap().risk = Some(RiskLevel::Two);
         let runner =
             DeterministicTestRunner::new(id("test-runner"), TestScenario::Wait, 16).unwrap();
         let mut app = open(&db, host, runner.clone(), existing);
@@ -2309,16 +2315,24 @@ fn service_expires_pending_confirmation_and_exposes_corrupt_confirmation_storage
     for corrupt in [false, true] {
         let db = Database::new();
         let mut host = TestHost::new();
-        let p = FrozenExecution::freeze(
-            decode_execution(
-                include_bytes!("../../execution-contract/tests/fixtures/plan.json"),
-                &test_execution_limits(),
-            )
-            .unwrap(),
+        let mut input = decode_execution(
+            include_bytes!("../../execution-contract/tests/fixtures/plan.json"),
             &test_execution_limits(),
         )
         .unwrap();
+        let Initiator::Human { os_session } = input.request.initiator.clone() else {
+            panic!("fixture")
+        };
+        input.request.initiator = Initiator::Ai {
+            os_session,
+            provider: id("provider"),
+            config: reference("config"),
+            conversation: id("chat"),
+            tool_call: id("call"),
+        };
+        let p = FrozenExecution::freeze(input, &test_execution_limits()).unwrap();
         host.template = p.clone();
+        host.state.lock().unwrap().risk = Some(RiskLevel::Two);
         let runner =
             DeterministicTestRunner::new(id("test-runner"), TestScenario::Wait, 16).unwrap();
         let mut app = open(&db, host.clone(), runner.clone(), false);
@@ -2362,7 +2376,7 @@ fn old_schema_reports_exact_versions_and_keeps_bytes() {
     };
     assert_eq!(
         error.to_string(),
-        "execution database schema 4 is unsupported; required schema 7; preserve the existing database; initialization and automatic migration are disabled"
+        "execution database schema 4 is unsupported; required schema 8; preserve the existing database; initialization and automatic migration are disabled"
     );
     assert_eq!(std::fs::read(&db.path).unwrap(), before);
 }
@@ -2441,8 +2455,10 @@ fn backend_preparation_is_durable_bound_and_never_dispatches_without_start() {
             user_initiated: true,
         },
         trigger: BackendTrigger::Human { os_session },
+        risk: None,
+        confirmation: None,
         revision: 1,
-        state: BackendRequestState::Proposed,
+        state: BackendRequestState::Ready,
         failure: None,
     };
     app.record_backend_request(&caller(), None, &original)
@@ -2512,4 +2528,25 @@ fn application_attachment_checks_actual_journal_authority_and_execution_envelope
         ExecutionApp::new(journal, host, runner, config),
         Err(Error::Configuration)
     ));
+}
+
+#[test]
+fn human_execution_requires_authorization_but_no_product_confirmation() {
+    let db = Database::new();
+    let mut host = TestHost::new();
+    let p = FrozenExecution::freeze(
+        decode_execution(
+            include_bytes!("../../execution-contract/tests/fixtures/plan.json"),
+            &test_execution_limits(),
+        )
+        .unwrap(),
+        &test_execution_limits(),
+    )
+    .unwrap();
+    host.template = p.clone();
+    let runner = DeterministicTestRunner::new(id("test-runner"), TestScenario::Wait, 16).unwrap();
+    let mut app = open(&db, host, runner.clone(), false);
+    assert_eq!(app.request_execution(&caller(), &p).unwrap().attempts, 1);
+    assert_eq!(runner.dispatch_count(), 1);
+    assert_eq!(db.count("interactions"), 0);
 }

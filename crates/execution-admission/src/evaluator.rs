@@ -1,4 +1,5 @@
 use crate::*;
+use execution_contract::RiskLevel;
 use execution_contract::{
     AttemptId, ExecutionBudget, ExecutionInput, ExecutionRequest, FrozenExecution, Initiator,
     ValidityWindow,
@@ -210,12 +211,10 @@ pub fn decide(
     };
     decision.risk = facts.risk;
     decision.execution_gate = match (&facts.verified_origin, facts.risk) {
-        (Initiator::Human { .. }, _) => ExecutionGate::Confirmation,
+        (Initiator::Human { .. }, _) => ExecutionGate::Direct,
         (Initiator::Policy { .. }, _) => ExecutionGate::Direct,
         (Initiator::Backend { .. }, _) => ExecutionGate::Direct,
-        (Initiator::Ai { .. }, Some(RiskLevel::Zero | RiskLevel::One)) => ExecutionGate::Direct,
-        (Initiator::Ai { .. }, Some(RiskLevel::Two)) => ExecutionGate::Confirmation,
-        _ => ExecutionGate::Blocked,
+        (Initiator::Ai { .. }, risk) => ai_execution_gate(risk),
     };
     if decision.execution_gate == ExecutionGate::Blocked {
         decision.outcome = DecisionOutcome::Denied;
@@ -230,4 +229,14 @@ pub fn decide(
             .min(spec.validity.expires_at_unix_ms),
     });
     decision
+}
+
+/// Evaluate only the AI product interaction, independently of enterprise/OS authority.
+/// Production services and standalone AI admission share this one classification mapping.
+pub fn ai_execution_gate(risk: Option<RiskLevel>) -> ExecutionGate {
+    match risk {
+        Some(RiskLevel::Zero | RiskLevel::One) => ExecutionGate::Direct,
+        Some(RiskLevel::Two) => ExecutionGate::Confirmation,
+        Some(RiskLevel::Three) | None => ExecutionGate::Blocked,
+    }
 }

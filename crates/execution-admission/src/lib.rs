@@ -9,5 +9,5 @@ mod decision;
 mod evaluator;
 mod model;
 pub use decision::*;
-pub use evaluator::decide;
+pub use evaluator::{ai_execution_gate, decide};
 pub use model::*;
