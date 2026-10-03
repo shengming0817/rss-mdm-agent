@@ -19,6 +19,7 @@ pub struct AppConfig {
 }
 impl AppConfig {
     /// Small explicit fixture limits; callers must select a revision.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn test_defaults(revision: u64) -> Self {
         Self {
             revision,
@@ -145,6 +146,7 @@ impl Configuration {
 }
 
 /// Explicit S1 execution envelope used by fixture plans and the test runner.
+#[cfg(any(test, feature = "test-support"))]
 pub fn test_execution_limits() -> ExecutionLimits {
     execution_contract::ExecutionLimits {
         max_input_bytes: 65_536,

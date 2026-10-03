@@ -40,7 +40,7 @@ windows-sys = { version = "=0.61.2", features = ["Wdk_System_SystemInformation",
 execution-admission = { path = "../execution-admission" }
 execution-approval = { path = "../execution-approval" }
 execution-capability = { path = "../execution-capability" }
-execution-sqlite = { path = "../execution-sqlite" }
+execution-sqlite = { path = "../execution-sqlite", features = ["test-support"] }
 rusqlite.workspace = true
 
 [build-dependencies]
