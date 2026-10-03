@@ -35,4 +35,3 @@ int rss_execution_grant_read(int fd,uint32_t uid) {
         &&acl_set_permset_mask_np(entry,mask)==0&&acl_set_fd_np(fd,acl,ACL_TYPE_EXTENDED)==0)result=0;
     acl_free(acl);return result;
 }
-

@@ -41,7 +41,7 @@ SECURITY_SCENARIOS = (
     'login_generation', 'helper_wrong_identity', 'helper_stale_endpoint', 'worker_direct_access',
     'fake_server', 'malformed_empty', 'malformed_json', 'malformed_truncated',
     'unknown_version', 'unknown_method', 'unknown_field', 'system_wire_limit', 'native_frame_limit',
-    'connection_repeat', 'connection_expiry', 'offer_tamper', 'offer_replay', 'offer_expiry',
+    'connection_repeat', 'connection_expiry', 'connection_capacity', 'offer_tamper', 'offer_replay', 'offer_expiry',
     'revocation_preopened', 'revocation_new_connection', 'revocation_active_process',
     'restart_old_connection', 'refresh_preflight', 'refresh_after_stop',
     'desktop_service', 'desktop_codex', 'host_crash', 'launcher_crash', 'retained_descendant',
@@ -57,7 +57,7 @@ def security_matrix():
     rows['login_generation']['reason'] = 'isolated logout/login and retained old request required'
     rows['legacy_challenge'] = dict(status='notApplicable',
         reason='IPC V7 has no challenge; NSXPC one-shot/5s lifetime and backend offer expiry replace it',
-        source='crates/execution-runner/src/{host.rs,macos_service.m}')
+        source='crates/execution-ipc/src/{host.rs,macos_service.m}')
     return dict(platform='macOS', scenarios=rows, status='notExecuted')
 
 
@@ -149,11 +149,50 @@ def assert_connection_closed(result):
         result.get('transport')=='timeout' and (result.get('invalidated') or result.get('interrupted'))), 'connection closure not proven: '+json.dumps(result)
 
 
+def native_connection_capacity_security(probe, matrix, administrator):
+    security_begin(matrix,'connection_capacity')
+    log_before=administrator.command('diagnostics')['log']
+    held=[];opens=[];rejected=None
+    try:
+        # registerHelper:nil establishes the real pinned channel without consuming execute.
+        # The registered helper may already own a slot, so observe the actual refusal.
+        for _ in range(9):
+            probe.sequence+=1;connection=str(probe.sequence)
+            opened=probe.exchange.command('open',connection=connection,establish=True)
+            opens.append(opened)
+            if opened.get('created') is not True:
+                rejected=opened;break
+            held.append(connection);probe.open_evidence[connection]=opened
+            assert opened.get('established') is True and opened.get('peerUid')==0 and opened.get('peerPid',0)>1
+        log_full=administrator.command('diagnostics')['log']
+        evidence=log_full[len(log_before):]
+        assert held and rejected is not None and 'RSS_IPC_SLOT_LIMIT active=8' in evidence, 'actual native capacity refusal required'
+        assert 'RSS_IPC_EXPIRED' not in evidence, 'slots expired before capacity was observed'
+        probe.close_connection(held.pop())
+        deadline=time.monotonic()+1
+        while True:
+            probe.sequence+=1;connection=str(probe.sequence)
+            released=probe.exchange.command('open',connection=connection,establish=True)
+            if released.get('created') is True:
+                held.append(connection);probe.open_evidence[connection]=released
+                assert released.get('established') is True and released.get('peerUid')==0 and released.get('peerPid',0)>1
+                break
+            assert time.monotonic()<deadline, 'invalidation did not release a native slot'
+        # The restored slot must perform an authenticated business query, not merely open locally.
+        response=probe.send(connection,json.dumps(probe.identity['baseline']).encode())
+        assert_native_reply(response,'serviceStatus')
+        security_result(matrix,'connection_capacity',dict(opens=opens,refused=rejected,
+            serverLog=evidence,released=released,response=response))
+    finally:
+        for connection in held: probe.close_connection(connection)
+
+
 def native_transport_security(probe, matrix, query, command, administrator):
     security_begin(matrix,'authorized_channel')
     baseline = probe.request(dict(method='serviceStatus'))
     assert_native_reply(baseline, 'serviceStatus')
     security_result(matrix, 'authorized_channel', dict(identity=probe.identity, response=baseline))
+    native_connection_capacity_security(probe,matrix,administrator)
     before = query()
     backend_before = command('status')['startRequests']
     attacks = dict(
