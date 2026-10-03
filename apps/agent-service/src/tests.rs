@@ -68,6 +68,7 @@ async fn signed_start_compiles_exactly_and_never_creates_a_local_enterprise_appr
     let receipt = server.register(&mut client).await;
     {
         let mut data = server.data.lock().unwrap();
+        data.script();
         let wire::TaskPayload::Script(mut spec) = data.offer.as_ref().unwrap().payload.clone()
         else {
             panic!("script")
