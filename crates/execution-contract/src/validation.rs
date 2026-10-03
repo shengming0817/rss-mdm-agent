@@ -547,13 +547,16 @@ fn software(p: &ExecutionInput, limits: &ExecutionLimits) -> Result<(), Contract
                 return Err(invalid());
             }
             invocation(&step.install)?;
-            let mut expected = match &step.format {
-                crate::SoftwareFormat::DmgApp { .. } => vec![
+            let mut expected = match (&step.format, program.intent) {
+                (crate::SoftwareFormat::DmgApp { .. }, crate::SoftwareOperation::Uninstall) => {
+                    vec![crate::SoftwarePhase::Cleanup]
+                }
+                (crate::SoftwareFormat::DmgApp { .. }, crate::SoftwareOperation::Install) => vec![
                     crate::SoftwarePhase::Attach,
                     crate::SoftwarePhase::Stage,
                     crate::SoftwarePhase::Cleanup,
                 ],
-                crate::SoftwareFormat::DmgPkg { .. } => {
+                (crate::SoftwareFormat::DmgPkg { .. }, crate::SoftwareOperation::Install) => {
                     vec![crate::SoftwarePhase::Attach, crate::SoftwarePhase::Cleanup]
                 }
                 _ => Vec::new(),

@@ -137,8 +137,46 @@ fn unknown_detector_activity_keeps_real_exit_and_cannot_skip_to_mutation() {
 
 #[test]
 fn current_observation_drives_real_runner_without_historical_installation_rows() {
-    // A controlled physical worker supplies bounded observations; the production
+    // A pinned Rust fixture supplies bounded physical observations; the production
     // runner, phase acknowledgements, claim owner and SQLite journal are real.
+    let worker = fixture("", vec![LaunchArg::ArtifactPath {}], 4096, 5000);
+    let executable = worker.root.join("physical-worker");
+    let worker_source = worker.root.join("physical-worker.rs");
+    std::fs::write(&worker_source, r#"
+fn main() {
+    let args: Vec<_> = std::env::args().collect();
+    assert_eq!(args.len(), 3);
+    assert_eq!(args[1], "--software-worker");
+    let payload = std::fs::read_to_string(&args[2]).unwrap();
+    let mut lines = payload.lines();
+    let operation = lines.next().unwrap();
+    let before = lines.next().unwrap();
+    let after = lines.next().unwrap();
+    let state = if operation == "observe" {
+        if std::path::Path::new("changed").exists() { after } else { before }
+    } else {
+        std::fs::write("calls", format!("{operation}\n")).unwrap();
+        std::fs::write("changed", b"").unwrap();
+        "null"
+    };
+    println!("{{\"nativeOutputBytes\":0,\"detected\":{state},\"closed\":true,\"diagnostics\":\"\"}}");
+}
+"#).unwrap();
+    assert!(std::process::Command::new("rustc")
+        .arg("--edition=2024")
+        .arg("--crate-name=physical_worker_fixture")
+        .arg(&worker_source)
+        .arg("-o")
+        .arg(&executable)
+        .status()
+        .unwrap()
+        .success());
+    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o500)).unwrap();
+    let worker_digest = Digest::new(format!(
+        "{:x}",
+        Sha256::digest(std::fs::read(&executable).unwrap())
+    ))
+    .unwrap();
     for (intent, before, target, expected, expected_phase) in [
         (
             SoftwareOperation::Install,
@@ -181,15 +219,18 @@ fn current_observation_drives_real_runner_without_historical_installation_rows()
         } else {
             format!(r#"{{"kind":"present","version":"{target}"}}"#)
         };
-        let script = format!(
-            r#"case "$1" in
-observe) if [ -f changed ]; then state='{after}'; else state='{before}'; fi ;;
-*) printf '%s\n' "$1" >> calls; : > changed; state=null ;;
-esac
-printf '{{"nativeOutputBytes":0,"detected":%s,"closed":true,"diagnostics":""}}' "$state"
-"#
+        let payload = |label: &str| format!("{label}\n{before}\n{after}\n");
+        let f = fixture(
+            &payload("observe"),
+            vec![LaunchArg::ArtifactPath {}],
+            32768,
+            10000,
         );
-        let f = fixture(&script, vec![LaunchArg::ArtifactPath {}], 32768, 10000);
+        for label in ["install", "uninstall", "upgrade", "observe"] {
+            let content = f.root.join(label);
+            std::fs::write(&content, payload(label)).unwrap();
+            std::fs::set_permissions(content, std::fs::Permissions::from_mode(0o600)).unwrap();
+        }
         let mut p = f.plan.spec().clone();
         p.request.parameters.clear();
         p.request.initiator = Initiator::Policy {
@@ -204,11 +245,15 @@ printf '{{"nativeOutputBytes":0,"detected":%s,"closed":true,"diagnostics":""}}' 
         let command = |label: &str| {
             let mut launch = p.launch.clone();
             launch.interpreter.profile.id = Id::new("native-software-worker").unwrap();
+            launch.interpreter.artifact.sha256 = worker_digest.clone();
+            launch.artifact.resource.id = Id::new(label).unwrap();
+            launch.artifact.sha256 =
+                Digest::new(format!("{:x}", Sha256::digest(payload(label).as_bytes()))).unwrap();
             launch.argv = vec![
-                LaunchArg::ArtifactPath {},
                 LaunchArg::Literal {
-                    value: label.into(),
+                    value: "--software-worker".into(),
                 },
+                LaunchArg::ArtifactPath {},
             ];
             SoftwareInvocation {
                 launch,
@@ -248,30 +293,38 @@ printf '{{"nativeOutputBytes":0,"detected":%s,"closed":true,"diagnostics":""}}' 
                     detection: SoftwareDetector::Script {
                         invocation: Box::new(detect),
                     },
-                    allow_downgrade: false,
+                    // The fixture explicitly permits opaque Pkg version comparisons.
+                    allow_downgrade: true,
                     allow_reboot: false,
                 }],
             }),
         };
         let plan =
             FrozenExecution::freeze(p, &execution_sqlite::test_store_limits().input).unwrap();
-        let source = || Artifacts {
+        let source = |label: &str| Artifacts {
             program: vec![],
             delegate: None,
-            interpreter: "/bin/sh".into(),
-            content: f.root.join("source"),
+            interpreter: executable.clone(),
+            content: f.root.join(label),
             work_root: f.root.clone(),
             controlled_input: None,
             fixture_owned: true,
         };
-        let mut materials = source();
+        let mut materials = source("observe");
         materials.program.push(crate::SoftwareStepArtifacts {
             mutations: [
-                (SoftwarePhase::Mutation, Box::new(source())),
-                (SoftwarePhase::Upgrade, Box::new(source())),
+                (
+                    SoftwarePhase::Mutation,
+                    Box::new(source(if intent == SoftwareOperation::Uninstall {
+                        "uninstall"
+                    } else {
+                        "install"
+                    })),
+                ),
+                (SoftwarePhase::Upgrade, Box::new(source("upgrade"))),
             ]
             .into(),
-            detection: Some(Box::new(source())),
+            detection: Some(Box::new(source("observe"))),
             files: vec![],
         });
         let runner = NativeRunner::new(
@@ -298,25 +351,23 @@ printf '{{"nativeOutputBytes":0,"detected":%s,"closed":true,"diagnostics":""}}' 
             execution_app::AppConfig::test_defaults(1),
         )
         .unwrap();
-        let attempt = app
+        let _attempt = app
             .request_execution(&caller, &plan)
             .unwrap()
             .attempt_id
             .unwrap();
         let deadline = Instant::now() + Duration::from_secs(8);
         loop {
-            app.reconcile(request).unwrap();
-            if carrier
-                .0
-                .evidence(&plan, &attempt)
-                .unwrap()
-                .is_some_and(|v| v.finished)
-            {
+            let status = app
+                .reconcile(request)
+                .unwrap_or_else(|error| panic!("before={before}: {error:?}"));
+            if status.process.as_ref().is_some_and(|p| p.finished) {
                 break;
             }
-            assert!(Instant::now() < deadline);
+            assert!(Instant::now() < deadline, "before={before}");
             std::thread::sleep(Duration::from_millis(20));
         }
+        assert_eq!(carrier.1.load(Ordering::SeqCst), 1);
         let delivery = app
             .service_delivery(request, &Id::new("fixture-delivery").unwrap(), 64)
             .unwrap();
@@ -324,7 +375,12 @@ printf '{{"nativeOutputBytes":0,"detected":%s,"closed":true,"diagnostics":""}}' 
             .iter()
             .find_map(|e| e.software_progress.as_ref())
             .unwrap();
-        assert_eq!(progress.complete(&plan), expected);
+        assert_eq!(
+            progress.complete(&plan),
+            expected,
+            "before={before} progress={}",
+            serde_json::to_string(&progress.checkpoints).unwrap()
+        );
         let phases: Vec<_> = progress
             .checkpoints
             .iter()
@@ -357,7 +413,7 @@ printf '{{"nativeOutputBytes":0,"detected":%s,"closed":true,"diagnostics":""}}' 
                 .query_row("SELECT count(*) FROM software_claims", [], |r| r
                     .get::<_, i64>(0))
                 .unwrap(),
-            if expected { 0 } else { 1 }
+            0
         );
     }
 }

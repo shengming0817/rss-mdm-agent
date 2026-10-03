@@ -251,7 +251,12 @@ impl RunnerPort for TestCarrier {
         s: ObservationStage,
         n: u64,
     ) -> Result<Option<ObservationFacts>, Error> {
-        self.0.observe(p, a, s, n)
+        self.0.observe(p, a, s, n).map(|facts| {
+            facts.map(|mut facts| {
+                facts.evidence.kind = EvidenceKind::TestResult;
+                facts
+            })
+        })
     }
 }
 

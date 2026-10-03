@@ -349,13 +349,11 @@ pub(super) fn execute(input: ProgramRun) {
                     }
                     if phase == SoftwarePhase::Before
                         && matches!(state, SoftwareState::Present { .. })
+                        && program.intent == SoftwareOperation::Install
+                        && !step.allow_downgrade
+                        && !crate::software::native_detection::not_downgrade(step, &state)
                     {
-                        if program.intent == SoftwareOperation::Install
-                            && !step.allow_downgrade
-                            && !crate::software::native_detection::not_downgrade(step, &state)
-                        {
-                            return Err(Error::Denied);
-                        }
+                        return Err(Error::Denied);
                     }
                     if phase == SoftwarePhase::Before {
                         let mutations = program.mutation_phases(step, &state);

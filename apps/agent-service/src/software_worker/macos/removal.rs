@@ -175,10 +175,7 @@ fn check_content(parent: &File, name: &str, expected: &Entry) -> Result<(), Erro
         Entry::Directory { .. } if file.metadata()?.is_dir() => (),
         Entry::Link { target }
             if file.metadata()?.file_type().is_symlink()
-                && link_at(parent, OsStr::new(name), &file)? == *target =>
-        {
-            ()
-        }
+                && link_at(parent, OsStr::new(name), &file)? == *target => {}
         Entry::File { length, sha256, .. }
             if file.metadata()?.is_file() && file.metadata()?.len() == *length =>
         {
@@ -258,7 +255,7 @@ fn execute_at(
     let removal = snapshot(&root)?;
     let observed = bundle_from(request, installed, application, &root)?;
     authorize_version(request.operation, application, &observed, before)?;
-    require_not_running(&installed)?;
+    require_not_running(installed)?;
     let current = snapshot(&root)?;
     if current.objects != removal.objects || current.tree != removal.tree {
         return Err(Error::Untrusted);
@@ -398,7 +395,7 @@ fn finish_removal(request: &WorkerRequest, record: &mut ImageState) -> Result<()
 fn drain(request: &WorkerRequest, record: &mut ImageState, installed: &Path) -> Result<(), Error> {
     // Owner publication and empty-root removal each have a durable absent-root boundary.
     if !present(&request.resource_root)? {
-        return remove_image_root(request);
+        return finish_removal(request, record);
     }
     let private = owned_root(request)?;
     let removal = record.removal.as_ref().ok_or(Error::Untrusted)?;
@@ -483,7 +480,12 @@ fn cleanup_at(
     drain(request, &mut record, installed)?;
     // RemovePrevious shares its attempt with the install image and staging. Resource
     // recovery closes those only through the existing image cleanup owner.
-    if present(&request.resource_root)? {
+    if present(&request.resource_root)?
+        || record.device.is_some()
+        || record.stage.is_some()
+        || record.alternate.is_some()
+        || record.partial_stage
+    {
         let wire::SoftwareTaskBehavior::Dmg(dmg) = &request.action.behavior else {
             return Err(Error::Untrusted);
         };
@@ -761,6 +763,27 @@ mod tests {
             assert!(!image_state_paths(&request).unwrap().1.exists());
             fs::remove_dir_all(parent).unwrap();
         }
+    }
+
+    #[test]
+    fn absent_resource_root_keeps_image_resources_for_the_image_cleanup_owner() {
+        let (parent, request) = image_request();
+        let mut record = initial_state(&request);
+        record.device = Some("/dev/disk-fixture".into());
+        record.removal = Some(RemovalState {
+            tree: Default::default(),
+            objects: Default::default(),
+            pending: None,
+            disposition: Disposition::DeleteVerified,
+        });
+        create_image_root(&request, &record).unwrap();
+        fs::remove_dir(&request.resource_root).unwrap();
+        drain(&request, &mut record, &parent.join("independent.app")).unwrap();
+        let retained = state(&request).unwrap();
+        assert!(retained.removal.is_none());
+        assert_eq!(retained.device, record.device);
+        assert!(image_state_paths(&request).unwrap().1.exists());
+        fs::remove_dir_all(parent).unwrap();
     }
 
     #[test]

@@ -464,7 +464,12 @@ async fn prior_communication_schema_preserves_registration_pending_delivery_and_
         .unwrap();
     let event = EventId::new("original-result").unwrap();
     client
-        .freeze_result(&association, &event, &[event.clone()], TaskEvent::Cancelled)
+        .freeze_result(
+            &association,
+            &event,
+            std::slice::from_ref(&event),
+            TaskEvent::Cancelled,
+        )
         .unwrap();
     client
         .queue_report(

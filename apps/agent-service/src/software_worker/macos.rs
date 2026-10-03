@@ -483,8 +483,13 @@ fn target(request: &WorkerRequest, dmg: &Dmg, application: &Application) -> Resu
                 .to_str()
                 .map_err(|_| Error::Identity)?;
             let root = PathBuf::from(home).join("Applications");
-            // A missing Applications directory is not created by read-only detection.
-            if !root.exists() && request.operation != WorkerOperation::Detect {
+            // Only installation preparation creates a missing Applications directory.
+            if !root.exists()
+                && matches!(
+                    request.operation,
+                    WorkerOperation::Install | WorkerOperation::Upgrade | WorkerOperation::Stage
+                )
+            {
                 fs::DirBuilder::new().mode(0o700).create(&root)?;
             }
             root
@@ -1296,7 +1301,10 @@ pub(super) fn execute(
     match request.operation {
         WorkerOperation::Attach => return attach(request, dmg),
         WorkerOperation::Cleanup => {
-            if removal::is_removal(request)? {
+            if discard_unpublished_image_state(request)? {
+                return Ok(result(0, None, String::new()));
+            }
+            if matches!(dmg.payload, Payload::AppCopy { .. }) && removal::is_removal(request)? {
                 return removal::cleanup(request, dmg);
             }
             return cleanup(request, dmg);

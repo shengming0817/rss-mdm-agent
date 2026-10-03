@@ -169,6 +169,14 @@ test("real Agent generator CLI preserves user-readable public inputs under restr
   mkdirSync(join(root, "scripts"));
   for (const name of ["agent-organization.mjs", "desktop-organization.mjs"])
     copyFileSync(new URL(name, import.meta.url), join(root, "scripts", name));
+  mkdirSync(join(root, "packages/execution-bindings/src"), { recursive: true });
+  copyFileSync(
+    new URL(
+      "../packages/execution-bindings/src/service-version.mjs",
+      import.meta.url,
+    ),
+    join(root, "packages/execution-bindings/src/service-version.mjs"),
+  );
   const cert = join(root, "source-ca.pem"),
     key = join(root, "source-ca.key");
   execFileSync(

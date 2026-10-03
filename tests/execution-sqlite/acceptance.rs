@@ -3093,49 +3093,109 @@ fn exe_uninstall_present_before_and_unknown_native_end_are_not_desired_or_cleanu
     assert_eq!(db.count("software_claims"), 1);
 }
 
+fn resource_closure_host(mode: u8) -> TestHost {
+    let ordinary_uninstall = mode == 2;
+    let mut host = software_host();
+    if mode != 0 {
+        let mut input = host.plan.spec().clone();
+        let ExecutionSpec::SoftwareProgram { program } = &mut input.execution else {
+            unreachable!()
+        };
+        let step = &mut program.steps[0];
+        step.format = if ordinary_uninstall {
+            SoftwareFormat::DmgApp {
+                volume: PackageValue::new("Approved").unwrap(),
+                path: "Target.app".into(),
+                bundle_id: step.package.clone(),
+                version: step.version.clone(),
+                target_name: "Target.app".into(),
+            }
+        } else {
+            SoftwareFormat::DmgPkg {
+                volume: PackageValue::new("Approved").unwrap(),
+                path: "fixed.pkg".into(),
+                length: 1,
+                sha256: step.payload.sha256.clone(),
+                receipt: PackageValue::new("org.rss.fixture").unwrap(),
+            }
+        };
+        if ordinary_uninstall {
+            step.uninstall = Some(step.install.clone());
+            program.intent = SoftwareOperation::Uninstall;
+            input.request.operation.action = id("software.uninstall");
+        } else {
+            step.auxiliary
+                .insert(SoftwarePhase::Attach, step.install.clone());
+        }
+        let mut cleanup = step.install.clone();
+        cleanup.launch.interpreter.profile.id = id("native-software-worker");
+        step.auxiliary.insert(SoftwarePhase::Cleanup, cleanup);
+        host.plan = FrozenExecution::freeze(input, &limits().input).unwrap();
+    }
+    host
+}
+
+#[test]
+fn ordinary_dmg_uninstall_requires_cleanup_and_rejects_install_image_phases() {
+    let host = resource_closure_host(2);
+    let mut input = host.plan.spec().clone();
+    let ExecutionSpec::SoftwareProgram { program } = &mut input.execution else {
+        unreachable!()
+    };
+    let step = &mut program.steps[0];
+    assert_eq!(
+        step.auxiliary.keys().copied().collect::<Vec<_>>(),
+        [SoftwarePhase::Cleanup]
+    );
+    step.auxiliary
+        .insert(SoftwarePhase::Attach, step.install.clone());
+    step.auxiliary
+        .insert(SoftwarePhase::Stage, step.install.clone());
+    assert!(FrozenExecution::freeze(input, &limits().input).is_err());
+}
+
+#[test]
+fn standalone_image_detection_and_pkg_removal_have_no_image_resource_phases() {
+    for (mode, intent) in [
+        (1, SoftwareOperation::Uninstall),
+        (1, SoftwareOperation::Detect),
+        (2, SoftwareOperation::Detect),
+    ] {
+        let host = resource_closure_host(mode);
+        let mut input = host.plan.spec().clone();
+        let ExecutionSpec::SoftwareProgram { program } = &mut input.execution else {
+            unreachable!()
+        };
+        program.intent = intent;
+        let step = &mut program.steps[0];
+        step.uninstall = Some(step.install.clone());
+        step.auxiliary.clear();
+        input.request.operation.action = id(if intent == SoftwareOperation::Uninstall {
+            "software.uninstall"
+        } else {
+            "software.detect"
+        });
+        let plan = FrozenExecution::freeze(input, &limits().input).unwrap();
+        let mut old = plan.spec().clone();
+        let ExecutionSpec::SoftwareProgram { program } = &mut old.execution else {
+            unreachable!()
+        };
+        let step = &mut program.steps[0];
+        step.auxiliary
+            .insert(SoftwarePhase::Attach, step.install.clone());
+        step.auxiliary
+            .insert(SoftwarePhase::Cleanup, step.install.clone());
+        assert!(FrozenExecution::freeze(old, &limits().input).is_err());
+    }
+}
+
 #[test]
 fn failed_software_claims_require_resource_closure_even_after_reopen() {
     for mode in 0..3 {
         let image = mode != 0;
         let ordinary_uninstall = mode == 2;
         let db = Database::new();
-        let mut host = software_host();
-        if image {
-            let mut input = host.plan.spec().clone();
-            let ExecutionSpec::SoftwareProgram { program } = &mut input.execution else {
-                unreachable!()
-            };
-            let step = &mut program.steps[0];
-            step.format = if ordinary_uninstall {
-                SoftwareFormat::DmgApp {
-                    volume: PackageValue::new("Approved").unwrap(),
-                    path: "Target.app".into(),
-                    bundle_id: step.package.clone(),
-                    version: step.version.clone(),
-                    target_name: "Target.app".into(),
-                }
-            } else {
-                SoftwareFormat::DmgPkg {
-                    volume: PackageValue::new("Approved").unwrap(),
-                    path: "fixed.pkg".into(),
-                    length: 1,
-                    sha256: step.payload.sha256.clone(),
-                    receipt: PackageValue::new("org.rss.fixture").unwrap(),
-                }
-            };
-            if ordinary_uninstall {
-                step.uninstall = Some(step.install.clone());
-                program.intent = SoftwareOperation::Uninstall;
-                input.request.operation.action = id("software.uninstall");
-            } else {
-                step.auxiliary
-                    .insert(SoftwarePhase::Attach, step.install.clone());
-            }
-            let mut cleanup = step.install.clone();
-            cleanup.launch.interpreter.profile.id = id("native-software-worker");
-            step.auxiliary.insert(SoftwarePhase::Cleanup, cleanup);
-            host.plan = FrozenExecution::freeze(input, &limits().input).unwrap();
-        }
+        let host = resource_closure_host(mode);
         let mut store = db.create();
         host.prepare(&mut store);
         store

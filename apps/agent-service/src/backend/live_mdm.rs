@@ -127,21 +127,29 @@ impl Admin {
         .await
     }
     async fn group_contains(&mut self, path: &str, device: &str) -> bool {
-        let state = self.request(reqwest::Method::GET, path, None, None).await;
-        let preview = self
-            .write(
-                &format!("{path}/previews"),
-                state["group"]["revision"].as_u64().unwrap(),
-                json!({}),
-            )
-            .await;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+        let task = loop {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "group preview repeatedly superseded"
+            );
+            let state = self.request(reqwest::Method::GET, path, None, None).await;
+            let preview = self
+                .write(
+                    &format!("{path}/previews"),
+                    state["group"]["revision"].as_u64().unwrap(),
+                    json!({}),
+                )
+                .await;
+            let task = preview["task"].as_str().unwrap().to_owned();
+            if self.wait_group_preview(path, &task, deadline).await {
+                break task;
+            }
+        };
         let members = self
             .request(
                 reqwest::Method::GET,
-                &format!(
-                    "{path}/results/{}/members",
-                    preview["task"].as_str().unwrap()
-                ),
+                &format!("{path}/results/{task}/members"),
                 None,
                 None,
             )
@@ -152,9 +160,39 @@ impl Admin {
             .iter()
             .any(|id| id == device)
     }
+    async fn wait_group_preview(
+        &mut self,
+        path: &str,
+        task: &str,
+        deadline: tokio::time::Instant,
+    ) -> bool {
+        loop {
+            let state = self
+                .request(
+                    reqwest::Method::GET,
+                    &format!("{path}/tasks/{task}"),
+                    None,
+                    None,
+                )
+                .await;
+            match state["status"].as_str().unwrap() {
+                "completed" => return true,
+                // Inventory changes invalidate a preview's input snapshot.
+                "superseded" => return false,
+                "pending" | "running" => {
+                    assert!(
+                        tokio::time::Instant::now() < deadline,
+                        "group preview timed out: {state}"
+                    );
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+                _ => panic!("group preview failed: {state}"),
+            }
+        }
+    }
     async fn resource(&mut self, software: bool, package: &str) -> (Uuid, Option<Value>) {
         let resource = Uuid::new_v4();
-        let path = format!("/api/v3/resources/{resource}");
+        let path = format!("/api/v4/resources/{resource}");
         let bytes = if software {
             b"controlled software fixture".as_slice()
         } else {
@@ -187,7 +225,7 @@ impl Admin {
         self.write(&path, 0, json!({"action":"create","kind":kind}))
             .await;
         self.write(&path,1,json!({"action":"version","version":"v1","kind":kind,"variants":[{"platform":"macos","architecture":"aarch64","key":"default","declaration":declaration}]})).await;
-        self.request(reqwest::Method::POST,&format!("{path}/content?version=v1&variant=default&platform=macos&architecture=aarch64&operation={}",Uuid::new_v4()),None,Some(bytes)).await;
+        self.request(reqwest::Method::POST,&format!("/api/v3/resources/{resource}/content?version=v1&variant=default&platform=macos&architecture=aarch64&operation={}",Uuid::new_v4()),None,Some(bytes)).await;
         self.write(&path, 2, json!({"action":"activate","version":"v1"}))
             .await;
         let admission = if software {
@@ -380,14 +418,14 @@ async fn real_https_registration_reports_script_software_and_journal_results() {
     for (software, uninstall) in [(true, false), (false, false), (true, true), (false, true)] {
         let (resource, admission) = admin.resource(software, &package).await;
         let action = if software {
-            json!({"kind":"software","resource":{"kind":"software","id":resource,"version":"v1","variants":{"macos_aarch64":"default"}},"intent":if uninstall { "required_uninstall" } else { "required_install" },"delivery":{"kind":"direct"},"admissionOperation":admission.unwrap(),"runLifetimeSeconds":600,"rollout":{"stages":[{"scope":scope,"opensAt":0}]}})
+            json!({"kind":"software","resource":{"kind":"software","id":resource,"version":"v1","variants":{"macos_aarch64":"default"}},"intent":if uninstall { "explicit_uninstall" } else { "required_install" },"delivery":{"kind":"direct"},"admissionOperation":admission.unwrap(),"runLifetimeSeconds":600,"rollout":{"stages":[{"scope":scope,"opensAt":0}]}})
         } else {
             json!({"kind":"execution","resource":{"id":resource,"version":"v1","platform":"macos","architecture":"aarch64","variant":"default"},"parameters":{},"runLifetimeSeconds":300})
         };
         let policy = Uuid::new_v4();
         admin
             .write(
-                &format!("/api/v2/policies/{policy}"),
+                &format!("/api/v3/policies/{policy}"),
                 0,
                 json!({"action":"put","enabled":true,"definition":{"scope":scope,"action":action}}),
             )
