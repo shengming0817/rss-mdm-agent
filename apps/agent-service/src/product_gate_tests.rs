@@ -248,7 +248,7 @@ async fn signed_start_needs_the_current_confirmed_request_and_frozen_action() {
     let start = c
         .service
         .client
-        .request_start(&c.offer, &materials)
+        .start_user_initiated(&c.offer, &materials)
         .await
         .unwrap();
     // Test the proof's binding independently of native package staging/physical execution.
