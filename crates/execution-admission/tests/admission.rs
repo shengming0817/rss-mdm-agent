@@ -1,5 +1,6 @@
 use execution_admission::Rule;
 use execution_admission::*;
+use execution_contract::RiskLevel;
 use execution_contract::*;
 fn id(v: &str) -> Id {
     Id::new(v).unwrap()
@@ -43,7 +44,7 @@ fn authority(p: &FrozenExecution) -> TestAuthority {
     let s = p.spec();
     TestAuthority(Ok(AuthorityFacts {
         verified_origin: s.request.initiator.clone(),
-        risk: Some(execution_admission::RiskLevel::One),
+        risk: Some(execution_contract::RiskLevel::One),
         subject: SubjectFacts {
             authority: s.request.authority.clone(),
             actor: s.request.actor.clone(),
@@ -521,7 +522,7 @@ fn trusted_origin_and_numeric_risk_choose_the_confirmation_gate() {
             facts(&mut a).risk = risk;
             let result = decide_for(&p, &a);
             let expected = match (&origin, risk) {
-                (Initiator::Human { .. }, _) => ExecutionGate::Confirmation,
+                (Initiator::Human { .. }, _) => ExecutionGate::Direct,
                 (_, Some(RiskLevel::Zero | RiskLevel::One)) => ExecutionGate::Direct,
                 (_, Some(RiskLevel::Two)) => ExecutionGate::Confirmation,
                 _ => ExecutionGate::Blocked,

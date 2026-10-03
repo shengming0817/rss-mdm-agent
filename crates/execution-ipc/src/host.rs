@@ -2,7 +2,7 @@
 use execution_contract::{Digest, Id, RequestId, VersionedRef};
 use serde::{Deserialize, Serialize};
 /// Current desktop/system IPC. No negotiation or legacy parser exists.
-pub const IPC_VERSION: u8 = 7;
+pub const IPC_VERSION: u8 = 8;
 /// Current protected installation document format.
 pub const DEPLOYMENT_VERSION: u32 = 2;
 
@@ -434,6 +434,12 @@ pub enum Request {
         revision: Digest,
         /// Native origin correlation.
         origin: ClientOrigin,
+    },
+    /// Confirm exactly one pending risk-two AI action from the authenticated desktop login.
+    /// AI MCP callers have no equivalent method.
+    ConfirmTask {
+        /// Original backend task reference; never executable content or an approval claim.
+        selection: execution_contract::BackendSelection,
     },
     /// Read an existing execution.
     Status {

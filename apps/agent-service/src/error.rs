@@ -5,6 +5,7 @@ pub(crate) fn app_error(error: execution_app::Error) -> Error {
     match error {
         E::Denied => Error::Denied,
         E::Unbound => Error::Identity,
+        E::UnsupportedSchema { .. } => Error::Schema,
         E::Unsupported => Error::Unsupported,
         E::Clock => Error::Clock,
         E::Conflict => Error::Conflict,
@@ -13,4 +14,16 @@ pub(crate) fn app_error(error: execution_app::Error) -> Error {
         E::Unavailable => Error::Unavailable,
         _ => Error::Storage,
     }
+}
+
+#[cfg(test)]
+#[test]
+fn unsupported_execution_database_preserves_the_schema_diagnosis() {
+    assert_eq!(
+        app_error(execution_app::Error::UnsupportedSchema {
+            found: 7,
+            supported: 8
+        }),
+        Error::Schema
+    );
 }

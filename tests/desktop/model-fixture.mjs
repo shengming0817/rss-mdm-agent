@@ -187,8 +187,8 @@ export async function startModelFixture() {
         }
         if (scenario === "DENY")
           assert.ok(
-            output("execute").output.includes("用户拒绝本次 AI 工具调用。"),
-            "new task must be rejected by the real Host permission owner",
+            output("execute").output.includes('"code":"denied"'),
+            "unknown-risk task must be rejected by the production service",
           );
       }
       if (scenario.startsWith("CANCEL") && !output("cancel"))

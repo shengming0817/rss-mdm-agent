@@ -71,7 +71,7 @@ fn main() {
     };
     fixtures.insert("offer".into(), serde_json::to_value(&offer).unwrap());
     for (name, state, failure) in [
-        ("proposed", BackendRequestState::Proposed, None),
+        ("proposed", BackendRequestState::AwaitingConfirmation, None),
         (
             "denied",
             BackendRequestState::Failed,
@@ -80,6 +80,15 @@ fn main() {
     ] {
         let request = BackendRequest {
             offer: offer.clone(),
+            risk: Some(BackendRiskDecision {
+                level: RiskLevel::Two,
+                policy: VersionedRef {
+                    id: id("fixture-risk"),
+                    revision: id("1"),
+                },
+                expires_at_unix_ms: 9_999_999_999_000,
+            }),
+            confirmation: None,
             revision: 1,
             state,
             failure,

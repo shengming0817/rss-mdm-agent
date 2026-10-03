@@ -2,7 +2,7 @@
 
 apps/agent-service 是唯一生产系统组合根，持有设备身份、执行 journal、恢复与结果送达。桌面和 AI Host 只消费认证 IPC，用户 helper 仅执行原登录会话的物理动作，不拥有注册、业务授权或账本。
 
-installation-security 持有管理员固定映像、摘要/代码身份、受保护配置与目录检查。系统 IPC 继续使用真实 OS 对等身份及专属操作认证；本机 IPC V7 拒绝旧格式，不协商或回退。远程 Agent wire 和 helper 协议由各自原 owner 持有。
+installation-security 持有管理员固定映像、摘要/代码身份、受保护配置与目录检查。系统 IPC 继续使用真实 OS 对等身份及专属操作认证；本机 IPC V8 拒绝旧格式，不协商或回退。远程 Agent wire 和 helper 协议由各自原 owner 持有。
 
 可信配置/pins 通过后，同一个监听器装配就绪执行 owner 或只读未就绪诊断。只有能证明从未初始化才报告待注册；损坏、身份冲突或未知残留不触发初始化、重置或重新注册。状态连接成功不表示任务获准或效果已发生。
 

@@ -89,10 +89,10 @@ function operationLabel(value: string) {
 }
 function stateLabel(value: string) {
   switch (value) {
-    case "proposed":
+    case "awaitingConfirmation":
       return "等待本人确认";
-    case "selected":
-      return "已确认";
+    case "ready":
+      return "待执行";
     case "submitting":
       return "准备执行";
     case "failed":
@@ -105,6 +105,10 @@ function stateLabel(value: string) {
 }
 function failureLabel(value: string) {
   switch (value) {
+    case "riskUnknown":
+      return "后台未提供可信风险等级，AI 操作已拒绝";
+    case "riskBlocked":
+      return "后台风险策略禁止 AI 执行此操作";
     case "preparationFailed":
       return "本机条件或后台 Start 未满足";
     case "interrupted":
@@ -245,7 +249,7 @@ function failureLabel(value: string) {
             :disabled="s.busy || s.uncertain"
             @click="c.select(resource)"
           >
-            查看并确认
+            确认此操作
           </button>
           <span v-else>由后台派发，执行服务处理。</span>
         </div>
@@ -277,6 +281,29 @@ function failureLabel(value: string) {
           :key="pending.offer.request"
         >
           <strong>{{ pending.offer.title }}</strong>
+          <template v-if="pending.offer.summary.kind === 'software'">
+            <p>操作：{{ operationLabel(pending.offer.summary.intent) }}</p>
+            <ol>
+              <li
+                v-for="(step, index) in pending.offer.summary.steps"
+                :key="index"
+              >
+                {{ step.package }} {{ step.version }} ·
+                {{ step.identity === "system" ? "系统账号" : "当前用户" }}
+              </li>
+            </ol>
+          </template>
+          <p v-else>
+            后台固定脚本 ·
+            {{
+              pending.offer.summary.identity === "system"
+                ? "系统账号"
+                : "当前用户"
+            }}
+          </p>
+          <p v-if="pending.trigger.kind === 'ai'">
+            AI 风险：{{ pending.risk?.level ?? "后台未提供" }}
+          </p>
           <p>
             {{ stateLabel(pending.state)
             }}<span v-if="pending.failure">
@@ -285,10 +312,11 @@ function failureLabel(value: string) {
             >
           </p>
           <button
-            v-if="pending.state === 'proposed'"
-            @click="c.select(pending.offer)"
+            v-if="pending.state === 'awaitingConfirmation'"
+            :disabled="s.busy || s.uncertain"
+            @click="c.confirmPreparation(pending.offer)"
           >
-            查看并确认
+            确认此操作
           </button>
           <button
             v-if="!['failed', 'cancelled'].includes(pending.state)"

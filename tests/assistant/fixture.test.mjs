@@ -7,14 +7,17 @@ test("one fixture simulates exact confirmation, replay and cancellation without 
   t.after(() => f.close());
   f.selectScenario("proposed");
   const offer = f.snapshot().available[0];
-  assert.equal(f.details(offer.request).value.state, "proposed");
+  assert.equal(f.details(offer.request).value.state, "awaitingConfirmation");
   assert.throws(
     () => f.execute({ ...offer, revision: "b".repeat(64) }),
     /mismatch/,
   );
-  assert.equal(f.details(offer.request).value.state, "proposed");
-  assert.equal(f.execute(offer).request, offer.request);
-  assert.equal(f.execute(offer).request, offer.request);
+  assert.equal(f.details(offer.request).value.state, "awaitingConfirmation");
+  assert.equal(f.execute(offer).confirmationRequired, true);
+  assert.equal(f.details(offer.request).value.state, "awaitingConfirmation");
+  assert.throws(() => f.confirm({ ...offer, attempt: "other" }), /mismatch/);
+  assert.equal(f.confirm(offer).request, offer.request);
+  assert.equal(f.confirm(offer).request, offer.request);
   assert.equal(f.snapshot().requests.length, 1);
   assert.equal(
     f.cancel({ requestId: offer.request }).value.status.cancelRequested,

@@ -57,6 +57,7 @@ macro_rules! commands {
 commands! {
     self_service_snapshot(SnapshotQuery) -> Snapshot = snapshot,
     self_service_execute(execution_contract::BackendSelection) -> execution_contract::TaskSubmission = execute_ui,
+    self_service_confirm(execution_contract::BackendSelection) -> execution_contract::TaskSubmission = confirm_ui,
     self_service_cancel(ActionRef) -> execution_app::BackendTaskView = cancel_ui,
 }
 #[tauri::command]
@@ -261,6 +262,7 @@ pub fn register<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder
         select_test_user,
         self_service_snapshot,
         self_service_execute,
+        self_service_confirm,
         self_service_cancel,
         execution_task_details,
         ai_connect,
@@ -372,6 +374,7 @@ mod tests {
             "ai_export_diagnostics",
             "self_service_snapshot",
             "self_service_execute",
+            "self_service_confirm",
             "self_service_cancel",
             "execution_task_details",
             "save_connection",
@@ -402,7 +405,11 @@ mod tests {
             serde_json::json!({})
         )
         .is_err());
-        for command in ["self_service_execute", "self_service_cancel"] {
+        for command in [
+            "self_service_execute",
+            "self_service_confirm",
+            "self_service_cancel",
+        ] {
             let error = call(
                 &main,
                 command,

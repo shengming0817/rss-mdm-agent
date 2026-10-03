@@ -797,7 +797,7 @@ try {
   await Promise.all([
     page.waitForResponse(
       (response) =>
-        response.url().endsWith("/__fixture/execute") && response.ok(),
+        response.url().endsWith("/__fixture/confirm") && response.ok(),
     ),
     activity.getByRole("button", { name: "确认上述操作", exact: true }).click(),
   ]);

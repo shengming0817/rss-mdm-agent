@@ -53,7 +53,7 @@ pub enum Reason {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AdmissionDecision {
     pub(crate) execution_gate: crate::ExecutionGate,
-    pub(crate) risk: Option<crate::RiskLevel>,
+    pub(crate) risk: Option<execution_contract::RiskLevel>,
     pub(crate) request_id: RequestId,
     pub(crate) content_digest: Digest,
     pub(crate) policy: VersionedRef,
@@ -98,7 +98,7 @@ impl AdmissionDecision {
         self.execution_gate
     }
     /// Protected classification, absent when unavailable.
-    pub fn risk(&self) -> Option<crate::RiskLevel> {
+    pub fn risk(&self) -> Option<execution_contract::RiskLevel> {
         self.risk
     }
 

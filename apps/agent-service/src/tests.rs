@@ -157,6 +157,15 @@ async fn signed_start_compiles_exactly_and_never_creates_a_local_enterprise_appr
     *host.current.lock().unwrap() = Some(Arc::new(host::BackendPermit {
         plan: frozen.clone(),
         start: start.clone(),
+        gate: crate::backend::gate::ProductGateProof::verify_start(
+            &offer,
+            &start,
+            &frozen,
+            None,
+            None,
+            host.clock.millis().unwrap(),
+        )
+        .unwrap(),
     }));
     assert!(host.verify(&frozen, &attempt).is_ok());
     assert!(execution_app::AppHost::approval_bindings(&host, &frozen)

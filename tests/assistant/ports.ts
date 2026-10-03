@@ -52,7 +52,7 @@ export function createFixturePorts() {
     },
     async confirmTask(task) {
       const { request, attempt, revision } = task;
-      await rpc("execute", { request, task: task.task, attempt, revision });
+      await rpc("confirm", { request, task: task.task, attempt, revision });
     },
     async cancelTask(requestId) {
       await rpc("cancel", { requestId });
@@ -84,6 +84,7 @@ export function createFixturePorts() {
   const selfServicePort: SelfServicePort = {
     snapshot: (input) => rpc("snapshot", input),
     execute: (input) => rpc("execute", input),
+    confirm: (input) => rpc("confirm", input),
     cancel: (input) => rpc("cancel", input),
   };
 

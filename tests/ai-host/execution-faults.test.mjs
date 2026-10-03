@@ -220,6 +220,19 @@ test("lost submit receipt recovers the same Rust attempt and keeps process exit 
     }).ok,
     false,
   );
+  assert.equal(
+    unwrap(connection.router.prepare(session.namespace, submit)).permission,
+    "none",
+  );
+  assert.equal(
+    unwrap(
+      connection.router.prepare(session.namespace, {
+        name: "execution_cancel",
+        arguments: { operationRequestId: input.request },
+      }),
+    ).permission,
+    "ask",
+  );
   const request = await crashAfterRustAcceptance(
     t,
     aiDb,

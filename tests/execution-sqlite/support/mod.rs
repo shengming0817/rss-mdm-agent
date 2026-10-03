@@ -331,7 +331,7 @@ impl AuthorityVerifier for TestHost {
         };
         Ok(AuthorityFacts {
             verified_origin: p.request.initiator.clone(),
-            risk: Some(execution_admission::RiskLevel::One),
+            risk: Some(execution_contract::RiskLevel::One),
             subject: SubjectFacts {
                 authority: p.request.authority.clone(),
                 actor: p.request.actor.clone(),

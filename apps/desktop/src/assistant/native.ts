@@ -56,7 +56,7 @@ export function nativeAssistant(): AssistantServices | undefined {
     },
     async confirmTask(task) {
       const { request, attempt, revision } = task;
-      await invoke("self_service_execute", {
+      await invoke("self_service_confirm", {
         generation,
         input: { request, task: task.task, attempt, revision },
       });

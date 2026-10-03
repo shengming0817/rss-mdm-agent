@@ -82,17 +82,31 @@ pub(crate) async fn submit<S: SecretProvider>(
             )
             .map_err(helper_error)?;
     }
-    if let Some(selection) = &selection {
+    if service
+        .core
+        .host
+        .revoked
+        .load(std::sync::atomic::Ordering::Acquire)
+        || service.core.stopping
+    {
+        return Err(Error::Denied);
+    }
+    let record = if let Some(selection) = &selection {
         let current = service
             .core
             .app
             .backend_request(&service.core.caller(), &selection.request)
             .map_err(crate::error::app_error)?
             .ok_or(Error::Conflict)?;
-        if current.state != BackendRequestState::Submitting {
+        if current.state != BackendRequestState::Submitting
+            || current.trigger != selection.trigger(&service.core.host.binding.device)?
+        {
             return Err(Error::Denied);
         }
-    }
+        Some(current)
+    } else {
+        None
+    };
     let (mut plan, artifacts) =
         compile(&service.core, &offer, &materials, start.payload(), delegate)?;
     if let Some(selection) = selection {
@@ -127,6 +141,14 @@ pub(crate) async fn submit<S: SecretProvider>(
         plan = execution_contract::FrozenExecution::freeze(input, &plan::storage_limits().input)
             .map_err(|_| Error::Untrusted)?;
     }
+    let gate = super::gate::ProductGateProof::verify_start(
+        &offer,
+        &start,
+        &plan,
+        record.as_ref(),
+        service.core.available_risk.as_ref(),
+        service.core.host.clock.millis()?,
+    )?;
     service
         .core
         .host
@@ -141,6 +163,7 @@ pub(crate) async fn submit<S: SecretProvider>(
         .map_err(|_| Error::Unavailable)? = Some(Arc::new(BackendPermit {
         plan: plan.clone(),
         start: start.clone(),
+        gate,
     }));
     let caller = service.core.caller();
     let result = (|| {

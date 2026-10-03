@@ -26,7 +26,7 @@ Windows 使用 PowerShell 7 运行 `scripts/service/execution-windows.ps1 -Actio
 
 卸载将 install/Install 改为 remove/Remove，并提供原始精确二进制和配置路径。install 拒绝已有注册；卸载核对归属，只移除注册，不删除凭据、journal、材料或审计。生产桌面读取默认受保护部署 pin；自定义配置用于显式命令行部署和隔离验收，不作为桌面失败后的回退。
 
-本地执行 V6、桌面/系统 IPC V7、SQLite schema 7 拒绝旧格式；远程 Agent 使用 V5，通信 SQLite 使用 schema 3。远程旧协议和旧通信库明确拒绝，保留原文件，不迁移、自动换库或重新注册。测试执行器仅用于测试专用装配。按实际运行的平台分别记录编译、测试与验收结果；开发机不承担 Windows 验证，未执行的环境不记为通过。
+本地执行 V6、桌面/系统 IPC V8、SQLite schema 8 拒绝旧格式；远程 Agent 使用 V5，通信 SQLite 使用 schema 3。远程旧协议和旧通信库明确拒绝，保留原文件，不迁移、自动换库或重新注册。测试执行器仅用于测试专用装配。按实际运行的平台分别记录编译、测试与验收结果；开发机不承担 Windows 验证，未执行的环境不记为通过。
 
 软件脚本检测器在退出码为 0 且完整捕获 stdout 时读取一个严格 JSON 对象：`{"kind":"absent"}` 或 `{"kind":"present","version":"固定版本"}`。其它输出、截断或无法核实的执行活动保持 Unknown；检测事实与安装进程退出分别记入同一 journal。
 
@@ -129,7 +129,7 @@ macOS 普通 PKG 包装执行保留既有保守语义：不保证逃逸后代停
 保留注册、凭据及 journal，不要求旧 PID 存活。SQLite 权限检查不得另开、关闭活跃
 数据或 sidecar 文件，以免释放同进程 POSIX 锁并破坏 WAL 共享内存。
 
-五秒 challenge 不属于 IPC V7，记录为有依据的不适用；连接寿命和业务 offer 有效期分别实测。
+五秒 challenge 不属于 IPC V8，记录为有依据的不适用；连接寿命和业务 offer 有效期分别实测。
 连接场景先用现有空 helper 注册的拒绝回包建立真实 NSXPC，且不消费业务调用额度。
 重启场景允许 NSXPC 按原 pins 重新认证新服务，要求旧实例终止、实际新 PID 及无新增执行证据。
 未安装、未就绪、超时及未连接到攻击端点不能作为身份攻击被拒绝的证据。
@@ -137,7 +137,7 @@ macOS 普通 PKG 包装执行保留既有保守语义：不保证逃逸后代停
 跨用户和登录世代在专用可重置 macOS 环境执行，保留原实验服务、backend 和固定候选。
 同一脚本提供 `--login-phase prepare|cross-user|resume|confirm`、
 `--deployment-config <受保护配置>`、`--login-state <checkpoint.json>`，并使用新 `--output` 目录。
-prepare 要求有效期至少五分钟的 user-initiated offer，保存需要确认的原请求与真实 UID/ASID；
+prepare 要求有效期至少五分钟的 user-initiated offer，保存风险未知而被拒绝的 AI 原请求与真实 UID/ASID；
 随后由操作员切换第二真实 GUI 用户执行 cross-user，或注销/重新登录原用户执行 resume。
 cross-user 的拒绝先记录为待确认；回到原用户后以 confirm 和
 `--login-response <第二用户回执>` 核验服务 ready、原 offer 未变及 journal 无新事实，才记通过。

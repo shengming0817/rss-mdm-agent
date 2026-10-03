@@ -59,13 +59,16 @@ impl Store {
         authorize(host, Access::Execute, scope, None)?;
         use execution_contract::BackendRequestState as S;
         let transition = match expected.map(|p| p.state) {
-            None => matches!(next.state, S::Proposed | S::Selected),
-            Some(S::Proposed) => matches!(next.state, S::Selected | S::Cancelled | S::Failed),
-            Some(S::Selected) => matches!(next.state, S::Submitting | S::Cancelled | S::Failed),
+            None => matches!(next.state, S::AwaitingConfirmation | S::Ready | S::Failed),
+            Some(S::AwaitingConfirmation) => {
+                matches!(next.state, S::Ready | S::Cancelled | S::Failed)
+            }
+            Some(S::Ready) => matches!(next.state, S::Submitting | S::Cancelled | S::Failed),
             Some(S::Submitting) => matches!(next.state, S::Cancelled | S::Failed),
             Some(S::Cancelled | S::Failed) => false,
         };
         if !transition
+            || !next.valid_product_gate()
             || !next.offer.user_initiated
             || matches!(
                 next.trigger,
@@ -85,7 +88,16 @@ impl Store {
         if previous.as_ref() != expected {
             return Err(Error::Conflict);
         }
-        if expected.is_some_and(|p| p.offer != next.offer || p.trigger != next.trigger) {
+        if expected.is_some_and(|p| {
+            p.offer != next.offer
+                || p.trigger != next.trigger
+                || p.risk != next.risk
+                || (p.confirmation != next.confirmation
+                    && !(p.state == S::AwaitingConfirmation
+                        && next.state == S::Ready
+                        && p.confirmation.is_none()
+                        && next.confirmation.is_some()))
+        }) {
             return Err(Error::Conflict);
         }
         tx.execute("INSERT INTO backend_requests VALUES(?1,?2,?3,?4) ON CONFLICT(scope) DO UPDATE SET body=excluded.body", params![key.as_str(), scope.actor.as_str(), scope.request_id.as_str(), encode(next, self.limits.max_record_bytes)?])?;

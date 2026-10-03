@@ -153,7 +153,21 @@ impl ExecutionHandle {
         selection_reply(&expected, reply)
     }
     pub async fn execute_ui(&self, input: BackendSelection) -> ui::Result<TaskSubmission> {
+        if !matches!(self.origin, ClientOrigin::Desktop {}) {
+            return Err(bad(Error::Denied));
+        }
         self.select(input).await.map_err(bad)
+    }
+    pub async fn confirm_ui(&self, input: BackendSelection) -> ui::Result<TaskSubmission> {
+        if !matches!(self.origin, ClientOrigin::Desktop {}) {
+            return Err(bad(Error::Denied));
+        }
+        let expected = input.clone();
+        let reply = self
+            .request(Request::ConfirmTask { selection: input })
+            .await
+            .map_err(bad)?;
+        selection_reply(&expected, reply).map_err(bad)
     }
     pub async fn cancel_ui(&self, input: ui::ActionRef) -> ui::Result<BackendTaskView> {
         self.cancel_task(input.request_id).await.map_err(bad)
@@ -323,9 +337,15 @@ fn selection_reply(input: &BackendSelection, reply: Reply) -> Result<TaskSubmiss
                 && value.offer.attempt == input.attempt
                 && value.offer.revision == input.revision =>
         {
+            if matches!(
+                value.state,
+                BackendRequestState::Failed | BackendRequestState::Cancelled
+            ) {
+                return Err(Error::Denied);
+            }
             Ok(TaskSubmission {
                 request: value.offer.request,
-                confirmation_required: value.state == BackendRequestState::Proposed,
+                confirmation_required: value.state == BackendRequestState::AwaitingConfirmation,
             })
         }
         _ => Err(Error::OutcomeUnknown),
@@ -377,13 +397,15 @@ mod selection_tests {
                 },
             },
             trigger: BackendTrigger::Automatic {},
+            risk: None,
+            confirmation: None,
             revision: 1,
-            state: BackendRequestState::Proposed,
+            state: BackendRequestState::AwaitingConfirmation,
             failure: None,
         };
         for state in [
-            BackendRequestState::Proposed,
-            BackendRequestState::Selected,
+            BackendRequestState::AwaitingConfirmation,
+            BackendRequestState::Ready,
             BackendRequestState::Submitting,
             BackendRequestState::Failed,
             BackendRequestState::Cancelled,
@@ -392,17 +414,24 @@ mod selection_tests {
                 state,
                 ..original.clone()
             };
-            let submission = selection_reply(
+            let result = selection_reply(
                 &selection,
                 Reply::Pending {
                     value: Box::new(value),
                 },
-            )
-            .unwrap();
+            );
+            if matches!(
+                state,
+                BackendRequestState::Failed | BackendRequestState::Cancelled
+            ) {
+                assert_eq!(result.unwrap_err(), Error::Denied);
+                continue;
+            }
+            let submission = result.unwrap();
             assert_eq!(submission.request, selection.request);
             assert_eq!(
                 submission.confirmation_required,
-                state == BackendRequestState::Proposed
+                state == BackendRequestState::AwaitingConfirmation
             );
         }
         for field in 0..4 {
