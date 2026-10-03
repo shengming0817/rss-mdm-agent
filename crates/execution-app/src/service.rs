@@ -420,10 +420,6 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
             Some(cause)
         } else {
             match self.runner.dispatch(AuthorizedDispatch {
-                ownership: self.journal.software_ownership(
-                    &Scope::from_input(execution.input()),
-                    &self.adapter(None, Some(execution.input())),
-                )?,
                 issued: std::time::Instant::now(),
                 allowance: execution
                     .allowance(self.host.reliable_now()?)
@@ -545,10 +541,6 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
                             && allowance.remaining_output_bytes > 0
                         {
                             self.runner.resume_software(crate::SoftwareResume {
-                                ownership: self.journal.software_ownership(
-                                    &scope,
-                                    &self.adapter(None, Some(execution.input())),
-                                )?,
                                 plan: execution.input().clone(),
                                 progress,
                                 allowance,

@@ -40,7 +40,7 @@ pub trait JournalPort {
         &self,
         request: &execution_contract::RequestId,
     ) -> Result<bool, JournalError>;
-    /// Atomically append the exact facts and ownership/claim changes to the original attempt.
+    /// Atomically append the exact facts and claim changes to the original attempt.
     /// Return those facts only after commit succeeds. Unknown commit must return
     /// OperationCommitUnknown and must not release a runner boundary.
     fn record_software_progress(
@@ -49,12 +49,6 @@ pub trait JournalPort {
         facts: &SoftwareProgress,
         host: &impl JournalHost,
     ) -> Result<SoftwareProgress, JournalError>;
-    /// Read only protected provenance produced by completed installations in this journal.
-    fn software_ownership(
-        &self,
-        scope: &Scope,
-        host: &impl JournalHost,
-    ) -> Result<Vec<execution_contract::SoftwareOwnership>, JournalError>;
     /// Read the original attempt's history without creating or replaying an invocation.
     fn software_progress(
         &self,

@@ -8,7 +8,7 @@
 
 当前格式与认证部署方式由[本机服务操作](../../docs/guides/local-service-lab.md)持有。旧格式明确拒绝，旧库和未决记录原样保留；没有自动迁移、清库、重新注册或新建 journal 的恢复回退。
 
-软件输入直接使用 V5 有序步骤、独立检测及 Bundle 成员长度/摘要。固定 MSI、WinGet manifest、PKG、Homebrew formula 和 Bundle 材料，不隐式选默认源或 latest。每个步骤开始前先提交 checkpoint，退出、检测和静止分别记录；同一 attempt 使用累计时间和输出预算。Start 只限制首次启动，后续步骤仍受原任务预算、取消及原 OS 会话约束。
+软件输入直接使用 V6 有序步骤、独立检测及 Bundle 成员长度/摘要。固定 MSI、WinGet manifest、PKG、Homebrew formula 和 Bundle 材料，不隐式选默认源或 latest。每个步骤开始前先提交 checkpoint，退出、检测和静止分别记录；同一 attempt 使用累计时间和输出预算。Start 只限制首次启动，后续步骤仍受原任务预算、取消及原 OS 会话约束。
 
 恢复先读取同一 journal 并查询原 helper。只有明确完成的步骤边界可继续；未完成、缺证据或内容不匹配的步骤保持 Unknown，不重跑、不跳过。根进程退出事实不因整体静止未知而丢失，退出零不等于安装成功。
 

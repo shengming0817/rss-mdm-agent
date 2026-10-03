@@ -13,7 +13,6 @@ pub(super) struct ProgramRun {
     pub(super) capture: Arc<Mutex<Option<ProcessEvidence>>>,
     pub(super) progress: Arc<progress::Progress>,
     pub(super) previous: Option<SoftwareProgress>,
-    pub(super) ownership: Vec<SoftwareOwnership>,
 }
 pub(super) fn execute(input: ProgramRun) {
     let ProgramRun {
@@ -28,7 +27,6 @@ pub(super) fn execute(input: ProgramRun) {
         capture,
         progress,
         previous,
-        mut ownership,
     } = input;
     let started = Instant::now();
     let mut journal = previous.unwrap_or_else(|| SoftwareProgress {
@@ -344,25 +342,6 @@ pub(super) fn execute(input: ProgramRun) {
                             deadline,
                             &cancel,
                         )?;
-                        let own = before.as_ref().is_some_and(|b| {
-                            matches!(b, SoftwareState::Absent {})
-                                || ownership
-                                    .iter()
-                                    .any(|o| o.step as usize == index && &o.state == b)
-                        });
-                        if own && program.intent == SoftwareOperation::Install {
-                            let key = step.ownership_key(program.intent);
-                            for (future, other) in program.steps.iter().enumerate().skip(index + 1)
-                            {
-                                if other.ownership_key(program.intent) == key {
-                                    ownership.retain(|o| o.step as usize != future);
-                                    ownership.push(SoftwareOwnership {
-                                        step: future as u32,
-                                        state: state.clone(),
-                                    });
-                                }
-                            }
-                        }
                         break;
                     }
                     if phase == SoftwarePhase::After {
@@ -371,16 +350,9 @@ pub(super) fn execute(input: ProgramRun) {
                     if phase == SoftwarePhase::Before
                         && matches!(state, SoftwareState::Present { .. })
                     {
-                        let managed = ownership
-                            .iter()
-                            .any(|o| o.step as usize == index && o.state == state);
-                        if (program.intent == SoftwareOperation::Uninstall
-                            && matches!(step.format, SoftwareFormat::DmgApp { .. })
-                            && !managed)
-                            || (step.existing != ExistingSoftware::AllowUserExisting && !managed)
-                            || (program.intent == SoftwareOperation::Install
-                                && !step.allow_downgrade
-                                && !crate::software::native_detection::not_downgrade(step, &state))
+                        if program.intent == SoftwareOperation::Install
+                            && !step.allow_downgrade
+                            && !crate::software::native_detection::not_downgrade(step, &state)
                         {
                             return Err(Error::Denied);
                         }

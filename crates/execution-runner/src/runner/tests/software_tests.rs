@@ -42,7 +42,7 @@ fn unknown_detector_activity_keeps_real_exit_and_cannot_skip_to_mutation() {
                 detection: SoftwareDetector::Script {
                     invocation: Box::new(invocation),
                 },
-                existing: ExistingSoftware::AllowUserExisting,
+
                 allow_downgrade: false,
                 allow_reboot: false,
             }],

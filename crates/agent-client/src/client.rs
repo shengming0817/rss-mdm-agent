@@ -75,7 +75,7 @@ pub struct ResumedStart {
     /// Locked, reverified complete cached materials; recovery never downloads new bytes.
     pub materials: Materials,
 }
-/// Explicitly driven V5 client; SQLite transactions never cross HTTP awaits.
+/// Explicitly driven V6 client; SQLite transactions never cross HTTP awaits.
 /// A private-root lease permits one driving owner; bounded HTTP tasks never access its state.
 pub struct Client<S, C> {
     pub(crate) store: Store,
@@ -198,7 +198,7 @@ impl<S: SecretProvider, C: Clock> Client<S, C> {
         self.store
             .cfg
             .origin
-            .join(&format!("api/agent/v5/{path}"))
+            .join(&format!("api/agent/v6/{path}"))
             .map_err(|_| Error::Configuration)
     }
     pub(crate) async fn checked_response(&self, response: Response) -> Result<Response, Error> {
@@ -255,13 +255,13 @@ impl<S: SecretProvider, C: Clock> Client<S, C> {
         credential_reference: &str,
         capabilities: Vec<wire::Capability>,
     ) -> Result<wire::RegistrationReceipt, Error> {
-        // Producer-owned MdmEnrollmentV5 opens the standard OS MDM enrollment UI;
+        // Producer-owned MdmEnrollmentV6 opens the standard OS MDM enrollment UI;
         // it is distinct from this Agent registration and unsupported by this client.
         if password_reference.is_empty()
             || credential_reference.is_empty()
             || password_reference.len() > 256
             || credential_reference.len() > 256
-            || capabilities.contains(&wire::Capability::MdmEnrollmentV5)
+            || capabilities.contains(&wire::Capability::MdmEnrollmentV6)
         {
             return Err(Error::Configuration);
         }

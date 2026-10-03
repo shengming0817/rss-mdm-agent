@@ -173,7 +173,7 @@ pub fn run(
 fn endpoint(system: bool) -> Result<(String, String), Error> {
     let (subject, session) = token_identity()?;
     Ok(if system {
-        (r"\\.\pipe\rss-mdm-execution-system-v5".into(), {
+        (r"\\.\pipe\rss-mdm-execution-system-v9".into(), {
             let mut sddl = String::from("D:P(A;;GA;;;SY)(A;;GA;;;BA)");
             if let Some(subjects) = CLIENT_SUBJECTS.get() {
                 for subject in subjects {
@@ -191,7 +191,7 @@ fn endpoint(system: bool) -> Result<(String, String), Error> {
         })
     } else {
         (
-            format!(r"\\.\pipe\rss-mdm-execution-{subject}-{session}-v5"),
+            format!(r"\\.\pipe\rss-mdm-execution-{subject}-{session}-v9"),
             format!("D:P(A;;GA;;;{subject})(A;;GA;;;SY)"),
         )
     })
@@ -534,7 +534,7 @@ pub fn query_session(
     query_at(
         bytes,
         Some(session),
-        format!(r"\\.\pipe\rss-mdm-execution-{subject}-{session}-v5"),
+        format!(r"\\.\pipe\rss-mdm-execution-{subject}-{session}-v9"),
         policy,
     )
 }

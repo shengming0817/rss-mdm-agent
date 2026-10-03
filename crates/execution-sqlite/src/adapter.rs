@@ -51,13 +51,6 @@ impl JournalPort for Store {
         self.sql_record_software_progress(scope, facts, host)
             .map_err(Into::into)
     }
-    fn software_ownership(
-        &self,
-        scope: &Scope,
-        host: &impl JournalHost,
-    ) -> Result<Vec<execution_contract::SoftwareOwnership>, JournalError> {
-        self.sql_software_ownership(scope, host).map_err(Into::into)
-    }
     fn software_progress(
         &self,
         scope: &Scope,

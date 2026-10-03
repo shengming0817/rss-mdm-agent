@@ -8,7 +8,7 @@ publish = false
 
 [dependencies]
 script-plan = { path = "../script-plan" }
-rss-mdm-resource = { git = "https://dev.azure.com/shengming0923/rss/_git/rss-mdm", rev = "574d11eec526f31fbc6ccc7a24d5fccddd6df8db", version = "=0.1.0" }
+rss-mdm-resource = { git = "https://dev.azure.com/shengming0923/rss/_git/rss-mdm", rev = "50d3390eabf396c74fb6d6339936821efe85ed45", version = "=0.1.0" }
 zip = { version = "=8.6.0", default-features = false, features = ["deflate"] }
 zeroize = "=1.8.2"
 execution-contract = { path = "../execution-contract" }

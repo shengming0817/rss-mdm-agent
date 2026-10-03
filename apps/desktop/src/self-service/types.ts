@@ -374,9 +374,9 @@ export type Initiator =
     };
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "LocalContractV6".
+ * via the `definition` "LocalContractV7".
  */
-export type LocalContractV6 = 6;
+export type LocalContractV7 = 7;
 /**
  * Required target user-session availability, independent of the originating login.
  *
@@ -876,7 +876,7 @@ export interface FrozenExecutionSummary {
   /**
    * Version of the frozen execution plan, independent of the AI wire version.
    */
-  schemaVersion: LocalContractV6;
+  schemaVersion: LocalContractV7;
   /**
    * Required target user session.
    */

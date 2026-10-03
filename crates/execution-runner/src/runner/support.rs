@@ -218,7 +218,6 @@ impl RunnerPort for TestCarrier {
     }
     fn dispatch(&self, p: AuthorizedDispatch) -> Result<DispatchOutcome, Error> {
         let allowance = p.allowance();
-        let ownership = p.software_ownership();
         p.dispatch(|plan, action| {
             if action.mode() != ExecutionMode::Test
                 || !matches!(plan.spec().request.authority, Authority::Test { .. })
@@ -229,8 +228,7 @@ impl RunnerPort for TestCarrier {
                 return Err(Error::Denied);
             }
             self.1.fetch_add(1, Ordering::SeqCst);
-            self.0
-                .launch_owned(plan, action.attempt_id(), allowance, ownership)
+            self.0.launch(plan, action.attempt_id(), allowance)
         })
     }
     fn stop(&self, p: &FrozenExecution, a: &AttemptId) -> Result<(), Error> {
