@@ -296,7 +296,6 @@ pub(super) fn compile(
         .clone();
     let format = match &action.behavior {
         wire::SoftwareTaskBehavior::Exe(exe) => SoftwareFormat::Exe {
-            ownership: exe_ownership(&exe.detect, &action.package)?,
             layout: exe
                 .layout
                 .iter()
@@ -418,13 +417,21 @@ pub(super) fn compile(
         format,
         SoftwareFormat::DmgApp { .. } | SoftwareFormat::DmgPkg { .. }
     ) {
-        let mut phases = vec![
-            (SoftwarePhase::Attach, O::Attach),
-            (SoftwarePhase::Cleanup, O::Cleanup),
-        ];
-        if matches!(format, SoftwareFormat::DmgApp { .. }) {
-            phases.push((SoftwarePhase::Stage, O::Stage));
-        }
+        let phases = match intent {
+            SoftwareOperation::Detect => Vec::new(),
+            SoftwareOperation::Uninstall if matches!(format, SoftwareFormat::DmgApp { .. }) => {
+                vec![(SoftwarePhase::Cleanup, O::Cleanup)]
+            }
+            SoftwareOperation::Uninstall => Vec::new(),
+            SoftwareOperation::Install => {
+                let mut phases = vec![(SoftwarePhase::Attach, O::Attach)];
+                if matches!(format, SoftwareFormat::DmgApp { .. }) {
+                    phases.push((SoftwarePhase::Stage, O::Stage));
+                }
+                phases.push((SoftwarePhase::Cleanup, O::Cleanup));
+                phases
+            }
+        };
         for (phase, operation) in phases {
             let (mut command, source) = build(operation, source_command)?;
             if phase == SoftwarePhase::Cleanup {
@@ -552,12 +559,6 @@ pub(super) fn compile(
                 }
                 wire::SoftwareTaskUpgrade::Deny => SoftwareUpgrade::Deny {},
             },
-            existing: match action.ownership {
-                wire::SoftwareTaskOwnership::ManagedOnly => ExistingSoftware::ManagedOnly,
-                wire::SoftwareTaskOwnership::AllowUserExisting => {
-                    ExistingSoftware::AllowUserExisting
-                }
-            },
             allow_downgrade: action.downgrade == wire::SoftwareTaskDowngrade::Allow,
             allow_reboot: action.reboot == wire::SoftwareTaskReboot::Report,
         },
@@ -570,20 +571,4 @@ pub(super) fn compile(
                 .collect(),
         },
     ))
-}
-
-fn exe_ownership(detector: &wire::SoftwareTaskDetection, package: &str) -> Result<Digest, Error> {
-    let selector = match detector {
-        wire::SoftwareTaskDetection::Registry {
-            scope, key, value, ..
-        } => serde_json::to_vec(&("registry", scope, key, value)),
-        wire::SoftwareTaskDetection::File { scope, path, .. } => {
-            serde_json::to_vec(&("file", scope, path))
-        }
-        wire::SoftwareTaskDetection::Script { .. } => serde_json::to_vec(&("script", package)),
-        _ => return Err(Error::Unsupported),
-    }
-    .map_err(|_| Error::Protocol)?;
-    use sha2::{Digest as _, Sha256};
-    Digest::new(format!("{:x}", Sha256::digest(selector))).map_err(|_| Error::Protocol)
 }
