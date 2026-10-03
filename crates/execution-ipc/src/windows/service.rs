@@ -730,7 +730,7 @@ mod deadline_tests {
         let status = std::process::Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",
-                "windows::service::deadline_tests::blocked_owner_fixture",
+                "windows_service::deadline_tests::blocked_owner_fixture",
                 "--ignored",
             ])
             .status()
