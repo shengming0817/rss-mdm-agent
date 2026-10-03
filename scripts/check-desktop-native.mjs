@@ -460,6 +460,7 @@ const verifyUnknownFence = async () => {
     {
       root,
       path: join(directory, "scope-fault.sqlite"),
+      actorRecoveryPath: join(directory, "scope-fault-actor.json"),
       runtime: scopeRuntime,
     },
     async (proof, executorPid) => {

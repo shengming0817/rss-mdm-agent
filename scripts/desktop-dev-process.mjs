@@ -3,6 +3,8 @@ import { spawn, execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { once } from "node:events";
 import { createInterface } from "node:readline";
+import { writeFileSync } from "node:fs";
+import { setTimeout as waitMilliseconds } from "node:timers/promises";
 
 const noMatch = (error) =>
   error.status === 1 &&
@@ -53,28 +55,20 @@ export async function runOwnedScopeProbe(
   signal,
   timeoutMs = 30000,
 ) {
-  const actorSource = `const {spawn}=require('node:child_process');const fs=require('node:fs');
-    const control=JSON.parse(process.argv[1]);
+  const actorSource = `const {spawn}=require('node:child_process');
     const child=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'});
-    child.once('spawn',()=>{
-      if(control.marker)fs.writeFileSync(control.marker,JSON.stringify({parent:process.pid,child:child.pid}),{mode:0o600,flag:'wx'});
-      setTimeout(()=>console.log(JSON.stringify({pid:child.pid})),control.delay);
-    });setInterval(()=>{},1000);`;
-  const delay = input.actorReadinessDelayMs ?? 0;
-  if (!Number.isInteger(delay) || delay < 0 || delay > 5000)
-    throw Error("actor readiness delay invalid");
-  const actor = spawn(
-    node,
-    [
-      "-e",
-      actorSource,
-      JSON.stringify({ delay, marker: input.actorRecoveryPath }),
-    ],
-    {
-      detached: true,
-      stdio: ["ignore", "pipe", "pipe"],
-    },
-  );
+    child.once('spawn',()=>console.log(JSON.stringify({pid:child.pid})));setInterval(()=>{},1000);`;
+  const registrationDelay = input.actorRegistrationDelayMs ?? 0;
+  if (
+    !Number.isInteger(registrationDelay) ||
+    registrationDelay < 0 ||
+    registrationDelay > 5000
+  )
+    throw Error("actor registration delay invalid");
+  const actor = spawn(node, ["-e", actorSource], {
+    detached: true,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
   let child, proof, timer, rejectStop;
   const stopped = new Promise((_, reject) => {
     rejectStop = reject;
@@ -101,6 +95,14 @@ export async function runOwnedScopeProbe(
     };
     if (!proof.anchor.start || Number(processField(pid, "pgid")) !== actor.pid)
       throw Error("actor identity unavailable");
+    if (input.actorRecoveryPath)
+      writeFileSync(
+        input.actorRecoveryPath,
+        JSON.stringify({ ...proof, parent: actor.pid, child: pid }),
+        { mode: 0o600, flag: "wx" },
+      );
+    if (registrationDelay)
+      await Promise.race([waitMilliseconds(registrationDelay), stopped]);
     await Promise.race([register(proof, process.pid), stopped]);
     child = spawn(
       node,

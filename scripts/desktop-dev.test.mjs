@@ -799,7 +799,7 @@ test("actor creation owner reaps before handoff on cancellation and timeout", as
         process.execPath,
         "throw Error('must not enter executor')",
         {
-          actorReadinessDelayMs: 2000,
+          actorRegistrationDelayMs: 5000,
           actorRecoveryPath: marker,
         },
         () => {
@@ -809,13 +809,13 @@ test("actor creation owner reaps before handoff on cancellation and timeout", as
           cleaned = true;
         },
         controller.signal,
-        cancel ? 5000 : 1000,
+        cancel ? 10000 : 4000,
       );
       const rejected = assert.rejects(
         pending,
         cancel ? /cancelled/ : /deadline exceeded/,
       );
-      const deadline = Date.now() + 900;
+      const deadline = Date.now() + 3500;
       while (!existsSync(marker)) {
         assert.ok(Date.now() < deadline);
         await new Promise((resolve) => setTimeout(resolve, 5));
