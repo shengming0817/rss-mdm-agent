@@ -19,6 +19,7 @@ it("requires explicit conversation selection, keeps one view and preserves stage
           .fn()
           .mockResolvedValue({ ...snapshot(), available: [resourceOffer()] }),
         execute: vi.fn(),
+        confirm: vi.fn(),
         cancel: vi.fn(),
       },
     },
@@ -82,6 +83,7 @@ it("uses one content header, a sidebar brand and a main welcome without remounti
       selfServicePort: {
         snapshot: vi.fn().mockResolvedValue(snapshot()),
         execute: vi.fn(),
+        confirm: vi.fn(),
         cancel: vi.fn(),
       },
     },

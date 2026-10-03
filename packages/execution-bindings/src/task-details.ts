@@ -16,6 +16,8 @@ export type BackendTaskView =
  * Closed preparation diagnosis without backend bodies or local paths.
  */
 export type BackendRequestFailure =
+  | "riskUnknown"
+  | "riskBlocked"
   | "preparationFailed"
   | "interrupted"
   | "expired"
@@ -90,6 +92,10 @@ export type StopOutcome = "acknowledged" | "failed";
  */
 export interface BackendRequest {
   /**
+   * Explicit risk-two response; readiness alone never proves confirmation.
+   */
+  confirmation: BackendConfirmation | null;
+  /**
    * Diagnosis when preparation failed.
    */
   failure: BackendRequestFailure | null;
@@ -99,9 +105,18 @@ export interface BackendRequest {
    */
   revision: number;
   /**
+   * Immutable trusted classification; absent for human requests or unknown AI risk.
+   */
+  risk: BackendRiskDecision | null;
+  /**
    * Preparation state, separate from execution lifecycle.
    */
-  state: "proposed" | "selected" | "submitting" | "failed" | "cancelled";
+  state:
+    | "awaitingConfirmation"
+    | "ready"
+    | "submitting"
+    | "failed"
+    | "cancelled";
   /**
    * OS-authenticated original trigger; never accepted from an IPC request body.
    */
@@ -111,21 +126,62 @@ export interface BackendRequest {
       }
     | {
         kind: "human";
-        osSession: OsSessionRef;
+        osSession: OsSessionRef1;
       }
     | {
-        config: VersionedRef;
+        config: VersionedRef1;
         /**
          * Conversation reference used for audit correlation.
          */
         conversation: string;
         kind: "ai";
-        osSession: OsSessionRef1;
+        osSession: OsSessionRef2;
         /**
          * Tool request reference used for audit correlation.
          */
         toolCall: string;
       };
+}
+/**
+ * Sole product confirmation, persisted together with the original AI request.
+ */
+export interface BackendConfirmation {
+  /**
+   * Trusted service time at the user's explicit response.
+   */
+  confirmedAtUnixMs: number;
+  /**
+   * Exclusive deadline, bounded by the offer, policy and one-minute interaction limit.
+   */
+  expiresAtUnixMs: number;
+  osSession: OsSessionRef;
+}
+/**
+ * Actual original login, independently authenticated at confirmation and dispatch.
+ */
+export interface OsSessionRef {
+  account: OsAccountRef;
+  /**
+   * Origin device reference; it does not establish registration or target authority.
+   */
+  device: string;
+  /**
+   * Origin OS login/session reference, including an explicit test reference in fixtures.
+   */
+  session: string;
+}
+/**
+ * Login account at the origin; never implicitly equated to the product actor.
+ */
+export interface OsAccountRef {
+  /**
+   * OS namespace of this reference or target; does not assert platform support.
+   */
+  platform: "windows" | "macos" | "linux";
+  /**
+   * Opaque stable OS account reference, such as a SID/UID reference, not an authentication credential.
+   */
+  subject: string;
 }
 /**
  * Exact offer and its display summary.
@@ -200,34 +256,21 @@ export interface BackendStepSummary {
   version: string;
 }
 /**
- * Actual native account and login session, supplied by ingress.
+ * Backend-authenticated classification of the exact offer, never an IPC claim.
  */
-export interface OsSessionRef {
-  account: OsAccountRef;
+export interface BackendRiskDecision {
   /**
-   * Origin device reference; it does not establish registration or target authority.
+   * Exclusive trusted decision deadline.
    */
-  device: string;
+  expiresAtUnixMs: number;
   /**
-   * Origin OS login/session reference, including an explicit test reference in fixtures.
+   * Explicit effect classification selected by backend policy.
    */
-  session: string;
+  level: "zero" | "one" | "two" | "three";
+  policy: VersionedRef;
 }
 /**
- * Login account at the origin; never implicitly equated to the product actor.
- */
-export interface OsAccountRef {
-  /**
-   * OS namespace of this reference or target; does not assert platform support.
-   */
-  platform: "windows" | "macos" | "linux";
-  /**
-   * Opaque stable OS account reference, such as a SID/UID reference, not an authentication credential.
-   */
-  subject: string;
-}
-/**
- * Native AI connection configuration, not a provider identity grant.
+ * Exact backend risk policy revision.
  */
 export interface VersionedRef {
   /**
@@ -243,6 +286,33 @@ export interface VersionedRef {
  * Actual native account and login session, supplied by ingress.
  */
 export interface OsSessionRef1 {
+  account: OsAccountRef;
+  /**
+   * Origin device reference; it does not establish registration or target authority.
+   */
+  device: string;
+  /**
+   * Origin OS login/session reference, including an explicit test reference in fixtures.
+   */
+  session: string;
+}
+/**
+ * Native AI connection configuration, not a provider identity grant.
+ */
+export interface VersionedRef1 {
+  /**
+   * Opaque reference identity; the revision must be supplied separately.
+   */
+  id: string;
+  /**
+   * Exact immutable revision reference; does not resolve or follow a moving alias.
+   */
+  revision: string;
+}
+/**
+ * Actual native account and login session, supplied by ingress.
+ */
+export interface OsSessionRef2 {
   account: OsAccountRef;
   /**
    * Origin device reference; it does not establish registration or target authority.
@@ -378,16 +448,16 @@ export interface FrozenExecutionSummary {
             }
           | {
               kind: "human";
-              osSession: OsSessionRef;
+              osSession: OsSessionRef1;
             }
           | {
-              config: VersionedRef;
+              config: VersionedRef1;
               /**
                * Conversation reference used for audit correlation.
                */
               conversation: string;
               kind: "ai";
-              osSession: OsSessionRef1;
+              osSession: OsSessionRef2;
               /**
                * Tool request reference used for audit correlation.
                */
@@ -396,16 +466,16 @@ export interface FrozenExecutionSummary {
       }
     | {
         kind: "human";
-        osSession: OsSessionRef2;
+        osSession: OsSessionRef3;
       }
     | {
-        config: VersionedRef2;
+        config: VersionedRef3;
         /**
          * Originating AI conversation reference in the provider namespace.
          */
         conversation: string;
         kind: "ai";
-        osSession: OsSessionRef3;
+        osSession: OsSessionRef4;
         /**
          * Provider namespace, independent of product authentication.
          */
@@ -417,11 +487,11 @@ export interface FrozenExecutionSummary {
       }
     | {
         kind: "policy";
-        policy: VersionedRef3;
+        policy: VersionedRef4;
       };
   interpreter: InterpreterRef;
   operation: Operation;
-  policy: VersionedRef6;
+  policy: VersionedRef7;
   /**
    * Exact frozen plan identity.
    */
@@ -467,7 +537,7 @@ export interface FrozenExecutionSummary {
  * Exact artifact revision and content hash.
  */
 export interface ExactArtifactRef {
-  resource: VersionedRef1;
+  resource: VersionedRef2;
   /**
    * Expected content SHA-256. The adapter must verify the actual bytes before use.
    */
@@ -476,7 +546,7 @@ export interface ExactArtifactRef {
 /**
  * Exact resource ID and revision; no latest-version lookup is performed here.
  */
-export interface VersionedRef1 {
+export interface VersionedRef2 {
   /**
    * Opaque reference identity; the revision must be supplied separately.
    */
@@ -566,7 +636,7 @@ export interface OsAccountRef1 {
 /**
  * Originating OS account/session reference, separate from requested run-as identity.
  */
-export interface OsSessionRef2 {
+export interface OsSessionRef3 {
   account: OsAccountRef;
   /**
    * Origin device reference; it does not establish registration or target authority.
@@ -580,7 +650,7 @@ export interface OsSessionRef2 {
 /**
  * Exact connection configuration used at initiation; no external account identity.
  */
-export interface VersionedRef2 {
+export interface VersionedRef3 {
   /**
    * Opaque reference identity; the revision must be supplied separately.
    */
@@ -593,7 +663,7 @@ export interface VersionedRef2 {
 /**
  * Originating OS account/session reference, separate from requested run-as identity.
  */
-export interface OsSessionRef3 {
+export interface OsSessionRef4 {
   account: OsAccountRef;
   /**
    * Origin device reference; it does not establish registration or target authority.
@@ -607,7 +677,7 @@ export interface OsSessionRef3 {
 /**
  * Exact policy revision associated with this request or audit decision.
  */
-export interface VersionedRef3 {
+export interface VersionedRef4 {
   /**
    * Opaque reference identity; the revision must be supplied separately.
    */
@@ -622,13 +692,13 @@ export interface VersionedRef3 {
  */
 export interface InterpreterRef {
   artifact: ExactArtifactRef1;
-  profile: VersionedRef4;
+  profile: VersionedRef5;
 }
 /**
  * Binary identity; the adapter must verify bytes, without PATH or version fallback.
  */
 export interface ExactArtifactRef1 {
-  resource: VersionedRef1;
+  resource: VersionedRef2;
   /**
    * Expected content SHA-256. The adapter must verify the actual bytes before use.
    */
@@ -637,7 +707,7 @@ export interface ExactArtifactRef1 {
 /**
  * Calling convention identity/revision; matched together with the binary.
  */
-export interface VersionedRef4 {
+export interface VersionedRef5 {
   /**
    * Opaque reference identity; the revision must be supplied separately.
    */
@@ -655,12 +725,12 @@ export interface Operation {
    * Stable operation identifier owned by the catalog/authorization policy.
    */
   action: string;
-  resource: VersionedRef5;
+  resource: VersionedRef6;
 }
 /**
  * Exact resource ID and revision; no latest-version lookup is performed here.
  */
-export interface VersionedRef5 {
+export interface VersionedRef6 {
   /**
    * Opaque reference identity; the revision must be supplied separately.
    */
@@ -673,7 +743,7 @@ export interface VersionedRef5 {
 /**
  * Exact policy revision.
  */
-export interface VersionedRef6 {
+export interface VersionedRef7 {
   /**
    * Opaque reference identity; the revision must be supplied separately.
    */
@@ -826,7 +896,7 @@ export interface EvidenceRef {
    * Recorded observation category; a category label does not prove an external fact.
    */
   kind: "testResult" | "processExited" | "stateObserved";
-  reference: VersionedRef7;
+  reference: VersionedRef8;
   /**
    * Runner reference whose evidence is being recorded, including an explicit fixture runner in tests.
    */
@@ -835,7 +905,7 @@ export interface EvidenceRef {
 /**
  * Exact versioned reference. Authenticity and access are checked by its owner.
  */
-export interface VersionedRef7 {
+export interface VersionedRef8 {
   /**
    * Opaque reference identity; the revision must be supplied separately.
    */

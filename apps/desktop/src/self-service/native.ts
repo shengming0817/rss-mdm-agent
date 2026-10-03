@@ -15,6 +15,8 @@ export function nativePort(): SelfServicePort | null {
       invoke<Snapshot>("self_service_snapshot", { input, generation }),
     execute: (input) =>
       invoke<TaskSubmission>("self_service_execute", { input, generation }),
+    confirm: (input) =>
+      invoke<TaskSubmission>("self_service_confirm", { input, generation }),
     cancel: (input) =>
       invoke<BackendTaskView>("self_service_cancel", { input, generation }),
   };

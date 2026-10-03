@@ -60,12 +60,17 @@ export function createController(
     state.taskId = task.request;
   }
   async function confirm() {
-    const item = state.item;
+    await submit(state.item, false);
+  }
+  async function confirmPreparation(item: BackendTask) {
+    await submit(item, true);
+  }
+  async function submit(item: BackendTask | null, confirmation: boolean) {
     if (!port || !item || state.busy || state.uncertain) return;
     state.busy = true;
     state.error = "";
     try {
-      const result = await port.execute({
+      const result = await (confirmation ? port.confirm : port.execute)({
         request: item.request,
         task: item.task,
         attempt: item.attempt,
@@ -130,6 +135,7 @@ export function createController(
     refresh,
     select,
     confirm,
+    confirmPreparation,
     cancel,
     navigate,
     next,

@@ -1540,11 +1540,29 @@ try {
       ),
     );
     result.checks.push("left-navigation-consistent-style");
-    mark("first send, real tool approval and Rust confirmation");
+    mark("human action enters the service without a backend confirmation gate");
     await browser.setWindowSize(1100, 760);
-    await prompt("GOLDEN_INSTALL 安装办公套件");
-    await permission(true);
-    await text("完成 INSTALL");
+    await navigate("软件中心");
+    await wait(() =>
+      browser.$('[data-action="resource-details"]').isDisplayed(),
+    );
+    await browser.$('[data-action="resource-details"]').click();
+    await click("确认此操作");
+    await click("确认并执行");
+    await wait(async () =>
+      (await serviceCall("query")).value.items.some(
+        (row) => row.status.attempts === 1,
+      ),
+    );
+    await navigate("AI 助手");
+    fixture.facts.request = (await serviceCall("query")).value.items.find(
+      (row) => row.status.attempts === 1,
+    ).action.requestId;
+    mark(
+      "first send and read the original human task without a generic permission",
+    );
+    await prompt("GOLDEN_HELLO 查看办公套件");
+    await text("完成 HELLO");
     await browser.$('[aria-label="复制代码"]').click();
     await wait(
       async () =>
@@ -1556,11 +1574,11 @@ try {
       : "explicit-selection-fallback";
     result.checks.push("native-copy-or-explicit-fallback");
 
-    await text("等待本人确认");
+    assert.equal((await task()).snapshot.attempts, 1);
+    assert.equal((await task()).plan.initiator.trigger.kind, "human");
     assert.equal(
-      (await task()).snapshot.attempts,
-      0,
-      "AI permission cannot replace Rust action confirmation",
+      await browser.$('[aria-label="AI 工具权限请求"]').isExisting(),
+      false,
     );
     await prompt("GOLDEN_CANCEL_REJECT 拒绝取消");
     await permission(false);
@@ -1571,13 +1589,9 @@ try {
         (await serviceCall("query")).preparations.length,
       1,
     );
-    mark("confirm the original prepared task through its product card");
-    await browser.execute(() => {
-      document.querySelector(".assistant-timeline").scrollTop = 0;
-    });
-    await click("确认上述操作");
-    mark("observe the original request creating its first attempt");
-    await wait(async () => (await task())?.snapshot.attempts === 1);
+    mark("read the original executed task through its product card");
+    await prompt("GOLDEN_READ 读取状态");
+    await text("完成 READ");
     await text("查看设备操作");
     await click("查看设备操作");
     await wait(() => browser.$("dialog[open]").isDisplayed());
@@ -1602,7 +1616,7 @@ try {
       "first-send-single-session",
       "cancel-allow-reject",
       "reads-without-approval",
-      "rust-confirmation-separate",
+      "human-without-backend-confirmation",
       "trusted-execution-card",
     );
     mark("manual history position survives a new reply");
@@ -1757,16 +1771,22 @@ try {
       "reject a distinct fixed task without creating another execution intent",
     );
     await prompt("GOLDEN_DENY 拒绝新的操作");
-    await permission(false);
     await text("完成 DENY");
     assert.notEqual(fixture.facts.deniedRequest, fixture.facts.request);
     const afterRejection = await serviceCall("query");
     assert.equal(
       afterRejection.value.items.length + afterRejection.preparations.length,
-      1,
+      2,
     );
     assert.equal((await task()).snapshot.attempts, 1);
-    result.checks.push("execute-allow-reject");
+    assert.equal(
+      afterRejection.preparations.find(
+        (row) => row.offer.request === fixture.facts.deniedRequest,
+      )?.failure,
+      "riskUnknown",
+    );
+    assert.equal((await serviceCall("status")).startRequests, 1);
+    result.checks.push("ai-unknown-risk-blocked-without-start");
     const proposalsBeforeContext = fixture.facts.proposals.length;
     for (const [width, height] of [
       [1100, 760],

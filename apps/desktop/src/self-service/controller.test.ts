@@ -15,6 +15,10 @@ function fixture() {
       request: input.request,
       confirmationRequired: false,
     })),
+    confirm: vi.fn<SelfServicePort["confirm"]>(async (input) => ({
+      request: input.request,
+      confirmationRequired: false,
+    })),
     cancel: vi.fn<SelfServicePort["cancel"]>(async () => ({
       kind: "execution",
       value: executionTask(),
@@ -47,6 +51,20 @@ describe("backend task selection", () => {
       revision: "a".repeat(64),
     });
     expect(c.state.taskId).toBe("backend-request");
+  });
+  it("confirms an AI preparation once through the dedicated endpoint", async () => {
+    const { c, port, value } = fixture();
+    await c.refresh();
+    const task = value.available[0]!;
+    await Promise.all([c.confirmPreparation(task), c.confirmPreparation(task)]);
+    expect(port.confirm).toHaveBeenCalledTimes(1);
+    expect(port.confirm).toHaveBeenCalledWith({
+      request: task.request,
+      task: task.task,
+      attempt: task.attempt,
+      revision: task.revision,
+    });
+    expect(port.execute).not.toHaveBeenCalled();
   });
   it("keeps an ambiguous original submission and does not create a replacement", async () => {
     const { c, port, value } = fixture();

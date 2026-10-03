@@ -182,7 +182,9 @@ it("keeps preparation actions and revocation visible in the modern task card", a
     value: {
       offer: request,
       revision: 1,
-      state: "proposed",
+      state: "awaitingConfirmation",
+      risk: null,
+      confirmation: null,
       failure: null,
       trigger: { kind: "automatic" },
     },

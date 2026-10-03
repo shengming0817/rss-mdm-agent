@@ -29,16 +29,12 @@ export type BackendTaskView =
       value: ExecutionTaskDetails;
     };
 /**
- * Closed preparation diagnosis without backend bodies or local paths.
+ * Target OS semantics for validation; an enum value is not a platform support claim.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "BackendRequestFailure".
+ * via the `definition` "Platform".
  */
-export type BackendRequestFailure =
-  | "preparationFailed"
-  | "interrupted"
-  | "expired"
-  | "revoked";
+export type Platform = "windows" | "macos" | "linux";
 /**
  * Opaque local reference identifier; syntax validity is not authenticity.
  *
@@ -46,6 +42,26 @@ export type BackendRequestFailure =
  * via the `definition` "Id".
  */
 export type Id = string;
+/**
+ * Device reference, not verified registration evidence.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "DeviceId".
+ */
+export type DeviceId = string;
+/**
+ * Closed preparation diagnosis without backend bodies or local paths.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "BackendRequestFailure".
+ */
+export type BackendRequestFailure =
+  | "riskUnknown"
+  | "riskBlocked"
+  | "preparationFailed"
+  | "interrupted"
+  | "expired"
+  | "revoked";
 /**
  * Lowercase SHA-256 bytes expressed as hex; a digest alone grants no trust.
  *
@@ -93,14 +109,21 @@ export type BackendIdentity = "system" | "user";
  */
 export type SoftwareOperation = "install" | "detect" | "uninstall";
 /**
+ * Protected policy classification; never accepted as a request field.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "RiskLevel".
+ */
+export type RiskLevel = "zero" | "one" | "two" | "three";
+/**
  * Preparation state only; none of these values authorizes physical execution.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
  * via the `definition` "BackendRequestState".
  */
 export type BackendRequestState =
-  | "proposed"
-  | "selected"
+  | "awaitingConfirmation"
+  | "ready"
   | "submitting"
   | "failed"
   | "cancelled";
@@ -140,20 +163,6 @@ export type BackendTrigger =
        */
       toolCall: Id;
     };
-/**
- * Target OS semantics for validation; an enum value is not a platform support claim.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Platform".
- */
-export type Platform = "windows" | "macos" | "linux";
-/**
- * Device reference, not verified registration evidence.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "DeviceId".
- */
-export type DeviceId = string;
 /**
  * Safe counts only; individual paths and network destinations remain protected.
  *
@@ -565,6 +574,7 @@ export type StopOutcome = "acknowledged" | "failed";
 export interface SelfServiceCommands {
   appearance_snapshot: Command4;
   self_service_cancel: Command3;
+  self_service_confirm: Command2;
   self_service_execute: Command2;
   self_service_snapshot: Command;
 }
@@ -608,6 +618,10 @@ export interface ActionRef {
  */
 export interface BackendRequest {
   /**
+   * Explicit risk-two response; readiness alone never proves confirmation.
+   */
+  confirmation: BackendConfirmation | null;
+  /**
    * Diagnosis when preparation failed.
    */
   failure: BackendRequestFailure | null;
@@ -620,6 +634,10 @@ export interface BackendRequest {
    */
   revision: number;
   /**
+   * Immutable trusted classification; absent for human requests or unknown AI risk.
+   */
+  risk: BackendRiskDecision | null;
+  /**
    * Preparation state, separate from execution lifecycle.
    */
   state: BackendRequestState;
@@ -627,6 +645,62 @@ export interface BackendRequest {
    * OS-authenticated original trigger; never accepted from an IPC request body.
    */
   trigger: BackendTrigger;
+}
+/**
+ * Sole product confirmation, persisted together with the original AI request.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "BackendConfirmation".
+ */
+export interface BackendConfirmation {
+  /**
+   * Trusted service time at the user's explicit response.
+   */
+  confirmedAtUnixMs: number;
+  /**
+   * Exclusive deadline, bounded by the offer, policy and one-minute interaction limit.
+   */
+  expiresAtUnixMs: number;
+  /**
+   * Actual original login, independently authenticated at confirmation and dispatch.
+   */
+  osSession: OsSessionRef;
+}
+/**
+ * Claimed OS login provenance at the request origin, separate from target and run-as identity.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "OsSessionRef".
+ */
+export interface OsSessionRef {
+  /**
+   * Login account at the origin; never implicitly equated to the product actor.
+   */
+  account: OsAccountRef;
+  /**
+   * Origin device reference; it does not establish registration or target authority.
+   */
+  device: DeviceId;
+  /**
+   * Origin OS login/session reference, including an explicit test reference in fixtures.
+   */
+  session: Id;
+}
+/**
+ * Opaque account reference in an OS namespace, independent of product or provider identity.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "OsAccountRef".
+ */
+export interface OsAccountRef {
+  /**
+   * OS namespace of this reference or target; does not assert platform support.
+   */
+  platform: Platform;
+  /**
+   * Opaque stable OS account reference, such as a SID/UID reference, not an authentication credential.
+   */
+  subject: Id;
 }
 /**
  * Exact displayed backend offer, without executable input or authorization claims.
@@ -689,40 +763,24 @@ export interface BackendStepSummary {
   version: string;
 }
 /**
- * Claimed OS login provenance at the request origin, separate from target and run-as identity.
+ * Backend-authenticated classification of the exact offer, never an IPC claim.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "OsSessionRef".
+ * via the `definition` "BackendRiskDecision".
  */
-export interface OsSessionRef {
+export interface BackendRiskDecision {
   /**
-   * Login account at the origin; never implicitly equated to the product actor.
+   * Exclusive trusted decision deadline.
    */
-  account: OsAccountRef;
+  expiresAtUnixMs: number;
   /**
-   * Origin device reference; it does not establish registration or target authority.
+   * Explicit effect classification selected by backend policy.
    */
-  device: DeviceId;
+  level: RiskLevel;
   /**
-   * Origin OS login/session reference, including an explicit test reference in fixtures.
+   * Exact backend risk policy revision.
    */
-  session: Id;
-}
-/**
- * Opaque account reference in an OS namespace, independent of product or provider identity.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "OsAccountRef".
- */
-export interface OsAccountRef {
-  /**
-   * OS namespace of this reference or target; does not assert platform support.
-   */
-  platform: Platform;
-  /**
-   * Opaque stable OS account reference, such as a SID/UID reference, not an authentication credential.
-   */
-  subject: Id;
+  policy: VersionedRef;
 }
 /**
  * Exact resource/configuration reference. Resolution and authenticity belong to the owner.

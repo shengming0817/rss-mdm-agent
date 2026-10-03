@@ -116,10 +116,10 @@ function operationLabel(value: string) {
 }
 function stateLabel(value: string) {
   switch (value) {
-    case "proposed":
+    case "awaitingConfirmation":
       return "等待本人确认";
-    case "selected":
-      return "已确认";
+    case "ready":
+      return "待执行";
     case "submitting":
       return "准备执行";
     case "failed":
@@ -132,6 +132,10 @@ function stateLabel(value: string) {
 }
 function failureLabel(value: string) {
   switch (value) {
+    case "riskUnknown":
+      return "后台未提供可信风险等级，AI 操作已拒绝";
+    case "riskBlocked":
+      return "后台风险策略禁止 AI 执行此操作";
     case "preparationFailed":
       return "本机条件或后台 Start 未满足";
     case "interrupted":
@@ -220,6 +224,7 @@ function failureLabel(value: string) {
         </li>
       </ol>
     </template>
+    <p>AI 风险：{{ details.value.risk?.level ?? "后台未提供" }}</p>
     <p>
       {{ stateLabel(details.value.state) }}
     </p>
@@ -227,7 +232,7 @@ function failureLabel(value: string) {
       {{ failureLabel(details.value.failure) }}
     </p>
     <button
-      v-if="details.value.state === 'proposed'"
+      v-if="details.value.state === 'awaitingConfirmation'"
       :disabled="busy"
       @click="act(true)"
     >

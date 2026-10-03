@@ -239,6 +239,7 @@
     }
   },
   "denied": {
+    "confirmation": null,
     "failure": "revoked",
     "offer": {
       "attempt": "backend-attempt",
@@ -257,6 +258,11 @@
       "userInitiated": true
     },
     "revision": 1,
+    "risk": {
+      "expiresAtUnixMs": 9999999999000,
+      "level": "two",
+      "policy": { "id": "fixture-risk", "revision": "1" }
+    },
     "state": "failed",
     "trigger": {
       "config": { "id": "fixture-config", "revision": "1" },
@@ -361,6 +367,7 @@
     }
   },
   "proposed": {
+    "confirmation": null,
     "failure": null,
     "offer": {
       "attempt": "backend-attempt",
@@ -379,7 +386,12 @@
       "userInitiated": true
     },
     "revision": 1,
-    "state": "proposed",
+    "risk": {
+      "expiresAtUnixMs": 9999999999000,
+      "level": "two",
+      "policy": { "id": "fixture-risk", "revision": "1" }
+    },
+    "state": "awaitingConfirmation",
     "trigger": {
       "config": { "id": "fixture-config", "revision": "1" },
       "conversation": "fixture-conversation",

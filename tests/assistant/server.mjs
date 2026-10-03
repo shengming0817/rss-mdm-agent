@@ -151,11 +151,21 @@ export async function createFixture() {
     )
       throw new Error("fixture selection mismatch");
     if (scenario === "denied") throw new Error("fixture request denied");
-    if (["proposed", "ready"].includes(scenario)) {
+    if (scenario === "proposed")
+      return { request: offer.request, confirmationRequired: true };
+    if (scenario === "ready") {
       scenario = "running";
       executionState = "running";
     }
     return { request: offer.request, confirmationRequired: false };
+  }
+  function confirm(input) {
+    const result = execute(input);
+    if (result.confirmationRequired) {
+      scenario = "running";
+      executionState = "running";
+    }
+    return { ...result, confirmationRequired: false };
   }
   function cancel(input) {
     available();
@@ -207,6 +217,7 @@ export async function createFixture() {
           "/__fixture/scenario",
           "/__fixture/snapshot",
           "/__fixture/execute",
+          "/__fixture/confirm",
           "/__fixture/cancel",
         ].includes(url.pathname)
       ) {
@@ -251,6 +262,9 @@ export async function createFixture() {
             break;
           case "/__fixture/execute":
             value = execute(input);
+            break;
+          case "/__fixture/confirm":
+            value = confirm(input);
             break;
           case "/__fixture/cancel":
             value = cancel(input);
@@ -322,6 +336,7 @@ export async function createFixture() {
     plugin,
     snapshot,
     execute,
+    confirm,
     cancel,
     details,
     serviceView,
