@@ -227,12 +227,14 @@ for (const provider of engines) {
           "catalog reads never ask permission",
         );
         for (const [commandId, choice] of [
-          // Reject first: once this exact backend request is accepted, replay must return
-          // its original receipt instead of asking a contradictory second permission.
-          ["deny-execute", "reject_once"],
-          ["allow-execute", "allow_once"],
+          ["execute-no-permission", "execute"],
+          // Cancel still uses the provider permission seam; reject before accepting it.
+          ["deny-cancel", "reject_once"],
+          ["allow-cancel", "allow_once"],
         ]) {
           permissionKind = choice;
+          const method =
+            choice === "execute" ? "execution_execute" : "execution_cancel";
           f.model.replies.push((res) => {
             const events = [
               { type: "response.created", response: { id: commandId } },
@@ -245,13 +247,16 @@ for (const provider of engines) {
                   name: "propose",
                   namespace: "mcp__rss_host",
                   arguments: JSON.stringify({
-                    name: "execution_execute",
-                    arguments: (({ request, task, attempt, revision }) => ({
-                      request,
-                      task,
-                      attempt,
-                      revision,
-                    }))(result.result[0]),
+                    name: method,
+                    arguments:
+                      choice === "execute"
+                        ? (({ request, task, attempt, revision }) => ({
+                            request,
+                            task,
+                            attempt,
+                            revision,
+                          }))(result.result[0])
+                        : { operationRequestId: result.result[0].request },
                   }),
                 },
               },
@@ -283,25 +288,32 @@ for (const provider of engines) {
             "completed",
             stderr,
           );
-          const request = permissions.at(-1);
-          assert.deepEqual(
-            request.options.map((option) => option.kind),
-            ["allow_once", "reject_once"],
-          );
-          assert.equal(
-            request.toolCall.rawInput.request,
-            result.result[0].request,
-          );
+          if (choice === "execute") {
+            assert.equal(
+              permissions.length,
+              0,
+              "execution has no generic provider permission",
+            );
+          } else {
+            const request = permissions.at(-1);
+            assert.deepEqual(
+              request.options.map((option) => option.kind),
+              ["allow_once", "reject_once"],
+            );
+            assert.equal(
+              request.toolCall.rawInput.operationRequestId,
+              result.result[0].request,
+            );
+          }
           const tool = Object.values(peer.client.getSession(id).tools).find(
             (tool) =>
               tool.toolCallId === commandId ||
-              (tool.name === "execution_execute" &&
-                tool.commandId === commandId),
+              (tool.name === method && tool.commandId === commandId),
           );
           assert.ok(tool, "execution result is observable");
           assert.equal(
             tool.result.disposition,
-            choice === "allow_once" ? "returned" : "rejected",
+            choice === "reject_once" ? "rejected" : "returned",
           );
         }
         assert.equal(permissions.length, 2);

@@ -137,6 +137,7 @@ it("changes the same assistant to compact resource presentation and stages sugge
           .fn()
           .mockResolvedValue({ ...snapshot(), available: [resourceOffer()] }),
         execute,
+        confirm: vi.fn(),
         cancel: vi.fn(),
       },
     },

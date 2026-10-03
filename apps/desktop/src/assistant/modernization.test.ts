@@ -217,6 +217,8 @@ it("keeps preparation actions and revocation visible in the modern task card", a
         offer: request,
         revision: 2,
         state: "failed",
+        risk: null,
+        confirmation: null,
         failure: "revoked",
         trigger: { kind: "automatic" },
       },

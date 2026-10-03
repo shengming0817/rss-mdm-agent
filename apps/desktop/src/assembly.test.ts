@@ -26,7 +26,7 @@ it("requires every fixture port and sends AI confirmation/cancellation to the ex
   try {
     const offer = fixtures.offer;
     await ports.assistantServices.confirmTask!(offer as never);
-    expect(fetch.mock.calls[0][0]).toBe("/__fixture/execute");
+    expect(fetch.mock.calls[0][0]).toBe("/__fixture/confirm");
     expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({
       request: offer.request,
       task: offer.task,
