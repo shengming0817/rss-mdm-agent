@@ -1,7 +1,8 @@
 #![allow(dead_code)]
-use agent_client::{Error, OutputPolicy};
+use crate::backend::bridge::OutputPolicy;
+use agent_client::Error;
 use std::sync::atomic::Ordering;
-#[path = "../../../execution-app/tests/support/mod.rs"]
+#[path = "../../../../crates/execution-app/tests/support/mod.rs"]
 pub mod local;
 pub struct FixtureOutput;
 impl OutputPolicy for FixtureOutput {
@@ -178,7 +179,9 @@ pub fn adapted_plan(
     let original = if software {
         FrozenExecution::freeze(
             decode_execution(
-                include_bytes!("../../../execution-contract/tests/fixtures/software.json"),
+                include_bytes!(
+                    "../../../../crates/execution-contract/tests/fixtures/software.json"
+                ),
                 &execution_app::test_execution_limits(),
             )
             .unwrap(),
@@ -189,7 +192,7 @@ pub fn adapted_plan(
         local::plan()
     };
     let mut spec = original.spec().clone();
-    spec.request.request_id = offer.request_id().unwrap();
+    spec.request.request_id = crate::backend::request_id(offer).unwrap();
     spec.request.target.device = DeviceId::new(device).unwrap();
     spec.request.target.platform = Platform::Macos;
     spec.request.target.scope = TargetScope::Device {};

@@ -3,7 +3,7 @@
 #[path = "../../../crates/execution-app/tests/support/mod.rs"]
 mod support;
 #[cfg(target_os = "macos")]
-use crate::protocol_test_support::execution::local as support;
+use crate::backend::test_support::local as support;
 use crate::service::{assemble_journal, ProductionStartup};
 use execution_app::*;
 use execution_contract::*;

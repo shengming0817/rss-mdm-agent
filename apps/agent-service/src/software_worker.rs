@@ -73,12 +73,14 @@ impl WorkerRequest {
 /// Run a bounded pinned input file under the actual OS account selected by the original runner.
 /// This entry returns the real native command exit, with separate completion and detection facts.
 pub fn run(path: &std::path::Path) -> Result<i32, Error> {
-    let bytes = execution_runner::staging::read_worker_input(path, 4 * 1024 * 1024)?;
+    let bytes = execution_runner::staging::read_worker_input(path, 4 * 1024 * 1024)
+        .map_err(crate::error::app_error)?;
     let request: WorkerRequest = serde_json::from_slice(&bytes).map_err(|_| Error::Protocol)?;
     if request.output_bytes == 0 || request.output_bytes > 1_048_576 {
         return Err(Error::Protocol);
     }
-    execution_runner::staging::verify_worker_identity(&request.run_as, &request.session)?;
+    execution_runner::staging::verify_worker_identity(&request.run_as, &request.session)
+        .map_err(crate::error::app_error)?;
     let _leases = request
         .materials
         .values()
@@ -89,7 +91,8 @@ pub fn run(path: &std::path::Path) -> Result<i32, Error> {
                 &material.artifact.sha256,
             )
         })
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(crate::error::app_error)?;
     let before = if matches!(
         request.operation,
         WorkerOperation::Install

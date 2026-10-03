@@ -121,18 +121,21 @@ fn executable(
             fs::create_dir_all(parent)?;
         }
         copy_new(&source, &target)?;
-        leases.push(execution_runner::staging::verify_staged(
-            &target,
-            &request
-                .materials
-                .get(artifact_key)
-                .ok_or(Error::Untrusted)?
-                .artifact
-                .sha256,
-            &request.resource_root,
-            &request.run_as,
-            &request.session,
-        )?);
+        leases.push(
+            execution_runner::staging::verify_staged(
+                &target,
+                &request
+                    .materials
+                    .get(artifact_key)
+                    .ok_or(Error::Untrusted)?
+                    .artifact
+                    .sha256,
+                &request.resource_root,
+                &request.run_as,
+                &request.session,
+            )
+            .map_err(crate::error::app_error)?,
+        );
         if artifact_key == key {
             if executable.replace(target).is_some() {
                 return Err(Error::Untrusted);
@@ -147,18 +150,21 @@ fn executable(
     if separate_removal {
         let path = layout.join("rss-removal.exe");
         copy_new(&request.material(key)?, &path)?;
-        leases.push(execution_runner::staging::verify_staged(
-            &path,
-            &request
-                .materials
-                .get(key)
-                .ok_or(Error::Untrusted)?
-                .artifact
-                .sha256,
-            &request.resource_root,
-            &request.run_as,
-            &request.session,
-        )?);
+        leases.push(
+            execution_runner::staging::verify_staged(
+                &path,
+                &request
+                    .materials
+                    .get(key)
+                    .ok_or(Error::Untrusted)?
+                    .artifact
+                    .sha256,
+                &request.resource_root,
+                &request.run_as,
+                &request.session,
+            )
+            .map_err(crate::error::app_error)?,
+        );
         executable = Some(path);
     }
     let image = executable.ok_or(Error::Untrusted)?;
@@ -213,7 +219,8 @@ fn detect(
                 Err(e) => return Err(e.into()),
                 _ => (),
             }
-            let digest = Digest::new(crate::plan::hex(sha256)).map_err(|_| Error::Protocol)?;
+            let digest =
+                Digest::new(crate::backend::plan::hex(sha256)).map_err(|_| Error::Protocol)?;
             match execution_runner::staging::verify_observed(
                 Path::new(path),
                 &digest,
@@ -724,11 +731,14 @@ fn selected_packages(
             wire::SoftwareTaskMsixContainer::Bundle { members, .. } => {
                 fs::create_dir(&request.resource_root)?;
                 selected.root = Some(request.resource_root.clone());
-                selected.directory = Some(execution_runner::staging::lease_staged_directory(
-                    &request.resource_root,
-                    &request.run_as,
-                    &request.session,
-                )?);
+                selected.directory = Some(
+                    execution_runner::staging::lease_staged_directory(
+                        &request.resource_root,
+                        &request.run_as,
+                        &request.session,
+                    )
+                    .map_err(crate::error::app_error)?,
+                );
                 let mut archive =
                     zip::ZipArchive::new(fs::File::open(source)?).map_err(|_| Error::Untrusted)?;
                 for (index, member) in members.iter().enumerate() {
@@ -759,17 +769,18 @@ fn selected_packages(
                     }
                     file.sync_all()?;
                     drop(file);
-                    let digest = Digest::new(crate::plan::hex(&member.sha256))
+                    let digest = Digest::new(crate::backend::plan::hex(&member.sha256))
                         .map_err(|_| Error::Protocol)?;
-                    selected
-                        .leases
-                        .push(execution_runner::staging::verify_staged(
+                    selected.leases.push(
+                        execution_runner::staging::verify_staged(
                             &path,
                             &digest,
                             &request.resource_root,
                             &request.run_as,
                             &request.session,
-                        )?);
+                        )
+                        .map_err(crate::error::app_error)?,
+                    );
                     super::material::manifest(
                         fs::File::open(&path)?,
                         &member.identity,

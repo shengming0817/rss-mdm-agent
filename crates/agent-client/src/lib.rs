@@ -1,7 +1,6 @@
 //! Agent V5 communication and bounded content delivery; execution remains journal-owned.
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
-mod bridge;
 mod delivery;
 mod redaction;
 pub use delivery::{AbandonmentAck, Association, FrozenAbandonment, FrozenResult, ResultAck};
@@ -10,7 +9,6 @@ mod client;
 mod config;
 mod content;
 mod store;
-pub use bridge::*;
 pub use client::*;
 pub use config::*;
 pub use content::{ContentFile, Materials};
@@ -75,22 +73,6 @@ impl From<wire::WireError> for Error {
         Self::Protocol
     }
 }
-impl From<execution_app::Error> for Error {
-    fn from(v: execution_app::Error) -> Self {
-        use execution_app::Error as E;
-        match v {
-            E::Denied => Self::Denied,
-            E::Unbound => Self::Identity,
-            E::Unsupported => Self::Unsupported,
-            E::Clock => Self::Clock,
-            E::Conflict => Self::Conflict,
-            E::Capacity => Self::Capacity,
-            E::Configuration => Self::Configuration,
-            E::Unavailable => Self::Unavailable,
-            _ => Self::Storage,
-        }
-    }
-}
 
 #[cfg(test)]
 extern crate self as agent_client;
@@ -98,8 +80,5 @@ extern crate self as agent_client;
 #[path = "../tests/unit/chunk_recovery.rs"]
 mod chunk_recovery;
 #[cfg(test)]
-#[path = "../tests/support/mod.rs"]
+#[path = "../../../tests/agent-protocol/mod.rs"]
 mod test_support;
-
-mod software;
-pub use software::{software_budget, software_commands, SoftwareCommands};

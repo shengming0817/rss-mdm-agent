@@ -251,6 +251,23 @@ impl<S: SecretProvider, C: Clock> Client<S, C> {
         }
         Ok(accepted)
     }
+    /// Recover acknowledgement of this exact frozen result without sending HTTP again.
+    pub fn frozen_result_ack(&self, result: &FrozenResult) -> Result<Option<ResultAck>, Error> {
+        if !self.check_result(result)? {
+            return Ok(None);
+        }
+        let recovered = self
+            .pending_result(&result.association)?
+            .ok_or(Error::Conflict)?;
+        let ack = ResultAck {
+            owner: self.delivery_owner,
+            association: result.association.clone(),
+            projection: hash(&encode(result.request.event())?),
+            result: Some(recovered),
+        };
+        self.validate_result_ack(&ack)?;
+        Ok(Some(ack))
+    }
     /// Send only transport work and return evidence after the ACK/projection transaction commits.
     pub async fn send_result(&mut self, result: FrozenResult) -> Result<ResultAck, Error> {
         if !self.check_result(&result)? {

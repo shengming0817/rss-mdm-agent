@@ -1,11 +1,10 @@
+use crate::error::app_error as map_app_error;
 use crate::{
-    host::{BackendPermit, EnterpriseHost},
-    plan, DeviceSecrets, Interpreter, SystemClock,
+    backend::{self, host::EnterpriseHost, offered, plan, ExecutionBridge},
+    DeviceSecrets, Interpreter, SystemClock,
 };
-use agent_client::{
-    wire, Client, CredentialRedactor, Error, ExecutionBridge, Materials, Offer, SecretProvider,
-};
-use execution_app::{AppConfig, ExecutionApp, ExecutionStatus, RequestContext};
+use agent_client::{wire, Client, CredentialRedactor, Error, Materials, Offer, SecretProvider};
+use execution_app::{AppConfig, ExecutionApp, RequestContext};
 use execution_contract::{
     BackendRequest, BackendRequestFailure, BackendRequestState, BackendTrigger, RequestId,
 };
@@ -26,15 +25,15 @@ pub struct ExecutionConfig {
     pub work_root: PathBuf,
     pub material_root: PathBuf,
     pub interpreters: Vec<Interpreter>,
-    pub managers: Vec<crate::plan::SoftwareManager>,
+    pub managers: Vec<crate::backend::plan::SoftwareManager>,
     pub processes: usize,
 }
 // Helper availability is not device registration identity. A closed login/endpoint
 // rejects helper work without entering the backend credential revocation path.
-fn helper_error(error: execution_app::Error) -> Error {
+pub(crate) fn helper_error(error: execution_app::Error) -> Error {
     match error {
         execution_app::Error::Unbound => Error::Unavailable,
-        other => other.into(),
+        other => map_app_error(other),
     }
 }
 #[cfg(test)]
@@ -45,7 +44,10 @@ fn unavailable_helper_does_not_revoke_device_identity() {
         Error::Unavailable
     );
     assert_eq!(helper_error(execution_app::Error::Denied), Error::Denied);
-    assert_eq!(Error::from(execution_app::Error::Unbound), Error::Identity);
+    assert_eq!(
+        map_app_error(execution_app::Error::Unbound),
+        Error::Identity
+    );
 }
 
 /// Administrator-pinned helpers; these select OS mechanisms, not enterprise authorization.
@@ -55,7 +57,7 @@ pub struct UserResources {
     pub work_roots: std::collections::BTreeMap<String, PathBuf>,
 }
 impl UserResources {
-    fn connect(
+    pub(crate) fn connect(
         &self,
         selection: Option<&Selection>,
     ) -> Result<Arc<execution_ipc::helper::Connection>, Error> {
@@ -86,9 +88,9 @@ impl UserResources {
 /// One device communication owner and one authoritative execution journal.
 /// The OS service supplies this assembly; no fixture runner or authority is selectable.
 pub struct DeviceService<S: SecretProvider = DeviceSecrets> {
-    client: Client<S, SystemClock>,
-    core: Core,
-    bridge: ExecutionBridge<CredentialRedactor>,
+    pub(crate) client: Client<S, SystemClock>,
+    pub(crate) core: Core,
+    pub(crate) bridge: ExecutionBridge<CredentialRedactor>,
     waiting: Option<(Offer, Materials)>,
     next_network: std::time::Instant,
     recovering: bool,
@@ -125,18 +127,20 @@ impl<S: SecretProvider> DeviceService<S> {
             client.configuration().tenant,
             &client.registration()?,
         )?;
-        let materials = MaterialRegistry::new(client.configuration().limits.pending_tasks)?;
+        let materials = MaterialRegistry::new(client.configuration().limits.pending_tasks)
+            .map_err(crate::error::app_error)?;
         let runner = NativeRunner::with_materials(
             plan::id("native-device-runner")?,
             materials.clone(),
             config.processes,
-        )?;
+        )
+        .map_err(crate::error::app_error)?;
         let host = EnterpriseHost {
             binding,
             actor,
             clock,
             materials,
-            subject: execution_ipc::host::current_subject()?,
+            subject: execution_ipc::host::current_subject().map_err(crate::error::app_error)?,
             current: Arc::new(Mutex::new(None)),
             revoked: Arc::new(AtomicBool::new(false)),
         };
@@ -147,7 +151,8 @@ impl<S: SecretProvider> DeviceService<S> {
             runner,
             app_config(),
             plan::storage_limits(),
-        )?;
+        )
+        .map_err(crate::error::app_error)?;
         let output = client.output_policy()?;
         Ok(Self {
             client,
@@ -184,11 +189,12 @@ impl<S: SecretProvider> DeviceService<S> {
             return Ok(());
         }
         if let Some((offer, _)) = &self.waiting {
-            let request = offer.request_id()?;
+            let request = backend::request_id(&offer)?;
             if self
                 .core
                 .app
-                .backend_request(&self.core.caller(), &request)?
+                .backend_request(&self.core.caller(), &request)
+                .map_err(crate::error::app_error)?
                 .is_some_and(|p| p.state == BackendRequestState::Cancelled)
             {
                 let task = offer.task_id();
@@ -200,11 +206,11 @@ impl<S: SecretProvider> DeviceService<S> {
         }
         if self.core.selected.is_some() {
             if let Some((offer, materials)) = self.waiting.take() {
-                let request = offer.request_id()?;
+                let request = backend::request_id(&offer)?;
                 let selection = self.core.selected.take();
                 self.core
                     .transition(&request, BackendRequestState::Submitting, None)?;
-                let result = self.submit(offer, materials, selection, commands).await;
+                let result = backend::submit(self, offer, materials, selection, commands).await;
                 self.core.available = None;
                 if let Err(error) = result {
                     self.core.transition(
@@ -231,7 +237,7 @@ impl<S: SecretProvider> DeviceService<S> {
         }) {
             if let Some((offer, _)) = &self.waiting {
                 self.core.transition(
-                    &offer.request_id()?,
+                    &backend::request_id(&offer)?,
                     BackendRequestState::Failed,
                     Some(BackendRequestFailure::Expired),
                 )?;
@@ -272,25 +278,39 @@ impl<S: SecretProvider> DeviceService<S> {
                         .finish_delivery(&mut self.client, pending, &mut self.core.app)?;
                 }
                 let request = self.client.bound_request(task)?.ok_or(Error::Conflict)?;
-                let input = self.core.app.frozen_input(&caller, &request)?;
+                let input = self
+                    .core
+                    .app
+                    .frozen_input(&caller, &request)
+                    .map_err(crate::error::app_error)?;
                 match self
                     .bridge
                     .finish(&mut self.client, task, &self.core.app, &caller)
                 {
                     Ok(()) => match self.core.host.materials.retire(&input) {
                         Ok(()) | Err(execution_app::Error::Conflict) => (),
-                        Err(error) => return Err(error.into()),
+                        Err(error) => return Err(map_app_error(error)),
                     },
                     Err(Error::Conflict) => {
                         // Only unresolved original work needs recovery material. Settled tasks
                         // must release first, without rebuilding every native phase after ACK.
-                        if !self.core.host.materials.registered(&input)? {
+                        if !self
+                            .core
+                            .host
+                            .materials
+                            .registered(&input)
+                            .map_err(crate::error::app_error)?
+                        {
                             if let Ok(materials) = crate::recovery::materials(
                                 &input,
                                 &self.core.config,
                                 &self.core.helpers,
                             ) {
-                                self.core.host.materials.register(&input, materials)?;
+                                self.core
+                                    .host
+                                    .materials
+                                    .register(&input, materials)
+                                    .map_err(crate::error::app_error)?;
                             }
                         }
                     }
@@ -329,7 +349,10 @@ impl<S: SecretProvider> DeviceService<S> {
             Err(e) => {
                 if e == Error::Identity {
                     self.core.host.revoked.store(true, Ordering::Release);
-                    self.core.app.stop_active(128)?;
+                    self.core
+                        .app
+                        .stop_active(128)
+                        .map_err(crate::error::app_error)?;
                 }
                 return Err(e);
             }
@@ -378,7 +401,7 @@ impl<S: SecretProvider> DeviceService<S> {
                 self.waiting = Some((offer, materials));
                 return Ok(());
             }
-            self.submit(offer, materials, None, commands).await?;
+            backend::submit(self, offer, materials, None, commands).await?;
             self.core.available = None;
         }
         Ok(())
@@ -405,208 +428,6 @@ impl<S: SecretProvider> DeviceService<S> {
         self.bridge
             .finish_abandonment(&mut self.client, pending, &self.core.app)
     }
-    async fn submit(
-        &mut self,
-        offer: Offer,
-        materials: Materials,
-        selection: Option<Selection>,
-        commands: &mut tokio::sync::mpsc::Receiver<Command>,
-    ) -> Result<ExecutionStatus, Error> {
-        if let Some(selection) = &selection {
-            let current = offered(&offer)?;
-            if selection.task != current.task
-                || selection.attempt != current.attempt
-                || selection.revision != current.revision
-            {
-                return Err(Error::Conflict);
-            }
-        }
-        self.core.available = None;
-        let needs_user = match offer.payload() {
-            wire::TaskPayload::Enrollment(_) => return Err(Error::Unsupported),
-            wire::TaskPayload::Script(p) => p.run_as == wire::ExecutionIdentity::LoggedInUser,
-            wire::TaskPayload::Software(p) => p
-                .steps
-                .iter()
-                .any(|step| matches!(step.target, wire::SoftwareExecutionTarget::User { .. })),
-        };
-        let login = if needs_user || selection.is_some() {
-            Some(self.core.helpers.connect(selection.as_ref())?)
-        } else {
-            None
-        };
-        let delegate = if needs_user { login.clone() } else { None };
-        let (preview, artifacts) =
-            self.compile(&offer, &materials, offer.payload(), delegate.clone())?;
-        artifacts.inspect(&preview)?;
-        let start = if selection.is_some() {
-            network(
-                self.client.start_user_initiated(&offer, &materials),
-                &mut self.core,
-                commands,
-            )
-            .await?
-        } else {
-            network(
-                self.client.request_start(&offer, &materials),
-                &mut self.core,
-                commands,
-            )
-            .await?
-        };
-        self.client.validate_start(&start)?;
-        if let Some(login) = &login {
-            let account = execution_contract::OsAccountRef {
-                platform: plan::platform()?,
-                subject: plan::id(&login.context().subject)?,
-            };
-            login
-                .verify_context(
-                    &execution_contract::RunAs::User {
-                        account: account.clone(),
-                    },
-                    &execution_contract::SessionRequirement::ActiveUser {
-                        account,
-                        session: login.context().binding.clone(),
-                    },
-                )
-                .map_err(helper_error)?;
-        }
-        if let Some(selection) = &selection {
-            let current = self
-                .core
-                .app
-                .backend_request(&self.core.caller(), &selection.request)?
-                .ok_or(Error::Conflict)?;
-            if current.state != BackendRequestState::Submitting {
-                return Err(Error::Denied);
-            }
-        }
-        let (mut plan, artifacts) = self.compile(&offer, &materials, start.payload(), delegate)?;
-        if let Some(selection) = selection {
-            let mut input = plan.spec().clone();
-            let execution_contract::Initiator::Backend { trigger, .. } =
-                &mut input.request.initiator
-            else {
-                return Err(Error::Untrusted);
-            };
-            let os_session = execution_contract::OsSessionRef {
-                device: self.core.host.binding.device.clone(),
-                account: execution_contract::OsAccountRef {
-                    platform: plan::platform()?,
-                    subject: plan::id(selection.subject)?,
-                },
-                session: selection.binding,
-            };
-            *trigger = match selection.origin {
-                execution_ipc::host::ClientOrigin::Desktop {} => {
-                    execution_contract::BackendTrigger::Human { os_session }
-                }
-                execution_ipc::host::ClientOrigin::Ai {
-                    config,
-                    conversation,
-                    tool_call,
-                } => execution_contract::BackendTrigger::Ai {
-                    os_session,
-                    config,
-                    conversation,
-                    tool_call,
-                },
-            };
-            plan =
-                execution_contract::FrozenExecution::freeze(input, &plan::storage_limits().input)
-                    .map_err(|_| Error::Untrusted)?;
-        }
-        self.core.host.materials.register(&plan, artifacts)?;
-        *self
-            .core
-            .host
-            .current
-            .lock()
-            .map_err(|_| Error::Unavailable)? = Some(Arc::new(BackendPermit {
-            plan: plan.clone(),
-            start: start.clone(),
-        }));
-        let caller = self.core.caller();
-        let result = (|| {
-            let prepared =
-                self.bridge
-                    .prepare(&offer, &materials, &self.core.app, &caller, &plan)?;
-            self.bridge.dispatch(
-                &mut self.client,
-                start,
-                &materials,
-                &mut self.core.app,
-                prepared,
-            )
-        })();
-        *self
-            .core
-            .host
-            .current
-            .lock()
-            .map_err(|_| Error::Unavailable)? = None;
-        if result.is_err()
-            && matches!(
-                self.core
-                    .app
-                    .frozen_input(&caller, &plan.spec().request.request_id),
-                Err(execution_app::Error::NotFound)
-            )
-        {
-            self.core.host.materials.retire(&plan)?;
-        }
-        result
-    }
-    fn compile(
-        &self,
-        offer: &Offer,
-        materials: &Materials,
-        payload: &wire::TaskPayload,
-        delegate: Option<Arc<execution_ipc::helper::Connection>>,
-    ) -> Result<
-        (
-            execution_contract::FrozenExecution,
-            execution_runner::Artifacts,
-        ),
-        Error,
-    > {
-        match payload {
-            wire::TaskPayload::Enrollment(_) => Err(Error::Unsupported),
-            wire::TaskPayload::Software(payload) => crate::software::compile(
-                offer,
-                materials,
-                payload,
-                &self.core.host.binding,
-                &self.core.host.actor,
-                &self.core.config,
-                delegate,
-            ),
-            wire::TaskPayload::Script(payload) => {
-                let work_root = delegate
-                    .as_ref()
-                    .map_or(&self.core.config.work_root, |h| &h.context().work_root);
-                let file = materials.files().first().ok_or(Error::Untrusted)?;
-                let content = execution_runner::staging::publish(
-                    &self.core.config.material_root,
-                    delegate.as_ref().map(|h| h.context().subject.as_str()),
-                    file.reader()?,
-                    &execution_contract::Digest::new(plan::hex(&payload.content.sha256))
-                        .map_err(|_| Error::Protocol)?,
-                    payload.content.length,
-                )?;
-                plan::script(
-                    offer,
-                    materials,
-                    payload,
-                    (&self.core.host.binding, &self.core.host.actor),
-                    &self.core.config.interpreters,
-                    (work_root, &content),
-                    delegate.clone(),
-                )
-            }
-        }
-    }
     /// Start the single service owner; native callbacks never access SQLite or network directly.
     pub fn spawn(
         mut self,
@@ -616,9 +437,9 @@ impl<S: SecretProvider> DeviceService<S> {
     where
         S: Send + 'static,
     {
-        policy.validate()?;
+        policy.validate().map_err(crate::error::app_error)?;
         if let Some(policy) = &helper_policy {
-            policy.validate()?;
+            policy.validate().map_err(crate::error::app_error)?;
         }
         let (sender, mut commands) = tokio::sync::mpsc::channel(32);
         let finished = Arc::new(AtomicBool::new(false));
@@ -669,46 +490,59 @@ impl<S: SecretProvider> DeviceService<S> {
     }
     /// Stop accepted work. Stopping never claims process termination or effect rollback.
     pub fn stop(&mut self) -> Result<(), Error> {
-        Ok(self.core.app.stop_active(128)?)
+        Ok(self
+            .core
+            .app
+            .stop_active(128)
+            .map_err(crate::error::app_error)?)
     }
 }
 
-struct Selection {
-    request: RequestId,
-    task: execution_contract::Id,
-    attempt: execution_contract::Id,
-    revision: execution_contract::Digest,
-    subject: String,
-    session: u32,
-    binding: execution_contract::Id,
-    origin: execution_ipc::host::ClientOrigin,
+pub(crate) struct Selection {
+    pub(crate) request: RequestId,
+    pub(crate) task: execution_contract::Id,
+    pub(crate) attempt: execution_contract::Id,
+    pub(crate) revision: execution_contract::Digest,
+    pub(crate) subject: String,
+    pub(crate) session: u32,
+    pub(crate) binding: execution_contract::Id,
+    pub(crate) origin: execution_ipc::host::ClientOrigin,
 }
-struct Core {
-    app: ExecutionApp<EnterpriseHost, NativeRunner, execution_sqlite::Store>,
-    host: EnterpriseHost,
-    config: ExecutionConfig,
-    helpers: UserResources,
-    available: Option<execution_contract::BackendTask>,
-    selected: Option<Selection>,
-    stopping: bool,
-    recovery_cursor: Option<RequestId>,
+pub(crate) struct Core {
+    pub(crate) app: ExecutionApp<EnterpriseHost, NativeRunner, execution_sqlite::Store>,
+    pub(crate) host: EnterpriseHost,
+    pub(crate) config: ExecutionConfig,
+    pub(crate) helpers: UserResources,
+    pub(crate) available: Option<execution_contract::BackendTask>,
+    pub(crate) selected: Option<Selection>,
+    pub(crate) stopping: bool,
+    pub(crate) recovery_cursor: Option<RequestId>,
 }
 impl Core {
     fn reconcile(&mut self) -> Result<(), Error> {
-        let page = self.app.service_tasks(self.recovery_cursor.as_ref(), 64)?;
+        let page = self
+            .app
+            .service_tasks(self.recovery_cursor.as_ref(), 64)
+            .map_err(crate::error::app_error)?;
         for item in &page.items {
             let request = &item.status.operation_request_id;
-            let status = self.app.reconcile(request)?;
+            let status = self
+                .app
+                .reconcile(request)
+                .map_err(crate::error::app_error)?;
             if matches!(
                 status.phase,
                 execution_app::TaskPhase::Verified
                     | execution_app::TaskPhase::Cancelled
                     | execution_app::TaskPhase::FailedBeforeDispatch
             ) {
-                let input = self.app.frozen_input(&self.caller(), request)?;
+                let input = self
+                    .app
+                    .frozen_input(&self.caller(), request)
+                    .map_err(crate::error::app_error)?;
                 match self.host.materials.retire(&input) {
                     Ok(()) | Err(execution_app::Error::Conflict) => (),
-                    Err(error) => return Err(error.into()),
+                    Err(error) => return Err(map_app_error(error)),
                 }
             }
         }
@@ -728,10 +562,15 @@ impl Core {
                 Some(BackendRequestFailure::Revoked),
             )?;
         }
-        for record in self.app.backend_requests(&self.caller())? {
+        for record in self
+            .app
+            .backend_requests(&self.caller())
+            .map_err(crate::error::app_error)?
+        {
             if !self
                 .app
-                .has_service_execution(&record.offer.request, &self.host.binding.device)?
+                .has_service_execution(&record.offer.request, &self.host.binding.device)
+                .map_err(crate::error::app_error)?
             {
                 self.transition(
                     &record.offer.request,
@@ -745,11 +584,15 @@ impl Core {
     fn pending(&self, request: &RequestId, subject: &str) -> Result<Option<BackendRequest>, Error> {
         if self
             .app
-            .has_service_execution(request, &self.host.binding.device)?
+            .has_service_execution(request, &self.host.binding.device)
+            .map_err(crate::error::app_error)?
         {
             return Ok(None);
         }
-        let value = self.app.backend_request(&self.caller(), request)?;
+        let value = self
+            .app
+            .backend_request(&self.caller(), request)
+            .map_err(crate::error::app_error)?;
         if value
             .as_ref()
             .is_some_and(|p| trigger_subject(&p.trigger) != Some(subject))
@@ -764,7 +607,11 @@ impl Core {
         state: BackendRequestState,
         failure: Option<BackendRequestFailure>,
     ) -> Result<Option<BackendRequest>, Error> {
-        let Some(previous) = self.app.backend_request(&self.caller(), request)? else {
+        let Some(previous) = self
+            .app
+            .backend_request(&self.caller(), request)
+            .map_err(crate::error::app_error)?
+        else {
             return Ok(None);
         };
         if matches!(
@@ -778,17 +625,21 @@ impl Core {
         next.state = state;
         next.failure = failure;
         self.app
-            .record_backend_request(&self.caller(), Some(&previous), &next)?;
+            .record_backend_request(&self.caller(), Some(&previous), &next)
+            .map_err(crate::error::app_error)?;
         Ok(Some(next))
     }
-    fn caller(&self) -> RequestContext {
+    pub(crate) fn caller(&self) -> RequestContext {
         RequestContext {
             actor: self.host.actor.clone(),
         }
     }
     fn can_read(&self, request: &RequestId, subject: &str) -> Result<bool, Error> {
         use execution_contract::{BackendTrigger, Initiator, RunAs};
-        let input = self.app.frozen_input(&self.caller(), request)?;
+        let input = self
+            .app
+            .frozen_input(&self.caller(), request)
+            .map_err(crate::error::app_error)?;
         Ok(match &input.spec().request.initiator {
             Initiator::Backend {
                 trigger:
@@ -827,7 +678,10 @@ impl Core {
                     Ok(Reply::Unavailable)
                 }
                 LocalRequest::Operation(Request::Tasks { after }) => {
-                    let mut value = self.app.tasks(&self.caller(), after.as_ref(), 64)?;
+                    let mut value = self
+                        .app
+                        .tasks(&self.caller(), after.as_ref(), 64)
+                        .map_err(crate::error::app_error)?;
                     value.items.retain(|item| {
                         self.can_read(&item.action.request_id, &command.subject)
                             .unwrap_or(false)
@@ -837,7 +691,8 @@ impl Core {
                         available: self.available.iter().cloned().collect(),
                         preparations: self
                             .app
-                            .backend_requests(&self.caller())?
+                            .backend_requests(&self.caller())
+                            .map_err(crate::error::app_error)?
                             .into_iter()
                             .filter(|p| {
                                 trigger_subject(&p.trigger) == Some(command.subject.as_str())
@@ -872,7 +727,11 @@ impl Core {
                         binding: command.binding.clone().ok_or(Error::Denied)?,
                         origin: origin.clone(),
                     };
-                    if let Some(previous) = self.app.backend_request(&self.caller(), &request)? {
+                    if let Some(previous) = self
+                        .app
+                        .backend_request(&self.caller(), &request)
+                        .map_err(crate::error::app_error)?
+                    {
                         // A proposed AI request still needs its explicit desktop confirmation.
                         // Once selected, replay returns facts and never repeats that transition.
                         if previous.state != BackendRequestState::Proposed {
@@ -922,7 +781,10 @@ impl Core {
                         origin,
                     };
                     let offer = offer.clone();
-                    let previous = self.app.backend_request(&self.caller(), &request)?;
+                    let previous = self
+                        .app
+                        .backend_request(&self.caller(), &request)
+                        .map_err(crate::error::app_error)?;
                     if let Some(previous) = &previous {
                         if previous.offer != offer || !same_login(&previous.trigger, &selection) {
                             return Err(Error::Conflict);
@@ -959,16 +821,15 @@ impl Core {
                             state,
                             failure: None,
                         };
-                        self.app.record_backend_request(
-                            &self.caller(),
-                            previous.as_ref(),
-                            &next,
-                        )?;
+                        self.app
+                            .record_backend_request(&self.caller(), previous.as_ref(), &next)
+                            .map_err(crate::error::app_error)?;
                     }
                     if !confirmation_required {
                         let saved = self
                             .app
-                            .backend_request(&self.caller(), &request)?
+                            .backend_request(&self.caller(), &request)
+                            .map_err(crate::error::app_error)?
                             .ok_or(Error::Conflict)?;
                         self.selected = Some(Selection::from_record(&saved)?);
                     }
@@ -989,7 +850,10 @@ impl Core {
                         return Err(Error::Denied);
                     }
                     Ok(Reply::Status {
-                        value: self.app.status(&self.caller(), &request)?,
+                        value: self
+                            .app
+                            .status(&self.caller(), &request)
+                            .map_err(crate::error::app_error)?,
                     })
                 }
                 LocalRequest::Operation(Request::Details { request }) => {
@@ -1002,7 +866,11 @@ impl Core {
                         return Err(Error::Denied);
                     }
                     Ok(Reply::Details {
-                        value: Box::new(self.app.task_details(&self.caller(), &request)?),
+                        value: Box::new(
+                            self.app
+                                .task_details(&self.caller(), &request)
+                                .map_err(crate::error::app_error)?,
+                        ),
                     })
                 }
                 LocalRequest::Operation(Request::Cancel { request }) => {
@@ -1020,7 +888,10 @@ impl Core {
                     if !self.can_read(&request, &command.subject)? {
                         return Err(Error::Denied);
                     }
-                    let input = self.app.frozen_input(&self.caller(), &request)?;
+                    let input = self
+                        .app
+                        .frozen_input(&self.caller(), &request)
+                        .map_err(crate::error::app_error)?;
                     if !matches!(
                         &input.spec().request.initiator,
                         execution_contract::Initiator::Backend {
@@ -1032,7 +903,10 @@ impl Core {
                         return Err(Error::Denied);
                     }
                     Ok(Reply::Status {
-                        value: self.app.cancel(&self.caller(), &request)?,
+                        value: self
+                            .app
+                            .cancel(&self.caller(), &request)
+                            .map_err(crate::error::app_error)?,
                     })
                 }
             }
@@ -1054,14 +928,14 @@ enum LocalRequest {
     Operation(execution_ipc::host::Request),
     Stop,
 }
-struct Command {
+pub(crate) struct Command {
     request: LocalRequest,
     subject: String,
     session: u32,
     binding: Option<execution_contract::Id>,
     reply: tokio::sync::oneshot::Sender<execution_ipc::host::Reply>,
 }
-async fn network<T>(
+pub(crate) async fn network<T>(
     future: impl std::future::Future<Output = Result<T, Error>>,
     core: &mut Core,
     commands: &mut tokio::sync::mpsc::Receiver<Command>,
@@ -1196,70 +1070,6 @@ impl execution_ipc::host::Handler for ServiceHandle {
             Ok(Ok(())) => Ok(()),
             _ => Err(execution_app::Error::OutcomeUnknown),
         }
-    }
-}
-
-fn offered(offer: &Offer) -> Result<execution_contract::BackendTask, Error> {
-    use sha2::{Digest as _, Sha256};
-    let bytes = serde_json::to_vec(offer.payload()).map_err(|_| Error::Protocol)?;
-    Ok(execution_contract::BackendTask {
-        summary: match offer.payload() {
-            wire::TaskPayload::Script(p) => execution_contract::BackendTaskSummary::Script {
-                identity: display_identity(p.run_as),
-            },
-            wire::TaskPayload::Software(p) => execution_contract::BackendTaskSummary::Software {
-                intent: match p.intent {
-                    wire::SoftwareTaskIntent::Install => {
-                        execution_contract::SoftwareOperation::Install
-                    }
-                    wire::SoftwareTaskIntent::Uninstall => {
-                        execution_contract::SoftwareOperation::Uninstall
-                    }
-                    wire::SoftwareTaskIntent::Detect => {
-                        execution_contract::SoftwareOperation::Detect
-                    }
-                },
-                steps: p
-                    .steps
-                    .iter()
-                    .map(|step| execution_contract::BackendStepSummary {
-                        package: step.action.package.clone(),
-                        version: step.action.version.clone(),
-                        identity: display_identity(match step.target {
-                            wire::SoftwareExecutionTarget::Device => {
-                                wire::ExecutionIdentity::System
-                            }
-                            wire::SoftwareExecutionTarget::User { .. } => {
-                                wire::ExecutionIdentity::LoggedInUser
-                            }
-                        }),
-                    })
-                    .collect(),
-            },
-            _ => return Err(Error::Unsupported),
-        },
-        request: offer.request_id()?,
-        task: plan::id(offer.task_id().to_string())?,
-        attempt: plan::id(offer.attempt_id().to_string())?,
-        revision: execution_contract::Digest::new(format!("{:x}", Sha256::digest(bytes)))
-            .map_err(|_| Error::Protocol)?,
-        title: match offer.payload() {
-            wire::TaskPayload::Software(p) => p
-                .steps
-                .last()
-                .map(|s| format!("{} {}", s.action.package, s.action.version))
-                .ok_or(Error::Protocol)?,
-            _ => format!("Task {}", offer.task_id()),
-        },
-        expires_at: offer.payload().expires_at(),
-        user_initiated: matches!(offer.payload(),wire::TaskPayload::Software(p) if p.start_mode==wire::SoftwareStartMode::UserInitiated),
-    })
-}
-
-fn display_identity(identity: wire::ExecutionIdentity) -> execution_contract::BackendIdentity {
-    match identity {
-        wire::ExecutionIdentity::System => execution_contract::BackendIdentity::System,
-        wire::ExecutionIdentity::LoggedInUser => execution_contract::BackendIdentity::User,
     }
 }
 

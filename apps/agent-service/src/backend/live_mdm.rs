@@ -1,7 +1,9 @@
 //! Real-server integration against isolated rss-mdm serve and PostgreSQL.
 //! The live_mdm target uses a controlled Test runner; it does not run against production.
-use support::execution::local::create_app;
-mod support;
+use super::bridge::ExecutionBridge;
+use super::test_support::local::create_app;
+use super::test_support::*;
+use crate::protocol_test_support as support;
 use agent_client::wire::*;
 use agent_client::*;
 use base64::Engine;
@@ -13,7 +15,6 @@ use std::{
     path::PathBuf,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-use support::execution::*;
 use support::{Root, Secrets};
 use uuid::Uuid;
 #[derive(Deserialize)]

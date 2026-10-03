@@ -596,8 +596,6 @@ fn content_response(d: &mut Data, headers: HeaderMap) -> Response {
         .unwrap()
 }
 
-pub mod execution;
-
 pub fn collections() -> Vec<agent_client::wire::CollectionDefinition> {
     let fields:Vec<_>=["device.model","device.os.version"].into_iter().map(|key|json!({
         "key":key,"version":1,"valueType":{"kind":"string","maxLength":256,"allowEmpty":false},

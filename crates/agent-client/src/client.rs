@@ -17,28 +17,6 @@ impl Offer {
     pub fn payload(&self) -> &wire::TaskPayload {
         &self.signed.payload
     }
-    /// Stable local request identity across offers; remote attempts do not create new executions.
-    pub fn request_id(&self) -> Result<execution_contract::RequestId, Error> {
-        let bytes = match self.payload() {
-            wire::TaskPayload::Script(v) => encode(&(
-                v.tenant_id,
-                &v.device_id,
-                v.registration_id,
-                v.generation,
-                v.task_id,
-            ))?,
-            wire::TaskPayload::Software(v) => encode(&(
-                v.tenant_id,
-                &v.device_id,
-                v.registration_id,
-                v.generation,
-                v.task_id,
-            ))?,
-            _ => return Err(Error::Unsupported),
-        };
-        execution_contract::RequestId::new(format!("agent-v5-{}", hash(&bytes)))
-            .map_err(|_| Error::Protocol)
-    }
     /// Exact remote task.
     pub fn task_id(&self) -> Uuid {
         self.payload().task_id()
@@ -57,6 +35,10 @@ impl Start {
     /// Exact verified signed input.
     pub fn payload(&self) -> &wire::TaskPayload {
         &self.signed.payload
+    }
+    /// Compare immutable signed facts, excluding the protocol permit and its expiry.
+    pub fn matches_payload(&self, payload: &wire::TaskPayload) -> bool {
+        same_input(payload, self.payload())
     }
 }
 /// One bounded claim and independent cancellation page.

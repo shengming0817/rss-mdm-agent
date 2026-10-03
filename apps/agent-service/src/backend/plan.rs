@@ -281,7 +281,7 @@ pub(crate) fn script(
             execution: ExecutionSpec::Process {},
             request: ExecutionRequest {
                 schema_version: V1,
-                request_id: offer.request_id()?,
+                request_id: crate::backend::request_id(offer)?,
                 authority: binding.authority.clone(),
                 actor: actor.clone(),
                 initiator: Initiator::Backend {

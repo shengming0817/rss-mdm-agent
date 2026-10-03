@@ -24,7 +24,8 @@ fn recipe(
 ) -> Result<Artifacts, Error> {
     let interpreter = if launch.interpreter.profile.id.as_str() == "native-software-worker" {
         let image = std::env::current_exe()?;
-        execution_runner::staging::verify_retained(&image, &launch.interpreter.artifact.sha256)?;
+        execution_runner::staging::verify_retained(&image, &launch.interpreter.artifact.sha256)
+            .map_err(crate::error::app_error)?;
         image
     } else {
         config
@@ -54,7 +55,8 @@ fn recipe(
                 },
                 account.subject.as_str().into(),
                 session,
-            )?;
+            )
+            .map_err(crate::error::app_error)?;
             if connection.context().binding != expected_binding {
                 return Err(Error::Untrusted);
             }
@@ -137,7 +139,8 @@ pub(crate) fn materials(
                 step.format.bundle().map(|(manifest, _)| manifest),
             ) {
                 if let Some((member, _)) = bundle.entries.iter().find(|(_, f)| {
-                    crate::plan::hex(&f.sha256) == invocation.launch.artifact.sha256.as_str()
+                    crate::backend::plan::hex(&f.sha256)
+                        == invocation.launch.artifact.sha256.as_str()
                 }) {
                     source.content = PathBuf::from(&invocation.launch.cwd).join(member);
                 }

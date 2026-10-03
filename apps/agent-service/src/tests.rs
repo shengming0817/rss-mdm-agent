@@ -1,5 +1,6 @@
 //! Real HTTP/signatures/SQLite feeding the production compiler; OS execution is separately tested.
 use super::*;
+use crate::backend::{host, plan, software};
 use crate::protocol_test_support as protocol;
 use agent_client::OpenMode;
 use execution_admission::AuthorityVerifier;

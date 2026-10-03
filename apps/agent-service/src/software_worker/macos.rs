@@ -1372,10 +1372,16 @@ pub(super) fn execute(
             uninstall,
         } => {
             if request.operation == WorkerOperation::Detect {
-                let detection = execution_runner::software::receipt_state(receipt)?;
+                let detection = execution_runner::software::receipt_state(receipt)
+                    .map_err(crate::error::app_error)?;
                 return Ok(result(0, Some(detection), String::new()));
             }
-            if before != Some(&execution_runner::software::receipt_state(receipt)?) {
+            if before
+                != Some(
+                    &execution_runner::software::receipt_state(receipt)
+                        .map_err(crate::error::app_error)?,
+                )
+            {
                 return Err(Error::Conflict);
             }
             let mut selected_package = None;
@@ -1389,7 +1395,8 @@ pub(super) fn execute(
                 if package.file.metadata()?.len() != *length {
                     return Err(Error::Untrusted);
                 }
-                let digest = Digest::new(crate::plan::hex(sha256)).map_err(|_| Error::Protocol)?;
+                let digest =
+                    Digest::new(crate::backend::plan::hex(sha256)).map_err(|_| Error::Protocol)?;
                 // Image contents are read-only; inner selected PKG bytes are checked independently.
                 if file_hash(&package)? != digest.as_str() {
                     return Err(Error::Untrusted);
