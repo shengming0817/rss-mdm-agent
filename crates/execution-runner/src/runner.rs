@@ -1032,7 +1032,7 @@ async fn run(
         .map_or(deadline, |start| start.min(deadline));
     let mut child = match platform::spawn(&mut command, &mut owner, &cancel, spawn_deadline).await {
         Ok(child) => child,
-        Err(_) => {
+        Err(error) => {
             let end = if cancel.load(Ordering::Acquire) {
                 ProcessEnd::Cancelled
             } else if Instant::now() >= spawn_deadline {
@@ -1042,7 +1042,11 @@ async fn run(
             };
             let mut facts = rejected(&plan, &attempt, &id, end);
             if end == ProcessEnd::Rejected {
-                facts.failure_kind = ProcessFailureKind::Spawn;
+                facts.failure_kind = if platform::capacity_error(&error) {
+                    ProcessFailureKind::Capacity
+                } else {
+                    ProcessFailureKind::Spawn
+                };
             }
             publish(&shared, facts);
             return;

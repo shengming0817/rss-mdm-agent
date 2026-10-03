@@ -64,6 +64,12 @@ pub(crate) async fn spawn(
 
 pub(crate) struct PathLease;
 impl PathLease {
+    pub(crate) fn directory(_: &Path, _: bool) -> Result<Self, Error> {
+        Err(Error::Unsupported)
+    }
+    pub(crate) fn into_file(self) -> Result<(File, Self), Error> {
+        Err(Error::Unsupported)
+    }
     pub(crate) fn source(_: &Path, _: bool) -> Result<Self, Error> {
         Err(Error::Unsupported)
     }
@@ -81,4 +87,22 @@ pub(crate) fn open_observed_file(_: &Path) -> Result<File, Error> {
 
 pub(crate) fn grant_read(_: &Path, _: &str) -> Result<(), Error> {
     Err(Error::Unsupported)
+}
+
+pub(crate) fn protected_file(_: &File) -> Result<(), Error> {
+    Err(Error::Unsupported)
+}
+pub(crate) fn storage_identity(_: &File) -> Result<(u64, u64), Error> {
+    Err(Error::Unsupported)
+}
+pub(crate) fn journal_identity(_: &Path) -> Result<(u64, u64), Error> {
+    Err(Error::Unsupported)
+}
+
+pub(crate) fn storage_links(_: &File) -> Result<u64, Error> {
+    Err(Error::Unsupported)
+}
+
+pub(crate) fn capacity_error(_: &std::io::Error) -> bool {
+    false
 }

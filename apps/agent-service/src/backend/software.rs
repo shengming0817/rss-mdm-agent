@@ -43,13 +43,14 @@ type CompiledCommand = (
 );
 struct Compiler<'a> {
     config: &'a ExecutionConfig,
+    root: &'a mut execution_runner::staging::MaterialRoot,
     helper: Option<Arc<execution_ipc::helper::Connection>>,
     files: BTreeMap<String, (PathBuf, ExactArtifactRef)>,
     bundle_root: Option<PathBuf>,
 }
 impl Compiler<'_> {
     fn command(
-        &self,
+        &mut self,
         (kind, entry, command): (CommandKind, Option<&str>, &wire::SoftwareTaskInvocation),
         adapter: SoftwareKind,
         payload: &(PathBuf, ExactArtifactRef),
@@ -133,14 +134,15 @@ impl Compiler<'_> {
             use sha2::{Digest as _, Sha256};
             let digest: [u8; 32] = Sha256::digest(wrapper).into();
             let reference = artifact(&digest)?;
-            let path = execution_runner::staging::publish(
-                &self.config.material_root,
-                delegate.as_ref().map(|h| h.context().subject.as_str()),
-                std::io::Cursor::new(wrapper),
-                &reference.sha256,
-                wrapper.len() as u64,
-            )
-            .map_err(crate::error::app_error)?;
+            let path = self
+                .root
+                .publish(
+                    delegate.as_ref().map(|h| h.context().subject.as_str()),
+                    std::io::Cursor::new(wrapper),
+                    &reference.sha256,
+                    wrapper.len() as u64,
+                )
+                .map_err(crate::error::app_error)?;
             arguments.extend([
                 manager
                     .image
@@ -160,14 +162,15 @@ impl Compiler<'_> {
                 (path, reference)
             } else {
                 let length = std::fs::metadata(&path)?.len();
-                let path = execution_runner::staging::publish(
-                    &self.config.material_root,
-                    delegate.as_ref().map(|h| h.context().subject.as_str()),
-                    std::fs::File::open(path)?,
-                    &reference.sha256,
-                    length,
-                )
-                .map_err(crate::error::app_error)?;
+                let path = self
+                    .root
+                    .publish(
+                        delegate.as_ref().map(|h| h.context().subject.as_str()),
+                        std::fs::File::open(path)?,
+                        &reference.sha256,
+                        length,
+                    )
+                    .map_err(crate::error::app_error)?;
                 (path, reference)
             }
         };
@@ -250,7 +253,10 @@ pub(crate) fn compile(
     payload: &wire::SoftwareTaskSpec,
     binding: &execution_app::ServiceBinding,
     actor: &ActorId,
-    config: &ExecutionConfig,
+    (config, root): (
+        &ExecutionConfig,
+        &mut execution_runner::staging::MaterialRoot,
+    ),
     helper: Option<Arc<execution_ipc::helper::Connection>>,
 ) -> Result<(FrozenExecution, Artifacts), Error> {
     let wire::TaskPayload::Software(original) = offer.payload() else {
@@ -313,10 +319,10 @@ pub(crate) fn compile(
                 (step, index),
                 payload,
                 materials,
-                config,
+                (config, root),
                 helper.clone(),
                 intent,
-                &architecture,
+                (&architecture, native::pin(&std::env::current_exe()?)?),
             )?;
             steps.push(compiled);
             sources.push(source);
@@ -358,6 +364,7 @@ pub(crate) fn compile(
         };
         let mut compiler = Compiler {
             config,
+            root,
             helper: helper.clone(),
             files: BTreeMap::new(),
             bundle_root: None,
@@ -370,14 +377,15 @@ pub(crate) fn compile(
                 .find(|f| f.key() == key)
                 .ok_or(Error::Untrusted)?;
             let reference = artifact(&declared.sha256)?;
-            let path = execution_runner::staging::publish(
-                &config.material_root,
-                helper.as_ref().map(|h| h.context().subject.as_str()),
-                file.reader()?,
-                &reference.sha256,
-                declared.length,
-            )
-            .map_err(crate::error::app_error)?;
+            let path = compiler
+                .root
+                .publish(
+                    helper.as_ref().map(|h| h.context().subject.as_str()),
+                    file.reader()?,
+                    &reference.sha256,
+                    declared.length,
+                )
+                .map_err(crate::error::app_error)?;
             compiler.files.insert(
                 declared
                     .key
@@ -393,13 +401,15 @@ pub(crate) fn compile(
             .cloned()
             .ok_or(Error::Untrusted)?;
         if let Some(name) = native_export_name(adapter, &action.package)? {
-            primary.0 = execution_runner::staging::native_export(
-                &primary.0,
-                &primary.1.sha256,
-                &name,
-                helper.as_ref().map(|h| h.context().subject.as_str()),
-            )
-            .map_err(crate::error::app_error)?;
+            primary.0 = compiler
+                .root
+                .native_export(
+                    &primary.0,
+                    &primary.1.sha256,
+                    &name,
+                    helper.as_ref().map(|h| h.context().subject.as_str()),
+                )
+                .map_err(crate::error::app_error)?;
         }
         let bundle = action.behavior.bundle().map(|b| BundleManifest {
             schema: V1,
@@ -420,14 +430,15 @@ pub(crate) fn compile(
                 .collect(),
         });
         if let Some(manifest) = &bundle {
-            let members = execution_runner::staging::bundle(
-                &config.material_root,
-                helper.as_ref().map(|h| h.context().subject.as_str()),
-                &primary.0,
-                &primary.1.sha256,
-                manifest,
-            )
-            .map_err(crate::error::app_error)?;
+            let members = compiler
+                .root
+                .bundle(
+                    helper.as_ref().map(|h| h.context().subject.as_str()),
+                    &primary.0,
+                    &primary.1.sha256,
+                    manifest,
+                )
+                .map_err(crate::error::app_error)?;
             compiler.bundle_root = Some(bundle_directory(
                 &members,
                 &commands.install_script.ok_or(Error::Protocol)?.entry,
@@ -458,14 +469,14 @@ pub(crate) fn compile(
                 )
             };
             let payload = if let Some(key) = commands.removal_artifact {
-                compiler.files.get(key).ok_or(Error::Untrusted)?
+                compiler.files.get(key).cloned().ok_or(Error::Untrusted)?
             } else {
-                &primary
+                primary.clone()
             };
             Some(compiler.command(
                 command,
                 adapter,
-                payload,
+                &payload,
                 SoftwareOperation::Uninstall,
                 &action.version,
                 &action.package,

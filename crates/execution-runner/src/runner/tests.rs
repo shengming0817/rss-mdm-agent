@@ -113,6 +113,69 @@ fn finish(f: &Fixture, id: &AttemptId) -> ProcessEvidence {
     }
 }
 #[test]
+fn exhausted_descriptors_report_capacity_and_release_capture_before_recovery() {
+    const CHILD: &str = "RSS_RUNNER_CAPACITY_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "runner::tests::exhausted_descriptors_report_capacity_and_release_capture_before_recovery"])
+            .env(CHILD, "1")
+            .status().unwrap();
+        assert!(status.success());
+        return;
+    }
+    let mut limit = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+    // SAFETY: limit is a writable rlimit object for the process-local resource query.
+    assert_eq!(
+        unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) },
+        0
+    );
+    limit.rlim_cur = 256;
+    // SAFETY: this isolated child only lowers its own soft descriptor limit.
+    assert_eq!(unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &limit) }, 0);
+    let f = fixture(
+        "printf recovered\n",
+        vec![LaunchArg::ArtifactPath {}],
+        128,
+        1000,
+    );
+    let mut occupied = Vec::new();
+    while let Ok(file) = std::fs::File::open("/dev/null") {
+        occupied.push(file);
+    }
+    for index in 0..4 {
+        let id = AttemptId::new(format!("capacity-{index}")).unwrap();
+        assert_eq!(
+            f.runner
+                .launch(
+                    &f.plan,
+                    &id,
+                    DispatchAllowance {
+                        deadline_unix_ms: now().unwrap() + 1000,
+                        remaining_timeout_ms: 1000,
+                        remaining_output_bytes: 128,
+                    }
+                )
+                .unwrap(),
+            DispatchOutcome::Accepted
+        );
+        let facts = finish(&f, &id);
+        assert_eq!(facts.failure_kind, ProcessFailureKind::Capacity);
+        assert_eq!(facts.scope, ProcessScope::NotStarted {});
+        f.runner.acknowledge_capture(&f.plan, &facts).unwrap();
+        assert!(f.runner.records.lock().unwrap().is_empty());
+    }
+    drop(occupied);
+    let id = start(&f, 128, 1000);
+    let facts = finish(&f, &id);
+    assert_eq!(facts.failure_kind, ProcessFailureKind::None);
+    assert_eq!(facts.stdout, b"recovered");
+    f.runner.acknowledge_capture(&f.plan, &facts).unwrap();
+    assert!(f.runner.records.lock().unwrap().is_empty());
+}
+#[test]
 fn argv_is_literal_and_exit_is_not_effect_or_tree_proof() {
     let f = fixture(
         "printf '%s' \"$1\"; printf err >&2\n",

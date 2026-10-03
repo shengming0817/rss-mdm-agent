@@ -135,8 +135,11 @@ impl<S: SecretProvider, C: Clock> Client<S, C> {
             .conn
             .prepare("SELECT id FROM tasks ORDER BY rowid LIMIT ?1")?;
         let ids = query
-            .query_map([limit], |r| r.get::<_, String>(0))?
+            .query_map([limit + 1], |r| r.get::<_, String>(0))?
             .collect::<Result<Vec<_>, _>>()?;
+        if ids.len() > limit {
+            return Err(Error::Capacity);
+        }
         ids.into_iter()
             .map(|s| Uuid::parse_str(&s).map_err(|_| Error::Storage))
             .collect()

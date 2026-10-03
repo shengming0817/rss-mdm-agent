@@ -3,6 +3,7 @@
 mod backend;
 pub mod deployment;
 mod error;
+mod material_gc;
 mod recovery;
 mod service;
 pub mod software_worker;

@@ -1,4 +1,7 @@
 //! Immutable execution materials retained independently of transport-cache acknowledgements.
+mod root;
+pub use root::{MaterialRoot, Reclaimed};
+
 use execution_app::Error;
 use execution_contract::Digest;
 use sha2::{Digest as _, Sha256};
@@ -57,39 +60,37 @@ fn require_system() -> Result<(), Error> {
 }
 /// Publish exact bytes into an immutable, content-addressed namespace. Existing content is
 /// verified and never replaced; a user receives only read access to their own artifact namespace.
-pub fn publish(
-    root: &Path,
+fn publish(
+    root: &mut MaterialRoot,
     subject: Option<&str>,
     mut source: impl Read,
     expected: &Digest,
     length: u64,
 ) -> Result<PathBuf, Error> {
-    require_system()?;
     if length > 8 * 1024 * 1024 * 1024 {
         return Err(Error::Capacity);
     }
-    let _root = crate::platform::PathLease::source(root, true)?;
     let key = subject.map_or_else(
         || "system".into(),
         |subject| format!("{:x}", Sha256::digest(subject.as_bytes())),
     );
-    let directory = root.join(key);
+    let directory = root.path.join(key);
     if !directory.exists() {
-        platform_private_storage::directory(&directory).map_err(|_| Error::Storage)?;
+        root.directory(&directory)?;
     }
-    let _directory = crate::platform::PathLease::source(&directory, true)?;
+    let _directory = root.directory_lease(&directory)?;
     if let Some(subject) = subject {
         crate::platform::grant_read(&directory, subject)?;
     }
     let path = directory.join(expected.as_str());
     if path.exists() {
-        verify(&path, expected, length)?;
+        root.verify(&path, expected, length)?;
         if let Some(subject) = subject {
             crate::platform::grant_read(&path, subject)?;
         }
         return Ok(path);
     }
-    quota(root, length)?;
+    root.quota(length, 2)?;
     let nonce = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|_| Error::Clock)?
@@ -127,65 +128,33 @@ pub fn publish(
         if let Some(subject) = subject {
             crate::platform::grant_read(&temporary, subject)?;
         }
-        std::fs::hard_link(&temporary, &path).map_err(|_| Error::Conflict)?;
+        root.link(&temporary, &path)?;
         #[cfg(target_os = "macos")]
         std::fs::File::open(&directory)
             .and_then(|file| file.sync_all())
             .map_err(|_| Error::Storage)?;
-        verify(&path, expected, length)?;
+        root.verify(&path, expected, length)?;
         Ok(path)
     })();
     // Only the exact newly created staging name is removed; published data is never reset.
     let _ = std::fs::remove_file(&temporary);
     result
 }
-fn quota(root: &Path, additional: u64) -> Result<(), Error> {
-    let mut pending = vec![root.to_owned()];
-    let mut count = 0usize;
-    let mut bytes = additional;
-    while let Some(directory) = pending.pop() {
-        for entry in std::fs::read_dir(directory).map_err(|_| Error::Storage)? {
-            let entry = entry.map_err(|_| Error::Storage)?;
-            count += 1;
-            if count > 32_768 {
-                return Err(Error::Capacity);
-            }
-            let metadata = entry
-                .path()
-                .symlink_metadata()
-                .map_err(|_| Error::Storage)?;
-            if metadata.is_symlink() {
-                return Err(Error::Denied);
-            }
-            if metadata.is_dir() {
-                pending.push(entry.path());
-            } else if metadata.is_file() {
-                bytes = bytes.checked_add(metadata.len()).ok_or(Error::Capacity)?;
-            } else {
-                return Err(Error::Denied);
-            }
-            if bytes > 8 * 1024 * 1024 * 1024 {
-                return Err(Error::Capacity);
-            }
-        }
-    }
-    Ok(())
-}
 /// Expand an exact V4 Bundle into a protected content-addressed tree. Members retain their
 /// relative layout; no path, link, undeclared member or existing file is overwritten.
-pub fn bundle(
-    root: &Path,
+fn bundle(
+    root: &mut MaterialRoot,
     subject: Option<&str>,
     archive_path: &Path,
     digest: &Digest,
     manifest: &execution_contract::BundleManifest,
 ) -> Result<std::collections::BTreeMap<String, PathBuf>, Error> {
     use std::collections::{BTreeMap, BTreeSet};
-    require_system()?;
     if manifest.entries.is_empty() || manifest.entries.len() > 4096 {
         return Err(Error::Capacity);
     }
-    let (archive, _lease) = crate::materialize::verify_material(archive_path, digest)?;
+    root.contained(archive_path)?;
+    let (archive, _lease) = root.verified(archive_path, digest)?;
     let mut archive = zip::ZipArchive::new(archive).map_err(|_| Error::InvalidInput)?;
     if archive.len() != manifest.entries.len() + 1 {
         return Err(Error::Denied);
@@ -236,19 +205,19 @@ pub fn bundle(
         || "system".into(),
         |s| format!("{:x}", Sha256::digest(s.as_bytes())),
     );
-    let parent = root.join(namespace);
+    let parent = root.path.join(namespace);
     if !parent.exists() {
-        platform_private_storage::directory(&parent).map_err(|_| Error::Storage)?;
+        root.directory(&parent)?;
     }
-    let _parent = crate::platform::PathLease::source(&parent, true)?;
+    let _parent = root.directory_lease(&parent)?;
     if let Some(subject) = subject {
         crate::platform::grant_read(&parent, subject)?;
     }
     let tree = parent.join(format!("bundle-{}", digest.as_str()));
     if !tree.exists() {
-        platform_private_storage::directory(&tree).map_err(|_| Error::Storage)?;
+        root.directory(&tree)?;
     }
-    let _tree = crate::platform::PathLease::source(&tree, true)?;
+    let _tree = root.directory_lease(&tree)?;
     if let Some(subject) = subject {
         crate::platform::grant_read(&tree, subject)?;
     }
@@ -281,17 +250,17 @@ pub fn bundle(
         for part in &components[..components.len() - 1] {
             directory.push(part);
             if !directory.exists() {
-                platform_private_storage::directory(&directory).map_err(|_| Error::Storage)?;
+                root.directory(&directory)?;
             }
-            let _ = crate::platform::PathLease::source(&directory, true)?;
+            let _ = root.directory_lease(&directory)?;
             if let Some(subject) = subject {
                 crate::platform::grant_read(&directory, subject)?;
             }
         }
         if !path.exists() {
-            std::fs::hard_link(&published, &path).map_err(|_| Error::Storage)?;
+            root.link(&published, &path)?;
         }
-        verify(&path, &expected, member.length)?;
+        root.verify(&path, &expected, member.length)?;
         result.insert(name.clone(), path);
     }
     Ok(result)
@@ -316,54 +285,34 @@ fn portable_member(name: &str) -> bool {
 }
 /// Retain the native export filename (notably Homebrew's formula class lookup) under
 /// the exact payload digest. No mutable source name or default-source search is created.
-pub fn native_export(
+fn native_export(
+    root: &mut MaterialRoot,
     source: &Path,
     expected: &Digest,
     name: &str,
     subject: Option<&str>,
 ) -> Result<PathBuf, Error> {
-    require_system()?;
     if !portable_member(name) || name.contains('/') {
         return Err(Error::InvalidInput);
     }
-    let (_, _lease) = crate::materialize::verify_material(source, expected)?;
+    root.contained(source)?;
+    let (_, _lease) = root.verified(source, expected)?;
     let parent = source.parent().ok_or(Error::Configuration)?;
     let directory = parent.join(format!("export-{}", expected.as_str()));
     if !directory.exists() {
-        platform_private_storage::directory(&directory).map_err(|_| Error::Storage)?;
+        root.directory(&directory)?;
     }
-    let _directory = crate::platform::PathLease::source(&directory, true)?;
+    let _directory = root.directory_lease(&directory)?;
     if let Some(subject) = subject {
         crate::platform::grant_read(&directory, subject)?;
     }
     let named = directory.join(name);
     if !named.exists() {
-        std::fs::hard_link(source, &named).map_err(|_| Error::Storage)?;
+        root.link(source, &named)?;
     }
-    crate::materialize::verify_material(&named, expected)?;
+    root.verified(&named, expected)?;
     Ok(named)
 }
-fn verify(path: &Path, expected: &Digest, length: u64) -> Result<(), Error> {
-    let _lease = crate::platform::PathLease::source(path, true)?;
-    let mut file = crate::platform::open_file(path)?;
-    if file.metadata().map_err(|_| Error::Storage)?.len() != length {
-        return Err(Error::Denied);
-    }
-    let mut digest = Sha256::new();
-    let mut buffer = [0; 65536];
-    loop {
-        let n = file.read(&mut buffer).map_err(|_| Error::Storage)?;
-        if n == 0 {
-            break;
-        }
-        digest.update(&buffer[..n]);
-    }
-    if format!("{:x}", digest.finalize()) != expected.as_str() {
-        return Err(Error::Denied);
-    }
-    Ok(())
-}
-
 /// Lease exact protected material while a fixed software worker uses its native path.
 /// This is physical input verification and grants no dispatch authority.
 pub struct RetainedMaterialLease {
@@ -464,7 +413,7 @@ pub fn read_worker_input(
 ) -> Result<Vec<u8>, execution_app::Error> {
     use std::io::Read;
     #[cfg(target_os = "macos")]
-    let file = if path
+    let (file, _lease) = if path
         .to_str()
         .and_then(|p| p.strip_prefix("/dev/fd/"))
         .is_some_and(|fd| {
@@ -473,15 +422,18 @@ pub fn read_worker_input(
                 && fd.parse::<u32>().is_ok_and(|n| n >= 3)
         }) {
         // The existing runner hands this worker a retained read-only file/anonymous pipe.
-        std::fs::File::open(path).map_err(|_| execution_app::Error::Unavailable)?
+        (
+            std::fs::File::open(path).map_err(|_| execution_app::Error::Unavailable)?,
+            None,
+        )
     } else {
-        crate::platform::protected_path(path, false)?;
-        crate::platform::open_file(path)?
+        let (file, lease) = crate::platform::PathLease::source(path, false)?.into_file()?;
+        (file, Some(lease))
     };
     #[cfg(not(target_os = "macos"))]
-    let file = {
-        crate::platform::protected_path(path, false)?;
-        crate::platform::open_file(path)?
+    let (file, _lease) = {
+        let (file, lease) = crate::platform::PathLease::source(path, false)?.into_file()?;
+        (file, Some(lease))
     };
     if file
         .metadata()

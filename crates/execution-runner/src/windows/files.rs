@@ -93,6 +93,43 @@ fn check(file: &File, immutable: bool, leaf: bool, current: &str) -> Result<(), 
     }
     Ok(())
 }
+pub(crate) fn capacity_error(error: &std::io::Error) -> bool {
+    error.raw_os_error() == Some(ERROR_TOO_MANY_OPEN_FILES as i32)
+}
+pub(crate) fn protected_file(file: &File) -> Result<(), Error> {
+    check(file, true, true, &token_identity()?.0)
+}
+pub(crate) fn storage_identity(file: &File) -> Result<(u64, u64), Error> {
+    // SAFETY: this Win32 output structure contains only integer fields and accepts zero initialization.
+    let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+    // SAFETY: File owns a live handle through the call and info is a valid writable output.
+    // Fields are consumed only after the OS reports success.
+    if unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut info) } == 0 {
+        return Err(Error::Storage);
+    }
+    Ok((
+        info.dwVolumeSerialNumber as u64,
+        ((info.nFileIndexHigh as u64) << 32) | info.nFileIndexLow as u64,
+    ))
+}
+pub(crate) fn storage_links(file: &File) -> Result<u64, Error> {
+    // SAFETY: this Win32 output structure contains only integer fields and accepts zero initialization.
+    let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+    // SAFETY: File owns a live handle through the call and info is a valid writable output.
+    // Fields are consumed only after the OS reports success.
+    if unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut info) } == 0 {
+        return Err(Error::Storage);
+    }
+    Ok(info.nNumberOfLinks as u64)
+}
+pub(crate) fn journal_identity(path: &Path) -> Result<(u64, u64), Error> {
+    let file = OpenOptions::new()
+        .access_mode(FILE_READ_ATTRIBUTES)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)
+        .map_err(|_| Error::Storage)?;
+    storage_identity(&file)
+}
 fn local_path(path: &Path) -> Result<(), Error> {
     if !path.is_absolute()
         || !matches!(path.components().next(),Some(Component::Prefix(p)) if matches!(p.kind(),Prefix::Disk(_)|Prefix::VerbatimDisk(_)))
@@ -107,6 +144,27 @@ fn local_path(path: &Path) -> Result<(), Error> {
 /// Retain every path component without delete/write sharing for the entire invocation.
 pub(crate) struct PathLease(Vec<File>);
 impl PathLease {
+    pub(crate) fn directory(path: &Path, immutable: bool) -> Result<Self, Error> {
+        let lease = Self::source(path, immutable)?;
+        if !lease
+            .0
+            .last()
+            .ok_or(Error::Denied)?
+            .metadata()
+            .map_err(|_| Error::Unavailable)?
+            .is_dir()
+        {
+            return Err(Error::Denied);
+        }
+        Ok(lease)
+    }
+    pub(crate) fn into_file(mut self) -> Result<(File, Self), Error> {
+        let file = self.0.pop().ok_or(Error::Denied)?;
+        if !file.metadata().map_err(|_| Error::Unavailable)?.is_file() {
+            return Err(Error::Denied);
+        }
+        Ok((file, self))
+    }
     pub(crate) fn source(path: &Path, immutable: bool) -> Result<Self, Error> {
         Self::open(path, immutable)
     }
@@ -122,7 +180,11 @@ impl PathLease {
             .rev()
         {
             let file = OpenOptions::new()
-                .access_mode(READ_CONTROL | FILE_READ_ATTRIBUTES)
+                .access_mode(if part == path {
+                    FILE_GENERIC_READ
+                } else {
+                    READ_CONTROL | FILE_READ_ATTRIBUTES
+                })
                 .share_mode(FILE_SHARE_READ)
                 .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS)
                 .open(part)
@@ -161,10 +223,20 @@ pub(crate) struct WorkingDirectory {
 }
 impl WorkingDirectory {
     pub(crate) fn open(path: &Path) -> Result<Self, Error> {
-        protected_path(path, true)?;
+        let guard = PathLease::open(path, false)?;
+        if !guard
+            .0
+            .last()
+            .ok_or(Error::Denied)?
+            .metadata()
+            .map_err(|_| Error::Unavailable)?
+            .is_dir()
+        {
+            return Err(Error::Denied);
+        }
         Ok(Self {
             path: path.into(),
-            _guard: PathLease::open(path, false)?,
+            _guard: guard,
         })
     }
     pub(crate) fn configure(
