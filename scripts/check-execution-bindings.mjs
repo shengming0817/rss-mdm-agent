@@ -9,11 +9,20 @@ const require = createRequire(import.meta.url);
 const { Ajv2020 } = require("ajv/dist/2020.js");
 const standalone = require("ajv/dist/standalone/index.js").default;
 const root = fileURLToPath(new URL("../", import.meta.url));
-const run = (example, crate = "execution-app") =>
+const run = (example, crate = "execution-app", features = []) =>
   JSON.parse(
     execFileSync(
       "cargo",
-      ["run", "--quiet", "--locked", "-p", crate, "--example", example],
+      [
+        "run",
+        "--quiet",
+        "--locked",
+        "-p",
+        crate,
+        "--example",
+        example,
+        ...features.flatMap((feature) => ["--features", feature]),
+      ],
       { cwd: root, encoding: "utf8" },
     ),
   );
@@ -28,9 +37,14 @@ const binding = await format(
   }),
   { parser: "typescript", printWidth: 80 },
 );
-const fixtures = await format(JSON.stringify(run("task-details-fixtures")), {
-  parser: "json",
-});
+const fixtures = await format(
+  JSON.stringify(
+    run("task-details-fixtures", "execution-app", ["test-support"]),
+  ),
+  {
+    parser: "json",
+  },
+);
 const tools = run("tool-schema", "execution-mcp");
 const generated = "packages/execution-bindings/src";
 const files = [

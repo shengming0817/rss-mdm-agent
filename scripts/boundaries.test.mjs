@@ -6,10 +6,44 @@ import {
   rmSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
+import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { checkTree, checkSource, checkRustSources } from "./boundaries.mjs";
+
+// ref: Cargo 0.90.0 src/cargo/core/resolver/features.rs (FeatureOpts/HasDevUnits).
+// Inspect the resolved production graph, without the dev edges used by test/example targets.
+test("production service and desktop resolve without test-support", () => {
+  const graph = execFileSync(
+    "cargo",
+    [
+      "tree",
+      "--locked",
+      "-p",
+      "agent-service",
+      "-p",
+      "rss-mdm-desktop",
+      "--edges",
+      "normal,build",
+      "--prefix",
+      "none",
+      "--format",
+      "{p}|{f}",
+    ],
+    { cwd: new URL("../", import.meta.url), encoding: "utf8" },
+  );
+  assert.ok(graph.includes("agent-service v"));
+  assert.ok(graph.includes("rss-mdm-desktop v"));
+  for (const line of graph.trim().split("\n")) {
+    const [identity, features] = line.split("|");
+    assert.ok(features !== undefined, `missing resolved features: ${line}`);
+    assert.ok(
+      !features.split(/[,\s]+/).includes("test-support"),
+      `${identity} enables test-support in the production dependency graph`,
+    );
+  }
+});
 
 test("Rust guard distinguishes syntax from harmless words and literal contents", () => {
   const file = "apps/desktop/src-tauri/src/self_service/example.rs";

@@ -13,6 +13,8 @@ export function executionServer() {
       "rss-mdm-desktop",
       "--example",
       "execution-acceptance-server",
+      "--features",
+      "test-support",
     ],
     {
       cwd: new URL("../..", import.meta.url),
