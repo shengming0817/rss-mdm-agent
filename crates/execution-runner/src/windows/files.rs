@@ -93,6 +93,34 @@ fn check(file: &File, immutable: bool, leaf: bool, current: &str) -> Result<(), 
     }
     Ok(())
 }
+pub(crate) fn protected_file(file: &File) -> Result<(), Error> {
+    check(file, true, true, &token_identity()?.0)
+}
+pub(crate) fn storage_identity(file: &File) -> Result<(u64, u64), Error> {
+    let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+    if unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut info) } == 0 {
+        return Err(Error::Storage);
+    }
+    Ok((
+        info.dwVolumeSerialNumber as u64,
+        ((info.nFileIndexHigh as u64) << 32) | info.nFileIndexLow as u64,
+    ))
+}
+pub(crate) fn storage_links(file: &File) -> Result<u64, Error> {
+    let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+    if unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut info) } == 0 {
+        return Err(Error::Storage);
+    }
+    Ok(info.nNumberOfLinks as u64)
+}
+pub(crate) fn journal_identity(path: &Path) -> Result<(u64, u64), Error> {
+    let file = OpenOptions::new()
+        .access_mode(FILE_READ_ATTRIBUTES)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)
+        .map_err(|_| Error::Storage)?;
+    storage_identity(&file)
+}
 fn local_path(path: &Path) -> Result<(), Error> {
     if !path.is_absolute()
         || !matches!(path.components().next(),Some(Component::Prefix(p)) if matches!(p.kind(),Prefix::Disk(_)|Prefix::VerbatimDisk(_)))

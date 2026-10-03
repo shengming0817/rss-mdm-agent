@@ -1212,6 +1212,7 @@ dependencies = [
  "execution-ipc",
  "execution-lifecycle",
  "execution-sqlite",
+ "fs2",
  "installation-security",
  "libc",
  "native-process",

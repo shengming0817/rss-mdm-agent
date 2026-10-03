@@ -70,6 +70,29 @@ impl MaterialRegistry {
             .map_err(|_| Error::Unavailable)?
             .contains_key(plan.digest().as_str()))
     }
+    /// Snapshot every registered and live physical reference for the exclusive service owner.
+    /// This includes helper recipes; retirement alone never authorizes disk deletion.
+    pub fn retained_paths(&self) -> Result<std::collections::BTreeSet<PathBuf>, Error> {
+        let entries = self.entries.lock().map_err(|_| Error::Unavailable)?;
+        let mut pending: Vec<&Artifacts> = entries.values().map(Arc::as_ref).collect();
+        let mut paths = std::collections::BTreeSet::new();
+        while let Some(value) = pending.pop() {
+            for path in [&value.interpreter, &value.content, &value.work_root] {
+                if !path.as_os_str().is_empty() {
+                    paths.insert(path.clone());
+                }
+            }
+            for step in &value.program {
+                pending.extend(step.mutations.values().map(Box::as_ref));
+                pending.extend(step.detection.as_deref());
+                paths.extend(step.files.iter().map(|(path, _)| path.clone()));
+            }
+            if paths.len() > 32_768 || pending.len() > 32_768 {
+                return Err(Error::Capacity);
+            }
+        }
+        Ok(paths)
+    }
     /// Retire settled material coordinates; in-use leases remain owned by the running attempt.
     /// The service calls this only after the journal and delivery owners have settled the task.
     pub fn retire(&self, plan: &FrozenExecution) -> Result<(), Error> {

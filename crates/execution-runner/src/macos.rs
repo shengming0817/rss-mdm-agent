@@ -32,6 +32,24 @@ fn check_fd(file: &File, immutable: bool, directory: Option<bool>) -> Result<(),
     }
     Ok(())
 }
+pub(crate) fn protected_file(file: &File) -> Result<(), Error> {
+    check_fd(file, true, Some(false))
+}
+pub(crate) fn storage_identity(file: &File) -> Result<(u64, u64), Error> {
+    let meta = file.metadata().map_err(|_| Error::Storage)?;
+    Ok((meta.dev(), meta.ino()))
+}
+pub(crate) fn storage_links(file: &File) -> Result<u64, Error> {
+    Ok(file.metadata().map_err(|_| Error::Storage)?.nlink())
+}
+pub(crate) fn journal_identity(path: &Path) -> Result<(u64, u64), Error> {
+    // Never open/close another SQLite descriptor: POSIX close releases byte-range locks.
+    let meta = path.symlink_metadata().map_err(|_| Error::Storage)?;
+    if !meta.is_file() {
+        return Err(Error::Denied);
+    }
+    Ok((meta.dev(), meta.ino()))
+}
 fn walk(
     path: &Path,
     directory: Option<bool>,
