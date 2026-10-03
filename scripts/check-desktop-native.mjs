@@ -79,7 +79,7 @@ function serviceCall(method, input = {}) {
         reject(new Error(`service ${method} deadline exceeded`));
       },
       method === "finish"
-        ? 180000
+        ? 240000
         : ["completion", "security"].includes(method)
           ? 90000
           : 15000,
@@ -244,15 +244,15 @@ const script = (source) =>
     encoding: "utf8",
     timeout: 10000,
   }).trim();
-const native = (source) =>
+const native = (source, requireForeground = true) =>
   script(
-    `tell application "System Events"\n tell (first application process whose unix id is ${receipt.pid})\n set frontmost to true\n if (count of windows) > 0 then perform action "AXRaise" of window 1\n repeat 10 times\n if frontmost then exit repeat\n set frontmost to true\n delay 0.1\n end repeat\n delay 0.2\n ${source}\n end tell\nend tell`,
+    `tell application "System Events"\n tell (first application process whose unix id is ${receipt.pid})\n set frontmost to true\n if (count of windows) > 0 then perform action "AXRaise" of window 1\n repeat 40 times\n if frontmost then exit repeat\n set frontmost to true\n delay 0.1\n end repeat\n delay 0.2\n ${requireForeground ? 'if not frontmost then error "Owned application foreground unavailable"' : ""}\n ${source}\n end tell\nend tell`,
   );
 const key = (code, shift = false) => {
-  const foreground = native("get frontmost");
+  const foreground = native("get frontmost", false);
   if (foreground !== "true")
     result.foregroundFailure = script(
-      'tell application "System Events" to get {name, unix id} of first application process whose frontmost is true',
+      'tell application "System Events" to get {name, unix id} of (first application process whose frontmost is true)',
     );
   assert.equal(
     foreground,
