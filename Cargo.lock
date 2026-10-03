@@ -102,6 +102,7 @@ dependencies = [
  "quick-xml",
  "ring",
  "rusqlite",
+ "script-plan",
  "serde",
  "serde_json",
  "sha2",

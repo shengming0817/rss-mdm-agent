@@ -41,17 +41,15 @@ fn authenticode(request: &WorkerRequest, key: &str) -> Result<(), Error> {
         ) {
             return Err(Error::Untrusted);
         }
-        let args = [
-            "-NoLogo".into(),
-            "-NoProfile".into(),
-            "-NonInteractive".into(),
-            "-File".into(),
-            request.tool("authenticode")?.to_string_lossy().into_owned(),
-            "-Path".into(),
-            request.material(key)?.to_string_lossy().into_owned(),
-            "-Publisher".into(),
-            signature.publisher.clone(),
-        ];
+        let args = script_plan::ScriptProfile::PowerShell7.materialized_file_argv(
+            &request.tool("authenticode")?.to_string_lossy(),
+            &[
+                "-Path".into(),
+                request.material(key)?.to_string_lossy().into_owned(),
+                "-Publisher".into(),
+                signature.publisher.clone(),
+            ],
+        );
         if run_tool(request, &request.tool("pwsh")?, &args)?.0 != 0 {
             return Err(Error::Untrusted);
         }

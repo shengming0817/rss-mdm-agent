@@ -11,6 +11,7 @@ name = "rss-execution-service"
 path = "src/main.rs"
 
 [dependencies]
+script-plan = { path = "../../crates/script-plan" }
 platform-private-storage = { path = "../../crates/platform-private-storage" }
 platform-credentials = { path = "../../crates/platform-credentials" }
 agent-client = { path = "../../crates/agent-client" }
