@@ -237,6 +237,15 @@ pub(super) fn execute(
     before: Option<&SoftwareState>,
 ) -> Result<(i32, SoftwareWorkerResult), Error> {
     let installed = target(request, dmg, application)?;
+    execute_at(request, application, before, &installed)
+}
+
+fn execute_at(
+    request: &WorkerRequest,
+    application: &Application,
+    before: Option<&SoftwareState>,
+    installed: &Path,
+) -> Result<(i32, SoftwareWorkerResult), Error> {
     let parent = OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
@@ -246,27 +255,45 @@ pub(super) fn execute(
         OsStr::new(&application.target_name),
         libc::O_DIRECTORY | libc::O_NOFOLLOW,
     )?;
-    let observed = bundle_from(request, &installed, application, &root)?;
+    let removal = snapshot(&root)?;
+    let observed = bundle_from(request, installed, application, &root)?;
     authorize_version(request.operation, application, &observed, before)?;
     require_not_running(&installed)?;
-    let removal = snapshot(&root)?;
-    same_path(&installed, &root)?;
+    let current = snapshot(&root)?;
+    if current.objects != removal.objects || current.tree != removal.tree {
+        return Err(Error::Untrusted);
+    }
+    same_path(installed, &root)?;
     same_path(installed.parent().ok_or(Error::Untrusted)?, &parent)?;
-    let mut record = ImageState {
-        owner: owner(request)?,
-        device: None,
-        stage: None,
-        alternate: None,
-        partial_stage: false,
-        group: unsafe { libc::getpgrp() },
-        removal: Some(removal),
+    let mut record = if request.operation == WorkerOperation::RemovePrevious {
+        let mut record = state(request)?;
+        if record.removal.is_some() {
+            return Err(Error::Untrusted);
+        }
+        record.removal = Some(removal);
+        record
+    } else {
+        ImageState {
+            owner: owner(request)?,
+            device: None,
+            stage: None,
+            alternate: None,
+            partial_stage: false,
+            // SAFETY: getpgrp only observes the current process group.
+            group: unsafe { libc::getpgrp() },
+            removal: Some(removal),
+        }
     };
     // SAFETY: getpgrp only observes the current process group; it dereferences no pointers.
     let (resource_parent, _, _) = image_state_paths(request)?;
     if resource_parent.metadata()?.dev() != parent.metadata()?.dev() {
         return Err(Error::Unsupported);
     }
-    create_image_root(request, &record)?;
+    if request.operation == WorkerOperation::RemovePrevious {
+        save(request, &record)?;
+    } else {
+        create_image_root(request, &record)?;
+    }
     let private = owned_root(request)?;
     rename_at(
         &parent,
@@ -274,19 +301,16 @@ pub(super) fn execute(
         &private,
         OsStr::new(ROOT_SLOT),
     )?;
-    drain(request, dmg, &mut record)?;
+    drain(request, &mut record, installed)?;
     Ok(result(0, None, String::new()))
 }
 
 fn restore(
     request: &WorkerRequest,
-    dmg: &Dmg,
     record: &mut ImageState,
     private: &File,
+    installed: &Path,
 ) -> Result<(), Error> {
-    let Payload::AppCopy { application, .. } = &dmg.payload else {
-        return Err(Error::Untrusted);
-    };
     let removal = record.removal.as_ref().ok_or(Error::Untrusted)?;
     if let Some(relative) = &removal.pending {
         if has_entry(private, ENTRY_SLOT)? {
@@ -307,7 +331,6 @@ fn restore(
         save(request, record)?;
     }
     if has_entry(private, ROOT_SLOT)? {
-        let installed = target(request, dmg, application)?;
         let parent = OpenOptions::new()
             .read(true)
             .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
@@ -316,28 +339,28 @@ fn restore(
             private,
             OsStr::new(ROOT_SLOT),
             &parent,
-            OsStr::new(&application.target_name),
+            installed.file_name().ok_or(Error::Untrusted)?,
         )?;
     }
-    remove_image_root(request)
+    finish_removal(request, record)
 }
 fn refuse(
     request: &WorkerRequest,
-    dmg: &Dmg,
     record: &mut ImageState,
     private: &File,
+    installed: &Path,
 ) -> Result<(), Error> {
     record.removal.as_mut().ok_or(Error::Untrusted)?.disposition = Disposition::RestoreOnly;
     save(request, record)?;
     // Recovery is no-overwrite; a failed restore retains the unapproved object and state.
-    let _ = restore(request, dmg, record, private);
+    let _ = restore(request, record, private, installed);
     Err(Error::Untrusted)
 }
 fn finish_pending(
     request: &WorkerRequest,
-    dmg: &Dmg,
     record: &mut ImageState,
     private: &File,
+    installed: &Path,
 ) -> Result<(), Error> {
     let removal = record.removal.as_ref().ok_or(Error::Untrusted)?;
     let Some(relative) = &removal.pending else {
@@ -349,7 +372,7 @@ fn finish_pending(
         if ObjectIdentity::entry(private, OsStr::new(ENTRY_SLOT))? != *expected
             || check_content(private, ENTRY_SLOT, entry).is_err()
         {
-            return refuse(request, dmg, record, private);
+            return refuse(request, record, private, installed);
         }
         unlink_at(
             private,
@@ -360,29 +383,45 @@ fn finish_pending(
     record.removal.as_mut().ok_or(Error::Untrusted)?.pending = None;
     save(request, record)
 }
-fn drain(request: &WorkerRequest, dmg: &Dmg, record: &mut ImageState) -> Result<(), Error> {
+fn finish_removal(request: &WorkerRequest, record: &mut ImageState) -> Result<(), Error> {
+    if record.device.is_some()
+        || record.stage.is_some()
+        || record.alternate.is_some()
+        || record.partial_stage
+    {
+        record.removal = None;
+        save(request, record)
+    } else {
+        remove_image_root(request)
+    }
+}
+fn drain(request: &WorkerRequest, record: &mut ImageState, installed: &Path) -> Result<(), Error> {
+    // Owner publication and empty-root removal each have a durable absent-root boundary.
+    if !present(&request.resource_root)? {
+        return remove_image_root(request);
+    }
     let private = owned_root(request)?;
     let removal = record.removal.as_ref().ok_or(Error::Untrusted)?;
     if removal.disposition == Disposition::RestoreOnly {
-        return restore(request, dmg, record, &private);
+        return restore(request, record, &private, installed);
     }
     if !has_entry(&private, ROOT_SLOT)? {
         if has_entry(&private, ENTRY_SLOT)? {
             return Err(Error::Untrusted);
         }
-        return remove_image_root(request);
+        return finish_removal(request, record);
     }
     if removal.objects.get(Path::new(""))
         != Some(&ObjectIdentity::entry(&private, OsStr::new(ROOT_SLOT))?)
     {
-        return refuse(request, dmg, record, &private);
+        return refuse(request, record, &private, installed);
     }
     let root = open_at(
         &private,
         OsStr::new(ROOT_SLOT),
         libc::O_DIRECTORY | libc::O_NOFOLLOW,
     )?;
-    finish_pending(request, dmg, record, &private)?;
+    finish_pending(request, record, &private, installed)?;
     let paths: Vec<_> = record
         .removal
         .as_ref()
@@ -408,16 +447,26 @@ fn drain(request: &WorkerRequest, dmg: &Dmg, record: &mut ImageState) -> Result<
         record.removal.as_mut().ok_or(Error::Untrusted)?.pending = Some(relative);
         save(request, record)?;
         rename_at(&parent, &name, &private, OsStr::new(ENTRY_SLOT))?;
-        finish_pending(request, dmg, record, &private)?;
+        finish_pending(request, record, &private, installed)?;
     }
     same_entry(&private, OsStr::new(ROOT_SLOT), &root)?;
     unlink_at(&private, ROOT_SLOT, true)?;
-    remove_image_root(request)
+    finish_removal(request, record)
 }
 
 pub(super) fn cleanup(
     request: &WorkerRequest,
     dmg: &Dmg,
+) -> Result<(i32, SoftwareWorkerResult), Error> {
+    let Payload::AppCopy { application, .. } = &dmg.payload else {
+        return Err(Error::Untrusted);
+    };
+    let installed = target(request, dmg, application)?;
+    cleanup_at(request, &installed)
+}
+fn cleanup_at(
+    request: &WorkerRequest,
+    installed: &Path,
 ) -> Result<(i32, SoftwareWorkerResult), Error> {
     if discard_unpublished_image_state(request)? {
         return Ok(result(0, None, String::new()));
@@ -431,7 +480,15 @@ pub(super) fn cleanup(
             return Err(Error::Unavailable);
         }
     }
-    drain(request, dmg, &mut record)?;
+    drain(request, &mut record, installed)?;
+    // RemovePrevious shares its attempt with the install image and staging. Resource
+    // recovery closes those only through the existing image cleanup owner.
+    if present(&request.resource_root)? {
+        let wire::SoftwareTaskBehavior::Dmg(dmg) = &request.action.behavior else {
+            return Err(Error::Untrusted);
+        };
+        return super::cleanup(request, dmg);
+    }
     Ok(result(0, None, String::new()))
 }
 
@@ -441,7 +498,19 @@ mod tests {
     use super::*;
 
     fn isolated() -> (PathBuf, WorkerRequest, ImageState) {
-        let (parent, request) = image_request();
+        let (parent, mut request) = image_request();
+        let wire::SoftwareTaskBehavior::Dmg(dmg) = &mut request.action.behavior else {
+            unreachable!()
+        };
+        dmg.payload = Payload::AppCopy {
+            application: Application {
+                path: "image.app".into(),
+                bundle_id: "org.rss.test".into(),
+                version: "1.0".into(),
+                target_name: "independent.app".into(),
+            },
+            uninstall: true,
+        };
         let source = parent.join("independent.app");
         fs::create_dir_all(source.join("Contents")).unwrap();
         fs::write(
@@ -534,10 +603,12 @@ mod tests {
                 unlink_at(&private, ENTRY_SLOT, false).unwrap();
             }
             drop(record);
-            let wire::SoftwareTaskBehavior::Dmg(dmg) = &request.action.behavior else {
-                unreachable!()
-            };
-            assert_eq!(cleanup(&request, dmg).unwrap().0, 0);
+            assert_eq!(
+                cleanup_at(&request, &parent.join("independent.app"))
+                    .unwrap()
+                    .0,
+                0
+            );
             assert!(!request.resource_root.exists());
             let (_, current, next) = image_state_paths(&request).unwrap();
             assert!(!current.exists() && !next.exists());
@@ -553,25 +624,159 @@ mod tests {
     fn replaced_leaf_with_identical_bytes_is_preserved_and_cannot_be_deleted_by_cleanup() {
         let (parent, request, mut record) = isolated();
         let root = request.resource_root.join(ROOT_SLOT);
+        fs::create_dir(parent.join("independent.app")).unwrap();
+        fs::write(
+            parent.join("independent.app/new-target"),
+            b"preserve current target",
+        )
+        .unwrap();
         fs::rename(root.join("Contents/local-data"), parent.join("original")).unwrap();
         fs::copy(parent.join("original"), root.join("Contents/local-data")).unwrap();
-        let wire::SoftwareTaskBehavior::Dmg(dmg) = &request.action.behavior else {
-            unreachable!()
-        };
         assert!(matches!(
-            drain(&request, dmg, &mut record),
+            drain(&request, &mut record, &parent.join("independent.app")),
             Err(Error::Untrusted)
         ));
         assert_eq!(
-            fs::read(request.resource_root.join(ENTRY_SLOT)).unwrap(),
+            fs::read(root.join("Contents/local-data")).unwrap(),
             fs::read(parent.join("original")).unwrap()
         );
         assert!(matches!(
             state(&request).unwrap().removal.unwrap().disposition,
             Disposition::RestoreOnly
         ));
-        assert!(cleanup(&request, dmg).is_err());
-        assert!(request.resource_root.join(ENTRY_SLOT).exists());
+        assert!(cleanup_at(&request, &parent.join("independent.app")).is_err());
+        assert!(root.join("Contents/local-data").exists());
+        assert_eq!(
+            fs::read(parent.join("independent.app/new-target")).unwrap(),
+            b"preserve current target"
+        );
+        fs::remove_dir_all(parent.join("independent.app")).unwrap();
+        assert_eq!(
+            cleanup_at(&request, &parent.join("independent.app"))
+                .unwrap()
+                .0,
+            0
+        );
+        assert_eq!(
+            fs::read(parent.join("independent.app/Contents/local-data")).unwrap(),
+            fs::read(parent.join("original")).unwrap()
+        );
+        assert!(!request.resource_root.exists());
+        fs::remove_dir_all(parent).unwrap();
+    }
+
+    #[test]
+    fn root_replaced_between_approval_and_atomic_isolation_is_restored() {
+        let (parent, mut request) = image_request();
+        let wire::SoftwareTaskBehavior::Dmg(dmg) = &mut request.action.behavior else {
+            unreachable!()
+        };
+        dmg.payload = Payload::AppCopy {
+            application: Application {
+                path: "image.app".into(),
+                bundle_id: "org.rss.test".into(),
+                version: "1.0".into(),
+                target_name: "independent.app".into(),
+            },
+            uninstall: true,
+        };
+        let installed = parent.join("independent.app");
+        fs::create_dir(&installed).unwrap();
+        fs::write(installed.join("approved"), b"original").unwrap();
+        let mut record = initial_state(&request);
+        record.removal = Some(snapshot(&File::open(&installed).unwrap()).unwrap());
+        create_image_root(&request, &record).unwrap();
+        fs::rename(&installed, parent.join("approved-original")).unwrap();
+        fs::create_dir(&installed).unwrap();
+        fs::write(installed.join("replacement"), b"preserve replacement").unwrap();
+        rename_at(
+            &File::open(&parent).unwrap(),
+            OsStr::new("independent.app"),
+            &owned_root(&request).unwrap(),
+            OsStr::new(ROOT_SLOT),
+        )
+        .unwrap();
+        assert!(matches!(
+            drain(&request, &mut record, &installed),
+            Err(Error::Untrusted)
+        ));
+        assert_eq!(
+            fs::read(installed.join("replacement")).unwrap(),
+            b"preserve replacement"
+        );
+        assert_eq!(
+            fs::read(parent.join("approved-original/approved")).unwrap(),
+            b"original"
+        );
+        assert!(!request.resource_root.exists());
+        fs::remove_dir_all(parent).unwrap();
+    }
+
+    #[test]
+    fn refusal_restores_unapproved_tree_without_deleting_it() {
+        let (parent, request, mut record) = isolated();
+        let leaf = request
+            .resource_root
+            .join(ROOT_SLOT)
+            .join("Contents/local-data");
+        fs::rename(&leaf, parent.join("original")).unwrap();
+        fs::copy(parent.join("original"), &leaf).unwrap();
+        assert!(matches!(
+            drain(&request, &mut record, &parent.join("independent.app")),
+            Err(Error::Untrusted)
+        ));
+        assert_eq!(
+            fs::read(parent.join("independent.app/Contents/local-data")).unwrap(),
+            fs::read(parent.join("original")).unwrap()
+        );
+        assert!(!request.resource_root.exists());
+        fs::remove_dir_all(parent).unwrap();
+    }
+
+    #[test]
+    fn owner_without_resource_root_closes_only_private_sidecars() {
+        for boundary in 0..2 {
+            let (parent, request) = image_request();
+            let mut record = initial_state(&request);
+            record.removal = Some(RemovalState {
+                tree: Default::default(),
+                objects: Default::default(),
+                pending: None,
+                disposition: Disposition::DeleteVerified,
+            });
+            create_image_root(&request, &record).unwrap();
+            // Both publication-before-mkdir and rmdir-before-sidecar-unlink have this state.
+            fs::remove_dir(&request.resource_root).unwrap();
+            fs::write(parent.join("business-object"), [boundary]).unwrap();
+            assert_eq!(
+                cleanup_at(&request, &parent.join("independent.app"))
+                    .unwrap()
+                    .0,
+                0
+            );
+            assert_eq!(
+                fs::read(parent.join("business-object")).unwrap(),
+                [boundary]
+            );
+            assert!(!image_state_paths(&request).unwrap().1.exists());
+            fs::remove_dir_all(parent).unwrap();
+        }
+    }
+
+    #[test]
+    fn remove_previous_preserves_install_image_and_staging() {
+        let (parent, mut request, mut record) = isolated();
+        request.operation = WorkerOperation::RemovePrevious;
+        record.device = Some("/dev/disk-fixture".into());
+        record.stage = Some(record.removal.as_ref().unwrap().tree.clone());
+        // Persisting resource ownership keeps cleanup with the image owner.
+        save(&request, &record).unwrap();
+        drain(&request, &mut record, &parent.join("independent.app")).unwrap();
+        let retained = state(&request).unwrap();
+        assert!(retained.removal.is_none());
+        assert_eq!(retained.device, record.device);
+        assert!(retained.stage.is_some());
+        assert!(request.resource_root.exists());
         fs::remove_dir_all(parent).unwrap();
     }
 
@@ -579,6 +784,7 @@ mod tests {
     fn replaced_root_or_parent_and_escaping_links_are_rejected() {
         let (parent, request, mut record) = isolated();
         let root_path = request.resource_root.join(ROOT_SLOT);
+        fs::create_dir(parent.join("independent.app")).unwrap();
         let root = File::open(&root_path).unwrap();
         fs::rename(root_path.join("Contents"), parent.join("original-contents")).unwrap();
         fs::create_dir(root_path.join("Contents")).unwrap();
@@ -591,11 +797,8 @@ mod tests {
         fs::rename(&root_path, parent.join("original-root")).unwrap();
         fs::create_dir(&root_path).unwrap();
         fs::write(root_path.join("unapproved"), b"preserve").unwrap();
-        let wire::SoftwareTaskBehavior::Dmg(dmg) = &request.action.behavior else {
-            unreachable!()
-        };
         assert!(matches!(
-            drain(&request, dmg, &mut record),
+            drain(&request, &mut record, &parent.join("independent.app")),
             Err(Error::Untrusted)
         ));
         assert_eq!(fs::read(root_path.join("unapproved")).unwrap(), b"preserve");
@@ -608,17 +811,19 @@ mod tests {
     fn unknown_private_entries_prevent_resource_closure() {
         let (parent, request, _) = isolated();
         fs::write(request.resource_root.join("unowned"), b"preserve").unwrap();
-        let wire::SoftwareTaskBehavior::Dmg(dmg) = &request.action.behavior else {
-            unreachable!()
-        };
-        assert!(cleanup(&request, dmg).is_err());
+        assert!(cleanup_at(&request, &parent.join("independent.app")).is_err());
         assert_eq!(
             fs::read(request.resource_root.join("unowned")).unwrap(),
             b"preserve"
         );
         assert!(image_state_paths(&request).unwrap().1.exists());
         fs::remove_file(request.resource_root.join("unowned")).unwrap();
-        assert_eq!(cleanup(&request, dmg).unwrap().0, 0);
+        assert_eq!(
+            cleanup_at(&request, &parent.join("independent.app"))
+                .unwrap()
+                .0,
+            0
+        );
         fs::remove_dir_all(parent).unwrap();
     }
 }

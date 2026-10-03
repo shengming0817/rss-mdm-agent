@@ -13,6 +13,7 @@ import {
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
+import { IPC_VERSION } from "../packages/execution-bindings/src/service-version.mjs";
 import { agentOrganizationConfiguration } from "./agent-organization.mjs";
 import {
   desktopBuildEnvironment,
@@ -93,7 +94,7 @@ test("desktop and Agent consume the same env CA without embedding paths or priva
   const desktop = JSON.parse(environment[organizationBuildInput]);
   const template = {
     version: 2,
-    ipc_version: 6,
+    ipc_version: IPC_VERSION,
     signing_keys: { key: "public" },
     state_root: "/state",
     ca_file: "/old",
@@ -127,12 +128,23 @@ test("desktop and Agent consume the same env CA without embedding paths or priva
 test("Agent origin normalization matches desktop DNS root-dot rules", (t) => {
   const root = mkdtempSync(join(tmpdir(), "rss-origin-env-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
-  const template = { version: 2, ipc_version: 6 };
+  const template = { version: 2, ipc_version: IPC_VERSION };
+
   const configure = (origin) =>
     writeFileSync(
       join(root, ".env"),
       `RSS_MDM_ORIGIN=${origin}\nRSS_MDM_TENANT_ID=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\nRSS_MDM_ORGANIZATION_LABEL=Fixture\n`,
     );
+  configure("https://fixture.test");
+  assert.throws(
+    () =>
+      agentOrganizationConfiguration(
+        root,
+        { version: 2, ipc_version: 6 },
+        join(root, "old-ca.pem"),
+      ),
+    /current deployment and IPC versions/,
+  );
   for (const origin of [
     "https://MDM.EXAMPLE.:443/",
     "https://example./",
@@ -189,7 +201,11 @@ test("real Agent generator CLI preserves user-readable public inputs under restr
     ca = join(root, "installed-ca.pem");
   writeFileSync(
     template,
-    JSON.stringify({ version: 2, ipc_version: 6, state_root: "/state" }),
+    JSON.stringify({
+      version: 2,
+      ipc_version: IPC_VERSION,
+      state_root: "/state",
+    }),
   );
   let entry = join(root, "scripts", "agent-organization.mjs");
   if (process.platform !== "win32") {

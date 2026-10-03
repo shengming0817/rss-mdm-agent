@@ -1091,12 +1091,6 @@ fn rename(source: &Path, target: &Path, swap: bool) -> Result<(), Error> {
     target_parent.sync_all()?;
     Ok(())
 }
-fn remove_tree(root: &Path, expected: &Tree) -> Result<(), Error> {
-    if inventory(root)? != *expected {
-        return Err(Error::Untrusted);
-    }
-    unlink_tree(root, expected)
-}
 fn unlink_tree(root: &Path, expected: &Tree) -> Result<(), Error> {
     let root_file = OpenOptions::new()
         .read(true)
@@ -1328,7 +1322,10 @@ pub(super) fn execute(
                     String::new(),
                 ));
             }
-            if request.operation == WorkerOperation::Uninstall {
+            if matches!(
+                request.operation,
+                WorkerOperation::Uninstall | WorkerOperation::RemovePrevious
+            ) {
                 if !uninstall {
                     return Err(Error::Unsupported);
                 }
@@ -1373,18 +1370,6 @@ pub(super) fn execute(
             }
             if Some(&observed) != before {
                 return Err(Error::Untrusted);
-            }
-            if matches!(
-                request.operation,
-                WorkerOperation::Uninstall | WorkerOperation::RemovePrevious
-            ) {
-                if !uninstall {
-                    return Err(Error::Unsupported);
-                }
-                removal::authorize_version(request.operation, application, &observed, before)?;
-                let actual = inventory(&installed)?;
-                remove_tree(&installed, &actual)?;
-                return Ok(result(0, None, String::new()));
             }
             let new = inventory(&staged)?;
             if new != inventory_from(&payload.file)? {
@@ -1972,15 +1957,15 @@ mod tests {
         rename(&stage, &installed, true).unwrap();
         assert_eq!(inventory(&installed).unwrap(), tree);
         assert_eq!(inventory(&stage).unwrap(), old);
-        remove_tree(&stage, &old).unwrap();
-        remove_tree(&installed, &tree).unwrap();
+        remove_owned_stage(&stage, &old, false).unwrap();
+        remove_owned_stage(&installed, &tree, false).unwrap();
         std::os::unix::fs::symlink("/tmp", retained_source.join("escape")).unwrap();
         assert!(inventory_from(&source_file).is_err());
         fs::remove_file(retained_source.join("escape")).unwrap();
         std::os::unix::fs::symlink("../source.app", retained_source.join("escape")).unwrap();
         assert!(inventory_from(&source_file).is_err());
         fs::remove_file(retained_source.join("escape")).unwrap();
-        remove_tree(&retained_source, &tree).unwrap();
+        remove_owned_stage(&retained_source, &tree, false).unwrap();
         fs::remove_file(source.join("replacement")).unwrap();
         fs::remove_dir(source).unwrap();
         fs::remove_dir(root).unwrap();
@@ -2005,7 +1990,7 @@ mod tests {
         copy_tree(&source, &stage, &tree).unwrap();
         fs::remove_file(stage.join("Contents/first")).unwrap();
         remove_owned_stage(&stage, &tree, false).unwrap();
-        remove_tree(&source, &tree).unwrap();
+        remove_owned_stage(&source, &tree, false).unwrap();
         fs::remove_dir(root).unwrap();
     }
 }
