@@ -142,7 +142,7 @@ Agent wire 的唯一 producer 仍为 rss-mdm；`execution-contract` 是本地执
 | CLI-REC05 | 离线/时钟回拨/授权撤销有界处理 | 无可靠授权时效依据时不接纳新变更；离线不承诺即时撤销，截止及最大窗口明确 |
 | CLI-REC06 | 本地DB迁移、容量、磁盘满、锁竞争与损坏有可诊断结果 | 明确支持的迁移必须事务化并可从中断恢复；不受支持的格式转换原样保留旧库并拒绝执行/写入，不恢复旧批准；旧客户端遇到更高schema只读诊断并禁止执行/写入；失败保留原库或隔离副本，禁止自动初始化新authority；真实SQLite故障测试覆盖上述边界 |
 
-#2564 生产执行边界：后台唯一决定企业任务授权、来源和批准；客户端验证签名、设备/注册世代、attempt、固定材料及真实 OS 上下文。企业批准走 `NotRequired`，不增加客户端企业审批、Grant 表或离线授权系统。用户主动安装的动作确认和 OS 授权独立保留。
+#2564 生产执行边界：后台唯一决定企业任务授权、来源和批准；客户端验证签名、设备/注册世代、attempt、固定材料及真实 OS 上下文。企业批准走 `NotRequired`，不增加客户端企业审批、Grant 表或离线授权系统。人工动作是否显示确认由前端决定，后端不强制本人确认；AI 产品确认和 OS 授权独立保留。
 
 系统服务是唯一生产组合根和执行 journal owner；用户 helper 只承担原登录会话的物理执行。V5 有序软件步骤直接进入本地执行输入 V5；系统 IPC V6、SQLite schema 6 同步切换。旧格式原样保留并拒绝，不提供兼容解析、自动迁移、重新注册或换 journal 的回退。远程 Agent 协议统一为 V5。
 
@@ -169,7 +169,7 @@ Agent wire 的唯一 producer 仍为 rss-mdm；`execution-contract` 是本地执
 
 最小业务对象：CatalogItem、OperationVariant、ParameterSchema、Conversation、ToolCallProposal、ExecutionRequest、FrozenExecution、ApprovalRecord、ExecutionIntent、Attempt、Evidence、Interaction、AuditEvent。
 
-一次性执行不建立独立 Plan 生命周期。人工在已有权限内只需本人确认；AI 工具由可信策略标定 0/1/2/3，0/1 按允许规则执行、2 由当前有执行权限用户确认、3 与未知默认阻止。人工确认和 AI 确认均不补充权限，AI 来源不能因点击确认变成人工；Policy 保持独立非交互授权。
+一次性执行不建立独立 Plan 生命周期。人工在已有权限内执行，确认仅为可选前端交互；AI 工具由 rss-mdm 后台可信策略标定 0/1/2/3，0/1 按允许规则执行、2 由当前有执行权限用户确认、3 与未知默认阻止。人工确认和 AI 确认均不补充权限，AI 来源不能因点击确认变成人工；Policy 保持独立非交互授权。
 
 `actor` 表示承担权限的主体，`initiator` 只记录 human/ai/policy 来源，`delegation` 限制代理范围；另存批准者和目标 OS 用户。
 模型账号、OS用户和企业身份不能按相同用户名或email自动合并。

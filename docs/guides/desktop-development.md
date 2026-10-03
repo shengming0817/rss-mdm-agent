@@ -46,13 +46,13 @@ pnpm desktop:build       # 自动打包 Node/依赖、stage、构建 .app
 
 ## 执行动作、确认和恢复
 
-系统服务的 Rust journal 持有唯一执行状态。桌面展示后台 Offer；用户确认后按 task、attempt、revision 和原 request 请求执行。MCP `execution_tasks` 读取同一批任务，`execution_execute` 仅提议精确任务，主动安装仍由用户在桌面确认。没有本地目录转计划或任意脚本入口。提交超时后查询原 request，不能换 ID 重派。
+系统服务的 Rust journal 持有唯一执行状态。桌面展示后台 Offer；人工按 task、attempt、revision 和原 request 请求执行，是否展示确认由前端决定。MCP `execution_tasks` 读取同一批任务，`execution_execute` 发起精确任务，二级风险的 AI 动作才等待桌面专用确认。没有本地目录转计划或任意脚本入口。提交超时后查询原 request，不能换 ID 重派。
 
-人工动作在已有权限内由本人确认。AI 动作由可信策略按真实内容和运行上下文分为 0/1/2/3：0/1 在允许规则内直接执行，2 由当前有执行权限的用户确认，3 与未知默认阻止。明确禁止或无权限不能通过确认放行；AI 经用户确认后仍保留 AI 来源。Policy 保持独立非交互授权。产品确认、provider 权限与 OS 同意分别执行，模型回答不能代替产品确认。
+人工动作在已有权限内执行，后端不强制产品确认。AI 动作由 rss-mdm 后台可信策略按真实内容和运行上下文分为 0/1/2/3：0/1 在允许规则内直接执行，2 由当前有执行权限的用户确认，3 与未知默认阻止。明确禁止或无权限不能通过确认放行；AI 经用户确认后仍保留 AI 来源。Policy 保持独立非交互授权。AI 执行不再增加通用 provider 许可；二级风险只保留一次具体动作确认，模型回答不能代替它。OS 授权独立判定。当前远程 V5 没有风险签名字段，正式装配把 AI 风险视为未知并拒绝执行；后台策略、签名契约与最终接线由 #2654 跟踪。
 
 桌面显示动作、来源、目标、运行身份、风险等级与内容摘要。确认有效期最长一分钟且不超过原执行有效期，等待不消耗进程运行预算。确认、取消及响应丢失均保留原请求身份，不重新创建任务；重启和 Unknown 只核实原 attempt。请求列表按原请求 ID 分页，每页最多 128 条，所选任务独立读取。
 
-正式装配使用远程 Agent V5、本机 IPC V7、helper V2、部署格式 2 和 SQLite schema 7；旧格式明确拒绝并保持原文件，不迁移、清空或新建 journal 绕过未决任务。生产启动失败直接显示诊断，不引导切入测试目录。测试专用构建和 S1 样本不代表生产结果。监听前完整核验固定候选；每次 IPC 再核验实际 OS 对等主体、会话与受保护映像。桌面执行端口串行使用原生通道，已有 16 个准入名额覆盖等待及活动读取；对话流式更新不重复启动同一任务读取。
+正式装配使用远程 Agent V5、本机 IPC V8、helper V2、部署格式 2 和 SQLite schema 8；旧格式明确拒绝并保持原文件，不迁移、清空或新建 journal 绕过未决任务。生产启动失败直接显示诊断，不引导切入测试目录。测试专用构建和 S1 样本不代表生产结果。监听前完整核验固定候选；每次 IPC 再核验实际 OS 对等主体、会话与受保护映像。桌面执行端口串行使用原生通道，已有 16 个准入名额覆盖等待及活动读取；对话流式更新不重复启动同一任务读取。
 
 AI 来源由 Host metadata 与 Rust 当前用户绑定核验，不能通过工具参数改为 Human。UI 确认原请求时单独核验当前用户权限，执行来源保持不变。
 
@@ -139,7 +139,7 @@ pnpm check:assistant
 
 AI 文本不能覆盖设备任务事实；执行详情来自 Rust 的授权读取。普通回答与 A2UI 动作均不能签发批准。未知接纳重试保留原命令和期限，回执不等于模型终态。过期、旧 generation 和删除卡片禁止继续提交；渲染失败保留只读内容。
 
-新的 `execution_execute` 与 `execution_cancel` 在 Host 投递前请求“允许一次 / 拒绝一次”；三个读工具不询问。相同待决提案共用一次询问，已有持久投递恢复不重问。许可过期、会话/命令结束或用户切换后不能写新执行意图。该许可仅允许 AI 发起请求，Rust 仍独立验证设备授权和具体动作确认。时间线的设备卡只从 Host 投递事件定位，再核对 Rust 返回的请求、会话和工具身份；模型文字不能生成可信设备卡。
+`execution_execute` 与三个读工具在 Host 投递前不请求通用许可；`execution_cancel` 保留“允许一次 / 拒绝一次”。相同待决提案共用一次询问，已有持久投递恢复不重问。许可过期、会话/命令结束或用户切换后不能写新执行意图。取消许可仅允许 AI 发起取消请求；Rust 在实际执行前验证后台授权和按风险要求的具体动作确认。时间线的设备卡只从 Host 投递事件定位，再核对 Rust 返回的请求、会话和工具身份；模型文字不能生成可信设备卡。
 
 交互参考复核基于 Codex 与 Claude 官方使用文档，未声称实机体验：
 [Codex/ChatGPT 项目与对话](https://learn.chatgpt.com/docs/projects)、[队列与 steer 设置](https://learn.chatgpt.com/docs/reference/settings)、[批准与沙箱](https://learn.chatgpt.com/docs/agent-approvals-security)、[Claude Desktop 导航](https://academy.claude.com/tutorials/navigating-the-claude-desktop-app)、[Claude 连接器](https://support.claude.com/en/articles/11176164-use-connectors-to-extend-claude-s-capabilities)。借鉴聊天入口、连接设置和动作许可分层；本产品的设备执行权威仍在 Rust。
