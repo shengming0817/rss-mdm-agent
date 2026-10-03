@@ -624,7 +624,7 @@ fn input_binding_limit_encoding_and_platform_guards_refuse_before_spawn() {
         assert_eq!(facts.failure_kind, expected);
         assert!(facts.stdout.is_empty());
     }
-    for case in 0..8 {
+    for case in 0..14 {
         let mut f = fixture(
             "printf forbidden",
             vec![LaunchArg::ArtifactPath {}],
@@ -673,6 +673,39 @@ fn input_binding_limit_encoding_and_platform_guards_refuse_before_spawn() {
                 std::fs::Permissions::from_mode(0o666),
             )
             .unwrap(),
+            8..=11 => replan(&mut f, |s| {
+                let key = [
+                    "ENV",
+                    "BASH_ENV",
+                    "DOTNET_STARTUP_HOOKS",
+                    "DyLd_Insert_Libraries",
+                ][case - 8];
+                s.launch.env.insert(
+                    EnvironmentKey::new(key).unwrap(),
+                    InputValue::Literal {
+                        value: serde_json::json!("forbidden-startup"),
+                    },
+                );
+            }),
+            12 => replan(&mut f, |s| {
+                // A canonical frozen plan can still carry the wrong startup shape.
+                s.launch.interpreter.profile.id = Id::new("native-bash-file").unwrap();
+                s.launch.argv.insert(
+                    0,
+                    LaunchArg::Literal {
+                        value: "--rcfile".into(),
+                    },
+                );
+                s.launch.argv.insert(
+                    0,
+                    LaunchArg::Literal {
+                        value: "--noprofile".into(),
+                    },
+                );
+            }),
+            13 => replan(&mut f, |s| {
+                s.launch.interpreter.profile.id = Id::new("native-pwsh7-file").unwrap();
+            }),
             _ => unreachable!(),
         }
         let id = start(&f, 128, 1000);
