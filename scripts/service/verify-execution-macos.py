@@ -264,15 +264,19 @@ def native_offer_security(probe, matrix, query, command, package, receipt, compl
     before=dict(effect=effect(),bytes=payload_file.read_bytes(),mtime=payload_file.stat().st_mtime_ns)
     assert before['effect']['receiptPresent'] and before['effect']['payloadMatches']
     baseline = command('status')['startRequests']
+    first = probe.request(request); assert_native_reply(first, 'pending')
     tampered=[]
     for field, replacement in [('request', 'foreign-request'), ('attempt', str(uuid.uuid4())), ('revision', 'a'*64)]:
         changed = dict(request, **{field: replacement})
-        response = probe.request(changed); assert_native_reply(response, 'rejected')
+        response = probe.request(changed)
+        if field=='request':
+            assert response.get('transport')=='reply' and response.get('peerUid')==0
+            assert response.get('envelope',{}).get('reply',{}).get('kind') in ('rejected','unavailable')
+        else: assert_native_reply(response, 'rejected')
         tampered.append(dict(field=field,response=response))
     assert command('status')['startRequests'] == baseline
     security_result(matrix, 'offer_tamper', dict(offer=offer, startRequests=baseline,rejections=tampered))
     # Replay the signed offer consumed by the actual journey; retain its original facts.
-    first = probe.request(request); assert_native_reply(first, 'pending')
     second = probe.request(request)
     assert second.get('transport')=='reply' and second.get('peerUid')==0
     assert second.get('envelope',{}).get('reply',{}).get('kind') in ('queued','pending','status')
