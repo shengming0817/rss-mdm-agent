@@ -78,7 +78,7 @@ fn publish(
     if !directory.exists() {
         root.directory(&directory)?;
     }
-    let _directory = crate::platform::PathLease::source(&directory, true)?;
+    let _directory = root.directory_lease(&directory)?;
     if let Some(subject) = subject {
         crate::platform::grant_read(&directory, subject)?;
     }
@@ -209,7 +209,7 @@ fn bundle(
     if !parent.exists() {
         root.directory(&parent)?;
     }
-    let _parent = crate::platform::PathLease::source(&parent, true)?;
+    let _parent = root.directory_lease(&parent)?;
     if let Some(subject) = subject {
         crate::platform::grant_read(&parent, subject)?;
     }
@@ -217,7 +217,7 @@ fn bundle(
     if !tree.exists() {
         root.directory(&tree)?;
     }
-    let _tree = crate::platform::PathLease::source(&tree, true)?;
+    let _tree = root.directory_lease(&tree)?;
     if let Some(subject) = subject {
         crate::platform::grant_read(&tree, subject)?;
     }
@@ -252,7 +252,7 @@ fn bundle(
             if !directory.exists() {
                 root.directory(&directory)?;
             }
-            let _ = crate::platform::PathLease::source(&directory, true)?;
+            let _ = root.directory_lease(&directory)?;
             if let Some(subject) = subject {
                 crate::platform::grant_read(&directory, subject)?;
             }
@@ -302,7 +302,7 @@ fn native_export(
     if !directory.exists() {
         root.directory(&directory)?;
     }
-    let _directory = crate::platform::PathLease::source(&directory, true)?;
+    let _directory = root.directory_lease(&directory)?;
     if let Some(subject) = subject {
         crate::platform::grant_read(&directory, subject)?;
     }

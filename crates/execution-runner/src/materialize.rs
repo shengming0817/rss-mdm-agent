@@ -378,7 +378,7 @@ impl Artifacts {
             return Err(Error::Capability);
         }
         super::platform::profile(&launch.interpreter.profile)?;
-        let work_lease = super::platform::PathLease::source(&self.work_root, false)?;
+        let work_lease = super::platform::PathLease::directory(&self.work_root, false)?;
         let content_path = &self.content;
         #[cfg(not(test))]
         let source_immutable = true;

@@ -100,7 +100,10 @@ pub(crate) fn protected_file(file: &File) -> Result<(), Error> {
     check(file, true, true, &token_identity()?.0)
 }
 pub(crate) fn storage_identity(file: &File) -> Result<(u64, u64), Error> {
+    // SAFETY: this Win32 output structure contains only integer fields and accepts zero initialization.
     let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+    // SAFETY: File owns a live handle through the call and info is a valid writable output.
+    // Fields are consumed only after the OS reports success.
     if unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut info) } == 0 {
         return Err(Error::Storage);
     }
@@ -110,7 +113,10 @@ pub(crate) fn storage_identity(file: &File) -> Result<(u64, u64), Error> {
     ))
 }
 pub(crate) fn storage_links(file: &File) -> Result<u64, Error> {
+    // SAFETY: this Win32 output structure contains only integer fields and accepts zero initialization.
     let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+    // SAFETY: File owns a live handle through the call and info is a valid writable output.
+    // Fields are consumed only after the OS reports success.
     if unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut info) } == 0 {
         return Err(Error::Storage);
     }
@@ -138,6 +144,20 @@ fn local_path(path: &Path) -> Result<(), Error> {
 /// Retain every path component without delete/write sharing for the entire invocation.
 pub(crate) struct PathLease(Vec<File>);
 impl PathLease {
+    pub(crate) fn directory(path: &Path, immutable: bool) -> Result<Self, Error> {
+        let lease = Self::source(path, immutable)?;
+        if !lease
+            .0
+            .last()
+            .ok_or(Error::Denied)?
+            .metadata()
+            .map_err(|_| Error::Unavailable)?
+            .is_dir()
+        {
+            return Err(Error::Denied);
+        }
+        Ok(lease)
+    }
     pub(crate) fn into_file(mut self) -> Result<(File, Self), Error> {
         let file = self.0.pop().ok_or(Error::Denied)?;
         if !file.metadata().map_err(|_| Error::Unavailable)?.is_file() {

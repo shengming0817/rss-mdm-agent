@@ -2,7 +2,7 @@
 use super::*;
 use crate::{
     backend::gate::{ProductGateProof, TrustedRisk},
-    protocol_test_support as protocol,
+    protocol_test_support as protocol, SoftwareManager, SoftwareManagerKind,
 };
 use agent_client::{Clock, OpenMode};
 use execution_contract::*;
@@ -487,6 +487,77 @@ async fn material_gc_scans_every_journal_page_and_waits_for_delivery_confirmatio
             platform: spec.request.target.platform,
         };
         spec.session_requirement = SessionRequirement::NotRequired {};
+        if index < 64 {
+            // More than 32,768 distinct historical paths are already absent. They must
+            // not consume the bounded deletion-candidate budget of this small live root.
+            spec.request.target.platform = Platform::Macos;
+            spec.request.target.scope = TargetScope::Device {};
+            spec.run_as = RunAs::System {
+                platform: Platform::Macos,
+            };
+            let invocation = SoftwareInvocation {
+                launch: spec.launch.clone(),
+                run_as: spec.run_as.clone(),
+                session_requirement: spec.session_requirement.clone(),
+                timeout_ms: 1000,
+                output_bytes: 1024,
+                exit_codes: SoftwareExitCodes {
+                    success: [0].into(),
+                    reboot: Default::default(),
+                },
+            };
+            let materials = (0..512)
+                .map(|member| {
+                    let sha =
+                        execution_contract::Digest::new(format!("{:064x}", index * 512 + member))
+                            .unwrap();
+                    SoftwareMaterial {
+                        path: c
+                            .service
+                            .core
+                            .config
+                            .material_root
+                            .join("system")
+                            .join(sha.as_str())
+                            .to_str()
+                            .unwrap()
+                            .into(),
+                        artifact: ExactArtifactRef {
+                            resource: plan::reference("historical-material", "1").unwrap(),
+                            sha256: sha,
+                        },
+                    }
+                })
+                .collect();
+            spec.request.parameters.clear();
+            spec.launch.interpreter.profile =
+                plan::reference("native-software-sequence", "1").unwrap();
+            spec.execution = ExecutionSpec::SoftwareProgram {
+                program: Box::new(SoftwareProgram {
+                    definition_digest: digest.clone(),
+                    intent: SoftwareOperation::Install,
+                    steps: vec![SoftwareProgramStep {
+                        format: SoftwareFormat::Pkg {},
+                        package: PackageValue::new("historical").unwrap(),
+                        version: PackageValue::new("1").unwrap(),
+                        architecture: PackageValue::new("aarch64").unwrap(),
+                        payload: invocation.launch.artifact.clone(),
+                        materials,
+                        signatures: vec![],
+                        upgrade: SoftwareUpgrade::Deny {},
+                        install: invocation,
+                        auxiliary: Default::default(),
+                        uninstall: None,
+                        detection: SoftwareDetector::PkgReceipt {
+                            receipt: "example.receipt".into(),
+                            version: PackageValue::new("1").unwrap(),
+                        },
+                        allow_downgrade: false,
+                        allow_reboot: false,
+                    }],
+                }),
+            };
+        }
         let input = FrozenExecution::freeze(spec, &plan::storage_limits().input).unwrap();
         let status = c
             .service
@@ -583,14 +654,99 @@ async fn material_gc_scans_every_journal_page_and_waits_for_delivery_confirmatio
         source.exists(),
         "failed or incomplete journal proof preserves all candidates"
     );
+    let prior_claims = c._server.data.lock().unwrap().claim_ops.len();
+    c.service.next_network = std::time::Instant::now();
+    c.service
+        .drive(&mut tokio::sync::mpsc::channel(1).1)
+        .await
+        .unwrap();
+    assert!(
+        c._server.data.lock().unwrap().claim_ops.len() > prior_claims,
+        "a deferred GC must still receive remote cancellation/offer messages"
+    );
+    assert!(source.exists());
     sql.execute(
         "UPDATE executions SET plan=?1 WHERE request_id=?2",
         rusqlite::params![original, last.as_str()],
     )
     .unwrap();
     drop(sql);
+    // Fixed local resources may reuse a digest previously published as settled content.
+    let original_image = c.service.core.config.interpreters[0].image.clone();
+    let pinned = installation_security::Artifact {
+        path: source.clone(),
+        sha256: digest.as_str().into(),
+        cdhash: None,
+    };
+    c.service.core.config.interpreters[0].image = pinned.clone();
+    c.service.reclaim_materials().unwrap();
+    assert!(source.exists(), "the configured interpreter remains pinned");
+    c.service.core.config.interpreters[0].image = original_image;
+    c.service.core.config.managers.push(SoftwareManager {
+        executor: SoftwareManagerKind::PackageInstaller,
+        image: pinned,
+    });
+    c.service.reclaim_materials().unwrap();
+    assert!(source.exists(), "the configured manager remains pinned");
+    c.service.core.config.managers.clear();
+    // An unresolved original journal input can retain an interpreter no longer in config.
+    let other_bytes = b"separate pending content";
+    let other_digest =
+        execution_contract::Digest::new(format!("{:x}", Sha256::digest(other_bytes))).unwrap();
+    let other_source = c
+        .service
+        .core
+        .material_root
+        .publish(
+            None,
+            other_bytes.as_slice(),
+            &other_digest,
+            other_bytes.len() as u64,
+        )
+        .unwrap();
+    let mut pending_spec = c
+        .service
+        .core
+        .app
+        .service_frozen_input(last)
+        .unwrap()
+        .spec()
+        .clone();
+    pending_spec.request.request_id = RequestId::new("gc-interpreter-pending").unwrap();
+    pending_spec.launch.artifact.sha256 = other_digest;
+    pending_spec.launch.interpreter.artifact.sha256 = digest;
+    let pending_input =
+        FrozenExecution::freeze(pending_spec, &plan::storage_limits().input).unwrap();
+    c.service
+        .core
+        .app
+        .request_execution(&caller, &pending_input)
+        .unwrap();
+    c.service.reclaim_materials().unwrap();
+    assert!(
+        source.exists(),
+        "the unresolved interpreter digest remains protected"
+    );
+    for item in c
+        .service
+        .core
+        .app
+        .service_delivery(&pending_input.spec().request.request_id, &consumer, 64)
+        .unwrap()
+    {
+        c.service
+            .core
+            .app
+            .service_confirm(
+                &pending_input.spec().request.request_id,
+                &consumer,
+                &item.receipt.event_id,
+            )
+            .unwrap();
+    }
     c.service.reclaim_materials().unwrap();
     assert!(!source.exists());
+    assert!(!other_source.exists());
     c.service.reclaim_materials().unwrap();
 }
 

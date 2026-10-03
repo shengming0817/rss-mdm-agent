@@ -4,6 +4,13 @@ use agent_client::{Error, SecretProvider};
 use std::collections::{BTreeMap, BTreeSet};
 
 impl<S: SecretProvider> DeviceService<S> {
+    pub(crate) fn reclaim_between_submissions(&mut self) {
+        if let Err(error) = self.reclaim_materials() {
+            // A closed, path-free diagnostic. Incomplete proof preserves materials; normal
+            // communication continues, and every publisher still enforces the physical quota.
+            eprintln!("material_reclaim_deferred: {error}");
+        }
+    }
     pub(crate) fn reclaim_materials(&mut self) -> Result<(), Error> {
         let mut associated = BTreeSet::new();
         for task in self
@@ -14,6 +21,12 @@ impl<S: SecretProvider> DeviceService<S> {
                 associated.insert(request);
             }
         }
+        let existing = self
+            .core
+            .material_root
+            .existing_files()
+            .map_err(crate::error::app_error)?;
+        let mut interpreter_digests = BTreeSet::new();
         let consumer = crate::backend::plan::id("backend-results")?;
         let mut retained = BTreeSet::new();
         let mut candidates = BTreeMap::new();
@@ -47,7 +60,10 @@ impl<S: SecretProvider> DeviceService<S> {
                         Ok(()) | Err(execution_app::Error::Conflict) => (),
                         Err(error) => return Err(crate::error::app_error(error)),
                     }
-                    for (path, digest) in references {
+                    for (path, digest) in references
+                        .into_iter()
+                        .filter(|(path, _)| existing.contains(path))
+                    {
                         if candidates
                             .insert(path, digest.clone())
                             .is_some_and(|old| old != digest)
@@ -56,9 +72,48 @@ impl<S: SecretProvider> DeviceService<S> {
                         }
                     }
                 } else {
+                    interpreter_digests.insert(
+                        input
+                            .spec()
+                            .launch
+                            .interpreter
+                            .artifact
+                            .sha256
+                            .as_str()
+                            .to_owned(),
+                    );
+                    if let Some(program) = input.spec().execution.software_program() {
+                        for index in 0..program.steps.len() {
+                            for phase in [
+                                execution_contract::SoftwarePhase::Before,
+                                execution_contract::SoftwarePhase::After,
+                                execution_contract::SoftwarePhase::Mutation,
+                                execution_contract::SoftwarePhase::Upgrade,
+                                execution_contract::SoftwarePhase::Removal,
+                                execution_contract::SoftwarePhase::Attach,
+                                execution_contract::SoftwarePhase::Stage,
+                                execution_contract::SoftwarePhase::Cleanup,
+                            ] {
+                                if let Some(invocation) = program.invocation(index, phase) {
+                                    interpreter_digests.insert(
+                                        invocation
+                                            .launch
+                                            .interpreter
+                                            .artifact
+                                            .sha256
+                                            .as_str()
+                                            .to_owned(),
+                                    );
+                                }
+                            }
+                        }
+                    }
                     retained.extend(references.into_keys());
                 }
-                if retained.len() > 32_768 || candidates.len() > 32_768 {
+                if retained.len() > 32_768
+                    || candidates.len() > 32_768
+                    || interpreter_digests.len() > 32_768
+                {
                     return Err(Error::Capacity);
                 }
             }
@@ -75,6 +130,21 @@ impl<S: SecretProvider> DeviceService<S> {
         if !associated.is_empty() {
             return Err(Error::Conflict);
         }
+        candidates.retain(|_, digest| !interpreter_digests.contains(digest.as_str()));
+        retained.extend(
+            self.core
+                .config
+                .interpreters
+                .iter()
+                .map(|i| i.image.path.clone()),
+        );
+        retained.extend(
+            self.core
+                .config
+                .managers
+                .iter()
+                .map(|m| m.image.path.clone()),
+        );
         // Native and helper attempts retain their registered Arc recipes until capture settles.
         retained.extend(
             self.core

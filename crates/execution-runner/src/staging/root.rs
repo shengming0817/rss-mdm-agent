@@ -173,6 +173,19 @@ impl MaterialRoot {
     fn file(&self, path: &Path) -> Result<(File, crate::platform::PathLease), Error> {
         crate::platform::PathLease::source(path, self.immutable())?.into_file()
     }
+    pub(super) fn directory_lease(&self, path: &Path) -> Result<crate::platform::PathLease, Error> {
+        crate::platform::PathLease::directory(path, self.immutable())
+    }
+    /// Snapshot the bounded set of existing file names without keeping every data handle open.
+    /// Missing historical journal coordinates do not consume the physical reclamation budget.
+    pub fn existing_files(&self) -> Result<BTreeSet<PathBuf>, Error> {
+        Ok(self
+            .inventory()?
+            .into_iter()
+            .filter(|entry| entry.identity.is_some())
+            .map(|entry| entry.path)
+            .collect())
+    }
     pub(super) fn verified(
         &self,
         path: &Path,

@@ -247,12 +247,14 @@ impl<S: SecretProvider> DeviceService<S> {
             }
         }
         if self.core.selected.is_some() {
+            if self.waiting.is_some() {
+                self.reclaim_between_submissions();
+            }
             if let Some((offer, materials)) = self.waiting.take() {
                 let request = backend::request_id(&offer)?;
                 let selection = self.core.selected.take();
                 self.core
                     .transition(&request, BackendRequestState::Submitting, None)?;
-                self.reclaim_materials()?;
                 let result = backend::submit(self, offer, materials, selection, commands).await;
                 self.core.available = None;
                 self.core.available_risk = None;
@@ -371,7 +373,7 @@ impl<S: SecretProvider> DeviceService<S> {
             }
         }
         self.recovering = false;
-        self.reclaim_materials()?;
+        self.reclaim_between_submissions();
         let reports = 16.min(self.client.configuration().limits.pending_reports);
         network(self.client.flush_reports(reports), &mut self.core, commands).await?;
         let mut context = self.client.execution_context()?;

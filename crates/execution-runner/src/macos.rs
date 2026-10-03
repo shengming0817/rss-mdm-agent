@@ -322,6 +322,11 @@ pub(crate) struct PathLease {
     file: Option<File>,
 }
 impl PathLease {
+    pub(crate) fn directory(path: &Path, immutable: bool) -> Result<Self, Error> {
+        Ok(Self {
+            file: Some(walk(path, Some(true), immutable, |_| {})?),
+        })
+    }
     pub(crate) fn into_file(mut self) -> Result<(File, Self), Error> {
         let file = self.file.take().ok_or(Error::Denied)?;
         if !file.metadata().map_err(|_| Error::Unavailable)?.is_file() {
