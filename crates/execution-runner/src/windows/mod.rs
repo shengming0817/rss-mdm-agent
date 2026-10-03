@@ -8,17 +8,16 @@ pub(crate) use execution_ipc::windows_identity::{identity, wide};
 pub(crate) use files::*;
 pub(crate) use process::{spawn, Owner};
 use std::{
-    ffi::{c_void, OsStr},
     os::windows::{
         ffi::OsStrExt,
-        io::{AsRawHandle, FromRawHandle, OwnedHandle},
+        io::{FromRawHandle, OwnedHandle},
     },
     ptr::{null, null_mut},
 };
 use windows_sys::Win32::{
     Foundation::*,
-    Security::{Authorization::*, Cryptography::*, *},
-    System::{RemoteDesktop::*, Threading::*},
+    Security::{Authorization::*, *},
+    System::Threading::*,
 };
 pub(crate) fn profile(profile: &VersionedRef) -> Result<(), Error> {
     if profile.revision.as_str() == "1"

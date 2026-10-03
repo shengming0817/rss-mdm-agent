@@ -287,6 +287,23 @@ impl PathLease {
         })
     }
 }
+pub(crate) fn grant_read(path: &Path, subject: &str) -> Result<(), Error> {
+    use std::os::fd::AsRawFd;
+    extern "C" {
+        fn rss_execution_grant_read(fd: i32, uid: u32) -> i32;
+    }
+    let uid: u32 = subject.parse().map_err(|_| Error::InvalidInput)?;
+    if uid == 0 || unsafe { libc::geteuid() } != 0 {
+        return Err(Error::Denied);
+    }
+    let directory = path.is_dir();
+    let file = bound_file(path, directory, true)?;
+    if unsafe { rss_execution_grant_read(file.as_raw_fd(), uid) } != 0 {
+        return Err(Error::Denied);
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod path_tests {
     use super::*;
@@ -447,21 +464,4 @@ mod path_tests {
         assert!(WorkingDirectory::open(&root.join("ancestor/child")).is_err());
         std::fs::remove_dir_all(root).unwrap();
     }
-}
-
-pub(crate) fn grant_read(path: &Path, subject: &str) -> Result<(), Error> {
-    use std::os::fd::AsRawFd;
-    extern "C" {
-        fn rss_execution_grant_read(fd: i32, uid: u32) -> i32;
-    }
-    let uid: u32 = subject.parse().map_err(|_| Error::InvalidInput)?;
-    if uid == 0 || unsafe { libc::geteuid() } != 0 {
-        return Err(Error::Denied);
-    }
-    let directory = path.is_dir();
-    let file = bound_file(path, directory, true)?;
-    if unsafe { rss_execution_grant_read(file.as_raw_fd(), uid) } != 0 {
-        return Err(Error::Denied);
-    }
-    Ok(())
 }
