@@ -79,7 +79,7 @@ function serviceCall(method, input = {}) {
         reject(new Error(`service ${method} deadline exceeded`));
       },
       method === "finish"
-        ? 180000
+        ? 240000
         : ["completion", "security"].includes(method)
           ? 90000
           : 15000,

@@ -335,10 +335,14 @@ def native_revocation_security(probe, matrix, query, command, package, receipt, 
     active = command('script', timeout=60,
         body="umask 022; printf '%s' \"$$\" > "+shlex.quote(str(marker))+
             "; /bin/sleep 25; printf x > "+shlex.quote(str(tail))+"\n")
-    deadline = time.monotonic()+15
+    # The preceding expired offer can leave the original claim in its bounded
+    # recovery window (request timeout + 60s). Observe recovery instead of clearing it.
+    waiting_started=time.monotonic()
+    deadline = waiting_started+90
     while not marker.exists():
         assert time.monotonic()<deadline, 'revocation process did not start'
         time.sleep(.05)
+    start_wait_ms=(time.monotonic()-waiting_started)*1000
     task = command('package', path=str(package), receipt=receipt, user=True)
     offer = await_offer(query, task['task']); request = offer_request(offer)
     starts = command('status')['startRequests']
@@ -374,7 +378,7 @@ def native_revocation_security(probe, matrix, query, command, package, receipt, 
     else: raise AssertionError('revoked shell is still alive')
     time.sleep(max(0,started+26-time.monotonic()))
     assert not tail.exists(), 'revoked process reached its tail'
-    security_result(matrix,'revocation_active_process',dict(record=records[0],pidAbsent=pid,tailAbsent=True))
+    security_result(matrix,'revocation_active_process',dict(record=records[0],pidAbsent=pid,tailAbsent=True,startWaitMs=start_wait_ms))
 
 
 def native_restart_security(probe,matrix,command,administrator):
