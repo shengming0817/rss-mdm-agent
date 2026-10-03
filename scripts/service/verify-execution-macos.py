@@ -262,13 +262,14 @@ def native_offer_security(probe, matrix, query, command, package, receipt, compl
         'install.sh': ('#!/bin/sh\nset -eu\numask 022\nprintf x >> '+shlex.quote(str(counter))+"\nprintf '{\"fixture\":\"replay\"}\\n'\n").encode(),
         'detect.sh': ('#!/bin/sh\nif [ -e '+shlex.quote(str(counter))+" ]; then printf '{\"kind\":\"present\",\"version\":\"1.0\"}\\n'; else printf '{\"kind\":\"absent\"}\\n'; fi\n").encode(),
     }
+    manifest=dict(schema=1,platform='macos',architecture='aarch64',entries={name:
+        dict(length=len(body),sha256=list(hashlib.sha256(body).digest())) for name,body in entries.items()})
     archive=Path(package).parent/'security-replay.zip'
     with zipfile.ZipFile(archive,'w',compression=zipfile.ZIP_STORED) as bundle:
         for name,body in entries.items():
             info=zipfile.ZipInfo(name);info.external_attr=(stat.S_IFREG|0o600)<<16
             bundle.writestr(info,body)
-    manifest=dict(schema=1,platform='macos',architecture='aarch64',entries={name:
-        dict(length=len(body),sha256=list(hashlib.sha256(body).digest())) for name,body in entries.items()})
+        bundle.writestr('manifest.json',json.dumps(manifest))
     task = command('bundle', path=str(archive), manifest=manifest)
     offer = await_offer(query, task['task'])
     request = offer_request(offer)
