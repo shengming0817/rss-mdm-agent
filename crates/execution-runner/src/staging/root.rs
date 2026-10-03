@@ -20,6 +20,13 @@ pub struct MaterialRoot {
     #[cfg(any(test, feature = "test-support"))]
     fixture_owned: bool,
 }
+impl Drop for MaterialRoot {
+    fn drop(&mut self) {
+        // Release the capability at owner drop even if a concurrent POSIX fork briefly
+        // inherited its close-on-exec descriptor. Closing only our copy can retain flock.
+        let _ = FileExt::unlock(&self._owner);
+    }
+}
 /// Bounded, path-free reclamation diagnostics.
 #[derive(Default, Debug, PartialEq, Eq)]
 pub struct Reclaimed {
@@ -458,15 +465,13 @@ fn pending_name(root: &Path, path: &Path) -> bool {
 mod tests {
     use super::*;
     fn fixture() -> (MaterialRoot, PathBuf) {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let cache = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.cache");
         std::fs::create_dir_all(&cache).unwrap();
         let path = cache.canonicalize().unwrap().join(format!(
             "material-{}-{}",
             std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
         platform_private_storage::directory(&path).unwrap();
         let path = path.canonicalize().unwrap();

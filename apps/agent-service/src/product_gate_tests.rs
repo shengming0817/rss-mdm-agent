@@ -481,8 +481,8 @@ async fn material_gc_scans_every_journal_page_and_waits_for_delivery_confirmatio
         };
         spec.request.delegation = None;
         spec.launch.artifact.sha256 = digest.clone();
-        // Service admission is denied without a trusted Start; this creates a real journal
-        // terminal with no dispatch. Its material still awaits original delivery evidence.
+        // Register the original input without bound dispatch material, then cancel through
+        // the actual journal API. No attempt starts; delivery still requires confirmation.
         spec.run_as = RunAs::System {
             platform: spec.request.target.platform,
         };
@@ -560,11 +560,15 @@ async fn material_gc_scans_every_journal_page_and_waits_for_delivery_confirmatio
             };
         }
         let input = FrozenExecution::freeze(spec, &plan::storage_limits().input).unwrap();
+        assert!(matches!(
+            c.service.core.app.request_execution(&caller, &input),
+            Err(execution_app::Error::Unbound)
+        ));
         let status = c
             .service
             .core
             .app
-            .request_execution(&caller, &input)
+            .cancel(&caller, &input.spec().request.request_id)
             .unwrap();
         assert!(crate::backend::settled(&status));
         requests.push(input.spec().request.request_id.clone());
@@ -718,10 +722,17 @@ async fn material_gc_scans_every_journal_page_and_waits_for_delivery_confirmatio
     pending_spec.launch.interpreter.artifact.sha256 = digest;
     let pending_input =
         FrozenExecution::freeze(pending_spec, &plan::storage_limits().input).unwrap();
+    assert!(matches!(
+        c.service
+            .core
+            .app
+            .request_execution(&caller, &pending_input),
+        Err(execution_app::Error::Unbound)
+    ));
     c.service
         .core
         .app
-        .request_execution(&caller, &pending_input)
+        .cancel(&caller, &pending_input.spec().request.request_id)
         .unwrap();
     c.service.reclaim_materials().unwrap();
     assert!(
