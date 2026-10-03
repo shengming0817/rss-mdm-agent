@@ -740,6 +740,7 @@ pub(crate) fn native_export_name(
 #[cfg(test)]
 mod review_tests {
     use super::*;
+    #[cfg(any(target_os = "macos", windows))]
     #[test]
     fn signed_software_and_wrapper_arguments_keep_original_calling_facts() {
         for (profile, name, prefix) in [
