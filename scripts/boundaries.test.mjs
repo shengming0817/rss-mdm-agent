@@ -35,7 +35,7 @@ test("production service and desktop resolve without test-support", () => {
   );
   assert.ok(graph.includes("agent-service v"));
   assert.ok(graph.includes("rss-mdm-desktop v"));
-  for (const line of graph.trim().split("\n")) {
+  for (const line of graph.trim().split("\n").filter(Boolean)) {
     const [identity, features] = line.split("|");
     assert.ok(features !== undefined, `missing resolved features: ${line}`);
     assert.ok(

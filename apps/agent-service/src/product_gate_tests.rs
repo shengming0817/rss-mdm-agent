@@ -465,6 +465,9 @@ async fn signed_start_needs_the_current_confirmed_request_and_frozen_action() {
 async fn material_gc_scans_every_journal_page_and_waits_for_delivery_confirmation() {
     // The real signed offer must remain valid throughout the large historical-journal scan.
     let mut c = Case::with_offer_lifetime(None, 600).await;
+    // This case proves GC across 32,768 historical materials, not short Start expiry.
+    // Owner reconciliation may scan that history while the HTTP response is pending.
+    c._server.data.lock().unwrap().start_validity_seconds = 600;
     let bytes = b"original journal material";
     let digest = execution_contract::Digest::new(format!("{:x}", Sha256::digest(bytes))).unwrap();
     let source = c

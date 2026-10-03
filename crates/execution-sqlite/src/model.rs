@@ -47,7 +47,7 @@ pub enum Error {
     #[error("confirmation commit outcome unknown")]
     ConfirmationCommitUnknown,
     /// Migration commit failed in an isolated bootstrap file; no database was published.
-    /// Retry initialize_test with the same intended path, or diagnose storage first.
+    /// Retry the selected initialization entry with the same path, or diagnose storage first.
     #[error("bootstrap database not published")]
     BootstrapUnpublished,
 }
