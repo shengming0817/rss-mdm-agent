@@ -5,7 +5,7 @@ use crate::{
 use agent_client::{
     wire, Client, CredentialRedactor, Error, ExecutionBridge, Materials, Offer, SecretProvider,
 };
-use execution_app::{AppConfig, ExecutionApp, ExecutionStatus, ProductionStartup, RequestContext};
+use execution_app::{AppConfig, ExecutionApp, ExecutionStatus, RequestContext};
 use execution_contract::{
     BackendRequest, BackendRequestFailure, BackendRequestState, BackendTrigger, RequestId,
 };
@@ -140,7 +140,7 @@ impl<S: SecretProvider> DeviceService<S> {
             current: Arc::new(Mutex::new(None)),
             revoked: Arc::new(AtomicBool::new(false)),
         };
-        let app = ExecutionApp::start_production(
+        let app = assemble_journal(
             journal,
             startup,
             host.clone(),
@@ -684,7 +684,7 @@ struct Selection {
     origin: execution_runner::host::ClientOrigin,
 }
 struct Core {
-    app: ExecutionApp<EnterpriseHost, NativeRunner>,
+    app: ExecutionApp<EnterpriseHost, NativeRunner, execution_sqlite::Store>,
     host: EnterpriseHost,
     config: ExecutionConfig,
     helpers: UserResources,
@@ -1376,4 +1376,48 @@ pub(crate) fn owner_runtime() -> Result<tokio::runtime::Runtime, Error> {
         .enable_all()
         .build()
         .map_err(|_| Error::Unavailable)
+}
+
+/// Explicit production journal lifecycle, owned by the service composition root.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProductionStartup {
+    /// Create a new journal without replacing an existing file.
+    Create,
+    /// Open the existing authority and exact supported schema.
+    Open,
+}
+
+pub(crate) fn assemble_journal<H: execution_app::AppHost, R: execution_app::RunnerPort>(
+    path: &Path,
+    startup: ProductionStartup,
+    host: H,
+    runner: R,
+    config: AppConfig,
+    limits: execution_sqlite::Limits,
+) -> Result<ExecutionApp<H, R, execution_sqlite::Store>, execution_app::Error> {
+    // Validate production inputs before any database access, including read-only inspection.
+    execution_app::Configuration::new(config, limits.input)?;
+    let binding = host.service_binding()?;
+    if matches!(
+        binding.authority,
+        execution_contract::Authority::Test { .. }
+    ) || runner.mode() != execution_lifecycle::ExecutionMode::Real
+    {
+        return Err(execution_app::Error::Unbound);
+    }
+    host.reliable_now()?;
+    let journal = match startup {
+        ProductionStartup::Create => {
+            execution_sqlite::Store::initialize_production(path, binding.authority, limits)?
+        }
+        ProductionStartup::Open => {
+            match execution_sqlite::Store::open(path, &binding.authority, limits)? {
+                execution_sqlite::OpenOutcome::Ready(journal) => *journal,
+                execution_sqlite::OpenOutcome::UnsupportedSchema { found, supported } => {
+                    return Err(execution_app::Error::UnsupportedSchema { found, supported });
+                }
+            }
+        }
+    };
+    ExecutionApp::new(journal, host, runner, config)
 }

@@ -67,11 +67,11 @@ pub(crate) fn summary(
 }
 impl Store {
     /// Save process facts and raw byte BLOBs atomically in the existing attempt namespace.
-    pub fn record_process(
+    pub(crate) fn sql_record_process(
         &mut self,
         scope: &Scope,
         facts: &ProcessEvidence,
-        host: &impl Host,
+        host: &impl JournalHost,
     ) -> Result<(), Error> {
         self.check_scope(scope)?;
         let tx = self
@@ -143,16 +143,16 @@ impl Store {
         &self,
         scope: &Scope,
         attempt: &AttemptId,
-        host: &impl Host,
+        host: &impl JournalHost,
     ) -> Result<Option<ProcessEvidence>, Error> {
         self.read_process(scope, attempt, Access::ReadAudit, host)
     }
     /// Internal owner reconciliation reads its previously committed facts, never creating a permit.
-    pub fn runner_evidence(
+    pub(crate) fn sql_runner_evidence(
         &self,
         scope: &Scope,
         attempt: &AttemptId,
-        host: &impl Host,
+        host: &impl JournalHost,
     ) -> Result<Option<ProcessEvidence>, Error> {
         self.read_process(scope, attempt, Access::RunnerFact, host)
     }
@@ -161,12 +161,12 @@ impl Store {
         scope: &Scope,
         attempt: &AttemptId,
         access: Access,
-        host: &impl Host,
+        host: &impl JournalHost,
     ) -> Result<Option<ProcessEvidence>, Error> {
         let tx = self.read(scope, access, None, host)?;
         let belongs: bool = tx.query_row(
             "SELECT EXISTS(SELECT 1 FROM attempts WHERE scope=?1 AND attempt_id=?2)",
-            params![scope.key(), attempt.as_str()],
+            params![scope.interaction_subject().as_str(), attempt.as_str()],
             |r| r.get(0),
         )?;
         if !belongs {

@@ -2,13 +2,13 @@ use super::SystemClock;
 use execution_admission::{
     AuthorityFacts, AuthorityVerifier, Rule, RuleEffect, SubjectFacts, VerificationError,
 };
+use execution_app::{AccessRequest, TrustSnapshot};
 use execution_app::{
     AppHost, CapabilitySnapshot, ConfigChange, Error, RequestContext, ServiceBinding,
 };
 use execution_capability::*;
 use execution_contract::*;
 use execution_runner::MaterialRegistry;
-use execution_sqlite::{AccessRequest, TrustSnapshot};
 use std::sync::{Arc, Mutex};
 
 pub(super) struct BackendPermit {
@@ -105,22 +105,22 @@ impl AppHost for EnterpriseHost {
         &self,
         caller: &RequestContext,
         r: AccessRequest<'_>,
-    ) -> Result<(), execution_sqlite::Error> {
+    ) -> Result<(), execution_app::JournalError> {
         if caller.actor != self.actor {
-            return Err(execution_sqlite::Error::Denied);
+            return Err(execution_app::JournalError::Denied);
         }
         self.authorize_service(r)
     }
-    fn authorize_service(&self, r: AccessRequest<'_>) -> Result<(), execution_sqlite::Error> {
+    fn authorize_service(&self, r: AccessRequest<'_>) -> Result<(), execution_app::JournalError> {
         if r.scope.authority != self.binding.authority || r.scope.actor != self.actor {
-            return Err(execution_sqlite::Error::Denied);
+            return Err(execution_app::JournalError::Denied);
         }
         Ok(())
     }
-    fn reliable_now(&self) -> Result<u64, execution_sqlite::Error> {
+    fn reliable_now(&self) -> Result<u64, execution_app::JournalError> {
         self.clock
             .millis()
-            .map_err(|_| execution_sqlite::Error::Clock)
+            .map_err(|_| execution_app::JournalError::Clock)
     }
     fn capabilities(&self, plan: &FrozenExecution) -> Result<CapabilitySnapshot, Error> {
         self.materials.inspect(plan)?;
@@ -163,15 +163,15 @@ impl AppHost for EnterpriseHost {
     fn trusted_snapshot(
         &self,
         plan: &FrozenExecution,
-    ) -> Result<TrustSnapshot, execution_sqlite::Error> {
+    ) -> Result<TrustSnapshot, execution_app::JournalError> {
         self.service_binding()
-            .map_err(|_| execution_sqlite::Error::Trust)?;
+            .map_err(|_| execution_app::JournalError::Trust)?;
         let input = plan.spec();
         if input.request.authority != self.binding.authority
             || input.request.actor != self.actor
             || input.request.target.device != self.binding.device
         {
-            return Err(execution_sqlite::Error::Trust);
+            return Err(execution_app::JournalError::Trust);
         }
         // Registration scope remains bound to this frozen journal after restart or a later
         // dispatch. The snapshot grants no attempt: AuthorityVerifier independently requires

@@ -13,7 +13,6 @@ execution-admission = { path = "../execution-admission" }
 execution-approval = { path = "../execution-approval" }
 execution-lifecycle = { path = "../execution-lifecycle" }
 execution-interaction = { path = "../execution-interaction" }
-execution-sqlite = { path = "../execution-sqlite" }
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -22,6 +21,7 @@ sha2.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+execution-sqlite = { path = "../execution-sqlite" }
 rusqlite.workspace = true
 
 [lints.clippy]

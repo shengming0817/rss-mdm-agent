@@ -11,11 +11,11 @@ use rusqlite::{params, Connection, OptionalExtension};
 impl Store {
     /// Restore by stable business request identity after reconnect or restart. The stored scope
     /// is authenticated before any plan or state is returned. No dispatch action is recoverable.
-    pub fn execution_by_request(
+    pub(crate) fn sql_execution_by_request(
         &self,
         request: &execution_contract::RequestId,
         access: ExecutionAccess<'_>,
-        host: &impl Host,
+        host: &impl JournalHost,
     ) -> Result<ExecutionRecord, Error> {
         let tx = self.conn.unchecked_transaction()?;
         crate::database::ensure_current(&tx, &self.authority, self.limits)?;
@@ -38,7 +38,7 @@ impl Store {
         }
         let receipt: Option<Vec<u8>> = tx.query_row(
             &format!("SELECT {} FROM receipts WHERE scope=?1 AND kind='admission' ORDER BY sequence DESC LIMIT 1", bounded_blob("body", self.limits.max_record_bytes)),
-            [scope.key()], |r| r.get(0),
+            [scope.interaction_subject().as_str()], |r| r.get(0),
         ).optional()?;
         let admission = receipt
             .map(|b| decode::<Receipt>(&b, self.limits.max_record_bytes))
@@ -82,11 +82,11 @@ impl Store {
 
     /// Retrieve an execution command's safe receipt under current Execute permission, independent
     /// of general result reading. Does not authorize a new attempt or re-run admission.
-    pub fn execution_receipt(
+    pub(crate) fn sql_execution_receipt(
         &self,
         scope: &Scope,
         op: &OperationRequestId,
-        host: &impl Host,
+        host: &impl JournalHost,
     ) -> Result<Option<Receipt>, Error> {
         let tx = self.read(scope, Access::Execute, None, host)?;
         let bytes: Option<Vec<u8>> = tx
@@ -95,7 +95,7 @@ impl Store {
                     "SELECT {} FROM receipts WHERE scope=?1 AND operation_id=?2",
                     bounded_blob("body", self.limits.max_record_bytes)
                 ),
-                params![scope.key(), op.as_str()],
+                params![scope.interaction_subject().as_str(), op.as_str()],
                 |r| r.get(0),
             )
             .optional()?;
@@ -118,7 +118,7 @@ impl Store {
         scope: &Scope,
         op: &OperationRequestId,
         access: ExecutionAccess<'_>,
-        host: &impl Host,
+        host: &impl JournalHost,
     ) -> Result<bool, Error> {
         self.check_scope(scope)?;
         access.authorize(scope, host)?;
@@ -126,17 +126,17 @@ impl Store {
         crate::database::ensure_current(&tx, &self.authority, self.limits)?;
         Ok(tx.query_row(
             "SELECT EXISTS(SELECT 1 FROM receipts WHERE scope=?1 AND operation_id=?2)",
-            params![scope.key(), op.as_str()],
+            params![scope.interaction_subject().as_str(), op.as_str()],
             |row| row.get(0),
         )?)
     }
 
     /// Register one immutable bounded plan. No preparation, approval or runner action is implied.
-    pub fn open_execution(
+    pub(crate) fn sql_open_execution(
         &mut self,
         op: &OperationRequestId,
         plan: &FrozenExecution,
-        host: &impl Host,
+        host: &impl JournalHost,
     ) -> Result<CommitOutcome, Error> {
         let scope = Scope::from_input(plan);
         // Revalidate against the store bounds even if another caller froze with looser limits.
@@ -184,7 +184,7 @@ impl Store {
         w.tx.execute(
             "INSERT INTO executions VALUES(?1,?2,?3,?4,?5,0,31)",
             params![
-                scope.key(),
+                scope.interaction_subject().as_str(),
                 plan.spec().request.request_id.as_str(),
                 bytes,
                 hash(plan.digest())?,
@@ -201,12 +201,12 @@ impl Store {
     }
     /// Device service recovery scan. Every row requires independent RunnerFact authorization.
     /// This does not grant ordinary callers a cross-actor listing endpoint.
-    pub fn device_execution_requests(
+    pub(crate) fn sql_device_execution_requests(
         &self,
         device: &execution_contract::DeviceId,
         after: Option<&execution_contract::RequestId>,
         limit: usize,
-        host: &impl Host,
+        host: &impl JournalHost,
     ) -> Result<ExecutionRequestPage, Error> {
         if !(1..=128).contains(&limit) {
             return Err(Error::InvalidInput);
@@ -227,19 +227,19 @@ impl Store {
         let more = requests.len() > limit;
         requests.truncate(limit);
         for request in &requests {
-            self.execution_by_request(request, ExecutionAccess::RunnerFact, host)?;
+            self.sql_execution_by_request(request, ExecutionAccess::RunnerFact, host)?;
         }
         let next = more.then(|| requests.last().expect("nonempty page").clone());
         Ok(ExecutionRequestPage { requests, next })
     }
     /// Read a bounded page only for the selected actor/device; each row requires result access.
-    pub fn execution_requests(
+    pub(crate) fn sql_execution_requests(
         &self,
         actor: &execution_contract::ActorId,
         device: &execution_contract::DeviceId,
         after: Option<&execution_contract::RequestId>,
         limit: usize,
-        host: &impl Host,
+        host: &impl JournalHost,
     ) -> Result<ExecutionRequestPage, Error> {
         if !(1..=128).contains(&limit) {
             return Err(Error::InvalidInput);
@@ -261,7 +261,7 @@ impl Store {
         let more = requests.len() > limit;
         requests.truncate(limit);
         for request in &requests {
-            self.execution_by_request(request, ExecutionAccess::Result, host)?;
+            self.sql_execution_by_request(request, ExecutionAccess::Result, host)?;
         }
         let next = more.then(|| requests.last().expect("nonempty page").clone());
         Ok(ExecutionRequestPage { requests, next })
@@ -269,45 +269,24 @@ impl Store {
     /// Apply a host command through historical deduplication and atomic persistence.
     /// BeginAttempt obtains decisions lazily after receipt replay is ruled out.
     /// Never reconstruct the returned dispatch action after a lost response.
-    /// ```compile_fail
-    /// use execution_sqlite::{Store, Scope, OperationRequestId, Host};
-    /// use execution_lifecycle::ObservationEvent;
-    /// fn wrong(store: &mut Store, op: &OperationRequestId, scope: &Scope, event: &ObservationEvent, host: &impl Host) {
-    ///     store.apply_command(op, scope, event, &[], host);
-    /// }
-    /// ```
-    pub fn apply_command(
+    pub(crate) fn sql_apply_command(
         &mut self,
         op: &OperationRequestId,
         scope: &Scope,
         event: &CommandEvent,
         bindings: &[ProfileApproval],
-        host: &impl Host,
+        host: &impl JournalHost,
     ) -> Result<CommitOutcome, Error> {
         self.apply_input(op, scope, Input::Command(event, bindings), host)
     }
     /// Verify and record an observation under RunnerFact authorization.
     /// Replay, revision and attempt checks precede verification; no approval inputs apply.
-    /// ```compile_fail
-    /// use execution_sqlite::{Store, Scope, OperationRequestId, Host};
-    /// use execution_lifecycle::{CommandEvent, ObservationVerifier};
-    /// fn wrong(store: &mut Store, op: &OperationRequestId, scope: &Scope, event: &CommandEvent, host: &impl Host, verifier: &dyn ObservationVerifier) {
-    ///     store.apply_observation(op, scope, event, host, verifier);
-    /// }
-    /// ```
-    /// ```compile_fail
-    /// use execution_sqlite::{Store, Scope, OperationRequestId, Host};
-    /// use execution_lifecycle::ObservationEvent;
-    /// fn missing(store: &mut Store, op: &OperationRequestId, scope: &Scope, event: &ObservationEvent, host: &impl Host) {
-    ///     store.apply_observation(op, scope, event, host);
-    /// }
-    /// ```
-    pub fn apply_observation(
+    pub(crate) fn sql_apply_observation(
         &mut self,
         op: &OperationRequestId,
         scope: &Scope,
         event: &ObservationEvent,
-        host: &impl Host,
+        host: &impl JournalHost,
         verifier: &dyn ObservationVerifier,
     ) -> Result<CommitOutcome, Error> {
         self.apply_input(op, scope, Input::Observation(event, verifier), host)
@@ -317,7 +296,7 @@ impl Store {
         op: &OperationRequestId,
         scope: &Scope,
         input: Input<'_>,
-        host: &impl Host,
+        host: &impl JournalHost,
     ) -> Result<CommitOutcome, Error> {
         let (event, bindings) = match &input {
             Input::Command(e, bindings) => (EventRecord::Command((*e).clone()), *bindings),
@@ -364,7 +343,11 @@ impl Store {
         // The unique historical key remains after last_event changes and after log retention.
         w.tx.execute(
             "INSERT INTO event_keys VALUES(?1,?2,?3)",
-            params![event.id().as_str(), scope.key(), op.as_str()],
+            params![
+                event.id().as_str(),
+                scope.interaction_subject().as_str(),
+                op.as_str()
+            ],
         )?;
         let mut audit = plan_audit(
             &w,
@@ -413,7 +396,7 @@ impl Store {
                 scope,
                 limits: w.limits,
                 now: w.now,
-                clock: &|| host.reliable_now(),
+                clock: &|| host.reliable_now().map_err(Into::into),
                 head: &h,
             };
             audit.trust = Some(TrustAudit {
@@ -475,7 +458,11 @@ impl Store {
             let attempt_id = attempt.as_ref().ok_or(Error::Corrupt)?;
             w.tx.execute(
                 "INSERT INTO attempts VALUES(?1,?2,?3)",
-                params![attempt_id.as_str(), scope.key(), op.as_str()],
+                params![
+                    attempt_id.as_str(),
+                    scope.interaction_subject().as_str(),
+                    op.as_str()
+                ],
             )?;
             crate::software::claim(&w.tx, &plan, attempt_id)?;
             audit.consumptions = consume(&w, &plan, attempt_id, &gate, &h)?;
@@ -504,7 +491,7 @@ impl Store {
         crate::software::settle(&w.tx, &plan, next, w.limits)?;
         let reserve = terminal_reserve(current.snapshot(), next, reserve, &event);
         let changed = w.tx.execute("UPDATE executions SET snapshot=?1,revision=?2,reserve=?3 WHERE scope=?4 AND revision=?5",
-            params![w.bounded(next)?, integer(next.revision)?, reserve, scope.key(), integer(transition.expected_revision())?])?;
+            params![w.bounded(next)?, integer(next.revision)?, reserve, scope.interaction_subject().as_str(), integer(transition.expected_revision())?])?;
         if changed != 1 {
             return Err(Error::Conflict);
         }
@@ -519,7 +506,7 @@ impl Store {
         })
     }
     /// Restore the current execution facts under result-read access. Restoration never releases an action.
-    pub fn execution(&self, scope: &Scope, host: &impl Host) -> Result<Execution, Error> {
+    pub fn execution(&self, scope: &Scope, host: &impl JournalHost) -> Result<Execution, Error> {
         let tx = self.read(scope, Access::ReadResult, None, host)?;
         Ok(load_execution(&tx, scope, self.limits)?.1)
     }
@@ -539,7 +526,7 @@ pub(crate) fn load_execution(
             "SELECT {},revision,reserve FROM executions WHERE scope=?1",
             bounded_blob("snapshot", limits.lifecycle.max_snapshot_bytes)
         ),
-        [scope.key()],
+        [scope.interaction_subject().as_str()],
         |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
     )?;
     let state =
@@ -636,14 +623,6 @@ pub(crate) fn plan_audit(
     });
     audit
 }
-impl AuditRecord {
-    fn occurred_at(&mut self, now: u64) {
-        if let Some(event) = &mut self.event {
-            event.occurred_at_unix_ms = now;
-        }
-    }
-}
-
 fn admission_audit(a: &execution_admission::AdmissionDecision) -> AdmissionAudit {
     AdmissionAudit {
         risk_level: a.risk().map(|r| r as u8),
@@ -686,11 +665,11 @@ fn approval_audit(p: &execution_approval::ApprovalDecision) -> ApprovalAudit {
 
 impl Store {
     /// Bounded owner scan, authenticating every scope before returning a request identifier.
-    pub fn service_requests(
+    pub(crate) fn sql_service_requests(
         &self,
         after: Option<&execution_contract::RequestId>,
         limit: usize,
-        host: &impl Host,
+        host: &impl JournalHost,
     ) -> Result<Vec<execution_contract::RequestId>, Error> {
         if limit == 0 || limit > 128 {
             return Err(Error::InvalidInput);
@@ -720,7 +699,7 @@ impl Store {
                 FrozenExecution::freeze(spec, &self.limits.input).map_err(|_| Error::Corrupt)?;
             let scope = Scope::from_input(&plan);
             self.check_scope(&scope)?;
-            if scope.key() != key {
+            if scope.interaction_subject().as_str() != key {
                 return Err(Error::Corrupt);
             }
             authorize(host, Access::RunnerFact, &scope, None)?;

@@ -7,11 +7,11 @@ use rusqlite::params;
 impl Store {
     /// Read the execution confirmation under the caller's existing operation access.
     /// Missing is distinct from corrupt/unavailable storage; this does not grant result access.
-    pub fn execution_confirmation_state(
+    pub(crate) fn sql_execution_confirmation_state(
         &self,
         input: &execution_contract::FrozenExecution,
         access: ExecutionAccess<'_>,
-        host: &impl Host,
+        host: &impl JournalHost,
     ) -> Result<Option<Interaction>, Error> {
         let scope = Scope::from_input(input);
         let tx = self.conn.unchecked_transaction()?;
@@ -26,12 +26,12 @@ impl Store {
     }
 
     /// Open an interaction bound to an existing execution scope. Answers are never approvals.
-    pub fn open_interaction(
+    pub(crate) fn sql_open_interaction(
         &mut self,
         op: &OperationRequestId,
         scope: &Scope,
         spec: &Spec,
-        host: &impl Host,
+        host: &impl JournalHost,
     ) -> Result<CommitOutcome, Error> {
         if spec.subject != scope.interaction_subject() {
             return Err(Error::Denied);
@@ -52,7 +52,11 @@ impl Store {
             .map_err(|_| Error::InvalidInput)?;
         w.tx.execute(
             "INSERT INTO interactions VALUES(?1,?2,?3,0,1)",
-            params![spec.id.as_str(), scope.key(), w.bounded(state.snapshot())?],
+            params![
+                spec.id.as_str(),
+                scope.interaction_subject().as_str(),
+                w.bounded(state.snapshot())?
+            ],
         )?;
         let audit = plan_audit(
             &w,
@@ -64,13 +68,13 @@ impl Store {
     }
     /// Resolve answer/cancel/expiry against the current protected state inside one write transaction.
     /// No public method accepts the core's freely constructible Transition.
-    pub fn apply_interaction(
+    pub(crate) fn sql_apply_interaction(
         &mut self,
         op: &OperationRequestId,
         scope: &Scope,
         id: &Reference,
         command: &Command,
-        host: &impl Host,
+        host: &impl JournalHost,
     ) -> Result<CommitOutcome, Error> {
         let mut w = match self.start(
             op,
@@ -110,7 +114,11 @@ impl Store {
         if let Some(id) = command_id {
             w.tx.execute(
                 "INSERT INTO interaction_keys VALUES(?1,?2,?3)",
-                params![id.as_str(), scope.key(), op.as_str()],
+                params![
+                    id.as_str(),
+                    scope.interaction_subject().as_str(),
+                    op.as_str()
+                ],
             )?;
         }
         let mut audit = plan_audit(
@@ -137,7 +145,7 @@ impl Store {
         audit.reason = AuditReason::Interaction(evaluation.outcome);
         let revision = if let Some(t) = evaluation.transition {
             let changed = w.tx.execute("UPDATE interactions SET snapshot=?1,revision=?2,reserve=0 WHERE id=?3 AND scope=?4 AND revision=?5",
-                params![w.bounded(t.next.snapshot())?, integer(t.next.snapshot().revision)?, id.as_str(), scope.key(), integer(t.expected_revision)?])?;
+                params![w.bounded(t.next.snapshot())?, integer(t.next.snapshot().revision)?, id.as_str(), scope.interaction_subject().as_str(), integer(t.expected_revision)?])?;
             if changed != 1 {
                 return Err(Error::Conflict);
             }
@@ -148,11 +156,11 @@ impl Store {
         w.finish(outcome, revision, audit)
     }
     /// Restore a pending or terminal interaction without changing the execution task.
-    pub fn interaction(
+    pub(crate) fn sql_interaction(
         &self,
         scope: &Scope,
         id: &Reference,
-        host: &impl Host,
+        host: &impl JournalHost,
     ) -> Result<Interaction, Error> {
         let tx = self.read(scope, Access::ReadResult, None, host)?;
         load(&tx, scope, id, self.limits)
@@ -169,7 +177,7 @@ pub(crate) fn load(
             "SELECT {},revision FROM interactions WHERE id=?1 AND scope=?2",
             bounded_blob("snapshot", limits.interaction.max_snapshot_bytes)
         ),
-        params![id.as_str(), scope.key()],
+        params![id.as_str(), scope.interaction_subject().as_str()],
         |r| Ok((r.get(0)?, r.get(1)?)),
     )?;
     let state = Interaction::decode(&bytes, limits.interaction).map_err(|_| Error::Corrupt)?;
@@ -182,22 +190,6 @@ pub(crate) fn load(
     Ok(state)
 }
 
-/// Stable interaction identity for the one product execution confirmation.
-pub fn execution_confirmation(plan: &execution_contract::FrozenExecution) -> Spec {
-    Spec {
-        id: Reference::new(format!("execute-{}", plan.digest().as_str())).expect("bounded digest"),
-        subject: Scope::from_input(plan).interaction_subject(),
-        kind: interaction::Kind::ExecutionAction {
-            digest: Reference::new(plan.digest().as_str()).expect("digest"),
-        },
-        expires_at_unix_ms: plan.spec().validity.expires_at_unix_ms.min(
-            plan.spec()
-                .validity
-                .not_before_unix_ms
-                .saturating_add(60_000),
-        ),
-    }
-}
 pub(crate) fn confirmed(
     conn: &rusqlite::Connection,
     plan: &execution_contract::FrozenExecution,

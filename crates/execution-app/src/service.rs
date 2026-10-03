@@ -8,24 +8,19 @@ use execution_lifecycle::{
     ExecutionMode, Observation, ObservationEvent, ObservationFacts, Phase, Preparation,
     StopOutcome, StopReason,
 };
-use execution_sqlite::{
-    Access, AccessRequest, AdmissionStatus, CommitOutcome, ExecutionAccess, Host as _, OpenOutcome,
-    OperationRequestId, Outcome, Scope, Store,
-};
 use sha2::{Digest as _, Sha256};
-use std::path::Path;
 
 /// Service-owned bounded execution operations. Dropping a client, window or model future does
 /// not own this object. The host schedules reconciliation independently of those clients.
 /// No method implicitly retries dispatch; a new attempt requires an explicit new command.
-pub struct ExecutionApp<H, R> {
-    pub(crate) store: Store,
+pub struct ExecutionApp<H, R, J: JournalPort> {
+    pub(crate) journal: J,
     pub(crate) host: H,
     runner: R,
     pub(crate) binding: ServiceBinding,
     pub(crate) config: Configuration,
 }
-impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
+impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
     /// Bounded pre-execution history for the same authenticated actor.
     pub fn backend_requests(
         &self,
@@ -34,7 +29,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
         if self.host.service_binding()? != self.binding {
             return Err(Error::Unbound);
         }
-        Ok(self.store.backend_requests(
+        Ok(self.journal.backend_requests(
             &caller.actor,
             &Host::new(&self.host, &self.binding, &self.config, Some(caller)),
         )?)
@@ -53,7 +48,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
             actor: caller.actor.clone(),
             request_id: request.clone(),
         };
-        Ok(self.store.backend_request(
+        Ok(self.journal.backend_request(
             &scope,
             &Host::new(&self.host, &self.binding, &self.config, Some(caller)),
         )?)
@@ -75,78 +70,25 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
         };
         let host = Host::new(&self.host, &self.binding, &self.config, Some(caller));
         Ok(self
-            .store
+            .journal
             .record_backend_request(&scope, expected, next, &host)?)
     }
-    /// Assemble the production journal with an independently authenticated host and real runner.
-    /// The host must verify registration, OS identity and protected policy before returning its
-    /// binding. Opening storage does not authorize a task; all ordinary per-operation gates remain.
-    pub fn start_production(
-        path: &Path,
-        startup: ProductionStartup,
-        host: H,
-        runner: R,
-        config: AppConfig,
-        limits: execution_sqlite::Limits,
-    ) -> Result<Self, Error> {
-        let config = Configuration::new(config, limits.input)?;
+    /// Attach an already-opened trusted journal. Storage creation/opening belongs to the
+    /// product composition root, which validates production inputs before touching storage.
+    pub fn new(journal: J, host: H, runner: R, config: AppConfig) -> Result<Self, Error> {
+        let config = Configuration::new(config, journal.input_limits())?;
         let binding = host.service_binding()?;
-        if matches!(binding.authority, Authority::Test { .. })
-            || runner.mode() != ExecutionMode::Real
-        {
+        let expected_mode = if matches!(binding.authority, Authority::Test { .. }) {
+            ExecutionMode::Test
+        } else {
+            host.reliable_now()?;
+            ExecutionMode::Real
+        };
+        if journal.authority() != &binding.authority || runner.mode() != expected_mode {
             return Err(Error::Unbound);
         }
-        host.reliable_now()?;
-        let store = match startup {
-            ProductionStartup::Create => {
-                Store::initialize_production(path, binding.authority.clone(), limits)?
-            }
-            ProductionStartup::Open => match Store::open(path, &binding.authority, limits)? {
-                OpenOutcome::Ready(store) => *store,
-                OpenOutcome::UnsupportedSchema { found, supported } => {
-                    return Err(Error::UnsupportedSchema { found, supported });
-                }
-            },
-        };
         Ok(Self {
-            store,
-            host,
-            runner,
-            binding,
-            config,
-        })
-    }
-    /// Explicit bootstrap/open modes. S1 rejects production without touching storage; it never
-    /// selects a fixture authority as fallback. Open never creates or repairs a missing database.
-    pub fn start(
-        path: &Path,
-        startup: Startup,
-        host: H,
-        runner: R,
-        config: AppConfig,
-    ) -> Result<Self, Error> {
-        let config = Configuration::new(config, test_store_limits().input)?;
-        let binding = host.service_binding()?;
-        if !matches!(binding.authority, Authority::Test { .. })
-            || runner.mode() != ExecutionMode::Test
-        {
-            return Err(Error::Unbound);
-        }
-        let store = match startup {
-            Startup::CreateTest => {
-                Store::initialize_test(path, binding.authority.clone(), test_store_limits())?
-            }
-            Startup::OpenTest => {
-                match Store::open(path, &binding.authority, test_store_limits())? {
-                    OpenOutcome::Ready(store) => *store,
-                    OpenOutcome::UnsupportedSchema { found, supported } => {
-                        return Err(Error::UnsupportedSchema { found, supported })
-                    }
-                }
-            }
-        };
-        Ok(Self {
-            store,
+            journal,
             host,
             runner,
             binding,
@@ -183,7 +125,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
         access: ExecutionAccess<'_>,
     ) -> Result<Execution, Error> {
         let execution = self
-            .store
+            .journal
             .execution_by_request(request, access, &self.adapter(context, None))?
             .execution;
         self.check_binding(context, execution.input())?;
@@ -222,7 +164,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
         let op = operation(plan, "request", "")?;
         let host =
             Host::new(&self.host, &self.binding, &self.config, Some(caller)).with_input(Some(plan));
-        self.store.open_execution(&op, plan, &host)?;
+        self.journal.open_execution(&op, plan, &host)?;
         let current = self.status_for(Some(caller), request, ExecutionAccess::Submission)?;
         if current.attempts > 0 || current.cancel_requested || current.admission.is_some() {
             return Ok(current);
@@ -238,7 +180,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
             },
         );
         if decision.execution_gate() == execution_admission::ExecutionGate::Confirmation {
-            let spec = execution_sqlite::execution_confirmation(plan);
+            let spec = crate::execution_confirmation(plan);
             self.open_interaction(
                 caller,
                 request,
@@ -287,7 +229,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
         if input.digest() != digest {
             return Err(Error::Conflict);
         }
-        let spec = execution_sqlite::execution_confirmation(&input);
+        let spec = crate::execution_confirmation(&input);
         let command = CommandId::new(if accepted {
             "execute-confirm"
         } else {
@@ -342,7 +284,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
         let config = self.config.active()?;
         let mut execution = self.load(context, request, ExecutionAccess::Execute)?;
         let op = operation(execution.input(), "begin", command.as_str())?;
-        if let Some(receipt) = self.store.execution_receipt(
+        if let Some(receipt) = self.journal.execution_receipt(
             &Scope::from_input(execution.input()),
             &op,
             &self.adapter(context, None),
@@ -377,7 +319,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
         }
         let scope = Scope::from_input(execution.input());
         let revision = self
-            .store
+            .journal
             .trust_revision(&scope, &self.adapter(context, Some(execution.input())))
             .map_err(|error| {
                 eprintln!("execution_trust_revision: {error:?}");
@@ -390,7 +332,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
         )?;
         let host = Host::new(&self.host, &self.binding, &self.config, context)
             .with_input(Some(execution.input()));
-        self.store
+        self.journal
             .refresh_trust(&refresh, &scope, revision, &host)
             .map_err(|error| {
                 eprintln!("execution_trust_refresh: {error:?}");
@@ -478,7 +420,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
             Some(cause)
         } else {
             match self.runner.dispatch(AuthorizedDispatch {
-                ownership: self.store.software_ownership(
+                ownership: self.journal.software_ownership(
                     &Scope::from_input(execution.input()),
                     &self.adapter(None, Some(execution.input())),
                 )?,
@@ -542,7 +484,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
             command,
         };
         Ok(self
-            .store
+            .journal
             .apply_command(&op, &scope, &event, bindings, &host)?)
     }
     fn observation(
@@ -563,7 +505,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
         };
         let host =
             Host::new(&self.host, &self.binding, &self.config, context).with_input(Some(plan));
-        Ok(self.store.apply_observation(
+        Ok(self.journal.apply_observation(
             &op,
             &Scope::from_input(plan),
             &event,
@@ -576,7 +518,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
             return Ok(());
         };
         let scope = Scope::from_input(execution.input());
-        if let Some(previous) = self.store.software_progress(
+        if let Some(previous) = self.journal.software_progress(
             &scope,
             &active.id,
             &self.adapter(None, Some(execution.input())),
@@ -587,11 +529,12 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
             {
                 let host = Host::new(&self.host, &self.binding, &self.config, None)
                     .with_input(Some(execution.input()));
-                self.store.record_software_progress(&scope, &facts, &host)?;
+                self.journal
+                    .record_software_progress(&scope, &facts, &host)?;
             }
         }
         if !execution.snapshot().cancel_requested && active.termination.is_none() {
-            if let Some(progress) = self.store.software_progress(
+            if let Some(progress) = self.journal.software_progress(
                 &scope,
                 &active.id,
                 &self.adapter(None, Some(execution.input())),
@@ -602,7 +545,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
                             && allowance.remaining_output_bytes > 0
                         {
                             self.runner.resume_software(crate::SoftwareResume {
-                                ownership: self.store.software_ownership(
+                                ownership: self.journal.software_ownership(
                                     &scope,
                                     &self.adapter(None, Some(execution.input())),
                                 )?,
@@ -615,7 +558,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
                 }
             }
         }
-        if let Some(progress) = self.store.software_progress(
+        if let Some(progress) = self.journal.software_progress(
             &scope,
             &active.id,
             &self.adapter(None, Some(execution.input())),
@@ -634,7 +577,10 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
             .runner
             .software_progress(execution.input(), &active.id)?
         {
-            let receipt = self.store.record_software_progress(&scope, &facts, &host)?;
+            let committed = self
+                .journal
+                .record_software_progress(&scope, &facts, &host)?;
+            let receipt = CommittedSoftwareProgress::from_committed(&facts, committed)?;
             self.runner.acknowledge_software_progress(receipt)?;
         }
         Ok(())
@@ -657,7 +603,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
         let capture = match live {
             Some(facts) => Some(facts),
             None => {
-                let stored = self.store.runner_evidence(
+                let stored = self.journal.runner_evidence(
                     &Scope::from_input(execution.input()),
                     &active.id,
                     &self.adapter(None, Some(execution.input())),
@@ -665,7 +611,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
                 if stored.as_ref().is_some_and(|f| f.finished) {
                     stored
                 } else {
-                    let progress = self.store.software_progress(
+                    let progress = self.journal.software_progress(
                         &Scope::from_input(execution.input()),
                         &active.id,
                         &self.adapter(None, Some(execution.input())),
@@ -707,7 +653,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
         if let Some(facts) = &capture {
             let host = Host::new(&self.host, &self.binding, &self.config, None)
                 .with_input(Some(execution.input()));
-            self.store
+            self.journal
                 .record_process(&Scope::from_input(execution.input()), facts, &host)?;
             if execution
                 .snapshot()
@@ -743,7 +689,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
         // While the attempt is active, step output is also charged without a whole capture.
         // After termination, bounded recovery output stays in the append-only software journal;
         // it cannot revise the immutable original process exit or lifecycle output total.
-        if let Some(progress) = self.store.software_progress(
+        if let Some(progress) = self.journal.software_progress(
             &Scope::from_input(execution.input()),
             &active.id,
             &self.adapter(None, Some(execution.input())),
@@ -792,18 +738,17 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
             return Ok(current);
         }
         let input = execution.input();
-        self.host
-            .authorize_service(execution_sqlite::AccessRequest {
-                access: execution_sqlite::Access::Execute,
-                scope: &Scope::from_input(input),
-                consumer: None,
-                interaction: None,
-            })?;
+        self.host.authorize_service(crate::AccessRequest {
+            access: crate::Access::Execute,
+            scope: &Scope::from_input(input),
+            consumer: None,
+            interaction: None,
+        })?;
         let caller = RequestContext {
             actor: input.spec().request.actor.clone(),
         };
-        let spec = execution_sqlite::execution_confirmation(input);
-        match self.store.interaction(
+        let spec = crate::execution_confirmation(input);
+        match self.journal.interaction(
             &Scope::from_input(input),
             &spec.id,
             &self.adapter(None, None),
@@ -823,7 +768,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
                 }
                 return self.cancel(&caller, request);
             }
-            Ok(_) | Err(execution_sqlite::Error::NotFound) => {}
+            Ok(_) | Err(crate::JournalError::NotFound) => {}
             Err(e) => return Err(e.into()),
         }
         self.request_execution(&caller, input)
@@ -890,7 +835,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
                 .runner
                 .observe(execution.input(), &attempt.id, stage, now)?;
             let program = self
-                .store
+                .journal
                 .software_progress(
                     &Scope::from_input(execution.input()),
                     &attempt.id,
@@ -1078,7 +1023,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
         after: Option<&RequestId>,
         limit: usize,
     ) -> Result<crate::TaskPage, Error> {
-        let page = self.store.device_execution_requests(
+        let page = self.journal.device_execution_requests(
             &self.binding.device,
             after,
             limit,
@@ -1105,7 +1050,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
         if self.host.service_binding()? != self.binding {
             return Err(Error::Denied);
         }
-        let page = self.store.execution_requests(
+        let page = self.journal.execution_requests(
             &caller.actor,
             &self.binding.device,
             after,
@@ -1138,7 +1083,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
         access: ExecutionAccess<'_>,
     ) -> Result<crate::ExecutionTaskDetails, Error> {
         let record =
-            self.store
+            self.journal
                 .execution_by_request(request, access, &self.adapter(context, None))?;
         let execution = record.execution;
         self.check_binding(context, execution.input())?;
@@ -1181,7 +1126,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
             }
         };
         let phase = if s.attempt.is_none() && !s.cancel_requested && record.admission.is_none() {
-            match self.store.execution_confirmation_state(
+            match self.journal.execution_confirmation_state(
                 execution.input(),
                 access,
                 &self.adapter(context, None),
@@ -1276,7 +1221,7 @@ fn revision_operation(
     operation(execution.input(), stage, &identity)
 }
 
-impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
+impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
     /// Service-owned bounded recovery: continue pre-intent requests, reconcile existing attempts.
     pub fn reconcile_page(
         &mut self,
@@ -1284,7 +1229,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
         limit: usize,
     ) -> Result<Option<RequestId>, Error> {
         let requests = self
-            .store
+            .journal
             .service_requests(after, limit, &self.adapter(None, None))?;
         for request in &requests {
             self.resume_initial(request)?;
@@ -1302,7 +1247,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
         let mut after = None;
         loop {
             let requests =
-                self.store
+                self.journal
                     .service_requests(after.as_ref(), limit, &self.adapter(None, None))?;
             for request in &requests {
                 if std::time::Instant::now() >= until {
@@ -1315,7 +1260,7 @@ impl<H: AppHost, R: RunnerPort> ExecutionApp<H, R> {
                     .as_ref()
                     .filter(|a| a.termination.is_none())
                 {
-                    let facts = self.store.runner_evidence(
+                    let facts = self.journal.runner_evidence(
                         &Scope::from_input(execution.input()),
                         &attempt.id,
                         &self.adapter(None, Some(execution.input())),

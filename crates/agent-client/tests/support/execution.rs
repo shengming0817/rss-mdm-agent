@@ -179,10 +179,10 @@ pub fn adapted_plan(
         FrozenExecution::freeze(
             decode_execution(
                 include_bytes!("../../../execution-contract/tests/fixtures/software.json"),
-                &execution_app::test_store_limits().input,
+                &execution_app::test_execution_limits(),
             )
             .unwrap(),
-            &execution_app::test_store_limits().input,
+            &execution_app::test_execution_limits(),
         )
         .unwrap()
     } else {
@@ -210,5 +210,5 @@ pub fn adapted_plan(
         )
         .unwrap();
     }
-    FrozenExecution::freeze(spec, &execution_app::test_store_limits().input).unwrap()
+    FrozenExecution::freeze(spec, &execution_app::test_execution_limits()).unwrap()
 }

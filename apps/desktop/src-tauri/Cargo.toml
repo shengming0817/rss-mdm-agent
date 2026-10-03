@@ -34,7 +34,6 @@ sha2.workspace = true
 constant_time_eq = "=0.4.2"
 execution-contract = { path = "../../../crates/execution-contract" }
 execution-app = { path = "../../../crates/execution-app" }
-execution-sqlite = { path = "../../../crates/execution-sqlite" }
 execution-runner = { path = "../../../crates/execution-runner" }
 execution-mcp = { path = "../../../crates/execution-mcp" }
 execution-lifecycle = { path = "../../../crates/execution-lifecycle" }
@@ -56,6 +55,7 @@ native-e2e = ["dep:tauri-plugin-wdio-webdriver"]
 custom-protocol = ["tauri/custom-protocol"]
 
 [dev-dependencies]
+execution-sqlite = { path = "../../../crates/execution-sqlite" }
 execution-interaction = { path = "../../../crates/execution-interaction" }
 execution-admission = { path = "../../../crates/execution-admission" }
 execution-approval = { path = "../../../crates/execution-approval" }

@@ -1,5 +1,6 @@
 //! Real local OS mechanics; no production AppHost or test authority is promoted.
 
+use super::support::{create_app, reopen_app};
 use super::*;
 use sha2::{Digest as _, Sha256};
 use std::{path::PathBuf, sync::atomic::AtomicU64};
@@ -10,7 +11,7 @@ fn now() -> Result<u64, Error> {
         .as_millis() as u64)
 }
 fn limits() -> ExecutionLimits {
-    execution_app::test_store_limits().input
+    execution_app::test_execution_limits()
 }
 fn interpreter() -> PathBuf {
     std::env::var_os("RSS_TEST_PWSH7")
@@ -350,7 +351,7 @@ use super::support as app_support;
 use super::support::TestCarrier;
 #[test]
 fn windows_capture_is_durable_and_reopened_attempt_does_not_launch() {
-    use execution_app::{AppConfig, ExecutionApp, RequestContext, Startup};
+    use execution_app::{AppConfig, RequestContext};
     let mut f = fixture(
         "[Console]::Out.Write('durable')",
         vec![LaunchArg::ArtifactPath {}],
@@ -378,9 +379,8 @@ fn windows_capture_is_durable_and_reopened_attempt_does_not_launch() {
     };
     let request = &f.plan.spec().request.request_id;
     let database = f.root.join("execution.sqlite");
-    let mut app = ExecutionApp::start(
+    let mut app = create_app(
         &database,
-        Startup::CreateTest,
         host.clone(),
         carrier.clone(),
         AppConfig::test_defaults(1),
@@ -420,14 +420,7 @@ fn windows_capture_is_durable_and_reopened_attempt_does_not_launch() {
         Arc::new(NativeRunner::new(Id::new("test-runner").unwrap(), BTreeMap::new(), 8).unwrap()),
         Arc::new(std::sync::atomic::AtomicUsize::new(0)),
     );
-    let mut app = ExecutionApp::start(
-        &database,
-        Startup::OpenTest,
-        host,
-        empty.clone(),
-        AppConfig::test_defaults(1),
-    )
-    .unwrap();
+    let mut app = reopen_app(&database, host, empty.clone(), AppConfig::test_defaults(1)).unwrap();
     let recovered = app.request_execution(&caller, &f.plan).unwrap();
     assert_eq!(recovered.attempts, 1);
     assert_eq!(

@@ -26,7 +26,7 @@ pub(crate) fn head(
                 bounded_blob("authorization_revision", limits.max_record_bytes),
                 bounded_blob("approval_revision", limits.max_record_bytes)
             ),
-            [scope.key()],
+            [scope.interaction_subject().as_str()],
             |r| {
                 Ok((
                     r.get::<_, u64>(0)?,
@@ -52,19 +52,23 @@ pub(crate) fn head(
 impl Store {
     /// Read the protected CAS revision for a subsequent trust refresh. Requires trust-management
     /// access, independently of result/audit access; absence means the first refresh uses None.
-    pub fn trust_revision(&self, scope: &Scope, host: &impl Host) -> Result<Option<u64>, Error> {
+    pub(crate) fn sql_trust_revision(
+        &self,
+        scope: &Scope,
+        host: &impl JournalHost,
+    ) -> Result<Option<u64>, Error> {
         let tx = self.read(scope, Access::ManageTrust, None, host)?;
         Ok(head(&tx, scope, self.limits)?.map(|head| head.revision))
     }
 
     /// Atomically install a complete freshly verified snapshot using expected local head revision.
     /// Definitions are immutable; refresh cannot import, reset or refund local consumption counters.
-    pub fn refresh_trust(
+    pub(crate) fn sql_refresh_trust(
         &mut self,
         op: &OperationRequestId,
         scope: &Scope,
         expected: Option<u64>,
-        host: &impl Host,
+        host: &impl JournalHost,
     ) -> Result<CommitOutcome, Error> {
         let mut w = match self.start(
             op,
@@ -105,7 +109,7 @@ impl Store {
         )?;
         w.tx.execute(
             "UPDATE approval_heads SET status='unknown' WHERE scope=?1",
-            [scope.key()],
+            [scope.interaction_subject().as_str()],
         )?;
         for entry in &snapshot.approvals {
             install(&w, entry)?;
@@ -117,7 +121,7 @@ impl Store {
         w.tx.execute("INSERT INTO trust_heads VALUES(?1,?2,?3,?4,?5,?6)
             ON CONFLICT(scope) DO UPDATE SET revision=excluded.revision,authorization_revision=excluded.authorization_revision,
             approval_revision=excluded.approval_revision,approval_digest=excluded.approval_digest,fresh_until=excluded.fresh_until",
-            params![scope.key(), integer(revision)?, w.bounded(&snapshot.authorization_revision)?, w.bounded(&snapshot.approval_revision)?,
+            params![scope.interaction_subject().as_str(), integer(revision)?, w.bounded(&snapshot.authorization_revision)?, w.bounded(&snapshot.approval_revision)?,
                 digest, integer(snapshot.fresh_until_unix_ms)?])?;
         let mut audit = empty_audit(AuditReason::TrustRefreshed);
         audit.trust = Some(TrustAudit {
@@ -179,7 +183,11 @@ fn retain_version(
     // A previous source revision can never become current again, even after record cleanup.
     w.tx.execute(
         "INSERT INTO trust_versions VALUES(?1,?2,?3)",
-        params![w.scope.key(), kind, w.bounded(version)?],
+        params![
+            w.scope.interaction_subject().as_str(),
+            kind,
+            w.bounded(version)?
+        ],
     )?;
     Ok(())
 }
@@ -193,7 +201,7 @@ fn install(w: &Write<'_>, entry: &TrustedApproval) -> Result<(), Error> {
                 bounded_blob("definition", w.limits.max_record_bytes)
             ),
             params![
-                w.scope.key(),
+                w.scope.interaction_subject().as_str(),
                 d.reference.id.as_str(),
                 d.reference.revision.as_str()
             ],
@@ -207,7 +215,7 @@ fn install(w: &Write<'_>, entry: &TrustedApproval) -> Result<(), Error> {
             w.tx.execute(
                 "INSERT INTO approvals VALUES(?1,?2,?3,?4)",
                 params![
-                    w.scope.key(),
+                    w.scope.interaction_subject().as_str(),
                     d.reference.id.as_str(),
                     d.reference.revision.as_str(),
                     bytes
@@ -216,7 +224,7 @@ fn install(w: &Write<'_>, entry: &TrustedApproval) -> Result<(), Error> {
             w.tx.execute(
                 "INSERT INTO approval_usage VALUES(?1,?2,?3,0,0)",
                 params![
-                    w.scope.key(),
+                    w.scope.interaction_subject().as_str(),
                     d.reference.id.as_str(),
                     d.reference.revision.as_str()
                 ],
@@ -224,7 +232,7 @@ fn install(w: &Write<'_>, entry: &TrustedApproval) -> Result<(), Error> {
         }
     }
     w.tx.execute("INSERT INTO approval_heads VALUES(?1,?2,?3,?4) ON CONFLICT(scope,record_id) DO UPDATE SET version=excluded.version,status=excluded.status",
-        params![w.scope.key(), d.reference.id.as_str(), d.reference.revision.as_str(), match entry.state { ApprovalState::Active=>"active", ApprovalState::Revoked=>"revoked", ApprovalState::Unknown=>"unknown" }])?;
+        params![w.scope.interaction_subject().as_str(), d.reference.id.as_str(), d.reference.revision.as_str(), match entry.state { ApprovalState::Active=>"active", ApprovalState::Revoked=>"revoked", ApprovalState::Unknown=>"unknown" }])?;
     Ok(())
 }
 pub(crate) struct StoredApprovals<'a> {
@@ -278,7 +286,7 @@ impl StoredApprovals<'_> {
              JOIN approval_heads h ON h.scope=a.scope AND h.record_id=a.record_id AND h.version=a.version
              JOIN approval_usage u ON u.scope=a.scope AND u.record_id=a.record_id AND u.version=a.version
              WHERE a.scope=?1 AND a.record_id=?2 AND a.version=?3", bounded_blob("a.definition", self.limits.max_record_bytes)),
-             params![self.scope.key(), reference.id.as_str(), reference.revision.as_str()],
+             params![self.scope.interaction_subject().as_str(), reference.id.as_str(), reference.revision.as_str()],
              |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?)))?;
         let d: ApprovalDefinition = decode(&bytes, self.limits.max_record_bytes)?;
         if &d.reference != reference {
@@ -413,7 +421,7 @@ pub(crate) fn consume(
             .checked_add(1)
             .ok_or(Error::Capacity)?;
         let n = w.tx.execute("UPDATE approval_usage SET used=?1,revision=?2 WHERE scope=?3 AND record_id=?4 AND version=?5 AND used=?6 AND revision=?7",
-            params![after, integer(revision)?, w.scope.key(), record.reference.id.as_str(), record.reference.revision.as_str(), record.used, integer(record.consumption_revision)?])?;
+            params![after, integer(revision)?, w.scope.interaction_subject().as_str(), record.reference.id.as_str(), record.reference.revision.as_str(), record.used, integer(record.consumption_revision)?])?;
         if n != 1 {
             return Err(Error::Conflict);
         }
@@ -421,7 +429,7 @@ pub(crate) fn consume(
             "INSERT INTO approval_consumptions VALUES(?1,?2,?3,?4)",
             params![
                 attempt.as_str(),
-                w.scope.key(),
+                w.scope.interaction_subject().as_str(),
                 record.reference.id.as_str(),
                 record.reference.revision.as_str()
             ],

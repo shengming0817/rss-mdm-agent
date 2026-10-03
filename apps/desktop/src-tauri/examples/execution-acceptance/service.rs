@@ -11,7 +11,7 @@ use std::{
 use tokio_util::sync::CancellationToken;
 
 pub struct FixtureService {
-    app: Mutex<ExecutionApp<support::TestHost, DeterministicTestRunner>>,
+    app: Mutex<ExecutionApp<support::TestHost, DeterministicTestRunner, execution_sqlite::Store>>,
     plan: FrozenExecution,
     caller: RequestContext,
 }
@@ -20,7 +20,7 @@ impl FixtureService {
         let mut host = support::TestHost::new();
         let mut input = host.template.spec().clone();
         input.request.request_id = RequestId::new("ai-unknown").unwrap();
-        let plan = FrozenExecution::freeze(input, &test_store_limits().input).unwrap();
+        let plan = FrozenExecution::freeze(input, &test_execution_limits()).unwrap();
         host.template = plan.clone();
         let caller = RequestContext {
             actor: plan.spec().request.actor.clone(),
@@ -30,15 +30,14 @@ impl FixtureService {
             TestScenario::Unknown,
             16,
         )?;
-        let mode = if path
+        let existing = path
             .try_exists()
-            .map_err(|_| execution_app::Error::Unavailable)?
-        {
-            Startup::OpenTest
+            .map_err(|_| execution_app::Error::Unavailable)?;
+        let app = if existing {
+            support::reopen_app(path, host, runner, AppConfig::test_defaults(1))?
         } else {
-            Startup::CreateTest
+            support::create_app(path, host, runner, AppConfig::test_defaults(1))?
         };
-        let app = ExecutionApp::start(path, mode, host, runner, AppConfig::test_defaults(1))?;
         Ok(Arc::new(Self {
             app: Mutex::new(app),
             plan,

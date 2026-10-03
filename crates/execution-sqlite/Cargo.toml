@@ -7,6 +7,7 @@ license.workspace = true
 publish = false
 
 [dependencies]
+execution-app = { path = "../execution-app" }
 platform-private-storage = { path = "../platform-private-storage" }
 execution-contract = { path = "../execution-contract" }
 execution-admission = { path = "../execution-admission" }

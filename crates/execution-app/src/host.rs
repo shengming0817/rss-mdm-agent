@@ -1,7 +1,6 @@
 use crate::*;
 use execution_contract::{AttemptId, EvidenceRef, FrozenExecution};
 use execution_lifecycle::{ObservationError, ObservationFacts, ObservationVerifier};
-use execution_sqlite::{self as db, AccessRequest, AdmissionGate, Scope, TrustSnapshot};
 
 pub(crate) struct Host<'a, H> {
     inner: &'a H,
@@ -79,32 +78,32 @@ impl ObservationVerifier for ObservationEvidence<'_> {
         Ok(facts.clone())
     }
 }
-impl<H: AppHost> db::Host for Host<'_, H> {
-    fn authorize(&self, request: AccessRequest<'_>) -> Result<(), db::Error> {
+impl<H: AppHost> JournalHost for Host<'_, H> {
+    fn authorize(&self, request: AccessRequest<'_>) -> Result<(), JournalError> {
         let actual = self
             .inner
             .service_binding()
-            .map_err(|_| db::Error::Denied)?;
+            .map_err(|_| JournalError::Denied)?;
         if &actual != self.binding
             || request.scope.authority != actual.authority
             || self
                 .caller
                 .is_some_and(|caller| request.scope.actor != caller.actor)
         {
-            return Err(db::Error::Denied);
+            return Err(JournalError::Denied);
         }
         match self.caller {
             Some(caller) => self.inner.authorize(caller, request),
             None => self.inner.authorize_service(request),
         }
     }
-    fn reliable_now(&self) -> Result<u64, db::Error> {
+    fn reliable_now(&self) -> Result<u64, JournalError> {
         self.inner.reliable_now()
     }
-    fn trusted_snapshot(&self, scope: &Scope) -> Result<TrustSnapshot, db::Error> {
-        let plan = self.plan.ok_or(db::Error::Trust)?;
+    fn trusted_snapshot(&self, scope: &Scope) -> Result<TrustSnapshot, JournalError> {
+        let plan = self.plan.ok_or(JournalError::Trust)?;
         if &Scope::from_input(plan) != scope {
-            return Err(db::Error::Trust);
+            return Err(JournalError::Trust);
         }
         self.inner.trusted_snapshot(plan)
     }
@@ -115,11 +114,11 @@ impl<H: AppHost> db::Host for Host<'_, H> {
         bindings: &[execution_approval::ProfileApproval],
         approvals: &dyn execution_approval::ApprovalVerifier,
         _now: u64,
-    ) -> Result<AdmissionGate, db::Error> {
-        let config = self.config.ok_or(db::Error::Trust)?;
+    ) -> Result<AdmissionGate, JournalError> {
+        let config = self.config.ok_or(JournalError::Trust)?;
         capabilities(self.inner, plan, config).map_err(|error| {
             eprintln!("execution_admit_capabilities: {error:?}");
-            db::Error::Trust
+            JournalError::Trust
         })?;
         let admission = execution_admission::decide(
             plan,

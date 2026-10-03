@@ -4,11 +4,13 @@ use execution_admission::{
     AuthorityFacts, AuthorityVerifier, DelegationFacts, Rule, RuleEffect, SubjectFacts,
     VerificationError,
 };
-use execution_app::{AppHost, CapabilitySnapshot, RequestContext, ServiceBinding};
+use execution_app::{AccessRequest, TrustSnapshot};
+use execution_app::{
+    AppConfig, AppHost, CapabilitySnapshot, ExecutionApp, RequestContext, ServiceBinding,
+};
 use execution_capability::{
     Availability, Entry, EnvironmentSnapshot, Inventory, Isolation, LaunchIoCapability,
 };
-use execution_sqlite::{AccessRequest, TrustSnapshot};
 pub fn id(value: &str) -> Id {
     Id::new(value).unwrap()
 }
@@ -22,17 +24,17 @@ pub fn plan() -> FrozenExecution {
     let original = FrozenExecution::freeze(
         decode_execution(
             include_bytes!("../../../execution-contract/tests/fixtures/plan.json"),
-            &execution_app::test_store_limits().input,
+            &execution_app::test_execution_limits(),
         )
         .unwrap(),
-        &execution_app::test_store_limits().input,
+        &execution_app::test_execution_limits(),
     )
     .unwrap();
     let mut spec = original.spec().clone();
     spec.request.initiator = execution_contract::Initiator::Policy {
         policy: spec.policy.clone(),
     };
-    FrozenExecution::freeze(spec, &execution_app::test_store_limits().input).unwrap()
+    FrozenExecution::freeze(spec, &execution_app::test_execution_limits()).unwrap()
 }
 #[derive(Clone)]
 pub struct TestHost {
@@ -110,22 +112,22 @@ impl AppHost for TestHost {
         &self,
         caller: &RequestContext,
         r: AccessRequest<'_>,
-    ) -> Result<(), execution_sqlite::Error> {
+    ) -> Result<(), execution_app::JournalError> {
         if caller.actor != r.scope.actor {
-            return Err(execution_sqlite::Error::Denied);
+            return Err(execution_app::JournalError::Denied);
         }
         self.authorize_service(r)
     }
-    fn authorize_service(&self, r: AccessRequest<'_>) -> Result<(), execution_sqlite::Error> {
+    fn authorize_service(&self, r: AccessRequest<'_>) -> Result<(), execution_app::JournalError> {
         if r.scope.authority != self.template.spec().request.authority
             || r.scope.actor != self.template.spec().request.actor
         {
-            Err(execution_sqlite::Error::Denied)
+            Err(execution_app::JournalError::Denied)
         } else {
             Ok(())
         }
     }
-    fn reliable_now(&self) -> Result<u64, execution_sqlite::Error> {
+    fn reliable_now(&self) -> Result<u64, execution_app::JournalError> {
         Ok(self.now())
     }
     fn capabilities(&self, _: &FrozenExecution) -> Result<CapabilitySnapshot, Error> {
@@ -170,7 +172,7 @@ impl AppHost for TestHost {
     fn trusted_snapshot(
         &self,
         _: &FrozenExecution,
-    ) -> Result<TrustSnapshot, execution_sqlite::Error> {
+    ) -> Result<TrustSnapshot, execution_app::JournalError> {
         Ok(TrustSnapshot {
             authorization_revision: reference("runner-policy"),
             approval_revision: reference("runner-approval"),
@@ -253,4 +255,40 @@ impl RunnerPort for TestCarrier {
     ) -> Result<Option<ObservationFacts>, Error> {
         self.0.observe(p, a, s, n)
     }
+}
+
+/// Create a fixture journal, then attach it through the real application port.
+pub(super) fn create_app<H: AppHost, R: RunnerPort>(
+    path: &std::path::Path,
+    host: H,
+    runner: R,
+    config: AppConfig,
+) -> Result<ExecutionApp<H, R, execution_sqlite::Store>, execution_app::Error> {
+    let binding = host.service_binding()?;
+    let journal = execution_sqlite::Store::initialize_test(
+        path,
+        binding.authority,
+        execution_sqlite::test_store_limits(),
+    )?;
+    ExecutionApp::new(journal, host, runner, config)
+}
+/// Reopen a fixture journal without create fallback or first-dispatch reconstruction.
+pub(super) fn reopen_app<H: AppHost, R: RunnerPort>(
+    path: &std::path::Path,
+    host: H,
+    runner: R,
+    config: AppConfig,
+) -> Result<ExecutionApp<H, R, execution_sqlite::Store>, execution_app::Error> {
+    let binding = host.service_binding()?;
+    let journal = match execution_sqlite::Store::open(
+        path,
+        &binding.authority,
+        execution_sqlite::test_store_limits(),
+    )? {
+        execution_sqlite::OpenOutcome::Ready(journal) => *journal,
+        execution_sqlite::OpenOutcome::UnsupportedSchema { found, supported } => {
+            return Err(execution_app::Error::UnsupportedSchema { found, supported });
+        }
+    };
+    ExecutionApp::new(journal, host, runner, config)
 }

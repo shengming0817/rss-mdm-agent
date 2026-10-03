@@ -1,10 +1,9 @@
-use crate::{ConfigChange, Error};
+use crate::{AccessRequest, ConfigChange, Error, TrustSnapshot};
 use execution_admission::AuthorityVerifier;
 use execution_approval::ProfileApproval;
 use execution_capability::EnvironmentSnapshot;
 use execution_contract::{ActorId, AttemptId, Authority, DeviceId, FrozenExecution, Id};
 use execution_lifecycle::{DispatchAction, ExecutionMode, ObservationFacts};
-use execution_sqlite::{AccessRequest, TrustSnapshot};
 
 /// Trusted host output; no Deserialize and no wire binding constructor is provided.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,19 +39,19 @@ pub trait AppHost: AuthorityVerifier {
         &self,
         caller: &RequestContext,
         request: AccessRequest<'_>,
-    ) -> Result<(), execution_sqlite::Error>;
+    ) -> Result<(), crate::JournalError>;
     /// Internal task observation/trust/dispatch operations, independent of UI selection.
     /// The application supplies a scope loaded from its journal, never an untrusted caller claim.
-    fn authorize_service(&self, request: AccessRequest<'_>) -> Result<(), execution_sqlite::Error>;
+    fn authorize_service(&self, request: AccessRequest<'_>) -> Result<(), crate::JournalError>;
     /// Independently reliable UTC; uncertainty/rollback is an error.
-    fn reliable_now(&self) -> Result<u64, execution_sqlite::Error>;
+    fn reliable_now(&self) -> Result<u64, crate::JournalError>;
     /// Verified capability inventory for the bound plan, never a preview cache.
     fn capabilities(&self, plan: &FrozenExecution) -> Result<CapabilitySnapshot, Error>;
     /// Independently verified approval definitions, current policy and revocation identity.
     fn trusted_snapshot(
         &self,
         plan: &FrozenExecution,
-    ) -> Result<TrustSnapshot, execution_sqlite::Error>;
+    ) -> Result<TrustSnapshot, crate::JournalError>;
     /// References selected by the trusted approval authority. C08 still validates every profile.
     fn approval_bindings(&self, plan: &FrozenExecution) -> Result<Vec<ProfileApproval>, Error>;
     /// Authenticate administrative rights and durably record a configuration activation.
@@ -148,7 +147,7 @@ pub trait RunnerPort {
     /// Release the exact boundary only after the execution journal committed it.
     fn acknowledge_software_progress(
         &self,
-        _receipt: execution_sqlite::CommittedSoftwareProgress,
+        _receipt: crate::CommittedSoftwareProgress,
     ) -> Result<(), Error> {
         Err(Error::Unsupported)
     }
@@ -218,5 +217,63 @@ impl SoftwareCleanupResume {
         run: impl FnOnce(FrozenExecution, execution_contract::SoftwareProgress) -> T,
     ) -> T {
         run(self.plan, self.progress)
+    }
+}
+
+/// Exact software facts confirmed committed by the application-owned trusted journal seam.
+/// This value is neither a runner message nor permission to start a new attempt.
+/// INVARIANT: SOFTWARE-PROGRESS-COMMIT-01
+/// ```compile_fail
+/// fn forge(facts: execution_contract::SoftwareProgress) {
+///     let _ = execution_app::CommittedSoftwareProgress(facts);
+/// }
+/// ```
+/// ```compile_fail
+/// fn duplicate(value: execution_app::CommittedSoftwareProgress) { let _ = value.clone(); }
+/// ```
+/// ```compile_fail
+/// let _: execution_app::CommittedSoftwareProgress = serde_json::from_str("{}").unwrap();
+/// ```
+pub struct CommittedSoftwareProgress(execution_contract::SoftwareProgress);
+impl CommittedSoftwareProgress {
+    pub(crate) fn from_committed(
+        requested: &execution_contract::SoftwareProgress,
+        committed: execution_contract::SoftwareProgress,
+    ) -> Result<Self, Error> {
+        if &committed != requested {
+            return Err(Error::Storage);
+        }
+        Ok(Self(committed))
+    }
+    /// Inspect the exact journal-committed facts; no new execution authority is granted.
+    pub fn facts(&self) -> &execution_contract::SoftwareProgress {
+        &self.0
+    }
+}
+
+#[cfg(test)]
+mod progress_commit_tests {
+    use super::*;
+    use execution_contract::{AttemptId, Digest, Id, SoftwareProgress};
+
+    #[test]
+    fn a_different_journal_confirmation_cannot_release_the_requested_boundary() {
+        let requested = SoftwareProgress {
+            attempt_id: AttemptId::new("original-attempt").unwrap(),
+            content_digest: Digest::new("a".repeat(64)).unwrap(),
+            runner: Id::new("runner").unwrap(),
+            checkpoints: Vec::new(),
+            elapsed_ms: 1,
+            output_bytes: 0,
+        };
+        let mut other = requested.clone();
+        other.attempt_id = AttemptId::new("different-attempt").unwrap();
+        assert!(matches!(
+            CommittedSoftwareProgress::from_committed(&requested, other),
+            Err(Error::Storage)
+        ));
+        let receipt =
+            CommittedSoftwareProgress::from_committed(&requested, requested.clone()).unwrap();
+        assert_eq!(receipt.facts(), &requested);
     }
 }

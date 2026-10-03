@@ -7,23 +7,14 @@ use crate::{
 use execution_contract::{AttemptId, SoftwareProgress};
 use rusqlite::{params, OptionalExtension, TransactionBehavior};
 
-/// Receipt constructible only after the existing journal commits the exact checkpoint.
-/// A deserialized runner message cannot manufacture permission to cross a phase boundary.
-pub struct CommittedSoftwareProgress(SoftwareProgress);
-impl CommittedSoftwareProgress {
-    /// Inspect the exact committed facts; this receipt grants no new business attempt.
-    pub fn facts(&self) -> &SoftwareProgress {
-        &self.0
-    }
-}
 impl Store {
     /// Append software phase facts atomically to the original attempt, before physical dispatch.
-    pub fn record_software_progress(
+    pub(crate) fn sql_record_software_progress(
         &mut self,
         scope: &Scope,
         facts: &SoftwareProgress,
-        host: &impl Host,
-    ) -> Result<CommittedSoftwareProgress, Error> {
+        host: &impl JournalHost,
+    ) -> Result<SoftwareProgress, Error> {
         self.check_scope(scope)?;
         let tx = self
             .conn
@@ -55,13 +46,13 @@ impl Store {
         ownership(&tx, &plan, facts, previous_count, self.limits)?;
         crate::software::settle(&tx, &plan, execution.snapshot(), self.limits)?;
         tx.commit().map_err(|_| Error::OperationCommitUnknown)?;
-        Ok(CommittedSoftwareProgress(facts.clone()))
+        Ok(facts.clone())
     }
     /// Read only protected provenance produced by completed installations in this journal.
-    pub fn software_ownership(
+    pub(crate) fn sql_software_ownership(
         &self,
         scope: &Scope,
-        host: &impl Host,
+        host: &impl JournalHost,
     ) -> Result<Vec<execution_contract::SoftwareOwnership>, Error> {
         let tx = self.read(scope, Access::RunnerFact, None, host)?;
         let (plan, _, _) = load_execution(&tx, scope, self.limits)?;
@@ -79,16 +70,16 @@ impl Store {
         Ok(result)
     }
     /// Read the original attempt's history without creating or replaying an invocation.
-    pub fn software_progress(
+    pub(crate) fn sql_software_progress(
         &self,
         scope: &Scope,
         attempt: &AttemptId,
-        host: &impl Host,
+        host: &impl JournalHost,
     ) -> Result<Option<SoftwareProgress>, Error> {
         let tx = self.read(scope, Access::RunnerFact, None, host)?;
         let belongs: bool = tx.query_row(
             "SELECT EXISTS(SELECT 1 FROM attempts WHERE scope=?1 AND attempt_id=?2)",
-            params![scope.key(), attempt.as_str()],
+            params![scope.interaction_subject().as_str(), attempt.as_str()],
             |r| r.get(0),
         )?;
         if !belongs {

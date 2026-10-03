@@ -20,10 +20,10 @@ fn main() {
             execution_contract::FrozenExecution::freeze(
                 execution_contract::decode_execution(
                     include_bytes!("../../execution-contract/tests/fixtures/software.json"),
-                    &test_store_limits().input,
+                    &test_execution_limits(),
                 )
                 .unwrap(),
-                &test_store_limits().input,
+                &test_execution_limits(),
             )
             .unwrap()
         } else {
@@ -32,14 +32,7 @@ fn main() {
         host.template = p.clone();
         host.state.lock().unwrap().approval = approval;
         let runner = DeterministicTestRunner::new(id("test-runner"), scenario, 16).unwrap();
-        let mut app = ExecutionApp::start(
-            &db.path,
-            Startup::CreateTest,
-            host,
-            runner,
-            AppConfig::test_defaults(1),
-        )
-        .unwrap();
+        let mut app = create_app(&db.path, host, runner, AppConfig::test_defaults(1)).unwrap();
         let request = &p.spec().request.request_id;
         app.request_execution(&caller(), &p).unwrap();
         if cancel {

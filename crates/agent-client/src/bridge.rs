@@ -79,11 +79,11 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
     }
     /// Check materials and current host prerequisites BEFORE requesting a remote Start.
     /// Scripts and ordered software each bind to one immutable local intent.
-    pub fn prepare<H: AppHost, R: RunnerPort>(
+    pub fn prepare<H: AppHost, R: RunnerPort, J: execution_app::JournalPort>(
         &self,
         offer: &crate::Offer,
         materials: &Materials,
-        app: &ExecutionApp<H, R>,
+        app: &ExecutionApp<H, R, J>,
         caller: &RequestContext,
         plan: &FrozenExecution,
     ) -> Result<PreparedExecution, Error> {
@@ -165,12 +165,18 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
     }
     /// Submit a host-adapted immutable plan only with a currently valid Start.
     /// Preparation/adaptation must occur before requesting Start; this does no network I/O.
-    pub fn dispatch<S: SecretProvider, C: Clock, H: AppHost, R: RunnerPort>(
+    pub fn dispatch<
+        S: SecretProvider,
+        C: Clock,
+        H: AppHost,
+        R: RunnerPort,
+        J: execution_app::JournalPort,
+    >(
         &self,
         client: &mut Client<S, C>,
         start: Start,
         materials: &Materials,
-        app: &mut ExecutionApp<H, R>,
+        app: &mut ExecutionApp<H, R, J>,
         prepared: PreparedExecution,
     ) -> Result<ExecutionStatus, Error> {
         let PreparedExecution {
@@ -246,11 +252,17 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
     }
     /// Repair only the transport association after an interrupted commit hand-off.
     /// The journal remains the authority for whether an attempt exists; this never dispatches.
-    pub fn recover_binding<S: SecretProvider, C: Clock, H: AppHost, R: RunnerPort>(
+    pub fn recover_binding<
+        S: SecretProvider,
+        C: Clock,
+        H: AppHost,
+        R: RunnerPort,
+        J: execution_app::JournalPort,
+    >(
         &self,
         client: &mut Client<S, C>,
         task: Uuid,
-        app: &ExecutionApp<H, R>,
+        app: &ExecutionApp<H, R, J>,
     ) -> Result<bool, Error> {
         let key = format!("binding/{task}");
         let mut binding: Binding = client.store.get(&key)?.ok_or(Error::Conflict)?;
@@ -289,11 +301,17 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
     }
     /// Settle an offer that never entered this authoritative journal. Cancellation ACK
     /// precedes releasing associations; any existing local execution remains journal-owned.
-    pub fn prepare_abandonment<S: SecretProvider, C: Clock, H: AppHost, R: RunnerPort>(
+    pub fn prepare_abandonment<
+        S: SecretProvider,
+        C: Clock,
+        H: AppHost,
+        R: RunnerPort,
+        J: execution_app::JournalPort,
+    >(
         &self,
         client: &mut Client<S, C>,
         task: Uuid,
-        app: &ExecutionApp<H, R>,
+        app: &ExecutionApp<H, R, J>,
     ) -> Result<PendingAbandonment, Error> {
         let offer = client.stored_offer(task)?;
         let request = offer.request_id()?;
@@ -352,11 +370,17 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
         Ok(())
     }
     /// Release transport state only after the same journal still proves there is no execution.
-    pub fn finish_abandonment<S: SecretProvider, C: Clock, H: AppHost, R: RunnerPort>(
+    pub fn finish_abandonment<
+        S: SecretProvider,
+        C: Clock,
+        H: AppHost,
+        R: RunnerPort,
+        J: execution_app::JournalPort,
+    >(
         &self,
         client: &mut Client<S, C>,
         pending: PendingAbandonment,
-        app: &ExecutionApp<H, R>,
+        app: &ExecutionApp<H, R, J>,
     ) -> Result<(), Error> {
         if !pending.accepted || app.has_service_execution(&pending.request, &pending.device)? {
             return Err(Error::Conflict);
@@ -364,22 +388,34 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
         client.release(pending.task)
     }
     /// Convenience for callers that do not own a concurrent execution loop.
-    pub async fn abandon<S: SecretProvider, C: Clock, H: AppHost, R: RunnerPort>(
+    pub async fn abandon<
+        S: SecretProvider,
+        C: Clock,
+        H: AppHost,
+        R: RunnerPort,
+        J: execution_app::JournalPort,
+    >(
         &self,
         client: &mut Client<S, C>,
         task: Uuid,
-        app: &ExecutionApp<H, R>,
+        app: &ExecutionApp<H, R, J>,
     ) -> Result<(), Error> {
         let mut pending = self.prepare_abandonment(client, task, app)?;
         self.send_abandonment(client, &mut pending).await?;
         self.finish_abandonment(client, pending, app)
     }
     /// Reconcile one exact cancellation against its existing journal; absence never proves stop.
-    pub fn cancel<S: SecretProvider, C: Clock, H: AppHost, R: RunnerPort>(
+    pub fn cancel<
+        S: SecretProvider,
+        C: Clock,
+        H: AppHost,
+        R: RunnerPort,
+        J: execution_app::JournalPort,
+    >(
         &self,
         client: &Client<S, C>,
         cancel: &wire::TaskCancellation,
-        app: &mut ExecutionApp<H, R>,
+        app: &mut ExecutionApp<H, R, J>,
         caller: &RequestContext,
     ) -> Result<ExecutionStatus, Error> {
         let binding: Binding = client
@@ -394,11 +430,17 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
     }
     /// Send one frozen result and precisely confirm its source events after durable remote ACK.
     /// Lost confirmations never cause another HTTP result request or runner dispatch.
-    pub fn prepare_delivery<S: SecretProvider, C: Clock, H: AppHost, R: RunnerPort>(
+    pub fn prepare_delivery<
+        S: SecretProvider,
+        C: Clock,
+        H: AppHost,
+        R: RunnerPort,
+        J: execution_app::JournalPort,
+    >(
         &self,
         client: &mut Client<S, C>,
         task: Uuid,
-        app: &mut ExecutionApp<H, R>,
+        app: &mut ExecutionApp<H, R, J>,
         limit: usize,
     ) -> Result<Option<PendingDelivery>, Error> {
         client.active()?;
@@ -511,11 +553,17 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
         Ok(())
     }
     /// Confirm original journal receipts after the durable HTTP acknowledgement.
-    pub fn finish_delivery<S: SecretProvider, C: Clock, H: AppHost, R: RunnerPort>(
+    pub fn finish_delivery<
+        S: SecretProvider,
+        C: Clock,
+        H: AppHost,
+        R: RunnerPort,
+        J: execution_app::JournalPort,
+    >(
         &self,
         client: &mut Client<S, C>,
         pending: PendingDelivery,
-        app: &mut ExecutionApp<H, R>,
+        app: &mut ExecutionApp<H, R, J>,
     ) -> Result<usize, Error> {
         if !pending.accepted {
             return Err(Error::Conflict);
@@ -535,11 +583,17 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
         Ok(1)
     }
     /// Deliver synchronously for consumers without a concurrent execution-owner loop.
-    pub async fn flush<S: SecretProvider, C: Clock, H: AppHost, R: RunnerPort>(
+    pub async fn flush<
+        S: SecretProvider,
+        C: Clock,
+        H: AppHost,
+        R: RunnerPort,
+        J: execution_app::JournalPort,
+    >(
         &self,
         client: &mut Client<S, C>,
         task: Uuid,
-        app: &mut ExecutionApp<H, R>,
+        app: &mut ExecutionApp<H, R, J>,
         limit: usize,
     ) -> Result<usize, Error> {
         let Some(mut pending) = self.prepare_delivery(client, task, app, limit)? else {
@@ -551,10 +605,10 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
     fn project(
         &self,
         payload: &wire::TaskPayload,
-        evidence: &execution_sqlite::DeliveryEvidence,
+        evidence: &execution_app::DeliveryEvidence,
     ) -> Result<Option<wire::TaskEvent>, Error> {
         if let Some(terminal) = evidence.terminal {
-            if terminal == execution_sqlite::DeliveryTerminal::Cancelled {
+            if terminal == execution_app::DeliveryTerminal::Cancelled {
                 return Ok(Some(wire::TaskEvent::Cancelled));
             }
             let diagnostics = wire::TaskDiagnostics::new(
@@ -643,11 +697,17 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
         }))
     }
     /// Explicit terminal cleanup after every journal event has been confirmed.
-    pub fn finish<S: SecretProvider, C: Clock, H: AppHost, R: RunnerPort>(
+    pub fn finish<
+        S: SecretProvider,
+        C: Clock,
+        H: AppHost,
+        R: RunnerPort,
+        J: execution_app::JournalPort,
+    >(
         &self,
         client: &mut Client<S, C>,
         task: Uuid,
-        app: &ExecutionApp<H, R>,
+        app: &ExecutionApp<H, R, J>,
         caller: &RequestContext,
     ) -> Result<(), Error> {
         let binding: Binding = client
