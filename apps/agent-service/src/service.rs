@@ -935,22 +935,49 @@ pub(crate) struct Command {
     binding: Option<execution_contract::Id>,
     reply: tokio::sync::oneshot::Sender<execution_ipc::host::Reply>,
 }
+/// Synchronous owner work selected while transport remains pending.
+pub(crate) enum NetworkEvent {
+    Reconcile,
+    Command(Command),
+    Closed,
+}
 pub(crate) async fn network<T>(
     future: impl std::future::Future<Output = Result<T, Error>>,
     core: &mut Core,
     commands: &mut tokio::sync::mpsc::Receiver<Command>,
 ) -> Result<T, Error> {
+    network_loop(future, commands, |event| {
+        match event {
+            NetworkEvent::Reconcile => core.reconcile()?,
+            NetworkEvent::Command(command) => core.handle(command),
+            NetworkEvent::Closed => core.stopping = true,
+        }
+        Ok(core.stopping)
+    })
+    .await
+}
+// One synchronous callback borrows the owner exclusively; neither a task nor a lock owns journal IO.
+// ref: tokio tokio-1.47.1 tokio/src/sync/mpsc/bounded.rs (single receiver, cancel-safe recv).
+pub(crate) async fn network_loop<T>(
+    future: impl std::future::Future<Output = Result<T, Error>>,
+    commands: &mut tokio::sync::mpsc::Receiver<Command>,
+    mut owner: impl FnMut(NetworkEvent) -> Result<bool, Error>,
+) -> Result<T, Error> {
     tokio::pin!(future);
-    // Native supervisors enforce process budgets independently. Reconcile between bounded
-    // network operations, so synchronous OS fact checks cannot starve an artifact stream.
+    let period = std::time::Duration::from_millis(50);
+    let mut timer = tokio::time::interval_at(tokio::time::Instant::now() + period, period);
+    timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
-        tokio::select! {
-            biased;
-            result=&mut future=>return result,
-            command=commands.recv()=>{
-                if let Some(command)=command {core.handle(command);} else {core.stopping=true;}
-                if core.stopping{return Err(Error::Unavailable);}
+        let event = tokio::select! {
+            result = &mut future => return result,
+            command = commands.recv() => match command {
+                Some(command) => NetworkEvent::Command(command),
+                None => NetworkEvent::Closed,
             },
+            _ = timer.tick() => NetworkEvent::Reconcile,
+        };
+        if owner(event)? {
+            return Err(Error::Unavailable);
         }
     }
 }

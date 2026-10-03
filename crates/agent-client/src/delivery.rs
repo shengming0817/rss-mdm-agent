@@ -92,10 +92,13 @@ pub struct AbandonmentAck(FrozenAbandonment);
 impl<S: SecretProvider, C: Clock> Client<S, C> {
     /// Read original coordinates without granting Start or execution authority.
     pub fn association(&self, task: Uuid) -> Result<Option<Association>, Error> {
-        self.store
-            .get::<Binding>(&format!("binding/{task}"))
-            .map(|v| v.map(Association))
+        let binding = self.store.get::<Binding>(&format!("binding/{task}"))?;
+        if binding.as_ref().is_some_and(|binding| binding.task != task) {
+            return Err(Error::Conflict);
+        }
+        Ok(binding.map(Association))
     }
+
     fn check_association(&self, association: &Association) -> Result<(), Error> {
         let current = self
             .association(association.task())?

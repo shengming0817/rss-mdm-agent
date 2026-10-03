@@ -269,6 +269,7 @@ async fn accepted_remote_result_with_failed_local_confirmation_never_resends() {
         inner: DeterministicTestRunner::new(local::id("test-runner"), TestScenario::Complete, 16)
             .unwrap(),
         ready: Default::default(),
+        progress: Default::default(),
         capture: Default::default(),
     };
     let mut app = create_app(
@@ -334,6 +335,7 @@ async fn exercise_bridge(software: bool) {
         inner: DeterministicTestRunner::new(local::id("test-runner"), TestScenario::Complete, 16)
             .unwrap(),
         ready: Default::default(),
+        progress: Default::default(),
         capture: Default::default(),
     };
     let mut app = create_app(
@@ -731,6 +733,7 @@ async fn check_encoded_result(
         inner: DeterministicTestRunner::new(local::id("test-runner"), TestScenario::Complete, 16)
             .unwrap(),
         ready: Default::default(),
+        progress: Default::default(),
         capture: std::sync::Arc::new(std::sync::Mutex::new(Some(CaptureSpec {
             quiescent: true,
             stdout,
@@ -824,6 +827,7 @@ async fn root_exit_is_delivered_while_overall_quiescence_stays_unknown() {
         inner: DeterministicTestRunner::new(local::id("test-runner"), TestScenario::Complete, 16)
             .unwrap(),
         ready: Default::default(),
+        progress: Default::default(),
         capture: std::sync::Arc::new(std::sync::Mutex::new(Some(CaptureSpec {
             quiescent: false,
             stdout: b"{\"ok\":true}".to_vec(),
@@ -884,6 +888,7 @@ async fn acknowledged_v5_result_is_not_replaced_by_later_local_facts() {
         inner: DeterministicTestRunner::new(local::id("test-runner"), TestScenario::Complete, 16)
             .unwrap(),
         ready: Default::default(),
+        progress: Default::default(),
         capture: std::sync::Arc::new(std::sync::Mutex::new(Some(CaptureSpec {
             quiescent: false,
             stdout: b"{\"ok\":true}".to_vec(),
@@ -944,4 +949,434 @@ async fn acknowledged_v5_result_is_not_replaced_by_later_local_facts() {
         .status(&caller, &plan.spec().request.request_id)
         .unwrap();
     assert!(status.process.unwrap().quiescent);
+}
+
+// These regressions exercise real socket and both SQLite owners through the production adapter.
+type TestApp =
+    execution_app::ExecutionApp<local::TestHost, CapturingRunner, execution_sqlite::Store>;
+struct Started {
+    client: Client<Secrets, Time>,
+    app: TestApp,
+    server: Server,
+    host: local::TestHost,
+    runner: CapturingRunner,
+    bridge: ExecutionBridge<FixtureOutput>,
+    plan: execution_contract::FrozenExecution,
+    task: Uuid,
+    root: Root,
+    db: local::Database,
+}
+impl Started {
+    async fn new(steps: usize) -> Self {
+        use execution_app::*;
+        let server = Server::new().await;
+        let root = Root::new();
+        let mut client = server.client(&root, OpenMode::Create);
+        server.register(&mut client).await;
+        if steps > 0 {
+            server.data.lock().unwrap().software(steps, false);
+        }
+        let offer = client.claim().await.unwrap().offer.unwrap();
+        let task = offer.task_id();
+        let materials = client.prepare(&offer).await.unwrap();
+        client.received(&offer).await.unwrap();
+        let db = local::Database::new();
+        let plan = adapted_plan(steps > 0, "device-1", &offer);
+        let mut host = local::TestHost::new();
+        host.template = plan.clone();
+        let runner = CapturingRunner {
+            inner: DeterministicTestRunner::new(
+                local::id("test-runner"),
+                TestScenario::Complete,
+                16,
+            )
+            .unwrap(),
+            ready: Default::default(),
+            progress: Default::default(),
+            capture: Default::default(),
+        };
+        let mut app = create_app(
+            &db.path,
+            host.clone(),
+            runner.clone(),
+            AppConfig::test_defaults(1),
+        )
+        .unwrap();
+        let caller = RequestContext {
+            actor: plan.spec().request.actor.clone(),
+        };
+        let bridge = ExecutionBridge::new(local::id("agent-consumer"), FixtureOutput);
+        let prepared = bridge
+            .prepare(&offer, &materials, &app, &caller, &plan)
+            .unwrap();
+        let start = client.request_start(&offer, &materials).await.unwrap();
+        bridge
+            .dispatch(&mut client, start, &materials, &mut app, prepared)
+            .unwrap();
+        Self {
+            client,
+            app,
+            server,
+            host,
+            runner,
+            bridge,
+            plan,
+            task,
+            root,
+            db,
+        }
+    }
+}
+
+#[tokio::test]
+async fn pending_http_without_ipc_commands_still_reconciles_the_original_journal() {
+    use crate::service::{network_loop, NetworkEvent};
+    let mut case = Started::new(0).await;
+    let gate = std::sync::Arc::new(tokio::sync::Notify::new());
+    case.server.data.lock().unwrap().claim_pause = Some(gate.clone());
+    let (_sender, mut commands) = tokio::sync::mpsc::channel(32);
+    let request = case.plan.spec().request.request_id.clone();
+    let mut progressed = false;
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        network_loop(case.client.claim(), &mut commands, |event| {
+            assert!(matches!(event, NetworkEvent::Reconcile));
+            if case.server.data.lock().unwrap().claim_waiting {
+                case.app.reconcile(&request).unwrap();
+                progressed = case
+                    .app
+                    .service_delivery(&request, &local::id("agent-consumer"), 64)
+                    .unwrap()
+                    .iter()
+                    .any(|event| event.process.as_ref().is_some_and(|p| p.finished));
+                if progressed {
+                    gate.notify_one();
+                }
+            }
+            Ok(false)
+        }),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(progressed && case.server.data.lock().unwrap().claim_waiting);
+    assert_eq!(result.offer.unwrap().task_id(), case.task);
+    assert_eq!(case.runner.inner.dispatch_count(), 1);
+}
+
+#[tokio::test]
+async fn durable_ack_then_partial_confirm_then_restart_confirms_only_original_sources() {
+    let mut case = Started::new(0).await;
+    case.app
+        .reconcile(&case.plan.spec().request.request_id)
+        .unwrap();
+    let pending = case
+        .bridge
+        .prepare_delivery(&mut case.client, case.task, &mut case.app, 64)
+        .unwrap()
+        .unwrap();
+    drop(pending);
+    let association = case.client.association(case.task).unwrap().unwrap();
+    let frozen = case.client.pending_result(&association).unwrap().unwrap();
+    let ack = case.client.send_result(frozen).await.unwrap();
+    let events = ack.events().to_vec();
+    assert!(events.len() >= 2);
+    let request = case.plan.spec().request.request_id.clone();
+    case.app
+        .service_confirm(&request, &local::id("agent-consumer"), &events[0])
+        .unwrap();
+    case.host.state.lock().unwrap().accesses = Some(vec![execution_app::Access::RunnerFact]);
+    assert!(case
+        .app
+        .service_confirm(&request, &local::id("agent-consumer"), &events[1])
+        .is_err());
+    let Started {
+        client,
+        app,
+        server,
+        host,
+        runner,
+        bridge,
+        plan,
+        task,
+        root,
+        db,
+    } = case;
+    drop(client);
+    drop(app);
+    host.state.lock().unwrap().accesses = None;
+    let mut client = server.client(&root, OpenMode::Existing);
+    assert!(matches!(
+        client.validate_result_ack(&ack),
+        Err(Error::Conflict)
+    ));
+    let mut app = reopen_app(
+        &db.path,
+        host,
+        runner.clone(),
+        execution_app::AppConfig::test_defaults(1),
+    )
+    .unwrap();
+    assert_eq!(
+        bridge.flush(&mut client, task, &mut app, 64).await.unwrap(),
+        1
+    );
+    assert!(app
+        .service_delivery(&request, &local::id("agent-consumer"), 64)
+        .unwrap()
+        .is_empty());
+    assert_eq!(
+        bridge.flush(&mut client, task, &mut app, 64).await.unwrap(),
+        0
+    );
+    assert_eq!(server.data.lock().unwrap().result_calls, 1);
+    assert_eq!(runner.inner.dispatch_count(), 1);
+    assert_eq!(
+        app.frozen_input(
+            &execution_app::RequestContext {
+                actor: plan.spec().request.actor.clone()
+            },
+            &request
+        )
+        .unwrap()
+        .digest(),
+        plan.digest()
+    );
+}
+
+#[tokio::test]
+async fn recovery_rejects_wrong_digest_and_attempt_without_dispatching() {
+    let case = Started::new(0).await;
+    let Started {
+        client,
+        app,
+        server,
+        host,
+        runner,
+        bridge,
+        plan: _,
+        task,
+        root,
+        db,
+    } = case;
+    drop(client);
+    drop(app);
+    let conn = rusqlite::Connection::open(root.path.join("communication.sqlite")).unwrap();
+    let key = format!("binding/{task}");
+    let bytes: Vec<u8> = conn
+        .query_row("SELECT body FROM state WHERE key=?1", [&key], |r| r.get(0))
+        .unwrap();
+    let original: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let mut client = server.client(&root, OpenMode::Existing);
+    let app = reopen_app(
+        &db.path,
+        host,
+        runner.clone(),
+        execution_app::AppConfig::test_defaults(1),
+    )
+    .unwrap();
+    for field in ["digest", "attempt", "request"] {
+        let mut changed = original.clone();
+        changed[field] = serde_json::Value::String(if field == "digest" {
+            "b".repeat(64)
+        } else if field == "attempt" {
+            Uuid::new_v4().to_string()
+        } else {
+            "foreign-request".to_owned()
+        });
+        conn.execute(
+            "UPDATE state SET body=?1 WHERE key=?2",
+            rusqlite::params![serde_json::to_vec(&changed).unwrap(), key],
+        )
+        .unwrap();
+        assert!(matches!(
+            bridge.recover_binding(&mut client, task, &app),
+            Err(Error::Conflict)
+        ));
+    }
+    assert_eq!(runner.inner.dispatch_count(), 1);
+}
+
+#[tokio::test]
+async fn revoked_and_expired_unknown_keeps_original_execution_and_association() {
+    let mut case = Started::new(0).await;
+    *case.runner.capture.lock().unwrap() = Some(CaptureSpec {
+        quiescent: false,
+        stdout: b"{\"ok\":true}".to_vec(),
+        stderr: vec![],
+        quality: execution_contract::OutputQuality::Complete,
+        end: execution_contract::ProcessEnd::Exited,
+    });
+    let request = case.plan.spec().request.request_id.clone();
+    case.app.reconcile(&request).unwrap();
+    case.server.time.set(75);
+    case.server.data.lock().unwrap().denied = true;
+    case.client
+        .queue_report(
+            "inventory",
+            ReportBody::Failed {
+                code: FailureCode::CollectionFailed,
+            },
+            1,
+        )
+        .unwrap();
+    assert_eq!(case.client.flush_reports(1).await, Err(Error::Identity));
+    case.app.reconcile(&request).unwrap();
+    let status = case
+        .app
+        .status(
+            &execution_app::RequestContext {
+                actor: case.plan.spec().request.actor.clone(),
+            },
+            &request,
+        )
+        .unwrap();
+    assert_ne!(status.phase, execution_app::TaskPhase::Verified);
+    assert!(case
+        .bridge
+        .finish(
+            &mut case.client,
+            case.task,
+            &case.app,
+            &execution_app::RequestContext {
+                actor: case.plan.spec().request.actor.clone()
+            }
+        )
+        .is_err());
+    assert!(case.client.association(case.task).unwrap().is_some());
+    assert_eq!(case.runner.inner.dispatch_count(), 1);
+}
+
+#[tokio::test]
+async fn software_restart_projects_each_steps_own_committed_facts() {
+    use execution_app::RunnerPort;
+    use execution_contract::{SoftwareCheckpoint as C, SoftwarePhase as P, SoftwareState as S};
+    let mut case = Started::new(2).await;
+    let request = case.plan.spec().request.request_id.clone();
+    let caller = execution_app::RequestContext {
+        actor: case.plan.spec().request.actor.clone(),
+    };
+    let attempt = case
+        .app
+        .status(&caller, &request)
+        .unwrap()
+        .attempt_id
+        .unwrap();
+    let mut child = case.runner.evidence(&case.plan, &attempt).unwrap().unwrap();
+    child.stdout = b"step-zero".to_vec();
+    child.stderr.clear();
+    child.total_output_bytes = child.stdout.len() as u64;
+    let progress = execution_contract::SoftwareProgress {
+        content_digest: case.plan.digest().clone(),
+        attempt_id: attempt,
+        runner: case.runner.id(),
+        elapsed_ms: 100,
+        output_bytes: child.total_output_bytes,
+        checkpoints: vec![
+            C::Begin {
+                step: 0,
+                phase: P::Before,
+            },
+            C::End {
+                step: 0,
+                phase: P::Before,
+                process: None,
+                detected: Some(S::Absent {}),
+                quiescent: true,
+                duration_ms: 0,
+            },
+            C::Begin {
+                step: 0,
+                phase: P::Mutation,
+            },
+            C::End {
+                step: 0,
+                phase: P::Mutation,
+                process: Some(Box::new(child)),
+                detected: None,
+                quiescent: true,
+                duration_ms: 10,
+            },
+            C::Begin {
+                step: 0,
+                phase: P::After,
+            },
+            C::End {
+                step: 0,
+                phase: P::After,
+                process: None,
+                detected: Some(S::Present {
+                    version: execution_contract::PackageValue::new("1.0").unwrap(),
+                }),
+                quiescent: true,
+                duration_ms: 0,
+            },
+            C::Complete { step: 0 },
+            C::Begin {
+                step: 1,
+                phase: P::Before,
+            },
+            C::End {
+                step: 1,
+                phase: P::Before,
+                process: None,
+                detected: Some(S::Absent {}),
+                quiescent: true,
+                duration_ms: 0,
+            },
+            C::Begin {
+                step: 1,
+                phase: P::Mutation,
+            },
+        ],
+    };
+    assert!(progress.valid_for(&case.plan));
+    *case.runner.progress.lock().unwrap() = Some(progress.clone());
+    *case.runner.capture.lock().unwrap() = Some(CaptureSpec {
+        quiescent: false,
+        stdout: vec![],
+        stderr: vec![],
+        quality: execution_contract::OutputQuality::Complete,
+        end: execution_contract::ProcessEnd::Exited,
+    });
+    case.app.reconcile(&request).unwrap();
+    let Started {
+        client,
+        app,
+        server,
+        host,
+        runner,
+        bridge,
+        plan: _,
+        task,
+        root,
+        db,
+    } = case;
+    drop(client);
+    drop(app);
+    let mut client = server.client(&root, OpenMode::Existing);
+    let mut app = reopen_app(
+        &db.path,
+        host,
+        runner.clone(),
+        execution_app::AppConfig::test_defaults(1),
+    )
+    .unwrap();
+    // No new runner observation participates in this wire result; only the committed journal does.
+    *runner.progress.lock().unwrap() = None;
+    assert_eq!(
+        bridge.flush(&mut client, task, &mut app, 64).await.unwrap(),
+        1
+    );
+    let data = server.data.lock().unwrap();
+    let result = data.results.values().next().unwrap();
+    let steps = result["event"]["result"]["steps"].as_array().unwrap();
+    assert_eq!(steps.len(), 2);
+    assert_eq!(steps[0]["index"], 0);
+    assert_eq!(steps[1]["index"], 1);
+    assert_eq!(steps[0]["diagnostics"]["stdout"], "step-zero");
+    assert_eq!(steps[1]["diagnostics"]["stdout"], "");
+    assert_eq!(steps[0]["process"]["kind"], "exited");
+    assert_eq!(steps[1]["process"]["kind"], "failed");
+    assert_eq!(runner.inner.dispatch_count(), 1);
 }

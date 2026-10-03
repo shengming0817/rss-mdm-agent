@@ -22,6 +22,7 @@ pub struct CaptureSpec {
 pub struct CapturingRunner {
     pub inner: execution_app::DeterministicTestRunner,
     pub ready: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    pub progress: std::sync::Arc<std::sync::Mutex<Option<execution_contract::SoftwareProgress>>>,
     pub capture: std::sync::Arc<std::sync::Mutex<Option<CaptureSpec>>>,
 }
 impl execution_app::RunnerPort for CapturingRunner {
@@ -80,6 +81,9 @@ impl execution_app::RunnerPort for CapturingRunner {
         use execution_contract::*;
         if !self.ready.load(Ordering::SeqCst) || p.spec().execution.software_program().is_none() {
             return Ok(None);
+        }
+        if let Some(progress) = self.progress.lock().unwrap().as_ref() {
+            return Ok(Some(progress.clone()));
         }
         let quiet = self
             .capture
@@ -212,6 +216,23 @@ pub fn adapted_plan(
                 .collect::<String>(),
         )
         .unwrap();
+    }
+    if let (
+        ExecutionSpec::SoftwareProgram { program },
+        agent_client::wire::TaskPayload::Software(remote),
+    ) = (&mut spec.execution, offer.payload())
+    {
+        let template = program.steps[0].clone();
+        program.steps = remote
+            .steps
+            .iter()
+            .map(|step| {
+                let mut local = template.clone();
+                local.package = PackageValue::new(&step.action.package).unwrap();
+                local.version = PackageValue::new(&step.action.version).unwrap();
+                local
+            })
+            .collect();
     }
     FrozenExecution::freeze(spec, &execution_app::test_execution_limits()).unwrap()
 }
