@@ -215,7 +215,8 @@ fn peer_token(peer: &crate::host::Peer) -> Result<std::os::windows::io::OwnedHan
     if unsafe { OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, 1, &mut handle) } == 0 {
         return Err(Error::Denied);
     }
-    own(handle)
+    // SAFETY: this OS call returns a fresh owned handle; this is its only owner.
+    unsafe { own(handle) }
 }
 pub(crate) fn session_binding(peer: &crate::host::Peer) -> Result<Id, Error> {
     crate::windows_identity::token_session_binding(raw(&peer_token(peer)?))
@@ -232,7 +233,9 @@ pub(crate) fn authenticate(
     {
         return Err(Error::Denied);
     }
-    let process = own(unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, peer.pid()) })?;
+    // SAFETY: this OS call returns a fresh owned handle; this is its only owner.
+    let process =
+        unsafe { own({ OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, peer.pid()) }) }?;
     let mut path = vec![0u16; 32768];
     let mut size = path.len() as u32;
     if unsafe { QueryFullProcessImageNameW(raw(&process), 0, path.as_mut_ptr(), &mut size) } == 0 {
@@ -258,21 +261,24 @@ fn listener(name: &str, sddl: &str) -> Result<NamedPipeServer, Error> {
     let descriptor = security(sddl)?;
     let attributes = SECURITY_ATTRIBUTES {
         nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
-        lpSecurityDescriptor: descriptor.0,
+        lpSecurityDescriptor: descriptor.as_ptr(),
         bInheritHandle: 0,
     };
-    let handle = own(unsafe {
-        CreateNamedPipeW(
-            wide(name).as_ptr(),
-            PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED | FILE_FLAG_FIRST_PIPE_INSTANCE,
-            PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
-            1,
-            65536,
-            65536,
-            5000,
-            &attributes,
-        )
-    })?;
+    // SAFETY: this OS call returns a fresh owned handle; this is its only owner.
+    let handle = unsafe {
+        own({
+            CreateNamedPipeW(
+                wide(name).as_ptr(),
+                PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED | FILE_FLAG_FIRST_PIPE_INSTANCE,
+                PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
+                1,
+                65536,
+                65536,
+                5000,
+                &attributes,
+            )
+        })
+    }?;
     unsafe { NamedPipeServer::from_raw_handle(handle.into_raw_handle()) }
         .map_err(|_| Error::Unavailable)
 }
@@ -389,7 +395,8 @@ async fn call(pipe: &mut NamedPipeServer, owner: &OwnerThread) -> Result<(), Err
     {
         return Err(Error::Denied);
     }
-    let process = own(unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) })?;
+    // SAFETY: this OS call returns a fresh owned handle; this is its only owner.
+    let process = unsafe { own({ OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) }) }?;
     let mut connection = null_mut();
     if unsafe {
         DuplicateHandle(
@@ -405,7 +412,8 @@ async fn call(pipe: &mut NamedPipeServer, owner: &OwnerThread) -> Result<(), Err
     {
         return Err(Error::Unavailable);
     }
-    let connection = own(connection)?;
+    // SAFETY: this OS call returns a fresh owned handle; this is its only owner.
+    let connection = unsafe { own(connection) }?;
     let size = pipe.read_u32_le().await.map_err(|_| Error::Unavailable)? as usize;
     if size == 0 || size > host::FRAME_LIMIT {
         return Err(Error::InvalidInput);
@@ -552,12 +560,15 @@ fn query_at(
             if unsafe { GetNamedPipeServerProcessId(pipe, &mut pid) } == 0 {
                 return Err(Error::Denied);
             }
-            let process = own(unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) })?;
+            // SAFETY: this OS call returns a fresh owned handle; this is its only owner.
+            let process =
+                unsafe { own({ OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) }) }?;
             let mut handle = null_mut();
             if unsafe { OpenProcessToken(raw(&process), TOKEN_QUERY, &mut handle) } == 0 {
                 return Err(Error::Denied);
             }
-            let token = own(handle)?;
+            // SAFETY: this OS call returns a fresh owned handle; this is its only owner.
+            let token = unsafe { own(handle) }?;
             let (subject, session) = crate::windows_identity::token_subject(raw(&token))?;
             if !policy.subjects.contains(&subject)
                 || expected_session.is_some_and(|expected| session != expected)

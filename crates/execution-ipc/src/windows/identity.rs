@@ -17,7 +17,12 @@ use windows_sys::Win32::{
 pub fn wide(value: impl AsRef<OsStr>) -> Vec<u16> {
     value.as_ref().encode_wide().chain(Some(0)).collect()
 }
-pub fn own(handle: HANDLE) -> Result<OwnedHandle, Error> {
+/// Take ownership of one newly returned native handle.
+///
+/// # Safety
+/// A non-null, non-invalid handle must be open, uniquely owned by the caller and
+/// releasable with `CloseHandle`. No other owner may close it after this call.
+pub unsafe fn own(handle: HANDLE) -> Result<OwnedHandle, Error> {
     if handle.is_null() || handle == INVALID_HANDLE_VALUE {
         Err(Error::Unavailable)
     } else {
@@ -27,7 +32,22 @@ pub fn own(handle: HANDLE) -> Result<OwnedHandle, Error> {
 pub fn raw(handle: &OwnedHandle) -> HANDLE {
     handle.as_raw_handle()
 }
-pub struct Local(pub *mut c_void);
+/// Unique owner of an allocation returned by a LocalAlloc-family native API.
+pub struct Local(*mut c_void);
+impl Local {
+    /// Take ownership of an allocation released by `LocalFree`.
+    ///
+    /// # Safety
+    /// `pointer` must be null or a live LocalFree-compatible allocation uniquely
+    /// owned by the caller. Ownership is transferred and must not be reused.
+    pub unsafe fn from_raw(pointer: *mut c_void) -> Self {
+        Self(pointer)
+    }
+    /// Borrow the allocation while its owner remains alive.
+    pub fn as_ptr(&self) -> *mut c_void {
+        self.0
+    }
+}
 impl Drop for Local {
     fn drop(&mut self) {
         unsafe {
@@ -35,12 +55,17 @@ impl Drop for Local {
         }
     }
 }
-pub fn sid(sid: PSID) -> Result<String, Error> {
+/// Copy a live native SID into its string representation.
+///
+/// # Safety
+/// `sid` must point to a valid readable SID for the entire call.
+pub unsafe fn sid(sid: PSID) -> Result<String, Error> {
     let mut text = null_mut();
     if unsafe { ConvertSidToStringSidW(sid, &mut text) } == 0 {
         return Err(Error::Unavailable);
     }
-    let _owner = Local(text.cast());
+    // SAFETY: the successful OS call allocated this pointer for LocalFree, once.
+    let _owner = unsafe { Local::from_raw(text.cast()) };
     let mut len = 0;
     while len < 256 && unsafe { *text.add(len) } != 0 {
         len += 1
@@ -56,7 +81,8 @@ pub fn token_identity() -> Result<(String, u32), Error> {
     if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut handle) } == 0 {
         return Err(Error::Unbound);
     }
-    let token = own(handle)?;
+    // SAFETY: this OS call returns a fresh owned handle; this is its only owner.
+    let token = unsafe { own(handle) }?;
     token_subject(raw(&token))
 }
 pub fn token_subject(token: HANDLE) -> Result<(String, u32), Error> {
@@ -74,7 +100,8 @@ pub fn token_subject(token: HANDLE) -> Result<(String, u32), Error> {
     {
         return Err(Error::Unbound);
     }
-    let subject = sid(unsafe { (*(buffer.as_ptr() as *const TOKEN_USER)).User.Sid })?;
+    // SAFETY: the successful native query owns the readable SID storage through this call.
+    let subject = unsafe { sid({ (*(buffer.as_ptr() as *const TOKEN_USER)).User.Sid }) }?;
     let mut session = 0u32;
     if unsafe {
         GetTokenInformation(
@@ -95,7 +122,8 @@ pub fn current_session_binding() -> Result<Id, Error> {
     if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut handle) } == 0 {
         return Err(Error::Unbound);
     }
-    let token = own(handle)?;
+    // SAFETY: this OS call returns a fresh owned handle; this is its only owner.
+    let token = unsafe { own(handle) }?;
     token_session_binding(raw(&token))
 }
 pub fn token_session_binding(token: HANDLE) -> Result<Id, Error> {
@@ -136,7 +164,8 @@ pub fn security(text: &str) -> Result<Local, Error> {
     {
         return Err(Error::Unavailable);
     }
-    Ok(Local(value))
+    // SAFETY: the successful OS call allocated this pointer for LocalFree, once.
+    Ok(unsafe { Local::from_raw(value) })
 }
 pub fn nonce() -> Result<String, Error> {
     let mut bytes = [0u8; 16];
@@ -184,7 +213,8 @@ pub fn active_user_session() -> Result<(String, u32), Error> {
     if unsafe { WTSQueryUserToken(selected[0], &mut token) } == 0 {
         return Err(Error::Unavailable);
     }
-    let token = own(token)?;
+    // SAFETY: this OS call returns a fresh owned handle; this is its only owner.
+    let token = unsafe { own(token) }?;
     let identity = token_subject(raw(&token))?;
     if identity.1 != selected[0] || identity.0 == "S-1-5-18" {
         return Err(Error::Denied);
