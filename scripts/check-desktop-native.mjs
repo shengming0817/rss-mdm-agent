@@ -252,7 +252,7 @@ const key = (code, shift = false) => {
   const foreground = native("get frontmost");
   if (foreground !== "true")
     result.foregroundFailure = script(
-      'tell application "System Events" to get {name, unix id} of first application process whose frontmost is true',
+      'tell application "System Events" to get {name, unix id} of (first application process whose frontmost is true)',
     );
   assert.equal(
     foreground,
