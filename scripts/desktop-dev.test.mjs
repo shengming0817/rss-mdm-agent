@@ -16,7 +16,12 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { test } from "node:test";
 import { waitForAppearance } from "./native-evidence.mjs";
-import { reapOwnedProcessGroup } from "./desktop-dev-process.mjs";
+import {
+  reapOwnedProcessGroup,
+  processField,
+  processChildren,
+  runOwnedScopeProbe,
+} from "./desktop-dev-process.mjs";
 import {
   developmentFingerprint,
   ensureDevelopmentRuntime,
@@ -671,5 +676,163 @@ test("stalled controlled worker is killed and reaped without signalling another 
     await reapOwnedProcessGroup(survivor, 500, 100, 500);
     if (child.exitCode === null && child.signalCode === null)
       child.kill("SIGKILL");
+  }
+});
+
+test("process observation distinguishes absence from failure", () => {
+  const missing = Object.assign(Error("no matches"), {
+    status: 1,
+    stdout: "",
+    stderr: "",
+  });
+  const deny = Object.assign(Error("query denied"), {
+    status: 1,
+    stdout: "",
+    stderr: "permission denied",
+  });
+  const unavailable = Object.assign(Error("tool unavailable"), {
+    code: "ENOENT",
+  });
+  assert.equal(
+    processField(99, "comm", () => {
+      throw missing;
+    }),
+    undefined,
+  );
+  assert.deepEqual(
+    processChildren(99, () => {
+      throw missing;
+    }),
+    [],
+  );
+  for (const error of [deny, unavailable]) {
+    assert.throws(
+      () =>
+        processField(99, "comm", () => {
+          throw error;
+        }),
+      error,
+    );
+    assert.throws(
+      () =>
+        processChildren(99, () => {
+          throw error;
+        }),
+      error,
+    );
+  }
+  assert.equal(
+    processField(99, "comm", () => "/frozen/node\n"),
+    "/frozen/node",
+  );
+  assert.deepEqual(
+    processChildren(99, () => "101\n102\n"),
+    [101, 102],
+  );
+});
+
+test("outer scope owner reaps detached descendants after timeout or inner close failure", async () => {
+  if (process.platform !== "darwin") return;
+  const source = `
+    const input=JSON.parse(process.argv[1]);
+    process.kill(input.actor.scope.root,'SIGKILL');
+    if(input.fail)throw Error('fixture resource close failed');
+    await new Promise(()=>{setInterval(()=>{},1000)});
+  `;
+  const survivor = spawn(
+    process.execPath,
+    ["-e", "console.log('ready');setInterval(()=>{},1000)"],
+    { detached: true, stdio: ["ignore", "pipe", "pipe"] },
+  );
+  try {
+    await once(survivor.stdout, "data");
+    for (const fail of [false, true]) {
+      let entry,
+        cleaned = false;
+      await assert.rejects(
+        runOwnedScopeProbe(
+          process.execPath,
+          source,
+          { fail },
+          (proof, owner) => {
+            assert.equal(Number(processField(proof.scope.root, "ppid")), owner);
+            assert.equal(
+              processField(proof.anchor.pid, "lstart"),
+              proof.anchor.start,
+            );
+            assert.equal(
+              Number(processField(proof.anchor.pid, "pgid")),
+              proof.scope.root,
+            );
+            entry = proof;
+          },
+          async () => {
+            assert.ok(entry, "scope handed off before fault");
+            assert.equal(processField(entry.anchor.pid, "lstart"), undefined);
+            cleaned = true;
+          },
+          undefined,
+          2000,
+        ),
+        fail ? /fixture resource close failed/ : /deadline exceeded/,
+      );
+      assert.equal(cleaned, true);
+      process.kill(survivor.pid, 0);
+    }
+  } finally {
+    survivor.kill("SIGTERM");
+    await reapOwnedProcessGroup(survivor, 500, 100, 500);
+  }
+});
+
+test("actor creation owner reaps before handoff on cancellation and timeout", async () => {
+  if (process.platform !== "darwin") return;
+  for (const cancel of [true, false]) {
+    const root = mkdtempSync(join(tmpdir(), "scope-creation-"));
+    const marker = join(root, "actor.json");
+    const controller = new AbortController();
+    let registered = false,
+      cleaned = false,
+      actor;
+    try {
+      const pending = runOwnedScopeProbe(
+        process.execPath,
+        "throw Error('must not enter executor')",
+        {
+          actorRegistrationDelayMs: 5000,
+          actorRecoveryPath: marker,
+        },
+        () => {
+          registered = true;
+        },
+        () => {
+          cleaned = true;
+        },
+        controller.signal,
+        cancel ? 10000 : 4000,
+      );
+      const rejected = assert.rejects(
+        pending,
+        cancel ? /cancelled/ : /deadline exceeded/,
+      );
+      const deadline = Date.now() + 3500;
+      while (!existsSync(marker)) {
+        assert.ok(Date.now() < deadline);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      actor = JSON.parse(readFileSync(marker, "utf8"));
+      assert.equal(Number(processField(actor.child, "pgid")), actor.parent);
+      process.kill(actor.child, 0);
+      if (cancel) controller.abort();
+      await rejected;
+      assert.equal(registered, false);
+      assert.equal(cleaned, true);
+      assert.equal(processField(actor.parent, "lstart"), undefined);
+      assert.equal(processField(actor.child, "lstart"), undefined);
+      assert.throws(() => process.kill(-actor.parent, 0), { code: "ESRCH" });
+    } finally {
+      controller.abort();
+      rmSync(root, { recursive: true, force: true });
+    }
   }
 });

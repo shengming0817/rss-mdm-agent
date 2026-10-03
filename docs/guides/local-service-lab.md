@@ -94,4 +94,54 @@ Windows 11 x64 目标通过固定 pnpm 环境执行 `pnpm exec pwsh -File script
 先由既有部署 owner 准备真实注册与受控配置；系统阶段在管理员会话执行，VerifyUser 在原非提升登录会话执行。
 RefreshSystem 还要求 CurrentBinary/CurrentConfig，复用安装 owner 的持久身份检查。
 该入口只证明已运行的阶段；远程/同名管道、跨用户/会话、秘密作用域、旧连接撤销和真实桌面进程链仍须补齐目标环境矩阵。
-开发机不运行 Windows 入口。回执明确区分成功、失败和未执行；#2559 仍以两平台全部适用场景通过为关闭条件。
+开发机不运行 Windows 入口。回执明确区分成功、失败和未执行；本轮验收范围为 macOS；Windows 未验证项继续留在 #2559，工单保持开放。
+
+### macOS 安全矩阵
+
+继续使用本页的服务安装和原生桌面入口。构建
+`cargo build --locked --release -p execution-runner --example macos-security-probe`
+后，将 probe 签名并准备另一份不同代码身份的同工具副本；二者均在冻结前完成，
+分别通过 `--security-probe` 和 `--untrusted-probe` 加入现有 candidate。
+只有获准 probe 被加入实验安装的客户端 pins，错误身份副本保持未获准。
+生产系统服务不提供测试命令或授权旁路。
+
+向现有 `verify-execution-macos.py` 或
+`pnpm check:desktop-native --controlled-service --candidate <candidate.json>` 增加 `--security`，
+执行原生非法字段/方法/版本、大小限制、重复与过期、错误代码身份、假服务、helper/worker
+边界、刷新与撤销。完整桌面旅程还覆盖真实 WKWebView、manifest 固定 Codex、
+Host/launcher 故障、保留后代和未知 scope。真实 Codex 链分别验证 Host/launcher
+崩溃后的整组回收；保留后代与未知 scope 复用现有 launch-fence 故障入口、冻结 runtime
+和隔离存储，要求存活后代、阻断恢复、保留原 fence 以及本次拥有 scope 的回收证据。
+模型端仍是确定性协议样本，
+在线模型能力由既有 smoke 单独验证。
+
+管理员授权使用 `--authorization-password-file <主仓库绝对路径/.passwd>`。
+文件必须是当前用户拥有、权限 600 的普通文件；不支持 symlink。
+该文件由 `/.passwd` 忽略，不复制进 worktree、回执或命令参数中的秘密字段。
+
+回执用 `journeyStatus` 表示本次旅程结果，用 `security.scenarios` 逐项记录
+`passed / failed / notApplicable / notExecuted`，完整矩阵由 `security.status` 汇总。
+旅程通过但矩阵未完成时顶层为 `partial`。旧 `unexecutedSecurity` 字段直接退出，不双读旧回执。
+macOS 普通 PKG 包装执行保留既有保守语义：不保证逃逸后代停止，可能返回
+`outcomeUnknown / capture_failed`。回执保留 `executionUncertain`；旅程仅在原尝试、
+后台确认、安装器退出及独立设备效果全部相符时接纳该已知不确定性，不改写执行成功。
+刷新停止前先验证原 PID、持久事实和正常用户健康查询；停止后失败比较完整配置值，
+保留注册、凭据及 journal，不要求旧 PID 存活。SQLite 权限检查不得另开、关闭活跃
+数据或 sidecar 文件，以免释放同进程 POSIX 锁并破坏 WAL 共享内存。
+
+五秒 challenge 不属于 IPC V7，记录为有依据的不适用；连接寿命和业务 offer 有效期分别实测。
+连接场景先用现有空 helper 注册的拒绝回包建立真实 NSXPC，且不消费业务调用额度。
+重启场景允许 NSXPC 按原 pins 重新认证新服务，要求旧实例终止、实际新 PID 及无新增执行证据。
+未安装、未就绪、超时及未连接到攻击端点不能作为身份攻击被拒绝的证据。
+
+跨用户和登录世代在专用可重置 macOS 环境执行，保留原实验服务、backend 和固定候选。
+同一脚本提供 `--login-phase prepare|cross-user|resume|confirm`、
+`--deployment-config <受保护配置>`、`--login-state <checkpoint.json>`，并使用新 `--output` 目录。
+prepare 要求有效期至少五分钟的 user-initiated offer，保存需要确认的原请求与真实 UID/ASID；
+随后由操作员切换第二真实 GUI 用户执行 cross-user，或注销/重新登录原用户执行 resume。
+cross-user 的拒绝先记录为待确认；回到原用户后以 confirm 和
+`--login-response <第二用户回执>` 核验服务 ready、原 offer 未变及 journal 无新事实，才记通过。
+resume 同样在拒绝前后核验这些前提，不把撤销、旧产物或 offer 被替换造成的拒绝当作登录边界证据。
+检查点含请求关联数据，按测试主体受控交接；不含授权秘密。resume 要求 offer 仍未过期。
+脚本不创建账户、不自动注销，不使用 sudo 切 UID 代替 GUI 登录。缺环境时保留未执行，
+不得把这两个场景或 Windows 计为通过。

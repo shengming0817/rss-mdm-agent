@@ -74,6 +74,40 @@ pub fn private_handle(file: &File) -> io::Result<()> {
     acl(file, true)?;
     Ok(())
 }
+pub fn sqlite_file(path: &Path) -> io::Result<()> {
+    let path = normalized(path)?;
+    let _parent = directory(path.parent().ok_or(io::ErrorKind::InvalidInput)?, false)?;
+    let before = std::fs::symlink_metadata(&path)?;
+    // SAFETY: geteuid reads only the current process kernel identity.
+    if !before.is_file() || before.uid() != unsafe { libc::geteuid() } || before.mode() & 0o077 != 0
+    {
+        return Err(io::Error::other("private SQLite file required"));
+    }
+    #[cfg(target_os = "macos")]
+    {
+        unsafe extern "C" {
+            fn acl_get_link_np(path: *const libc::c_char, kind: i32) -> *mut std::ffi::c_void;
+        }
+        let name = text(path.as_os_str())?;
+        // ref: macOS SDK sys/acl.h acl_get_link_np. Metadata-only and no symlink following;
+        // opening a second data descriptor would destroy the caller's POSIX SQLite locks.
+        // SAFETY: name is a live NUL-terminated CString and acl_get_link_np does not
+        // retain it. ACL_TYPE_EXTENDED is the SDK constant; acl_value takes ownership
+        // of the returned ACL allocation and frees it, including rejection paths.
+        let raw = unsafe { acl_get_link_np(name.as_ptr(), 0x100) };
+        acl_value(raw, true)?;
+    }
+    let after = std::fs::symlink_metadata(&path)?;
+    if (before.dev(), before.ino(), before.uid(), before.mode())
+        != (after.dev(), after.ino(), after.uid(), after.mode())
+    {
+        return Err(io::Error::other(
+            "SQLite metadata changed during validation",
+        ));
+    }
+    Ok(())
+}
+
 pub fn directory(path: &Path, create: bool) -> io::Result<File> {
     let path = normalized(path)?;
     // SAFETY: the root pathname is a static NUL-terminated string; open returns a new owned fd.
@@ -189,9 +223,16 @@ pub fn publish_new(dir: &File, staged: &Path, target: &Path) -> io::Result<()> {
 }
 #[cfg(target_os = "macos")]
 fn acl(file: &File, private: bool) -> io::Result<()> {
+    unsafe extern "C" {
+        fn acl_get_fd_np(fd: i32, kind: i32) -> *mut std::ffi::c_void;
+    }
+    // SAFETY: file remains owned and live; the returned ACL has independent ownership.
+    acl_value(unsafe { acl_get_fd_np(file.as_raw_fd(), 0x100) }, private)
+}
+#[cfg(target_os = "macos")]
+fn acl_value(raw: *mut std::ffi::c_void, private: bool) -> io::Result<()> {
     use std::ffi::c_void;
     unsafe extern "C" {
-        fn acl_get_fd_np(fd: i32, kind: i32) -> *mut c_void;
         fn acl_get_entry(acl: *mut c_void, which: i32, entry: *mut *mut c_void) -> i32;
         fn acl_get_tag_type(entry: *mut c_void, tag: *mut i32) -> i32;
         fn acl_get_permset(entry: *mut c_void, set: *mut *mut c_void) -> i32;
@@ -204,15 +245,12 @@ fn acl(file: &File, private: bool) -> io::Result<()> {
     impl Drop for Acl {
         fn drop(&mut self) {
             // SAFETY: Acl is constructed only from non-null allocations returned by
-            // acl_get_fd_np/acl_get_qualifier. Both require acl_free, and this is their sole owner.
+            // acl_get_fd_np/acl_get_link_np/acl_get_qualifier; this is their sole owner.
             unsafe {
                 acl_free(self.0);
             }
         }
     }
-    // SAFETY: file owns the live fd for this entire function. ACL_TYPE_EXTENDED
-    // is supported by Darwin; a non-null result is an independent owned ACL allocation.
-    let raw = unsafe { acl_get_fd_np(file.as_raw_fd(), 0x100) };
     if raw.is_null() {
         let e = io::Error::last_os_error();
         // Darwin uses ENOENT for an absent extended ACL on an already-open object.

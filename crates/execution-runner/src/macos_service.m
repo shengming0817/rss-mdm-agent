@@ -2,15 +2,14 @@
 #import <Foundation/Foundation.h>
 #include <stdint.h>
 #include <unistd.h>
+#include <time.h>
+static double rss_ipc_now(void){struct timespec value;clock_gettime(CLOCK_MONOTONIC,&value);return value.tv_sec+(double)value.tv_nsec/1e9;}
 extern intptr_t rss_execution_call(void *, uint32_t, uint32_t, uint32_t, const uint8_t *, size_t, uint8_t *, size_t);
 extern int rss_execution_stopping(void);
 extern int rss_execution_allow_helper(void *, uint32_t, uint32_t, uint32_t);
 extern int rss_execution_helper_active(void);
 static const NSUInteger RSS_FRAME_LIMIT = 8 * 1024 * 1024;
-@protocol RSSExecution
-- (void)execute:(NSData *)request reply:(void (^)(NSData *))reply;
-- (void)registerHelper:(NSXPCListenerEndpoint *)endpoint reply:(void (^)(BOOL))reply;
-@end
+#import "macos_ipc.h"
 @interface RSSHelperRegistration:NSObject
 @property(strong) NSXPCListenerEndpoint *endpoint;
 @property uint32_t pid;
@@ -29,12 +28,14 @@ static uint64_t rss_registration_order;
 @interface RSSExecutionPeer:NSObject<RSSExecution>
 @property(weak) NSXPCConnection *connection;
 @property BOOL consumed;
+@property uint64_t serial;
+@property double deadline;
 @end
 @implementation RSSExecutionPeer
 - (void)registerHelper:(NSXPCListenerEndpoint *)endpoint reply:(void (^)(BOOL))reply {
     @synchronized(self) {
         NSXPCConnection *connection=self.connection;
-        if(!connection||_consumed||geteuid()!=0||!endpoint){reply(NO);return;}
+        if(!connection||_consumed||rss_ipc_now()>=_deadline||geteuid()!=0||!endpoint){reply(NO);return;}
         _consumed=YES;
         uint32_t uid=connection.effectiveUserIdentifier,session=connection.auditSessionIdentifier,pid=connection.processIdentifier;
         if(!rss_execution_allow_helper((__bridge void *)connection,pid,uid,session)){reply(NO);return;}
@@ -51,7 +52,8 @@ static uint64_t rss_registration_order;
 - (void)execute:(NSData *)request reply:(void (^)(NSData *))reply {
     @synchronized(self) {
         NSXPCConnection *connection=self.connection;
-        if (!connection||_consumed||request.length>RSS_FRAME_LIMIT) { reply([NSData data]); return; }
+        if (!connection||_consumed||rss_ipc_now()>=_deadline||request.length>RSS_FRAME_LIMIT) { reply([NSData data]); return; }
+        fprintf(stderr,"RSS_IPC_EXECUTE id=%llu clientPid=%u\n",(unsigned long long)_serial,connection.processIdentifier);
         _consumed=YES;
         NSMutableData *output=[NSMutableData dataWithLength:RSS_FRAME_LIMIT];
         intptr_t n=rss_execution_call((__bridge void *)connection,connection.processIdentifier,
@@ -63,20 +65,27 @@ static uint64_t rss_registration_order;
 @end
 @interface RSSExecutionListener:NSObject<NSXPCListenerDelegate>
 @property NSUInteger active;
+@property uint64_t serial;
 @property(copy) NSString *requirement;
 @end
 @implementation RSSExecutionListener
 - (BOOL)listener:(NSXPCListener *)listener shouldAcceptNewConnection:(NSXPCConnection *)connection {
     (void)listener;
-    @synchronized(self){if(_active>=8||rss_execution_stopping()){fprintf(stderr,"RSS_IPC_SLOT_LIMIT active=%lu\n",(unsigned long)_active);return NO;}_active++;}
+    uint64_t serial;
+    @synchronized(self){if(_active>=8||rss_execution_stopping()){fprintf(stderr,"RSS_IPC_SLOT_LIMIT active=%lu\n",(unsigned long)_active);return NO;}_active++;serial=++_serial;}
     if(_requirement){[connection setCodeSigningRequirement:_requirement];}
     RSSExecutionPeer *peer=[RSSExecutionPeer new];peer.connection=connection;
+    peer.serial=serial;peer.deadline=rss_ipc_now()+5;
+    fprintf(stderr,"RSS_IPC_OPEN id=%llu clientPid=%u\n",(unsigned long long)serial,connection.processIdentifier);
     connection.exportedInterface=[NSXPCInterface interfaceWithProtocol:@protocol(RSSExecution)];
     connection.exportedObject=peer;
     __block BOOL counted=YES;
     connection.invalidationHandler=^{@synchronized(self){if(counted){counted=NO;self.active--;}}};
     [connection resume];
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,5*NSEC_PER_SEC),dispatch_get_global_queue(QOS_CLASS_DEFAULT,0),^{[connection invalidate];});
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,5*NSEC_PER_SEC),dispatch_get_global_queue(QOS_CLASS_DEFAULT,0),^{
+        fprintf(stderr,"RSS_IPC_EXPIRED id=%llu clientPid=%u\n",(unsigned long long)serial,connection.processIdentifier);
+        [connection invalidate];
+    });
     return YES;
 }
 @end
@@ -206,6 +215,7 @@ int rss_execution_helper_query(const uint8_t *request,size_t length,uint32_t uid
             finished=YES;BOOL peerOk=connection.effectiveUserIdentifier==uid&&(uint32_t)connection.auditSessionIdentifier==session&&(uint32_t)connection.processIdentifier==entry.pid;
             [connection invalidate];
             if(!result||!peerOk||result.length>*capacity){
+                fprintf(stderr,"RSS_HELPER_ENDPOINT_INVALID uid=%u session=%u\n",uid,session);
                 @synchronized(values){if(values[key]==entry)[values removeObjectForKey:key];}
                 return -1;
             }

@@ -117,7 +117,10 @@ impl<H: AppHost> db::Host for Host<'_, H> {
         _now: u64,
     ) -> Result<AdmissionGate, db::Error> {
         let config = self.config.ok_or(db::Error::Trust)?;
-        capabilities(self.inner, plan, config).map_err(|_| db::Error::Trust)?;
+        capabilities(self.inner, plan, config).map_err(|error| {
+            eprintln!("execution_admit_capabilities: {error:?}");
+            db::Error::Trust
+        })?;
         let admission = execution_admission::decide(
             plan,
             attempt,

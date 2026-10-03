@@ -29,6 +29,25 @@ pub struct ExecutionConfig {
     pub managers: Vec<crate::plan::SoftwareManager>,
     pub processes: usize,
 }
+// Helper availability is not device registration identity. A closed login/endpoint
+// rejects helper work without entering the backend credential revocation path.
+fn helper_error(error: execution_app::Error) -> Error {
+    match error {
+        execution_app::Error::Unbound => Error::Unavailable,
+        other => other.into(),
+    }
+}
+#[cfg(test)]
+#[test]
+fn unavailable_helper_does_not_revoke_device_identity() {
+    assert_eq!(
+        helper_error(execution_app::Error::Unbound),
+        Error::Unavailable
+    );
+    assert_eq!(helper_error(execution_app::Error::Denied), Error::Denied);
+    assert_eq!(Error::from(execution_app::Error::Unbound), Error::Identity);
+}
+
 /// Administrator-pinned helpers; these select OS mechanisms, not enterprise authorization.
 #[derive(Clone)]
 pub struct UserResources {
@@ -42,7 +61,7 @@ impl UserResources {
     ) -> Result<Arc<execution_runner::helper::Connection>, Error> {
         let (subject, session) = match selection {
             Some(selection) => (selection.subject.clone(), selection.session),
-            None => execution_runner::host::active_user_session()?,
+            None => execution_runner::host::active_user_session().map_err(helper_error)?,
         };
         let root = self.work_roots.get(&subject).ok_or(Error::Denied)?;
         let connection = execution_runner::helper::Connection::connect(
@@ -53,7 +72,8 @@ impl UserResources {
             },
             subject,
             session,
-        )?;
+        )
+        .map_err(helper_error)?;
         if selection.is_some_and(|s| s.binding != connection.context().binding) {
             return Err(Error::Untrusted);
         }
@@ -440,15 +460,17 @@ impl<S: SecretProvider> DeviceService<S> {
                 platform: plan::platform()?,
                 subject: plan::id(&login.context().subject)?,
             };
-            login.verify_context(
-                &execution_contract::RunAs::User {
-                    account: account.clone(),
-                },
-                &execution_contract::SessionRequirement::ActiveUser {
-                    account,
-                    session: login.context().binding.clone(),
-                },
-            )?;
+            login
+                .verify_context(
+                    &execution_contract::RunAs::User {
+                        account: account.clone(),
+                    },
+                    &execution_contract::SessionRequirement::ActiveUser {
+                        account,
+                        session: login.context().binding.clone(),
+                    },
+                )
+                .map_err(helper_error)?;
         }
         if let Some(selection) = &selection {
             let current = self
@@ -839,6 +861,38 @@ impl Core {
                 }) => {
                     if self.host.revoked.load(Ordering::Acquire) {
                         return Err(Error::Denied);
+                    }
+                    let replay = Selection {
+                        request: request.clone(),
+                        task: task.clone(),
+                        attempt: attempt.clone(),
+                        revision: revision.clone(),
+                        subject: command.subject.clone(),
+                        session: command.session,
+                        binding: command.binding.clone().ok_or(Error::Denied)?,
+                        origin: origin.clone(),
+                    };
+                    if let Some(previous) = self.app.backend_request(&self.caller(), &request)? {
+                        // A proposed AI request still needs its explicit desktop confirmation.
+                        // Once selected, replay returns facts and never repeats that transition.
+                        if previous.state != BackendRequestState::Proposed {
+                            let original_origin =
+                                previous.trigger == replay.trigger(&self.host.binding.device)?;
+                            let desktop_confirmation =
+                                matches!(origin, execution_runner::host::ClientOrigin::Desktop {})
+                                    && matches!(previous.trigger, BackendTrigger::Ai { .. })
+                                    && same_login(&previous.trigger, &replay);
+                            if previous.offer.task != task
+                                || previous.offer.attempt != attempt
+                                || previous.offer.revision != revision
+                                || !(original_origin || desktop_confirmation)
+                            {
+                                return Err(Error::Conflict);
+                            }
+                            return Ok(Reply::Pending {
+                                value: Box::new(previous),
+                            });
+                        }
                     }
                     let offer = self.available.as_ref().ok_or(Error::Unavailable)?;
                     if offer.request != request

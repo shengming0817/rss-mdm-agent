@@ -21,6 +21,77 @@ spec.loader.exec_module(acceptance)
 
 
 class BackendLifecycleTests(unittest.TestCase):
+    def test_fixed_operation_cancellation_reaps_child_and_restores_before_cleanup(self):
+        for disconnect,orphan in ((False,False),(True,False),(False,True)):
+          with self.subTest(disconnect=disconnect,orphan=orphan), tempfile.TemporaryDirectory(dir='/private/tmp') as directory:
+            root=Path(directory);endpoint=str(root/'control');pid_file=root/'pid';restored=root/'restored';cleaned=root/'cleaned'
+            listener=socket.socket(socket.AF_UNIX);listener.bind(endpoint);listener.listen(1)
+            setup="import subprocess\nfrom pathlib import Path\ntry:\n subprocess.run(['/bin/sh','-c',%r],timeout=%r,capture_output=True)\nfinally:\n Path(%r).write_text('restored')" % (
+                ('/bin/sleep 60 & echo $! > '+str(pid_file)+'; exit 0') if orphan else ('echo $$ > '+str(pid_file)+'; exec /bin/sleep 60'),10 if disconnect else .3,str(restored))
+            programs={'setup':setup,'cleanup':"from pathlib import Path\nPath(%r).write_text('cleaned')" % str(cleaned)}
+            failures=[]
+            def run():
+                try: acceptance.authorized_steps(programs,endpoint,123,501,time.clock_gettime(time.CLOCK_MONOTONIC)+10)
+                except BaseException as error: failures.append(error)
+            with patch.object(acceptance,'peer_identity',return_value=(123,501)):
+                worker=threading.Thread(target=run);worker.start()
+                connection,_=listener.accept();connection.settimeout(3)
+                connection.sendall(b'{"id":0,"operation":"setup"}\n')
+                end=time.monotonic()+2
+                while not pid_file.exists():
+                    self.assertLess(time.monotonic(),end);time.sleep(.01)
+                if disconnect: connection.close()
+                else:
+                    with connection,connection.makefile('rb') as reader:
+                        result=json.loads(reader.readline());self.assertFalse(result['ok'])
+                        self.assertEqual(result['value']['reason'],'operation budget exceeded')
+                        connection.sendall(b'{"id":1,"operation":"cleanup"}\n')
+                        self.assertTrue(json.loads(reader.readline())['ok'])
+                worker.join(3);self.assertFalse(worker.is_alive())
+                self.assertTrue(restored.exists());self.assertTrue(cleaned.exists())
+                child_pid=int(pid_file.read_text());end=time.monotonic()+2
+                while True:
+                    try: os.kill(child_pid,0)
+                    except ProcessLookupError: break
+                    self.assertLess(time.monotonic(),end);time.sleep(.01)
+            listener.close()
+
+    def test_started_security_failure_is_distinct_from_unexecuted_scenario(self):
+        matrix=acceptance.security_matrix()
+        acceptance.security_begin(matrix,'offer_replay')
+        self.assertEqual(matrix['scenarios']['offer_replay']['status'],'failed')
+        self.assertEqual(matrix['scenarios']['offer_expiry']['status'],'notExecuted')
+        self.assertEqual(acceptance.summarize_security(matrix),'failed')
+        acceptance.security_result(matrix,'offer_replay',{'actual':'evidence'})
+        self.assertEqual(matrix['scenarios']['offer_replay']['status'],'passed')
+        acceptance.security_begin(matrix,'offer_expiry')
+        self.assertEqual(matrix['scenarios']['offer_replay']['status'],'passed')
+        self.assertEqual(matrix['scenarios']['offer_expiry']['status'],'failed')
+        self.assertEqual(matrix['scenarios']['revocation_preopened']['status'],'notExecuted')
+
+    def test_failed_setup_keeps_only_the_fixed_cleanup_channel_available(self):
+        with tempfile.TemporaryDirectory(dir='/private/tmp') as directory:
+            endpoint=str(Path(directory)/'control')
+            listener=socket.socket(socket.AF_UNIX);listener.bind(endpoint);listener.listen(1)
+            programs={'setup':'raise PermissionError("protected input")',
+                      'cleanup':'import json\nprint(json.dumps({"cleaned":True}))'}
+            failures=[]
+            def run():
+                try: acceptance.authorized_steps(programs,endpoint,123,501,time.clock_gettime(time.CLOCK_MONOTONIC)+10)
+                except BaseException as error: failures.append(error)
+            with patch.object(acceptance,'peer_identity',return_value=(123,501)):
+                worker=threading.Thread(target=run);worker.start()
+                connection,_=listener.accept();connection.settimeout(3)
+                with connection,connection.makefile('rb') as reader:
+                    connection.sendall(b'{"id":0,"operation":"setup"}\n')
+                    setup=json.loads(reader.readline())
+                    self.assertFalse(setup['ok']);self.assertEqual(setup['error'],'PermissionError')
+                    connection.sendall(b'{"id":1,"operation":"cleanup"}\n')
+                    closed=json.loads(reader.readline())
+                    self.assertTrue(closed['ok']);self.assertEqual(closed['value'],{'cleaned':True})
+                worker.join(3);self.assertFalse(worker.is_alive());self.assertEqual(failures,[])
+            listener.close()
+
     def backend(self, source):
         return subprocess.Popen(['/usr/bin/python3', '-u', '-c', source], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
 
@@ -85,10 +156,51 @@ class BackendLifecycleTests(unittest.TestCase):
 
 
 class EvidenceTests(unittest.TestCase):
+    def test_partial_matrix_cannot_claim_complete_security_from_a_successful_journey(self):
+        matrix=acceptance.security_matrix()
+        self.assertEqual(acceptance.summarize_security(matrix),'notExecuted')
+        acceptance.security_result(matrix,'authorized_channel',{'peerUid':0,'reply':'actual baseline'})
+        self.assertEqual(acceptance.summarize_security(matrix),'partial')
+        self.assertEqual(matrix['scenarios']['cross_user']['status'],'notExecuted')
+        self.assertEqual(matrix['scenarios']['legacy_challenge']['status'],'notApplicable')
+        matrix['failure']='native attack assertion failed'
+        self.assertEqual(acceptance.summarize_security(matrix),'failed')
+
+    def test_security_refuses_unknown_empty_and_unavailable_evidence(self):
+        matrix=acceptance.security_matrix()
+        for name,evidence in [('unknown',{'reply':True}),('authorized_channel',None)]:
+            with self.assertRaises(RuntimeError): acceptance.security_result(matrix,name,evidence)
+        for result in [{'transport':'timeout'}, {'transport':'reply','peerUid':0,'envelope':{'reply':{'kind':'unavailable'}}},
+                       {'transport':'reply','peerUid':501,'envelope':{'reply':{'kind':'rejected'}}}]:
+            with self.assertRaises(AssertionError): acceptance.assert_native_reply(result,'rejected')
+        for result in [{'transport':'timeout'}, {'transport':'reply','bytes':1}]:
+            with self.assertRaises(AssertionError): acceptance.assert_connection_closed(result)
+
+    def test_invalid_native_probe_startup_reaps_its_owned_process(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);binary=root/'probe'
+            binary.write_text('#!/usr/bin/python3\nimport time\nprint("{}",flush=True)\ntime.sleep(60)\n')
+            binary.chmod(0o700)
+            opened=[];spawn=acceptance.subprocess.Popen
+            def capture(*args,**kwargs):
+                process=spawn(*args,**kwargs);opened.append(process);return process
+            with patch.object(acceptance.subprocess,'Popen',side_effect=capture):
+                with (root/'log').open('w') as log:
+                    with self.assertRaisesRegex(RuntimeError,'not ready'):
+                        acceptance.NativeProbe(binary,root/'config',log)
+            self.assertEqual(len(opened),1)
+            self.assertIsNotNone(opened[0].poll())
+
     def test_authorization_password_file_is_private_and_never_an_argument(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);password=root/'.passwd';password.write_text('synthetic-admin-password\n');password.chmod(0o600)
             self.assertEqual(acceptance.read_authorization_password(password),'synthetic-admin-password')
+            subprocess.run(['/bin/chmod','+a','everyone allow read,write',str(password)],check=True)
+            try:
+                self.assertEqual(password.stat().st_mode & 0o777,0o600)
+                with self.assertRaisesRegex(RuntimeError,'extended ACL'):
+                    acceptance.read_authorization_password(password)
+            finally: subprocess.run(['/bin/chmod','-N',str(password)],check=True)
             password.chmod(0o644)
             with self.assertRaisesRegex(RuntimeError,'private'): acceptance.read_authorization_password(password)
             password.chmod(0o600);link=root/'link';link.symlink_to(password)
@@ -152,6 +264,25 @@ class EvidenceTests(unittest.TestCase):
         acceptance.validate_desktop_completion([record], backend, absent, 'request')
         with self.assertRaises(AssertionError):
             acceptance.validate_desktop_completion([record], backend, {**absent,'receiptPresent':True}, 'request')
+
+    def test_known_macos_uncertainty_is_preserved_and_requires_independent_effect(self):
+        record={'action':{'initiator':{'kind':'backend','attempt':'a'}},'status':{
+            'operationRequestId':'r','attempts':1,'phase':'outcomeUnknown',
+            'process':{'finished':True,'end':'exited','exitCode':0,'quiescent':False}}}
+        event={'kind':'software_result','steps':[{'process':{'kind':'exited','code':0},
+            'diagnostics':{'failure':'capture_failed'},'after':{'state':'unknown'}}]}
+        backend={'startRequests':1,'results':{'op':{'attemptId':'a','event':event}},'acknowledged':['op']}
+        effect={key:True for key in ('receiptPresent','payloadPresent','payloadMatches')}
+        result=acceptance.validate_desktop_completion([record],backend,effect,'r')
+        self.assertTrue(result['executionUncertain'])
+        for change in ('phase','quiescent','effect','failure'):
+            r,b,e=copy.deepcopy(record),copy.deepcopy(backend),copy.deepcopy(effect)
+            if change=='phase': r['status']['phase']='completed'
+            elif change=='quiescent':r['status']['process']['quiescent']=True
+            elif change=='effect':e['payloadMatches']=False
+            else:b['results']['op']['event']['steps'][0]['diagnostics']['failure']='cancelled'
+            with self.subTest(change=change),self.assertRaises(AssertionError):
+                acceptance.validate_desktop_completion([r],b,e,'r')
 
     def test_journal_proof_reads_capture_for_the_original_attempt_not_snapshot_fields(self):
         with tempfile.TemporaryDirectory() as directory:

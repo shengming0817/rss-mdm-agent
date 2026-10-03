@@ -1,6 +1,190 @@
 // ref: Node.js lib/child_process.js@v24.14.1
-import { spawn } from "node:child_process";
+import { spawn, execFileSync } from "node:child_process";
 import { join } from "node:path";
+import { once } from "node:events";
+import { createInterface } from "node:readline";
+import { writeFileSync } from "node:fs";
+import { setTimeout as waitMilliseconds } from "node:timers/promises";
+
+const noMatch = (error) =>
+  error.status === 1 &&
+  !error.signal &&
+  !String(error.stdout ?? "").trim() &&
+  !String(error.stderr ?? "").trim();
+export function processField(pid, field, run = execFileSync) {
+  try {
+    const value = run("/bin/ps", ["-p", String(pid), "-o", field + "="], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 2000,
+    }).trim();
+    if (!value) throw Error("empty process identity observation");
+    return value;
+  } catch (error) {
+    if (noMatch(error)) return undefined;
+    throw error;
+  }
+}
+export function processChildren(pid, run = execFileSync) {
+  try {
+    const values = run("/usr/bin/pgrep", ["-P", String(pid)], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 2000,
+    })
+      .trim()
+      .split(/\s+/)
+      .map(Number);
+    if (values.some((pid) => !Number.isSafeInteger(pid) || pid <= 0))
+      throw Error("invalid process enumeration");
+    return values;
+  } catch (error) {
+    if (noMatch(error)) return [];
+    throw error;
+  }
+}
+
+// This owner creates the detached actor itself, before any readiness/registration wait.
+// ref: Node.js child_process detached: killing the executor cannot reap another group.
+export async function runOwnedScopeProbe(
+  node,
+  source,
+  input,
+  register,
+  cleanup,
+  signal,
+  timeoutMs = 30000,
+) {
+  const actorSource = `const {spawn}=require('node:child_process');
+    const child=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'});
+    child.once('spawn',()=>console.log(JSON.stringify({pid:child.pid})));setInterval(()=>{},1000);`;
+  const registrationDelay = input.actorRegistrationDelayMs ?? 0;
+  if (
+    !Number.isInteger(registrationDelay) ||
+    registrationDelay < 0 ||
+    registrationDelay > 5000
+  )
+    throw Error("actor registration delay invalid");
+  const actor = spawn(node, ["-e", actorSource], {
+    detached: true,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let child, proof, timer, rejectStop;
+  const stopped = new Promise((_, reject) => {
+    rejectStop = reject;
+  });
+  stopped.catch(() => {});
+  const abort = () => rejectStop(Error("owned scope probe cancelled"));
+  signal?.addEventListener("abort", abort, { once: true });
+  timer = setTimeout(
+    () => rejectStop(Error("owned scope probe deadline exceeded")),
+    timeoutMs,
+  );
+  actor.once("error", rejectStop);
+  const lines = createInterface({ input: actor.stdout });
+  try {
+    if (signal?.aborted) abort();
+    const [line] = await Promise.race([once(lines, "line"), stopped]);
+    const pid = JSON.parse(line).pid;
+    if (!Number.isSafeInteger(pid) || pid <= 1)
+      throw Error("actor descendant invalid");
+    proof = {
+      kind: "ownedScope",
+      scope: { kind: "processGroup", root: actor.pid },
+      anchor: { pid, start: processField(pid, "lstart") },
+    };
+    if (!proof.anchor.start || Number(processField(pid, "pgid")) !== actor.pid)
+      throw Error("actor identity unavailable");
+    if (input.actorRecoveryPath)
+      writeFileSync(
+        input.actorRecoveryPath,
+        JSON.stringify({ ...proof, parent: actor.pid, child: pid }),
+        { mode: 0o600, flag: "wx" },
+      );
+    if (registrationDelay)
+      await Promise.race([waitMilliseconds(registrationDelay), stopped]);
+    await Promise.race([register(proof, process.pid), stopped]);
+    child = spawn(
+      node,
+      [
+        "--input-type=module",
+        "-e",
+        source,
+        JSON.stringify({ ...input, actor: proof }),
+      ],
+      {
+        detached: true,
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+    const result = new Promise((resolve, reject) => {
+      let stdout = "",
+        stderr = "";
+      child.once("error", reject);
+      child.stdout.on("data", (bytes) => {
+        stdout += bytes;
+        if (stdout.length > 1024 * 1024)
+          reject(Error("scope probe output bound"));
+      });
+      child.stderr.on("data", (bytes) => {
+        stderr = (stderr + bytes).slice(-65536);
+      });
+      child.once("close", (code) => {
+        if (code !== 0) reject(Error("owned scope probe failed: " + stderr));
+        else {
+          try {
+            resolve(JSON.parse(stdout));
+          } catch (error) {
+            reject(error);
+          }
+        }
+      });
+    });
+    return await Promise.race([result, stopped]);
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", abort);
+    lines.close();
+    try {
+      if (
+        child &&
+        !(await reapOwnedProcessGroup(child, 0, 500, 1500)).confirmed
+      )
+        throw Error("owned scope executor cleanup unconfirmed");
+    } finally {
+      try {
+        const parentAlive =
+          actor.exitCode === null && actor.signalCode === null;
+        let groupAlive = !!actor.pid;
+        if (actor.pid) {
+          try {
+            process.kill(-actor.pid, 0);
+          } catch (error) {
+            if (error.code === "ESRCH") groupAlive = false;
+            else throw error;
+          }
+        }
+        if (
+          groupAlive &&
+          !parentAlive &&
+          (!proof ||
+            processField(proof.anchor.pid, "lstart") !== proof.anchor.start ||
+            Number(processField(proof.anchor.pid, "pgid")) !== actor.pid)
+        )
+          throw Error("actor scope ownership unconfirmed");
+        if (parentAlive || groupAlive) {
+          if (!(await reapOwnedProcessGroup(actor, 0, 500, 1500)).confirmed)
+            throw Error("actor group cleanup unconfirmed");
+        } else {
+          actor.stdout?.destroy();
+          actor.stderr?.destroy();
+        }
+      } finally {
+        await cleanup();
+      }
+    }
+  }
+}
 
 // Tauri, Vite and the app share a dedicated group, including when an IDE only
 // signals this wrapper. Reap the leader and bound cleanup of remaining children.

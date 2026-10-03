@@ -82,6 +82,7 @@ impl From<execution_app::Error> for Error {
             E::Conflict => Self::Conflict,
             E::Capacity => Self::Capacity,
             E::Configuration => Self::Configuration,
+            E::Unavailable => Self::Unavailable,
             _ => Self::Storage,
         }
     }

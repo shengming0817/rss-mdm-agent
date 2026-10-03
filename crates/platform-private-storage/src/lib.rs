@@ -153,6 +153,17 @@ fn parent(path: &Path) -> io::Result<(PrivateDirectory, &Path)> {
     let name = Path::new(path.file_name().ok_or(io::ErrorKind::InvalidInput)?);
     Ok((PrivateDirectory::open(directory)?, name))
 }
+/// Validate private SQLite file metadata without opening or closing its data descriptor.
+/// POSIX close releases this process's byte-range locks even on another descriptor;
+/// SQLite owns those descriptors and locks. The private parent remains validated.
+pub fn validate_sqlite_file(path: &Path) -> io::Result<()> {
+    #[cfg(unix)]
+    unix::sqlite_file(path)?;
+    #[cfg(windows)]
+    validate(path)?;
+    Ok(())
+}
+
 /// Validate a directory or regular file, never a symbolic link or special file.
 pub fn validate(path: &Path) -> io::Result<()> {
     #[cfg(unix)]

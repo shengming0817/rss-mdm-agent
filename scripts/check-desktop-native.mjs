@@ -20,6 +20,9 @@ import { cargoTargetDir } from "./cargo-target.mjs";
 import {
   runPreparation,
   reapOwnedProcessGroup,
+  processField,
+  processChildren,
+  runOwnedScopeProbe,
 } from "./desktop-dev-process.mjs";
 import { randomBytes } from "node:crypto";
 import { createServer } from "node:net";
@@ -36,10 +39,16 @@ import {
 import { developmentFingerprint } from "./desktop-dev-runtime.mjs";
 import { verifyCandidate } from "./native-candidate.mjs";
 import { verifyRuntimeIntegrity } from "./ai-host-artifacts.mjs";
+import { scopeAbsentWithin } from "../packages/ai-host/dist/process.js";
 
 const visualOnly = process.argv.includes("--visual");
 const baseline = process.argv.includes("--baseline");
 const controlledService = process.argv.includes("--controlled-service");
+const security = process.argv.includes("--security");
+assert.ok(
+  !security || controlledService,
+  "security requires controlled-service mode",
+);
 const candidateIndex = process.argv.indexOf("--candidate");
 const candidatePath =
   candidateIndex < 0 ? undefined : process.argv[candidateIndex + 1];
@@ -69,7 +78,11 @@ function serviceCall(method, input = {}) {
         servicePending.delete(id);
         reject(new Error(`service ${method} deadline exceeded`));
       },
-      method === "completion" ? 90000 : 15000,
+      method === "finish"
+        ? 180000
+        : ["completion", "security"].includes(method)
+          ? 90000
+          : 15000,
     );
     servicePending.set(id, {
       resolve(value) {
@@ -129,6 +142,49 @@ let directory,
   stage = "preflight",
   spawnError,
   keychainState;
+let scopeRuntime;
+const ownedWorkerScopes = new Map();
+const processIdentity = processField;
+const rememberScopes = (rows, host) => {
+  for (const row of rows) {
+    if (row.scope?.kind !== "processGroup") continue;
+    const scope = row.scope;
+    if (ownedWorkerScopes.has(scope.root)) continue;
+    let anchor;
+    if (
+      scopeRuntime &&
+      processIdentity(scope.root, "comm") === scopeRuntime.launcher &&
+      Number(processIdentity(scope.root, "ppid")) === host
+    ) {
+      const children = processChildren(scope.root);
+      const pid = children.find(
+        (child) => processIdentity(child, "comm") === scopeRuntime.node,
+      );
+      if (pid && Number(processIdentity(pid, "pgid")) === scope.root)
+        anchor = { pid, start: processIdentity(pid, "lstart") };
+    }
+    ownedWorkerScopes.set(scope.root, {
+      scope,
+      anchor,
+      launchId: row.launchId,
+    });
+  }
+};
+const terminateObservedScope = (entry) => {
+  if (
+    !entry.anchor ||
+    processIdentity(entry.anchor.pid, "lstart") !== entry.anchor.start ||
+    Number(processIdentity(entry.anchor.pid, "pgid")) !== entry.scope.root
+  )
+    return false;
+  try {
+    process.kill(-entry.scope.root, "SIGKILL");
+    return true;
+  } catch (error) {
+    if (error.code === "ESRCH") return true;
+    throw error;
+  }
+};
 const systemKeychains = () =>
   ["default-keychain", "list-keychains"].map((command) =>
     execFileSync("/usr/bin/security", [command, "-d", "user"], {
@@ -155,10 +211,12 @@ const rootAlive = () => {
     return false;
   }
 };
+const faultAbort = new AbortController();
 let cancelled = false;
 for (const signal of ["SIGINT", "SIGTERM"])
   process.on(signal, () => {
     cancelled = true;
+    faultAbort.abort();
     spawnError = new Error("native acceptance cancelled");
     // The dev wrapper owns Tauri/Vite/main and their bounded process-group shutdown.
     signalRoot("SIGTERM");
@@ -317,6 +375,137 @@ const dbRead = (file, action) => {
     db.close();
   }
 };
+// The live store is exclusive. Observe the actual fixed native launcher, not its locked database.
+const readWorkerScopes = async () => {
+  if (!scopeRuntime || !receipt?.pid) return [];
+  let children = processChildren(receipt.pid);
+  const hosts = children.filter(
+    (pid) => processIdentity(pid, "comm") === scopeRuntime.node,
+  );
+  assert.ok(hosts.length <= 1, "one actual owned Host");
+  if (!hosts.length) return [];
+  children = processChildren(hosts[0]);
+  return children
+    .filter((pid) => processIdentity(pid, "comm") === scopeRuntime.launcher)
+    .map((pid) => {
+      assert.equal(Number(processIdentity(pid, "pgid")), pid);
+      const launchId = / launch ([a-f0-9-]{36})$/.exec(
+        processIdentity(pid, "args"),
+      )?.[1];
+      assert.ok(launchId, "fixed native launch identity");
+      return {
+        phase: "observedNative",
+        launchId,
+        scope: { kind: "processGroup", root: pid },
+      };
+    });
+};
+let faultScopeConfirmed = true;
+const verifyUnknownFence = async () => {
+  const source = `
+    import assert from 'node:assert/strict';
+    import {setTimeout as delay} from 'node:timers/promises';
+    import {randomUUID} from 'node:crypto';
+    import {pathToFileURL} from 'node:url';
+    import {join} from 'node:path';
+    const input=JSON.parse(process.argv[1]);
+    const {openSqliteStore}=await import(pathToFileURL(join(input.root,'packages/ai-store-sqlite/dist/index.js')));
+    const {createHost}=await import(pathToFileURL(join(input.root,'packages/ai-host/dist/index.js')));
+    const {scopeAbsentWithin}=await import(pathToFileURL(join(input.root,'packages/ai-host/dist/process.js')));
+    const {fixtureSession,acceptance}=await import(pathToFileURL(join(input.root,'packages/ai-contract/dist/testing/index.js')));
+    const {fixturePersistence}=await import(pathToFileURL(join(input.root,'tests/ai-host/harness.mjs')));
+    const budget=()=>({timeoutMs:5000,signal:new AbortController().signal});
+    const {processField:field}=await import(pathToFileURL(join(input.root,'scripts/desktop-dev-process.mjs')));
+    const unwrap=(result)=>{assert.equal(result.ok,true,JSON.stringify(result));return result.value};
+    // Existing launch-fence fault seam, isolated from the UI's credential namespace.
+    const {scope,anchor}=input.actor;
+    const child=anchor.pid,birth=anchor.start;
+    let store,host;
+    assert.equal(field(child,'lstart'),birth);
+    assert.equal(Number(field(child,'pgid')),scope.root);
+    try {
+      store=unwrap(openSqliteStore({path:input.path,mode:'create'}));
+      const session=fixtureSession();unwrap(await store.create(session));unwrap(await store.accept(acceptance(session)));
+      const launchId=randomUUID();
+      unwrap(await store.reserveLaunch({runtimeDigest:input.runtime.manifestDigest,namespace:session.namespace,
+        launchId,artifact:pathToFileURL(join(input.root,'tests/ai-host/provider.mjs')).href,phase:'reserved'}));
+      unwrap(await store.registerLaunch(session.namespace,launchId,scope));
+      process.kill(scope.root,'SIGKILL');
+      const deadline=Date.now()+2000;
+      while(field(scope.root,'comm')){assert.ok(Date.now()<deadline);await delay(10);}
+      assert.equal(await scopeAbsentWithin(input.runtime,scope,budget()),false);process.kill(child,0);
+      await store.close(budget());store=unwrap(openSqliteStore({path:input.path,mode:'open'}));
+      let resolves=0;
+      host=unwrap(await createHost({credentialPersistence:fixturePersistence(store),workerRuntime:input.runtime,
+        delivery:null,store,launchFences:store,resolve:async()=>{resolves++;throw Error('unknown scope must block restore')}}));
+      const retained=unwrap(await store.launches()).find(row=>row.launchId===launchId);
+      assert.ok(retained);assert.deepEqual(retained.scope,scope);assert.equal(resolves,0);
+      assert.equal(unwrap(await store.snapshotPage(session.namespace,{limit:256})).session.status,'recovery_required');
+      process.kill(child,0);await host.close(budget());host=null;process.kill(child,0);
+      assert.equal(field(child,'lstart'),birth);assert.equal(Number(field(child,'pgid')),scope.root);
+      process.kill(-scope.root,'SIGKILL');
+      assert.equal(await scopeAbsentWithin(input.runtime,scope,budget()),true);
+      console.log(JSON.stringify({actor:'existing launch-fence fault seam',retained,resolveCalls:resolves,
+        descendantObserved:true,originalParentExited:true,scopeAbsentAfterOwnedCleanup:true}));
+    } finally {
+      try {await host?.close(budget());}
+      finally {await store?.close(budget());}
+      // The external creator owns actor cleanup even when resource closure throws.
+    }
+  `;
+  let entry;
+  return runOwnedScopeProbe(
+    scopeRuntime.node,
+    source,
+    {
+      root,
+      path: join(directory, "scope-fault.sqlite"),
+      actorRecoveryPath: join(directory, "scope-fault-actor.json"),
+      runtime: scopeRuntime,
+    },
+    async (proof, executorPid) => {
+      assert.equal(proof.kind, "ownedScope");
+      assert.equal(proof.scope.kind, "processGroup");
+      assert.ok(Number.isSafeInteger(proof.scope.root) && proof.scope.root > 1);
+      assert.ok(Number.isSafeInteger(proof.anchor.pid) && proof.anchor.pid > 1);
+      entry = {
+        scope: proof.scope,
+        anchor: proof.anchor,
+        launchId: "fault-" + nonce,
+      };
+      ownedWorkerScopes.set(entry.scope.root, entry);
+      assert.equal(
+        processIdentity(proof.scope.root, "comm"),
+        scopeRuntime.node,
+      );
+      assert.equal(
+        Number(processIdentity(proof.scope.root, "ppid")),
+        executorPid,
+      );
+      assert.equal(
+        processIdentity(proof.anchor.pid, "lstart"),
+        proof.anchor.start,
+      );
+      assert.equal(
+        Number(processIdentity(proof.anchor.pid, "pgid")),
+        proof.scope.root,
+      );
+    },
+    async () => {
+      if (!entry) return;
+      const absent = () =>
+        scopeAbsentWithin(scopeRuntime, entry.scope, {
+          timeoutMs: 1000,
+          signal: new AbortController().signal,
+        });
+      if (!(await absent())) terminateObservedScope(entry);
+      await wait(absent);
+      faultScopeConfirmed = true;
+    },
+    faultAbort.signal,
+  );
+};
+
 const task = async () => {
   const reply = await serviceCall("query");
   const request = fixture.facts.request;
@@ -456,6 +645,10 @@ try {
         candidate.binaries.desktop && candidate.runtime,
         "desktop and runtime candidate required",
       );
+    assert.ok(
+      !security || candidate?.binaries.securityProbe,
+      "security requires a frozen native probe",
+    );
     result.candidate = candidate;
     mark(
       candidate
@@ -522,6 +715,7 @@ try {
         "--output",
         serviceEvidence,
         ...(candidatePath ? ["--candidate", candidatePath] : []),
+        ...(security ? ["--security"] : []),
         ...(authorizationPasswordFile
           ? ["--authorization-password-file", authorizationPasswordFile]
           : []),
@@ -667,6 +861,14 @@ try {
     result.runtimeManifestSha256 = sha256(
       readFileSync(join(artifact, "manifest.json")),
     );
+    scopeRuntime = {
+      launcher: join(artifact, "bin/rss-ai-worker-launcher"),
+      node: join(artifact, "bin/node"),
+      manifestDigest: sha256(
+        readFileSync(join(artifact, "worker-manifest.json")),
+      ),
+      runtimeTreeSha256: manifest.runtimeTreeSha256,
+    };
   }
   const processField = (pid, field) =>
     execFileSync("/bin/ps", ["-p", String(pid), "-o", field + "="], {
@@ -1796,6 +1998,7 @@ try {
     await navigate("AI 助手");
     await text("GOLDEN_INSTALL 安装办公套件");
     mark("restart Host through settings");
+    rememberScopes(await readWorkerScopes(), hostPid());
     await navigate("设置");
     await click("重启 AI Host");
     await click("确认重启");
@@ -1825,6 +2028,144 @@ try {
       "host-restart-credential-reuse",
       "new-provider-session-after-restart",
     );
+    if (security) {
+      const runtime = {
+        launcher: join(artifact, "bin/rss-ai-worker-launcher"),
+        manifestDigest: sha256(
+          readFileSync(join(artifact, "worker-manifest.json")),
+        ),
+      };
+      const fences = readWorkerScopes;
+      const absent = (scope) =>
+        scopeAbsentWithin(runtime, scope, {
+          timeoutMs: 1000,
+          signal: new AbortController().signal,
+        });
+      const proof = {
+        runtimeTreeSha256: manifest.runtimeTreeSha256,
+        scenarios: {},
+      };
+      result.processSecurity = proof;
+      const restart = async () => {
+        const previous = hostPid();
+        rememberScopes(await fences(), previous);
+        await navigate("设置");
+        await click("重启 AI Host");
+        await click("确认重启");
+        await wait(() => hostPid() && hostPid() !== previous);
+        if (previous)
+          await wait(() => {
+            try {
+              process.kill(previous, 0);
+              return false;
+            } catch (error) {
+              if (error.code === "ESRCH") return true;
+              throw error;
+            }
+          });
+        await text("AI Host：已就绪");
+        result.owner.restartedHostPid = hostPid();
+      };
+      const held = async () => {
+        const existing = await fences();
+        rememberScopes(existing, hostPid());
+        const previousRoots = new Set(existing.map((row) => row.scope.root));
+        await navigate("AI 助手");
+        await browser.$(".conversation-list .new-conversation").click();
+        const previous = fixture.facts.held;
+        await prompt("GOLDEN_HOLD 安全验收：保持请求等待");
+        await wait(() => fixture.facts.held > previous);
+        const observed = await fences();
+        rememberScopes(observed, hostPid());
+        const rows = observed.filter(
+          (row) => !previousRoots.has(row.scope.root),
+        );
+        assert.equal(rows.length, 1, "one actual live Codex worker scope");
+        assert.equal(rows[0].scope.kind, "processGroup");
+        assert.equal(await absent(rows[0].scope), false);
+        rememberScopes(rows, hostPid());
+        assert.ok(
+          ownedWorkerScopes.get(rows[0].scope.root)?.anchor,
+          "live native worker ownership required before fault injection",
+        );
+        return rows[0];
+      };
+      const record = async (name, evidence) => {
+        await serviceCall("processSecurity", {
+          proof: {
+            runtimeTreeSha256: proof.runtimeTreeSha256,
+            scenarios: { [name]: evidence },
+          },
+        });
+        proof.scenarios[name] = evidence;
+        result.checks.push(name);
+      };
+      mark("security: unresponsive actual launcher, bounded Host close");
+      await serviceCall("processSecurityBegin", { name: "close_timeout" });
+      let launch = await held();
+      const closeStart = performance.now();
+      process.kill(launch.scope.root, "SIGSTOP");
+      await restart();
+      await wait(() => absent(launch.scope));
+      await record("close_timeout", {
+        launch,
+        stoppedLauncher: true,
+        elapsedMs: performance.now() - closeStart,
+        scopeAbsent: true,
+      });
+
+      mark(
+        "security: kill launcher, retain descendant and block unknown restore",
+      );
+      await serviceCall("processSecurityBegin", { name: "launcher_crash" });
+      launch = await held();
+      const requests = fixture.facts.requests;
+      const survivingHost = hostPid();
+      assert.equal(Number(processIdentity(survivingHost, "ppid")), receipt.pid);
+      process.kill(launch.scope.root, "SIGKILL");
+      await wait(() => absent(launch.scope));
+      assert.ok(
+        processIdentity(survivingHost, "comm"),
+        "Host must survive launcher failure",
+      );
+      assert.equal(hostPid(), survivingHost);
+      await record("launcher_crash", {
+        launch,
+        survivingHost,
+        scopeAbsent: true,
+      });
+      await serviceCall("processSecurityBegin", {
+        name: "retained_descendant",
+      });
+      await serviceCall("processSecurityBegin", { name: "unknown_scope" });
+      faultScopeConfirmed = false;
+      const recovery = await verifyUnknownFence();
+      faultScopeConfirmed = recovery.scopeAbsentAfterOwnedCleanup === true;
+      assert.equal(
+        fixture.facts.requests,
+        requests,
+        "fault recovery cannot redispatch the model request",
+      );
+      await record("retained_descendant", recovery);
+      await record("unknown_scope", recovery);
+      await restart();
+
+      mark("security: actual Host crash and owned worker group termination");
+      await serviceCall("processSecurityBegin", { name: "host_crash" });
+      launch = await held();
+      const crashedHost = hostPid();
+      assert.equal(Number(processIdentity(crashedHost, "ppid")), receipt.pid);
+      process.kill(crashedHost, "SIGKILL");
+      await wait(() => absent(launch.scope));
+      await restart();
+      await record("host_crash", {
+        hostPid: crashedHost,
+        launch,
+        scopeAbsent: true,
+      });
+
+      result.processSecurity = proof;
+    }
     mark("caller isolation and credential deletion");
     await navigate("设置");
     await browser.$('[aria-label="测试用户名"]').setValue("Golden Bob");
@@ -1900,7 +2241,7 @@ try {
         .all()
         .map((row) => JSON.parse(row.json)),
     );
-    assert.equal(sessions.length, 2);
+    assert.ok(security ? sessions.length >= 2 : sessions.length === 2);
     assert.equal(
       new Set(sessions.map((session) => session.namespace.principalId)).size,
       1,
@@ -1999,6 +2340,17 @@ try {
   }
   process.exitCode = 1;
 } finally {
+  let scopeObservationFailed = false;
+  if (scopeRuntime && directory && existsSync(join(directory, "ai.sqlite"))) {
+    try {
+      rememberScopes(
+        await readWorkerScopes(),
+        result.owner?.restartedHostPid ?? result.owner?.hostPid,
+      );
+    } catch {
+      scopeObservationFailed = true;
+    }
+  }
   awake?.kill("SIGTERM");
   if (browser && !cancelled)
     await Promise.race([browser.deleteSession().catch(() => {}), delay(5000)]);
@@ -2039,7 +2391,45 @@ try {
   const cleanupDeadline = Date.now() + 7000;
   while ((alive().length || rootAlive()) && Date.now() < cleanupDeadline)
     await delay(100);
-  const cleanupComplete = alive().length === 0 && !rootAlive();
+  const scopeCleanup = [];
+  for (const entry of ownedWorkerScopes.values()) {
+    const absent = () =>
+      scopeAbsentWithin(scopeRuntime, entry.scope, {
+        timeoutMs: 1000,
+        signal: new AbortController().signal,
+      });
+    let confirmed = false;
+    try {
+      confirmed = await absent();
+      if (!confirmed && terminateObservedScope(entry)) {
+        const deadline = Date.now() + 7000;
+        do {
+          confirmed = await absent();
+          if (confirmed) break;
+          await delay(100);
+        } while (Date.now() < deadline);
+      }
+    } catch {
+      scopeObservationFailed = true;
+    }
+    scopeCleanup.push({
+      scope: entry.scope,
+      launchId: entry.launchId,
+      confirmed,
+      ownershipObserved: !!entry.anchor,
+    });
+  }
+  result.processScopeProof = {
+    runtimeTreeSha256: scopeRuntime?.runtimeTreeSha256,
+    observationComplete: !scopeObservationFailed && faultScopeConfirmed,
+    scopes: scopeCleanup,
+  };
+  const cleanupComplete =
+    alive().length === 0 &&
+    !rootAlive() &&
+    !scopeObservationFailed &&
+    faultScopeConfirmed &&
+    scopeCleanup.every((row) => row.confirmed);
   if (!cleanupComplete) {
     result.cleanup = "owned-processes-still-present";
     result.status = cancelled ? "cancelled" : "failed";
@@ -2076,6 +2466,8 @@ try {
         await serviceCall("finish", {
           status: result.status,
           request: fixture?.facts.request,
+          processScopeEmpty: cleanupComplete,
+          processScopeProof: result.processScopeProof,
         });
       } catch {
         result.status = "failed";
@@ -2137,9 +2529,17 @@ try {
           records[0].process.exitCode,
           result.completion.record.status.process.exitCode,
         );
-        assert.equal(result.serviceReceipt.status, "passed");
+        assert.equal(result.serviceReceipt.journeyStatus, "passed");
       }
     }
+  }
+  result.journeyStatus = result.status;
+  if (
+    result.status === "passed" &&
+    result.serviceReceipt?.security.status !== "passed" &&
+    controlledService
+  ) {
+    result.status = "partial";
   }
   writeReport();
   writeFileSync(

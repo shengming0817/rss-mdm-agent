@@ -16,7 +16,8 @@ __pycache__/
 *.py[cod]
 .env
 .env.*
-.passwd
+# Native administrator acceptance input; never commit credentials.
+/.passwd
 !.env.example
 !.env.*.example
 *.profraw

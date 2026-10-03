@@ -279,7 +279,11 @@ fn check_metadata(path: &Path, directory: bool) -> Result<(), Error> {
     {
         return Err(Error::Storage);
     }
-    platform_private_storage::validate(path).map_err(|_| Error::Storage)?;
+    if directory {
+        platform_private_storage::validate(path).map_err(|_| Error::Storage)?;
+    } else {
+        platform_private_storage::validate_sqlite_file(path).map_err(|_| Error::Storage)?;
+    }
     Ok(())
 }
 

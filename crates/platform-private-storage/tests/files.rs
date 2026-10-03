@@ -128,3 +128,80 @@ fn helper_bounds_and_failures_do_not_emit_partial_secrets() {
         assert_eq!(result.stderr, b"private_storage_unavailable\n");
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn sqlite_validation_preserves_live_posix_locks() {
+    use std::os::fd::AsRawFd;
+    let root = Root::new();
+    let path = root.0.join("live.sqlite-shm");
+    storage::write_new(&path, b"shared memory").unwrap();
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&path)
+        .unwrap();
+    // SAFETY: a zeroed flock is initialized below with a valid exclusive byte range.
+    let mut lock: libc::flock = unsafe { std::mem::zeroed() };
+    lock.l_type = libc::F_WRLCK as _;
+    lock.l_whence = libc::SEEK_SET as _;
+    lock.l_len = 1;
+    // SAFETY: file owns a writable fd and lock is a live, fully initialized flock.
+    assert_eq!(
+        unsafe { libc::fcntl(file.as_raw_fd(), libc::F_SETLK, &lock) },
+        0
+    );
+    storage::validate_sqlite_file(&path).unwrap();
+    let child = std::process::Command::new("python3")
+        .args([
+            "-c",
+            r#"
+import fcntl,sys
+with open(sys.argv[1],'r+b') as stream:
+    try: fcntl.lockf(stream,fcntl.LOCK_EX|fcntl.LOCK_NB,1)
+    except BlockingIOError: sys.exit(0)
+    sys.exit(1)
+"#,
+        ])
+        .arg(&path)
+        .status()
+        .unwrap();
+    assert!(
+        child.success(),
+        "validation released the live SQLite process lock"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn sqlite_metadata_keeps_private_file_type_mode_and_acl_checks() {
+    use std::os::unix::{fs::symlink, fs::PermissionsExt};
+    let root = Root::new();
+    let path = root.0.join("journal.sqlite");
+    storage::write_new(&path, b"journal").unwrap();
+    storage::validate_sqlite_file(&path).unwrap();
+    let link = root.0.join("alias");
+    symlink(&path, &link).unwrap();
+    assert!(storage::validate_sqlite_file(&link).is_err());
+    assert!(storage::validate_sqlite_file(&root.0).is_err());
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+    assert!(storage::validate_sqlite_file(&path).is_err());
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+    #[cfg(target_os = "macos")]
+    {
+        assert!(std::process::Command::new("/bin/chmod")
+            .args(["+a", "everyone allow read"])
+            .arg(&path)
+            .status()
+            .unwrap()
+            .success());
+        assert!(storage::validate_sqlite_file(&path).is_err());
+        assert!(std::process::Command::new("/bin/chmod")
+            .arg("-N")
+            .arg(&path)
+            .status()
+            .unwrap()
+            .success());
+        storage::validate_sqlite_file(&path).unwrap();
+    }
+}
