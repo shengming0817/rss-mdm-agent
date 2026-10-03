@@ -18,6 +18,9 @@ struct Case {
 }
 impl Case {
     async fn new(level: Option<RiskLevel>) -> Self {
+        Self::with_offer_lifetime(level, 60).await
+    }
+    async fn with_offer_lifetime(level: Option<RiskLevel>, seconds: i64) -> Self {
         let server = protocol::Server::new().await;
         let root = protocol::Root::new();
         let clock = SystemClock::new().unwrap();
@@ -25,6 +28,13 @@ impl Case {
         {
             let mut data = server.data.lock().unwrap();
             data.software(1, true);
+            let wire::TaskPayload::Software(mut spec) =
+                data.offer.as_ref().unwrap().payload.clone()
+            else {
+                panic!("software")
+            };
+            spec.expires_at = clock.now().unwrap() + seconds;
+            data.offer = Some(data.signed(wire::TaskPayload::Software(spec)));
             data.explicit_offers = true;
         }
         let mut client = server.client(&root, OpenMode::Create);
@@ -453,7 +463,8 @@ async fn signed_start_needs_the_current_confirmed_request_and_frozen_action() {
 
 #[tokio::test]
 async fn material_gc_scans_every_journal_page_and_waits_for_delivery_confirmation() {
-    let mut c = Case::new(None).await;
+    // The real signed offer must remain valid throughout the large historical-journal scan.
+    let mut c = Case::with_offer_lifetime(None, 600).await;
     let bytes = b"original journal material";
     let digest = execution_contract::Digest::new(format!("{:x}", Sha256::digest(bytes))).unwrap();
     let source = c
