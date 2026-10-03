@@ -96,7 +96,7 @@ impl AppHost for EnterpriseHost {
     fn service_binding(&self) -> Result<ServiceBinding, Error> {
         // Revocation blocks new admission, while the original journal remains available for
         // stopping/reconciliation and reporting; it never changes device or tenant identity.
-        if execution_runner::host::current_subject()? != self.subject {
+        if execution_ipc::host::current_subject()? != self.subject {
             return Err(Error::Unbound);
         }
         Ok(self.binding.clone())

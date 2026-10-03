@@ -99,7 +99,7 @@ RefreshSystem 还要求 CurrentBinary/CurrentConfig，复用安装 owner 的持�
 ### macOS 安全矩阵
 
 继续使用本页的服务安装和原生桌面入口。构建
-`cargo build --locked --release -p execution-runner --example macos-security-probe`
+`cargo build --locked --release -p execution-ipc --example macos-security-probe`
 后，将 probe 签名并准备另一份不同代码身份的同工具副本；二者均在冻结前完成，
 分别通过 `--security-probe` 和 `--untrusted-probe` 加入现有 candidate。
 只有获准 probe 被加入实验安装的客户端 pins，错误身份副本保持未获准。

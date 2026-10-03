@@ -2,7 +2,7 @@ use crate::ProductionStartup;
 use crate::{DeviceSecrets, DeviceService, ExecutionConfig, SystemClock};
 use agent_client::{wire, Client, Config, Error, Limits, OpenMode, Transport};
 use base64::Engine;
-use execution_runner::host::{current_subject, PeerPolicy};
+use execution_ipc::host::{current_subject, PeerPolicy};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -31,13 +31,13 @@ pub struct Deployment {
 }
 impl Deployment {
     /// Assemble the one authenticated listener without creating device identity on startup.
-    pub fn assemble(self) -> Result<Box<dyn execution_runner::host::Handler>, Error> {
-        use execution_runner::host::Readiness;
+    pub fn assemble(self) -> Result<Box<dyn execution_ipc::host::Handler>, Error> {
+        use execution_ipc::host::Readiness;
         self.require_service()?;
         let never_initialized = match never_initialized(&self.state_root) {
             Ok(value) => value,
             Err(error) => {
-                execution_runner::record_startup_failure(startup_failure(error));
+                execution_ipc::record_startup_failure(startup_failure(error));
                 return Ok(Box::new(Diagnostic {
                     policy: self.clients,
                     readiness: Readiness::NotReady,
@@ -61,7 +61,7 @@ impl Deployment {
                     return Ok(Box::new(service.spawn(self.clients, helper_policy)?));
                 }
                 Err(error) => {
-                    execution_runner::record_startup_failure(startup_failure(error));
+                    execution_ipc::record_startup_failure(startup_failure(error));
                     Readiness::NotReady
                 }
             }
@@ -78,8 +78,8 @@ impl Deployment {
         let bytes =
             installation_security::read_protected(path).map_err(|_| Error::Configuration)?;
         let value: Self = serde_json::from_slice(&bytes).map_err(|_| Error::Configuration)?;
-        if value.version != execution_runner::host::DEPLOYMENT_VERSION
-            || value.ipc_version != execution_runner::host::IPC_VERSION
+        if value.version != execution_ipc::host::DEPLOYMENT_VERSION
+            || value.ipc_version != execution_ipc::host::IPC_VERSION
             || value.enrollment.is_nil()
             || value.registration_operation.is_nil()
             || !value.state_root.is_absolute()
@@ -476,18 +476,18 @@ fn never_initialized(root: &Path) -> Result<bool, Error> {
 
 struct Diagnostic {
     policy: PeerPolicy,
-    readiness: execution_runner::host::Readiness,
+    readiness: execution_ipc::host::Readiness,
 }
-impl execution_runner::host::Handler for Diagnostic {
+impl execution_ipc::host::Handler for Diagnostic {
     fn peer_policy(&self) -> Option<PeerPolicy> {
         Some(self.policy.clone())
     }
     fn handle(
         &mut self,
-        peer: &execution_runner::host::Peer,
-        request: execution_runner::host::Request,
-    ) -> execution_runner::host::Reply {
-        use execution_runner::host::{Reply, Request, ServiceStatus};
+        peer: &execution_ipc::host::Peer,
+        request: execution_ipc::host::Request,
+    ) -> execution_ipc::host::Reply {
+        use execution_ipc::host::{Reply, Request, ServiceStatus};
         if peer.authenticate(&self.policy).is_err() {
             return Reply::Rejected;
         }
@@ -550,8 +550,8 @@ mod tests {
             cdhash: None,
         };
         let mut deployment = Deployment {
-            version: execution_runner::host::DEPLOYMENT_VERSION,
-            ipc_version: execution_runner::host::IPC_VERSION,
+            version: execution_ipc::host::DEPLOYMENT_VERSION,
+            ipc_version: execution_ipc::host::IPC_VERSION,
             origin: String::new(),
             tenant: uuid::Uuid::new_v4(),
             signing_keys: Default::default(),

@@ -1,7 +1,7 @@
 //! The sole production execution service. Initialization is explicit and never a startup fallback.
 use agent_client::{wire, Error};
 use agent_service::deployment::Deployment;
-use execution_runner::host::Request;
+use execution_ipc::host::Request;
 use std::{io::Read, path::PathBuf, sync::atomic::AtomicBool};
 static STOP: AtomicBool = AtomicBool::new(false);
 #[cfg(target_os = "macos")]
@@ -68,11 +68,11 @@ fn run() -> Result<(), Error> {
         _ => return Err(Error::Configuration),
     };
     if let Some(request) = request {
-        let reply = execution_runner::host::ServiceClient::new(deployment.server_policy())?
+        let reply = execution_ipc::host::ServiceClient::new(deployment.server_policy())?
             .request(request)?;
         println!(
             "{}",
-            std::str::from_utf8(&execution_runner::host::encode_reply(reply))
+            std::str::from_utf8(&execution_ipc::host::encode_reply(reply))
                 .map_err(|_| Error::Protocol)?
         );
         return Ok(());
@@ -80,7 +80,7 @@ fn run() -> Result<(), Error> {
     let handler = deployment.assemble()?;
     serve(handler, true)
 }
-fn serve(handler: Box<dyn execution_runner::host::Handler>, system: bool) -> Result<(), Error> {
+fn serve(handler: Box<dyn execution_ipc::host::Handler>, system: bool) -> Result<(), Error> {
     #[cfg(target_os = "macos")]
     {
         let _ = system;
@@ -88,10 +88,10 @@ fn serve(handler: Box<dyn execution_runner::host::Handler>, system: bool) -> Res
             libc::signal(libc::SIGTERM, stopped as *const () as usize);
             libc::signal(libc::SIGINT, stopped as *const () as usize);
         }
-        execution_runner::host::run(handler, &STOP)?;
+        execution_ipc::host::run(handler, &STOP)?;
     }
     #[cfg(windows)]
-    execution_runner::windows_service::run(handler, &STOP, system)?;
+    execution_ipc::windows_service::run(handler, &STOP, system)?;
     Ok(())
 }
 

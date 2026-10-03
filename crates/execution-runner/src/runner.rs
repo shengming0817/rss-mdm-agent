@@ -97,7 +97,7 @@ impl NativeRunner {
     /// session. No local admission, approval, credentials or journal is created here.
     pub(crate) fn execute_delegated(
         &self,
-        _connection: &crate::host::SystemConnection<'_>,
+        _connection: &execution_ipc::host::SystemConnection<'_>,
         plan: &FrozenExecution,
         attempt: &AttemptId,
         remaining_timeout_ms: u64,
@@ -181,7 +181,7 @@ impl NativeRunner {
                 .remaining_timeout_ms
                 .saturating_sub(allowance.deadline_unix_ms.saturating_sub(expiry));
             Some(
-                crate::host::monotonic_millis()?
+                execution_ipc::host::monotonic_millis()?
                     .checked_add(remaining)
                     .ok_or(Error::Clock)?,
             )
@@ -296,7 +296,7 @@ impl NativeRunner {
                 }
                 let preparation_deadline = start_before
                     .and_then(|before| {
-                        crate::host::monotonic_millis().ok().map(|now| {
+                        execution_ipc::host::monotonic_millis().ok().map(|now| {
                             Instant::now() + Duration::from_millis(before.saturating_sub(now))
                         })
                     })
@@ -458,9 +458,9 @@ impl RunnerPort for NativeRunner {
         let Some(connection) = material.and_then(|m| m.delegate.as_ref()) else {
             return Ok(None);
         };
-        let Ok(crate::helper::Reply::Evidence {
+        let Ok(execution_ipc::helper::Reply::Evidence {
             process: Some(mut facts),
-        }) = connection.exchange(crate::helper::Command::InvocationEvidence {
+        }) = connection.exchange(execution_ipc::helper::Command::InvocationEvidence {
             input: Box::new(plan.spec().clone()),
             attempt: previous.attempt_id.clone(),
             step: *step,
@@ -673,7 +673,7 @@ impl RunnerPort for NativeRunner {
             if !matches!(facts.scope, ProcessScope::Delegated { .. }) {
                 let mut delegated = facts.clone();
                 delegated.runner = Id::new("native-user-helper").expect("constant");
-                let _ = connection.exchange(crate::helper::Command::Acknowledge {
+                let _ = connection.exchange(execution_ipc::helper::Command::Acknowledge {
                     input: Box::new(plan.spec().clone()),
                     process: Box::new(delegated),
                 });
@@ -703,9 +703,9 @@ impl RunnerPort for NativeRunner {
             }
             if let Some(source) = self.artifacts.get(plan.digest().as_str())? {
                 if let Some(connection) = &source.delegate {
-                    if let Ok(crate::helper::Reply::Evidence {
+                    if let Ok(execution_ipc::helper::Reply::Evidence {
                         process: Some(mut facts),
-                    }) = connection.exchange(crate::helper::Command::Evidence {
+                    }) = connection.exchange(execution_ipc::helper::Command::Evidence {
                         input: Box::new(plan.spec().clone()),
                         attempt: attempt.clone(),
                     }) {
@@ -868,7 +868,7 @@ fn run_delegated(
     cancel: &AtomicBool,
     slot: &Mutex<Option<ProcessEvidence>>,
 ) {
-    use crate::helper::{Command as C, Reply as R};
+    use execution_ipc::helper::{Command as C, Reply as R};
     let connection = source.delegate.as_ref().expect("delegate selected");
     let mut unknown = rejected(plan, attempt, runner, ProcessEnd::Unknown);
     unknown.scope = ProcessScope::Delegated {
@@ -884,8 +884,9 @@ fn run_delegated(
         .min(u128::from(u64::MAX)) as u64;
     if remaining == 0
         || cancel.load(Ordering::Acquire)
-        || start_before
-            .is_none_or(|before| crate::host::monotonic_millis().map_or(true, |now| now >= before))
+        || start_before.is_none_or(|before| {
+            execution_ipc::host::monotonic_millis().map_or(true, |now| now >= before)
+        })
     {
         publish(
             slot,
@@ -1018,8 +1019,9 @@ async fn run(
     };
     if cancel.load(Ordering::Acquire)
         || Instant::now() >= deadline
-        || start_before
-            .is_some_and(|before| crate::host::monotonic_millis().map_or(true, |now| now >= before))
+        || start_before.is_some_and(|before| {
+            execution_ipc::host::monotonic_millis().map_or(true, |now| now >= before)
+        })
     {
         publish(
             &shared,
@@ -1038,7 +1040,7 @@ async fn run(
     }
     let spawn_deadline = start_before
         .and_then(|before| {
-            crate::host::monotonic_millis()
+            execution_ipc::host::monotonic_millis()
                 .ok()
                 .map(|now| Instant::now() + Duration::from_millis(before.saturating_sub(now)))
         })

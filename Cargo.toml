@@ -1,5 +1,5 @@
 [workspace]
-members = ["apps/agent-service", "crates/agent-client", "crates/execution-runner", "crates/native-process", "crates/platform-private-storage", "crates/platform-credentials", "crates/installation-security", "apps/desktop/src-tauri", "crates/execution-contract", "crates/ai-session-contract", "crates/execution-interaction", "crates/execution-capability", "crates/execution-admission", "crates/service-catalog", "crates/execution-approval", "crates/execution-lifecycle", "crates/script-plan", "crates/execution-mcp", "crates/execution-sqlite", "crates/execution-app"]
+members = ["apps/agent-service", "crates/agent-client", "crates/execution-runner", "crates/execution-ipc", "crates/native-process", "crates/platform-private-storage", "crates/platform-credentials", "crates/installation-security", "apps/desktop/src-tauri", "crates/execution-contract", "crates/ai-session-contract", "crates/execution-interaction", "crates/execution-capability", "crates/execution-admission", "crates/service-catalog", "crates/execution-approval", "crates/execution-lifecycle", "crates/script-plan", "crates/execution-mcp", "crates/execution-sqlite", "crates/execution-app"]
 exclude = ["vendor/tauri-plugin-wdio-webdriver"]
 resolver = "2"
 

@@ -660,7 +660,7 @@ export function checkTree(treeRoot = root) {
         'objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSAlert", "NSButton", "NSControl", "NSSecureTextField", "NSTextField", "NSView", "NSResponder", "NSWindow", "NSApplication", "NSSavePanel", "NSPanel", "NSWorkspace", "NSAccessibility"] }',
         'objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSString", "NSGeometry", "NSURL"] }',
         'execution-app = { path = "../../../crates/execution-app" }',
-        'execution-runner = { path = "../../../crates/execution-runner" }',
+        'execution-ipc = { path = "../../../crates/execution-ipc" }',
         'execution-interaction = { path = "../../../crates/execution-interaction" }',
         "rusqlite.workspace = true",
         'execution-sqlite = { path = "../../../crates/execution-sqlite" }',

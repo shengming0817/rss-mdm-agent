@@ -58,14 +58,14 @@ impl UserResources {
     fn connect(
         &self,
         selection: Option<&Selection>,
-    ) -> Result<Arc<execution_runner::helper::Connection>, Error> {
+    ) -> Result<Arc<execution_ipc::helper::Connection>, Error> {
         let (subject, session) = match selection {
             Some(selection) => (selection.subject.clone(), selection.session),
-            None => execution_runner::host::active_user_session().map_err(helper_error)?,
+            None => execution_ipc::host::active_user_session().map_err(helper_error)?,
         };
         let root = self.work_roots.get(&subject).ok_or(Error::Denied)?;
-        let connection = execution_runner::helper::Connection::connect(
-            execution_runner::host::PeerPolicy {
+        let connection = execution_ipc::helper::Connection::connect(
+            execution_ipc::host::PeerPolicy {
                 images: vec![self.image.clone()],
                 subjects: vec![subject.clone()],
                 interactive: true,
@@ -136,7 +136,7 @@ impl<S: SecretProvider> DeviceService<S> {
             actor,
             clock,
             materials,
-            subject: execution_runner::host::current_subject()?,
+            subject: execution_ipc::host::current_subject()?,
             current: Arc::new(Mutex::new(None)),
             revoked: Arc::new(AtomicBool::new(false)),
         };
@@ -499,10 +499,10 @@ impl<S: SecretProvider> DeviceService<S> {
                 session: selection.binding,
             };
             *trigger = match selection.origin {
-                execution_runner::host::ClientOrigin::Desktop {} => {
+                execution_ipc::host::ClientOrigin::Desktop {} => {
                     execution_contract::BackendTrigger::Human { os_session }
                 }
-                execution_runner::host::ClientOrigin::Ai {
+                execution_ipc::host::ClientOrigin::Ai {
                     config,
                     conversation,
                     tool_call,
@@ -563,7 +563,7 @@ impl<S: SecretProvider> DeviceService<S> {
         offer: &Offer,
         materials: &Materials,
         payload: &wire::TaskPayload,
-        delegate: Option<Arc<execution_runner::helper::Connection>>,
+        delegate: Option<Arc<execution_ipc::helper::Connection>>,
     ) -> Result<
         (
             execution_contract::FrozenExecution,
@@ -610,8 +610,8 @@ impl<S: SecretProvider> DeviceService<S> {
     /// Start the single service owner; native callbacks never access SQLite or network directly.
     pub fn spawn(
         mut self,
-        policy: execution_runner::host::PeerPolicy,
-        helper_policy: Option<execution_runner::host::PeerPolicy>,
+        policy: execution_ipc::host::PeerPolicy,
+        helper_policy: Option<execution_ipc::host::PeerPolicy>,
     ) -> Result<ServiceHandle, Error>
     where
         S: Send + 'static,
@@ -681,7 +681,7 @@ struct Selection {
     subject: String,
     session: u32,
     binding: execution_contract::Id,
-    origin: execution_runner::host::ClientOrigin,
+    origin: execution_ipc::host::ClientOrigin,
 }
 struct Core {
     app: ExecutionApp<EnterpriseHost, NativeRunner, execution_sqlite::Store>,
@@ -806,7 +806,7 @@ impl Core {
         })
     }
     fn handle(&mut self, command: Command) {
-        use execution_runner::host::{Reply, Request};
+        use execution_ipc::host::{Reply, Request};
         if command.reply.is_closed() {
             return;
         }
@@ -814,12 +814,12 @@ impl Core {
             match command.request {
                 LocalRequest::Operation(Request::ServiceStatus {}) => {
                     let readiness = if self.host.revoked.load(Ordering::Acquire) {
-                        execution_runner::host::Readiness::NotReady
+                        execution_ipc::host::Readiness::NotReady
                     } else {
-                        execution_runner::host::Readiness::Ready
+                        execution_ipc::host::Readiness::Ready
                     };
                     Ok(Reply::ServiceStatus {
-                        value: execution_runner::host::ServiceStatus::new(readiness),
+                        value: execution_ipc::host::ServiceStatus::new(readiness),
                     })
                 }
                 LocalRequest::Stop => {
@@ -879,7 +879,7 @@ impl Core {
                             let original_origin =
                                 previous.trigger == replay.trigger(&self.host.binding.device)?;
                             let desktop_confirmation =
-                                matches!(origin, execution_runner::host::ClientOrigin::Desktop {})
+                                matches!(origin, execution_ipc::host::ClientOrigin::Desktop {})
                                     && matches!(previous.trigger, BackendTrigger::Ai { .. })
                                     && same_login(&previous.trigger, &replay);
                             if previous.offer.task != task
@@ -910,7 +910,7 @@ impl Core {
                         return Err(Error::Conflict);
                     }
                     let confirmation_required =
-                        matches!(origin, execution_runner::host::ClientOrigin::Ai { .. });
+                        matches!(origin, execution_ipc::host::ClientOrigin::Ai { .. });
                     let selection = Selection {
                         request: request.clone(),
                         task,
@@ -1051,7 +1051,7 @@ impl Core {
     }
 }
 enum LocalRequest {
-    Operation(execution_runner::host::Request),
+    Operation(execution_ipc::host::Request),
     Stop,
 }
 struct Command {
@@ -1059,7 +1059,7 @@ struct Command {
     subject: String,
     session: u32,
     binding: Option<execution_contract::Id>,
-    reply: tokio::sync::oneshot::Sender<execution_runner::host::Reply>,
+    reply: tokio::sync::oneshot::Sender<execution_ipc::host::Reply>,
 }
 async fn network<T>(
     future: impl std::future::Future<Output = Result<T, Error>>,
@@ -1083,8 +1083,8 @@ async fn network<T>(
 /// Native callbacks forward bounded commands to the only journal/network owner.
 pub struct ServiceHandle {
     sender: tokio::sync::mpsc::Sender<Command>,
-    policy: execution_runner::host::PeerPolicy,
-    helper_policy: Option<execution_runner::host::PeerPolicy>,
+    policy: execution_ipc::host::PeerPolicy,
+    helper_policy: Option<execution_ipc::host::PeerPolicy>,
     finished: Arc<AtomicBool>,
     completion: std::sync::mpsc::Receiver<Result<(), Error>>,
 }
@@ -1095,7 +1095,7 @@ impl ServiceHandle {
         subject: String,
         session: u32,
         binding: Option<execution_contract::Id>,
-    ) -> execution_runner::host::Reply {
+    ) -> execution_ipc::host::Reply {
         let (reply, receiver) = tokio::sync::oneshot::channel();
         if self
             .sender
@@ -1108,14 +1108,14 @@ impl ServiceHandle {
             })
             .is_err()
         {
-            return execution_runner::host::Reply::Unavailable;
+            return execution_ipc::host::Reply::Unavailable;
         }
         let runtime = match tokio::runtime::Builder::new_current_thread()
             .enable_time()
             .build()
         {
             Ok(v) => v,
-            Err(_) => return execution_runner::host::Reply::Unavailable,
+            Err(_) => return execution_ipc::host::Reply::Unavailable,
         };
         let started = std::time::Instant::now();
         let reply = runtime.block_on(async {
@@ -1123,7 +1123,7 @@ impl ServiceHandle {
                 .await
                 .ok()
                 .and_then(Result::ok)
-                .unwrap_or(execution_runner::host::Reply::Unavailable)
+                .unwrap_or(execution_ipc::host::Reply::Unavailable)
         });
         let elapsed = started.elapsed().as_millis();
         if elapsed > 1500 {
@@ -1132,8 +1132,8 @@ impl ServiceHandle {
         reply
     }
 }
-impl execution_runner::host::Handler for ServiceHandle {
-    fn peer_policy(&self) -> Option<execution_runner::host::PeerPolicy> {
+impl execution_ipc::host::Handler for ServiceHandle {
+    fn peer_policy(&self) -> Option<execution_ipc::host::PeerPolicy> {
         let mut policy = self.policy.clone();
         if let Some(helper) = &self.helper_policy {
             for image in &helper.images {
@@ -1153,7 +1153,7 @@ impl execution_runner::host::Handler for ServiceHandle {
     }
     fn register_helper(
         &mut self,
-        peer: &execution_runner::host::Peer,
+        peer: &execution_ipc::host::Peer,
     ) -> Result<(), execution_app::Error> {
         peer.authenticate(
             self.helper_policy
@@ -1164,9 +1164,9 @@ impl execution_runner::host::Handler for ServiceHandle {
     }
     fn handle(
         &mut self,
-        peer: &execution_runner::host::Peer,
-        request: execution_runner::host::Request,
-    ) -> execution_runner::host::Reply {
+        peer: &execution_ipc::host::Peer,
+        request: execution_ipc::host::Request,
+    ) -> execution_ipc::host::Reply {
         match peer.authenticate(&self.policy) {
             Ok(subject) => match peer.session_binding() {
                 Ok(binding) => self.call(
@@ -1175,9 +1175,9 @@ impl execution_runner::host::Handler for ServiceHandle {
                     peer.session(),
                     Some(binding),
                 ),
-                Err(_) => execution_runner::host::Reply::Rejected,
+                Err(_) => execution_ipc::host::Reply::Rejected,
             },
-            Err(_) => execution_runner::host::Reply::Rejected,
+            Err(_) => execution_ipc::host::Reply::Rejected,
         }
     }
     fn tick(&mut self) -> Result<(), execution_app::Error> {
@@ -1291,10 +1291,8 @@ impl Selection {
             session: self.binding.clone(),
         };
         Ok(match &self.origin {
-            execution_runner::host::ClientOrigin::Desktop {} => {
-                BackendTrigger::Human { os_session }
-            }
-            execution_runner::host::ClientOrigin::Ai {
+            execution_ipc::host::ClientOrigin::Desktop {} => BackendTrigger::Human { os_session },
+            execution_ipc::host::ClientOrigin::Ai {
                 config,
                 conversation,
                 tool_call,
@@ -1309,7 +1307,7 @@ impl Selection {
     fn from_record(record: &BackendRequest) -> Result<Self, Error> {
         let (os_session, origin) = match &record.trigger {
             BackendTrigger::Human { os_session } => {
-                (os_session, execution_runner::host::ClientOrigin::Desktop {})
+                (os_session, execution_ipc::host::ClientOrigin::Desktop {})
             }
             BackendTrigger::Ai {
                 os_session,
@@ -1318,7 +1316,7 @@ impl Selection {
                 tool_call,
             } => (
                 os_session,
-                execution_runner::host::ClientOrigin::Ai {
+                execution_ipc::host::ClientOrigin::Ai {
                     config: config.clone(),
                     conversation: conversation.clone(),
                     tool_call: tool_call.clone(),
@@ -1346,7 +1344,7 @@ impl Selection {
     }
 }
 
-pub(crate) fn login_id(context: &execution_runner::helper::UserContext) -> uuid::Uuid {
+pub(crate) fn login_id(context: &execution_ipc::helper::UserContext) -> uuid::Uuid {
     use sha2::{Digest as _, Sha256};
     let digest = Sha256::digest(context.binding.as_str().as_bytes());
     let mut bytes = [0; 16];

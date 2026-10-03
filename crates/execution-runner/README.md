@@ -1,6 +1,6 @@
 # 平台执行机制
 
-生产组合根是 `apps/agent-service`，二进制为 `rss-execution-service`。`NativeRunner` 只拥有实际进程与材料租约；通信客户端、设备凭据、IPC 和唯一执行 journal 由系统服务装配。桌面和 AI 通过同一认证 IPC 提交后台任务标识，不提交脚本、执行计划或批准声明。
+生产组合根是 `apps/agent-service`，二进制为 `rss-execution-service`。`NativeRunner` 只拥有实际进程与材料租约；`execution-ipc` 持有认证接入、纯应用视图和有界平台 transport，桌面直接消费它；通信客户端、设备凭据、IPC 和唯一执行 journal 由系统服务装配。桌面和 AI 通过同一认证 IPC 提交后台任务标识，不提交脚本、执行计划或批准声明。
 
 后台决定企业任务授权、来源和批准。客户端验证签名，以及租户、设备、注册世代、attempt、材料和 OS 上下文的精确绑定。Offer 只准备；取得 Start 后才登记执行意图。用户主动安装的动作确认与 macOS 自身授权仍然独立存在。客户端不维护企业 Grant 表，不签发企业批准，不用测试身份回退。
 

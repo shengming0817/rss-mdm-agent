@@ -1,4 +1,4 @@
-// @generated from execution-runner::host::ServiceView. Do not edit.
+// @generated from execution-ipc::host::ServiceView. Do not edit.
 
 /**
  * Closed presentation combining local installation checks and authenticated service facts.

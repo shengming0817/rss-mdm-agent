@@ -110,48 +110,16 @@ pub(crate) fn identity(run_as: &RunAs, session: &SessionRequirement) -> Result<(
         _ => return Err(Error::Unbound),
     }
     if let SessionRequirement::ActiveUser { account, session } = session {
-        if session != &crate::host::current_session_binding()?
+        if session != &execution_ipc::host::current_session_binding()?
             || account.platform != Platform::Macos
             || account.subject.as_str() != uid.to_string()
-            || !console_user(uid)
-            || !crate::host::active_login()
+            || !execution_ipc::macos_identity::console_user(uid)
+            || !execution_ipc::host::active_login()
         {
             return Err(Error::Unbound);
         }
     }
     Ok(())
-}
-pub(crate) fn console_account() -> Result<u32, Error> {
-    #[link(name = "SystemConfiguration", kind = "framework")]
-    extern "C" {
-        fn SCDynamicStoreCopyConsoleUser(
-            store: *const std::ffi::c_void,
-            uid: *mut u32,
-            gid: *mut u32,
-        ) -> *const std::ffi::c_void;
-    }
-    #[link(name = "CoreFoundation", kind = "framework")]
-    extern "C" {
-        fn CFRelease(value: *const std::ffi::c_void);
-    }
-    let mut actual = u32::MAX;
-    let mut gid = 0;
-    // SAFETY: returned CF object is released exactly once; outputs are valid writable integers.
-    unsafe {
-        let name = SCDynamicStoreCopyConsoleUser(std::ptr::null(), &mut actual, &mut gid);
-        if name.is_null() {
-            return Err(Error::Unbound);
-        }
-        CFRelease(name);
-        if actual == 0 || actual == u32::MAX {
-            Err(Error::Unbound)
-        } else {
-            Ok(actual)
-        }
-    }
-}
-pub(crate) fn console_user(uid: u32) -> bool {
-    console_account() == Ok(uid)
 }
 pub(crate) fn profile(profile: &VersionedRef) -> Result<(), Error> {
     if profile.revision.as_str() != "1"
@@ -319,6 +287,23 @@ impl PathLease {
         })
     }
 }
+pub(crate) fn grant_read(path: &Path, subject: &str) -> Result<(), Error> {
+    use std::os::fd::AsRawFd;
+    extern "C" {
+        fn rss_execution_grant_read(fd: i32, uid: u32) -> i32;
+    }
+    let uid: u32 = subject.parse().map_err(|_| Error::InvalidInput)?;
+    if uid == 0 || unsafe { libc::geteuid() } != 0 {
+        return Err(Error::Denied);
+    }
+    let directory = path.is_dir();
+    let file = bound_file(path, directory, true)?;
+    if unsafe { rss_execution_grant_read(file.as_raw_fd(), uid) } != 0 {
+        return Err(Error::Denied);
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod path_tests {
     use super::*;
@@ -479,55 +464,4 @@ mod path_tests {
         assert!(WorkingDirectory::open(&root.join("ancestor/child")).is_err());
         std::fs::remove_dir_all(root).unwrap();
     }
-}
-
-// ref: Apple XNU bsd/kern/kern_mib.c, kern.bootsessionuuid (kernel boot generation).
-pub(crate) fn boot_generation() -> Result<Id, Error> {
-    let mut bytes = [0u8; 128];
-    let mut length = bytes.len();
-    if unsafe {
-        libc::sysctlbyname(
-            c"kern.bootsessionuuid".as_ptr(),
-            bytes.as_mut_ptr().cast(),
-            &mut length,
-            std::ptr::null_mut(),
-            0,
-        )
-    } != 0
-        || length == 0
-        || length > bytes.len()
-    {
-        return Err(Error::Unavailable);
-    }
-    let text = std::str::from_utf8(&bytes[..length])
-        .map_err(|_| Error::Unavailable)?
-        .trim_end_matches('\0');
-    Id::new(text).map_err(|_| Error::Unavailable)
-}
-#[cfg(test)]
-mod boot_tests {
-    #[test]
-    fn same_kernel_boot_is_stable_across_reads() {
-        assert_eq!(
-            super::boot_generation().unwrap(),
-            super::boot_generation().unwrap()
-        );
-    }
-}
-
-pub(crate) fn grant_read(path: &Path, subject: &str) -> Result<(), Error> {
-    use std::os::fd::AsRawFd;
-    extern "C" {
-        fn rss_execution_grant_read(fd: i32, uid: u32) -> i32;
-    }
-    let uid: u32 = subject.parse().map_err(|_| Error::InvalidInput)?;
-    if uid == 0 || unsafe { libc::geteuid() } != 0 {
-        return Err(Error::Denied);
-    }
-    let directory = path.is_dir();
-    let file = bound_file(path, directory, true)?;
-    if unsafe { rss_execution_grant_read(file.as_raw_fd(), uid) } != 0 {
-        return Err(Error::Denied);
-    }
-    Ok(())
 }

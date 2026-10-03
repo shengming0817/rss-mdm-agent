@@ -65,7 +65,7 @@ int rss_security_probe_main(const char *requirement,int fake) {
                 if(![identity isKindOfClass:[NSString class]]||identity.length>64){free(line);return 2;}
                 if([op isEqual:@"stop"])break;
                 if([op isEqual:@"open"]) {
-                    if(connections[identity]||connections.count>=8){emit(@{@"error":@"connection limit or duplicate"});continue;}
+                    if(connections[identity]||connections.count>=16){emit(@{@"error":@"connection limit or duplicate"});continue;}
                     BOOL isFake=[command[@"target"] isEqual:@"fake"];
                     BOOL untrusted=[command[@"untrusted"] boolValue];
                     if(untrusted&&!isFake){emit(@{@"error":@"untrusted baseline is fake-only"});continue;}

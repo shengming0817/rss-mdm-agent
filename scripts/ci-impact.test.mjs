@@ -4,7 +4,13 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { selectImpact, workspaceGraph, parseChanges } from "./ci-impact.mjs";
+import {
+  selectImpact,
+  workspaceGraph,
+  parseChanges,
+  sourceEdges,
+  testOwners,
+} from "./ci-impact.mjs";
 
 const npm = (name) => `@rss-mdm-agent/${name}`;
 function fixture() {
@@ -265,6 +271,67 @@ test("dirty docs remain docs-only and ignored files do not select tests", () => 
     assert.equal(f.select().reasons[0], "no-changes");
     rmSync(join(f.root, "README.md"));
     assert.equal(f.select().reasons[0], "docs-only");
+  } finally {
+    f.close();
+  }
+});
+
+test("IPC sources and fixtures select native service and desktop consumers", () => {
+  const f = fixture();
+  try {
+    const rust = [
+      "execution-ipc",
+      "execution-runner",
+      "agent-service",
+      "rss-mdm-desktop",
+    ];
+    const node = [npm("desktop")];
+    const relevant = new Set([...rust, ...node]);
+    const cargo = {
+      workspace_root: f.root,
+      workspace_members: rust,
+      packages: rust.map((name) => ({
+        id: name,
+        name,
+        manifest_path: `${f.root}/crates/${name}/Cargo.toml`,
+      })),
+      resolve: {
+        nodes: rust.map((id) => ({
+          id,
+          deps: id === "execution-ipc" ? [] : [{ pkg: "execution-ipc" }],
+        })),
+      },
+    };
+    const graph = workspaceGraph(
+      f.root,
+      cargo,
+      [{ name: npm("desktop"), path: `${f.root}/apps/desktop`, manifest: {} }],
+      sourceEdges.filter(([a, b]) => relevant.has(a) && relevant.has(b)),
+      testOwners.filter(([, name]) => relevant.has(name)),
+    );
+    for (const path of [
+      "crates/execution-ipc/src/host.rs",
+      "tests/assistant/service-fixtures.json",
+    ]) {
+      const baseRef = f.run("rev-parse", "HEAD");
+      f.change(path);
+      const result = f.select({ baseRef, graph: () => graph });
+      assert.equal(result.full, false);
+      assert.deepEqual(result.rustPackages, [...rust].sort());
+      assert.deepEqual(result.nodePackages, node);
+    }
+    assert.deepEqual(
+      graph.roots
+        .filter(([path]) => path === "scripts/native-candidate.mjs")
+        .map(([, owner]) => owner)
+        .sort(),
+      ["execution-ipc", "execution-runner"],
+    );
+    const baseRef = f.run("rev-parse", "HEAD");
+    f.change("scripts/native-candidate.mjs");
+    const candidate = f.select({ baseRef, graph: () => graph });
+    assert.equal(candidate.full, true);
+    assert.deepEqual(candidate.reasons, ["global-input"]);
   } finally {
     f.close();
   }

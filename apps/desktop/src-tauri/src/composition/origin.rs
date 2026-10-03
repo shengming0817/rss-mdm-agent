@@ -1,7 +1,7 @@
 //! AI provenance bound by the desktop-owned pipe; OS identity comes from native IPC.
 use execution_contract::{Id, VersionedRef};
+use execution_ipc::host::ClientOrigin;
 use execution_mcp::ServiceError;
-use execution_runner::host::ClientOrigin;
 use serde_json::{Map, Value};
 pub fn bind(
     context: &ai_session_contract::UserContext,

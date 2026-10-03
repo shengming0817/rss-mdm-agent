@@ -9,7 +9,7 @@ pub(crate) enum Stage {
     Shutdown,
 }
 pub(crate) fn record(stage: Stage, error: Error) {
-    emit(stage, crate::runner::classify(error));
+    emit(stage, classify(error));
 }
 /// Record a composition startup failure through the existing native OS sink.
 /// Only a closed, value-free category is accepted; this grants no execution authority.
@@ -41,17 +41,17 @@ fn emit(stage: Stage, kind: ProcessFailureKind) {
         use windows_sys::Win32::System::EventLog::*;
         // ref: RegisterEventSourceW: an unregistered source is written to Application.
         // No registry provider or message DLL is installed; structured strings are the record.
-        let mode = match crate::windows::token_identity() {
+        let mode = match crate::windows_identity::token_identity() {
             Ok((sid, _)) if sid == "S-1-5-18" => "system",
             Ok(_) => "user",
             Err(_) => "unknown",
         };
-        let message = crate::windows::wide(line(stage, kind, mode));
+        let message = crate::windows_identity::wide(line(stage, kind, mode));
         let strings = [message.as_ptr()];
         unsafe {
             let source = RegisterEventSourceW(
                 std::ptr::null(),
-                crate::windows::wide("RSS Execution").as_ptr(),
+                crate::windows_identity::wide("RSS Execution").as_ptr(),
             );
             if !source.is_null() {
                 if ReportEventW(
@@ -77,6 +77,25 @@ fn emit(stage: Stage, kind: ProcessFailureKind) {
     #[cfg(not(any(windows, target_os = "macos")))]
     eprintln!("{}", line(stage, kind, "unsupported"));
 }
+fn classify(error: Error) -> ProcessFailureKind {
+    match error {
+        Error::Denied => ProcessFailureKind::Denied,
+        Error::Unbound => ProcessFailureKind::Unbound,
+        Error::Capability | Error::Degraded => ProcessFailureKind::Capability,
+        Error::Unsupported => ProcessFailureKind::Unsupported,
+        Error::InvalidInput | Error::Configuration => ProcessFailureKind::InvalidInput,
+        Error::Capacity => ProcessFailureKind::Capacity,
+        Error::Conflict => ProcessFailureKind::Conflict,
+        Error::NotFound
+        | Error::Clock
+        | Error::Unavailable
+        | Error::Storage
+        | Error::UnsupportedSchema { .. }
+        | Error::OutcomeUnknown
+        | Error::ConfirmationUnknown => ProcessFailureKind::Unavailable,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

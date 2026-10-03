@@ -22,6 +22,7 @@ execution-approval = { path = "../../crates/execution-approval" }
 execution-capability = { path = "../../crates/execution-capability" }
 execution-lifecycle = { path = "../../crates/execution-lifecycle" }
 execution-sqlite = { path = "../../crates/execution-sqlite" }
+execution-ipc = { path = "../../crates/execution-ipc" }
 execution-runner = { path = "../../crates/execution-runner" }
 native-process = { path = "../../crates/native-process" }
 installation-security = { path = "../../crates/installation-security" }

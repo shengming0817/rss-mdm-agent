@@ -20,6 +20,7 @@ fn only_current_envelope_calls_the_handler() {
         pid: 1,
         uid: Some(1),
         session: 1,
+        #[cfg(windows)]
         native: 0,
     };
     for version in [1, 2, 3, 4, 5, 6] {

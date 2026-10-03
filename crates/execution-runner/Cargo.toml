@@ -11,12 +11,12 @@ rss-mdm-resource = { git = "https://dev.azure.com/shengming0923/rss/_git/rss-mdm
 zip = { version = "=8.6.0", default-features = false, features = ["deflate"] }
 zeroize = "=1.8.2"
 execution-contract = { path = "../execution-contract" }
+execution-ipc = { path = "../execution-ipc" }
 execution-app = { path = "../execution-app" }
 execution-lifecycle = { path = "../execution-lifecycle" }
 native-process = { path = "../native-process" }
 platform-private-storage = { path = "../platform-private-storage" }
 installation-security = { path = "../installation-security" }
-schemars.workspace = true
 serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }
 sha2.workspace = true

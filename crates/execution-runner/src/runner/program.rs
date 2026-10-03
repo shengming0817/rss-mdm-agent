@@ -126,7 +126,7 @@ pub(super) fn execute(input: ProgramRun) {
                         &cancel,
                     )?;
                     if first.is_some_and(|before| {
-                        crate::host::monotonic_millis().map_or(true, |now| now >= before)
+                        execution_ipc::host::monotonic_millis().map_or(true, |now| now >= before)
                     }) {
                         return Err(Error::Clock);
                     }
@@ -237,7 +237,8 @@ pub(super) fn execute(input: ProgramRun) {
                         if cancel.load(Ordering::Acquire)
                             || Instant::now() >= deadline
                             || first.is_some_and(|end| {
-                                crate::host::monotonic_millis().map_or(true, |now| now >= end)
+                                execution_ipc::host::monotonic_millis()
+                                    .map_or(true, |now| now >= end)
                             })
                         {
                             return Err(Error::Clock);
@@ -309,7 +310,7 @@ pub(super) fn execute(input: ProgramRun) {
                     sources.detection.as_deref()
                 };
                 if let Some(connection) = material.and_then(|m| m.delegate.as_ref()) {
-                    let _ = connection.exchange(crate::helper::Command::InvocationAck {
+                    let _ = connection.exchange(execution_ipc::helper::Command::InvocationAck {
                         input: Box::new(plan.spec().clone()),
                         attempt: attempt.clone(),
                         step: index as u32,
@@ -496,7 +497,7 @@ pub(super) fn cleanup(
             &cancel,
         )?;
         if let Some(connection) = &material.delegate {
-            let _ = connection.exchange(crate::helper::Command::InvocationAck {
+            let _ = connection.exchange(execution_ipc::helper::Command::InvocationAck {
                 input: Box::new(plan.spec().clone()),
                 attempt: journal.attempt_id.clone(),
                 step,
@@ -563,7 +564,7 @@ fn invoke(
     (cancel, before): (Arc<AtomicBool>, Option<SoftwareState>),
 ) -> Result<ProcessEvidence, Error> {
     if let Some(connection) = &material.delegate {
-        use crate::helper::{Command, Reply};
+        use execution_ipc::helper::{Command, Reply};
         let remaining = deadline
             .saturating_duration_since(Instant::now())
             .as_millis()

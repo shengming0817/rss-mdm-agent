@@ -900,10 +900,10 @@ fn material_registry_is_bounded_immutable_and_retains_live_leases() {
 
 #[test]
 fn another_login_of_the_same_os_account_is_not_the_bound_session() {
-    let session = crate::host::current_session().unwrap();
+    let session = execution_ipc::host::current_session().unwrap();
     let account = OsAccountRef {
         platform: Platform::Macos,
-        subject: Id::new(crate::host::current_subject().unwrap()).unwrap(),
+        subject: Id::new(execution_ipc::host::current_subject().unwrap()).unwrap(),
     };
     let changed = SessionRequirement::ActiveUser {
         account: account.clone(),

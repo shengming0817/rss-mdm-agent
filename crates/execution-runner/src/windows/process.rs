@@ -25,12 +25,13 @@ impl Owner {
         let descriptor = security(&format!("D:P(A;;GA;;;{subject})(A;;GA;;;SY)(A;;GA;;;BA)"))?;
         let attributes = SECURITY_ATTRIBUTES {
             nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
-            lpSecurityDescriptor: descriptor.0,
+            lpSecurityDescriptor: descriptor.as_ptr(),
             bInheritHandle: 0,
         };
         let handle = unsafe { CreateJobObjectW(&attributes, wide(&name).as_ptr()) };
         let existed = unsafe { GetLastError() } == ERROR_ALREADY_EXISTS;
-        let job = own(handle)?;
+        // SAFETY: this OS call returns a fresh owned handle; this is its only owner.
+        let job = unsafe { own(handle) }?;
         if existed {
             return Err(Error::Conflict);
         }
@@ -145,7 +146,7 @@ async fn pipe(parent_writes: bool) -> io::Result<(NamedPipeServer, OwnedHandle)>
         security(&format!("D:P(A;;GA;;;{subject})(A;;GA;;;SY)")).map_err(io::Error::other)?;
     let mut attributes = SECURITY_ATTRIBUTES {
         nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
-        lpSecurityDescriptor: descriptor.0,
+        lpSecurityDescriptor: descriptor.as_ptr(),
         bInheritHandle: 0,
     };
     let name = wide(format!(
@@ -157,8 +158,9 @@ async fn pipe(parent_writes: bool) -> io::Result<(NamedPipeServer, OwnedHandle)>
     } else {
         PIPE_ACCESS_INBOUND
     };
-    let server = own(unsafe {
-        CreateNamedPipeW(
+    // SAFETY: this OS call returns a fresh owned handle; this is its only owner.
+    let server = unsafe {
+        own(CreateNamedPipeW(
             name.as_ptr(),
             direction | FILE_FLAG_OVERLAPPED | FILE_FLAG_FIRST_PIPE_INSTANCE,
             PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
@@ -167,13 +169,14 @@ async fn pipe(parent_writes: bool) -> io::Result<(NamedPipeServer, OwnedHandle)>
             16384,
             1000,
             &attributes,
-        )
-    })
+        ))
+    }
     .map_err(io::Error::other)?;
     let server = unsafe { NamedPipeServer::from_raw_handle(server.into_raw_handle()) }?;
     attributes.bInheritHandle = 1;
-    let client = own(unsafe {
-        CreateFileW(
+    // SAFETY: this OS call returns a fresh owned handle; this is its only owner.
+    let client = unsafe {
+        own(CreateFileW(
             name.as_ptr(),
             if parent_writes {
                 GENERIC_READ
@@ -185,8 +188,8 @@ async fn pipe(parent_writes: bool) -> io::Result<(NamedPipeServer, OwnedHandle)>
             OPEN_EXISTING,
             FILE_ATTRIBUTE_NORMAL,
             null_mut(),
-        )
-    })
+        ))
+    }
     .map_err(io::Error::other)?;
     tokio::time::timeout(Duration::from_secs(1), server.connect())
         .await
@@ -545,7 +548,8 @@ mod crash_tests {
             }
             std::thread::sleep(Duration::from_millis(10));
         };
-        let process = own(unsafe { OpenProcess(SYNCHRONIZE, 0, pid) }).unwrap();
+        // SAFETY: this OS call returns a fresh owned handle; this is its only owner.
+        let process = unsafe { own(OpenProcess(SYNCHRONIZE, 0, pid)) }.unwrap();
         owner.kill().unwrap();
         owner.wait().unwrap();
         assert_eq!(

@@ -38,12 +38,14 @@ fn check(file: &File, immutable: bool, leaf: bool, current: &str) -> Result<(), 
     {
         return Err(Error::Denied);
     }
-    let _descriptor = Local(descriptor);
+    // SAFETY: the successful OS call allocated this pointer for LocalFree, once.
+    let _descriptor = unsafe { Local::from_raw(descriptor) };
     if owner.is_null()
         || acl.is_null()
         || unsafe { IsValidSid(owner) } == 0
         || unsafe { IsValidAcl(acl) } == 0
-        || !trusted(&sid(owner)?, immutable, current)
+        // SAFETY: the successful native query owns the readable SID storage through this call.
+        || !trusted(&unsafe { sid(owner) }?, immutable, current)
     {
         return Err(Error::Denied);
     }
@@ -84,7 +86,8 @@ fn check(file: &File, immutable: bool, leaf: bool, current: &str) -> Result<(), 
         } else {
             replace
         };
-        if mask & forbidden != 0 && !trusted(&sid(subject)?, immutable, current) {
+        // SAFETY: the successful native query owns the readable SID storage through this call.
+        if mask & forbidden != 0 && !trusted(&unsafe { sid(subject) }?, immutable, current) {
             return Err(Error::Denied);
         }
     }
@@ -193,7 +196,7 @@ pub(crate) fn payload(
     ))?;
     let attributes = SECURITY_ATTRIBUTES {
         nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
-        lpSecurityDescriptor: descriptor.0,
+        lpSecurityDescriptor: descriptor.as_ptr(),
         bInheritHandle: 0,
     };
     use sha2::{Digest as _, Sha256};
@@ -220,7 +223,8 @@ pub(crate) fn payload(
                 null_mut(),
             )
         };
-        let owned = own(handle)?;
+        // SAFETY: this OS call returns a fresh owned handle; this is its only owner.
+        let owned = unsafe { own(handle) }?;
         use std::os::windows::io::IntoRawHandle;
         let mut file = unsafe { File::from_raw_handle(owned.into_raw_handle()) };
         file.write_all(content)
@@ -289,8 +293,9 @@ pub(crate) fn grant_read(path: &Path, subject: &str) -> Result<(), Error> {
     let mut present = 0;
     let mut defaulted = 0;
     let mut acl = null_mut();
-    if unsafe { GetSecurityDescriptorDacl(descriptor.0, &mut present, &mut acl, &mut defaulted) }
-        == 0
+    if unsafe {
+        GetSecurityDescriptorDacl(descriptor.as_ptr(), &mut present, &mut acl, &mut defaulted)
+    } == 0
         || present == 0
         || acl.is_null()
     {
