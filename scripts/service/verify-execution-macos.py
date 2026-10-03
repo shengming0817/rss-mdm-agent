@@ -862,8 +862,9 @@ def authorized_steps(programs, endpoint, expected_pid, expected_uid, deadline):
                 if check and result.returncode: raise subprocess.CalledProcessError(result.returncode,result.args,stdout,stderr)
                 return result
             except BaseException as error:
-                if process.poll() is None:
-                    os.killpg(process.pid,signal.SIGKILL)
+                if isinstance(error,OperationAborted) or process.poll() is None:
+                    try: os.killpg(process.pid,signal.SIGKILL)
+                    except ProcessLookupError: pass
                     process.communicate(timeout=3)
                 if isinstance(error,OperationAborted):
                     recovering=True;operation_deadline=time.monotonic()+15
@@ -1479,8 +1480,9 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
                 elif method == 'processSecurity':
                     proof=request['proof']
                     assert frozen and proof['runtimeTreeSha256']==frozen['runtime']['sha256'], 'process proof candidate mismatch'
-                    for name in ['host_crash','launcher_crash','retained_descendant','close_timeout','unknown_scope']:
-                        security_result(receipt['security'],name,proof['scenarios'][name])
+                    assert proof['scenarios'] and not set(proof['scenarios'])-{'host_crash','launcher_crash','retained_descendant','close_timeout','unknown_scope'}
+                    for name,evidence in proof['scenarios'].items():
+                        security_result(receipt['security'],name,evidence)
                     value=dict(recorded=True)
                 elif method == 'catalog':
                     value = command('package', path=str(pkg), receipt=package_receipt, user=True)

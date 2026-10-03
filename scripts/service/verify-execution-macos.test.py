@@ -22,12 +22,12 @@ spec.loader.exec_module(acceptance)
 
 class BackendLifecycleTests(unittest.TestCase):
     def test_fixed_operation_cancellation_reaps_child_and_restores_before_cleanup(self):
-        for disconnect in (False,True):
-          with self.subTest(disconnect=disconnect), tempfile.TemporaryDirectory(dir='/private/tmp') as directory:
+        for disconnect,orphan in ((False,False),(True,False),(False,True)):
+          with self.subTest(disconnect=disconnect,orphan=orphan), tempfile.TemporaryDirectory(dir='/private/tmp') as directory:
             root=Path(directory);endpoint=str(root/'control');pid_file=root/'pid';restored=root/'restored';cleaned=root/'cleaned'
             listener=socket.socket(socket.AF_UNIX);listener.bind(endpoint);listener.listen(1)
-            setup="import subprocess\nfrom pathlib import Path\ntry:\n subprocess.run(['/bin/sh','-c',%r],timeout=%r)\nfinally:\n Path(%r).write_text('restored')" % (
-                'echo $$ > '+str(pid_file)+'; exec /bin/sleep 60',10 if disconnect else .3,str(restored))
+            setup="import subprocess\nfrom pathlib import Path\ntry:\n subprocess.run(['/bin/sh','-c',%r],timeout=%r,capture_output=True)\nfinally:\n Path(%r).write_text('restored')" % (
+                ('/bin/sleep 60 & echo $! > '+str(pid_file)+'; exit 0') if orphan else ('echo $$ > '+str(pid_file)+'; exec /bin/sleep 60'),10 if disconnect else .3,str(restored))
             programs={'setup':setup,'cleanup':"from pathlib import Path\nPath(%r).write_text('cleaned')" % str(cleaned)}
             failures=[]
             def run():
@@ -49,7 +49,11 @@ class BackendLifecycleTests(unittest.TestCase):
                         self.assertTrue(json.loads(reader.readline())['ok'])
                 worker.join(3);self.assertFalse(worker.is_alive())
                 self.assertTrue(restored.exists());self.assertTrue(cleaned.exists())
-                with self.assertRaises(ProcessLookupError): os.kill(int(pid_file.read_text()),0)
+                child_pid=int(pid_file.read_text());end=time.monotonic()+2
+                while True:
+                    try: os.kill(child_pid,0)
+                    except ProcessLookupError: break
+                    self.assertLess(time.monotonic(),end);time.sleep(.01)
             listener.close()
 
     def test_started_security_failure_is_distinct_from_unexecuted_scenario(self):
@@ -60,6 +64,10 @@ class BackendLifecycleTests(unittest.TestCase):
         self.assertEqual(acceptance.summarize_security(matrix),'failed')
         acceptance.security_result(matrix,'offer_replay',{'actual':'evidence'})
         self.assertEqual(matrix['scenarios']['offer_replay']['status'],'passed')
+        acceptance.security_begin(matrix,'offer_expiry')
+        self.assertEqual(matrix['scenarios']['offer_replay']['status'],'passed')
+        self.assertEqual(matrix['scenarios']['offer_expiry']['status'],'failed')
+        self.assertEqual(matrix['scenarios']['revocation_preopened']['status'],'notExecuted')
 
     def test_failed_setup_keeps_only_the_fixed_cleanup_channel_available(self):
         with tempfile.TemporaryDirectory(dir='/private/tmp') as directory:

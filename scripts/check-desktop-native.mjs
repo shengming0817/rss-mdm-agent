@@ -2094,7 +2094,13 @@ try {
         );
         return rows[0];
       };
-      const record = (name, evidence) => {
+      const record = async (name, evidence) => {
+        await serviceCall("processSecurity", {
+          proof: {
+            runtimeTreeSha256: proof.runtimeTreeSha256,
+            scenarios: { [name]: evidence },
+          },
+        });
         proof.scenarios[name] = evidence;
         result.checks.push(name);
       };
@@ -2105,7 +2111,7 @@ try {
       process.kill(launch.scope.root, "SIGSTOP");
       await restart();
       await wait(() => absent(launch.scope));
-      record("close_timeout", {
+      await record("close_timeout", {
         launch,
         stoppedLauncher: true,
         elapsedMs: performance.now() - closeStart,
@@ -2127,7 +2133,11 @@ try {
         "Host must survive launcher failure",
       );
       assert.equal(hostPid(), survivingHost);
-      record("launcher_crash", { launch, survivingHost, scopeAbsent: true });
+      await record("launcher_crash", {
+        launch,
+        survivingHost,
+        scopeAbsent: true,
+      });
       await serviceCall("processSecurityBegin", {
         name: "retained_descendant",
       });
@@ -2140,8 +2150,8 @@ try {
         requests,
         "fault recovery cannot redispatch the model request",
       );
-      record("retained_descendant", recovery);
-      record("unknown_scope", recovery);
+      await record("retained_descendant", recovery);
+      await record("unknown_scope", recovery);
       await restart();
 
       mark("security: actual Host crash and owned worker group termination");
@@ -2152,9 +2162,12 @@ try {
       process.kill(crashedHost, "SIGKILL");
       await wait(() => absent(launch.scope));
       await restart();
-      record("host_crash", { hostPid: crashedHost, launch, scopeAbsent: true });
+      await record("host_crash", {
+        hostPid: crashedHost,
+        launch,
+        scopeAbsent: true,
+      });
 
-      await serviceCall("processSecurity", { proof });
       result.processSecurity = proof;
     }
     mark("caller isolation and credential deletion");
