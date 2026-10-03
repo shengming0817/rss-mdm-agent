@@ -32,13 +32,42 @@ fn artifact(value: &str) -> ExactArtifactRef {
     }
 }
 
-/// Synthetic test context only; no production authority or installed interpreter is asserted.
-pub fn input(profile: ScriptProfile) -> ScriptPlanInput {
+pub fn invocation(profile: ScriptProfile) -> ScriptInvocationInput {
+    let message = "-true ; $(touch forbidden) 'quoted'";
+    ScriptInvocationInput {
+        platform: Platform::Linux,
+        profile,
+        artifact: artifact("native-script"),
+        interpreter: artifact("test-interpreter-7"),
+        arguments: if profile == ScriptProfile::PowerShell7 {
+            vec!["-Message:".into(), message.into()]
+        } else {
+            vec![message.into()]
+        },
+        artifact_encoding: ArtifactEncoding::Utf8,
+        stdin: StandardInput::Controlled {
+            reference: reference("secret-handle"),
+            encoding: TextEncoding::Utf8,
+            max_bytes: 128,
+        },
+        output: OutputSpec {
+            format: OutputFormat::Text {},
+            stdout: TextEncoding::Utf8,
+            stderr: TextEncoding::Utf8,
+        },
+        cwd: "/workspace".into(),
+        env: BTreeMap::new(),
+    }
+}
+/// Fixed synthetic context for the digest baseline measured before the API replacement.
+pub fn context(profile: ScriptProfile) -> ExecutionInput {
     let account = OsAccountRef {
         platform: Platform::Linux,
         subject: id("uid:1000"),
     };
-    ScriptPlanInput {
+    ExecutionInput {
+        schema_version: V6,
+        execution: ExecutionSpec::Process {},
         request: ExecutionRequest {
             schema_version: V1,
             request_id: RequestId::new("test-request").unwrap(),
@@ -78,32 +107,7 @@ pub fn input(profile: ScriptProfile) -> ScriptPlanInput {
                 ),
             ]),
         },
-        artifact: artifact("native-script"),
-        interpreter: artifact("test-interpreter-7"),
-        profile,
-        artifact_encoding: ArtifactEncoding::Utf8,
-        bindings: vec![ParameterBinding {
-            parameter: "message".into(),
-            target: if profile == ScriptProfile::PowerShell7 {
-                ParameterTarget::Named {
-                    name: "Message".into(),
-                }
-            } else {
-                ParameterTarget::Positional
-            },
-        }],
-        cwd: "/workspace".into(),
-        env: BTreeMap::new(),
-        stdin: StdinBinding::Parameter {
-            parameter: "credential".into(),
-            encoding: TextEncoding::Utf8,
-            max_bytes: 128,
-        },
-        output: OutputSpec {
-            format: OutputFormat::Text {},
-            stdout: TextEncoding::Utf8,
-            stderr: TextEncoding::Utf8,
-        },
+        launch: compile_invocation(invocation(profile), &limits()).unwrap(),
         run_as: RunAs::User {
             account: account.clone(),
         },
