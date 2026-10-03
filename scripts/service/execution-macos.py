@@ -44,7 +44,7 @@ def candidate(binary, config):
         '=cdhash H"' + cdhash + '"', str(binary)], check=True, capture_output=True, text=True)
     result = subprocess.run([str(binary), '--config', str(config), '--validate-installation'], check=True, capture_output=True, text=True)
     value = json.loads(result.stdout)
-    if value['version'] != 2 or value['ipc_version'] != 7 or value['service']['path'] != str(binary):
+    if value['version'] != 2 or value['ipc_version'] != 8 or value['service']['path'] != str(binary):
         raise RuntimeError('candidate deployment/protocol mismatch')
     return value
 

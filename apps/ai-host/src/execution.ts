@@ -193,7 +193,7 @@ export async function connectExecution(
       return ok({
         operationId,
         target: "rust-execution",
-        permission: read ? "none" : "ask",
+        permission: proposal.name === "execution_cancel" ? "ask" : "none",
       });
     },
     send: async (request, b) => {

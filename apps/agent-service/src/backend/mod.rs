@@ -4,6 +4,7 @@ use sha2::Digest as _;
 mod bridge;
 mod commands;
 mod dispatch;
+pub(crate) mod gate;
 pub(crate) mod host;
 mod offer;
 pub(crate) mod plan;

@@ -12,8 +12,9 @@ use execution_runner::MaterialRegistry;
 use std::sync::{Arc, Mutex};
 
 pub(crate) struct BackendPermit {
-    pub plan: FrozenExecution,
-    pub start: agent_client::Start,
+    pub(crate) plan: FrozenExecution,
+    pub(crate) start: agent_client::Start,
+    pub(crate) gate: super::gate::ProductGateProof,
 }
 #[derive(Clone)]
 pub(crate) struct EnterpriseHost {
@@ -36,6 +37,10 @@ impl EnterpriseHost {
             .map_err(|_| Error::Unavailable)?
             .clone()
             .ok_or(Error::Denied)?;
+        permit
+            .gate
+            .verify(plan, self.clock.millis().map_err(|_| Error::Clock)?)
+            .map_err(|_| Error::Denied)?;
         if permit.plan.digest() != plan.digest()
             || permit.start.payload().permit() != agent_client::wire::TaskPermit::Start
         {
@@ -57,7 +62,7 @@ impl AuthorityVerifier for EnterpriseHost {
         // No submitted IPC/AI plan supplies an allow rule and there is no second approver.
         Ok(AuthorityFacts {
             verified_origin: p.request.initiator.clone(),
-            risk: None,
+            risk: grant.gate.risk(),
             subject: SubjectFacts {
                 authority: self.binding.authority.clone(),
                 actor: self.actor.clone(),
@@ -73,10 +78,7 @@ impl AuthorityVerifier for EnterpriseHost {
             }],
             now_unix_ms: now,
             verification_revision: p.policy.clone(),
-            fresh_until_unix_ms: u64::try_from(grant.start.payload().expires_at())
-                .map_err(|_| VerificationError::Clock)?
-                .checked_mul(1000)
-                .ok_or(VerificationError::Clock)?,
+            fresh_until_unix_ms: grant.gate.until(),
         })
     }
 }

@@ -56,7 +56,7 @@ def security_matrix():
     rows['cross_user']['reason'] = 'second real GUI login required; sudo -u is not evidence'
     rows['login_generation']['reason'] = 'isolated logout/login and retained old request required'
     rows['legacy_challenge'] = dict(status='notApplicable',
-        reason='IPC V7 has no challenge; NSXPC one-shot/5s lifetime and backend offer expiry replace it',
+        reason='IPC V8 has no challenge; NSXPC one-shot/5s lifetime and backend offer expiry replace it',
         source='crates/execution-ipc/src/{host.rs,macos_service.m}')
     return dict(platform='macOS', scenarios=rows, status='notExecuted')
 
@@ -691,8 +691,8 @@ def login_security(args, frozen):
                 request=offer_request(offers[0])
                 request['origin']=dict(kind='ai',config=dict(id='security-login',revision='1'),
                     conversation='security-login',toolCall='security-login')
-                proposed=probe.request(request);assert_native_reply(proposed,'queued')
-                assert proposed['envelope']['reply']['confirmationRequired'] is True
+                proposed=probe.request(request);assert_native_reply(proposed,'pending')
+                assert proposed['envelope']['reply']['value']['failure'] == 'riskUnknown'
                 after_proposal=probe.request(dict(method='tasks',after=None));assert_native_reply(after_proposal,'tasks')
                 state=dict(candidateSha256=digest,identity=probe.identity,offer=offers[0],request=request,
                     baseline=healthy,proposed=proposed,afterProposal=after_proposal['envelope']['reply'])
@@ -1273,7 +1273,7 @@ def main():
         installer.chmod(0o600)
         system_installer_source = installer_source.replace("'ProcessType': 'Background'", "'ProcessType': 'Background', 'StandardErrorPath': " + repr(str(protected/'service-stderr.log')))
         shutil.copyfile(lab / 'tls.pem', inputs / 'tls.pem')
-        deployment = dict(version=2, ipc_version=7, origin=f'https://localhost:{proxy.server_port}/', tenant=info['tenant'],
+        deployment = dict(version=2, ipc_version=8, origin=f'https://localhost:{proxy.server_port}/', tenant=info['tenant'],
                           signing_keys={'test': info['key']}, ca_file=str(protected / 'ca.pem'),
                           enrollment=str(uuid.uuid4()), registration_operation=str(uuid.uuid4()),
                           state_root=str(protected / 'state'),

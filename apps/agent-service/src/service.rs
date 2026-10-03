@@ -162,6 +162,7 @@ impl<S: SecretProvider> DeviceService<S> {
                 config,
                 helpers,
                 available: None,
+                available_risk: None,
                 selected: None,
                 stopping: false,
                 recovery_cursor: None,
@@ -393,6 +394,7 @@ impl<S: SecretProvider> DeviceService<S> {
             if self.client.bound_request(offer.task_id())?.is_some() {
                 return Ok(());
             }
+            self.core.available_risk = backend::gate::TrustedRisk::from_offer(&offer);
             self.core.available = Some(offered(&offer)?);
             network(self.client.received(&offer), &mut self.core, commands).await?;
             let materials = network(self.client.prepare(&offer), &mut self.core, commands).await?;
@@ -513,6 +515,7 @@ pub(crate) struct Core {
     pub(crate) config: ExecutionConfig,
     pub(crate) helpers: UserResources,
     pub(crate) available: Option<execution_contract::BackendTask>,
+    pub(crate) available_risk: Option<backend::gate::TrustedRisk>,
     pub(crate) selected: Option<Selection>,
     pub(crate) stopping: bool,
     pub(crate) recovery_cursor: Option<RequestId>,
@@ -628,6 +631,168 @@ impl Core {
             .map_err(crate::error::app_error)?;
         Ok(Some(next))
     }
+    fn start_task(&mut self, selection: Selection) -> Result<execution_ipc::host::Reply, Error> {
+        use execution_admission::{ai_execution_gate, ExecutionGate};
+        use execution_ipc::host::Reply;
+        if self.host.revoked.load(Ordering::Acquire) {
+            return Err(Error::Denied);
+        }
+        if let Some(previous) = self
+            .app
+            .backend_request(&self.caller(), &selection.request)
+            .map_err(map_app_error)?
+        {
+            if !selection.matches(&previous.offer)
+                || previous.trigger != selection.trigger(&self.host.binding.device)?
+            {
+                return Err(Error::Conflict);
+            }
+            // Replays never confirm, change provenance, or create a new attempt.
+            if previous.state == BackendRequestState::Ready
+                && self.available.as_ref() == Some(&previous.offer)
+            {
+                self.selected = Some(Selection::from_record(&previous)?);
+            }
+            return Ok(Reply::Pending {
+                value: Box::new(previous),
+            });
+        }
+        let offer = self.available.as_ref().ok_or(Error::Unavailable)?.clone();
+        let now = self.host.clock.millis()?;
+        if !selection.matches(&offer)
+            || !offer.user_initiated
+            || now / 1000 >= u64::try_from(offer.expires_at).map_err(|_| Error::Clock)?
+        {
+            return Err(Error::Denied);
+        }
+        let trigger = selection.trigger(&self.host.binding.device)?;
+        let risk = if matches!(trigger, BackendTrigger::Ai { .. }) {
+            self.available_risk
+                .as_ref()
+                .and_then(|r| r.decision(&offer.revision))
+                .cloned()
+        } else {
+            None
+        };
+        let (state, failure) = if matches!(trigger, BackendTrigger::Ai { .. }) {
+            if risk.as_ref().is_some_and(|r| now >= r.expires_at_unix_ms) {
+                (
+                    BackendRequestState::Failed,
+                    Some(BackendRequestFailure::Expired),
+                )
+            } else {
+                match ai_execution_gate(risk.as_ref().map(|r| r.level)) {
+                    ExecutionGate::Direct => (BackendRequestState::Ready, None),
+                    ExecutionGate::Confirmation => {
+                        (BackendRequestState::AwaitingConfirmation, None)
+                    }
+                    ExecutionGate::Blocked => (
+                        BackendRequestState::Failed,
+                        Some(if risk.is_none() {
+                            BackendRequestFailure::RiskUnknown
+                        } else {
+                            BackendRequestFailure::RiskBlocked
+                        }),
+                    ),
+                }
+            }
+        } else {
+            (BackendRequestState::Ready, None)
+        };
+        let next = BackendRequest {
+            offer: offer.clone(),
+            trigger,
+            risk,
+            confirmation: None,
+            revision: 1,
+            state,
+            failure,
+        };
+        self.app
+            .record_backend_request(&self.caller(), None, &next)
+            .map_err(map_app_error)?;
+        if state == BackendRequestState::Failed {
+            return Ok(Reply::Pending {
+                value: Box::new(next),
+            });
+        }
+        if state == BackendRequestState::Ready {
+            self.selected = Some(Selection::from_record(&next)?);
+        }
+        Ok(Reply::Queued {
+            request: offer.request,
+            task: offer.task,
+            attempt: offer.attempt,
+            confirmation_required: state == BackendRequestState::AwaitingConfirmation,
+        })
+    }
+    fn confirm_task(&mut self, selection: Selection) -> Result<execution_ipc::host::Reply, Error> {
+        use execution_ipc::host::Reply;
+        if self.host.revoked.load(Ordering::Acquire) {
+            return Err(Error::Denied);
+        }
+        let previous = self
+            .app
+            .backend_request(&self.caller(), &selection.request)
+            .map_err(map_app_error)?
+            .ok_or(Error::Denied)?;
+        let BackendTrigger::Ai { os_session, .. } = &previous.trigger else {
+            return Err(Error::Denied);
+        };
+        if !selection.matches(&previous.offer)
+            || !same_login(&previous.trigger, &selection)
+            || previous
+                .risk
+                .as_ref()
+                .is_none_or(|r| r.level != execution_contract::RiskLevel::Two)
+        {
+            return Err(Error::Denied);
+        }
+        if previous.state != BackendRequestState::AwaitingConfirmation {
+            return Ok(Reply::Pending {
+                value: Box::new(previous),
+            });
+        }
+        if self.available.as_ref() != Some(&previous.offer) {
+            return Err(Error::Denied);
+        }
+        let now = self.host.clock.millis()?;
+        let risk = self
+            .available_risk
+            .as_ref()
+            .and_then(|r| r.decision(&previous.offer.revision))
+            .ok_or(Error::Denied)?;
+        if previous.risk.as_ref() != Some(risk) {
+            return Err(Error::Denied);
+        }
+        let until = now.saturating_add(60_000).min(risk.expires_at_unix_ms).min(
+            u64::try_from(previous.offer.expires_at)
+                .map_err(|_| Error::Clock)?
+                .checked_mul(1000)
+                .ok_or(Error::Clock)?,
+        );
+        if now >= until {
+            return Err(Error::Expired);
+        }
+        let mut next = previous.clone();
+        next.revision += 1;
+        next.state = BackendRequestState::Ready;
+        next.confirmation = Some(execution_contract::BackendConfirmation {
+            os_session: os_session.clone(),
+            confirmed_at_unix_ms: now,
+            expires_at_unix_ms: until,
+        });
+        self.app
+            .record_backend_request(&self.caller(), Some(&previous), &next)
+            .map_err(map_app_error)?;
+        self.selected = Some(Selection::from_record(&next)?);
+        Ok(Reply::Queued {
+            request: next.offer.request,
+            task: next.offer.task,
+            attempt: next.offer.attempt,
+            confirmation_required: false,
+        })
+    }
     pub(crate) fn caller(&self) -> RequestContext {
         RequestContext {
             actor: self.host.actor.clone(),
@@ -712,131 +877,26 @@ impl Core {
                     attempt,
                     revision,
                     origin,
-                }) => {
-                    if self.host.revoked.load(Ordering::Acquire) {
-                        return Err(Error::Denied);
-                    }
-                    let replay = Selection {
-                        request: request.clone(),
-                        task: task.clone(),
-                        attempt: attempt.clone(),
-                        revision: revision.clone(),
-                        subject: command.subject.clone(),
-                        session: command.session,
-                        binding: command.binding.clone().ok_or(Error::Denied)?,
-                        origin: origin.clone(),
-                    };
-                    if let Some(previous) = self
-                        .app
-                        .backend_request(&self.caller(), &request)
-                        .map_err(crate::error::app_error)?
-                    {
-                        // A proposed AI request still needs its explicit desktop confirmation.
-                        // Once selected, replay returns facts and never repeats that transition.
-                        if previous.state != BackendRequestState::Proposed {
-                            let original_origin =
-                                previous.trigger == replay.trigger(&self.host.binding.device)?;
-                            let desktop_confirmation =
-                                matches!(origin, execution_ipc::host::ClientOrigin::Desktop {})
-                                    && matches!(previous.trigger, BackendTrigger::Ai { .. })
-                                    && same_login(&previous.trigger, &replay);
-                            if previous.offer.task != task
-                                || previous.offer.attempt != attempt
-                                || previous.offer.revision != revision
-                                || !(original_origin || desktop_confirmation)
-                            {
-                                return Err(Error::Conflict);
-                            }
-                            return Ok(Reply::Pending {
-                                value: Box::new(previous),
-                            });
-                        }
-                    }
-                    let offer = self.available.as_ref().ok_or(Error::Unavailable)?;
-                    if offer.request != request
-                        || offer.task != task
-                        || offer.attempt != attempt
-                        || offer.revision != revision
-                        || !offer.user_initiated
-                        || self.host.clock.millis()? / 1000 >= offer.expires_at as u64
-                    {
-                        return Err(Error::Denied);
-                    }
-                    if self.selected.as_ref().is_some_and(|s| {
-                        s.subject != command.subject || s.session != command.session
-                    }) {
-                        return Err(Error::Conflict);
-                    }
-                    let confirmation_required =
-                        matches!(origin, execution_ipc::host::ClientOrigin::Ai { .. });
-                    let selection = Selection {
-                        request: request.clone(),
-                        task,
-                        attempt,
-                        revision,
+                }) => self.start_task(Selection {
+                    request,
+                    task,
+                    attempt,
+                    revision,
+                    subject: command.subject,
+                    session: command.session,
+                    binding: command.binding.ok_or(Error::Denied)?,
+                    origin,
+                }),
+                LocalRequest::Operation(Request::ConfirmTask { selection }) => {
+                    self.confirm_task(Selection {
+                        request: selection.request,
+                        task: selection.task,
+                        attempt: selection.attempt,
+                        revision: selection.revision,
                         subject: command.subject,
                         session: command.session,
                         binding: command.binding.ok_or(Error::Denied)?,
-                        origin,
-                    };
-                    let offer = offer.clone();
-                    let previous = self
-                        .app
-                        .backend_request(&self.caller(), &request)
-                        .map_err(crate::error::app_error)?;
-                    if let Some(previous) = &previous {
-                        if previous.offer != offer || !same_login(&previous.trigger, &selection) {
-                            return Err(Error::Conflict);
-                        }
-                        if matches!(
-                            previous.state,
-                            BackendRequestState::Failed | BackendRequestState::Cancelled
-                        ) {
-                            return Ok(Reply::Pending {
-                                value: Box::new(previous.clone()),
-                            });
-                        }
-                    }
-                    let trigger = previous
-                        .as_ref()
-                        .map(|p| p.trigger.clone())
-                        .unwrap_or(selection.trigger(&self.host.binding.device)?);
-                    let state = if confirmation_required {
-                        BackendRequestState::Proposed
-                    } else {
-                        BackendRequestState::Selected
-                    };
-                    if previous.as_ref().is_none_or(|p| p.state != state) {
-                        if previous
-                            .as_ref()
-                            .is_some_and(|p| p.state != BackendRequestState::Proposed)
-                        {
-                            return Err(Error::Conflict);
-                        }
-                        let next = BackendRequest {
-                            offer: offer.clone(),
-                            trigger,
-                            revision: previous.as_ref().map_or(1, |p| p.revision + 1),
-                            state,
-                            failure: None,
-                        };
-                        self.app
-                            .record_backend_request(&self.caller(), previous.as_ref(), &next)
-                            .map_err(crate::error::app_error)?;
-                    }
-                    if !confirmation_required {
-                        let saved = self
-                            .app
-                            .backend_request(&self.caller(), &request)
-                            .map_err(crate::error::app_error)?
-                            .ok_or(Error::Conflict)?;
-                        self.selected = Some(Selection::from_record(&saved)?);
-                    }
-                    Ok(Reply::Queued {
-                        task: offer.task.clone(),
-                        attempt: offer.attempt.clone(),
-                        request: offer.request.clone(),
-                        confirmation_required,
+                        origin: execution_ipc::host::ClientOrigin::Desktop {},
                     })
                 }
                 LocalRequest::Operation(Request::Status { request }) => {
@@ -1117,7 +1177,16 @@ fn same_login(trigger: &BackendTrigger, selection: &Selection) -> bool {
     }
 }
 impl Selection {
-    fn trigger(&self, device: &execution_contract::DeviceId) -> Result<BackendTrigger, Error> {
+    fn matches(&self, offer: &execution_contract::BackendTask) -> bool {
+        self.request == offer.request
+            && self.task == offer.task
+            && self.attempt == offer.attempt
+            && self.revision == offer.revision
+    }
+    pub(crate) fn trigger(
+        &self,
+        device: &execution_contract::DeviceId,
+    ) -> Result<BackendTrigger, Error> {
         let os_session = execution_contract::OsSessionRef {
             device: device.clone(),
             account: execution_contract::OsAccountRef {
@@ -1255,3 +1324,7 @@ pub(crate) fn assemble_journal<H: execution_app::AppHost, R: execution_app::Runn
     };
     ExecutionApp::new(journal, host, runner, config)
 }
+
+#[cfg(all(test, target_os = "macos"))]
+#[path = "product_gate_tests.rs"]
+mod product_gate_tests;
