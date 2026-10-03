@@ -114,7 +114,6 @@ unsafe extern "C" fn rss_execution_call(
         pid,
         uid: Some(uid),
         session,
-        native: connection as usize,
     };
     let reply = handle_call(handler, stop, &peer, unsafe {
         std::slice::from_raw_parts(data, size)
@@ -146,7 +145,6 @@ unsafe extern "C" fn rss_execution_allow_helper(
         pid,
         uid: Some(uid),
         session,
-        native: connection as usize,
     };
     i32::from(
         handler
@@ -331,7 +329,6 @@ mod tests {
             pid: 1,
             uid: Some(1),
             session: 1,
-            native: 0,
         };
         assert!(handle_call(
             &handler,

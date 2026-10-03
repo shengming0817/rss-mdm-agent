@@ -251,6 +251,7 @@ pub struct Peer {
     pub(crate) pid: u32,
     pub(crate) uid: Option<u32>,
     pub(crate) session: u32,
+    #[cfg(windows)]
     pub(crate) native: usize,
 }
 impl Peer {
@@ -719,6 +720,7 @@ mod tests {
             pid: 1,
             uid: Some(0),
             session: 1,
+            #[cfg(windows)]
             native: 0,
         };
         let mut handler = Unbound;
