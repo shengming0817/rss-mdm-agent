@@ -1,6 +1,8 @@
 // ref: Node.js lib/child_process.js@v24.14.1
 import { spawn, execFileSync } from "node:child_process";
 import { join } from "node:path";
+import { once } from "node:events";
+import { createInterface } from "node:readline";
 
 const noMatch = (error) =>
   error.status === 1 &&
@@ -40,7 +42,8 @@ export function processChildren(pid, run = execFileSync) {
   }
 }
 
-// The timeout owner receives each detached actor before allowing the fault to proceed.
+// This owner creates the detached actor itself, before any readiness/registration wait.
+// ref: Node.js child_process detached: killing the executor cannot reap another group.
 export async function runOwnedScopeProbe(
   node,
   source,
@@ -50,73 +53,133 @@ export async function runOwnedScopeProbe(
   signal,
   timeoutMs = 30000,
 ) {
-  const child = spawn(
+  const actorSource = `const {spawn}=require('node:child_process');const fs=require('node:fs');
+    const control=JSON.parse(process.argv[1]);
+    const child=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'});
+    child.once('spawn',()=>{
+      if(control.marker)fs.writeFileSync(control.marker,JSON.stringify({parent:process.pid,child:child.pid}),{mode:0o600,flag:'wx'});
+      setTimeout(()=>console.log(JSON.stringify({pid:child.pid})),control.delay);
+    });setInterval(()=>{},1000);`;
+  const delay = input.actorReadinessDelayMs ?? 0;
+  if (!Number.isInteger(delay) || delay < 0 || delay > 5000)
+    throw Error("actor readiness delay invalid");
+  const actor = spawn(
     node,
-    ["--input-type=module", "-e", source, JSON.stringify(input)],
+    [
+      "-e",
+      actorSource,
+      JSON.stringify({ delay, marker: input.actorRecoveryPath }),
+    ],
     {
       detached: true,
-      stdio: ["ignore", "pipe", "pipe", "ipc"],
+      stdio: ["ignore", "pipe", "pipe"],
     },
   );
-  let timer,
-    stdout = "",
-    stderr = "",
-    registered = false;
-  const stop = () => child.kill("SIGTERM");
+  let child, proof, timer, rejectStop;
+  const stopped = new Promise((_, reject) => {
+    rejectStop = reject;
+  });
+  stopped.catch(() => {});
+  const abort = () => rejectStop(Error("owned scope probe cancelled"));
+  signal?.addEventListener("abort", abort, { once: true });
+  timer = setTimeout(
+    () => rejectStop(Error("owned scope probe deadline exceeded")),
+    timeoutMs,
+  );
+  actor.once("error", rejectStop);
+  const lines = createInterface({ input: actor.stdout });
   try {
-    return await new Promise((resolve, reject) => {
-      timer = setTimeout(() => {
-        stop();
-        reject(Error("owned scope probe deadline exceeded"));
-      }, timeoutMs);
-      const abort = () => {
-        stop();
-        reject(Error("owned scope probe cancelled"));
-      };
-      signal?.addEventListener("abort", abort, { once: true });
+    if (signal?.aborted) abort();
+    const [line] = await Promise.race([once(lines, "line"), stopped]);
+    const pid = JSON.parse(line).pid;
+    if (!Number.isSafeInteger(pid) || pid <= 1)
+      throw Error("actor descendant invalid");
+    proof = {
+      kind: "ownedScope",
+      scope: { kind: "processGroup", root: actor.pid },
+      anchor: { pid, start: processField(pid, "lstart") },
+    };
+    if (!proof.anchor.start || Number(processField(pid, "pgid")) !== actor.pid)
+      throw Error("actor identity unavailable");
+    await Promise.race([register(proof, process.pid), stopped]);
+    child = spawn(
+      node,
+      [
+        "--input-type=module",
+        "-e",
+        source,
+        JSON.stringify({ ...input, actor: proof }),
+      ],
+      {
+        detached: true,
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+    const result = new Promise((resolve, reject) => {
+      let stdout = "",
+        stderr = "";
+      child.once("error", reject);
+      child.stdout.on("data", (bytes) => {
+        stdout += bytes;
+        if (stdout.length > 1024 * 1024)
+          reject(Error("scope probe output bound"));
+      });
+      child.stderr.on("data", (bytes) => {
+        stderr = (stderr + bytes).slice(-65536);
+      });
       child.once("close", (code) => {
-        signal?.removeEventListener("abort", abort);
         if (code !== 0) reject(Error("owned scope probe failed: " + stderr));
         else {
           try {
-            if (!registered) throw Error("scope handoff absent");
             resolve(JSON.parse(stdout));
           } catch (error) {
             reject(error);
           }
         }
       });
-      child.once("error", reject);
-      child.stdout.on("data", (bytes) => {
-        stdout += bytes;
-        if (stdout.length > 1024 * 1024) {
-          stop();
-          reject(Error("scope probe output bound"));
-        }
-      });
-      child.stderr.on("data", (bytes) => {
-        stderr = (stderr + bytes).slice(-65536);
-      });
-      child.on("message", async (proof) => {
-        try {
-          if (registered) throw Error("duplicate scope handoff");
-          await register(proof, child.pid);
-          registered = true;
-          child.send({ scopeRecorded: true });
-        } catch (error) {
-          stop();
-          reject(error);
-        }
-      });
-      if (signal?.aborted) abort();
     });
+    return await Promise.race([result, stopped]);
   } finally {
     clearTimeout(timer);
+    signal?.removeEventListener("abort", abort);
+    lines.close();
     try {
-      if (!(await reapOwnedProcessGroup(child, 0, 500, 1500)).confirmed)
+      if (
+        child &&
+        !(await reapOwnedProcessGroup(child, 0, 500, 1500)).confirmed
+      )
         throw Error("owned scope executor cleanup unconfirmed");
     } finally {
-      await cleanup();
+      try {
+        const parentAlive =
+          actor.exitCode === null && actor.signalCode === null;
+        let groupAlive = !!actor.pid;
+        if (actor.pid) {
+          try {
+            process.kill(-actor.pid, 0);
+          } catch (error) {
+            if (error.code === "ESRCH") groupAlive = false;
+            else throw error;
+          }
+        }
+        if (
+          groupAlive &&
+          !parentAlive &&
+          (!proof ||
+            processField(proof.anchor.pid, "lstart") !== proof.anchor.start ||
+            Number(processField(proof.anchor.pid, "pgid")) !== actor.pid)
+        )
+          throw Error("actor scope ownership unconfirmed");
+        if (parentAlive || groupAlive) {
+          if (!(await reapOwnedProcessGroup(actor, 0, 500, 1500)).confirmed)
+            throw Error("actor group cleanup unconfirmed");
+        } else {
+          actor.stdout?.destroy();
+          actor.stderr?.destroy();
+        }
+      } finally {
+        await cleanup();
+      }
     }
   }
 }

@@ -404,9 +404,7 @@ let faultScopeConfirmed = true;
 const verifyUnknownFence = async () => {
   const source = `
     import assert from 'node:assert/strict';
-    import {spawn,execFileSync} from 'node:child_process';
-    import {once} from 'node:events';
-    import {createInterface} from 'node:readline';
+    import {setTimeout as delay} from 'node:timers/promises';
     import {randomUUID} from 'node:crypto';
     import {pathToFileURL} from 'node:url';
     import {join} from 'node:path';
@@ -420,25 +418,21 @@ const verifyUnknownFence = async () => {
     const {processField:field}=await import(pathToFileURL(join(input.root,'scripts/desktop-dev-process.mjs')));
     const unwrap=(result)=>{assert.equal(result.ok,true,JSON.stringify(result));return result.value};
     // Existing launch-fence fault seam, isolated from the UI's credential namespace.
-    const parent=spawn(process.execPath,['-e',
-      "const {spawn}=require('node:child_process');const child=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'});child.once('spawn',()=>console.log(JSON.stringify({pid:child.pid})));setInterval(()=>{},1000)"],
-      {detached:true,stdio:['ignore','pipe','ignore']});
-    const lines=createInterface({input:parent.stdout});
-    let child, birth, store, host;
-    const scope={kind:'processGroup',root:parent.pid};
+    const {scope,anchor}=input.actor;
+    const child=anchor.pid,birth=anchor.start;
+    let store,host;
+    assert.equal(field(child,'lstart'),birth);
+    assert.equal(Number(field(child,'pgid')),scope.root);
     try {
-      const ready=await Promise.race([once(lines,'line'),new Promise((_,reject)=>setTimeout(()=>reject(Error('fault actor readiness deadline')),2000))]);
-      child=JSON.parse(ready[0]).pid;birth=field(child,'lstart');
-      assert.equal(Number(field(child,'pgid')),scope.root);
-      process.send({kind:'ownedScope',scope,anchor:{pid:child,start:birth}});
-      assert.deepEqual((await once(process,'message'))[0],{scopeRecorded:true});
       store=unwrap(openSqliteStore({path:input.path,mode:'create'}));
       const session=fixtureSession();unwrap(await store.create(session));unwrap(await store.accept(acceptance(session)));
       const launchId=randomUUID();
       unwrap(await store.reserveLaunch({runtimeDigest:input.runtime.manifestDigest,namespace:session.namespace,
         launchId,artifact:pathToFileURL(join(input.root,'tests/ai-host/provider.mjs')).href,phase:'reserved'}));
       unwrap(await store.registerLaunch(session.namespace,launchId,scope));
-      const exited=once(parent,'exit');parent.kill('SIGKILL');await exited;
+      process.kill(scope.root,'SIGKILL');
+      const deadline=Date.now()+2000;
+      while(field(scope.root,'comm')){assert.ok(Date.now()<deadline);await delay(10);}
       assert.equal(await scopeAbsentWithin(input.runtime,scope,budget()),false);process.kill(child,0);
       await store.close(budget());store=unwrap(openSqliteStore({path:input.path,mode:'open'}));
       let resolves=0;
@@ -454,14 +448,9 @@ const verifyUnknownFence = async () => {
       console.log(JSON.stringify({actor:'existing launch-fence fault seam',retained,resolveCalls:resolves,
         descendantObserved:true,originalParentExited:true,scopeAbsentAfterOwnedCleanup:true}));
     } finally {
-      lines.close();
       try {await host?.close(budget());}
-      finally {try {await store?.close(budget());}
-        finally {
-          if(parent.exitCode===null&&parent.signalCode===null)process.kill(-scope.root,'SIGKILL');
-          else if(child&&birth&&field(child,'lstart')===birth&&Number(field(child,'pgid'))===scope.root)process.kill(-scope.root,'SIGKILL');
-        }
-      }
+      finally {await store?.close(budget());}
+      // The external creator owns actor cleanup even when resource closure throws.
     }
   `;
   let entry;

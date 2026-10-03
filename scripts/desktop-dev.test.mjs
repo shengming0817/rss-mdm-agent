@@ -734,17 +734,9 @@ test("process observation distinguishes absence from failure", () => {
 test("outer scope owner reaps detached descendants after timeout or inner close failure", async () => {
   if (process.platform !== "darwin") return;
   const source = `
-    import {spawn,execFileSync} from 'node:child_process';
-    import {once} from 'node:events';
-    import {createInterface} from 'node:readline';
     const input=JSON.parse(process.argv[1]);
-    const parent=spawn(process.execPath,['-e',"const {spawn}=require('node:child_process');const child=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'});child.once('spawn',()=>console.log(child.pid));setInterval(()=>{},1000)"],{detached:true,stdio:['ignore','pipe','ignore']});
-    const lines=createInterface({input:parent.stdout});
-    const child=Number((await once(lines,'line'))[0]);
-    const start=execFileSync('/bin/ps',['-p',String(child),'-o','lstart='],{encoding:'utf8'}).trim();
-    process.send({scope:{kind:'processGroup',root:parent.pid},anchor:{pid:child,start}});
-    await once(process,'message');parent.kill('SIGKILL');
-    if(input.fail) throw Error('fixture resource close failed');
+    process.kill(input.actor.scope.root,'SIGKILL');
+    if(input.fail)throw Error('fixture resource close failed');
     await new Promise(()=>{setInterval(()=>{},1000)});
   `;
   const survivor = spawn(
@@ -776,16 +768,7 @@ test("outer scope owner reaps detached descendants after timeout or inner close 
           },
           async () => {
             assert.ok(entry, "scope handed off before fault");
-            assert.equal(
-              processField(entry.anchor.pid, "lstart"),
-              entry.anchor.start,
-            );
-            process.kill(-entry.scope.root, "SIGKILL");
-            const deadline = Date.now() + 2000;
-            while (processField(entry.anchor.pid, "lstart")) {
-              assert.ok(Date.now() < deadline);
-              await new Promise((resolve) => setTimeout(resolve, 10));
-            }
+            assert.equal(processField(entry.anchor.pid, "lstart"), undefined);
             cleaned = true;
           },
           undefined,
@@ -799,5 +782,57 @@ test("outer scope owner reaps detached descendants after timeout or inner close 
   } finally {
     survivor.kill("SIGTERM");
     await reapOwnedProcessGroup(survivor, 500, 100, 500);
+  }
+});
+
+test("actor creation owner reaps before handoff on cancellation and timeout", async () => {
+  if (process.platform !== "darwin") return;
+  for (const cancel of [true, false]) {
+    const root = mkdtempSync(join(tmpdir(), "scope-creation-"));
+    const marker = join(root, "actor.json");
+    const controller = new AbortController();
+    let registered = false,
+      cleaned = false,
+      actor;
+    try {
+      const pending = runOwnedScopeProbe(
+        process.execPath,
+        "throw Error('must not enter executor')",
+        {
+          actorReadinessDelayMs: 2000,
+          actorRecoveryPath: marker,
+        },
+        () => {
+          registered = true;
+        },
+        () => {
+          cleaned = true;
+        },
+        controller.signal,
+        cancel ? 5000 : 1000,
+      );
+      const rejected = assert.rejects(
+        pending,
+        cancel ? /cancelled/ : /deadline exceeded/,
+      );
+      const deadline = Date.now() + 900;
+      while (!existsSync(marker)) {
+        assert.ok(Date.now() < deadline);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      actor = JSON.parse(readFileSync(marker, "utf8"));
+      assert.equal(Number(processField(actor.child, "pgid")), actor.parent);
+      process.kill(actor.child, 0);
+      if (cancel) controller.abort();
+      await rejected;
+      assert.equal(registered, false);
+      assert.equal(cleaned, true);
+      assert.equal(processField(actor.parent, "lstart"), undefined);
+      assert.equal(processField(actor.child, "lstart"), undefined);
+      assert.throws(() => process.kill(-actor.parent, 0), { code: "ESRCH" });
+    } finally {
+      controller.abort();
+      rmSync(root, { recursive: true, force: true });
+    }
   }
 });
