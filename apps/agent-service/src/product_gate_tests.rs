@@ -633,6 +633,7 @@ async fn material_gc_scans_every_journal_page_and_waits_for_delivery_confirmatio
     }
     // Preview reuses a settled digest before awaiting a real signed Start. Network ticks
     // reconcile journal facts while that unregistered preview remains usable.
+    c._server.time.set(c.service.core.host.clock.now().unwrap());
     let materials = c.service.client.prepare(&c.offer).await.unwrap();
     crate::service::network(
         async {
