@@ -874,10 +874,6 @@ fn human_ai_and_policy_use_the_same_actor_authorization_and_test_provenance() {
             let mut app = open(&db, host, runner.clone(), false);
             if allow {
                 app.request_execution(&caller(), &p).unwrap();
-                if matches!(initiator, Initiator::Human { .. }) {
-                    app.confirm_execution(&caller(), r, p.digest(), true)
-                        .unwrap();
-                }
                 assert_eq!(
                     app.reconcile(r).unwrap().mode,
                     execution_lifecycle::ExecutionMode::Test
