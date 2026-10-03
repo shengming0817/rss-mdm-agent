@@ -23,7 +23,7 @@ fn only_current_envelope_calls_the_handler() {
         #[cfg(windows)]
         native: 0,
     };
-    for version in [1, 2, 3, 4, 5, 6] {
+    for version in [1, 2, 3, 4, 5, 6, 7] {
         let bytes = serde_json::to_vec(
             &serde_json::json!({"version":version,"request":{"method":"status","request":"r"}}),
         )
@@ -31,7 +31,7 @@ fn only_current_envelope_calls_the_handler() {
         assert_eq!(
             serde_json::from_slice::<serde_json::Value>(&dispatch(&mut spy, &peer, &bytes))
                 .unwrap(),
-            serde_json::json!({"version":7,"reply":{"kind":"rejected"}})
+            serde_json::json!({"version":8,"reply":{"kind":"rejected"}})
         );
         assert_eq!(spy.0, 0);
     }
@@ -39,9 +39,9 @@ fn only_current_envelope_calls_the_handler() {
         dispatch(
             &mut spy,
             &peer,
-            br#"{"version":7,"request":{"method":"status","request":"r"}}"#
+            br#"{"version":8,"request":{"method":"status","request":"r"}}"#
         ),
-        br#"{"version":7,"reply":{"kind":"unavailable"}}"#
+        br#"{"version":8,"reply":{"kind":"unavailable"}}"#
     );
     assert_eq!(spy.0, 1);
 }

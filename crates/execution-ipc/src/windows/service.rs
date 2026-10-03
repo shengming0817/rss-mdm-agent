@@ -641,7 +641,7 @@ mod tests {
         let size = client.read_u32_le().await.unwrap();
         let mut reply = vec![0; size as usize];
         client.read_exact(&mut reply).await.unwrap();
-        assert_eq!(reply, br#"{"version":7,"reply":{"kind":"rejected"}}"#);
+        assert_eq!(reply, br#"{"version":8,"reply":{"kind":"rejected"}}"#);
         client.write_u32_le(65537).await.unwrap();
         assert!(matches!(
             call(&mut pipe, &owner).await,
