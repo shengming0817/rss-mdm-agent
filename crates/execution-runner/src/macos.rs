@@ -8,6 +8,14 @@ use std::{
 };
 // ref: Darwin openat(2), fstat(2), acl_get_fd_np(3). Never validate a pathname
 // and subsequently resolve it again for cwd: every component is relative to its retained parent.
+// ref: apple-oss-distributions/Libc@71bbe350ab79eef58113991d817ccc6165061a64
+// posix1e/acl_file.c; terminal FDs pin the verified object after the walk.
+fn open_error(error: std::io::Error) -> Error {
+    match error.raw_os_error() {
+        Some(libc::EMFILE | libc::ENFILE) => Error::Capacity,
+        _ => Error::Denied,
+    }
+}
 fn check_fd(file: &File, immutable: bool, directory: Option<bool>) -> Result<(), Error> {
     use std::os::fd::AsRawFd;
     extern "C" {
@@ -29,7 +37,7 @@ fn walk(
     directory: Option<bool>,
     immutable: bool,
     mut opened: impl FnMut(&Path),
-) -> Result<Vec<File>, Error> {
+) -> Result<File, Error> {
     use std::{
         ffi::CString,
         os::{
@@ -49,9 +57,9 @@ fn walk(
         .read(true)
         .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
         .open("/")
-        .map_err(|_| Error::Unavailable)?;
+        .map_err(open_error)?;
     check_fd(&root, true, Some(true))?;
-    let mut files = vec![root];
+    let mut current = root;
     let mut prefix = std::path::PathBuf::from("/");
     let parts: Vec<_> = path
         .components()
@@ -74,21 +82,21 @@ fn walk(
             } else {
                 0
             };
-        let fd = unsafe { libc::openat(files.last().unwrap().as_raw_fd(), name.as_ptr(), flags) };
+        let fd = unsafe { libc::openat(current.as_raw_fd(), name.as_ptr(), flags) };
         if fd < 0 {
-            return Err(Error::Denied);
+            return Err(open_error(std::io::Error::last_os_error()));
         }
         let file = unsafe { File::from_raw_fd(fd) };
         check_fd(&file, immutable, if last { directory } else { Some(true) })?;
-        files.push(file);
+        current = file;
         prefix.push(part);
         opened(&prefix);
     }
-    check_fd(files.last().unwrap(), immutable, directory)?;
-    Ok(files)
+    check_fd(&current, immutable, directory)?;
+    Ok(current)
 }
 fn bound_file(path: &Path, directory: bool, immutable: bool) -> Result<File, Error> {
-    walk(path, Some(directory), immutable, |_| {}).map(|mut files| files.pop().unwrap())
+    walk(path, Some(directory), immutable, |_| {})
 }
 pub(crate) fn protected_path(path: &Path, directory: bool) -> Result<(), Error> {
     bound_file(path, directory, false).map(|_| ())
@@ -169,7 +177,7 @@ pub(crate) struct Owner {
 }
 impl Owner {
     pub(crate) fn prepare(command: &mut tokio::process::Command) -> Result<Self, Error> {
-        let group = native_process::AttemptGroup::new().map_err(|_| Error::Unavailable)?;
+        let group = native_process::AttemptGroup::new().map_err(open_error)?;
         group.configure(command.as_std_mut());
         // No shell or inherited terminal; user switching belongs to the launchd user helper.
         Ok(Self { group })
@@ -211,7 +219,7 @@ pub(crate) fn payload(
     // process input task feeds it after spawn, under the same cancellation and timeout owner.
     // ref: rust-lang/rust library/std/src/io/pipe.rs (anonymous_pipe, stable since 1.87).
     let (file, input) = if unsafe { libc::geteuid() } != 0 {
-        let (reader, writer) = std::io::pipe().map_err(|_| Error::Unavailable)?;
+        let (reader, writer) = std::io::pipe().map_err(open_error)?;
         (
             File::from(OwnedFd::from(reader)),
             Some((writer, bytes.to_vec())),
@@ -277,12 +285,19 @@ pub(crate) async fn spawn(
 }
 
 pub(crate) struct PathLease {
-    _handles: Vec<File>,
+    file: Option<File>,
 }
 impl PathLease {
+    pub(crate) fn into_file(mut self) -> Result<(File, Self), Error> {
+        let file = self.file.take().ok_or(Error::Denied)?;
+        if !file.metadata().map_err(|_| Error::Unavailable)?.is_file() {
+            return Err(Error::Denied);
+        }
+        Ok((file, self))
+    }
     pub(crate) fn source(path: &Path, immutable: bool) -> Result<Self, Error> {
         Ok(Self {
-            _handles: walk(path, None, immutable, |_| {})?,
+            file: Some(walk(path, None, immutable, |_| {})?),
         })
     }
 }
@@ -404,6 +419,54 @@ mod path_tests {
         let _reader = File::from(OwnedFd::from(_reader));
     }
     #[test]
+    fn bounded_walk_and_capacity_recover_in_an_isolated_process() {
+        const CHILD: &str = "RSS_FD_WALK_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "macos::path_tests::bounded_walk_and_capacity_recover_in_an_isolated_process",
+                ])
+                .env(CHILD, "1")
+                .status()
+                .unwrap();
+            assert!(status.success());
+            return;
+        }
+        let mut limit = libc::rlimit {
+            rlim_cur: 0,
+            rlim_max: 0,
+        };
+        assert_eq!(
+            unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) },
+            0
+        );
+        limit.rlim_cur = 256;
+        assert_eq!(unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &limit) }, 0);
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join(format!("../../.cache/bounded-fd-{}", std::process::id()));
+        let leaf = (0..24).fold(root.clone(), |path, _| path.join("child"));
+        std::fs::create_dir_all(&leaf).unwrap();
+        let path = leaf.join("material");
+        std::fs::write(&path, b"pinned").unwrap();
+        let path = path.canonicalize().unwrap();
+        let mut occupied: Vec<_> = (0..180).map(|_| File::open("/dev/null").unwrap()).collect();
+        let leases: Vec<_> = (0..24)
+            .map(|_| PathLease::source(&path, false).unwrap())
+            .collect();
+        while let Ok(file) = File::open("/dev/null") {
+            occupied.push(file);
+        }
+        assert!(matches!(
+            PathLease::source(&path, false),
+            Err(Error::Capacity)
+        ));
+        drop(occupied);
+        assert!(PathLease::source(&path, false).is_ok());
+        drop(leases);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
     fn read_only_acl_is_allowed_but_mutation_acl_is_rejected() {
         use std::os::unix::fs::PermissionsExt;
         let root = std::env::temp_dir()
@@ -459,7 +522,7 @@ mod path_tests {
             }
         })
         .unwrap();
-        assert_eq!(files.last().unwrap().metadata().unwrap().ino(), expected);
+        assert_eq!(files.metadata().unwrap().ino(), expected);
         assert!(WorkingDirectory::open(&root.join("ancestor/child")).is_err());
         std::fs::remove_dir_all(root).unwrap();
     }

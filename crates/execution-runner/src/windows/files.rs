@@ -107,6 +107,13 @@ fn local_path(path: &Path) -> Result<(), Error> {
 /// Retain every path component without delete/write sharing for the entire invocation.
 pub(crate) struct PathLease(Vec<File>);
 impl PathLease {
+    pub(crate) fn into_file(mut self) -> Result<(File, Self), Error> {
+        let file = self.0.pop().ok_or(Error::Denied)?;
+        if !file.metadata().map_err(|_| Error::Unavailable)?.is_file() {
+            return Err(Error::Denied);
+        }
+        Ok((file, self))
+    }
     pub(crate) fn source(path: &Path, immutable: bool) -> Result<Self, Error> {
         Self::open(path, immutable)
     }
@@ -122,7 +129,11 @@ impl PathLease {
             .rev()
         {
             let file = OpenOptions::new()
-                .access_mode(READ_CONTROL | FILE_READ_ATTRIBUTES)
+                .access_mode(if part == path {
+                    FILE_GENERIC_READ
+                } else {
+                    READ_CONTROL | FILE_READ_ATTRIBUTES
+                })
                 .share_mode(FILE_SHARE_READ)
                 .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS)
                 .open(part)

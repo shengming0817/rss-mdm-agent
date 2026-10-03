@@ -344,8 +344,7 @@ pub fn native_export(
     Ok(named)
 }
 fn verify(path: &Path, expected: &Digest, length: u64) -> Result<(), Error> {
-    let _lease = crate::platform::PathLease::source(path, true)?;
-    let mut file = crate::platform::open_file(path)?;
+    let (mut file, _lease) = crate::platform::PathLease::source(path, true)?.into_file()?;
     if file.metadata().map_err(|_| Error::Storage)?.len() != length {
         return Err(Error::Denied);
     }

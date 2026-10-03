@@ -205,9 +205,13 @@ impl Materialized {
         )
     }
 }
-fn exact(path: &Path, digest: &Digest, limit: u64) -> Result<(File, Vec<u8>), Error> {
-    super::platform::protected_path(path, false)?;
-    let mut file = super::platform::open_file(path)?;
+fn exact(
+    path: &Path,
+    digest: &Digest,
+    limit: u64,
+    immutable: bool,
+) -> Result<(File, Vec<u8>, super::platform::PathLease), Error> {
+    let (mut file, lease) = super::platform::PathLease::source(path, immutable)?.into_file()?;
     if file.metadata().map_err(|_| Error::Unavailable)?.len() > limit {
         return Err(Error::Capacity);
     }
@@ -220,7 +224,7 @@ fn exact(path: &Path, digest: &Digest, limit: u64) -> Result<(File, Vec<u8>), Er
         return Err(Error::Denied);
     }
     file.rewind().map_err(|_| Error::Unavailable)?;
-    Ok((file, bytes))
+    Ok((file, bytes, lease))
 }
 impl Artifacts {
     /// Inspect actual OS identity and protected interpreter/content before network Start.
@@ -283,15 +287,19 @@ impl Artifacts {
             return Err(Error::Capability);
         }
         super::platform::protected_path(&self.work_root, true)?;
-        let _interpreter = super::platform::PathLease::source(&self.interpreter, true)?;
         exact(
             &self.interpreter,
             &p.launch.interpreter.artifact.sha256,
             256 * 1024 * 1024,
+            true,
         )?;
         if p.execution.software_program().is_none() {
-            let _content = super::platform::PathLease::source(&self.content, true)?;
-            exact(&self.content, &p.launch.artifact.sha256, 16 * 1024 * 1024)?;
+            exact(
+                &self.content,
+                &p.launch.artifact.sha256,
+                16 * 1024 * 1024,
+                true,
+            )?;
         }
         Ok(())
     }
@@ -310,11 +318,13 @@ impl Artifacts {
             &self.interpreter,
             &recipe.launch.interpreter.artifact.sha256,
             256 * 1024 * 1024,
+            true,
         )?;
         exact(
             &self.content,
             &recipe.launch.artifact.sha256,
             16 * 1024 * 1024,
+            true,
         )?;
         Ok(())
     }
@@ -345,25 +355,25 @@ impl Artifacts {
             return Err(Error::Capability);
         }
         super::platform::profile(&launch.interpreter.profile)?;
-        super::platform::protected_path(&self.work_root, true)?;
         let work_lease = super::platform::PathLease::source(&self.work_root, false)?;
         let content_path = &self.content;
         #[cfg(not(test))]
         let source_immutable = true;
         #[cfg(test)]
         let source_immutable = !self.fixture_owned;
-        let mut leases = vec![
-            work_lease,
-            super::platform::PathLease::source(&self.interpreter, source_immutable)?,
-            super::platform::PathLease::source(content_path, source_immutable)?,
-        ];
-        let (interpreter, _) = exact(
+        let (interpreter, _, interpreter_lease) = exact(
             &self.interpreter,
             &launch.interpreter.artifact.sha256,
             256 * 1024 * 1024,
+            source_immutable,
         )?;
-        let (content_file, content) =
-            exact(content_path, &launch.artifact.sha256, 16 * 1024 * 1024)?;
+        let (content_file, content, content_lease) = exact(
+            content_path,
+            &launch.artifact.sha256,
+            16 * 1024 * 1024,
+            source_immutable,
+        )?;
+        let leases = vec![work_lease, interpreter_lease, content_lease];
         super::platform::encoding(launch.artifact_encoding)?;
         match launch.artifact_encoding {
             ArtifactEncoding::Utf8
@@ -404,8 +414,6 @@ impl Artifacts {
                 return Err(Error::Denied);
             }
         }
-        super::platform::protected_path(&self.work_root, true)?;
-        leases.push(super::platform::PathLease::source(&self.work_root, false)?);
         let cwd = super::platform::WorkingDirectory::open(Path::new(&launch.cwd))?;
         let bundled = plan
             .spec()
@@ -530,8 +538,7 @@ pub(crate) fn verify_material_kind(
     expected: &Digest,
     immutable: bool,
 ) -> Result<(File, super::platform::PathLease), Error> {
-    let lease = super::platform::PathLease::source(path, immutable)?;
-    let mut file = super::platform::open_file(path)?;
+    let (mut file, lease) = super::platform::PathLease::source(path, immutable)?.into_file()?;
     if file.metadata().map_err(|_| Error::Unavailable)?.len() > 8 * 1024 * 1024 * 1024 {
         return Err(Error::Capacity);
     }

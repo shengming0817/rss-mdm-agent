@@ -64,6 +64,9 @@ pub(crate) async fn spawn(
 
 pub(crate) struct PathLease;
 impl PathLease {
+    pub(crate) fn into_file(self) -> Result<(File, Self), Error> {
+        Err(Error::Unsupported)
+    }
     pub(crate) fn source(_: &Path, _: bool) -> Result<Self, Error> {
         Err(Error::Unsupported)
     }
