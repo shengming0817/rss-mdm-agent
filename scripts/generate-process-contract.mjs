@@ -27,7 +27,7 @@ if (process.argv.includes("--check")) {
 
 const service = spawnSync(
   "cargo",
-  ["run", "--quiet", "-p", "execution-runner", "--example", "service-schema"],
+  ["run", "--quiet", "-p", "execution-ipc", "--example", "service-schema"],
   { encoding: "utf8" },
 );
 if (service.status !== 0) throw new Error(service.stderr);
@@ -35,7 +35,7 @@ const servicePath = "apps/desktop/src/settings/service-contract.ts";
 const serviceText = await format(
   await compile(JSON.parse(service.stdout), "ServiceView", {
     bannerComment:
-      "// @generated from execution-runner::host::ServiceView. Do not edit.",
+      "// @generated from execution-ipc::host::ServiceView. Do not edit.",
   }),
   { parser: "typescript" },
 );
@@ -51,7 +51,7 @@ const fixtureResult = spawnSync(
     "--quiet",
     "--locked",
     "-p",
-    "execution-runner",
+    "execution-ipc",
     "--example",
     "service-fixtures",
   ],
