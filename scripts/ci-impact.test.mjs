@@ -336,3 +336,45 @@ test("IPC sources and fixtures select native service and desktop consumers", () 
     f.close();
   }
 });
+
+test("shared Agent HTTP fixtures select both owners and backend changes select the service", () => {
+  const f = fixture();
+  try {
+    const rust = ["agent-client", "agent-service"];
+    const cargo = {
+      workspace_root: f.root,
+      workspace_members: rust,
+      packages: rust.map((name) => ({
+        id: name,
+        name,
+        manifest_path: `${f.root}/${name === "agent-client" ? "crates" : "apps"}/${name}/Cargo.toml`,
+      })),
+      resolve: {
+        nodes: [
+          { id: "agent-client", deps: [] },
+          { id: "agent-service", deps: [{ pkg: "agent-client" }] },
+        ],
+      },
+    };
+    const graph = workspaceGraph(
+      f.root,
+      cargo,
+      [],
+      [],
+      testOwners.filter(([, owner]) => rust.includes(owner)),
+    );
+    for (const [path, expected] of [
+      ["tests/agent-protocol/mod.rs", rust],
+      ["crates/agent-client/src/delivery.rs", rust],
+      ["apps/agent-service/src/backend/bridge.rs", ["agent-service"]],
+    ]) {
+      const baseRef = f.run("rev-parse", "HEAD");
+      f.change(path);
+      const result = f.select({ baseRef, graph: () => graph });
+      assert.equal(result.full, false);
+      assert.deepEqual(result.rustPackages, expected);
+    }
+  } finally {
+    f.close();
+  }
+});
