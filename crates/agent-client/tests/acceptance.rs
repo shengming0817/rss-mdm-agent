@@ -198,7 +198,7 @@ async fn register_report_recovery_and_exact_ack() {
     server.data.lock().unwrap().registration_failure = true;
     let operation = Uuid::new_v4();
     let enrollment = Uuid::new_v4();
-    let capabilities = vec![Capability::InventoryCollectionV5, Capability::TaskExecuteV5];
+    let capabilities = vec![Capability::InventoryCollectionV6, Capability::TaskExecuteV6];
     assert_eq!(
         client
             .register(
@@ -424,7 +424,7 @@ fn unsupported_database_and_changed_namespace_are_preserved() {
     let root = Root::new();
     drop(server.client(&root, OpenMode::Create));
     let path = root.path.join("communication.sqlite");
-    for version in [1, 2] {
+    for version in [1, 2, 3, 5] {
         let db = rusqlite::Connection::open(&path).unwrap();
         db.pragma_update(None, "user_version", version).unwrap();
         drop(db);
@@ -441,6 +441,75 @@ fn unsupported_database_and_changed_namespace_are_preserved() {
         ));
         assert_eq!(before, std::fs::read(&path).unwrap());
     }
+}
+
+#[tokio::test]
+async fn prior_communication_schema_preserves_registration_pending_delivery_and_materials() {
+    use execution_contract::{ActorId, Digest, EventId, RequestId};
+    let server = Server::new().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    let offer = client.claim().await.unwrap().offer.unwrap();
+    let materials = client.prepare(&offer).await.unwrap();
+    client.received(&offer).await.unwrap();
+    let start = client.request_start(&offer, &materials).await.unwrap();
+    let association = client
+        .reserve_association(
+            &start,
+            &RequestId::new("pending-original").unwrap(),
+            &Digest::new("ab".repeat(32)).unwrap(),
+            &ActorId::new("original-actor").unwrap(),
+        )
+        .unwrap();
+    let event = EventId::new("original-result").unwrap();
+    client
+        .freeze_result(&association, &event, &[event.clone()], TaskEvent::Cancelled)
+        .unwrap();
+    client
+        .queue_report(
+            "inventory",
+            ReportBody::Failed {
+                code: FailureCode::CollectionFailed,
+            },
+            1,
+        )
+        .unwrap();
+    let material_bytes: Vec<_> = materials
+        .files()
+        .iter()
+        .map(|file| (file.path().to_owned(), std::fs::read(file.path()).unwrap()))
+        .collect();
+    let credentials = server.secrets.0.lock().unwrap().clone();
+    drop(client);
+    let path = root.path.join("communication.sqlite");
+    let db = rusqlite::Connection::open(&path).unwrap();
+    db.pragma_update(None, "user_version", 3).unwrap();
+    drop(db);
+    let before = std::fs::read(&path).unwrap();
+    assert!(matches!(
+        Client::open(
+            &root.path,
+            server.config(),
+            OpenMode::Existing,
+            server.secrets.clone(),
+            server.time.clone()
+        ),
+        Err(Error::Schema)
+    ));
+    assert!(Client::open(
+        &root.path,
+        server.config(),
+        OpenMode::Create,
+        server.secrets.clone(),
+        server.time.clone()
+    )
+    .is_err());
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+    for (path, bytes) in material_bytes {
+        assert_eq!(std::fs::read(path).unwrap(), bytes);
+    }
+    assert_eq!(*server.secrets.0.lock().unwrap(), credentials);
 }
 
 #[test]

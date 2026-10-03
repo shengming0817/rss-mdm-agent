@@ -21,8 +21,8 @@ pub(crate) fn app_error(error: execution_app::Error) -> Error {
 fn unsupported_execution_database_preserves_the_schema_diagnosis() {
     assert_eq!(
         app_error(execution_app::Error::UnsupportedSchema {
-            found: 7,
-            supported: 8
+            found: 8,
+            supported: 9
         }),
         Error::Schema
     );

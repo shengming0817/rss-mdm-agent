@@ -56,7 +56,7 @@ def security_matrix():
     rows['cross_user']['reason'] = 'second real GUI login required; sudo -u is not evidence'
     rows['login_generation']['reason'] = 'isolated logout/login and retained old request required'
     rows['legacy_challenge'] = dict(status='notApplicable',
-        reason='IPC V8 has no challenge; NSXPC one-shot/5s lifetime and backend offer expiry replace it',
+        reason='IPC V9 has no challenge; NSXPC one-shot/5s lifetime and backend offer expiry replace it',
         source='crates/execution-ipc/src/{host.rs,macos_service.m}')
     return dict(platform='macOS', scenarios=rows, status='notExecuted')
 
@@ -1273,7 +1273,7 @@ def main():
         installer.chmod(0o600)
         system_installer_source = installer_source.replace("'ProcessType': 'Background'", "'ProcessType': 'Background', 'StandardErrorPath': " + repr(str(protected/'service-stderr.log')))
         shutil.copyfile(lab / 'tls.pem', inputs / 'tls.pem')
-        deployment = dict(version=2, ipc_version=8, origin=f'https://localhost:{proxy.server_port}/', tenant=info['tenant'],
+        deployment = dict(version=2, ipc_version=9, origin=f'https://localhost:{proxy.server_port}/', tenant=info['tenant'],
                           signing_keys={'test': info['key']}, ca_file=str(protected / 'ca.pem'),
                           enrollment=str(uuid.uuid4()), registration_operation=str(uuid.uuid4()),
                           state_root=str(protected / 'state'),
@@ -1440,6 +1440,16 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
 """ % ([str(binary),'--config',str(config)],str(protected/'restart-pid')))
         cleanup.write_text("from pathlib import Path\nif Path(%r).exists(): Path(%r).write_text('finished')\n" % (str(protected/'restart-pid'),str(protected/'restart-finish')) + cleanup.read_text())
         receipt['journal'] = str(protected / 'state/execution.sqlite')
+        if args.dmg_app:
+            application = args.dmg_app.resolve()
+            run('/usr/bin/codesign','--verify','--deep','--strict',str(application))
+            run('/usr/sbin/spctl','--assess','--type','execute',str(application))
+            existing_app = Path('/Applications') / ('RSS-'+tag+'-existing.app')
+            assert not existing_app.exists(), 'refuse existing independent application target'
+            # This copy is outside Agent execution history. Permission metadata deliberately
+            # differs from the image payload while the actual native code signature remains valid.
+            setup.write_text(setup.read_text() + "\nassert not Path(%r).exists()\nsubprocess.run(['/usr/bin/ditto',%r,%r],check=True)\nos.chmod(%r,0o700)\n" %
+                             (str(existing_app),str(application),str(existing_app),str(existing_app)))
         first = None if args.desktop else command('script', body='printf \'{"fixture":"system"}\\n\'\n')
         if not args.desktop: command('result_failure')
         administrator_session = AdministratorSession(setup,initialize,restart,cleanup,lab,args.authorization_password_file,
@@ -1653,6 +1663,21 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
             assert not installed_app.exists(), 'refuse existing application target'
             parameters = dict(path=str(image),volume=volume,application=application.name,bundle=info['CFBundleIdentifier'],
                               version=info['CFBundleShortVersionString'],target=target_name)
+            independent_parameters = dict(parameters, target=existing_app.name)
+            satisfied_task = command('dmg', **independent_parameters)
+            satisfied = completed(satisfied_task['attempt'], 120)
+            satisfied_event = acknowledged_result(satisfied, satisfied_task['attempt'])
+            assert satisfied_event['steps'][0]['before']['state'] == 'present'
+            assert satisfied_event['steps'][0]['after']['state'] == 'present'
+            assert satisfied_event['steps'][0]['diagnostics']['failure'] is None
+            assert satisfied_event['steps'][0]['process']['kind'] == 'not_run', 'satisfied target must not invent installation'
+            independent_remove = command('dmg', uninstall=True, **independent_parameters)
+            independent_removed = completed(independent_remove['attempt'], 120)
+            independent_event = acknowledged_result(independent_removed, independent_remove['attempt'])
+            assert independent_event['steps'][0]['after']['state'] == 'absent'
+            assert independent_event['steps'][0]['diagnostics']['failure'] is None and not existing_app.exists()
+            receipt['scenarios']['dmg_independent_target'] = dict(satisfied=satisfied,uninstalled=independent_removed,
+                source='administrator copy, without Agent installation history',imageDirectoryEquality=False)
             app_task = command('dmg',**parameters)
             remote = completed(app_task['attempt'],120)
             app_event = acknowledged_result(remote,app_task['attempt'])

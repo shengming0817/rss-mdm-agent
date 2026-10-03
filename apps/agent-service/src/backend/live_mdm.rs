@@ -126,13 +126,39 @@ impl Admin {
         )
         .await
     }
-    async fn resource(&mut self, software: bool) -> (Uuid, Option<Value>) {
+    async fn group_contains(&mut self, path: &str, device: &str) -> bool {
+        let state = self.request(reqwest::Method::GET, path, None, None).await;
+        let preview = self
+            .write(
+                &format!("{path}/previews"),
+                state["group"]["revision"].as_u64().unwrap(),
+                json!({}),
+            )
+            .await;
+        let members = self
+            .request(
+                reqwest::Method::GET,
+                &format!(
+                    "{path}/results/{}/members",
+                    preview["task"].as_str().unwrap()
+                ),
+                None,
+                None,
+            )
+            .await;
+        members["page"]["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|id| id == device)
+    }
+    async fn resource(&mut self, software: bool, package: &str) -> (Uuid, Option<Value>) {
         let resource = Uuid::new_v4();
         let path = format!("/api/v3/resources/{resource}");
         let bytes = if software {
             b"controlled software fixture".as_slice()
         } else {
-            b"{\"ok\":true,\"message\":\"fixture\"}\n".as_slice()
+            b"declared full installed-software collector fixture".as_slice()
         };
         let digest = Sha256::digest(bytes).to_vec();
         let declaration = if software {
@@ -146,16 +172,16 @@ impl Admin {
             )
             .await;
             let invocation = json!({"runAs":"system","arguments":[],"environment":{},"timeoutSeconds":60,"outputBytes":4096,"exitCodes":{"success":[0],"reboot":[]}});
-            json!({"kind":"software","definition":{"source":created["snapshot"],"package":"Agent.LiveFixture","version":"1.0",
+            json!({"kind":"software","definition":{"source":created["snapshot"],"package":package,"version":"1.0",
                 "artifacts":{"package":{"reference":"installer","length":bytes.len(),"sha256":digest}},
-                "behavior":{"kind":"pkg","installer":"package","scope":"system","install":invocation,"upgradeInvocation":invocation,"upgrade":"in_place","uninstall":null,"detect":{"kind":"pkg_receipt","receipt":"Agent.LiveFixture","version":"1.0"}},
-                "signatures":[],"reboot":"report","downgrade":"deny","ownership":"managed_only","dependencies":[],"provenance":{"kind":"private"},"export":{"kind":"disabled"}}})
+                "behavior":{"kind":"pkg","installer":"package","scope":"system","install":invocation,"upgradeInvocation":invocation,"upgrade":"in_place","uninstall":{"installer":"package","invocation":invocation},"detect":{"kind":"pkg_receipt","receipt":package,"version":"1.0"}},
+                "signatures":[],"reboot":"report","downgrade":"deny","dependencies":[],"provenance":{"kind":"private"},"export":{"kind":"disabled"}}})
         } else {
             json!({"kind":"script","artifact":{"reference":"fixture-script","length":bytes.len(),"sha256":digest},
                 "definition":{"profile":"posix_sh","runAs":"system","encoding":"utf8",
                 "parameters":{"type":"object","properties":{},"required":[],"additionalProperties":false},"bindings":{},
-                "output":{"type":"object","properties":{"ok":{"type":"boolean"},"message":{"type":"string"}},"required":["ok","message"],"additionalProperties":false},
-                "purpose":{"kind":"collection","mappings":{"custom.corporate_agent.healthy":"/ok","custom.corporate_agent.version":"/message"}},"timeoutSeconds":60,"outputBytes":4096,"maxRows":1}})
+                "output":{"type":"object","properties":{"installed":{"type":"array","maxItems":128,"items":{"type":"object","properties":{"id":{"type":"string"},"name":{"type":"string"},"version":{"type":"string"},"publisher":{"type":"string"},"scope":{"type":"string"}},"required":["id","name","version","publisher","scope"],"additionalProperties":false}}},"required":["installed"],"additionalProperties":false},
+                "purpose":{"kind":"collection","mappings":{"device.software.installed":"/installed"}},"timeoutSeconds":60,"outputBytes":4096,"maxRows":1}})
         };
         let kind = if software { "software" } else { "script" };
         self.write(&path, 0, json!({"action":"create","kind":kind}))
@@ -249,6 +275,9 @@ async fn real_https_registration_reports_script_software_and_journal_results() {
         "policy_write",
         "scope_read",
         "scope_write",
+        "group_read",
+        "group_write",
+        "group_recompute",
         "software_read",
         "software_write",
         "software_approve",
@@ -291,9 +320,9 @@ async fn real_https_registration_reports_script_software_and_journal_results() {
             "password",
             "credential",
             vec![
-                Capability::InventoryCollectionV5,
-                Capability::TaskExecuteV5,
-                Capability::SoftwarePkgSystemV5,
+                Capability::InventoryCollectionV6,
+                Capability::TaskExecuteV6,
+                Capability::SoftwarePkgSystemV6,
             ],
         )
         .await
@@ -335,10 +364,23 @@ async fn real_https_registration_reports_script_software_and_journal_results() {
     })
     .await
     .expect("live Scope resolution");
-    for software in [false, true] {
-        let (resource, admission) = admin.resource(software).await;
+    let package = format!("Agent.LiveFixture.{}", Uuid::new_v4());
+    let group = format!("/api/v2/groups/{}", Uuid::new_v4());
+    admin
+        .write(
+            &group,
+            0,
+            json!({"action":"create","name":"installed software contract",
+        "description":"independent declared collection; software result is not inventory",
+        "criteria":{"kind":"predicate","field":"device.software.installed.id","op":"contains_any",
+        "values":[{"kind":"string","value":package}]}}),
+        )
+        .await;
+    assert!(!admin.group_contains(&group, &device).await);
+    for (software, uninstall) in [(true, false), (false, false), (true, true), (false, true)] {
+        let (resource, admission) = admin.resource(software, &package).await;
         let action = if software {
-            json!({"kind":"software","resource":{"kind":"software","id":resource,"version":"v1","variants":{"macos_aarch64":"default"}},"intent":"required_install","delivery":{"kind":"direct"},"admissionOperation":admission.unwrap(),"runLifetimeSeconds":600,"rollout":{"stages":[{"scope":scope,"opensAt":0}]}})
+            json!({"kind":"software","resource":{"kind":"software","id":resource,"version":"v1","variants":{"macos_aarch64":"default"}},"intent":if uninstall { "required_uninstall" } else { "required_install" },"delivery":{"kind":"direct"},"admissionOperation":admission.unwrap(),"runLifetimeSeconds":600,"rollout":{"stages":[{"scope":scope,"opensAt":0}]}})
         } else {
             json!({"kind":"execution","resource":{"id":resource,"version":"v1","platform":"macos","architecture":"aarch64","variant":"default"},"parameters":{},"runLifetimeSeconds":300})
         };
@@ -369,6 +411,25 @@ async fn real_https_registration_reports_script_software_and_journal_results() {
         let db = local::Database::new();
         let mut host = local::TestHost::new();
         let plan = adapted_plan(software, &device, &offer);
+        let plan = if software && uninstall {
+            let mut input = plan.spec().clone();
+            input.request.operation.action =
+                execution_contract::Id::new("software.uninstall").unwrap();
+            let execution_contract::ExecutionSpec::SoftwareProgram { program } =
+                &mut input.execution
+            else {
+                unreachable!()
+            };
+            program.intent = execution_contract::SoftwareOperation::Uninstall;
+            program.steps[0].uninstall = Some(program.steps[0].install.clone());
+            execution_contract::FrozenExecution::freeze(
+                input,
+                &execution_app::test_execution_limits(),
+            )
+            .unwrap()
+        } else {
+            plan
+        };
         host.template = plan.clone();
         let runner = CapturingRunner {
             inner: DeterministicTestRunner::new(
@@ -379,7 +440,12 @@ async fn real_https_registration_reports_script_software_and_journal_results() {
             .unwrap(),
             ready: Default::default(),
             progress: Default::default(),
-            capture: Default::default(),
+            capture: std::sync::Arc::new(std::sync::Mutex::new((!software).then(|| CaptureSpec {
+                quiescent: true,
+                stdout: serde_json::to_vec(&json!({"installed": if uninstall { json!([]) } else { json!([{"id":package,"name":package,"version":"1.0","publisher":"fixture","scope":"system"}]) }})).unwrap(),
+                stderr: vec![], quality: execution_contract::OutputQuality::Complete,
+                end: execution_contract::ProcessEnd::Exited,
+            }))),
         };
         let mut app =
             create_app(&db.path, host, runner.clone(), AppConfig::test_defaults(1)).unwrap();
@@ -394,6 +460,34 @@ async fn real_https_registration_reports_script_software_and_journal_results() {
         bridge
             .dispatch(&mut client, start, &materials, &mut app, prepared)
             .unwrap();
+        if software && uninstall {
+            use execution_contract::*;
+            let status = app
+                .status(&caller, &plan.spec().request.request_id)
+                .unwrap();
+            *runner.progress.lock().unwrap() = Some(SoftwareProgress {
+                attempt_id: status.attempt_id.unwrap(),
+                content_digest: plan.digest().clone(),
+                runner: local::id("test-runner"),
+                elapsed_ms: 1,
+                output_bytes: 0,
+                checkpoints: vec![
+                    SoftwareCheckpoint::Begin {
+                        step: 0,
+                        phase: SoftwarePhase::Before,
+                    },
+                    SoftwareCheckpoint::End {
+                        step: 0,
+                        phase: SoftwarePhase::Before,
+                        duration_ms: 0,
+                        process: None,
+                        detected: Some(SoftwareState::Absent {}),
+                        quiescent: true,
+                    },
+                    SoftwareCheckpoint::Complete { step: 0 },
+                ],
+            });
+        }
         app.reconcile(&plan.spec().request.request_id).unwrap();
         assert_eq!(
             bridge
@@ -435,7 +529,8 @@ async fn real_https_registration_reports_script_software_and_journal_results() {
                 )
                 .await;
             assert_eq!(run["asset"]["run"]["result"], "snapshot");
-            assert_eq!(run["asset"]["run"]["fields"].as_array().unwrap().len(), 2);
+            assert_eq!(run["asset"]["run"]["fields"].as_array().unwrap().len(), 1);
+            assert_eq!(admin.group_contains(&group, &device).await, !uninstall);
         }
         if software {
             let rollout = admin
@@ -447,6 +542,10 @@ async fn real_https_registration_reports_script_software_and_journal_results() {
                 )
                 .await;
             assert_eq!(rollout["stages"][0]["verifiedSuccess"], 1);
+            assert!(
+                admin.group_contains(&group, &device).await == uninstall,
+                "single-target software result cannot synthesize a full inventory"
+            );
         }
     }
 }
