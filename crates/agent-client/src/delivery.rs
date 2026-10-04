@@ -1,7 +1,7 @@
 //! Durable communication associations and frozen transport; no execution application access.
 use crate::{
     store::{decode, encode, hash},
-    wire, Client, Clock, Error, SecretProvider, Start,
+    wire, Client, Clock, Error, IdentityProvider, Start,
 };
 use execution_contract::{ActorId, AttemptId, Digest, EventId, RequestId};
 use rusqlite::{params, OptionalExtension};
@@ -89,7 +89,7 @@ pub struct FrozenAbandonment {
 }
 /// Durable cancellation acknowledgement; not proof that a local execution is absent.
 pub struct AbandonmentAck(FrozenAbandonment);
-impl<S: SecretProvider, C: Clock> Client<S, C> {
+impl<S: IdentityProvider, C: Clock> Client<S, C> {
     /// Read original coordinates without granting Start or execution authority.
     pub fn association(&self, task: Uuid) -> Result<Option<Association>, Error> {
         let binding = self.store.get::<Binding>(&format!("binding/{task}"))?;

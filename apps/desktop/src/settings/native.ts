@@ -1,4 +1,4 @@
-import type { ServiceView } from "./service-contract";
+import type { ServiceView, RegistrationStatus } from "./service-contract";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import {
   boundedJson,
@@ -26,8 +26,17 @@ export function nativeHost() {
   };
 }
 
-export type ServicePort = { read(): Promise<ServiceView> };
+export type ServicePort = {
+  read(): Promise<ServiceView>;
+  registration(): Promise<RegistrationStatus>;
+  requestRegistration(): Promise<RegistrationStatus>;
+};
 export function nativeService(): ServicePort | undefined {
   if (!isTauri()) return undefined;
-  return { read: () => invoke<ServiceView>("execution_service_status") };
+  return {
+    read: () => invoke<ServiceView>("execution_service_status"),
+    registration: () => invoke<RegistrationStatus>("agent_registration_status"),
+    requestRegistration: () =>
+      invoke<RegistrationStatus>("agent_request_registration"),
+  };
 }

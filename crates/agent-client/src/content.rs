@@ -1,6 +1,6 @@
 use crate::{
     store::{encode, hash, private},
-    wire, Client, Clock, Error, Offer, SecretProvider,
+    wire, Client, Clock, Error, IdentityProvider, Offer,
 };
 use fs2::FileExt;
 use rusqlite::params;
@@ -125,7 +125,7 @@ fn digest(mut file: File) -> Result<[u8; 32], Error> {
     }
     Ok(hash.finalize().into())
 }
-impl<S: SecretProvider, C: Clock> Client<S, C> {
+impl<S: IdentityProvider, C: Clock> Client<S, C> {
     pub(crate) fn recover_materials(&self, offer: &Offer) -> Result<Materials, Error> {
         self.active()?;
         self.now()?;
@@ -290,7 +290,6 @@ impl<S: SecretProvider, C: Clock> Client<S, C> {
             let mut request = self
                 .http
                 .get(url)
-                .bearer_auth(self.credential()?.expose())
                 .header("accept-encoding", "identity")
                 .timeout(self.store.cfg.limits.transfer_timeout.min(remaining));
             if offset > 0 {

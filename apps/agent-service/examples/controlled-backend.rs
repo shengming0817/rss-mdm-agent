@@ -2,9 +2,9 @@
 //! Only test targets include this fixture; it is never a production transport mode.
 #[path = "../../../tests/agent-protocol/mod.rs"]
 mod protocol;
-use agent_client::wire;
 use base64::Engine;
 use ring::signature::KeyPair;
+use rss_mdm_agent_wire::runtime as wire;
 use std::io::{BufRead, Write};
 
 #[tokio::main]

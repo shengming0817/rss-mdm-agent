@@ -237,6 +237,34 @@ pub async fn execution_service_status() -> execution_ipc::host::ServiceView {
         .await
         .unwrap_or(execution_ipc::host::ServiceView::Unavailable)
 }
+async fn registration_request(
+    request: execution_ipc::host::Request,
+) -> Result<execution_ipc::host::RegistrationStatus> {
+    tokio::task::spawn_blocking(move || {
+        let client = execution_ipc::host::ServiceClient::installed()
+            .map_err(|_| error("service_unavailable", "本机服务不可用"))?;
+        match client
+            .request(request)
+            .map_err(|_| error("service_unavailable", "本机服务不可用"))?
+        {
+            execution_ipc::host::Reply::RegistrationStatus { value } => Ok(value),
+            execution_ipc::host::Reply::Rejected => {
+                Err(error("registration_denied", "当前桌面没有注册权限"))
+            }
+            _ => Err(error("service_unavailable", "本机服务不可用")),
+        }
+    })
+    .await
+    .map_err(|_| error("service_unavailable", "本机服务不可用"))?
+}
+#[tauri::command]
+pub async fn agent_registration_status() -> Result<execution_ipc::host::RegistrationStatus> {
+    registration_request(execution_ipc::host::Request::RegistrationStatus {}).await
+}
+#[tauri::command]
+pub async fn agent_request_registration() -> Result<execution_ipc::host::RegistrationStatus> {
+    registration_request(execution_ipc::host::Request::RequestRegistration {}).await
+}
 #[tauri::command]
 pub async fn appearance_snapshot<R: tauri::Runtime>(
     window: tauri::WebviewWindow<R>,
@@ -254,6 +282,8 @@ pub fn register<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder
         account_save_organization,
         account_login,
         execution_service_status,
+        agent_registration_status,
+        agent_request_registration,
         ai_host_status,
         ai_restart_host,
         ai_export_diagnostics,
@@ -368,6 +398,8 @@ mod tests {
             "account_organizations",
             "account_save_organization",
             "execution_service_status",
+            "agent_registration_status",
+            "agent_request_registration",
             "appearance_snapshot",
             "ai_host_status",
             "ai_restart_host",

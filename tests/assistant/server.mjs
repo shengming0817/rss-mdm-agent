@@ -103,13 +103,46 @@ export async function createFixture() {
     "verified",
     "cancelled",
   ];
+  let registrationRequested = false;
   function selectScenario(value) {
     if (!scenarios.includes(value)) throw new Error("unknown fixture scenario");
     scenario = value;
+    registrationRequested = false;
     if (execution[value]?.status) executionState = value;
   }
   function serviceView() {
     return structuredClone(serviceViews[scenario] ?? serviceViews.ready);
+  }
+  function registration() {
+    const view = serviceView();
+    if (view.phase !== "connected")
+      throw new Error("fixture service unavailable");
+    if (view.status.readiness.phase === "registrationRequired") {
+      return {
+        phase: registrationRequested ? "awaitingAuthorization" : "unregistered",
+        registered: false,
+        credential: "absent",
+        grantId: registrationRequested
+          ? "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+          : null,
+        publicKeyFingerprint: registrationRequested ? "a".repeat(64) : null,
+        expiresAt: null,
+      };
+    }
+    return {
+      phase: "active",
+      registered: true,
+      credential: "active",
+      grantId: null,
+      publicKeyFingerprint: null,
+      expiresAt: null,
+    };
+  }
+  function requestRegistration(input) {
+    if (Object.keys(input).length || registration().registered)
+      throw new Error("fixture registration rejected");
+    registrationRequested = true;
+    return registration();
   }
   function available() {
     const view = serviceView();
@@ -213,6 +246,8 @@ export async function createFixture() {
           "/__fixture/host",
           "/__fixture/host-restart",
           "/__fixture/host-export",
+          "/__fixture/registration",
+          "/__fixture/registration-request",
           "/__fixture/state",
           "/__fixture/scenario",
           "/__fixture/snapshot",
@@ -249,6 +284,14 @@ export async function createFixture() {
             break;
           case "/__fixture/host-export":
             value = false;
+            break;
+          case "/__fixture/registration":
+            value = registration();
+            break;
+          case "/__fixture/registration-request":
+            if (req.method !== "POST")
+              throw new Error("fixture registration requires POST");
+            value = requestRegistration(input);
             break;
           case "/__fixture/state":
             value = { scenario, scenarios, service: serviceView() };
@@ -360,6 +403,7 @@ export async function createFixture() {
       if (!execution[value]) throw new Error("scenario");
       executionState = value;
       scenario = value;
+      registrationRequested = false;
     },
     // Test-only association: phase/effect facts remain the generated Rust fixture.
     async executionDelivery(

@@ -42,7 +42,7 @@ impl EnterpriseHost {
             .verify(plan, self.clock.millis().map_err(|_| Error::Clock)?)
             .map_err(|_| Error::Denied)?;
         if permit.plan.digest() != plan.digest()
-            || permit.start.payload().permit() != agent_client::wire::TaskPermit::Start
+            || permit.start.payload().permit() != rss_mdm_agent_wire::runtime::TaskPermit::Start
         {
             return Err(Error::Denied);
         }

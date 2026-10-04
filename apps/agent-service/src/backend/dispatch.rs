@@ -4,11 +4,12 @@ use crate::{
     service::{helper_error, network, Command, Core, Selection},
     DeviceService,
 };
-use agent_client::{wire, Error, Materials, Offer, SecretProvider};
+use agent_client::{Error, IdentityProvider, Materials, Offer};
 use execution_app::ExecutionStatus;
 use execution_contract::BackendRequestState;
+use rss_mdm_agent_wire::runtime as wire;
 use std::sync::Arc;
-pub(crate) async fn submit<S: SecretProvider>(
+pub(crate) async fn submit<S: IdentityProvider>(
     service: &mut DeviceService<S>,
     offer: Offer,
     materials: Materials,

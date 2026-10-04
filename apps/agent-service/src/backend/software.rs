@@ -3,9 +3,10 @@ use crate::{
     backend::plan::{self, hex, id, reference},
     ExecutionConfig, SoftwareManagerKind,
 };
-use agent_client::{wire, Error, Materials, Offer};
+use agent_client::{Error, Materials, Offer};
 use execution_contract::*;
 use execution_runner::{Artifacts, SoftwareStepArtifacts};
+use rss_mdm_agent_wire::runtime as wire;
 use script_plan::{compile_invocation, ScriptInvocationInput};
 use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 

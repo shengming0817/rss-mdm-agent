@@ -1,9 +1,10 @@
 //! Product gate proof bound to a verified backend task, never supplied by IPC or the model.
 //! ref: rustls 0.23.45 rustls/src/verify.rs (2976d90): private verification markers.
 use super::{offered, request_id};
-use agent_client::{wire, Error, Offer, Start};
+use agent_client::{Error, Offer, Start};
 use execution_admission::{ai_execution_gate, ExecutionGate};
 use execution_contract::*;
+use rss_mdm_agent_wire::runtime as wire;
 
 /// A decoded backend risk decision tied to its authenticated full offer revision.
 /// Current wire has no such decision (#2654); formal builds have no alternate source.

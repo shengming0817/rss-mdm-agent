@@ -39,9 +39,9 @@ fn only_current_envelope_calls_the_handler() {
         dispatch(
             &mut spy,
             &peer,
-            br#"{"version":9,"request":{"method":"status","request":"r"}}"#
+            br#"{"version":10,"request":{"method":"status","request":"r"}}"#
         ),
-        br#"{"version":9,"reply":{"kind":"unavailable"}}"#
+        br#"{"version":10,"reply":{"kind":"unavailable"}}"#
     );
     assert_eq!(spy.0, 1);
 }

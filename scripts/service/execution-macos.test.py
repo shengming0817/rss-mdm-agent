@@ -105,7 +105,7 @@ class Installation(unittest.TestCase):
                 plist.chmod(0o600)
                 journal=home/'execution.sqlite'; journal.write_bytes(b'unresolved journal')
                 secret=home/'credential'; secret.write_bytes(b'credential marker')
-                old={'origin':'https://same.test','tenant':'tenant','enrollment':'enrollment','registration_operation':'operation','state_root':'/same/state','helper_work_roots':{},'execution':{'work_root':'/same/work','material_root':'/same/material'}}
+                old={'origin':'https://same.test','tenant':'tenant','installation_id':'installation','device_ca_file':'/same/device-ca.pem','state_root':'/same/state','helper_work_roots':{},'execution':{'work_root':'/same/work','material_root':'/same/material'}}
                 import copy
                 new=copy.deepcopy(old)
                 if failure == 'identity': new['state_root']='/replacement/state'

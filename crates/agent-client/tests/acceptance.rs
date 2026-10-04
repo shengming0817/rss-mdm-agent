@@ -1,9 +1,10 @@
-use agent_client::{wire::*, Client, Config, Error, Limits, OpenMode, Transport};
+use agent_client::{Client, Config, Error, Limits, OpenMode, Transport};
+use rss_mdm_agent_wire::runtime::*;
 use url::Url;
 use uuid::Uuid;
 #[path = "../../../tests/agent-protocol/mod.rs"]
 mod support;
-use agent_client::wire::{TaskArchitecture, TaskPlatform};
+use rss_mdm_agent_wire::runtime::{TaskArchitecture, TaskPlatform};
 use support::*;
 #[tokio::test]
 async fn refresh_inspection_reads_live_binding_without_locking_or_creating_state() {
@@ -13,7 +14,7 @@ async fn refresh_inspection_reads_live_binding_without_locking_or_creating_state
     server.register(&mut client).await;
     let cfg = client.configuration().clone();
     let before = std::fs::read(root.path.join("communication.sqlite")).unwrap();
-    let registration = agent_client::inspect_registration(&root.path, &cfg).unwrap();
+    let registration = agent_client::inspect_binding(&root.path, &cfg).unwrap();
     assert_eq!(
         registration.registration_id,
         client.registration().unwrap().registration_id
@@ -21,7 +22,7 @@ async fn refresh_inspection_reads_live_binding_without_locking_or_creating_state
     let mut wrong = cfg.clone();
     wrong.tenant = Uuid::new_v4();
     assert!(matches!(
-        agent_client::inspect_registration(&root.path, &wrong),
+        agent_client::inspect_binding(&root.path, &wrong),
         Err(Error::Identity)
     ));
     assert_eq!(
@@ -29,7 +30,7 @@ async fn refresh_inspection_reads_live_binding_without_locking_or_creating_state
         std::fs::read(root.path.join("communication.sqlite")).unwrap()
     );
     let empty = Root::new();
-    assert!(agent_client::inspect_registration(&empty.path, &cfg).is_err());
+    assert!(agent_client::inspect_binding(&empty.path, &cfg).is_err());
     assert_eq!(std::fs::read_dir(&empty.path).unwrap().count(), 0);
 }
 
@@ -109,8 +110,8 @@ async fn material_reader_starts_at_zero_and_revocation_invalidates_held_start() 
         )
         .unwrap();
     server.data.lock().unwrap().denied = true;
-    assert_eq!(client.flush_reports(1).await, Err(Error::Identity));
-    assert_eq!(client.validate_start(&start), Err(Error::Identity));
+    assert_eq!(client.flush_reports(1).await, Err(Error::CredentialRevoked));
+    assert_eq!(client.validate_start(&start), Err(Error::CredentialRevoked));
 }
 
 #[tokio::test]
@@ -196,47 +197,23 @@ async fn register_report_recovery_and_exact_ack() {
     let root = Root::new();
     let mut client = server.client(&root, OpenMode::Create);
     server.data.lock().unwrap().registration_failure = true;
-    let operation = Uuid::new_v4();
-    let enrollment = Uuid::new_v4();
-    let capabilities = vec![Capability::InventoryCollectionV6, Capability::TaskExecuteV6];
-    assert_eq!(
-        client
-            .register(
-                operation,
-                enrollment,
-                "password",
-                "credential",
-                capabilities.clone()
-            )
-            .await
-            .unwrap_err(),
-        Error::Unavailable
-    );
+    let capabilities = vec![Capability::InventoryCollectionV1, Capability::TaskExecuteV1];
+    assert!(matches!(
+        client.request_authorization(capabilities.clone()).await,
+        Err(Error::Unavailable)
+    ));
+    let operation = server.data.lock().unwrap().operation;
     drop(client);
     let mut client = server.client(&root, OpenMode::Existing);
     client
-        .register(
-            operation,
-            enrollment,
-            "password",
-            "credential",
-            capabilities.clone(),
-        )
+        .request_authorization(capabilities.clone())
         .await
         .unwrap();
-    assert_eq!(
-        client
-            .register(
-                Uuid::new_v4(),
-                enrollment,
-                "password",
-                "credential",
-                capabilities
-            )
-            .await
-            .unwrap_err(),
-        Error::Conflict
-    );
+    assert_eq!(server.data.lock().unwrap().operation, operation);
+    assert!(matches!(
+        client.request_authorization(capabilities).await,
+        Err(Error::Conflict)
+    ));
     let report = client
         .queue_report(
             "inventory",
@@ -281,9 +258,9 @@ async fn revoked_identity_blocks_retries_and_clock_rollback_preserves_queue() {
         .unwrap();
     server.time.set(2);
     server.data.lock().unwrap().denied = true;
-    assert_eq!(client.flush_reports(4).await, Err(Error::Identity));
+    assert_eq!(client.flush_reports(4).await, Err(Error::CredentialRevoked));
     server.data.lock().unwrap().denied = false;
-    assert_eq!(client.flush_reports(4).await, Err(Error::Identity));
+    assert_eq!(client.flush_reports(4).await, Err(Error::CredentialRevoked));
     drop(client);
     let cfg = server.config();
     server.time.set(0);
@@ -303,7 +280,7 @@ async fn revoked_identity_blocks_retries_and_clock_rollback_preserves_queue() {
             },
             1
         ),
-        Err(Error::Identity)
+        Err(Error::CredentialRevoked)
     );
 }
 
@@ -424,7 +401,7 @@ fn unsupported_database_and_changed_namespace_are_preserved() {
     let root = Root::new();
     drop(server.client(&root, OpenMode::Create));
     let path = root.path.join("communication.sqlite");
-    for version in [1, 2, 3, 5] {
+    for version in [1, 2, 3, 4, 6] {
         let db = rusqlite::Connection::open(&path).unwrap();
         db.pragma_update(None, "user_version", version).unwrap();
         drop(db);
@@ -520,7 +497,7 @@ async fn prior_communication_schema_preserves_registration_pending_delivery_and_
 #[test]
 fn configuration_rejects_untrusted_network_and_unbounded_budgets() {
     let mut cfg = Config {
-        execution_context: agent_client::wire::SoftwareExecutionContext {
+        execution_context: rss_mdm_agent_wire::runtime::SoftwareExecutionContext {
             revision: 1,
             os_version: [14, 0, 0, 0],
             system_broker: true,
@@ -537,6 +514,7 @@ fn configuration_rejects_untrusted_network_and_unbounded_budgets() {
         limits: Limits::test_defaults(),
         transport: Transport::Https,
         ca_pem: None,
+        device_ca_pem: b"fixture".to_vec(),
     };
     assert_eq!(cfg.validate(), Err(Error::Configuration));
     cfg.origin = Url::parse("http://127.0.0.1:8080").unwrap();
@@ -733,4 +711,273 @@ async fn review_regression_registration_context_survives_restart_before_first_po
         inputs[0]["executionContext"]["osVersion"],
         serde_json::json!([15, 1, 0, 0])
     );
+}
+
+#[tokio::test]
+async fn activation_response_loss_recovers_original_candidate_over_real_tls() {
+    let server = Server::tls().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.data.lock().unwrap().activation_failure = true;
+    assert!(matches!(
+        client
+            .request_authorization(vec![
+                Capability::InventoryCollectionV1,
+                Capability::TaskExecuteV1
+            ])
+            .await,
+        Err(Error::ActivationUnknown)
+    ));
+    let secrets = server.secrets.0.lock().unwrap().clone();
+    let receipt = server.data.lock().unwrap().activation.clone().unwrap();
+    drop(client);
+    let mut client = server.client(&root, OpenMode::Existing);
+    client.drive_enrollment().await.unwrap();
+    assert_eq!(client.registration().unwrap(), receipt.runtime);
+    assert_eq!(server.secrets.0.lock().unwrap().clone(), secrets);
+    let data = server.data.lock().unwrap();
+    assert_eq!(data.certificate_calls.len(), 1);
+    assert_eq!(data.activation_calls.len(), 1);
+}
+#[tokio::test]
+async fn certificate_response_loss_replays_exact_frozen_request_and_key() {
+    let server = Server::tls().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.data.lock().unwrap().certificate_failure = true;
+    assert!(matches!(
+        client
+            .request_authorization(vec![
+                Capability::InventoryCollectionV1,
+                Capability::TaskExecuteV1
+            ])
+            .await,
+        Err(Error::Unavailable)
+    ));
+    let secrets = server.secrets.0.lock().unwrap().clone();
+    drop(client);
+    let mut client = server.client(&root, OpenMode::Existing);
+    client.drive_enrollment().await.unwrap();
+    assert_eq!(server.secrets.0.lock().unwrap().clone(), secrets);
+    let data = server.data.lock().unwrap();
+    assert_eq!(data.certificate_calls.len(), 2);
+    assert_eq!(data.certificate_calls[0], data.certificate_calls[1]);
+}
+#[tokio::test]
+async fn unknown_issuance_never_submits_another_certificate_operation() {
+    let server = Server::new().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.data.lock().unwrap().issuance_unknown = true;
+    let caps = vec![Capability::InventoryCollectionV1, Capability::TaskExecuteV1];
+    assert!(matches!(
+        client.request_authorization(caps.clone()).await,
+        Err(Error::IssuanceUnknown)
+    ));
+    let secrets = server.secrets.0.lock().unwrap().clone();
+    drop(client);
+    let mut client = server.client(&root, OpenMode::Existing);
+    assert_eq!(client.drive_enrollment().await, Err(Error::IssuanceUnknown));
+    assert!(matches!(
+        client.request_authorization(caps).await,
+        Err(Error::IssuanceUnknown)
+    ));
+    assert_eq!(server.data.lock().unwrap().certificate_calls.len(), 1);
+    assert_eq!(server.secrets.0.lock().unwrap().clone(), secrets);
+}
+
+#[tokio::test]
+async fn manual_renewal_keeps_binding_tasks_reports_and_original_recovery_operations() {
+    let server = Server::tls().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    let old_leaf = server.data.lock().unwrap().candidate_leaf.clone().unwrap();
+    let binding = client.registration().unwrap();
+    let offer = client.claim().await.unwrap().offer.unwrap();
+    let task = offer.task_id();
+    client
+        .queue_report(
+            "inventory",
+            ReportBody::Failed {
+                code: FailureCode::CollectionFailed,
+            },
+            1,
+        )
+        .unwrap();
+    server.data.lock().unwrap().activation_failure = true;
+    assert_eq!(
+        client.renew_certificate().await.unwrap_err(),
+        Error::ActivationUnknown
+    );
+    server.data.lock().unwrap().denied = true;
+    assert_eq!(
+        client.flush_reports(1).await.unwrap_err(),
+        Error::CredentialRevoked
+    );
+    let status = client.enrollment_status().unwrap();
+    assert_eq!(
+        status.failure,
+        Some(rss_mdm_agent_wire::enroll::ErrorCode::CredentialRevoked)
+    );
+    assert_eq!(
+        status.phase,
+        agent_client::EnrollmentPhase::ActivationUnknown
+    );
+    server.data.lock().unwrap().denied = false;
+    let secrets = server.secrets.0.lock().unwrap().clone();
+    let (candidate, operation) = {
+        let data = server.data.lock().unwrap();
+        assert_ne!(
+            data.certificate_calls[0]["operationId"],
+            data.certificate_calls[1]["operationId"]
+        );
+        assert_ne!(
+            data.certificate_calls[0]["csr"],
+            data.certificate_calls[1]["csr"]
+        );
+        (data.issuance, data.activation.clone().unwrap().operation_id)
+    };
+    // Use a real TLS connection authenticated by the former active certificate.
+    // A same-CA peer must still match the exact candidate being activated.
+    use der::{DecodePem, Encode};
+    let mut roots = rustls::RootCertStore::empty();
+    roots
+        .add(rustls::pki_types::CertificateDer::from(
+            x509_cert::Certificate::from_pem(support::pki::ca())
+                .unwrap()
+                .to_der()
+                .unwrap(),
+        ))
+        .unwrap();
+    let tls = rustls::ClientConfig::builder_with_provider(std::sync::Arc::new(
+        rustls::crypto::ring::default_provider(),
+    ))
+    .with_safe_default_protocol_versions()
+    .unwrap()
+    .with_root_certificates(roots)
+    .with_client_auth_cert(
+        vec![rustls::pki_types::CertificateDer::from(old_leaf)],
+        rustls::pki_types::PrivateKeyDer::Pkcs8(rustls::pki_types::PrivatePkcs8KeyDer::from(
+            include_bytes!("../../../tests/agent-protocol/pki/device-test-key.pk8").to_vec(),
+        )),
+    )
+    .unwrap();
+    let old_client = reqwest::Client::builder()
+        .no_proxy()
+        .tls_backend_preconfigured(tls)
+        .build()
+        .unwrap();
+    let rejected = old_client
+        .post(server.url.join("api/v1/agent/enroll/activate").unwrap())
+        .json(&rss_mdm_agent_wire::enroll::ActivationRequest {
+            wire_version: 1,
+            issuance_id: candidate,
+            operation_id: operation,
+        })
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(rejected.status(), reqwest::StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        rejected
+            .json::<rss_mdm_agent_wire::enroll::ErrorBody>()
+            .await
+            .unwrap()
+            .code,
+        rss_mdm_agent_wire::enroll::ErrorCode::InvalidIdentity
+    );
+    assert_eq!(server.data.lock().unwrap().activation_calls.len(), 2);
+    assert_eq!(server.data.lock().unwrap().binding.as_ref(), Some(&binding));
+    drop(client);
+    let mut client = server.client(&root, OpenMode::Existing);
+    client.renew_certificate().await.unwrap();
+    assert_eq!(client.registration().unwrap(), binding);
+    assert_eq!(client.pending_tasks(8).unwrap(), vec![task]);
+    assert_eq!(client.flush_reports(1).await.unwrap(), 1);
+    assert_eq!(server.secrets.0.lock().unwrap().clone(), secrets);
+    let data = server.data.lock().unwrap();
+    assert_eq!(data.certificate_calls.len(), 2);
+    assert_eq!(data.activation_calls.len(), 2);
+    assert_eq!(data.activation.as_ref().unwrap().issuance_id, candidate);
+    assert_eq!(data.activation.as_ref().unwrap().operation_id, operation);
+}
+#[tokio::test]
+async fn readonly_identity_preflight_shares_runtime_rules_and_preserves_state() {
+    use rss_mdm_agent_wire::enroll::ErrorCode;
+    let server = Server::tls().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    let cfg = client.configuration().clone();
+    let binding = client.registration().unwrap();
+    let validate =
+        || agent_client::validate_identity(&root.path, &cfg, &server.secrets, &server.time);
+    assert_eq!(validate().unwrap(), binding); // Validates while the original owner holds its lease.
+    let secrets = server.secrets.0.lock().unwrap().clone();
+    for value in server.secrets.0.lock().unwrap().values_mut() {
+        if value == "fixture-key" {
+            *value = "fixture-renewal-key".into();
+        }
+    }
+    assert!(matches!(validate(), Err(Error::Identity)));
+    *server.secrets.0.lock().unwrap() = secrets.clone();
+    server
+        .secrets
+        .0
+        .lock()
+        .unwrap()
+        .retain(|_, value| value != "fixture-key");
+    assert_eq!(validate().unwrap_err(), Error::Identity);
+    *server.secrets.0.lock().unwrap() = secrets.clone();
+    let mut wrong_issuer = cfg.clone();
+    {
+        use base64::Engine;
+        use der::{Decode, EncodePem};
+        let leaf = x509_cert::Certificate::from_der(
+            &base64::engine::general_purpose::STANDARD
+                .decode(&support::pki::chain(server.config().tenant)[0])
+                .unwrap(),
+        )
+        .unwrap();
+        wrong_issuer.device_ca_pem = leaf.to_pem(der::pem::LineEnding::LF).unwrap().into_bytes();
+    }
+    assert_eq!(
+        agent_client::validate_identity(&root.path, &wrong_issuer, &server.secrets, &server.time)
+            .unwrap_err(),
+        Error::Untrusted
+    );
+    server.time.set(4_070_908_800);
+    assert_eq!(validate().unwrap_err(), Error::CertificateExpired);
+    server.time.set(1_700_000_000);
+    drop(client);
+    let path = root.path.join("communication.sqlite");
+    for (code, expected) in [
+        (ErrorCode::CredentialRevoked, Error::CredentialRevoked),
+        (ErrorCode::CredentialRetired, Error::CredentialRetired),
+        (ErrorCode::CertificateExpired, Error::CertificateExpired),
+    ] {
+        let db = rusqlite::Connection::open(&path).unwrap();
+        let bytes: Vec<u8> = db
+            .query_row("SELECT body FROM state WHERE key='identity'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        let mut state: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        state["failure"] = serde_json::to_value(code).unwrap();
+        db.execute(
+            "UPDATE state SET body=?1 WHERE key='identity'",
+            [serde_json::to_vec(&state).unwrap()],
+        )
+        .unwrap();
+        drop(db);
+        let before = std::fs::read(&path).unwrap();
+        assert_eq!(validate().unwrap_err(), expected);
+        assert_eq!(
+            agent_client::inspect_binding(&root.path, &cfg).unwrap(),
+            binding
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        assert_eq!(*server.secrets.0.lock().unwrap(), secrets);
+    }
 }

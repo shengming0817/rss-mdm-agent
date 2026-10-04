@@ -44,7 +44,7 @@ def candidate(binary, config):
         '=cdhash H"' + cdhash + '"', str(binary)], check=True, capture_output=True, text=True)
     result = subprocess.run([str(binary), '--config', str(config), '--validate-installation'], check=True, capture_output=True, text=True)
     value = json.loads(result.stdout)
-    if value['version'] != 2 or value['ipc_version'] != 9 or value['service']['path'] != str(binary):
+    if value['version'] != 3 or value['ipc_version'] != 10 or value['service']['path'] != str(binary):
         raise RuntimeError('candidate deployment/protocol mismatch')
     return value
 
@@ -101,7 +101,7 @@ def refresh(plist, label, domain, endpoint, program, config, next_binary, next_c
         raise RuntimeError('refusing to refresh another installation')
     old = candidate(Path(program[0]), config)
     new = candidate(next_binary, next_config)
-    immutable = ['origin', 'tenant', 'enrollment', 'registration_operation', 'state_root', 'helper_work_roots']
+    immutable = ['origin', 'tenant', 'installation_id', 'device_ca_file', 'state_root', 'helper_work_roots']
     if any(old[key] != new[key] for key in immutable) or any(old['execution'][key] != new['execution'][key] for key in ['work_root', 'material_root']):
         raise RuntimeError('refresh cannot replace identity, storage or unresolved task resources')
     # Read-only proof by the current identity owner before any stop or publication.
