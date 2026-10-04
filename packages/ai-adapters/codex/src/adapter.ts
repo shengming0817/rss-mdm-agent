@@ -42,7 +42,7 @@ import {
   type RpcConnection,
   type RuntimeFactory,
 } from "./runtime.js";
-import { HOST_SERVER, HOST_TOOL, ToolBridge } from "./bridge.js";
+import { HOST_SERVER, ToolBridge } from "./bridge.js";
 import {
   rpc,
   nativeNotification,
@@ -560,8 +560,13 @@ export class CodexAdapter implements ProviderAgentPort {
       server.name !== HOST_SERVER ||
       server.runtimeStatus !== "connected" ||
       server.toolsError !== null ||
-      !same(Object.keys(server.tools), [HOST_TOOL.name]) ||
-      !same(server.tools.propose.inputSchema, HOST_TOOL.inputSchema) ||
+      !same(
+        Object.keys(server.tools).sort(),
+        this.bridge.catalog.map((t) => t.name).sort(),
+      ) ||
+      this.bridge.catalog.some(
+        (t) => !same(server.tools[t.name]?.inputSchema, t.inputSchema),
+      ) ||
       !same(server.resources, []) ||
       !same(server.resourceTemplates, [])
     )
@@ -980,17 +985,16 @@ export class CodexAdapter implements ProviderAgentPort {
       const args = item.arguments as any;
       if (
         item.server === HOST_SERVER &&
-        item.tool === HOST_TOOL.name &&
+        this.bridge?.catalog.some((t) => t.name === item.tool) &&
         args &&
-        isId(args.name) &&
-        args.arguments &&
-        typeof args.arguments === "object"
+        typeof args === "object" &&
+        !Array.isArray(args)
       ) {
         this.emit(entry, {
           type: "tool_proposal",
           proposalId: item.id,
-          name: args.name,
-          arguments: args.arguments,
+          name: item.tool,
+          arguments: args,
         });
         const result = (item.result?.structuredContent as any)?.rssHostResult;
         const known =

@@ -1,3 +1,4 @@
+import { policyFixturePort } from "../../../../tests/self-service/support";
 import { describe, expect, it, vi } from "vitest";
 import { createController } from "./controller";
 import {
@@ -8,6 +9,7 @@ import type { SelfServicePort } from "./types";
 function fixture() {
   const value = snapshot();
   const port = {
+    ...policyFixturePort,
     snapshot: vi.fn<SelfServicePort["snapshot"]>(async () =>
       structuredClone(value),
     ),

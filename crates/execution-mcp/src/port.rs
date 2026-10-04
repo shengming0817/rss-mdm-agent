@@ -30,6 +30,38 @@ pub trait ExecutionServicePort: Send + Sync + 'static {
         &self,
         wait: CancellationToken,
     ) -> impl Future<Output = Result<Vec<BackendTask>, ServiceError>> + Send;
+    /// Native discovery of current AI-authorized Policy tools. The production consumer uses the formal directory.
+    fn policy_tools(
+        &self,
+        _: CancellationToken,
+    ) -> impl Future<Output = Result<Vec<serde_json::Value>, ServiceError>> + Send {
+        async { Ok(Vec::new()) }
+    }
+    /// Invoke a current Policy descriptor with a Host-owned original request identity.
+    fn invoke_policy(
+        &self,
+        _: &str,
+        _: serde_json::Map<String, serde_json::Value>,
+        _: CancellationToken,
+    ) -> impl Future<Output = Result<execution_contract::BackendRequest, ServiceError>> + Send {
+        async { Err(ServiceError::Denied) }
+    }
+    /// Structured employee-authorized result for the original Policy request.
+    fn policy_status(
+        &self,
+        _: OperationRequest,
+        _: CancellationToken,
+    ) -> impl Future<Output = Result<serde_json::Value, ServiceError>> + Send {
+        async { Err(ServiceError::Denied) }
+    }
+    /// Bounded on-demand native software observation without an execution attempt.
+    fn observe_software(
+        &self,
+        _: execution_contract::SoftwareReadSelection,
+        _: CancellationToken,
+    ) -> impl Future<Output = Result<execution_contract::BackendRequest, ServiceError>> + Send {
+        async { Err(ServiceError::Denied) }
+    }
     /// Capabilities of the bound device/context, with unknown represented explicitly.
     fn capabilities(
         &self,

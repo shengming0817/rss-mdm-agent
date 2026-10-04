@@ -59,6 +59,32 @@ export function createController(
     state.item = { ...task };
     state.taskId = task.request;
   }
+  async function observe(task: BackendTask, step: number) {
+    if (!port || state.busy || state.uncertain) return;
+    const request = crypto.randomUUID();
+    state.taskId = request;
+    state.busy = true;
+    try {
+      await port.observe_software({
+        request,
+        input: {
+          selection: {
+            request: task.request,
+            task: task.task,
+            attempt: task.attempt,
+            revision: task.revision,
+          },
+          step,
+        },
+      });
+    } catch {
+      state.uncertain = true;
+      state.error = "检测回执未确认；请查询原请求。";
+    } finally {
+      state.busy = false;
+      await refresh();
+    }
+  }
   async function confirm() {
     await submit(state.item, false);
   }
@@ -131,8 +157,10 @@ export function createController(
     ++epoch;
   }
   return {
+    port,
     state,
     interactive: !!port,
+    observe,
     refresh,
     select,
     confirm,

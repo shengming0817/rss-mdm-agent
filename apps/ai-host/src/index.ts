@@ -140,7 +140,32 @@ export async function startLocalApp(
       requireLocalExecution(current, request.namespace);
       if (!current || !available(request.namespace))
         throw new Error("unbound origin");
-      if (!request.commandId) throw new Error("unbound origin");
+      if (!request.commandId) {
+        const session = await store.session(request.namespace);
+        if (!session.ok) throw new Error("unbound origin");
+        const phase = session.value.stages.find(
+          (stage) => stage.stageId === session.value.currentStageId,
+        );
+        if (phase)
+          return { binding: phase.binding, userGeneration: current.generation };
+        if (!session.value.selectedConnectionId)
+          throw new Error("unbound origin");
+        const connection = await store.connection(
+          request.namespace,
+          session.value.selectedConnectionId,
+        );
+        if (!connection.ok) throw new Error("unbound origin");
+        return {
+          binding: {
+            provider: connection.value.provider,
+            config: {
+              id: connection.value.connectionId,
+              revision: String(connection.value.configRevision),
+            },
+          },
+          userGeneration: current.generation,
+        };
+      }
       const command = await store.command(request.namespace, request.commandId),
         session = await store.session(request.namespace);
       if (!command.ok || !session.ok) throw new Error("unbound origin");

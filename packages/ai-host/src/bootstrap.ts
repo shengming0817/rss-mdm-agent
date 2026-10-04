@@ -23,6 +23,13 @@ const observations = new Set<AbortController>();
 const output = new Channel(link.lane("events"), launchId);
 const tools = new Channel(link.lane("tools"), launchId);
 const bridge: ToolEndpoint = {
+  list: async (budget) => {
+    if (stopped)
+      return { ok: false, error: { code: "unavailable", retry: "never" } };
+    return (await tools.call("list", {}, budget)) as Awaited<
+      ReturnType<ToolEndpoint["list"]>
+    >;
+  },
   propose: async (proposal, budget) => {
     if (stopped)
       return { ok: false, error: { code: "unavailable", retry: "never" } };

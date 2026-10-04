@@ -24,7 +24,13 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             .http
             .request(method, self.url(path)?)
             .header("x-rss-user-session", secret)
-            .timeout(self.store.cfg.limits.request_timeout);
+            .timeout(
+                self.store
+                    .cfg
+                    .limits
+                    .request_timeout
+                    .min(std::time::Duration::from_secs(2)),
+            );
         if let Some(body) = body {
             if body.len() > 131072 {
                 return Err(Error::Capacity);

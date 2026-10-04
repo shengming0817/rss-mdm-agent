@@ -1,3 +1,4 @@
+import { policyFixturePort } from "../../../tests/self-service/support";
 import { mount, flushPromises } from "@vue/test-utils";
 import { it, expect, vi } from "vitest";
 import Workspace from "./Workspace.vue";
@@ -15,6 +16,7 @@ it("requires explicit conversation selection, keeps one view and preserves stage
       page: "software",
       host: createHostSettings(undefined),
       selfServicePort: {
+        ...policyFixturePort,
         snapshot: vi
           .fn()
           .mockResolvedValue({ ...snapshot(), available: [resourceOffer()] }),
@@ -81,6 +83,7 @@ it("uses one content header, a sidebar brand and a main welcome without remounti
       page: "assistant",
       host: createHostSettings(undefined),
       selfServicePort: {
+        ...policyFixturePort,
         snapshot: vi.fn().mockResolvedValue(snapshot()),
         execute: vi.fn(),
         confirm: vi.fn(),
@@ -133,6 +136,7 @@ it("changes the same assistant to compact resource presentation and stages sugge
       page: "software",
       host: createHostSettings(undefined),
       selfServicePort: {
+        ...policyFixturePort,
         snapshot: vi
           .fn()
           .mockResolvedValue({ ...snapshot(), available: [resourceOffer()] }),

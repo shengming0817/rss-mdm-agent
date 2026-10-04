@@ -483,6 +483,13 @@ pub struct EmployeeSession {
     deny_unknown_fields
 )]
 pub enum Request {
+    /// Finite native software observation; service selects only the exact signed detector.
+    ObserveSoftware {
+        /// Stable query and exact current signed selection.
+        choice: execution_contract::SoftwareReadChoice,
+        /// Origin attested by the native peer.
+        origin: ClientOrigin,
+    },
     /// Bind or revoke the native employee session for this authenticated login.
     EmployeeSession {
         /// None revokes all pending self-service for this login.

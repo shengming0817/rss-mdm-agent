@@ -15,6 +15,7 @@ async fn lost_chunk_ack_replays_identical_bytes_after_restart_and_requires_every
         OutputQuality::Complete,
         value.clone(),
         TaskDiagnostics::new("".into(), "".into(), 1, 1, None).unwrap(),
+        1000,
     )
     .unwrap();
     let request = client

@@ -92,6 +92,48 @@ impl Core {
         }
         Ok(employee)
     }
+    pub(super) fn policy_readable(
+        &self,
+        request: &RequestId,
+        subject: &str,
+        binding: Option<&Id>,
+    ) -> Result<bool, Error> {
+        let Some(record) = self
+            .app
+            .backend_request(&self.caller(), request)
+            .map_err(map_app_error)?
+        else {
+            return Ok(true);
+        };
+        let PreparedAction::Policy {
+            actor, generation, ..
+        } = &record.action
+        else {
+            return Ok(true);
+        };
+        if trigger_subject(&record.trigger) != Some(subject)
+            || record.trigger_os_session() != binding
+        {
+            return Ok(false);
+        }
+        let current = self
+            .employees
+            .iter()
+            .find(|(key, _)| {
+                key.starts_with(&format!("{subject}:"))
+                    && binding.is_some_and(|id| key.ends_with(&format!(":{}", id.as_str())))
+            })
+            .map(|(_, value)| value);
+        Ok(current.is_some_and(|current| {
+            &current.actor == actor
+                && &current.generation == generation
+                && self
+                    .host
+                    .clock
+                    .millis()
+                    .is_ok_and(|now| now < current.expires_at_unix_ms)
+        }))
+    }
     pub(crate) fn current_policy_login(&self, record: &BackendRequest) -> Result<(), Error> {
         if self.host.revoked.load(Ordering::Acquire) || self.stopping {
             return Err(Error::Denied);
@@ -209,6 +251,9 @@ impl<S: IdentityProvider> DeviceService<S> {
                 .employees
                 .insert(peer_key(command)?, value.clone());
             return Ok(Reply::EmployeeBound);
+        }
+        if let Request::ObserveSoftware { choice, origin } = request {
+            return self.observe_software(command, choice, origin);
         }
         let employee = self.core.employee(command)?.clone();
         let result = match request {
@@ -597,5 +642,166 @@ impl<S: IdentityProvider> DeviceService<S> {
             .record_backend_request(&self.core.caller(), Some(&previous), &next)
             .map_err(map_app_error)?;
         Selection::from_record(&next)
+    }
+}
+
+impl<S: IdentityProvider> DeviceService<S> {
+    fn observe_software(
+        &mut self,
+        command: &Command,
+        choice: &execution_contract::SoftwareReadChoice,
+        origin: &ClientOrigin,
+    ) -> Result<Reply, Error> {
+        use execution_contract::*;
+        uuid(choice.request.as_str())?;
+        if self.core.stopping || self.core.host.revoked.load(Ordering::Acquire) {
+            return Err(Error::Denied);
+        }
+        let original_trigger = trigger(&self.core, command, origin)?;
+        if let Some(previous) = self
+            .core
+            .app
+            .backend_request(&self.core.caller(), &choice.request)
+            .map_err(map_app_error)?
+        {
+            let PreparedAction::SoftwareRead {
+                choice: original, ..
+            } = &previous.action
+            else {
+                return Err(Error::Conflict);
+            };
+            if original != choice || previous.trigger != original_trigger {
+                return Err(Error::Conflict);
+            }
+            return Ok(Reply::PolicyRequest {
+                value: Box::new(previous),
+            });
+        }
+        let (offer, _) = self.waiting.as_ref().ok_or(Error::Denied)?;
+        let view = offered(offer)?;
+        let selected = &choice.input.selection;
+        if view.request != selected.request
+            || view.task != selected.task
+            || view.attempt != selected.attempt
+            || view.revision != selected.revision
+        {
+            return Err(Error::Denied);
+        }
+        let now = self.core.host.clock.millis()?;
+        let until = u64::try_from(view.expires_at)
+            .map_err(|_| Error::Expired)?
+            .saturating_mul(1000);
+        if now >= until {
+            return Err(Error::Expired);
+        }
+        let wire::TaskPayload::Software(spec) = offer.payload() else {
+            return Err(Error::Denied);
+        };
+        let step = spec
+            .steps
+            .get(choice.input.step as usize)
+            .ok_or(Error::Denied)?;
+        let commands = backend::commands::software_commands(&step.action)?;
+        let detector = match commands.detection {
+            Some(wire::SoftwareTaskDetection::PkgReceipt { receipt, version }) => {
+                SoftwareDetector::PkgReceipt {
+                    receipt: receipt.clone(),
+                    version: PackageValue::new(version).map_err(|_| Error::Protocol)?,
+                }
+            }
+            Some(wire::SoftwareTaskDetection::MsiProduct {
+                product_code,
+                version,
+            }) => SoftwareDetector::MsiProduct {
+                product_code: product_code.clone(),
+                version: PackageValue::new(version).map_err(|_| Error::Protocol)?,
+            },
+            _ => return Err(Error::Unsupported),
+        };
+        let run_as = match commands.install.run_as {
+            wire::ExecutionIdentity::System => RunAs::System {
+                platform: plan::platform()?,
+            },
+            wire::ExecutionIdentity::LoggedInUser => RunAs::User {
+                account: OsAccountRef {
+                    platform: plan::platform()?,
+                    subject: plan::id(&command.subject)?,
+                },
+            },
+        };
+        let native_selection = Selection {
+            request: selected.request.clone(),
+            task: selected.task.clone(),
+            attempt: selected.attempt.clone(),
+            revision: selected.revision.clone(),
+            origin: origin.clone(),
+            subject: command.subject.clone(),
+            session: command.session,
+            binding: command.binding.clone().ok_or(Error::Denied)?,
+        };
+        let login = self.core.helpers.connect(Some(&native_selection))?;
+        if let wire::SoftwareExecutionTarget::User {
+            identity,
+            session_id,
+        } = &step.target
+        {
+            if identity != &command.subject || *session_id != login_id(login.context()) {
+                return Err(Error::Denied);
+            }
+        }
+        let definition = execution_contract::Digest::new(plan::hex(&spec.definition_digest))
+            .map_err(|_| Error::Protocol)?;
+        let risk = matches!(origin, ClientOrigin::Ai { .. }).then(|| ExecutionRisk {
+            level: RiskLevel::One,
+            source: RiskSource::Software {
+                definition: definition.clone(),
+            },
+            expires_at_unix_ms: until,
+        });
+        let record = BackendRequest {
+            action: PreparedAction::SoftwareRead {
+                choice: choice.clone(),
+                definition,
+                expires_at_unix_ms: until,
+                observation: None,
+            },
+            trigger: original_trigger,
+            risk,
+            confirmation: None,
+            revision: 1,
+            state: BackendRequestState::Ready,
+            failure: None,
+        };
+        self.core
+            .app
+            .record_backend_request(&self.core.caller(), None, &record)
+            .map_err(map_app_error)?;
+        let mut submitting = record.clone();
+        submitting.revision += 1;
+        submitting.state = BackendRequestState::Submitting;
+        self.core
+            .app
+            .record_backend_request(&self.core.caller(), Some(&record), &submitting)
+            .map_err(map_app_error)?;
+        let state = execution_runner::software::observe_native(&detector, &run_as)
+            .map_err(crate::error::app_error)?;
+        let mut observed = submitting.clone();
+        observed.revision += 1;
+        observed.state = BackendRequestState::Observed;
+        if let PreparedAction::SoftwareRead { observation, .. } = &mut observed.action {
+            *observation = Some(SoftwareObservation {
+                collected_at_unix_ms: self.core.host.clock.millis()?,
+                package: step.action.package.clone(),
+                expected_version: step.action.version.clone(),
+                state,
+            });
+        }
+        self.core
+            .app
+            .record_backend_request(&self.core.caller(), Some(&submitting), &observed)
+            .map_err(map_app_error)?;
+        Ok(Reply::PolicyRequest {
+            value: Box::new(observed),
+        })
     }
 }

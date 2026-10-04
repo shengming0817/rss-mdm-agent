@@ -100,3 +100,49 @@ impl<S: ExecutionServicePort> ExecutionMcp<S> {
         session.failure().map_or(result, Err)
     }
 }
+
+/// Deterministic MCP identity bound to Policy configuration and immutable execution version.
+pub fn policy_tool_name(item: &rss_mdm_agent_wire::runtime::SelfServiceDirectoryItem) -> String {
+    use sha2::{Digest, Sha256};
+    let hash = format!(
+        "{:x}",
+        Sha256::digest(format!("{}:{}", item.policy_revision, item.policy_version))
+    );
+    format!("policy_{}_{}", item.policy_id.simple(), &hash[..16])
+}
+/// Project only Input fields from the Resource-owned schema; full resolved validation remains in the service.
+pub fn policy_tool(
+    item: &rss_mdm_agent_wire::runtime::SelfServiceDirectoryItem,
+) -> Result<serde_json::Value, ServiceError> {
+    use rss_mdm_agent_wire::runtime::ScriptParameterSource;
+    if !item.self_service.published
+        || !item.self_service.allow_ai
+        || !matches!(item.self_service.risk_level, 1 | 2)
+    {
+        return Err(ServiceError::Denied);
+    }
+    let mut schema = item.parameter_schema.clone();
+    let object = schema.as_object_mut().ok_or(ServiceError::InvalidInput)?;
+    let input = |key: &str| {
+        matches!(
+            item.parameter_sources.get(key),
+            Some(ScriptParameterSource::Input {})
+        )
+    };
+    if let Some(properties) = object
+        .get_mut("properties")
+        .and_then(serde_json::Value::as_object_mut)
+    {
+        properties.retain(|key, _| input(key));
+    }
+    if let Some(required) = object
+        .get_mut("required")
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        required.retain(|value| value.as_str().is_some_and(input));
+    }
+    object.insert("additionalProperties".into(), false.into());
+    Ok(
+        serde_json::json!({"name": policy_tool_name(item), "description": format!("{}\n{}\nPrerequisites: {}\nSide effects: {}", item.self_service.display_name, item.self_service.description, item.self_service.prerequisites, item.self_service.side_effects), "inputSchema": schema, "annotations": {"readOnlyHint": item.self_service.risk_level == 1, "openWorldHint": false, "idempotentHint": false}}),
+    )
+}

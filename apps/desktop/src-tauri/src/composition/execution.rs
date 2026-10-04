@@ -181,6 +181,19 @@ impl ExecutionHandle {
             _ => Err(bad(Error::OutcomeUnknown)),
         }
     }
+    pub async fn observe_software(&self, choice: SoftwareReadChoice) -> ui::Result<BackendRequest> {
+        match self
+            .request(Request::ObserveSoftware {
+                choice,
+                origin: self.origin.clone(),
+            })
+            .await
+            .map_err(bad)?
+        {
+            Reply::PolicyRequest { value } => Ok(*value),
+            _ => Err(bad(Error::OutcomeUnknown)),
+        }
+    }
     pub async fn close(&self) {
         self.permits.close();
     }
@@ -331,6 +344,117 @@ impl mcp::ExecutionServicePort for ExecutionHandle {
             _ => Err(mcp::ServiceError::Unavailable),
         }
     }
+    async fn observe_software(
+        &self,
+        input: SoftwareReadSelection,
+        _: CancellationToken,
+    ) -> Result<BackendRequest, mcp::ServiceError> {
+        let ClientOrigin::Ai { tool_call, .. } = &self.origin else {
+            return Err(mcp::ServiceError::Denied);
+        };
+        let request = RequestId::new(
+            uuid::Uuid::parse_str(tool_call.as_str())
+                .map_err(|_| mcp::ServiceError::InvalidInput)?
+                .to_string(),
+        )
+        .map_err(|_| mcp::ServiceError::InvalidInput)?;
+        self.observe_software(SoftwareReadChoice { request, input })
+            .await
+            .map_err(|_| mcp::ServiceError::Unavailable)
+    }
+    async fn policy_tools(
+        &self,
+        _: CancellationToken,
+    ) -> Result<Vec<serde_json::Value>, mcp::ServiceError> {
+        if !matches!(self.origin, ClientOrigin::Ai { .. }) {
+            return Err(mcp::ServiceError::Denied);
+        }
+        let mut after = None;
+        let mut tools = Vec::new();
+        for _ in 0..16 {
+            let page = self
+                .policy_directory(ui::PolicyDirectoryQuery { after })
+                .await
+                .map_err(|_| mcp::ServiceError::Unavailable)?;
+            for item in page.items {
+                tools.push(mcp::policy_tool(&item)?);
+            }
+            after = page
+                .next_cursor
+                .map(|id| Id::new(id.to_string()))
+                .transpose()
+                .map_err(|_| mcp::ServiceError::InvalidInput)?;
+            if after.is_none() {
+                return Ok(tools);
+            }
+            if tools.len() >= 128 {
+                return Err(mcp::ServiceError::Limit);
+            }
+        }
+        Err(mcp::ServiceError::Limit)
+    }
+    async fn invoke_policy(
+        &self,
+        name: &str,
+        args: serde_json::Map<String, serde_json::Value>,
+        _: CancellationToken,
+    ) -> Result<BackendRequest, mcp::ServiceError> {
+        let ClientOrigin::Ai { tool_call, .. } = &self.origin else {
+            return Err(mcp::ServiceError::Denied);
+        };
+        let request = RequestId::new(
+            uuid::Uuid::parse_str(tool_call.as_str())
+                .map_err(|_| mcp::ServiceError::InvalidInput)?
+                .to_string(),
+        )
+        .map_err(|_| mcp::ServiceError::InvalidInput)?;
+        let mut after = None;
+        for _ in 0..16 {
+            let page = self
+                .policy_directory(ui::PolicyDirectoryQuery { after })
+                .await
+                .map_err(|_| mcp::ServiceError::Unavailable)?;
+            for item in page.items {
+                if mcp::policy_tool_name(&item) == name {
+                    mcp::policy_tool(&item)?;
+                    return self
+                        .invoke_policy(PolicyChoice {
+                            request,
+                            policy_id: Id::new(item.policy_id.to_string())
+                                .map_err(|_| mcp::ServiceError::InvalidInput)?,
+                            policy_revision: item.policy_revision,
+                            policy_version: Id::new(item.policy_version.to_string())
+                                .map_err(|_| mcp::ServiceError::InvalidInput)?,
+                            parameters: args.into_iter().collect(),
+                        })
+                        .await
+                        .map_err(|_| mcp::ServiceError::OutcomeUnknown);
+                }
+            }
+            after = page
+                .next_cursor
+                .map(|id| Id::new(id.to_string()))
+                .transpose()
+                .map_err(|_| mcp::ServiceError::InvalidInput)?;
+            if after.is_none() {
+                break;
+            }
+        }
+        Err(mcp::ServiceError::Denied)
+    }
+    async fn policy_status(
+        &self,
+        request: mcp::OperationRequest,
+        _: CancellationToken,
+    ) -> Result<serde_json::Value, mcp::ServiceError> {
+        let value = self
+            .policy_status(ui::ActionRef {
+                request_id: request.operation_request_id,
+            })
+            .await
+            .map_err(|_| mcp::ServiceError::Unavailable)?;
+        serde_json::to_value(value).map_err(|_| mcp::ServiceError::Unavailable)
+    }
     async fn capabilities(
         &self,
         _: CancellationToken,
@@ -442,6 +566,7 @@ fn pending_operation(value: execution_contract::BackendRequest) -> mcp::Operatio
                 .expect("digest")
             }),
         phase: match value.state {
+            BackendRequestState::Observed => mcp::OperationPhase::ExecutionEnded,
             BackendRequestState::Failed => mcp::OperationPhase::Failed,
             BackendRequestState::Cancelled => mcp::OperationPhase::Cancelled,
             _ => mcp::OperationPhase::Waiting,
@@ -464,16 +589,18 @@ mod selection_tests {
             revision: Digest::new("a".repeat(64)).unwrap(),
         };
         let original = BackendRequest {
-            offer: BackendTask {
-                request: selection.request.clone(),
-                task: selection.task.clone(),
-                attempt: selection.attempt.clone(),
-                revision: selection.revision.clone(),
-                title: "original".into(),
-                expires_at: 100,
-                user_initiated: true,
-                summary: BackendTaskSummary::Script {
-                    identity: BackendIdentity::System,
+            action: PreparedAction::Offered {
+                offer: BackendTask {
+                    request: selection.request.clone(),
+                    task: selection.task.clone(),
+                    attempt: selection.attempt.clone(),
+                    revision: selection.revision.clone(),
+                    title: "original".into(),
+                    expires_at: 100,
+                    user_initiated: true,
+                    summary: BackendTaskSummary::Script {
+                        identity: BackendIdentity::System,
+                    },
                 },
             },
             trigger: BackendTrigger::Automatic {},
@@ -516,23 +643,14 @@ mod selection_tests {
         }
         for field in 0..4 {
             let mut value = original.clone();
+            let PreparedAction::Offered { offer } = &mut value.action else {
+                unreachable!()
+            };
             match field {
-                0 => {
-                    value.action.offer().ok_or(Error::InvalidInput)?.request =
-                        RequestId::new("other-request").unwrap()
-                }
-                1 => {
-                    value.action.offer().ok_or(Error::InvalidInput)?.task =
-                        Id::new("other-task").unwrap()
-                }
-                2 => {
-                    value.action.offer().ok_or(Error::InvalidInput)?.attempt =
-                        Id::new("other-attempt").unwrap()
-                }
-                _ => {
-                    value.action.offer().ok_or(Error::InvalidInput)?.revision =
-                        Digest::new("b".repeat(64)).unwrap()
-                }
+                0 => offer.request = RequestId::new("other-request").unwrap(),
+                1 => offer.task = Id::new("other-task").unwrap(),
+                2 => offer.attempt = Id::new("other-attempt").unwrap(),
+                _ => offer.revision = Digest::new("b".repeat(64)).unwrap(),
             }
             assert!(selection_reply(
                 &selection,

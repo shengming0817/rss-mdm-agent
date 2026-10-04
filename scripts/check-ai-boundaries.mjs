@@ -23,7 +23,12 @@ const allowed = {
   ],
   "packages/platform-private-storage": [],
   "packages/ai-host": ["@rss-mdm-agent/ai-contract"],
-  "packages/ai-contract": ["@noble/hashes", "canonicalize", "jsonc-parser"],
+  "packages/ai-contract": [
+    "@modelcontextprotocol/sdk",
+    "@noble/hashes",
+    "canonicalize",
+    "jsonc-parser",
+  ],
   "packages/ai-access": [
     "@rss-mdm-agent/ai-contract",
     "@agentclientprotocol/sdk",

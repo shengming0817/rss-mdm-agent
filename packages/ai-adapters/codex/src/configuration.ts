@@ -201,7 +201,7 @@ export async function launchSpec(
             bearer_token_env_var: "RSS_CODEX_MCP_TOKEN",
             enabled: true,
             required: true,
-            enabled_tools: ["propose"],
+            enabled_tools: bridge.catalog.map((tool) => tool.name),
             default_tools_approval_mode: "approve",
             startup_timeout_sec: 10,
             tool_timeout_sec: 30,

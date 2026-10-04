@@ -3,13 +3,15 @@ import { workspaceIdentity } from "@rss-mdm-agent/ai-contract/session";
 import { randomUUID } from "node:crypto";
 import {
   createSdkMcpServer,
-  tool,
   type CanUseTool,
   type Options,
   type SDKMessage,
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
-import { z } from "zod";
+import {
+  ListToolsRequestSchema,
+  CallToolRequestSchema,
+} from "@modelcontextprotocol/sdk/types.js";
 import {
   decode,
   boundedJson,
@@ -73,7 +75,7 @@ export function assistantFailure(error: string): Failure {
             : "unavailable";
   return { code, retry: "never" };
 }
-const bridge = "mcp__rss_host__propose";
+const bridgePrefix = "mcp__rss_host__";
 interface Turn {
   command: Pick<Command, "sessionId" | "commandId">;
   hash: string;
@@ -298,89 +300,81 @@ export class ClaudeAdapter implements ProviderAgentPort {
           },
         ],
       };
-      if (config.permissions === "host_mediated")
-        options.mcpServers = {
-          rss_host: createSdkMcpServer({
-            name: "rss_host",
-            version: "1.0.0",
-            alwaysLoad: true,
-            tools: [
-              tool(
-                "propose",
-                "Submit an untrusted business proposal to the Host. This never grants approval.",
-                {
-                  name: z.string().refine(isId),
-                  // SDK 0.3.277's bundled schema converter cannot list a Zod 4
-                  // record here; an open object preserves the same JSON payload.
-                  arguments: z.object({}).catchall(z.unknown()),
-                },
-                async (args) => {
-                  const turn = session?.active;
-                  if (
-                    !session?.initialized ||
-                    session.closing ||
-                    session.failed ||
-                    !turn?.consumed ||
-                    turn.outcome
-                  )
-                    return {
-                      isError: true,
-                      content: [{ type: "text", text: "Tool unavailable" }],
-                    };
-                  const proposalId = randomUUID();
-                  try {
-                    const proposal = copy(args);
-                    this.emit(turn, {
-                      type: "tool_proposal",
-                      proposalId,
-                      ...proposal,
-                    });
-                    const result = await withinBudget(
-                      () => ({
-                        timeoutMs: 30000,
-                        signal: session.abort.signal,
-                      }),
-                      (budget) => tools!.propose(proposal, budget),
-                    );
-                    const value = result.ok
-                      ? copy(result.value)
-                      : {
-                          disposition: "unavailable" as const,
-                          text: "Tool unavailable",
-                        };
-                    if (
-                      !["returned", "rejected", "unavailable"].includes(
-                        value.disposition,
-                      ) ||
-                      typeof value.text !== "string"
-                    )
-                      throw new Error("invalid tool result");
-                    if (
-                      session.active !== turn ||
-                      turn.outcome ||
-                      session.closing
-                    )
-                      throw new Error("stale tool result");
-                    this.emit(turn, {
-                      type: "tool_result",
-                      proposalId,
-                      ...value,
-                    });
-                    return {
-                      isError: value.disposition !== "returned",
-                      content: [{ type: "text", text: value.text }],
-                    };
-                  } catch {
-                    return {
-                      isError: true,
-                      content: [{ type: "text", text: "Tool unavailable" }],
-                    };
-                  }
-                },
-              ),
-            ],
-          }),
-        };
+      this.toolNames.clear();
+      if (config.permissions === "host_mediated") {
+        const listed = await tools!.list(remaining());
+        if (!listed.ok || listed.value.length > 128)
+          throw new Error("Tool discovery unavailable");
+        const catalog = copy(listed.value);
+        for (const definition of catalog)
+          this.toolNames.add(bridgePrefix + definition.name);
+        const server = createSdkMcpServer({
+          name: "rss_host",
+          version: "1.0.0",
+          alwaysLoad: true,
+          tools: [],
+        });
+        server.instance.server.setRequestHandler(
+          ListToolsRequestSchema,
+          async () => ({ tools: catalog }),
+        );
+        server.instance.server.setRequestHandler(
+          CallToolRequestSchema,
+          async ({ params }) => {
+            const turn = session?.active;
+            if (
+              !session?.initialized ||
+              session.closing ||
+              session.failed ||
+              !turn?.consumed ||
+              turn.outcome ||
+              !catalog.some((t) => t.name === params.name)
+            )
+              return {
+                isError: true,
+                content: [{ type: "text", text: "Tool unavailable" }],
+              };
+            const proposalId = randomUUID();
+            try {
+              const proposal = {
+                name: params.name,
+                arguments: copy(params.arguments ?? {}),
+                callId: proposalId,
+              };
+              this.emit(turn, {
+                type: "tool_proposal",
+                proposalId,
+                name: proposal.name,
+                arguments: proposal.arguments,
+              });
+              const result = await withinBudget(
+                () => ({ timeoutMs: 30000, signal: session.abort.signal }),
+                (budget) => tools!.propose(proposal, budget),
+              );
+              const value = result.ok
+                ? copy(result.value)
+                : {
+                    disposition: "unavailable" as const,
+                    text: "Tool unavailable",
+                  };
+              if (session.active !== turn || turn.outcome || session.closing)
+                throw new Error("Stale tool result");
+              this.emit(turn, { type: "tool_result", proposalId, ...value });
+              return {
+                isError: value.disposition !== "returned",
+                content: [{ type: "text", text: value.text }],
+                structuredContent: { rssHostResult: value },
+              };
+            } catch {
+              return {
+                isError: true,
+                content: [{ type: "text", text: "Tool unavailable" }],
+              };
+            }
+          },
+        );
+        options.mcpServers = { rss_host: server };
+      }
       const runtime = this.factory(options, {
         async *[Symbol.asyncIterator]() {
           for await (const user of input) {
@@ -445,6 +439,7 @@ export class ClaudeAdapter implements ProviderAgentPort {
       this.opening = false;
     }
   }
+  private toolNames = new Set<string>();
   private isBridge(
     session: Session,
     name: string,
@@ -452,7 +447,7 @@ export class ClaudeAdapter implements ProviderAgentPort {
   ): boolean {
     return (
       session.configuration.permissions === "host_mediated" &&
-      name === bridge &&
+      this.toolNames.has(name) &&
       server?.name === "rss_host" &&
       server.source === "sdk"
     );
@@ -683,7 +678,9 @@ export class ClaudeAdapter implements ProviderAgentPort {
     if (m.type === "system" && m.subtype === "init") {
       const allowed = new Set([
         "AskUserQuestion",
-        ...(s.configuration.permissions === "host_mediated" ? [bridge] : []),
+        ...(s.configuration.permissions === "host_mediated"
+          ? [...this.toolNames]
+          : []),
       ]);
       if (
         m.claude_code_version !== CLI_VERSION ||

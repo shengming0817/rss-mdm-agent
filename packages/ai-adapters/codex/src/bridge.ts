@@ -19,20 +19,6 @@ import {
 import { bounded, limits } from "./support.js";
 
 export const HOST_SERVER = "rss_host";
-export const HOST_TOOL = {
-  name: "propose",
-  description:
-    "Submit a business tool proposal to the authenticated host; this does not grant execution authority.",
-  inputSchema: {
-    type: "object" as const,
-    properties: {
-      name: { type: "string" },
-      arguments: { type: "object", additionalProperties: true },
-    },
-    required: ["name", "arguments"],
-    additionalProperties: false,
-  },
-};
 function toolResult(
   disposition: "returned" | "rejected" | "unavailable",
   text: string,
@@ -49,6 +35,7 @@ export class ToolBridge {
   private connections = new Set<Server>();
   private abort = new AbortController();
   readonly token = randomUUID();
+  catalog: readonly import("@modelcontextprotocol/sdk/types.js").Tool[] = [];
   url?: string;
   constructor(
     private readonly endpoint: ToolEndpoint,
@@ -78,7 +65,7 @@ export class ToolBridge {
       });
       this.connections.add(mcp);
       mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
-        tools: [HOST_TOOL],
+        tools: this.catalog,
       }));
       mcp.setRequestHandler(ListResourcesRequestSchema, async () => ({
         resources: [],
@@ -92,16 +79,12 @@ export class ToolBridge {
       mcp.setRequestHandler(CallToolRequestSchema, async ({ params }) => {
         const input = params.arguments;
         if (
-          params.name !== HOST_TOOL.name ||
+          !this.catalog.some((tool) => tool.name === params.name) ||
           !input ||
-          Object.keys(input).sort().join(",") !== "arguments,name" ||
-          !isId(input.name) ||
-          !input.arguments ||
-          typeof input.arguments !== "object" ||
-          Array.isArray(input.arguments) ||
+          Array.isArray(input) ||
           !this.canPropose()
         )
-          return toolResult("unavailable", "Host proposal unavailable");
+          return toolResult("unavailable", "Tool unavailable");
         try {
           boundedJson(input, limits);
           const result = await withinBudget(
@@ -109,8 +92,9 @@ export class ToolBridge {
             (budget) =>
               this.endpoint.propose(
                 {
-                  name: input.name as string,
-                  arguments: input.arguments as Record<string, unknown>,
+                  name: params.name,
+                  arguments: input,
+                  callId: randomUUID(),
                 },
                 budget,
               ),
@@ -150,6 +134,15 @@ export class ToolBridge {
     this.server.headersTimeout = 5000;
   }
   async start(budget: Budget): Promise<void> {
+    const listed = await bounded(this.endpoint.list(budget), budget);
+    if (
+      !listed.ok ||
+      listed.value.length > 128 ||
+      listed.value.some((t) => !isId(t.name))
+    )
+      throw new Error("Tool discovery unavailable");
+    boundedJson(listed.value, limits);
+    this.catalog = structuredClone(listed.value);
     await bounded(
       new Promise<void>((resolve, reject) => {
         this.server.once("error", reject);

@@ -13,6 +13,7 @@ import {
   isId,
   type Budget,
   type ExecutionOrigin,
+  type Namespace,
 } from "@rss-mdm-agent/ai-contract";
 import {
   defaultLimits,
@@ -90,6 +91,9 @@ export class ParentTransport implements Transport {
   }
 }
 const methods = new Set([
+  "execution_software_observe",
+  "execution_policy_tools",
+  "execution_policy_status",
   "execution_tasks",
   "execution_capabilities",
   "execution_execute",
@@ -100,8 +104,14 @@ const methods = new Set([
 export async function connectExecution(
   input: Readable,
   output: Writable,
-  resolveBinding: (request: DeliveryRequest) => Promise<{
-    binding: import("@rss-mdm-agent/ai-contract").Binding;
+  resolveBinding: (request: {
+    namespace: Namespace;
+    commandId?: string;
+  }) => Promise<{
+    binding: Pick<
+      import("@rss-mdm-agent/ai-contract").Binding,
+      "provider" | "config"
+    >;
     userGeneration: string;
   }>,
 ) {
@@ -176,20 +186,71 @@ export async function connectExecution(
     },
   });
   const router: DeliveryRouter = {
-    prepare: (namespace, proposal) => {
-      if (!methods.has(proposal.name)) return fail("unsupported_capability");
+    catalog: async (namespace, b) => {
+      try {
+        const { binding, userGeneration } = await resolveBinding({ namespace });
+        const origin: ExecutionOrigin = {
+          schemaVersion: 7,
+          kind: "executionOrigin",
+          namespace,
+          userGeneration,
+          operationId: "directory",
+          provider: binding.provider as ExecutionOrigin["provider"],
+          config: binding.config,
+        };
+        const value = await client.callTool(
+          {
+            name: "execution_policy_tools",
+            arguments: {},
+            _meta: { "com.rss-mdm/ai-origin": origin },
+          },
+          undefined,
+          { signal: b.signal, timeout: b.timeoutMs },
+        );
+        boundedJson(value, defaultLimits);
+        const body = value.structuredContent as any;
+        if (body?.status !== "ok" || !Array.isArray(body.result))
+          return fail("unavailable");
+        const catalog = await client.listTools(
+          {},
+          { signal: b.signal, timeout: b.timeoutMs },
+        );
+        return ok([
+          ...catalog.tools.filter((t) => t.name !== "execution_policy_tools"),
+          ...body.result,
+        ]);
+      } catch {
+        return fail("unavailable");
+      }
+    },
+    prepare: (namespace, proposal, commandId) => {
+      if (
+        !methods.has(proposal.name) &&
+        !/^policy_[a-f0-9]{32}_[a-f0-9]{16}$/.test(proposal.name)
+      )
+        return fail("unsupported_capability");
       const read = [
+        "execution_software_observe",
+        "execution_policy_tools",
+        "execution_policy_status",
         "execution_tasks",
         "execution_capabilities",
         "execution_status",
       ].includes(proposal.name);
-      const id = read
-        ? randomUUID()
-        : operationRequestId(proposal.name, proposal.arguments);
+      const id = proposal.name.startsWith("policy_")
+        ? proposal.callId
+        : read
+          ? randomUUID()
+          : operationRequestId(proposal.name, proposal.arguments);
       if (!isId(id)) return fail("invalid_input");
-      const operationId = createHash("sha256")
-        .update(JSON.stringify([namespace, proposal.name, id]))
+      const digest = createHash("sha256")
+        .update(JSON.stringify([namespace, commandId, proposal.name, id]))
         .digest("hex");
+      const operationId =
+        proposal.name.startsWith("policy_") ||
+        proposal.name === "execution_software_observe"
+          ? `${digest.slice(0, 8)}-${digest.slice(8, 12)}-4${digest.slice(13, 16)}-a${digest.slice(17, 20)}-${digest.slice(20, 32)}`
+          : digest;
       return ok({
         operationId,
         target: "rust-execution",
@@ -216,7 +277,21 @@ export async function connectExecution(
     reconcile: async (request, b) => {
       const { name, arguments: args } = request.body.proposal;
       try {
-        // These reads and exact immutable registrations are receiver-idempotent and never dispatch.
+        if (name.startsWith("policy_")) {
+          const status = await call(
+            request,
+            "execution_policy_status",
+            { operationRequestId: request.body.operationId },
+            b,
+          );
+          if (status.status === "error")
+            return ok({
+              state:
+                status.error?.code === "notFound" ? "not_submitted" : "unknown",
+            });
+          return ok({ state: "committed", receipt: receipt(request, status) });
+        }
+        // Reads and exact immutable registrations are receiver-idempotent.
         if (!["execution_execute", "execution_cancel"].includes(name))
           return ok({
             state: "committed",

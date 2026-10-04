@@ -311,7 +311,7 @@ async fn production_preparation_applies_the_risk_matrix_and_human_has_no_gate() 
         c.service.core.start_task(selection).unwrap();
         let r = c.record();
         let expected = match level {
-            Some(RiskLevel::Zero | RiskLevel::One) => BackendRequestState::Ready,
+            Some(RiskLevel::One) => BackendRequestState::Ready,
             Some(RiskLevel::Two) => BackendRequestState::AwaitingConfirmation,
             _ => BackendRequestState::Failed,
         };

@@ -2673,22 +2673,24 @@ fn backend_preparation_is_durable_bound_and_never_dispatches_without_start() {
         panic!("human fixture")
     };
     let original = BackendRequest {
-        offer: BackendTask {
-            request: request("backend-intent"),
-            task: id("task"),
-            attempt: id("attempt"),
-            revision: Digest::new("a".repeat(64)).unwrap(),
-            title: "Exact backend task".into(),
-            summary: BackendTaskSummary::Software {
-                intent: SoftwareOperation::Uninstall,
-                steps: vec![BackendStepSummary {
-                    package: "fixed".into(),
-                    version: "1.0".into(),
-                    identity: BackendIdentity::User,
-                }],
+        action: PreparedAction::Offered {
+            offer: BackendTask {
+                request: request("backend-intent"),
+                task: id("task"),
+                attempt: id("attempt"),
+                revision: Digest::new("a".repeat(64)).unwrap(),
+                title: "Exact backend task".into(),
+                summary: BackendTaskSummary::Software {
+                    intent: SoftwareOperation::Uninstall,
+                    steps: vec![BackendStepSummary {
+                        package: "fixed".into(),
+                        version: "1.0".into(),
+                        identity: BackendIdentity::User,
+                    }],
+                },
+                expires_at: 60,
+                user_initiated: true,
             },
-            expires_at: 60,
-            user_initiated: true,
         },
         trigger: BackendTrigger::Human { os_session },
         risk: None,
@@ -2704,13 +2706,16 @@ fn backend_preparation_is_durable_bound_and_never_dispatches_without_start() {
     drop(app);
     let mut app = reopen_app(&db.path, host, runner.clone(), AppConfig::test_defaults(1)).unwrap();
     assert_eq!(
-        app.backend_request(&caller(), &original.offer.request)
+        app.backend_request(&caller(), original.action.request())
             .unwrap(),
         Some(original.clone())
     );
     let mut replaced = original.clone();
     replaced.revision = 2;
-    replaced.offer.revision = Digest::new("b".repeat(64)).unwrap();
+    let PreparedAction::Offered { offer } = &mut replaced.action else {
+        unreachable!()
+    };
+    offer.revision = Digest::new("b".repeat(64)).unwrap();
     assert!(app
         .record_backend_request(&caller(), Some(&original), &replaced)
         .is_err());

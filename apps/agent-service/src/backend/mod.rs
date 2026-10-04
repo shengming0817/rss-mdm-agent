@@ -3,7 +3,7 @@ use agent_client::{Error, Offer};
 use rss_mdm_agent_wire::runtime as wire;
 use sha2::Digest as _;
 mod bridge;
-mod commands;
+pub(crate) mod commands;
 mod dispatch;
 pub(crate) mod gate;
 pub(crate) mod host;

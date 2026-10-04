@@ -54,6 +54,14 @@ export function nativeAssistant(): AssistantServices | undefined {
       );
       return { runtime, mode: "live" };
     },
+    async confirmPolicy(requestId) {
+      await invoke("self_service_policy_confirm", {
+        generation,
+        input: { requestId },
+      });
+      if (generation !== userGeneration())
+        throw new ClientError("request_failed");
+    },
     async confirmTask(task) {
       const { request, attempt, revision } = task;
       await invoke("self_service_confirm", {

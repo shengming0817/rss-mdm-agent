@@ -55,6 +55,7 @@ macro_rules! commands {
     }
 }
 commands! {
+    self_service_observe_software(execution_contract::SoftwareReadChoice) -> execution_contract::BackendRequest = observe_software,
     self_service_policy_directory(PolicyDirectoryQuery) -> rss_mdm_agent_wire::runtime::SelfServiceDirectoryResponse = policy_directory,
     self_service_policy_invoke(execution_contract::PolicyChoice) -> execution_contract::BackendRequest = invoke_policy,
     self_service_policy_confirm(ActionRef) -> execution_contract::BackendRequest = confirm_policy,
@@ -294,6 +295,7 @@ pub fn register<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder
         save_connection,
         test_users,
         select_test_user,
+        self_service_observe_software,
         self_service_policy_directory,
         self_service_policy_invoke,
         self_service_policy_confirm,

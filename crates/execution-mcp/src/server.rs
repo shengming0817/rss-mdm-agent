@@ -43,6 +43,9 @@ fn schema<T: JsonSchema>() -> Arc<serde_json::Map<String, Value>> {
 #[derive(Clone, Copy)]
 pub(crate) enum ToolKind {
     Tasks,
+    PolicyTools,
+    PolicyStatus,
+    SoftwareRead,
     Capabilities,
     Execute,
     Status,
@@ -54,8 +57,11 @@ enum Effect {
     MayPersist,
 }
 impl ToolKind {
-    const ALL: [Self; 5] = [
+    const ALL: [Self; 8] = [
         Self::Tasks,
+        Self::PolicyTools,
+        Self::PolicyStatus,
+        Self::SoftwareRead,
         Self::Capabilities,
         Self::Execute,
         Self::Status,
@@ -64,6 +70,9 @@ impl ToolKind {
 
     fn descriptor(self) -> (&'static str, &'static str, Effect) {
         match self {
+            Self::SoftwareRead => ("execution_software_observe", "Collect a fresh bounded native software fact from one current signed definition step. No installation or script execution.", Effect::ReadOnly),
+            Self::PolicyTools => ("execution_policy_tools", "Current employee-authorized script tools. Policy publication, allowAi and risk are verified for this AI origin.", Effect::ReadOnly),
+            Self::PolicyStatus => ("execution_policy_status", "Read structured status and result for the original Policy request. Unknown never permits another invocation.", Effect::ReadOnly),
             Self::Tasks => ("execution_tasks", "Verified backend tasks. Select the exact task, attempt and revision; presence never authorizes execution.", Effect::ReadOnly),
             Self::Capabilities => ("execution_capabilities", "Current bound-context capabilities. Unknown is not supported.", Effect::ReadOnly),
             Self::Execute => ("execution_execute", "Propose an exact backend task. The desktop user must confirm installation. Query the returned original request; never choose another attempt after response loss.", Effect::MayPersist),
@@ -84,6 +93,12 @@ impl ToolKind {
     }
     fn definition(self) -> Tool {
         match self {
+            Self::SoftwareRead => tool::<
+                execution_contract::SoftwareReadSelection,
+                execution_contract::BackendRequest,
+            >(self),
+            Self::PolicyTools => tool::<Empty, Vec<Value>>(self),
+            Self::PolicyStatus => tool::<OperationRequest, Value>(self),
             Self::Tasks => tool::<Empty, Vec<BackendTask>>(self),
             Self::Capabilities => tool::<Empty, CapabilityView>(self),
             Self::Execute => tool::<BackendSelection, TaskSubmission>(self),
@@ -155,9 +170,32 @@ impl<S: ExecutionServicePort> Handler<S> {
             .check_binding()
             .map_err(|_| ErrorData::invalid_request("service binding unavailable", None))?;
         let max = self.limits.response_bytes;
-        let kind = ToolKind::from_name(name)
-            .ok_or_else(|| ErrorData::invalid_params("unknown tool", None))?;
+        let Some(kind) = ToolKind::from_name(name) else {
+            if !name.starts_with("policy_") {
+                return Err(ErrorData::invalid_params("unknown tool", None));
+            }
+            return result(
+                async { Ok(self.service.invoke_policy(name, decode(raw)?, wait).await?) }.await,
+                max,
+            );
+        };
         match kind {
+            ToolKind::SoftwareRead => result(
+                async { Ok(self.service.observe_software(decode(raw)?, wait).await?) }.await,
+                max,
+            ),
+            ToolKind::PolicyTools => result(
+                async {
+                    let _: Empty = decode(raw)?;
+                    Ok(self.service.policy_tools(wait).await?)
+                }
+                .await,
+                max,
+            ),
+            ToolKind::PolicyStatus => result(
+                async { Ok(self.service.policy_status(decode(raw)?, wait).await?) }.await,
+                max,
+            ),
             ToolKind::Tasks => result(self.tasks(raw, wait).await, max),
             ToolKind::Capabilities => {
                 let r = async {

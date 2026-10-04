@@ -42,3 +42,19 @@ pub fn receipt_state(
         },
     ))
 }
+
+/// Read only closed platform-native identities. Script and other detectors are denied.
+/// The caller must authorize the exact signed definition and live OS subject before using this port.
+pub fn observe_native(
+    detector: &execution_contract::SoftwareDetector,
+    run_as: &execution_contract::RunAs,
+) -> Result<execution_contract::SoftwareState, execution_app::Error> {
+    if !matches!(
+        detector,
+        execution_contract::SoftwareDetector::PkgReceipt { .. }
+            | execution_contract::SoftwareDetector::MsiProduct { .. }
+    ) {
+        return Err(execution_app::Error::Denied);
+    }
+    Ok(native_detection::detect(detector, run_as))
+}

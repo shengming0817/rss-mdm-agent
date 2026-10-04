@@ -111,6 +111,17 @@ pub struct PolicyChoice {
     deny_unknown_fields
 )]
 pub enum PreparedAction {
+    /// A bounded native observation authorized by an exact current signed software definition.
+    SoftwareRead {
+        /// Original read identity, independent of installation execution.
+        choice: SoftwareReadChoice,
+        /// Exact declared software definition; this is a software risk source.
+        definition: Digest,
+        /// Original preparation validity.
+        expires_at_unix_ms: u64,
+        /// Independently collected fact, appended once and never treated as installation success.
+        observation: Option<SoftwareObservation>,
+    },
     /// Existing offered software selection.
     Offered {
         /// Exact signed task projection.
@@ -148,6 +159,7 @@ impl PreparedAction {
     /// Original stable request, independent of the arrival of a task.
     pub fn request(&self) -> &RequestId {
         match self {
+            Self::SoftwareRead { choice, .. } => &choice.request,
             Self::Offered { offer } => &offer.request,
             Self::Policy { choice, .. } => &choice.request,
         }
@@ -155,6 +167,7 @@ impl PreparedAction {
     /// Actual Offer only; absence cannot be treated as a fabricated task.
     pub fn offer(&self) -> Option<&BackendTask> {
         match self {
+            Self::SoftwareRead { .. } => None,
             Self::Offered { offer } => Some(offer),
             Self::Policy { offer, .. } => offer.as_ref(),
         }
@@ -164,6 +177,9 @@ impl PreparedAction {
         let mut a = self.clone();
         let mut b = other.clone();
         for action in [&mut a, &mut b] {
+            if let Self::SoftwareRead { observation, .. } = action {
+                *observation = None;
+            }
             if let Self::Policy { run_id, offer, .. } = action {
                 *run_id = None;
                 *offer = None;
@@ -171,6 +187,14 @@ impl PreparedAction {
         }
         a == b
             && match (self, other) {
+                (
+                    Self::SoftwareRead {
+                        observation: old, ..
+                    },
+                    Self::SoftwareRead { observation, .. },
+                ) => old
+                    .as_ref()
+                    .is_none_or(|value| observation.as_ref() == Some(value)),
                 (
                     Self::Policy {
                         run_id: old_run,
@@ -195,6 +219,9 @@ impl PreparedAction {
     /// Preparation validity independent of transport lease changes.
     pub fn expires_at_unix_ms(&self) -> u64 {
         match self {
+            Self::SoftwareRead {
+                expires_at_unix_ms, ..
+            } => *expires_at_unix_ms,
             Self::Offered { offer } => u64::try_from(offer.expires_at)
                 .unwrap_or(0)
                 .saturating_mul(1000),
@@ -256,6 +283,8 @@ pub struct BackendStepSummary {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum BackendRequestState {
+    /// A bounded native observation was collected; no execution attempt or side effect exists.
+    Observed,
     /// Risk-two AI action awaiting its sole explicit product confirmation.
     AwaitingConfirmation,
     /// Product gate is satisfied; this still grants no backend Start or OS authority.
@@ -332,7 +361,7 @@ impl BackendRequest {
                     return false;
                 }
                 match risk.level {
-                    RiskLevel::Zero | RiskLevel::One => {
+                    RiskLevel::One => {
                         self.confirmation.is_none() && self.state != S::AwaitingConfirmation
                     }
                     RiskLevel::Two => match &self.confirmation {
@@ -347,10 +376,42 @@ impl BackendRequest {
                                 && self.state != S::AwaitingConfirmation
                         }
                     },
-                    RiskLevel::Three => terminal && self.confirmation.is_none(),
+                    RiskLevel::Zero | RiskLevel::Three => terminal && self.confirmation.is_none(),
                 }
             }
             crate::BackendTrigger::Automatic {} => false,
         }
     }
+}
+
+/// Model-visible selection for a finite native software detector; no arbitrary selector or command.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SoftwareReadSelection {
+    /// Exact current signed offer projection.
+    pub selection: BackendSelection,
+    /// One declared step in that definition.
+    pub step: u32,
+}
+/// Native human read input with its preallocated stable request.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SoftwareReadChoice {
+    /// Original query identity.
+    pub request: RequestId,
+    /// The sole immutable query input.
+    pub input: SoftwareReadSelection,
+}
+/// Fresh native software fact, with collection time and no installer result claims.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SoftwareObservation {
+    /// Time of actual observation from the service clock.
+    pub collected_at_unix_ms: u64,
+    /// Exact declared package.
+    pub package: String,
+    /// Exact declared desired version, separate from the observed version.
+    pub expected_version: String,
+    /// Native receipt or product observation; unknown remains explicit.
+    pub state: crate::SoftwareState,
 }

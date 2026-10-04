@@ -193,6 +193,17 @@ impl Data {
             permit: TaskPermit::Offer,
             expires_at: self.time.now().unwrap() + 60,
             resource_digest: [3; 32],
+            resource: ScriptResource {
+                id: "fixture-resource".into(),
+                version: "v1".into(),
+                variant: "default".into(),
+            },
+            authorization: ScriptAuthorization::Policy {
+                policy_id: self.task,
+                policy_version: self.task,
+            },
+            parameters: BTreeMap::new(),
+            deadline: self.time.now().unwrap() + 300,
             content: TaskContent {
                 length: self.bytes.len() as u64,
                 sha256: Sha256::digest(&self.bytes).into(),
@@ -206,7 +217,7 @@ impl Data {
             output_bytes: 65536,
             max_rows: 1,
         };
-        self.offer = Some(self.signed(TaskPayload::Script(spec)));
+        self.offer = Some(self.signed(TaskPayload::Script(Box::new(spec))));
     }
     pub fn software(&mut self, steps: usize, user: bool) {
         self.reset_current_task();

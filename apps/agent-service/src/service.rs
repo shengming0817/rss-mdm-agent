@@ -691,7 +691,9 @@ impl Core {
         };
         if matches!(
             previous.state,
-            BackendRequestState::Cancelled | BackendRequestState::Failed
+            BackendRequestState::Observed
+                | BackendRequestState::Cancelled
+                | BackendRequestState::Failed
         ) {
             return Ok(Some(previous));
         }
@@ -705,7 +707,6 @@ impl Core {
         Ok(Some(next))
     }
     fn start_task(&mut self, selection: Selection) -> Result<execution_ipc::host::Reply, Error> {
-        use execution_admission::{ai_execution_gate, ExecutionGate};
         use execution_ipc::host::Reply;
         if self.host.revoked.load(Ordering::Acquire) {
             return Err(Error::Denied);
@@ -757,12 +758,12 @@ impl Core {
                     Some(BackendRequestFailure::Expired),
                 )
             } else {
-                match ai_execution_gate(risk.as_ref().map(|r| r.level)) {
-                    ExecutionGate::Direct => (BackendRequestState::Ready, None),
-                    ExecutionGate::Confirmation => {
+                match risk.as_ref().map(|r| r.level) {
+                    Some(execution_contract::RiskLevel::One) => (BackendRequestState::Ready, None),
+                    Some(execution_contract::RiskLevel::Two) => {
                         (BackendRequestState::AwaitingConfirmation, None)
                     }
-                    ExecutionGate::Blocked => (
+                    _ => (
                         BackendRequestState::Failed,
                         Some(if risk.is_none() {
                             BackendRequestFailure::RiskUnknown
@@ -912,6 +913,7 @@ impl Core {
             &command.request,
             LocalRequest::Operation(
                 execution_ipc::host::Request::EmployeeSession { .. }
+                    | execution_ipc::host::Request::ObserveSoftware { .. }
                     | execution_ipc::host::Request::PolicyDirectory { .. }
                     | execution_ipc::host::Request::InvokePolicy { .. }
                     | execution_ipc::host::Request::ConfirmPolicy { .. }
@@ -928,6 +930,7 @@ impl Core {
             match command.request {
                 LocalRequest::Operation(
                     Request::EmployeeSession { .. }
+                    | Request::ObserveSoftware { .. }
                     | Request::PolicyDirectory { .. }
                     | Request::InvokePolicy { .. }
                     | Request::ConfirmPolicy { .. }
@@ -958,6 +961,13 @@ impl Core {
                     value.items.retain(|item| {
                         self.can_read(&item.action.request_id, &command.subject)
                             .unwrap_or(false)
+                            && self
+                                .policy_readable(
+                                    &item.action.request_id,
+                                    &command.subject,
+                                    command.binding.as_ref(),
+                                )
+                                .unwrap_or(false)
                     });
                     Ok(Reply::Tasks {
                         value,
@@ -969,6 +979,13 @@ impl Core {
                             .into_iter()
                             .filter(|p| {
                                 trigger_subject(&p.trigger) == Some(command.subject.as_str())
+                                    && self
+                                        .policy_readable(
+                                            p.action.request(),
+                                            &command.subject,
+                                            command.binding.as_ref(),
+                                        )
+                                        .unwrap_or(false)
                                     && !self
                                         .app
                                         .has_service_execution(
@@ -1009,6 +1026,13 @@ impl Core {
                     })
                 }
                 LocalRequest::Operation(Request::Status { request }) => {
+                    if !self.policy_readable(
+                        &request,
+                        &command.subject,
+                        command.binding.as_ref(),
+                    )? {
+                        return Err(Error::Denied);
+                    }
                     if let Some(value) = self.pending(&request, &command.subject)? {
                         return Ok(Reply::Pending {
                             value: Box::new(value),
@@ -1025,6 +1049,13 @@ impl Core {
                     })
                 }
                 LocalRequest::Operation(Request::Details { request }) => {
+                    if !self.policy_readable(
+                        &request,
+                        &command.subject,
+                        command.binding.as_ref(),
+                    )? {
+                        return Err(Error::Denied);
+                    }
                     if let Some(value) = self.pending(&request, &command.subject)? {
                         return Ok(Reply::Pending {
                             value: Box::new(value),
@@ -1042,6 +1073,13 @@ impl Core {
                     })
                 }
                 LocalRequest::Operation(Request::Cancel { request }) => {
+                    if !self.policy_readable(
+                        &request,
+                        &command.subject,
+                        command.binding.as_ref(),
+                    )? {
+                        return Err(Error::Denied);
+                    }
                     if let Some(value) = self.pending(&request, &command.subject)? {
                         let value = self
                             .transition(

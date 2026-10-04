@@ -64,9 +64,23 @@ impl Store {
                 matches!(next.state, S::Ready | S::Cancelled | S::Failed)
             }
             Some(S::Ready) => matches!(next.state, S::Submitting | S::Cancelled | S::Failed),
-            Some(S::Submitting) => matches!(next.state, S::Submitting | S::Cancelled | S::Failed),
-            Some(S::Cancelled | S::Failed) => false,
+            Some(S::Submitting) => matches!(
+                next.state,
+                S::Submitting | S::Observed | S::Cancelled | S::Failed
+            ),
+            Some(S::Observed | S::Cancelled | S::Failed) => false,
         };
+        if (next.state == S::Observed)
+            != matches!(
+                &next.action,
+                execution_contract::PreparedAction::SoftwareRead {
+                    observation: Some(_),
+                    ..
+                }
+            )
+        {
+            return Err(Error::InvalidInput);
+        }
         if !transition
             || !next.valid_product_gate()
             || next
