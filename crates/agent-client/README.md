@@ -36,7 +36,7 @@ AGENT_LIVE_CONFIG=/private/test-environment/agent-live.json \
   python3 scripts/build-run.py -- cargo test --locked -p agent-service --lib backend::live_mdm -- --ignored
 ```
 
-也可由现有 runner 生成可丢弃环境并执行同一个 ignored 测试（固定后端 checkout；需 Docker、nginx 和 backend 的受控工具依赖）：
+也可由现有 runner 生成可丢弃环境并执行同一个 ignored 测试（固定后端 checkout；需 Docker、nginx、curl 和 backend 的受控工具依赖）：
 
 ```sh
 python3 <fixed-backend>/hack/build_run.py -- python3 <agent-checkout>/scripts/live-agent.py --backend <fixed-backend>

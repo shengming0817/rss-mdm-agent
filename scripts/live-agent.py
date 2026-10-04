@@ -11,7 +11,6 @@ import os
 from pathlib import Path
 import shutil
 import socket
-import ssl
 import subprocess
 import sys
 import time
@@ -61,6 +60,9 @@ def main():
     nginx = shutil.which('nginx')
     if not nginx:
         raise RuntimeError('The real management HTTPS gateway requires nginx on this host')
+    curl = shutil.which('curl')
+    if not curl:
+        raise RuntimeError('The management HTTPS readiness probe requires curl on this host')
     environment = Environment(backend, group='agent-live')
     # Cleanup remains scoped to this worktree/group; logs and private inputs are retained as artifacts.
     try:
@@ -125,16 +127,16 @@ def main():
                     time.sleep(.1)
                 with process([nginx, '-c', receipt['gateway'], '-g', 'daemon off;'], backend, root/'agent-live-gateway.log', child_env) as gateway:
                     ready = time.monotonic()+15
-                    context = ssl.create_default_context(cafile=root/'ca.crt')
                     while True:
                         if gateway.poll() is not None:
                             raise RuntimeError('Management gateway exited during readiness')
-                        try:
-                            with urllib.request.build_opener(urllib.request.ProxyHandler({}), urllib.request.HTTPSHandler(context=context)).open(receipt['origin']+'/readyz', timeout=1) as response:
-                                if response.status==200: break
-                        except (OSError, urllib.error.URLError) as error:
-                            readiness_error = error
-                        if time.monotonic()>ready: raise RuntimeError(f'Management gateway readiness deadline: {readiness_error}')
+                        # Verify HTTPS with the explicit fixture CA. The producer's
+                        # fixture lacks AKI, which Python 3.13+ strict mode requires.
+                        probe = subprocess.run([curl, '--noproxy', '*', '--fail', '--silent',
+                            '--show-error', '--max-time', '1', '--cacert', root/'ca.crt',
+                            receipt['origin']+'/readyz'], capture_output=True, text=True)
+                        if probe.returncode == 0: break
+                        if time.monotonic()>ready: raise RuntimeError(f'Management gateway readiness deadline: {probe.stderr.strip()}')
                         time.sleep(.1)
                     env = dict(os.environ)
                     for key in ['_MDM_BUILD_LEASE', 'CARGO_TARGET_DIR']:
