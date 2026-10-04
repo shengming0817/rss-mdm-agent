@@ -110,6 +110,7 @@ pub struct Data {
     pub tls_required: bool,
     pub grant: Option<enroll::GrantReceipt>,
     pub issuance: Uuid,
+    pub candidate_leaf: Option<Vec<u8>>,
     pub profile: Option<enroll::RuntimeProfile>,
     pub activation: Option<enroll::ActivationReceipt>,
     pub binding: Option<BindingProfile>,
@@ -301,6 +302,7 @@ impl Server {
             tls_required: tls,
             grant: None,
             issuance: Uuid::new_v4(),
+            candidate_leaf: None,
             profile: None,
             activation: None,
             binding: None,
@@ -457,7 +459,8 @@ async fn handler(
     }
     let mut d = data.lock().unwrap();
     let path = uri.path();
-    let authenticated = peer.is_ok_and(|v| v.0 .0);
+    let peer_leaf = peer.ok().and_then(|v| v.0 .0);
+    let authenticated = peer_leaf.is_some();
     if d.tls_required
         && (path.ends_with("/activate")
             || path.ends_with("/renewal-grants")
@@ -471,7 +474,7 @@ async fn handler(
         return runtime_error(StatusCode::UNAUTHORIZED, ErrorCode::InvalidIdentity);
     }
     if let Some(action) = path.strip_prefix("/api/v1/agent/enroll/") {
-        return enrollment_response(&mut d, action, value);
+        return enrollment_response(&mut d, action, value, peer_leaf.as_deref());
     }
     if !path.starts_with("/api/v1/agent/runtime/") {
         return StatusCode::NOT_FOUND.into_response();
@@ -510,7 +513,7 @@ async fn handler(
 fn runtime_error(status: StatusCode, code: ErrorCode) -> Response {
     (status, axum::Json(ErrorBody { code })).into_response()
 }
-fn enrollment_response(d: &mut Data, action: &str, value: Value) -> Response {
+fn enrollment_response(d: &mut Data, action: &str, value: Value, peer: Option<&[u8]>) -> Response {
     match action {
         "requests" | "renewal-grants" => {
             let request: enroll::GrantRequest = serde_json::from_value(value).unwrap();
@@ -521,6 +524,7 @@ fn enrollment_response(d: &mut Data, action: &str, value: Value) -> Response {
                 d.activation = None;
                 d.profile = None;
                 d.issuance = Uuid::new_v4();
+                d.candidate_leaf = None;
             }
             if d.operation.is_some_and(|old| old != request.operation_id) {
                 return (
@@ -592,25 +596,41 @@ fn enrollment_response(d: &mut Data, action: &str, value: Value) -> Response {
                 )
                     .into_response();
             }
+            let chain = {
+                use der::{Decode, Encode};
+                let csr = x509_cert::request::CertReq::from_der(
+                    &base64::engine::general_purpose::STANDARD
+                        .decode(&request.csr)
+                        .unwrap(),
+                )
+                .unwrap();
+                pki::chain_for(d.tenant, csr.info.public_key.to_der().unwrap())
+            };
+            d.candidate_leaf = Some(
+                base64::engine::general_purpose::STANDARD
+                    .decode(&chain[0])
+                    .unwrap(),
+            );
             axum::Json(enroll::Candidate {
                 wire_version: 1,
                 issuance_id: d.issuance,
                 operation_id: request.operation_id,
-                certificate_chain: {
-                    use der::{Decode, Encode};
-                    let csr = x509_cert::request::CertReq::from_der(
-                        &base64::engine::general_purpose::STANDARD
-                            .decode(&request.csr)
-                            .unwrap(),
-                    )
-                    .unwrap();
-                    pki::chain_for(d.tenant, csr.info.public_key.to_der().unwrap())
-                },
+                certificate_chain: chain,
                 activate_before: d.grant.as_ref().unwrap().expires_at,
             })
             .into_response()
         }
         "activate" => {
+            if d.tls_required && (peer.is_none() || peer != d.candidate_leaf.as_deref()) {
+                return (
+                    StatusCode::UNAUTHORIZED,
+                    axum::Json(enroll::ErrorBody {
+                        code: enroll::ErrorCode::InvalidIdentity,
+                        issuance_id: Some(d.issuance),
+                    }),
+                )
+                    .into_response();
+            }
             d.activation_calls.push(value.clone());
             let request: enroll::ActivationRequest = serde_json::from_value(value).unwrap();
             assert_eq!(request.issuance_id, d.issuance);
@@ -855,7 +875,7 @@ pub fn execution_context() -> SoftwareExecutionContext {
 }
 
 #[derive(Clone, Debug)]
-struct TlsIdentity(bool);
+struct TlsIdentity(Option<Vec<u8>>);
 struct TlsListener {
     listener: tokio::net::TcpListener,
     acceptor: tokio_rustls::TlsAcceptor,
@@ -872,17 +892,20 @@ impl axum::serve::Listener for TlsListener {
             )
             .await
             {
-                let authenticated = stream
+                // ref: rustls 0.23.45 common_state.rs peer_certificates: the first entry
+                // is the authenticated peer leaf, including resumed handshakes.
+                let leaf = stream
                     .get_ref()
                     .1
                     .peer_certificates()
-                    .is_some_and(|v| !v.is_empty());
-                return (stream, TlsIdentity(authenticated));
+                    .and_then(|v| v.first())
+                    .map(|leaf| leaf.as_ref().to_vec());
+                return (stream, TlsIdentity(leaf));
             }
         }
     }
     fn local_addr(&self) -> std::io::Result<Self::Addr> {
-        Ok(TlsIdentity(false))
+        Ok(TlsIdentity(None))
     }
 }
 impl axum::extract::connect_info::Connected<axum::serve::IncomingStream<'_, TlsListener>>

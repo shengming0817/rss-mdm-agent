@@ -792,6 +792,7 @@ async fn manual_renewal_keeps_binding_tasks_reports_and_original_recovery_operat
     let root = Root::new();
     let mut client = server.client(&root, OpenMode::Create);
     server.register(&mut client).await;
+    let old_leaf = server.data.lock().unwrap().candidate_leaf.clone().unwrap();
     let binding = client.registration().unwrap();
     let offer = client.claim().await.unwrap().offer.unwrap();
     let task = offer.task_id();
@@ -837,6 +838,51 @@ async fn manual_renewal_keeps_binding_tasks_reports_and_original_recovery_operat
         );
         (data.issuance, data.activation.clone().unwrap().operation_id)
     };
+    // Use a real TLS connection authenticated by the former active certificate.
+    // A same-CA peer must still match the exact candidate being activated.
+    let mut roots = rustls::RootCertStore::empty();
+    roots
+        .add(rustls::pki_types::CertificateDer::from(support::pki::ca()))
+        .unwrap();
+    let tls = rustls::ClientConfig::builder_with_provider(std::sync::Arc::new(
+        rustls::crypto::ring::default_provider(),
+    ))
+    .with_safe_default_protocol_versions()
+    .unwrap()
+    .with_root_certificates(roots)
+    .with_client_auth_cert(
+        vec![rustls::pki_types::CertificateDer::from(old_leaf)],
+        rustls::pki_types::PrivateKeyDer::Pkcs8(rustls::pki_types::PrivatePkcs8KeyDer::from(
+            include_bytes!("../../../tests/agent-protocol/pki/device-test-key.pk8").to_vec(),
+        )),
+    )
+    .unwrap();
+    let old_client = reqwest::Client::builder()
+        .no_proxy()
+        .tls_backend_preconfigured(tls)
+        .build()
+        .unwrap();
+    let rejected = old_client
+        .post(server.url.join("api/v1/agent/enroll/activate").unwrap())
+        .json(&rss_mdm_agent_wire::enroll::ActivationRequest {
+            wire_version: 1,
+            issuance_id: candidate,
+            operation_id: operation,
+        })
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(rejected.status(), reqwest::StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        rejected
+            .json::<rss_mdm_agent_wire::enroll::ErrorBody>()
+            .await
+            .unwrap()
+            .code,
+        rss_mdm_agent_wire::enroll::ErrorCode::InvalidIdentity
+    );
+    assert_eq!(server.data.lock().unwrap().activation_calls.len(), 2);
+    assert_eq!(server.data.lock().unwrap().binding.as_ref(), Some(&binding));
     drop(client);
     let mut client = server.client(&root, OpenMode::Existing);
     client.renew_certificate().await.unwrap();
