@@ -596,3 +596,65 @@ test(
     }
   },
 );
+
+test("formal MCP outputSchema validates business structuredContent without a Host wrapper", async (t) => {
+  const descriptor = {
+    name: "business",
+    description: "Native business shape",
+    inputSchema: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
+    outputSchema: {
+      type: "object",
+      properties: {
+        status: { const: "ok" },
+        result: {
+          type: "object",
+          properties: { original: { type: "string" } },
+          required: ["original"],
+          additionalProperties: false,
+        },
+      },
+      required: ["status", "result"],
+      additionalProperties: false,
+    },
+  };
+  const observed = [];
+  const bridge = new ToolBridge(
+    {
+      list: async () => ({ ok: true, value: [descriptor] }),
+      propose: async () => ({
+        ok: true,
+        value: {
+          disposition: "returned",
+          text: JSON.stringify({
+            status: "ok",
+            result: { original: "original-uuid" },
+          }),
+        },
+      }),
+    },
+    () => true,
+    (proposal) => (result) => observed.push({ proposal, result }),
+  );
+  await bridge.start(budget());
+  t.after(() => bridge.close(budget()));
+  const client = new Client({ name: "schema-test", version: "1" });
+  await client.connect(
+    new StreamableHTTPClientTransport(new URL(bridge.url), {
+      requestInit: { headers: { authorization: `Bearer ${bridge.token}` } },
+    }),
+  );
+  t.after(() => client.close());
+  await client.listTools();
+  const result = await client.callTool({ name: "business", arguments: {} });
+  assert.deepEqual(result.structuredContent, {
+    status: "ok",
+    result: { original: "original-uuid" },
+  });
+  assert.equal(result._meta["com.rss-mdm/host-disposition"], "returned");
+  assert.equal(observed[0].result.disposition, "returned");
+  assert.match(observed[0].proposal.callId, /^[a-f0-9-]{36}$/);
+});

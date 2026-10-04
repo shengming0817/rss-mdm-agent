@@ -5,11 +5,12 @@ use std::{
     ffi::c_void,
     sync::{
         atomic::{AtomicBool, Ordering},
-        Mutex, OnceLock,
+        Arc, Mutex, OnceLock,
     },
     time::Duration,
 };
 static HANDLER: OnceLock<Mutex<Box<dyn Handler>>> = OnceLock::new();
+static FENCE: OnceLock<Option<Arc<dyn host::SessionFence>>> = OnceLock::new();
 static STOP: OnceLock<&'static AtomicBool> = OnceLock::new();
 static REQUIREMENT: OnceLock<std::ffi::CString> = OnceLock::new();
 extern "C" {
@@ -35,6 +36,9 @@ pub(crate) fn run(handler: Box<dyn Handler>, stop: &'static AtomicBool) -> Resul
 fn run_inner(handler: Box<dyn Handler>, stop: &'static AtomicBool) -> Result<(), Error> {
     let requirement = handler.peer_policy().ok_or(Error::Unbound)?.requirement()?;
     REQUIREMENT.set(requirement).map_err(|_| Error::Conflict)?;
+    FENCE
+        .set(handler.session_fence())
+        .map_err(|_| Error::Conflict)?;
     HANDLER
         .set(Mutex::new(handler))
         .map_err(|_| Error::Conflict)?;
@@ -115,9 +119,13 @@ unsafe extern "C" fn rss_execution_call(
         uid: Some(uid),
         session,
     };
-    let reply = handle_call(handler, stop, &peer, unsafe {
-        std::slice::from_raw_parts(data, size)
-    });
+    let reply = handle_call(
+        handler,
+        FENCE.get().and_then(|v| v.as_deref()),
+        stop,
+        &peer,
+        unsafe { std::slice::from_raw_parts(data, size) },
+    );
     match reply {
         Ok(reply) if reply.len() <= capacity => {
             unsafe {
@@ -289,6 +297,7 @@ pub fn query_trusted(bytes: &[u8], system: bool, server: &PeerPolicy) -> Result<
 
 fn handle_call(
     handler: &Mutex<Box<dyn Handler>>,
+    fence: Option<&dyn host::SessionFence>,
     stop: &AtomicBool,
     peer: &Peer,
     bytes: &[u8],
@@ -297,6 +306,9 @@ fn handle_call(
         return Err(Error::Unavailable);
     }
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        if let Some(reply) = fence.and_then(|f| host::dispatch_fence(f, peer, bytes)) {
+            return Ok(reply);
+        }
         let mut h = handler.lock().map_err(|_| Error::Unavailable)?;
         Ok(host::dispatch(h.as_mut(), peer, bytes))
     }))
@@ -332,13 +344,44 @@ mod tests {
         };
         assert!(handle_call(
             &handler,
+            None,
             &stop,
             &peer,
-            br#"{"version":10,"request":{"method":"status","request":"r"}}"#
+            &serde_json::to_vec(&serde_json::json!({"version": crate::host::IPC_VERSION, "request":{"method":"status","request":"r"}})).unwrap()
         )
         .is_err());
         assert!(stop.load(Ordering::Acquire));
         assert!(handler.is_poisoned());
+    }
+    #[test]
+    fn revocation_completes_while_the_business_handler_is_busy() {
+        struct Fence(AtomicBool);
+        impl host::SessionFence for Fence {
+            fn revoke(&self, _: &Peer) -> host::Reply {
+                self.0.store(true, Ordering::Release);
+                host::Reply::EmployeeBound
+            }
+        }
+        let handler: Mutex<Box<dyn Handler>> = Mutex::new(Box::new(Panicking));
+        let held = handler.lock().unwrap();
+        let fence = Fence(AtomicBool::new(false));
+        let stop = AtomicBool::new(false);
+        let peer = Peer {
+            pid: 1,
+            uid: Some(1),
+            session: 1,
+        };
+        let bytes = host::encode(host::Request::EmployeeSession { value: None }).unwrap();
+        let reply = handle_call(&handler, Some(&fence), &stop, &peer, &bytes).unwrap();
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&reply).unwrap()["reply"]["kind"],
+            "employeeBound"
+        );
+        assert!(fence.0.load(Ordering::Acquire));
+        for bytes in [b"{}".to_vec(), host::encode(host::Request::Tasks { after: None }).unwrap(), serde_json::to_vec(&serde_json::json!({"version": host::IPC_VERSION - 1, "request": {"method":"employeeSession", "value":null}})).unwrap()] {
+            assert!(host::dispatch_fence(&fence, &peer, &bytes).is_none());
+        }
+        drop(held);
     }
     #[test]
     #[ignore = "requires an isolated macOS login with no execution service registration"]

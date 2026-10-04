@@ -5,7 +5,70 @@ use execution_ipc::host::{ClientOrigin, EmployeeSession, Reply, Request};
 use std::collections::{BTreeMap, VecDeque};
 use uuid::Uuid;
 
-pub(super) type Employees = BTreeMap<String, EmployeeSession>;
+#[derive(Default)]
+pub(crate) struct Fences(std::sync::Mutex<BTreeMap<String, u64>>);
+impl Fences {
+    pub(super) fn current(&self, subject: &str) -> Result<u64, Error> {
+        Ok(*self
+            .0
+            .lock()
+            .map_err(|_| Error::Unavailable)?
+            .get(subject)
+            .unwrap_or(&0))
+    }
+    pub(crate) fn admit(
+        &self,
+        subject: &str,
+        expected: u64,
+    ) -> Result<std::sync::MutexGuard<'_, BTreeMap<String, u64>>, Error> {
+        let epochs = self.0.lock().map_err(|_| Error::Unavailable)?;
+        if *epochs.get(subject).unwrap_or(&0) != expected {
+            return Err(Error::Identity);
+        }
+        Ok(epochs)
+    }
+    pub(super) fn revoke(&self, subject: &str) -> Result<(), Error> {
+        let mut epochs = self.0.lock().map_err(|_| Error::Unavailable)?;
+        let epoch = epochs.entry(subject.to_owned()).or_default();
+        *epoch = epoch.checked_add(1).ok_or(Error::Capacity)?;
+        Ok(())
+    }
+}
+pub(super) struct NativeFence {
+    pub(super) policy: execution_ipc::host::PeerPolicy,
+    pub(super) fences: Arc<Fences>,
+    pub(super) finished: Arc<AtomicBool>,
+}
+impl execution_ipc::host::SessionFence for NativeFence {
+    fn revoke(&self, peer: &execution_ipc::host::Peer) -> Reply {
+        if self.finished.load(Ordering::Acquire) {
+            return Reply::Unavailable;
+        }
+        match peer.authenticate(&self.policy).and_then(|subject| {
+            peer.session_binding()?;
+            self.fences
+                .revoke(&subject)
+                .map_err(|_| execution_app::Error::Unavailable)
+        }) {
+            Ok(()) => Reply::EmployeeBound,
+            Err(_) => Reply::Rejected,
+        }
+    }
+}
+#[derive(Clone)]
+pub(super) struct Employee {
+    session: EmployeeSession,
+    subject: String,
+    epoch: u64,
+    lease: Arc<zeroize::Zeroizing<String>>,
+}
+impl std::ops::Deref for Employee {
+    type Target = EmployeeSession;
+    fn deref(&self) -> &Self::Target {
+        &self.session
+    }
+}
+pub(super) type Employees = BTreeMap<String, Employee>;
 pub(super) type Commands = VecDeque<Command>;
 fn peer_key(command: &Command) -> Result<String, Error> {
     Ok(format!(
@@ -79,7 +142,7 @@ fn parameters(
     Ok(resolved)
 }
 impl Core {
-    pub(super) fn employee(&self, command: &Command) -> Result<&EmployeeSession, Error> {
+    pub(super) fn employee(&self, command: &Command) -> Result<&Employee, Error> {
         if self.host.revoked.load(Ordering::Acquire) || self.stopping {
             return Err(Error::Denied);
         }
@@ -87,6 +150,9 @@ impl Core {
             .employees
             .get(&peer_key(command)?)
             .ok_or(Error::Identity)?;
+        if self.fences.current(&employee.subject)? != employee.epoch {
+            return Err(Error::Identity);
+        }
         if self.host.clock.millis()? >= employee.expires_at_unix_ms {
             return Err(Error::Expired);
         }
@@ -125,7 +191,10 @@ impl Core {
             })
             .map(|(_, value)| value);
         Ok(current.is_some_and(|current| {
-            &current.actor == actor
+            self.fences
+                .current(&current.subject)
+                .is_ok_and(|epoch| epoch == current.epoch)
+                && &current.actor == actor
                 && &current.generation == generation
                 && self
                     .host
@@ -133,6 +202,34 @@ impl Core {
                     .millis()
                     .is_ok_and(|now| now < current.expires_at_unix_ms)
         }))
+    }
+    pub(crate) fn policy_fence(
+        &self,
+        record: &BackendRequest,
+    ) -> Result<Option<(Arc<Fences>, String, u64)>, Error> {
+        if let PreparedAction::Policy {
+            actor, generation, ..
+        } = &record.action
+        {
+            self.current_policy_login(record)?;
+            let subject = trigger_subject(&record.trigger).ok_or(Error::Identity)?;
+            let employee = self
+                .employees
+                .values()
+                .find(|employee| {
+                    employee.subject == subject
+                        && &employee.actor == actor
+                        && &employee.generation == generation
+                })
+                .ok_or(Error::Identity)?;
+            Ok(Some((
+                self.fences.clone(),
+                subject.to_owned(),
+                employee.epoch,
+            )))
+        } else {
+            Ok(None)
+        }
     }
     pub(crate) fn current_policy_login(&self, record: &BackendRequest) -> Result<(), Error> {
         if self.host.revoked.load(Ordering::Acquire) || self.stopping {
@@ -157,7 +254,8 @@ impl Core {
                 })
                 .map(|(_, v)| v)
                 .ok_or(Error::Identity)?;
-            if &current.actor != actor
+            if self.fences.current(&current.subject)? != current.epoch
+                || &current.actor != actor
                 || &current.generation != generation
                 || self.host.clock.millis()? >= current.expires_at_unix_ms
                 || self.host.clock.millis()? >= record.action.expires_at_unix_ms()
@@ -170,6 +268,7 @@ impl Core {
     pub(super) fn enqueue_policy(&mut self, command: Command) {
         if let LocalRequest::Operation(Request::EmployeeSession { value: None }) = &command.request
         {
+            let _ = self.fences.revoke(&command.subject);
             if let Ok(key) = peer_key(&command) {
                 self.employees.remove(&key);
             }
@@ -246,10 +345,30 @@ impl<S: IdentityProvider> DeviceService<S> {
             {
                 return Err(Error::Capacity);
             }
-            self.bridge.protect_employee(&value.credential)?;
-            self.core
+            if self.core.fences.current(&command.subject)? != command.fence_epoch {
+                return Err(Error::Identity);
+            }
+            self.prune_credentials()?;
+            let key = peer_key(command)?;
+            let lease = self
+                .core
                 .employees
-                .insert(peer_key(command)?, value.clone());
+                .get(&key)
+                .filter(|old| {
+                    old.generation == value.generation && old.credential == value.credential
+                })
+                .map(|old| old.lease.clone())
+                .unwrap_or_else(|| Arc::new(value.credential.clone()));
+            self.bridge.protect_employee(&lease)?;
+            self.core.employees.insert(
+                key,
+                Employee {
+                    session: value.clone(),
+                    subject: command.subject.clone(),
+                    epoch: command.fence_epoch,
+                    lease,
+                },
+            );
             return Ok(Reply::EmployeeBound);
         }
         if let Request::ObserveSoftware { choice, origin } = request {
@@ -626,6 +745,10 @@ impl<S: IdentityProvider> DeviceService<S> {
         {
             return Err(Error::Untrusted);
         }
+        let lease = self.core.employees.values().find(|employee| {
+            employee.actor == *expected && matches!(&previous.action, PreparedAction::Policy { generation, .. } if generation == &employee.generation)
+        }).ok_or(Error::Identity)?.lease.clone();
+        self.core.credential_leases.insert(request.clone(), lease);
         let mut next = previous.clone();
         next.revision += 1;
         if let PreparedAction::Policy {
@@ -776,19 +899,69 @@ impl<S: IdentityProvider> DeviceService<S> {
             state: BackendRequestState::Ready,
             failure: None,
         };
-        self.core
-            .app
-            .record_backend_request(&self.core.caller(), None, &record)
+        let observed = self.core.record_software_observation(
+            record,
+            || {
+                execution_runner::software::observe_native(&detector, &run_as)
+                    .map_err(crate::error::app_error)
+            },
+            step.action.package.clone(),
+            step.action.version.clone(),
+        )?;
+        Ok(Reply::PolicyRequest {
+            value: Box::new(observed),
+        })
+    }
+}
+
+impl<S: IdentityProvider> DeviceService<S> {
+    pub(super) fn prune_credentials(&mut self) -> Result<(), Error> {
+        let now = self.core.host.clock.millis()?;
+        let fences = &self.core.fences;
+        self.core.employees.retain(|_, employee| {
+            now < employee.expires_at_unix_ms
+                && fences
+                    .current(&employee.subject)
+                    .is_ok_and(|epoch| epoch == employee.epoch)
+        });
+        // Communication retains every unsettled task, including ambiguous native outcomes.
+        // Drop a retired lease only after that owner has drained its result and task state.
+        let pending = self
+            .client
+            .pending_tasks(self.client.configuration().limits.pending_tasks)?;
+        let caller = self.core.caller();
+        let app = &self.core.app;
+        self.core.credential_leases.retain(|request, _| {
+            app.backend_request(&caller, request)
+                .ok()
+                .flatten()
+                .and_then(|record| record.action.offer().map(|offer| offer.task.clone()))
+                .is_none_or(|task| pending.iter().any(|id| id.to_string() == task.as_str()))
+        });
+        Ok(())
+    }
+}
+
+impl Core {
+    pub(super) fn record_software_observation(
+        &mut self,
+        record: BackendRequest,
+        collect: impl FnOnce() -> Result<execution_contract::SoftwareState, Error>,
+        package: String,
+        version: String,
+    ) -> Result<BackendRequest, Error> {
+        use execution_contract::*;
+        let caller = self.caller();
+        self.app
+            .record_backend_request(&caller, None, &record)
             .map_err(map_app_error)?;
         let mut submitting = record.clone();
         submitting.revision += 1;
         submitting.state = BackendRequestState::Submitting;
-        self.core
-            .app
-            .record_backend_request(&self.core.caller(), Some(&record), &submitting)
+        self.app
+            .record_backend_request(&caller, Some(&record), &submitting)
             .map_err(map_app_error)?;
-        let state = execution_runner::software::observe_native(&detector, &run_as)
-            .map_err(crate::error::app_error)?;
+        let state = collect()?;
         let mut observed = submitting.clone();
         observed.revision += 1;
         observed.state = BackendRequestState::Observed;
@@ -799,18 +972,17 @@ impl<S: IdentityProvider> DeviceService<S> {
                 } else {
                     OutputQuality::Complete
                 },
-                collected_at_unix_ms: self.core.host.clock.millis()?,
-                package: step.action.package.clone(),
-                expected_version: step.action.version.clone(),
+                collected_at_unix_ms: self.host.clock.millis()?,
+                package,
+                expected_version: version,
                 state,
             });
+        } else {
+            return Err(Error::Protocol);
         }
-        self.core
-            .app
-            .record_backend_request(&self.core.caller(), Some(&submitting), &observed)
+        self.app
+            .record_backend_request(&caller, Some(&submitting), &observed)
             .map_err(map_app_error)?;
-        Ok(Reply::PolicyRequest {
-            value: Box::new(observed),
-        })
+        Ok(observed)
     }
 }

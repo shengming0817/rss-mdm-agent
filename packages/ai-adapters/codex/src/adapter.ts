@@ -253,6 +253,30 @@ export class CodexAdapter implements ProviderAgentPort {
                 a.command.input.type === "prompt" &&
                 a.command.input.policy === "queue_next",
             ),
+          (proposal) => {
+            const owner = [...this.attempts.values()].find(
+              (a) =>
+                a.confirmed &&
+                !a.outcome &&
+                a.command.input.type === "prompt" &&
+                a.command.input.policy === "queue_next",
+            );
+            if (!owner) throw new Error("No current tool owner");
+            this.emit(owner, {
+              type: "tool_proposal",
+              proposalId: proposal.callId,
+              name: proposal.name,
+              arguments: proposal.arguments,
+            });
+            return (result) => {
+              if (!owner.outcome && !this.closed && !this.failed)
+                this.emit(owner, {
+                  type: "tool_result",
+                  proposalId: proposal.callId,
+                  ...result,
+                });
+            };
+          },
         );
         await this.bridge.start(nextBudget());
       }
@@ -981,37 +1005,8 @@ export class CodexAdapter implements ProviderAgentPort {
     if (entry.completedItems.size >= 8192) throw new Error("turn item limit");
     if (item.type === "agentMessage")
       this.emit(entry, { type: "text", messageId: item.id, text: item.text });
-    else if (item.type === "mcpToolCall") {
-      const args = item.arguments as any;
-      if (
-        item.server === HOST_SERVER &&
-        this.bridge?.catalog.some((t) => t.name === item.tool) &&
-        args &&
-        typeof args === "object" &&
-        !Array.isArray(args)
-      ) {
-        this.emit(entry, {
-          type: "tool_proposal",
-          proposalId: item.id,
-          name: item.tool,
-          arguments: args,
-        });
-        const result = (item.result?.structuredContent as any)?.rssHostResult;
-        const known =
-          result &&
-          same(Object.keys(result).sort(), ["disposition", "text"]) &&
-          ["returned", "rejected", "unavailable"].includes(
-            result.disposition,
-          ) &&
-          typeof result.text === "string";
-        this.emit(entry, {
-          type: "tool_result",
-          proposalId: item.id,
-          disposition: known ? result.disposition : "unavailable",
-          text: known ? result.text : "Host proposal unavailable",
-        });
-      }
-    }
+    // MCP business results follow each tool's formal output schema. Native Host
+    // disposition is observed at the bridge, before the SDK drops transport metadata.
     entry.completedItems.add(item.id);
   }
   private finishTurn(turn: Turn): void {

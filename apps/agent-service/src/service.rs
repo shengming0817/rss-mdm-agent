@@ -209,6 +209,8 @@ impl<S: IdentityProvider> DeviceService<S> {
                 stopping: false,
                 recovery_cursor: None,
                 employees: Default::default(),
+                fences: Default::default(),
+                credential_leases: Default::default(),
                 policy_commands: Default::default(),
             },
             bridge: ExecutionBridge::new(plan::id("backend-results")?, output),
@@ -226,6 +228,7 @@ impl<S: IdentityProvider> DeviceService<S> {
         while let Ok(command) = commands.try_recv() {
             self.core.handle(command);
         }
+        self.prune_credentials()?;
         self.drive_policy(commands).await?;
         if self.core.stopping {
             return Ok(());
@@ -521,6 +524,7 @@ impl<S: IdentityProvider> DeviceService<S> {
         if let Some(policy) = &helper_policy {
             policy.validate().map_err(crate::error::app_error)?;
         }
+        let fences = self.core.fences.clone();
         let (sender, mut commands) = tokio::sync::mpsc::channel(32);
         let finished = Arc::new(AtomicBool::new(false));
         let done = finished.clone();
@@ -553,6 +557,7 @@ impl<S: IdentityProvider> DeviceService<S> {
         })?;
         Ok(ServiceHandle {
             sender,
+            fences,
             policy,
             helper_policy,
             finished,
@@ -607,6 +612,8 @@ pub(crate) struct Core {
     pub(crate) stopping: bool,
     pub(crate) recovery_cursor: Option<RequestId>,
     employees: policy::Employees,
+    fences: Arc<policy::Fences>,
+    credential_leases: std::collections::BTreeMap<RequestId, Arc<zeroize::Zeroizing<String>>>,
     policy_commands: policy::Commands,
 }
 impl Core {
@@ -994,13 +1001,16 @@ impl Core {
                                             command.binding.as_ref(),
                                         )
                                         .unwrap_or(false)
-                                    && !self
+                                    && (matches!(
+                                        p.action,
+                                        execution_contract::PreparedAction::Policy { .. }
+                                    ) || !self
                                         .app
                                         .has_service_execution(
                                             &p.action.request().clone(),
                                             &self.host.binding.device,
                                         )
-                                        .unwrap_or(true)
+                                        .unwrap_or(true))
                             })
                             .collect(),
                     })
@@ -1148,6 +1158,7 @@ enum LocalRequest {
 }
 pub(crate) struct Command {
     request: LocalRequest,
+    fence_epoch: u64,
     subject: String,
     session: u32,
     binding: Option<execution_contract::Id>,
@@ -1202,6 +1213,7 @@ pub(crate) async fn network_loop<T>(
 /// Native callbacks forward bounded commands to the only journal/network owner.
 pub struct ServiceHandle {
     sender: tokio::sync::mpsc::Sender<Command>,
+    fences: Arc<policy::Fences>,
     policy: execution_ipc::host::PeerPolicy,
     helper_policy: Option<execution_ipc::host::PeerPolicy>,
     finished: Arc<AtomicBool>,
@@ -1236,6 +1248,7 @@ impl ServiceHandle {
         if self
             .sender
             .try_send(Command {
+                fence_epoch: self.fences.current(&subject).unwrap_or(u64::MAX),
                 request,
                 subject,
                 session,
@@ -1269,6 +1282,13 @@ impl ServiceHandle {
     }
 }
 impl execution_ipc::host::Handler for ServiceHandle {
+    fn session_fence(&self) -> Option<Arc<dyn execution_ipc::host::SessionFence>> {
+        Some(Arc::new(policy::NativeFence {
+            policy: self.policy.clone(),
+            fences: self.fences.clone(),
+            finished: self.finished.clone(),
+        }))
+    }
     fn peer_policy(&self) -> Option<execution_ipc::host::PeerPolicy> {
         let mut policy = self.policy.clone();
         if let Some(helper) = &self.helper_policy {

@@ -368,11 +368,24 @@ export class ClaudeAdapter implements ProviderAgentPort {
                   };
               if (session.active !== turn || turn.outcome || session.closing)
                 throw new Error("Stale tool result");
+              let structuredContent: Record<string, unknown> | undefined;
+              try {
+                structuredContent = JSON.parse(value.text);
+              } catch {
+                /* Error prose carries no business output. */
+              }
+              if (
+                value.disposition === "returned" &&
+                catalog.find((t) => t.name === params.name)?.outputSchema &&
+                !structuredContent
+              )
+                throw new Error("Missing structured tool output");
               this.emit(turn, { type: "tool_result", proposalId, ...value });
               return {
                 isError: value.disposition !== "returned",
                 content: [{ type: "text", text: value.text }],
-                structuredContent: { rssHostResult: value },
+                ...(structuredContent ? { structuredContent } : {}),
+                _meta: { "com.rss-mdm/host-disposition": value.disposition },
               };
             } catch {
               return {

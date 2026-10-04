@@ -4,6 +4,7 @@ const props = defineProps<{ record: BackendRequest; disabled?: boolean }>();
 const emit = defineEmits<{
   confirm: [request: string];
   cancel: [request: string];
+  query: [request: string];
 }>();
 function request() {
   const action = props.record.action;
@@ -51,7 +52,7 @@ function resolved() {
           {{ record.action.generation }}
         </dd>
         <template v-if="record.trigger.kind !== 'automatic'"
-          ><dt>目标设备 / OS 账号 / 登录</dt>
+          ><dt>发起设备 / OS 账号 / 登录</dt>
           <dd>
             {{ record.trigger.osSession.device }} /
             {{ record.trigger.osSession.account.subject }} /
@@ -65,6 +66,9 @@ function resolved() {
           </dd></template
         >
       </dl>
+      <button :disabled="disabled" @click="emit('query', request())">
+        查询原请求与结果
+      </button>
       <p>最终参数</p>
       <pre>{{ JSON.stringify(resolved(), null, 2) }}</pre>
       <p>风险：{{ record.risk?.level ?? "人工操作" }} · {{ record.state }}</p>

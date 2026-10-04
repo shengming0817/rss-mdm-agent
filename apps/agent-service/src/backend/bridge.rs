@@ -49,7 +49,10 @@ pub struct ExecutionBridge<P> {
     policy: P,
 }
 impl ExecutionBridge<agent_client::CredentialRedactor> {
-    pub(crate) fn protect_employee(&mut self, value: &str) -> Result<(), Error> {
+    pub(crate) fn protect_employee(
+        &mut self,
+        value: &std::sync::Arc<zeroize::Zeroizing<String>>,
+    ) -> Result<(), Error> {
         self.policy.protect_employee(value)
     }
 }

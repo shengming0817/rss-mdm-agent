@@ -26,7 +26,14 @@ function toolResult(
   return {
     isError: disposition !== "returned",
     content: [{ type: "text" as const, text }],
-    structuredContent: { rssHostResult: { disposition, text } },
+    ...(() => {
+      try {
+        return { structuredContent: JSON.parse(text) };
+      } catch {
+        return {};
+      }
+    })(),
+    _meta: { "com.rss-mdm/host-disposition": disposition },
   };
 }
 /** Incarnation-local endpoint. Native tools never receive an execution permit. */
@@ -40,6 +47,14 @@ export class ToolBridge {
   constructor(
     private readonly endpoint: ToolEndpoint,
     private readonly canPropose: () => boolean,
+    private readonly observe?: (proposal: {
+      name: string;
+      arguments: Record<string, unknown>;
+      callId: string;
+    }) => (result: {
+      disposition: "returned" | "rejected" | "unavailable";
+      text: string;
+    }) => void,
   ) {
     this.server = createServer(async (request, response) => {
       const actual = Buffer.from(request.headers.authorization ?? ""),
@@ -85,19 +100,17 @@ export class ToolBridge {
           !this.canPropose()
         )
           return toolResult("unavailable", "Tool unavailable");
+        const proposal = {
+          name: params.name,
+          arguments: input,
+          callId: randomUUID(),
+        };
+        const observed = this.observe?.(proposal);
         try {
           boundedJson(input, limits);
           const result = await withinBudget(
             () => ({ timeoutMs: 30000, signal: this.abort.signal }),
-            (budget) =>
-              this.endpoint.propose(
-                {
-                  name: params.name,
-                  arguments: input,
-                  callId: randomUUID(),
-                },
-                budget,
-              ),
+            (budget) => this.endpoint.propose(proposal, budget),
           );
           if (!result.ok || this.abort.signal.aborted)
             throw new Error("unavailable");
@@ -110,8 +123,23 @@ export class ToolBridge {
             result.value.text.length > 65536
           )
             throw new Error("invalid host result");
-          return toolResult(result.value.disposition, result.value.text);
+          const response = toolResult(
+            result.value.disposition,
+            result.value.text,
+          );
+          if (
+            result.value.disposition === "returned" &&
+            this.catalog.find((t) => t.name === params.name)?.outputSchema &&
+            !("structuredContent" in response)
+          )
+            throw new Error("Missing structured tool output");
+          observed?.(result.value);
+          return response;
         } catch {
+          observed?.({
+            disposition: "unavailable",
+            text: "Host proposal unavailable",
+          });
           return toolResult("unavailable", "Host proposal unavailable");
         }
       });

@@ -6,7 +6,10 @@ use execution_ipc::host::{ClientOrigin, Reply, Request, ServiceClient};
 use execution_mcp as mcp;
 use sha2::Digest as _;
 use std::{
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
     time::{SystemTime, UNIX_EPOCH},
 };
 use tokio_util::sync::CancellationToken;
@@ -40,6 +43,8 @@ pub struct ExecutionHandle {
     origin: ClientOrigin,
     permits: Arc<tokio::sync::Semaphore>,
     wire: Arc<Mutex<()>>,
+    employee_possible: Arc<AtomicBool>,
+    employee_initialized: Arc<AtomicBool>,
 }
 impl ExecutionHandle {
     pub fn new() -> Self {
@@ -49,6 +54,8 @@ impl ExecutionHandle {
             origin: ClientOrigin::Desktop {},
             permits: Arc::new(tokio::sync::Semaphore::new(16)),
             wire: Arc::new(Mutex::new(())),
+            employee_possible: Arc::new(AtomicBool::new(false)),
+            employee_initialized: Arc::new(AtomicBool::new(false)),
         }
     }
     pub fn with_trusted_users(mut self, users: Arc<Mutex<super::users::Users>>) -> Self {
@@ -101,6 +108,19 @@ impl ExecutionHandle {
             let client = ServiceClient::installed().inspect_err(|error| {
                 eprintln!("RSS_EXECUTION_IPC_FAILURE stage=installation code={error:?}");
             })?;
+            if matches!(&request, Request::EmployeeSession { value: Some(_) }) {
+                // No protected installation means no handoff was attempted. Once transport
+                // can begin, retain uncertainty until a separate authenticated revoke ACK.
+                bound.employee_possible.store(true, Ordering::Release);
+                if !bound.employee_initialized.load(Ordering::Acquire) {
+                    match client.request(Request::EmployeeSession { value: None })? {
+                        Reply::EmployeeBound => {
+                            bound.employee_initialized.store(true, Ordering::Release)
+                        }
+                        _ => return Err(Error::OutcomeUnknown),
+                    }
+                }
+            }
             client.request(request).inspect_err(|error| {
                 eprintln!("RSS_EXECUTION_IPC_FAILURE stage=request code={error:?}");
             })
@@ -114,10 +134,33 @@ impl ExecutionHandle {
             reply => Ok(reply),
         }
     }
+    pub async fn revoke_employee(&self) -> ui::Result<()> {
+        if !self.employee_possible.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        let possible = self.employee_possible.clone();
+        tokio::task::spawn_blocking(move || {
+            // This control request never takes the business semaphore or transport lock.
+            let client = ServiceClient::installed()?;
+            match client.request(Request::EmployeeSession { value: None })? {
+                Reply::EmployeeBound => {
+                    possible.store(false, Ordering::Release);
+                    Ok(())
+                }
+                _ => Err(Error::OutcomeUnknown),
+            }
+        })
+        .await
+        .map_err(|_| bad(Error::OutcomeUnknown))?
+        .map_err(bad)
+    }
     pub async fn employee(
         &self,
         value: Option<execution_ipc::host::EmployeeSession>,
     ) -> ui::Result<()> {
+        if value.is_none() {
+            return self.revoke_employee().await;
+        }
         match self
             .request(Request::EmployeeSession { value })
             .await

@@ -126,12 +126,19 @@ function preview() {
     error.value = "参数格式无效，请按字段要求填写。";
   }
 }
-async function query() {
+async function query(id?: string) {
+  if (id) {
+    request.value = id;
+    status.value = undefined;
+    choice.value = undefined;
+    selected.value = undefined;
+  }
   if (!props.port || !request.value) return;
   const current = epoch;
   try {
-    const value = await props.port.policy_status({ requestId: request.value });
-    if (current !== epoch) return;
+    const original = request.value;
+    const value = await props.port.policy_status({ requestId: original });
+    if (current !== epoch || request.value !== original) return;
     status.value = value;
     emit("changed");
   } catch {
@@ -179,6 +186,7 @@ async function cancel(id: string) {
   const current = epoch;
   try {
     await props.port.cancel({ requestId: id });
+    await query(id);
     if (current !== epoch) return;
     emit("changed");
   } catch {
@@ -267,13 +275,14 @@ watch(
       <button v-if="finished" :disabled="busy" @click="newRequest">
         发起新任务
       </button>
-      <button :disabled="busy" @click="query">查询原请求</button
+      <button :disabled="busy" @click="query()">查询原请求</button
       ><PolicyPreparation
         v-if="status?.kind === 'preparation'"
         :record="status.value"
         :disabled="busy"
         @confirm="confirm"
         @cancel="cancel"
+        @query="query"
       /><template v-else-if="status?.kind === 'run'"
         ><p>状态：{{ status.value.state }}</p>
         <template v-if="status.value.result"
@@ -307,6 +316,7 @@ watch(
       :disabled="busy"
       @confirm="confirm"
       @cancel="cancel"
+      @query="query"
     />
   </section>
 </template>

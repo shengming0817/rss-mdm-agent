@@ -757,7 +757,40 @@ impl ServiceClient {
     }
 }
 /// The native OS service owns one handler; ticks and calls are serialized by the owner loop.
+pub trait SessionFence: Send + Sync {
+    /// Authenticate the native peer and invalidate its employee grants without business IO.
+    fn revoke(&self, peer: &Peer) -> Reply;
+}
+/// Only a current, bounded native employee revocation bypasses the serial business handler.
+#[cfg(windows)]
+pub(crate) fn is_employee_revocation(bytes: &[u8]) -> bool {
+    bytes.len() <= 65536
+        && serde_json::from_slice::<Envelope>(bytes).is_ok_and(|e| {
+            e.version == IPC_VERSION
+                && matches!(e.request, Request::EmployeeSession { value: None })
+        })
+}
+/// Decode a current revocation and dispatch only its authenticated ephemeral fence.
+pub fn dispatch_fence(fence: &dyn SessionFence, peer: &Peer, bytes: &[u8]) -> Option<Vec<u8>> {
+    if bytes.len() > 65536 {
+        return None;
+    }
+    let envelope: Envelope = serde_json::from_slice(bytes).ok()?;
+    if envelope.version != IPC_VERSION {
+        return None;
+    }
+    match envelope.request {
+        Request::EmployeeSession { value: None } => Some(encode_reply(fence.revoke(peer))),
+        _ => None,
+    }
+}
+/// Native lifecycle handler; all business work remains serialized by its owner.
 pub trait Handler: Send {
+    /// Optional authenticated revocation which performs no execution or journal IO.
+    fn session_fence(&self) -> Option<std::sync::Arc<dyn SessionFence>> {
+        None
+    }
+
     /// Current installed client pins. Production handlers must supply these before listening.
     fn peer_policy(&self) -> Option<PeerPolicy> {
         None
