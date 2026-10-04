@@ -7,7 +7,7 @@ import { openSqliteStore } from "../../packages/ai-store-sqlite/dist/index.js";
 import { NativeControl } from "../../apps/ai-host/dist/native.js";
 import { PrivateLink } from "../../packages/ai-host/dist/private-link.js";
 import { spawn } from "node:child_process";
-import { executionServer } from "../ai-host/rust-execution.mjs";
+import { preparedArtifact } from "../../scripts/preparation.mjs";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { once } from "node:events";
@@ -322,7 +322,7 @@ export async function fixture(t, provider) {
     },
     async start() {
       rust = spawn(
-        executionServer(),
+        preparedArtifact("execution"),
         [
           join(directory, "execution.sqlite"),
           join(directory, "audit.json"),

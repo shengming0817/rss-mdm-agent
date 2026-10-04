@@ -3,12 +3,11 @@ import { activeStage } from "../../packages/ai-contract/dist/index.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { spawn } from "node:child_process";
-import { fileURLToPath } from "node:url";
 import { once } from "node:events";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { openSqliteStore } from "../../packages/ai-store-sqlite/dist/index.js";
-import { executionServer } from "../ai-host/rust-execution.mjs";
+import { preparedArtifact } from "../../scripts/preparation.mjs";
 import {
   engines,
   fixture,
@@ -23,7 +22,7 @@ import {
   executionGeneration,
 } from "./support.mjs";
 
-const executable = executionServer();
+const executable = preparedArtifact("execution");
 async function stop(child, signal = "SIGTERM") {
   if (child.exitCode !== null || child.signalCode !== null)
     return child.exitCode;
@@ -71,12 +70,9 @@ for (const provider of engines) {
       // Register ownership before the next spawn can throw.
       t.after(() => stop(rust));
       const app = spawn(
-        fileURLToPath(
-          new URL(
-            "../../.local-ci-runs/worker-runtime/bin/node" +
-              (process.platform === "win32" ? ".exe" : ""),
-            import.meta.url,
-          ),
+        join(
+          preparedArtifact("worker"),
+          "bin/node" + (process.platform === "win32" ? ".exe" : ""),
         ),
         ["apps/ai-host/dist/cli.js", f.path],
         {

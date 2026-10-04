@@ -8,7 +8,7 @@ import {
   clientAt,
   executionGeneration,
 } from "../tests/ai-provider-conformance/support.mjs";
-import { executionServer } from "../tests/ai-host/rust-execution.mjs";
+import { preparedArtifact } from "./preparation.mjs";
 import assert from "node:assert/strict";
 import { spawn, execFileSync } from "node:child_process";
 import { once } from "node:events";
@@ -64,7 +64,7 @@ for (const signal of ["SIGTERM", "SIGINT"]) {
     const configuration = setup.config,
       configurationPath = setup.path;
     rust = spawn(
-      executionServer(),
+      preparedArtifact("execution"),
       [
         join(directory, "execution.sqlite"),
         join(directory, "audit.json"),

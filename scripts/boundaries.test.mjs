@@ -10,7 +10,15 @@ import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { checkTree, checkSource, checkRustSources } from "./boundaries.mjs";
+import {
+  checkTree as inspectTree,
+  checkSource,
+  checkRustSources as inspectRust,
+} from "./boundaries.mjs";
+import { preparedArtifact } from "./preparation.mjs";
+const rustGuard = preparedArtifact("boundaries");
+const checkTree = (treeRoot) => inspectTree(treeRoot, rustGuard);
+const checkRustSources = (sources) => inspectRust(sources, rustGuard);
 
 // ref: Cargo 0.90.0 src/cargo/core/resolver/features.rs (FeatureOpts/HasDevUnits).
 // Inspect the resolved production graph, without the dev edges used by test/example targets.

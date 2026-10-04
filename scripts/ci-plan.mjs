@@ -110,7 +110,11 @@ function leaseFds(env, cwd, stdio) {
 }
 
 // ref: Node.js v24.14.1 lib/internal/child_process.js (numeric stdio descriptors).
-export function runCommand(command, args, { signal, ...options }) {
+export function runCommand(
+  command,
+  args,
+  { signal, capture = false, ...options },
+) {
   return new Promise((resolve) => {
     if (signal?.aborted) {
       resolve({ status: null, signal: signal.reason });
@@ -119,23 +123,37 @@ export function runCommand(command, args, { signal, ...options }) {
     const childEnv = options.env ?? process.env;
     const fds = leaseFds(childEnv, options.cwd, options.stdio);
     const managed = fds !== null;
-    const stdio = managed
+    let stdio = managed
       ? Array.from({ length: Math.max(...fds) + 1 }, (_, index) =>
           index < 3 ? "inherit" : "ignore",
         )
       : options.stdio;
     if (managed) for (const fd of fds) stdio[fd] = fd;
+    if (capture) {
+      stdio = Array.isArray(stdio) ? [...stdio] : ["ignore", "pipe", "inherit"];
+      stdio[1] = "pipe";
+    }
     const child = spawn(command, args, {
       ...options,
       env: childEnv,
       stdio,
-      detached: process.platform !== "win32" && !managed,
+      detached: options.detached ?? (process.platform !== "win32" && !managed),
     });
     let failure, timer;
+    let stdout = "";
+    if (capture)
+      child.stdout.on("data", (bytes) => {
+        stdout += bytes;
+      });
     const stop = (kind) => {
       if (!child.pid) return;
       try {
-        if (process.platform === "win32" || managed) child.kill(kind);
+        if (
+          process.platform === "win32" ||
+          managed ||
+          options.detached === false
+        )
+          child.kill(kind);
         else process.kill(-child.pid, kind);
       } catch (error) {
         if (error.code !== "ESRCH") failure = error;
@@ -157,7 +175,12 @@ export function runCommand(command, args, { signal, ...options }) {
       if (signal?.aborted) stop("SIGKILL");
       clearTimeout(timer);
       signal?.removeEventListener("abort", cancel);
-      resolve({ status, signal: exitSignal, error: failure });
+      resolve({
+        status,
+        signal: exitSignal,
+        error: failure,
+        ...(capture ? { stdout } : {}),
+      });
     });
   });
 }
@@ -200,11 +223,14 @@ export async function executeSteps(
     }
     record({
       ...stepResult(name, [command, ...args], result),
-      outcome: signal?.aborted
-        ? "cancelled"
-        : result.status === 0
-          ? "passed"
-          : "failed",
+      ...(result.blocked ? { reason: result.blocked } : {}),
+      outcome: result.blocked
+        ? "skipped"
+        : signal?.aborted
+          ? "cancelled"
+          : result.status === 0
+            ? "passed"
+            : "failed",
     });
   }
   return results;
