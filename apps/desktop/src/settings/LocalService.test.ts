@@ -2,7 +2,8 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { expect, it, vi } from "vitest";
 import LocalService from "./LocalService.vue";
 import type { ServicePort } from "./native";
-import type { RegistrationStatus } from "./service-contract";
+import serviceViews from "../../../../tests/assistant/service-fixtures.json";
+import type { RegistrationStatus, ServiceView } from "./service-contract";
 it("requests one fixed machine registration and refreshes its original public progress", async () => {
   let state: RegistrationStatus = {
     phase: "unregistered",
@@ -19,10 +20,8 @@ it("requests one fixed machine registration and refreshes its original public pr
     return state;
   });
   const port: ServicePort = {
-    read: async () => ({
-      phase: "connected",
-      status: { protocol: 10, readiness: { phase: "registrationRequired" } },
-    }),
+    read: async () =>
+      structuredClone(serviceViews.registrationRequired) as ServiceView,
     registration: async () => state,
     requestRegistration: request,
   };

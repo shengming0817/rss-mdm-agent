@@ -179,13 +179,11 @@ impl Keychain {
             let private = unsafe {
                 CFDictionary::from_CFType_pairs(&[
                     attribute(kSecAttrIsPermanent, CFBoolean::true_value().as_CFType()),
-                    attribute(kSecAttrIsExtractable, CFBoolean::false_value().as_CFType()),
                     attribute(kSecAttrLabel, label.as_CFType()),
                     attribute(
                         kSecAttrApplicationTag,
                         CFData::from_buffer(name.as_bytes()).as_CFType(),
                     ),
-                    attribute(kSecAttrAccess, access.as_CFType()),
                 ])
             };
             // SAFETY: Security attribute constants are valid; dictionary retains nested values.
@@ -196,6 +194,10 @@ impl Keychain {
                         CFString::wrap_under_get_rule(kSecAttrKeyTypeRSA).as_CFType(),
                     ),
                     attribute(kSecAttrKeySizeInBits, CFNumber::from(2048).as_CFType()),
+                    // The file-keychain generator reads these from the top-level
+                    // dictionary, rather than kSecPrivateKeyAttrs (Apple SecKey.cpp).
+                    attribute(kSecAttrIsExtractable, CFBoolean::false_value().as_CFType()),
+                    attribute(kSecAttrAccess, access.as_CFType()),
                     attribute(kSecUseKeychain, self.0.as_CFType()),
                     attribute(kSecPrivateKeyAttrs, private.as_CFType()),
                 ])
@@ -330,10 +332,10 @@ impl DeviceKey {
             let application = applications.get(0).ok_or_else(denied)?;
             // SAFETY: OS-owned trusted application and NUL-terminated current image path.
             // Validate the original code requirement, rather than its informational path.
-            if unsafe {
+            let status = unsafe {
                 SecTrustedApplicationValidateWithPath(application.as_CFTypeRef(), path.as_ptr())
-            } != 0
-            {
+            };
+            if status != 0 {
                 return Err(denied());
             }
         }

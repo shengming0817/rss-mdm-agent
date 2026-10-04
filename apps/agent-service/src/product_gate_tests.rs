@@ -873,6 +873,8 @@ async fn service_assembly_creates_and_reopens_journal_with_its_actual_budgets() 
 #[tokio::test]
 async fn renewal_and_revoked_restart_keep_the_existing_journal_authority() {
     let mut case = Case::new(None).await;
+    let selected = case.selection(false);
+    case.service.core.start_task(selected).unwrap();
     let binding = case.service.client.registration().unwrap();
     let records = case
         .service

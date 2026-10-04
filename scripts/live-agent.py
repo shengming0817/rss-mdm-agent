@@ -15,6 +15,7 @@ import ssl
 import subprocess
 import sys
 import time
+import tempfile
 import urllib.request
 
 REVISION = '407b3febaf5192f397bedf5e0b64c57f75a1285f'
@@ -67,8 +68,7 @@ def main():
         root = environment.root
         config_path = Path(receipt['configuration'])
         config = json.loads(config_path.read_text())
-        fixture = root/'agent-pki'
-        fixture.mkdir(parents=True, exist_ok=True, mode=0o700)
+        fixture = Path(tempfile.mkdtemp(prefix='agent-pki-', dir=root))
         shutil.copyfile(root/'ca.crt', fixture/'ca.crt')
         environment.issue_leaf(fixture, ['localhost'])
         generate(fixture, fixture/'server.crt', fixture/'server.key')
@@ -132,9 +132,9 @@ def main():
                         try:
                             with urllib.request.build_opener(urllib.request.ProxyHandler({}), urllib.request.HTTPSHandler(context=context)).open(receipt['origin']+'/readyz', timeout=1) as response:
                                 if response.status==200: break
-                        except (OSError, urllib.error.URLError):
-                            pass
-                        if time.monotonic()>ready: raise RuntimeError('Management gateway readiness deadline')
+                        except (OSError, urllib.error.URLError) as error:
+                            readiness_error = error
+                        if time.monotonic()>ready: raise RuntimeError(f'Management gateway readiness deadline: {readiness_error}')
                         time.sleep(.1)
                     env = dict(os.environ)
                     for key in ['_MDM_BUILD_LEASE', 'CARGO_TARGET_DIR']:

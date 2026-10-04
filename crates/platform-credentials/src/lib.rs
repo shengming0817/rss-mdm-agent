@@ -28,9 +28,16 @@ impl Keychain {
         Ok(Self(keychain))
     }
     pub fn disable_interaction() -> io::Result<NonInteractiveGuard> {
-        security_framework::os::macos::keychain::SecKeychain::disable_user_interaction()
-            .map(|guard| NonInteractiveGuard { _guard: guard })
-            .map_err(io::Error::other)
+        use security_framework::os::macos::keychain::SecKeychain;
+        let mut state = INTERACTION
+            .lock()
+            .map_err(|_| io::Error::other("keychain interaction unavailable"))?;
+        if state.guards == 0 && SecKeychain::user_interaction_allowed().map_err(io::Error::other)? {
+            state.disabled =
+                Some(SecKeychain::disable_user_interaction().map_err(io::Error::other)?);
+        }
+        state.guards += 1;
+        Ok(NonInteractiveGuard { _private: () })
     }
 
     pub fn open(scope: Scope) -> io::Result<Self> {
@@ -75,13 +82,7 @@ impl Keychain {
         &self,
         operation: impl FnOnce() -> io::Result<T>,
     ) -> io::Result<T> {
-        use security_framework::os::macos::keychain::SecKeychain;
-        let allowed = SecKeychain::user_interaction_allowed().map_err(io::Error::other)?;
-        let _guard = if allowed {
-            Some(SecKeychain::disable_user_interaction().map_err(io::Error::other)?)
-        } else {
-            None
-        };
+        let _guard = Self::disable_interaction()?;
         operation()
     }
 }
@@ -109,7 +110,30 @@ pub fn random_bytes(length: usize) -> io::Result<Vec<u8>> {
 
 #[cfg(target_os = "macos")]
 pub struct NonInteractiveGuard {
-    _guard: security_framework::os::macos::keychain::KeychainUserInteractionLock,
+    _private: (),
+}
+#[cfg(target_os = "macos")]
+struct InteractionState {
+    guards: usize,
+    disabled: Option<security_framework::os::macos::keychain::KeychainUserInteractionLock>,
+}
+#[cfg(target_os = "macos")]
+static INTERACTION: std::sync::Mutex<InteractionState> = std::sync::Mutex::new(InteractionState {
+    guards: 0,
+    disabled: None,
+});
+#[cfg(target_os = "macos")]
+impl Drop for NonInteractiveGuard {
+    fn drop(&mut self) {
+        // The Security switch is process-wide. Restore it only after every overlapping
+        // operation exits; nested guards do not retain the mutex during an OS call.
+        if let Ok(mut state) = INTERACTION.lock() {
+            state.guards -= 1;
+            if state.guards == 0 {
+                drop(state.disabled.take());
+            }
+        }
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -257,6 +281,14 @@ mod tests {
     #[test]
     #[ignore = "child process of nonexportable_device_key_reopens_and_signs_without_interaction"]
     fn device_key_child() {
+        use security_framework::os::macos::keychain::SecKeychain;
+        let allowed = SecKeychain::user_interaction_allowed().unwrap();
+        let first = Keychain::disable_interaction().unwrap();
+        let second = Keychain::disable_interaction().unwrap();
+        drop(first);
+        assert!(!SecKeychain::user_interaction_allowed().unwrap());
+        drop(second);
+        assert_eq!(SecKeychain::user_interaction_allowed().unwrap(), allowed);
         let path = std::path::PathBuf::from(std::env::var_os("RSS_TEST_KEYCHAIN").unwrap());
         let keychain = Keychain::open_file(&path).unwrap();
         let key = keychain.open_device_key("machine-key");
