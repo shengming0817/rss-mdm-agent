@@ -1,7 +1,9 @@
 //! OS credential primitives. Product names, references, formats and key sizes belong to callers.
 use std::io;
 mod device_key;
+mod machine_certificates;
 pub use device_key::{DeviceKey, SignatureScheme};
+pub use machine_certificates::{CertificateStore, MachineCertificates};
 #[cfg(windows)]
 mod windows;
 #[cfg(windows)]
