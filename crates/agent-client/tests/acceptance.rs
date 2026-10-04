@@ -1019,6 +1019,7 @@ async fn obsolete_wire_and_signing_domain_never_accept_a_task() {
     let root = Root::new();
     let mut client = server.client(&root, OpenMode::Create);
     server.register(&mut client).await;
+    server.data.lock().unwrap().script();
     let signed = server.data.lock().unwrap().offer.clone().unwrap();
     let response =
         serde_json::to_value(TaskClaimResponse::new(Some(signed.clone()), vec![]).unwrap())
@@ -1078,7 +1079,7 @@ async fn obsolete_ack_preserves_the_original_report_for_retry() {
     server.data.lock().unwrap().response_override = Some((
         "/reports".into(),
         serde_json::json!({
-            "wireVersion":6,"reportId":report,"acceptedAt":1
+            "wireVersion":6,"reportId":report,"receivedAt":1,"intake":"durable"
         }),
     ));
     assert_eq!(client.flush_reports(1).await, Err(Error::Protocol));
@@ -1108,12 +1109,10 @@ async fn obsolete_activation_capability_preserves_active_binding_and_candidate()
         client.renew_certificate().await.unwrap_err(),
         Error::ActivationUnknown
     );
-    let (operation, mut response, calls) = {
+    let (mut response, calls) = {
         let data = server.data.lock().unwrap();
         (
-            data.operation.unwrap(),
-            serde_json::to_value(enroll::EnrollmentState {
-                wire_version: 1,
+            serde_json::to_value(enroll::Progress {
                 grant: data.grant.clone().unwrap(),
                 issuance_id: Some(data.issuance),
                 issuance_unknown: false,
@@ -1124,8 +1123,7 @@ async fn obsolete_activation_capability_preserves_active_binding_and_candidate()
         )
     };
     response["activation"]["runtime"]["capabilities"][0] = "inventory.collection.v6".into();
-    server.data.lock().unwrap().response_override =
-        Some((format!("/requests/by-operation/{operation}"), response));
+    server.data.lock().unwrap().response_override = Some(("/status".into(), response));
     drop(client);
     let mut client = server.client(&root, OpenMode::Existing);
     let identity = || {

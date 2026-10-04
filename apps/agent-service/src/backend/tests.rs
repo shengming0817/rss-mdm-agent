@@ -1270,15 +1270,26 @@ async fn revoked_and_expired_unknown_keeps_original_execution_and_association() 
     next_server.register(&mut next_client).await;
     let next_offer = next_client.claim().await.unwrap().offer.unwrap();
     let mut next_host = local::TestHost::new();
-    next_host.template = adapted_plan(false, "device-1", &next_offer);
-    let old_journal = std::fs::read(&case.db.path).unwrap();
-    assert!(reopen_app(
-        &case.db.path,
-        next_host,
-        case.runner.clone(),
-        execution_app::AppConfig::test_defaults(76)
+    let mut next_spec = adapted_plan(false, "device-1", &next_offer).spec().clone();
+    // Keep the runner explicitly Test; use a distinct namespace for the new deployment.
+    next_spec.request.authority = execution_contract::Authority::Test {
+        id: local::id("separately-registered-deployment"),
+    };
+    next_host.template = execution_contract::FrozenExecution::freeze(
+        next_spec,
+        &execution_contract::test_execution_limits(),
     )
-    .is_err());
+    .unwrap();
+    let old_journal = std::fs::read(&case.db.path).unwrap();
+    assert!(matches!(
+        reopen_app(
+            &case.db.path,
+            next_host,
+            case.runner.clone(),
+            execution_app::AppConfig::test_defaults(76)
+        ),
+        Err(execution_app::Error::Denied)
+    ));
     assert_eq!(std::fs::read(&case.db.path).unwrap(), old_journal);
     assert!(next_client.association(case.task).unwrap().is_none());
     assert_eq!(

@@ -548,7 +548,7 @@ def complete_native_security(probe, matrix, query, command, package, package_rec
 
 def root_refresh_security(root, binary, config, installer_source, phase):
     # This whole program is frozen before elevation; only the owned experiment is modified.
-    import contextlib, copy, hashlib, io, json, os, plistlib, re, sqlite3, subprocess, time, uuid
+    import contextlib, copy, hashlib, io, json, os, plistlib, re, shutil, sqlite3, subprocess, time, uuid
     from pathlib import Path
     root,binary,config=Path(root),Path(binary),Path(config)
     namespace={'__name__':'acceptance_owner','__builtins__':__builtins__}
@@ -579,7 +579,7 @@ def root_refresh_security(root, binary, config, installer_source, phase):
     for name in cases if phase=='preflight' else []:
         changed=copy.deepcopy(document); actual=next_config
         next_config.write_text(json.dumps(changed));next_config.chmod(0o644)
-        held=None; held_source=None; copied_plist=None; unexpected=None; paused=False
+        held=None; held_source=None; copied_plist=None; unexpected=None; paused=False; legacy_bytes=None
         try:
             if name=='mode': next_config.chmod(0o666)
             elif name=='symlink':
@@ -622,8 +622,11 @@ def root_refresh_security(root, binary, config, installer_source, phase):
         finally:
             if held:
                 if name=='communication_format' and held_source.exists():
-                    assert held_source.read_bytes()==legacy_bytes, 'old-format preflight rewrote the fixture'
-                    held_source.unlink()
+                    if legacy_bytes is not None and held_source.read_bytes()==legacy_bytes:
+                        held_source.unlink()
+                    else:
+                        unexpected=held_source.with_name(held_source.name+'.unexpected-'+uuid.uuid4().hex)
+                        held_source.rename(unexpected)
                 if held_source.exists():
                     unexpected=held_source.with_name(held_source.name+'.unexpected-'+uuid.uuid4().hex)
                     held_source.rename(unexpected)
@@ -1268,7 +1271,7 @@ def artifact(path):
 config=%r
 config['service']=artifact(binary)
 config['clients']=dict(images=[config['service']],subjects=[%r],interactive=True)
-config['registration_clients']=dict(config['clients'])
+config['registration_clients']=dict(images=[config['service']],subjects=[%r],interactive=True)
 config['execution']['interpreters']=[dict(profile='posix_sh',image=artifact('/bin/sh'))]
 config['execution']['managers']=[dict(executor='package_installer',image=artifact('/usr/sbin/installer'))]
 (root/'ca.pem').write_bytes(%r); os.chmod(root/'ca.pem',0o644)
@@ -1277,7 +1280,7 @@ config['execution']['managers']=[dict(executor='package_installer',image=artifac
 path=root/'execution.json';path.write_text(json.dumps(config));os.chmod(path,0o644)
 subprocess.run([str(binary),'--config',str(path),'--import-grant',str(root/'grant.json')],input='AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',text=True,check=True)
 subprocess.run(%r,check=True)
-''' % (str(protected), str(args.binary.resolve()), hashlib.sha256(args.binary.read_bytes()).hexdigest(), deployment, str(os.geteuid()), (lab / 'tls.pem').read_bytes(), json.dumps(grant), frozen_installer(system_installer_source, ['install','--scope','system','--binary',str(binary),'--config',str(config)])))
+''' % (str(protected), str(args.binary.resolve()), hashlib.sha256(args.binary.read_bytes()).hexdigest(), deployment, str(os.geteuid()), str(os.geteuid()), (lab / 'tls.pem').read_bytes(), json.dumps(grant), frozen_installer(system_installer_source, ['install','--scope','system','--binary',str(binary),'--config',str(config)])))
         if args.desktop:
             # Extend this same installation owner, retaining its protected binary/config checks.
             contents = setup.read_text()
@@ -1285,6 +1288,7 @@ subprocess.run(%r,check=True)
 copy_candidate(%r,desktop,%r)
 subprocess.run(['/usr/bin/codesign','--verify','--strict',str(desktop)],check=True)
 config['clients']['images'].append(artifact(desktop))
+config['registration_clients']['images']=[artifact(desktop)]
 """ % (str(args.desktop.resolve()), hashlib.sha256(args.desktop.read_bytes()).hexdigest())
             contents = contents.replace("path=root/'execution.json'", insertion + "path=root/'execution.json'")
             # Default pin creation is exclusive. The desktop never selects an arbitrary config.
