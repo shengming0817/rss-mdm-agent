@@ -4,6 +4,8 @@ const MAX_FRAME: usize = 65536;
 #[cfg(target_os = "macos")]
 mod macos;
 mod policy;
+mod target;
+pub use target::Target;
 #[cfg(any(windows, test))]
 mod policy_acl;
 #[cfg(windows)]
@@ -14,3 +16,5 @@ pub use policy::{deployment_path, protected, read_protected, Artifact};
 #[derive(Debug, thiserror::Error)]
 #[error("installation protection failed")]
 pub struct Rejected;
+
+pub mod runtime;

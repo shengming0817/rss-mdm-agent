@@ -951,7 +951,7 @@ mod tests {
         std::fs::create_dir_all(script.parent().unwrap()).unwrap();
         std::fs::write(script, mode).unwrap();
         let manifest = json!({"status":"passed","desktopProtocol":4,"contractVersion":7,
-            "verification":{"platform":if cfg!(windows){"win32"}else{"darwin"},"arch":if cfg!(windows){"x64"}else{"arm64"}},
+            "verification":{"platform":if cfg!(windows){"win32"}else{"darwin"},"arch":installation_security::Target::current().unwrap().architecture()},
             "runtimeTreeSha256":super::super::runtime_package::digest(&artifact).unwrap()});
         std::fs::write(
             artifact.join("manifest.json"),

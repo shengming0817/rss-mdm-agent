@@ -207,12 +207,9 @@ fn preflight(artifact: &Path, trusted_digest: Option<&str>) -> Result<(), Fault>
     {
         return Err(Fault::Version);
     }
-    if manifest["verification"]["platform"] != if cfg!(windows) { "win32" } else { "darwin" }
-        || manifest["verification"]["arch"] != if cfg!(windows) { "x64" } else { "arm64" }
-        || !cfg!(any(
-            all(target_os = "macos", target_arch = "aarch64"),
-            all(windows, target_arch = "x86_64")
-        ))
+    let target = installation_security::Target::current().map_err(|_| Fault::Version)?;
+    if manifest["verification"]["platform"] != target.platform()
+        || manifest["verification"]["arch"] != target.architecture()
     {
         return Err(Fault::Version);
     }
