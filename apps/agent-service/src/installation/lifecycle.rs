@@ -426,6 +426,25 @@ fn apply(candidate_path: &Path, profile: Option<&PathBuf>, config: &Path) -> Res
     Ok(())
 }
 
+fn installation_lock(config: &Path, system: bool) -> Result<std::fs::File, Error> {
+    let root = config.parent().ok_or(Error::Configuration)?;
+    if system {
+        platform::public_directory(root)?;
+    }
+    let path = root.join("installation.lock");
+    let mut opts = std::fs::OpenOptions::new();
+    opts.read(true).write(system).create(system).truncate(false);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o644).custom_flags(libc::O_NOFOLLOW);
+    }
+    let file = opts.open(&path)?;
+    installation_security::protected(&path).map_err(|_| Error::Identity)?;
+    fs2::FileExt::try_lock_exclusive(&file).map_err(|_| Error::Conflict)?;
+    Ok(file)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -494,23 +513,4 @@ mod tests {
             Options::parse(&["apply".into(), "--config".into(), "/a/../b".into()]).unwrap();
         assert!(opts.config().is_err());
     }
-}
-
-fn installation_lock(config: &Path, system: bool) -> Result<std::fs::File, Error> {
-    let root = config.parent().ok_or(Error::Configuration)?;
-    if system {
-        platform::public_directory(root)?;
-    }
-    let path = root.join("installation.lock");
-    let mut opts = std::fs::OpenOptions::new();
-    opts.read(true).write(system).create(system).truncate(false);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        opts.mode(0o644).custom_flags(libc::O_NOFOLLOW);
-    }
-    let file = opts.open(&path)?;
-    installation_security::protected(&path).map_err(|_| Error::Identity)?;
-    fs2::FileExt::try_lock_exclusive(&file).map_err(|_| Error::Conflict)?;
-    Ok(file)
 }
