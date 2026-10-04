@@ -111,6 +111,8 @@ export function checkSource(file, source) {
       ]
     : ["vue"];
   allowed.push(...(uiImports[file] ?? []));
+  if (file === "apps/desktop/src/self-service/PolicySelfService.vue")
+    allowed.push("ajv");
   if (nativeAdapters.has(file)) allowed.push("@tauri-apps/api/core");
   if (assistant)
     allowed.push(
@@ -581,13 +583,14 @@ export function checkTree(treeRoot = root, executable) {
     Object.keys(desktop.dependencies ?? {})
       .sort()
       .join() !==
-      "@rss-mdm-agent/ai-client,@rss-mdm-agent/ai-contract,@rss-mdm-agent/ai-ui-bridge,@rss-mdm-agent/execution-bindings,@rss-mdm-agent/ui,@tauri-apps/api,vue" ||
+      "@rss-mdm-agent/ai-client,@rss-mdm-agent/ai-contract,@rss-mdm-agent/ai-ui-bridge,@rss-mdm-agent/execution-bindings,@rss-mdm-agent/ui,@tauri-apps/api,ajv,vue" ||
+    desktop.dependencies?.ajv !== "8.20.0" ||
     desktop.dependencies?.["@tauri-apps/api"] !== "2.11.1" ||
     Object.keys(desktop.optionalDependencies ?? {}).length ||
     Object.keys(desktop.peerDependencies ?? {}).length
   )
     errors.push(
-      "desktop production dependencies must be UI, public AI contract/client/bridge, generated execution bindings, Vue and pinned Tauri core only",
+      "desktop production dependencies must be UI, public AI contract/client/bridge, generated execution bindings, pinned Ajv schema validation, Vue and pinned Tauri core only",
     );
   const config = JSON.parse(read("apps/desktop/src-tauri/tauri.conf.json"));
   const capabilityFiles = files(

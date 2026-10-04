@@ -23,7 +23,7 @@ const directory = ref<SelfServiceDirectoryItem[]>([]),
   status = ref<PolicyStatus>(),
   busy = ref(false),
   error = ref("");
-const fieldErrors = ref<Record<string, string>>({});
+const fieldErrors = ref(new Map<string, string>());
 const ajv = new Ajv({ strict: false, allErrors: true });
 const validator = computed(
   () => selected.value && ajv.compile(selected.value.parameterSchema),
@@ -117,7 +117,7 @@ function select(item: SelfServiceDirectoryItem) {
   selected.value = item;
   choice.value = undefined;
   inputs.value = {};
-  fieldErrors.value = {};
+  fieldErrors.value = new Map();
 }
 function options(schema: any): unknown[] | undefined {
   return (
@@ -132,33 +132,38 @@ function options(schema: any): unknown[] | undefined {
 function preview() {
   if (!selected.value || busy.value || request.value) return;
   try {
-    fieldErrors.value = {};
-    const parameters: Record<string, unknown> = {};
+    fieldErrors.value = new Map();
+    const parameters = new Map<string, unknown>();
     for (const field of fields.value) {
       try {
         const value =
           options(field.schema) || field.schema.type !== "string"
-            ? JSON.parse(inputs.value[field.name] ?? "")
+            ? JSON.parse(inputs.value[field.name] ?? "", (_key, value) => {
+                if (typeof value === "number" && !Number.isSafeInteger(value))
+                  throw new Error("不支持的整数值");
+                return value;
+              })
             : (inputs.value[field.name] ?? "");
-        parameters[field.name] = value;
+        parameters.set(field.name, value);
       } catch {
-        fieldErrors.value[field.name] = "请填写有效的字段值。";
+        fieldErrors.value.set(field.name, "请填写有效的字段值。");
       }
     }
     const resolvedParameters = Object.fromEntries(
       Object.entries(selected.value.parameterSources).map(([name, source]) => [
         name,
-        source.kind === "fixed" ? source.value : parameters[name],
+        source.kind === "fixed" ? source.value : parameters.get(name),
       ]),
     );
     if (!validator.value?.(resolvedParameters)) {
       for (const issue of validator.value?.errors ?? []) {
         const name =
-          issue.instancePath.split("/")[1] || issue.params.missingProperty;
-        if (name) fieldErrors.value[name] = `不符合字段要求：${issue.message}`;
+          issue.instancePath.split("/").at(1) || issue.params.missingProperty;
+        if (name)
+          fieldErrors.value.set(name, `不符合字段要求：${issue.message}`);
       }
     }
-    if (Object.keys(fieldErrors.value).length) {
+    if (fieldErrors.value.size) {
       error.value = "请修正标出的参数后再核对。";
       return;
     }
@@ -167,7 +172,7 @@ function preview() {
       policyId: selected.value.policyId,
       policyRevision: selected.value.policyRevision,
       policyVersion: selected.value.policyVersion,
-      parameters,
+      parameters: Object.fromEntries(parameters),
     };
     error.value = "";
   } catch {
@@ -323,8 +328,8 @@ watch(
         >
           范围：{{ field.schema.minimum ?? "不限" }} 至
           {{ field.schema.maximum ?? "不限" }} </small
-        ><span v-if="fieldErrors[field.name]" role="alert">{{
-          fieldErrors[field.name]
+        ><span v-if="fieldErrors.get(field.name)" role="alert">{{
+          fieldErrors.get(field.name)
         }}</span></label
       ><button :disabled="busy">核对执行参数</button>
     </form>
