@@ -311,6 +311,7 @@ impl DesktopRuntime {
     }
     async fn retry_cleanup(&self) -> ui::Result<()> {
         if self.cleanup_pending.load(Ordering::Acquire) {
+            self.execution.revoke_employee().await?;
             if let Some(process) = self.process() {
                 if !process.close().await {
                     return Err(unavailable());
@@ -321,7 +322,14 @@ impl DesktopRuntime {
         Ok(())
     }
     async fn revoke_locked(&self) -> ui::Result<()> {
-        self.execution.revoke_employee().await?;
+        if let Err(error) = self.execution.revoke_employee().await {
+            self.cleanup_pending.store(true, Ordering::Release);
+            self.detach_views().await;
+            if let Some(process) = self.process() {
+                process.close().await;
+            }
+            return Err(error);
+        }
         self.retry_cleanup().await?;
         let previous = self.users.lock().map_err(|_| unavailable())?.page().current;
         let cleared = self.users.lock().map_err(|_| unavailable())?.clear();

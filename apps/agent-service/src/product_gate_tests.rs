@@ -1053,7 +1053,7 @@ impl Case {
                 .fences
                 .current(&self.selection.subject)
                 .unwrap(),
-            request: LocalRequest::Operation(request),
+            request: LocalRequest::operation(request),
             subject: self.selection.subject.clone(),
             session: self.selection.session,
             binding: Some(self.selection.binding.clone()),
@@ -1169,12 +1169,13 @@ async fn policy_confirmation_is_single_exact_and_bound_to_employee_generation() 
     };
     assert_eq!(submitted.state, BackendRequestState::Submitting);
     assert!(submitted.confirmation.is_some());
-    let data = c._server.data.lock().unwrap();
-    let input = &data.invocations.values().next().unwrap().0;
-    assert_eq!(input["source"], "ai");
-    assert_eq!(input["confirmed"], true);
-    assert_eq!(input["parameters"], serde_json::json!({"name":"Acme"}));
-    drop(data);
+    {
+        let data = c._server.data.lock().unwrap();
+        let input = &data.invocations.values().next().unwrap().0;
+        assert_eq!(input["source"], "ai");
+        assert_eq!(input["confirmed"], true);
+        assert_eq!(input["parameters"], serde_json::json!({"name":"Acme"}));
+    }
     let Reply::PolicyStatus { value: status } = c
         .policy_call(Request::PolicyStatus {
             request: choice.request.clone(),
@@ -1237,11 +1238,12 @@ async fn policy_low_risk_and_human_only_settings_have_separate_native_sources() 
         assert_eq!(value.state, BackendRequestState::Submitting);
         assert!(value.confirmation.is_none());
         assert_eq!(value.risk.is_none(), human);
-        let data = c._server.data.lock().unwrap();
-        let input = &data.invocations.values().next().unwrap().0;
-        assert_eq!(input["source"], if human { "human" } else { "ai" });
-        assert_eq!(input["confirmed"], false);
-        drop(data);
+        {
+            let data = c._server.data.lock().unwrap();
+            let input = &data.invocations.values().next().unwrap().0;
+            assert_eq!(input["source"], if human { "human" } else { "ai" });
+            assert_eq!(input["confirmed"], false);
+        }
         let mut stale = choice.clone();
         stale.request = RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap();
         stale.policy_revision += 1;
@@ -1461,7 +1463,7 @@ async fn revoked_generation_cannot_rebind_from_a_queued_native_handoff() {
         subject: c.selection.subject.clone(),
         session: c.selection.session,
         binding: Some(c.selection.binding.clone()),
-        request: LocalRequest::Operation(execution_ipc::host::Request::EmployeeSession {
+        request: LocalRequest::operation(execution_ipc::host::Request::EmployeeSession {
             value: Some(execution_ipc::host::EmployeeSession {
                 credential: zeroize::Zeroizing::new("c".repeat(64)),
                 actor: wire::ScriptActor {

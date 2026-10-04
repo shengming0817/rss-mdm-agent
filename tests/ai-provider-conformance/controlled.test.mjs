@@ -178,7 +178,7 @@ for (const provider of engines) {
           "actual dynamic Policy MCP call crosses the SDK/Host/Rust boundary",
         );
         assert.deepEqual(policyCall.arguments, { name: "Acme" });
-        assert.equal(policyCall.result.disposition, "returned");
+        assert.equal(policyCall.result.disposition, "rejected");
         assert.equal(JSON.parse(policyCall.result.text).error.code, "denied");
         assert.equal(
           permissions.length,

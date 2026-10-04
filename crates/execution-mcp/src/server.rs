@@ -28,15 +28,47 @@ fn decode<T: DeserializeOwned>(raw: &str) -> Result<T, Failure> {
     serde_json::from_str(raw).map_err(|_| ServiceError::InvalidInput.into())
 }
 fn schema<T: JsonSchema>() -> Arc<serde_json::Map<String, Value>> {
-    let value = schemars::generate::SchemaSettings::draft2020_12()
+    let mut value = schemars::generate::SchemaSettings::draft2020_12()
         .into_generator()
         .into_root_schema_for::<T>()
         .to_value();
+    constrain_schema_integers(&mut value);
     let mut object = value.as_object().expect("object schema").clone();
     // Every tool DTO is object-shaped, including tagged enum branches. Schemars
     // omits the root type for those unions; MCP 2025-11-25 requires it explicitly.
     object.insert("type".into(), Value::String("object".into()));
     Arc::new(object)
+}
+// The MCP/SDK boundary accepts JSON safe integers. Rust-owned static DTO schemas
+// must advertise that same range; Resource parameter schemas are passed unchanged.
+fn constrain_schema_integers(value: &mut Value) {
+    const MAX: i64 = 9_007_199_254_740_991;
+    match value {
+        Value::Object(object) => {
+            if object.get("type").and_then(Value::as_str) == Some("integer") {
+                for (name, bound) in [("maximum", MAX), ("minimum", -MAX)] {
+                    if object.get(name).and_then(Value::as_f64).is_some_and(|n| {
+                        if name == "maximum" {
+                            n > MAX as f64
+                        } else {
+                            n < -MAX as f64
+                        }
+                    }) {
+                        object.insert(name.into(), bound.into());
+                    }
+                }
+            }
+            for child in object.values_mut() {
+                constrain_schema_integers(child);
+            }
+        }
+        Value::Array(items) => {
+            for child in items {
+                constrain_schema_integers(child);
+            }
+        }
+        _ => {}
+    }
 }
 // Tool identity and effect metadata have one typed owner. Exhaustive matches
 // bind schemas and dispatch to that owner without repeating wire-name lists.

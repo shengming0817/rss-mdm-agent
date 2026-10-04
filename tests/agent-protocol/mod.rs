@@ -1036,5 +1036,5 @@ fn employee_response(d: &mut Data, uri: &Uri, headers: &HeaderMap, value: Value)
             .into_response();
         }
     }
-    return runtime_error(StatusCode::NOT_FOUND, ErrorCode::TaskNotFound);
+    runtime_error(StatusCode::NOT_FOUND, ErrorCode::TaskNotFound)
 }

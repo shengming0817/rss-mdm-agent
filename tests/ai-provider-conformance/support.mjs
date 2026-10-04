@@ -567,8 +567,16 @@ export function assertNativeToolSchema(provider, requests, definition) {
           : definition.name),
     );
   assert.ok(actual, "dynamic Policy has an actual native model schema");
+  const expected = structuredClone(definition.inputSchema);
+  if (provider === "codex") {
+    // ref: openai/codex rust-v0.155.0 codex-rs/tools/src/json_schema/types.rs (JsonSchema).
+    // App-server verifies the original MCP schema before admission. Its model-facing
+    // schema representation omits the fixture's maxLength.
+    assert.equal(expected.properties.name.maxLength, 32);
+    delete expected.properties.name.maxLength;
+  }
   assert.deepEqual(
     actual.input_schema ?? actual.parameters ?? actual.function?.parameters,
-    definition.inputSchema,
+    expected,
   );
 }

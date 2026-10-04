@@ -108,7 +108,7 @@ async fn discovery_exposes_backend_references_and_rejects_old_script_and_catalog
         .await;
     let list = w.recv().await;
     let tools = list["result"]["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 5);
+    assert_eq!(tools.len(), 8);
     for tool in tools {
         jsonschema::draft202012::new(&tool["inputSchema"]).unwrap();
         jsonschema::draft202012::new(&tool["outputSchema"]).unwrap();
@@ -394,7 +394,7 @@ async fn official_rmcp_client_can_consume_the_bounded_service() {
             .unwrap()
             .tools
             .len(),
-        5
+        8
     );
     client.cancel().await.unwrap();
     timeout(Duration::from_secs(2), task)
@@ -558,6 +558,19 @@ async fn every_tool_advertises_and_times_out_according_to_its_effects() {
     let tools = list["result"]["tools"].as_array().unwrap();
     let operation = json!({"operationRequestId":"original-id"});
     let cases = [
+        ("execution_policy_tools", json!({}), true, "unavailable"),
+        (
+            "execution_policy_status",
+            operation.clone(),
+            true,
+            "unavailable",
+        ),
+        (
+            "execution_software_observe",
+            json!({"selection": p, "step": 0}),
+            true,
+            "unavailable",
+        ),
         ("execution_tasks", json!({}), true, "unavailable"),
         ("execution_capabilities", json!({}), true, "unavailable"),
         ("execution_status", operation.clone(), true, "unavailable"),

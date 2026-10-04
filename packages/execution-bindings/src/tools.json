@@ -1291,8 +1291,8 @@
                     { "pattern": "^[^\\u0000]*$", "type": "string" },
                     { "type": "boolean" },
                     {
-                      "maximum": 9223372036854776000,
-                      "minimum": -9223372036854776000,
+                      "maximum": 9007199254740991,
+                      "minimum": -9007199254740991,
                       "type": "integer"
                     }
                   ],

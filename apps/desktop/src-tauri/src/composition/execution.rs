@@ -219,8 +219,10 @@ impl ExecutionHandle {
             .await
             .map_err(bad)?
         {
-            Reply::PolicyRequest { value } => Ok(ui::PolicyStatus::Preparation { value: *value }),
-            Reply::PolicyStatus { value } => Ok(ui::PolicyStatus::Run { value }),
+            Reply::PolicyRequest { value } => Ok(ui::PolicyStatus::Preparation { value }),
+            Reply::PolicyStatus { value } => Ok(ui::PolicyStatus::Run {
+                value: Box::new(value),
+            }),
             Reply::PolicyAbsent => Ok(ui::PolicyStatus::Absent),
             _ => Err(bad(Error::OutcomeUnknown)),
         }

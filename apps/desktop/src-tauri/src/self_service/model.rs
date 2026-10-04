@@ -52,9 +52,9 @@ pub struct PolicyDirectoryQuery {
 pub enum PolicyStatus {
     Absent,
     Preparation {
-        value: execution_contract::BackendRequest,
+        value: Box<execution_contract::BackendRequest>,
     },
     Run {
-        value: rss_mdm_agent_wire::runtime::SelfServiceStatus,
+        value: Box<rss_mdm_agent_wire::runtime::SelfServiceStatus>,
     },
 }

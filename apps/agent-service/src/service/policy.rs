@@ -253,7 +253,10 @@ impl Core {
             if self.fences.current(&current.subject)? != current.epoch
                 || &current.actor != actor
                 || &current.generation != generation
-                || self.host.clock.millis()? >= current.expires_at_unix_ms
+            {
+                return Err(Error::Identity);
+            }
+            if self.host.clock.millis()? >= current.expires_at_unix_ms
                 || self.host.clock.millis()? >= record.action.expires_at_unix_ms()
             {
                 return Err(Error::Expired);
@@ -262,8 +265,7 @@ impl Core {
         Ok(())
     }
     pub(super) fn enqueue_policy(&mut self, command: Command) {
-        if let LocalRequest::Operation(Request::EmployeeSession { value: None }) = &command.request
-        {
+        if let Some(Request::EmployeeSession { value: None }) = command.request.as_operation() {
             let _ = self.fences.revoke(&command.subject);
             if let Ok(key) = peer_key(&command) {
                 self.employees.remove(&key);
@@ -322,7 +324,7 @@ impl<S: IdentityProvider> DeviceService<S> {
         command: &Command,
         commands: &mut tokio::sync::mpsc::Receiver<Command>,
     ) -> Result<Reply, Error> {
-        let LocalRequest::Operation(request) = &command.request else {
+        let Some(request) = command.request.as_operation() else {
             return Err(Error::Protocol);
         };
         if let Request::EmployeeSession { value: Some(value) } = request {

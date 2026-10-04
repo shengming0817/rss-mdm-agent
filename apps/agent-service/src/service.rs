@@ -618,9 +618,11 @@ pub(crate) struct Core {
 }
 impl Core {
     fn reconcile(&mut self) -> Result<(), Error> {
+        // Each network tick advances one request. Historical pages must not monopolize
+        // the single owner while an HTTP deadline or revocation command is pending.
         let page = self
             .app
-            .service_tasks(self.recovery_cursor.as_ref(), 64)
+            .service_tasks(self.recovery_cursor.as_ref(), 1)
             .map_err(crate::error::app_error)?;
         for item in &page.items {
             let request = &item.status.operation_request_id;
@@ -925,8 +927,8 @@ impl Core {
     fn handle(&mut self, command: Command) {
         use execution_ipc::host::{Reply, Request};
         if matches!(
-            &command.request,
-            LocalRequest::Operation(
+            command.request.as_operation(),
+            Some(
                 execution_ipc::host::Request::EmployeeSession { .. }
                     | execution_ipc::host::Request::ObserveSoftware { .. }
                     | execution_ipc::host::Request::PolicyDirectory { .. }
@@ -942,8 +944,8 @@ impl Core {
             return;
         }
         let reply = (|| -> Result<Reply, Error> {
-            match command.request {
-                LocalRequest::Operation(
+            match command.request.into_operation() {
+                Some(
                     Request::EmployeeSession { .. }
                     | Request::ObserveSoftware { .. }
                     | Request::PolicyDirectory { .. }
@@ -951,7 +953,7 @@ impl Core {
                     | Request::ConfirmPolicy { .. }
                     | Request::PolicyStatus { .. },
                 ) => Err(Error::Denied),
-                LocalRequest::Operation(Request::ServiceStatus {}) => {
+                Some(Request::ServiceStatus {}) => {
                     let readiness = if self.host.revoked.load(Ordering::Acquire) {
                         execution_ipc::host::Readiness::NotReady
                     } else {
@@ -961,14 +963,14 @@ impl Core {
                         value: execution_ipc::host::ServiceStatus::new(readiness),
                     })
                 }
-                LocalRequest::Stop => {
+                None => {
                     self.stopping = true;
                     Ok(Reply::Unavailable)
                 }
-                LocalRequest::Operation(
-                    Request::RegistrationStatus {} | Request::RequestRegistration {},
-                ) => Ok(Reply::Rejected),
-                LocalRequest::Operation(Request::Tasks { after }) => {
+                Some(Request::RegistrationStatus {} | Request::RequestRegistration {}) => {
+                    Ok(Reply::Rejected)
+                }
+                Some(Request::Tasks { after }) => {
                     let mut value = self
                         .app
                         .tasks(&self.caller(), after.as_ref(), 64)
@@ -1015,7 +1017,7 @@ impl Core {
                             .collect(),
                     })
                 }
-                LocalRequest::Operation(Request::StartTask {
+                Some(Request::StartTask {
                     request,
                     task,
                     attempt,
@@ -1031,19 +1033,17 @@ impl Core {
                     binding: command.binding.ok_or(Error::Denied)?,
                     origin,
                 }),
-                LocalRequest::Operation(Request::ConfirmTask { selection }) => {
-                    self.confirm_task(Selection {
-                        request: selection.request,
-                        task: selection.task,
-                        attempt: selection.attempt,
-                        revision: selection.revision,
-                        subject: command.subject,
-                        session: command.session,
-                        binding: command.binding.ok_or(Error::Denied)?,
-                        origin: execution_ipc::host::ClientOrigin::Desktop {},
-                    })
-                }
-                LocalRequest::Operation(Request::Status { request }) => {
+                Some(Request::ConfirmTask { selection }) => self.confirm_task(Selection {
+                    request: selection.request,
+                    task: selection.task,
+                    attempt: selection.attempt,
+                    revision: selection.revision,
+                    subject: command.subject,
+                    session: command.session,
+                    binding: command.binding.ok_or(Error::Denied)?,
+                    origin: execution_ipc::host::ClientOrigin::Desktop {},
+                }),
+                Some(Request::Status { request }) => {
                     if !self.policy_readable(
                         &request,
                         &command.subject,
@@ -1066,7 +1066,7 @@ impl Core {
                             .map_err(crate::error::app_error)?,
                     })
                 }
-                LocalRequest::Operation(Request::Details { request }) => {
+                Some(Request::Details { request }) => {
                     if !self.policy_readable(
                         &request,
                         &command.subject,
@@ -1090,7 +1090,7 @@ impl Core {
                         ),
                     })
                 }
-                LocalRequest::Operation(Request::Cancel { request }) => {
+                Some(Request::Cancel { request }) => {
                     if !self.policy_readable(
                         &request,
                         &command.subject,
@@ -1153,8 +1153,25 @@ impl Core {
     }
 }
 enum LocalRequest {
-    Operation(execution_ipc::host::Request),
+    Operation(Box<execution_ipc::host::Request>),
     Stop,
+}
+impl LocalRequest {
+    fn operation(request: execution_ipc::host::Request) -> Self {
+        Self::Operation(Box::new(request))
+    }
+    fn as_operation(&self) -> Option<&execution_ipc::host::Request> {
+        match self {
+            Self::Operation(request) => Some(request),
+            Self::Stop => None,
+        }
+    }
+    fn into_operation(self) -> Option<execution_ipc::host::Request> {
+        match self {
+            Self::Operation(request) => Some(*request),
+            Self::Stop => None,
+        }
+    }
 }
 pub(crate) struct Command {
     request: LocalRequest,
@@ -1223,7 +1240,7 @@ pub struct ServiceHandle {
 impl ServiceHandle {
     pub(crate) fn service_status(&self) -> execution_ipc::host::Reply {
         self.call(
-            LocalRequest::Operation(execution_ipc::host::Request::ServiceStatus {}),
+            LocalRequest::operation(execution_ipc::host::Request::ServiceStatus {}),
             String::new(),
             0,
             None,
@@ -1326,7 +1343,7 @@ impl execution_ipc::host::Handler for ServiceHandle {
         match peer.authenticate(&self.policy) {
             Ok(subject) => match peer.session_binding() {
                 Ok(binding) => self.call(
-                    LocalRequest::Operation(request),
+                    LocalRequest::operation(request),
                     subject,
                     peer.session(),
                     Some(binding),

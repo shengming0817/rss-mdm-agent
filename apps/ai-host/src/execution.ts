@@ -219,8 +219,10 @@ export async function connectExecution(
         stage = "projection";
         boundedJson(value, defaultLimits);
         const body = value.structuredContent as any;
-        if (body?.status !== "ok" || !Array.isArray(body.result))
+        if (body?.status !== "ok" || !Array.isArray(body.result)) {
+          console.error("RSS_POLICY_DISCOVERY_UNAVAILABLE stage=projection");
           return fail("unavailable");
+        }
         stage = "catalog";
         const catalog = await client.listTools(
           {},
