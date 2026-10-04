@@ -35,14 +35,7 @@ if (
   throw Error("Build on native macOS arm64 or Windows amd64/arm64");
 const release = args.includes("--release");
 const organization = JSON.parse(readFileSync(resolve(args[input + 1]), "utf8"));
-const allowed = [
-  "origin",
-  "tenant",
-  "label",
-  "signing_keys",
-  "ca_pem",
-  "device_ca_pem",
-];
+const allowed = ["origin", "tenant", "label", "signing_keys", "ca_pem"];
 if (Object.keys(organization).some((key) => !allowed.includes(key)))
   throw Error("Organization input accepts public trust fields only");
 if (
@@ -53,9 +46,7 @@ if (
   !Object.keys(organization.signing_keys ?? {}).length
 )
   throw Error("Invalid organization identity or signing keys");
-for (const pem of [organization.device_ca_pem, organization.ca_pem].filter(
-  Boolean,
-)) {
+for (const pem of [organization.ca_pem].filter(Boolean)) {
   if (
     !/^\s*-----BEGIN CERTIFICATE-----[A-Za-z0-9+/=\s]+-----END CERTIFICATE-----\s*$/.test(
       pem,
@@ -64,8 +55,8 @@ for (const pem of [organization.device_ca_pem, organization.ca_pem].filter(
   )
     throw Error("One public CA certificate required");
 }
-if (!organization.device_ca_pem)
-  throw Error("Device CA is required independently of package signing");
+if (!organization.ca_pem)
+  throw Error("A protected HTTPS bootstrap CA is required");
 for (const key of Object.values(organization.signing_keys))
   if (Buffer.from(key, "base64url").length !== 32)
     throw Error("Ed25519 public key required");
@@ -266,7 +257,7 @@ function image(path) {
   return result;
 }
 const candidate = {
-  version: 1,
+  version: 2,
   product_version: version,
   target,
   root: installed,
@@ -278,7 +269,6 @@ const candidate = {
   tenant: organization.tenant,
   signing_keys: organization.signing_keys,
   ca_pem: organization.ca_pem ?? null,
-  device_ca_pem: organization.device_ca_pem,
   signing_mode: release ? "release" : "development",
 };
 const candidateBytes = JSON.stringify(candidate, null, 2) + "\n";
