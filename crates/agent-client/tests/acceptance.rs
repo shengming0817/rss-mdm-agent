@@ -840,9 +840,15 @@ async fn manual_renewal_keeps_binding_tasks_reports_and_original_recovery_operat
     };
     // Use a real TLS connection authenticated by the former active certificate.
     // A same-CA peer must still match the exact candidate being activated.
+    use der::{DecodePem, Encode};
     let mut roots = rustls::RootCertStore::empty();
     roots
-        .add(rustls::pki_types::CertificateDer::from(support::pki::ca()))
+        .add(rustls::pki_types::CertificateDer::from(
+            x509_cert::Certificate::from_pem(&support::pki::ca())
+                .unwrap()
+                .to_der()
+                .unwrap(),
+        ))
         .unwrap();
     let tls = rustls::ClientConfig::builder_with_provider(std::sync::Arc::new(
         rustls::crypto::ring::default_provider(),
