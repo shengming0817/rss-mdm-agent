@@ -1,3 +1,5 @@
+import { withPreparation } from "./preparation.mjs";
+import { entry } from "./preparation-entries.mjs";
 import { createHash } from "node:crypto";
 import { lstatSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
@@ -118,20 +120,7 @@ export function ensureDevelopmentRuntime(
   } = {},
 ) {
   const fingerprint = developmentFingerprint(root);
-  let manifest;
-  try {
-    manifest = JSON.parse(
-      readFileSync(join(directory, "manifest.json"), "utf8"),
-    );
-  } catch {
-    /* Missing/incomplete cache is rebuilt. */
-  }
-  if (
-    manifest?.kind !== "development" ||
-    manifest.developmentFingerprint !== fingerprint ||
-    manifest.status === "failed"
-  )
-    build();
+  if (developmentNeedsBuild(root, directory, fingerprint)) build();
   const verifiedManifest = verify(root, directory);
   if (developmentFingerprint(root) !== fingerprint)
     throw new Error(
@@ -146,8 +135,38 @@ export function ensureDevelopmentRuntime(
   return directory;
 }
 
+function developmentNeedsBuild(
+  root,
+  directory,
+  fingerprint = developmentFingerprint(root),
+) {
+  let manifest;
+  try {
+    manifest = JSON.parse(
+      readFileSync(join(directory, "manifest.json"), "utf8"),
+    );
+  } catch {
+    return true;
+  }
+  return (
+    manifest.kind !== "development" ||
+    manifest.developmentFingerprint !== fingerprint ||
+    manifest.status === "failed"
+  );
+}
 if (process.argv[2] === "--prepare") {
   const [root, directory, kind] = process.argv.slice(3);
-  if (kind === "override") verifyDevelopmentRuntime(root, directory);
-  else ensureDevelopmentRuntime(root, directory);
+  const requirements =
+    kind !== "override" && developmentNeedsBuild(root, directory)
+      ? entry("bundle:ai-host").requirements
+      : ["execution"];
+  process.exitCode = await withPreparation(
+    requirements,
+    () => {
+      if (kind === "override") verifyDevelopmentRuntime(root, directory);
+      else ensureDevelopmentRuntime(root, directory);
+      return 0;
+    },
+    { directory: root },
+  );
 }

@@ -29,7 +29,7 @@ await withPreparation(
     "worker",
     "execution",
   ],
-  async () => {
+  async (_env, signal, _nested, assertReady) => {
     const development = process.argv.includes("--development");
     const root = fileURLToPath(new URL("../", import.meta.url)),
       start = development ? developmentFingerprint(root) : undefined;
@@ -58,7 +58,7 @@ await withPreparation(
       if (!existsSync(archive) || hash(readFileSync(archive)) !== sha256) {
         const response = await fetch(
           `https://nodejs.org/download/release/v${version}/node-v${version}-${target}.${extension}`,
-          { signal: AbortSignal.timeout(60000) },
+          { signal: AbortSignal.any([signal, AbortSignal.timeout(60000)]) },
         );
         if (!response.ok) throw new Error("Node runtime download failed");
         const bytes = Buffer.from(await response.arrayBuffer());
@@ -132,7 +132,13 @@ await withPreparation(
         runtimeTreeSha256;
       if (deliverable) {
         try {
+          await new Promise(setImmediate);
+          assertReady();
           runtimeTreeSha256 = hashRuntimeTree(directory);
+          await new Promise(setImmediate);
+          assertReady();
+          await new Promise(setImmediate);
+          signal.throwIfAborted();
         } catch (error) {
           failure = String(error);
           deliverable = false;

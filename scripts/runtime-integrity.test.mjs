@@ -115,7 +115,17 @@ test("runtime digest survives verbatim staging and rejects changed JS and binari
 test("AI host build removes orphaned compiler output before packing", (t) => {
   const root = fileURLToPath(new URL("../", import.meta.url));
   const destination = mkdtempSync(join(tmpdir(), "rss-ai-host-pack-"));
-  const isolated = join(destination, "isolated");
+  const isolatedRoot = join(destination, "isolated");
+  const isolated = join(isolatedRoot, "apps/ai-host");
+  mkdirSync(join(isolatedRoot, "apps"), { recursive: true });
+  for (const name of [
+    "packages",
+    "node_modules",
+    "package.json",
+    "pnpm-lock.yaml",
+    "pnpm-workspace.yaml",
+  ])
+    symlinkSync(join(root, name), join(isolatedRoot, name));
   cpSync(join(root, "apps/ai-host"), isolated, {
     recursive: true,
     filter: (source) => !["node_modules", "dist"].includes(basename(source)),
@@ -142,8 +152,8 @@ test("AI host build removes orphaned compiler output before packing", (t) => {
     orphans.every((path) => !existsSync(path)),
     "real Host compilation cleans isolated orphan output",
   );
-  const artifacts = packHost(root, destination);
-  const deployed = materializeDeploymentLock(root, destination);
+  const artifacts = packHost(isolatedRoot, destination);
+  const deployed = materializeDeploymentLock(isolatedRoot, destination);
   const source = load(readFileSync(join(root, "pnpm-lock.yaml"), "utf8"));
   for (const [key, snapshot] of Object.entries(source.snapshots))
     assert.deepEqual(

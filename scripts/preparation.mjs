@@ -88,12 +88,8 @@ export function sourceDigest(directory) {
   const digest = createHash("sha256");
   function visit(name) {
     const path = join(directory, name);
-    if (!existsSync(path)) {
-      digest.update(`${name}\0missing\0`);
-      return;
-    }
+    if (!existsSync(path)) return;
     const stat = lstatSync(path);
-    digest.update(name + "\0");
     if (stat.isDirectory()) {
       for (const child of readdirSync(path).sort()) {
         if (
@@ -111,9 +107,11 @@ export function sourceDigest(directory) {
           continue;
         visit(`${name}/${child}`);
       }
-    } else if (stat.isFile()) digest.update(readFileSync(path));
-    else if (stat.isSymbolicLink())
-      digest.update(`link\0${readlinkSync(path)}`);
+    } else if (stat.isFile()) {
+      digest.update(`${name}\0file\0${stat.size}\0`);
+      digest.update(readFileSync(path));
+    } else if (stat.isSymbolicLink())
+      digest.update(`${name}\0link\0${readlinkSync(path)}\0`);
   }
   for (const name of [
     "Cargo.toml",
@@ -199,18 +197,34 @@ export function preparedContext(directory = root, env = process.env) {
 }
 export function preparedArtifact(key, directory = root, env = process.env) {
   const value = preparedContext(directory, env);
-  if (key === "node:*") {
-    for (const name of packages(directory).keys()) {
-      const artifact = value.artifacts[`node:${name}`];
+  if (key.startsWith("node:")) {
+    const graph = packages(directory),
+      visited = new Set();
+    function validate(name) {
+      if (visited.has(name)) return;
+      visited.add(name);
+      const pkg = graph.get(name),
+        artifact = value.artifacts[`node:${name}`];
       if (
+        !pkg ||
         !value.nodes.includes(name) ||
         !artifact ||
         !existsSync(artifact.path) ||
         treeDigest(artifact.path) !== artifact.digest
       )
         throw Error(`missing or changed prepared Node package: ${name}`);
+      for (const field of [
+        "dependencies",
+        "devDependencies",
+        "peerDependencies",
+        "optionalDependencies",
+      ])
+        for (const dependency of Object.keys(pkg[field] ?? {}))
+          if (graph.has(dependency)) validate(dependency);
     }
-    return directory;
+    if (key === "node:*") for (const name of graph.keys()) validate(name);
+    else validate(key.slice(5));
+    return key === "node:*" ? directory : value.artifacts[key].path;
   }
   const artifact = value.artifacts[key];
   if (
@@ -341,8 +355,11 @@ export class Preparation {
         this.artifacts[key] ||
         (key.startsWith("check:") && this.checks.has(key.slice(6))) ||
         (key.startsWith("node:") && this.nodes.has(key.slice(5)))
-      )
+      ) {
+        if (!key.startsWith("check:"))
+          preparedArtifact(key, this.root, this.env);
         continue;
+      }
       const start = performance.now();
       try {
         const details = await this.prepare(key);
@@ -411,7 +428,11 @@ export class Preparation {
       const graph = packages(this.root),
         needed = new Set();
       const visit = (name) => {
-        if (needed.has(name) || this.nodes.has(name)) return;
+        if (needed.has(name)) return;
+        if (this.nodes.has(name)) {
+          preparedArtifact(`node:${name}`, this.root, this.env);
+          return;
+        }
         const pkg = graph.get(name);
         if (!pkg) throw Error(`unknown Node package: ${name}`);
         needed.add(name);
@@ -513,44 +534,57 @@ export class Preparation {
       rmSync(this.directory, { recursive: true, force: true });
   }
 }
+// Called immediately before publishing a deliverable, as well as after callbacks.
+export function assertPreparedRun(signal, directory = root, env = process.env) {
+  if (signal?.aborted) throw Error("preparation cancelled");
+  preparedContext(directory, env);
+}
 export async function withPreparation(
   keys,
   callback,
   { directory = root, allowSourceChanges = false } = {},
 ) {
-  if (process.env[contextKey]) {
-    const value = preparedContext(directory);
-    for (const key of keys) {
-      if (key.startsWith("check:")) {
-        if (!value.checks.includes(key.slice(6)))
-          throw Error(`missing prepared check: ${key}`);
-      } else preparedArtifact(key, directory);
-    }
-    const env = { ...process.env };
-    // The CI owner holds its lease; descendants do not borrow descriptors that
-    // pnpm/Node test subprocesses do not inherit.
-    delete env._AGENT_BUILD_LEASE;
-    return callback(env, undefined, true);
-  }
   const controller = new AbortController();
   const interrupt = () => controller.abort("SIGINT"),
     terminate = () => controller.abort("SIGTERM");
   process.on("SIGINT", interrupt);
   process.on("SIGTERM", terminate);
-  const preparation = new Preparation(directory, { signal: controller.signal });
+  let preparation;
   const previous = process.env[contextKey];
   try {
-    await preparation.ensure(keys);
-    process.env[contextKey] = preparation.env[contextKey];
-    const result = await callback(preparation.env, controller.signal, false);
-    if (!allowSourceChanges) preparation.assertInputs();
+    const nested = Boolean(previous);
+    let env;
+    if (nested) {
+      const value = preparedContext(directory);
+      for (const key of keys) {
+        if (key.startsWith("check:")) {
+          if (!value.checks.includes(key.slice(6)))
+            throw Error(`missing prepared check: ${key}`);
+        } else preparedArtifact(key, directory);
+      }
+      env = { ...process.env };
+      // The CI owner holds its lease; descendants do not borrow descriptors that
+      // pnpm/Node test subprocesses do not inherit.
+      delete env._AGENT_BUILD_LEASE;
+    } else {
+      preparation = new Preparation(directory, { signal: controller.signal });
+      await preparation.ensure(keys);
+      env = preparation.env;
+      process.env[contextKey] = env[contextKey];
+    }
+    const check = () => assertPreparedRun(controller.signal, directory, env);
+    const result = await callback(env, controller.signal, nested, check);
     if (controller.signal.aborted)
       return controller.signal.reason === "SIGINT" ? 130 : 143;
+    if (!allowSourceChanges) {
+      if (preparation) preparation.assertInputs();
+      else check();
+    }
     return result;
   } finally {
     if (previous === undefined) delete process.env[contextKey];
     else process.env[contextKey] = previous;
-    preparation.close();
+    preparation?.close();
     process.removeListener("SIGINT", interrupt);
     process.removeListener("SIGTERM", terminate);
   }
