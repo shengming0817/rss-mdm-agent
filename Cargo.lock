@@ -73,6 +73,7 @@ dependencies = [
  "url",
  "uuid",
  "x509-cert",
+ "zeroize",
 ]
 
 [[package]]
@@ -95,6 +96,7 @@ dependencies = [
  "execution-sqlite",
  "fs2",
  "installation-security",
+ "jsonschema",
  "libc",
  "native-process",
  "platform-credentials",
@@ -1181,6 +1183,7 @@ name = "execution-contract"
 version = "0.1.0"
 dependencies = [
  "jsonschema",
+ "rss-mdm-agent-wire",
  "schemars 1.2.2",
  "serde",
  "serde_json",
@@ -1209,12 +1212,14 @@ dependencies = [
  "execution-contract",
  "installation-security",
  "libc",
+ "rss-mdm-agent-wire",
  "schemars 1.2.2",
  "serde",
  "serde_json",
  "sha2",
  "tokio",
  "windows-sys 0.61.2",
+ "zeroize",
 ]
 
 [[package]]
@@ -3894,6 +3899,7 @@ dependencies = [
  "platform-private-storage",
  "proc-macro2",
  "reqwest",
+ "rss-mdm-agent-wire",
  "rusqlite",
  "schemars 1.2.2",
  "serde",

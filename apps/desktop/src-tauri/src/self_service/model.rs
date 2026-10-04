@@ -41,3 +41,19 @@ pub struct Snapshot {
 pub struct ActionRef {
     pub request_id: RequestId,
 }
+
+#[derive(Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PolicyDirectoryQuery {
+    pub after: Option<execution_contract::Id>,
+}
+#[derive(Clone, Serialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum PolicyStatus {
+    Preparation {
+        value: execution_contract::BackendRequest,
+    },
+    Run {
+        value: rss_mdm_agent_wire::runtime::SelfServiceStatus,
+    },
+}

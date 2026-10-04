@@ -186,6 +186,7 @@ impl DesktopRuntime {
         if matches!(self.host.lock().unwrap().owner, Host::Closed) || expected != self.epoch() {
             return self.status();
         }
+        let _ = self.execution.employee(None).await;
         self.detach_views().await;
         if let Some(process) = self.process() {
             let reaped = process.close().await;
@@ -245,6 +246,21 @@ impl DesktopRuntime {
         self.execution
             .for_caller(context.user.user_id.as_str())
             .map_err(|_| unavailable())
+    }
+    pub async fn policy_execution_for(&self, generation: &str) -> ui::Result<ExecutionHandle> {
+        self.verify_account().await?;
+        let _switch = self.switching.lock().await;
+        let handle = self.execution_for(generation)?;
+        let employee = self
+            .account
+            .lock()
+            .await
+            .as_ref()
+            .ok_or_else(unavailable)?
+            .employee(generation)?;
+        handle.employee(Some(employee)).await?;
+        self.current(generation)?;
+        Ok(handle)
     }
     pub fn account_status(&self) -> ui::Result<ai_session_contract::AccountStatus> {
         Ok(ai_session_contract::AccountStatus {
@@ -378,6 +394,12 @@ impl DesktopRuntime {
             let result = self.account_result(Err(error));
             retirement?;
             return result;
+        }
+        // Bind only the native service boundary. The AI pipe receives no credential.
+        if let Some(account) = self.account.lock().await.as_ref() {
+            let current = self.users.lock().map_err(|_| unavailable())?.current()?;
+            let employee = account.employee(current.generation.as_str())?;
+            let _ = self.execution.employee(Some(employee)).await;
         }
         Ok(())
     }

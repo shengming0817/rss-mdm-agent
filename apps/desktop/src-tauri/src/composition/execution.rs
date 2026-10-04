@@ -4,6 +4,7 @@ use execution_app::{BackendTaskView, Error, ExecutionStatus, TaskPhase};
 use execution_contract::*;
 use execution_ipc::host::{ClientOrigin, Reply, Request, ServiceClient};
 use execution_mcp as mcp;
+use sha2::Digest as _;
 use std::{
     sync::{Arc, Mutex},
     time::{SystemTime, UNIX_EPOCH},
@@ -111,6 +112,73 @@ impl ExecutionHandle {
             Reply::Rejected => Err(Error::Denied),
             Reply::Unavailable => Err(Error::OutcomeUnknown),
             reply => Ok(reply),
+        }
+    }
+    pub async fn employee(
+        &self,
+        value: Option<execution_ipc::host::EmployeeSession>,
+    ) -> ui::Result<()> {
+        match self
+            .request(Request::EmployeeSession { value })
+            .await
+            .map_err(bad)?
+        {
+            Reply::EmployeeBound => Ok(()),
+            _ => Err(bad(Error::Denied)),
+        }
+    }
+    pub async fn policy_directory(
+        &self,
+        input: ui::PolicyDirectoryQuery,
+    ) -> ui::Result<rss_mdm_agent_wire::runtime::SelfServiceDirectoryResponse> {
+        match self
+            .request(Request::PolicyDirectory {
+                after: input.after,
+                origin: self.origin.clone(),
+            })
+            .await
+            .map_err(bad)?
+        {
+            Reply::PolicyDirectory { value } => Ok(value),
+            _ => Err(bad(Error::Denied)),
+        }
+    }
+    pub async fn invoke_policy(&self, choice: PolicyChoice) -> ui::Result<BackendRequest> {
+        match self
+            .request(Request::InvokePolicy {
+                choice,
+                origin: self.origin.clone(),
+            })
+            .await
+            .map_err(bad)?
+        {
+            Reply::PolicyRequest { value } => Ok(*value),
+            _ => Err(bad(Error::OutcomeUnknown)),
+        }
+    }
+    pub async fn confirm_policy(&self, input: ui::ActionRef) -> ui::Result<BackendRequest> {
+        match self
+            .request(Request::ConfirmPolicy {
+                request: input.request_id,
+            })
+            .await
+            .map_err(bad)?
+        {
+            Reply::PolicyRequest { value } => Ok(*value),
+            _ => Err(bad(Error::OutcomeUnknown)),
+        }
+    }
+    pub async fn policy_status(&self, input: ui::ActionRef) -> ui::Result<ui::PolicyStatus> {
+        match self
+            .request(Request::PolicyStatus {
+                request: input.request_id,
+            })
+            .await
+            .map_err(bad)?
+        {
+            Reply::PolicyRequest { value } => Ok(ui::PolicyStatus::Preparation { value: *value }),
+            Reply::PolicyStatus { value } => Ok(ui::PolicyStatus::Run { value }),
+            _ => Err(bad(Error::OutcomeUnknown)),
         }
     }
     pub async fn close(&self) {
@@ -332,10 +400,10 @@ fn selection_reply(input: &BackendSelection, reply: Reply) -> Result<TaskSubmiss
             confirmation_required,
         }),
         Reply::Pending { value }
-            if value.offer.request == input.request
-                && value.offer.task == input.task
-                && value.offer.attempt == input.attempt
-                && value.offer.revision == input.revision =>
+            if value.action.offer().ok_or(Error::InvalidInput)?.request == input.request
+                && value.action.offer().ok_or(Error::InvalidInput)?.task == input.task
+                && value.action.offer().ok_or(Error::InvalidInput)?.attempt == input.attempt
+                && value.action.offer().ok_or(Error::InvalidInput)?.revision == input.revision =>
         {
             if matches!(
                 value.state,
@@ -344,7 +412,7 @@ fn selection_reply(input: &BackendSelection, reply: Reply) -> Result<TaskSubmiss
                 return Err(Error::Denied);
             }
             Ok(TaskSubmission {
-                request: value.offer.request,
+                request: value.action.request().clone(),
                 confirmation_required: value.state == BackendRequestState::AwaitingConfirmation,
             })
         }
@@ -359,8 +427,20 @@ fn pending_operation(value: execution_contract::BackendRequest) -> mcp::Operatio
         process: None,
         assessment: None,
         cancel_requested: value.state == BackendRequestState::Cancelled,
-        operation_request_id: value.offer.request,
-        content_digest: value.offer.revision,
+        operation_request_id: value.action.request().clone(),
+        content_digest: value
+            .action
+            .offer()
+            .map(|o| o.revision.clone())
+            .unwrap_or_else(|| {
+                Digest::new(format!(
+                    "{:x}",
+                    sha2::Sha256::digest(
+                        serde_json::to_vec(&value.action).expect("typed preparation")
+                    )
+                ))
+                .expect("digest")
+            }),
         phase: match value.state {
             BackendRequestState::Failed => mcp::OperationPhase::Failed,
             BackendRequestState::Cancelled => mcp::OperationPhase::Cancelled,
@@ -437,10 +517,22 @@ mod selection_tests {
         for field in 0..4 {
             let mut value = original.clone();
             match field {
-                0 => value.offer.request = RequestId::new("other-request").unwrap(),
-                1 => value.offer.task = Id::new("other-task").unwrap(),
-                2 => value.offer.attempt = Id::new("other-attempt").unwrap(),
-                _ => value.offer.revision = Digest::new("b".repeat(64)).unwrap(),
+                0 => {
+                    value.action.offer().ok_or(Error::InvalidInput)?.request =
+                        RequestId::new("other-request").unwrap()
+                }
+                1 => {
+                    value.action.offer().ok_or(Error::InvalidInput)?.task =
+                        Id::new("other-task").unwrap()
+                }
+                2 => {
+                    value.action.offer().ok_or(Error::InvalidInput)?.attempt =
+                        Id::new("other-attempt").unwrap()
+                }
+                _ => {
+                    value.action.offer().ok_or(Error::InvalidInput)?.revision =
+                        Digest::new("b".repeat(64)).unwrap()
+                }
             }
             assert!(selection_reply(
                 &selection,

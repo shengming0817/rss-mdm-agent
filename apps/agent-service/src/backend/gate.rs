@@ -7,22 +7,78 @@ use execution_contract::*;
 use rss_mdm_agent_wire::runtime as wire;
 
 /// A decoded backend risk decision tied to its authenticated full offer revision.
-/// Current wire has no such decision (#2654); formal builds have no alternate source.
+/// Backend scripts and built-in software rules have distinct authority identities.
 #[derive(Clone)]
 pub(crate) struct TrustedRisk {
     revision: Digest,
-    decision: BackendRiskDecision,
+    decision: ExecutionRisk,
 }
 impl TrustedRisk {
-    pub(crate) fn from_offer(_offer: &Offer) -> Option<Self> {
-        // The producer must publish its signed contract before this adapter can decode it.
-        None
+    pub(crate) fn from_offer(offer: &Offer) -> Option<Self> {
+        let revision = offered(offer).ok()?.revision;
+        let expires_at_unix_ms = u64::try_from(offer.payload().expires_at())
+            .ok()?
+            .checked_mul(1000)?;
+        let (level, source) = match offer.payload() {
+            wire::TaskPayload::Script(spec) => match &spec.authorization {
+                wire::ScriptAuthorization::SelfService {
+                    policy_id,
+                    policy_revision,
+                    allow_ai: true,
+                    risk_level,
+                    source: wire::ScriptCaller::Ai,
+                    ..
+                } => (
+                    match risk_level {
+                        1 => RiskLevel::One,
+                        2 => RiskLevel::Two,
+                        _ => return None,
+                    },
+                    RiskSource::Policy {
+                        policy: VersionedRef {
+                            id: Id::new(policy_id.to_string()).ok()?,
+                            revision: Id::new(policy_revision.to_string()).ok()?,
+                        },
+                    },
+                ),
+                _ => return None,
+            },
+            wire::TaskPayload::Software(spec) => {
+                let level = match spec.intent {
+                    wire::SoftwareTaskIntent::Install | wire::SoftwareTaskIntent::Uninstall => {
+                        RiskLevel::Two
+                    }
+                    wire::SoftwareTaskIntent::Detect => return None,
+                };
+                (
+                    level,
+                    RiskSource::Software {
+                        definition: Digest::new(
+                            spec.definition_digest
+                                .iter()
+                                .map(|b| format!("{b:02x}"))
+                                .collect::<String>(),
+                        )
+                        .ok()?,
+                    },
+                )
+            }
+            _ => return None,
+        };
+        Some(Self {
+            revision,
+            decision: ExecutionRisk {
+                level,
+                source,
+                expires_at_unix_ms,
+            },
+        })
     }
-    pub(crate) fn decision(&self, revision: &Digest) -> Option<&BackendRiskDecision> {
+    pub(crate) fn decision(&self, revision: &Digest) -> Option<&ExecutionRisk> {
         (&self.revision == revision).then_some(&self.decision)
     }
     #[cfg(test)]
-    pub(crate) fn fixture(offer: &Offer, decision: BackendRiskDecision) -> Self {
+    pub(crate) fn fixture(offer: &Offer, decision: ExecutionRisk) -> Self {
         Self {
             revision: offered(offer).unwrap().revision,
             decision,
@@ -35,7 +91,7 @@ impl TrustedRisk {
 pub(crate) struct ProductGateProof {
     digest: Digest,
     trigger: BackendTrigger,
-    risk: Option<BackendRiskDecision>,
+    risk: Option<ExecutionRisk>,
     until: u64,
 }
 impl ProductGateProof {
@@ -63,7 +119,7 @@ impl ProductGateProof {
         let view = offered(offer)?;
         let (trigger, classification, until) = if view.user_initiated {
             let record = record.ok_or(Error::Denied)?;
-            if record.offer != view
+            if record.action.offer() != Some(&view)
                 || record.state != BackendRequestState::Submitting
                 || !record.valid_product_gate()
             {
@@ -75,11 +131,17 @@ impl ProductGateProof {
                     let decision = risk
                         .and_then(|r| r.decision(&view.revision))
                         .ok_or(Error::Denied)?;
-                    if record.risk.as_ref() != Some(decision) || now >= decision.expires_at_unix_ms
+                    if record.risk.as_ref().is_none_or(|stored| {
+                        stored.level != decision.level
+                            || stored.source != decision.source
+                            || now >= stored.expires_at_unix_ms
+                    }) || now >= decision.expires_at_unix_ms
                     {
                         return Err(Error::Denied);
                     }
-                    let until = until.min(decision.expires_at_unix_ms);
+                    let until = until
+                        .min(decision.expires_at_unix_ms)
+                        .min(record.action.expires_at_unix_ms());
                     let until = match ai_execution_gate(Some(decision.level)) {
                         ExecutionGate::Direct if record.confirmation.is_none() => until,
                         ExecutionGate::Confirmation => {

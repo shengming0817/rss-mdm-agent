@@ -2,7 +2,7 @@
 use execution_contract::{Digest, Id, RequestId, VersionedRef};
 use serde::{Deserialize, Serialize};
 /// Current desktop/system IPC. No negotiation or legacy parser exists.
-pub const IPC_VERSION: u8 = 10;
+pub const IPC_VERSION: u8 = 11;
 /// Current protected installation document format.
 pub const DEPLOYMENT_VERSION: u32 = 3;
 
@@ -461,6 +461,19 @@ pub enum ClientOrigin {
         tool_call: Id,
     },
 }
+/// Native-only bearer handoff, never included in renderer, AI schema or journal records.
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct EmployeeSession {
+    /// Only the employee secret, not the cookie or CSRF header.
+    pub credential: zeroize::Zeroizing<String>,
+    /// Native verified product employee.
+    pub actor: rss_mdm_agent_wire::runtime::ScriptActor,
+    /// Exact native product login generation.
+    pub generation: Id,
+    /// Current session expiry; never extended by an invocation.
+    pub expires_at_unix_ms: u64,
+}
 /// Local IPC V7 carries backend task references, never executable plans or authority claims.
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(
@@ -470,6 +483,35 @@ pub enum ClientOrigin {
     deny_unknown_fields
 )]
 pub enum Request {
+    /// Bind or revoke the native employee session for this authenticated login.
+    EmployeeSession {
+        /// None revokes all pending self-service for this login.
+        value: Option<EmployeeSession>,
+    },
+    /// Query the current Policy directory; origin is attested by the native bridge.
+    PolicyDirectory {
+        /// Backend page cursor.
+        after: Option<Id>,
+        /// Trusted native origin.
+        origin: ClientOrigin,
+    },
+    /// Freeze a Policy choice in the unique journal; neither source nor confirmation is a model field.
+    InvokePolicy {
+        /// Exact directory choice and Input values.
+        choice: execution_contract::PolicyChoice,
+        /// Trusted native origin.
+        origin: ClientOrigin,
+    },
+    /// Sole employee response to the original risk-two Policy preparation.
+    ConfirmPolicy {
+        /// Original stable request.
+        request: RequestId,
+    },
+    /// Authorized result of the original Policy invocation.
+    PolicyStatus {
+        /// Stable original request.
+        request: RequestId,
+    },
     /// Read safe installation and execution readiness; never execution permission.
     ServiceStatus {},
     /// Read public machine registration progress.
@@ -531,6 +573,23 @@ struct Envelope {
     rename_all_fields = "camelCase"
 )]
 pub enum Reply {
+    /// Native employee handoff accepted; no enterprise permission is granted.
+    EmployeeBound,
+    /// Formal authorized Policy directory, not an execution permit.
+    PolicyDirectory {
+        /// Current server projection.
+        value: rss_mdm_agent_wire::runtime::SelfServiceDirectoryResponse,
+    },
+    /// Original request state, including preparation before any backend Run exists.
+    PolicyRequest {
+        /// Same authoritative journal record.
+        value: Box<execution_contract::BackendRequest>,
+    },
+    /// Structured server-authorized status/result.
+    PolicyStatus {
+        /// Original invocation's durable server observation.
+        value: rss_mdm_agent_wire::runtime::SelfServiceStatus,
+    },
     /// Safe readiness projection from the authenticated system owner.
     ServiceStatus {
         /// Closed service diagnostic.

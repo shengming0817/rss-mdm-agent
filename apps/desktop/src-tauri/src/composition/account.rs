@@ -216,7 +216,7 @@ impl Organizations {
         Ok(saved)
     }
 }
-// Never Serialize or Debug: cookie/CSRF cannot cross IPC or enter diagnostics.
+// Never Serialize or Debug. Only the employee secret may cross authenticated native IPC; cookie/CSRF stay here.
 pub struct Session {
     client: Client,
     organization: Organization,
@@ -282,6 +282,31 @@ fn enterprise_client(ca: Option<Vec<u8>>) -> Result<Client> {
 }
 
 impl Session {
+    pub(super) fn employee(
+        &self,
+        generation: &str,
+    ) -> Result<execution_ipc::host::EmployeeSession> {
+        let secret = self
+            .cookie
+            .strip_prefix("__Host-identity-session=")
+            .filter(|v| {
+                v.len() == 64
+                    && v.bytes()
+                        .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
+            })
+            .ok_or_else(invalid)?;
+        Ok(execution_ipc::host::EmployeeSession {
+            credential: zeroize::Zeroizing::new(secret.to_owned()),
+            actor: rss_mdm_agent_wire::runtime::ScriptActor {
+                tenant_id: Uuid::parse_str(&self.organization.tenant_id).map_err(|_| invalid())?,
+                instance_id: Uuid::parse_str(&self.instance).map_err(|_| invalid())?,
+                principal_id: Uuid::parse_str(&self.principal).map_err(|_| invalid())?,
+            },
+            generation: execution_contract::Id::new(generation).map_err(|_| invalid())?,
+            expires_at_unix_ms: self.expires,
+        })
+    }
+
     pub async fn login(organization: Organization, login: &str, password: String) -> Result<Self> {
         if login.is_empty() || login.len() > 256 || password.is_empty() || password.len() > 16384 {
             return Err(failure(Stage::Login, Reason::Denied));

@@ -18,6 +18,12 @@ pub(crate) fn request_id(offer: &Offer) -> Result<execution_contract::RequestId,
     fn encode(value: &impl serde::Serialize) -> Result<Vec<u8>, Error> {
         serde_json_canonicalizer::to_vec(value).map_err(|_| Error::Protocol)
     }
+    if let wire::TaskPayload::Script(v) = offer.payload() {
+        if let wire::ScriptAuthorization::SelfService { request_id, .. } = &v.authorization {
+            return execution_contract::RequestId::new(request_id.to_string())
+                .map_err(|_| Error::Protocol);
+        }
+    }
     let bytes = match offer.payload() {
         wire::TaskPayload::Script(v) => encode(&(
             v.tenant_id,

@@ -6,10 +6,12 @@ use crate::{
 use agent_client::{Client, CredentialRedactor, Error, IdentityProvider, Materials, Offer};
 use execution_app::{AppConfig, ExecutionApp, RequestContext};
 use execution_contract::{
-    BackendRequest, BackendRequestFailure, BackendRequestState, BackendTrigger, RequestId,
+    BackendRequest, BackendRequestFailure, BackendRequestState, BackendTrigger, PreparedAction,
+    RequestId,
 };
 use execution_runner::{MaterialRegistry, NativeRunner};
 use rss_mdm_agent_wire::runtime as wire;
+mod policy;
 use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
@@ -206,6 +208,8 @@ impl<S: IdentityProvider> DeviceService<S> {
                 selected: None,
                 stopping: false,
                 recovery_cursor: None,
+                employees: Default::default(),
+                policy_commands: Default::default(),
             },
             bridge: ExecutionBridge::new(plan::id("backend-results")?, output),
             waiting: None,
@@ -222,6 +226,7 @@ impl<S: IdentityProvider> DeviceService<S> {
         while let Ok(command) = commands.try_recv() {
             self.core.handle(command);
         }
+        self.drive_policy(commands).await?;
         if self.core.stopping {
             return Ok(());
         }
@@ -456,6 +461,14 @@ impl<S: IdentityProvider> DeviceService<S> {
             self.core.available = Some(offered(&offer)?);
             network(self.client.received(&offer), &mut self.core, commands).await?;
             let materials = network(self.client.prepare(&offer), &mut self.core, commands).await?;
+            if matches!(offer.payload(),wire::TaskPayload::Script(p) if matches!(p.authorization,wire::ScriptAuthorization::SelfService {..}))
+            {
+                let selection = self.bind_policy_offer(&offer)?;
+                backend::submit(self, offer, materials, Some(selection), commands).await?;
+                self.core.available = None;
+                self.core.available_risk = None;
+                return Ok(());
+            }
             if matches!(offer.payload(),wire::TaskPayload::Software(p) if p.start_mode==wire::SoftwareStartMode::UserInitiated)
             {
                 self.waiting = Some((offer, materials));
@@ -593,6 +606,8 @@ pub(crate) struct Core {
     pub(crate) selected: Option<Selection>,
     pub(crate) stopping: bool,
     pub(crate) recovery_cursor: Option<RequestId>,
+    employees: policy::Employees,
+    policy_commands: policy::Commands,
 }
 impl Core {
     fn reconcile(&mut self) -> Result<(), Error> {
@@ -629,11 +644,11 @@ impl Core {
         {
             if !self
                 .app
-                .has_service_execution(&record.offer.request, &self.host.binding.device)
+                .has_service_execution(&record.action.request().clone(), &self.host.binding.device)
                 .map_err(crate::error::app_error)?
             {
                 self.transition(
-                    &record.offer.request,
+                    &record.action.request().clone(),
                     BackendRequestState::Failed,
                     Some(BackendRequestFailure::Revoked),
                 )?;
@@ -700,14 +715,17 @@ impl Core {
             .backend_request(&self.caller(), &selection.request)
             .map_err(map_app_error)?
         {
-            if !selection.matches(&previous.offer)
+            if !previous
+                .action
+                .offer()
+                .is_some_and(|offer| selection.matches(offer))
                 || previous.trigger != selection.trigger(&self.host.binding.device)?
             {
                 return Err(Error::Conflict);
             }
             // Replays never confirm, change provenance, or create a new attempt.
             if previous.state == BackendRequestState::Ready
-                && self.available.as_ref() == Some(&previous.offer)
+                && self.available.as_ref() == previous.action.offer()
             {
                 self.selected = Some(Selection::from_record(&previous)?);
             }
@@ -758,7 +776,9 @@ impl Core {
             (BackendRequestState::Ready, None)
         };
         let next = BackendRequest {
-            offer: offer.clone(),
+            action: PreparedAction::Offered {
+                offer: offer.clone(),
+            },
             trigger,
             risk,
             confirmation: None,
@@ -797,7 +817,10 @@ impl Core {
         let BackendTrigger::Ai { os_session, .. } = &previous.trigger else {
             return Err(Error::Denied);
         };
-        if !selection.matches(&previous.offer)
+        if !previous
+            .action
+            .offer()
+            .is_some_and(|offer| selection.matches(offer))
             || !same_login(&previous.trigger, &selection)
             || previous
                 .risk
@@ -811,20 +834,25 @@ impl Core {
                 value: Box::new(previous),
             });
         }
-        if self.available.as_ref() != Some(&previous.offer) {
+        if self.available.as_ref() != previous.action.offer() {
             return Err(Error::Denied);
         }
         let now = self.host.clock.millis()?;
         let risk = self
             .available_risk
             .as_ref()
-            .and_then(|r| r.decision(&previous.offer.revision))
+            .and_then(|r| {
+                previous
+                    .action
+                    .offer()
+                    .and_then(|offer| r.decision(&offer.revision))
+            })
             .ok_or(Error::Denied)?;
         if previous.risk.as_ref() != Some(risk) {
             return Err(Error::Denied);
         }
         let until = now.saturating_add(60_000).min(risk.expires_at_unix_ms).min(
-            u64::try_from(previous.offer.expires_at)
+            u64::try_from(previous.action.offer().ok_or(Error::Denied)?.expires_at)
                 .map_err(|_| Error::Clock)?
                 .checked_mul(1000)
                 .ok_or(Error::Clock)?,
@@ -845,9 +873,9 @@ impl Core {
             .map_err(map_app_error)?;
         self.selected = Some(Selection::from_record(&next)?);
         Ok(Reply::Queued {
-            request: next.offer.request,
-            task: next.offer.task,
-            attempt: next.offer.attempt,
+            request: next.action.request().clone(),
+            task: next.action.offer().ok_or(Error::Denied)?.task.clone(),
+            attempt: next.action.offer().ok_or(Error::Denied)?.attempt.clone(),
             confirmation_required: false,
         })
     }
@@ -880,11 +908,31 @@ impl Core {
     }
     fn handle(&mut self, command: Command) {
         use execution_ipc::host::{Reply, Request};
+        if matches!(
+            &command.request,
+            LocalRequest::Operation(
+                execution_ipc::host::Request::EmployeeSession { .. }
+                    | execution_ipc::host::Request::PolicyDirectory { .. }
+                    | execution_ipc::host::Request::InvokePolicy { .. }
+                    | execution_ipc::host::Request::ConfirmPolicy { .. }
+                    | execution_ipc::host::Request::PolicyStatus { .. }
+            )
+        ) {
+            self.enqueue_policy(command);
+            return;
+        }
         if command.reply.is_closed() {
             return;
         }
         let reply = (|| -> Result<Reply, Error> {
             match command.request {
+                LocalRequest::Operation(
+                    Request::EmployeeSession { .. }
+                    | Request::PolicyDirectory { .. }
+                    | Request::InvokePolicy { .. }
+                    | Request::ConfirmPolicy { .. }
+                    | Request::PolicyStatus { .. },
+                ) => Err(Error::Denied),
                 LocalRequest::Operation(Request::ServiceStatus {}) => {
                     let readiness = if self.host.revoked.load(Ordering::Acquire) {
                         execution_ipc::host::Readiness::NotReady
@@ -924,7 +972,7 @@ impl Core {
                                     && !self
                                         .app
                                         .has_service_execution(
-                                            &p.offer.request,
+                                            &p.action.request().clone(),
                                             &self.host.binding.device,
                                         )
                                         .unwrap_or(true)
@@ -996,7 +1044,11 @@ impl Core {
                 LocalRequest::Operation(Request::Cancel { request }) => {
                     if let Some(value) = self.pending(&request, &command.subject)? {
                         let value = self
-                            .transition(&value.offer.request, BackendRequestState::Cancelled, None)?
+                            .transition(
+                                &value.action.request().clone(),
+                                BackendRequestState::Cancelled,
+                                None,
+                            )?
                             .ok_or(Error::Conflict)?;
                         if self.selected.as_ref().is_some_and(|s| s.request == request) {
                             self.selected = None;
@@ -1308,10 +1360,10 @@ impl Selection {
             _ => return Err(Error::Denied),
         };
         Ok(Self {
-            request: record.offer.request.clone(),
-            task: record.offer.task.clone(),
-            attempt: record.offer.attempt.clone(),
-            revision: record.offer.revision.clone(),
+            request: record.action.request().clone(),
+            task: record.action.offer().ok_or(Error::Denied)?.task.clone(),
+            attempt: record.action.offer().ok_or(Error::Denied)?.attempt.clone(),
+            revision: record.action.offer().ok_or(Error::Denied)?.revision.clone(),
             subject: os_session.account.subject.as_str().into(),
             session: os_session
                 .session

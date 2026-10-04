@@ -88,9 +88,11 @@ impl Case {
         service.core.available_risk = level.map(|level| {
             TrustedRisk::fixture(
                 &offer,
-                BackendRiskDecision {
+                ExecutionRisk {
                     level,
-                    policy: plan::reference("backend-risk-policy", "1").unwrap(),
+                    source: execution_contract::RiskSource::Policy {
+                        policy: plan::reference("backend-risk-policy", "1").unwrap(),
+                    },
                     expires_at_unix_ms: clock.millis().unwrap() + 120_000,
                 },
             )
@@ -119,7 +121,9 @@ impl Case {
     }
     fn selection(&self, human: bool) -> Selection {
         let mut selection = Selection::from_record(&BackendRequest {
-            offer: offered(&self.offer).unwrap(),
+            action: execution_contract::PreparedAction::Offered {
+                offer: offered(&self.offer).unwrap(),
+            },
             trigger: self
                 .selection
                 .trigger(&self.service.core.host.binding.device)
@@ -158,9 +162,11 @@ async fn terminal_waiting_releases_capacity_without_changing_the_original_reques
         if cause == 2 {
             c.service.core.available_risk = Some(TrustedRisk::fixture(
                 &c.offer,
-                BackendRiskDecision {
+                ExecutionRisk {
                     level: RiskLevel::Two,
-                    policy: plan::reference("backend-risk-policy", "1").unwrap(),
+                    source: execution_contract::RiskSource::Policy {
+                        policy: plan::reference("backend-risk-policy", "1").unwrap(),
+                    },
                     expires_at_unix_ms: c.service.core.host.clock.millis().unwrap() - 1,
                 },
             ));
@@ -218,7 +224,7 @@ async fn terminal_waiting_releases_capacity_without_changing_the_original_reques
         c.service.next_network = std::time::Instant::now();
         c.service.drive(&mut commands).await.unwrap();
         let next = c.service.core.available.as_ref().unwrap().clone();
-        assert_ne!(next.request, original.offer.request);
+        assert_ne!(next.request, original.action.offer().unwrap().request);
         assert!(c.service.waiting.is_some());
         let mut human = c.selection(true);
         human.request = next.request;
@@ -423,10 +429,10 @@ async fn signed_start_needs_the_current_confirmed_request_and_frozen_action() {
         "../../../crates/execution-contract/tests/fixtures/plan.json"
     ))
     .unwrap();
-    spec.request.request_id = record.offer.request.clone();
+    spec.request.request_id = record.action.offer().unwrap().request.clone();
     spec.request.initiator = Initiator::Backend {
-        task: record.offer.task.clone(),
-        attempt: record.offer.attempt.clone(),
+        task: record.action.offer().unwrap().task.clone(),
+        attempt: record.action.offer().unwrap().attempt.clone(),
         trigger: record.trigger.clone(),
     };
     let frozen = FrozenExecution::freeze(spec, &plan::storage_limits().input).unwrap();
@@ -990,8 +996,14 @@ async fn renewal_and_revoked_restart_keep_the_existing_journal_authority() {
         .backend_requests(&service.core.caller())
         .unwrap();
     assert_eq!(recovered.len(), records.len());
-    assert_eq!(recovered[0].offer.request, records[0].offer.request);
-    assert_eq!(recovered[0].offer.attempt, records[0].offer.attempt);
+    assert_eq!(
+        recovered[0].action.offer().unwrap().request,
+        records[0].action.offer().unwrap().request
+    );
+    assert_eq!(
+        recovered[0].action.offer().unwrap().attempt,
+        records[0].action.offer().unwrap().attempt
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

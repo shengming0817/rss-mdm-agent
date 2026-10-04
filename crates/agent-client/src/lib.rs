@@ -8,6 +8,7 @@ pub use redaction::CredentialRedactor;
 mod client;
 mod enrollment;
 mod identity;
+mod self_service;
 mod tls;
 pub use enrollment::{EnrollmentPhase, EnrollmentStatus, GrantImport};
 mod config;
@@ -22,6 +23,9 @@ pub use store::{inspect_binding, validate_existing, validate_identity};
 /// Closed errors, without secrets, response bodies or backend paths.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum Error {
+    /// Original employee invocation is not yet present.
+    #[error("Agent operation not found")]
+    NotFound,
     /// Invalid trusted configuration.
     #[error("invalid communication configuration")]
     Configuration,

@@ -104,6 +104,7 @@ pub(crate) async fn submit<S: IdentityProvider>(
         {
             return Err(Error::Denied);
         }
+        service.core.current_policy_login(&current)?;
         Some(current)
     } else {
         None

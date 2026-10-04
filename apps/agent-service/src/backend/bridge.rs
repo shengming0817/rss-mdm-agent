@@ -48,6 +48,11 @@ pub struct ExecutionBridge<P> {
     consumer: Id,
     policy: P,
 }
+impl ExecutionBridge<agent_client::CredentialRedactor> {
+    pub(crate) fn protect_employee(&mut self, value: &str) -> Result<(), Error> {
+        self.policy.protect_employee(value)
+    }
+}
 impl<P: OutputPolicy> ExecutionBridge<P> {
     /// Select one stable consumer and independently trusted output policy.
     pub fn new(consumer: Id, policy: P) -> Self {
@@ -504,6 +509,7 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
                     wire::OutputQuality::Failed,
                     serde_json::Value::Null,
                     diagnostics,
+                    i64::try_from(evidence.observed_at_unix_ms / 1000).map_err(|_| Error::Clock)?,
                 )?),
                 wire::TaskPayload::Software(spec) => {
                     wire::TaskEvent::SoftwareResult(software_result(
@@ -569,6 +575,7 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
                     quality,
                     output,
                     diagnostics,
+                    i64::try_from(evidence.observed_at_unix_ms / 1000).map_err(|_| Error::Clock)?,
                 )?)
             }
             _ => return Err(Error::Unsupported),

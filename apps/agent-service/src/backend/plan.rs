@@ -136,7 +136,7 @@ pub(crate) fn script(
     let mut compared = payload.clone();
     compared.permit = original.permit;
     compared.expires_at = original.expires_at;
-    if &compared != original || payload.device_id != binding.device.as_str() {
+    if compared != **original || payload.device_id != binding.device.as_str() {
         return Err(Error::Untrusted);
     }
     let interpreter = interpreters
