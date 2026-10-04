@@ -545,7 +545,6 @@ fn configuration_rejects_untrusted_network_and_unbounded_budgets() {
         limits: Limits::test_defaults(),
         transport: Transport::Https,
         ca_pem: None,
-        device_ca_pem: b"fixture".to_vec(),
     };
     assert_eq!(cfg.validate(), Err(Error::Configuration));
     cfg.origin = Url::parse("http://127.0.0.1:8080").unwrap();
@@ -995,23 +994,6 @@ async fn readonly_identity_preflight_shares_runtime_rules_and_preserves_state() 
         .retain(|_, value| value != "fixture-key");
     assert_eq!(validate().unwrap_err(), Error::Identity);
     *server.secrets.0.lock().unwrap() = secrets.clone();
-    let mut wrong_issuer = cfg.clone();
-    {
-        use base64::Engine;
-        use der::{Decode, EncodePem};
-        let leaf = x509_cert::Certificate::from_der(
-            &base64::engine::general_purpose::STANDARD
-                .decode(&support::pki::chain(server.config().tenant)[0])
-                .unwrap(),
-        )
-        .unwrap();
-        wrong_issuer.device_ca_pem = leaf.to_pem(der::pem::LineEnding::LF).unwrap().into_bytes();
-    }
-    assert_eq!(
-        agent_client::validate_identity(&root.path, &wrong_issuer, &server.secrets, &server.time)
-            .unwrap_err(),
-        Error::Untrusted
-    );
     server.time.set(4_070_908_800);
     assert_eq!(validate().unwrap_err(), Error::CertificateExpired);
     assert_eq!(stored().unwrap(), Some(binding.clone()));

@@ -39,7 +39,7 @@ impl Drop for Root {
         let _ = std::fs::remove_dir_all(&self.path);
     }
 }
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Time(pub Arc<AtomicI64>);
 impl Clock for Time {
     fn now(&self) -> Result<i64, Error> {
@@ -49,6 +49,16 @@ impl Clock for Time {
 impl Time {
     pub fn set(&self, v: i64) {
         self.0.store(v, Ordering::SeqCst);
+    }
+}
+impl rustls::time_provider::TimeProvider for Time {
+    fn current_time(&self) -> Option<rustls::pki_types::UnixTime> {
+        self.now()
+            .ok()
+            .and_then(|now| u64::try_from(now).ok())
+            .map(|now| {
+                rustls::pki_types::UnixTime::since_unix_epoch(std::time::Duration::from_secs(now))
+            })
     }
 }
 #[derive(Clone)]
@@ -107,7 +117,59 @@ impl IdentityProvider for Secrets {
         }
     }
 }
+fn certificate_key(store: agent_client::MachineStore, der: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    format!("machine/{store:?}/{:x}", Sha256::digest(der))
+}
+impl agent_client::MachineTrust for Secrets {
+    fn read_certificate(
+        &self,
+        store: agent_client::MachineStore,
+        der: &[u8],
+    ) -> Result<bool, Error> {
+        let values = self.0.lock().unwrap();
+        if values.contains_key("machine/read-failure") {
+            return Err(Error::Storage);
+        }
+        Ok(values
+            .get(&certificate_key(store, der))
+            .is_some_and(|value| *value == base64::engine::general_purpose::STANDARD.encode(der)))
+    }
+    fn add_certificate(
+        &self,
+        store: agent_client::MachineStore,
+        der: &[u8],
+    ) -> Result<agent_client::CertificateAdd, Error> {
+        let mut values = self.0.lock().unwrap();
+        if values.contains_key("machine/add-failure") {
+            return Err(Error::Storage);
+        }
+        let key = certificate_key(store, der);
+        if values.contains_key(&key) {
+            return Ok(agent_client::CertificateAdd::Present);
+        }
+        values.insert(key, base64::engine::general_purpose::STANDARD.encode(der));
+        if values.remove("machine/add-response-lost").is_some() {
+            return Err(Error::Storage);
+        }
+        Ok(agent_client::CertificateAdd::Created)
+    }
+    fn delete_certificate(
+        &self,
+        store: agent_client::MachineStore,
+        der: &[u8],
+    ) -> Result<(), Error> {
+        self.0.lock().unwrap().remove(&certificate_key(store, der));
+        Ok(())
+    }
+}
 pub struct Data {
+    pub trust: Value,
+    pub trust_calls: usize,
+    pub trust_ack_calls: Vec<Value>,
+    pub trust_ack_failure: bool,
+    pub renewal_lookup_calls: Vec<Value>,
+    pub renewal_lookup_authenticated: Vec<bool>,
     pub tls_required: bool,
     pub employee_calls: Vec<(String, Value)>,
     pub self_service_directory: Option<SelfServiceDirectoryResponse>,
@@ -118,6 +180,8 @@ pub struct Data {
     pub grant: Option<enroll::GrantReceipt>,
     pub issuance: Uuid,
     pub candidate_leaf: Option<Vec<u8>>,
+    pub candidate_not_after: u64,
+    pub candidate_rotated: bool,
     pub profile: Option<enroll::RuntimeProfile>,
     pub activation: Option<enroll::ActivationReceipt>,
     pub binding: Option<BindingProfile>,
@@ -317,6 +381,12 @@ impl Server {
         let time = Time(Arc::new(AtomicI64::new(1)));
         let signer = Ed25519KeyPair::from_seed_unchecked(&[7; 32]).unwrap();
         let data = Arc::new(Mutex::new(Data {
+            trust: Value::Null,
+            trust_calls: 0,
+            trust_ack_calls: Vec::new(),
+            trust_ack_failure: false,
+            renewal_lookup_calls: Vec::new(),
+            renewal_lookup_authenticated: Vec::new(),
             tls_required: tls,
             employee_calls: vec![],
             self_service_directory: None,
@@ -327,6 +397,8 @@ impl Server {
             grant: None,
             issuance: Uuid::new_v4(),
             candidate_leaf: None,
+            candidate_not_after: 4_070_908_800,
+            candidate_rotated: false,
             profile: None,
             activation: None,
             binding: None,
@@ -387,14 +459,21 @@ impl Server {
             listener.local_addr().unwrap()
         ))
         .unwrap();
+        {
+            let mut state = data.lock().unwrap();
+            state.trust = pki::trust(url.as_str(), state.tenant);
+        }
         let router = axum::Router::new()
             .fallback(handler)
             .with_state(data.clone());
+        let data_time = time.clone();
         let task = tokio::spawn(async move {
             if tls {
+                let mut config = pki::server();
+                config.time_provider = Arc::new(data_time);
                 let listener = TlsListener {
                     listener,
-                    acceptor: tokio_rustls::TlsAcceptor::from(Arc::new(pki::server())),
+                    acceptor: tokio_rustls::TlsAcceptor::from(Arc::new(config)),
                 };
                 axum::serve(
                     listener,
@@ -430,7 +509,6 @@ impl Server {
                 Transport::TestLoopback
             },
             ca_pem: data.tls_required.then(pki::ca),
-            device_ca_pem: pki::ca(),
         }
     }
     pub fn client(&self, root: &Root, mode: OpenMode) -> Client<Secrets, Time> {
@@ -454,6 +532,7 @@ impl Server {
             ])
             .await
             .unwrap();
+        client.drive_pki().await.unwrap();
         client.registration().unwrap()
     }
 }
@@ -488,6 +567,7 @@ async fn handler(
     if d.tls_required
         && (path.ends_with("/activate")
             || path.ends_with("/renewal-grants")
+            || path.ends_with("/trust/acknowledgements")
             || path.starts_with("/api/v1/agent/runtime/"))
         && !authenticated
     {
@@ -547,6 +627,45 @@ fn runtime_error(status: StatusCode, code: ErrorCode) -> Response {
 }
 fn enrollment_response(d: &mut Data, action: &str, value: Value, peer: Option<&[u8]>) -> Response {
     match action {
+        "trust" => {
+            d.trust_calls += 1;
+            axum::Json(d.trust.clone()).into_response()
+        }
+        "trust/acknowledgements" => {
+            assert!(d.activation.is_some());
+            if d.tls_required && peer.is_none() {
+                return runtime_error(StatusCode::UNAUTHORIZED, ErrorCode::InvalidIdentity);
+            }
+            d.trust_ack_calls.push(value);
+            if std::mem::take(&mut d.trust_ack_failure) {
+                return (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    axum::Json(enroll::ErrorBody {
+                        code: enroll::ErrorCode::ServiceUnavailable,
+                        issuance_id: None,
+                    }),
+                )
+                    .into_response();
+            }
+            StatusCode::NO_CONTENT.into_response()
+        }
+        "renewal-grants/status" => {
+            d.renewal_lookup_calls.push(value.clone());
+            d.renewal_lookup_authenticated.push(peer.is_some());
+            if value["operationId"].as_str() != d.operation.map(|id| id.to_string()).as_deref()
+                || value["secret"].as_str() != d.bootstrap.as_deref()
+            {
+                return (
+                    StatusCode::UNAUTHORIZED,
+                    axum::Json(enroll::ErrorBody {
+                        code: enroll::ErrorCode::InvalidIdentity,
+                        issuance_id: None,
+                    }),
+                )
+                    .into_response();
+            }
+            axum::Json(d.grant.clone().unwrap()).into_response()
+        }
         "requests" | "renewal-grants" => {
             let request: enroll::GrantRequest = serde_json::from_value(value).unwrap();
             if action == "renewal-grants" && d.operation != Some(request.operation_id) {
@@ -636,7 +755,19 @@ fn enrollment_response(d: &mut Data, action: &str, value: Value, peer: Option<&[
                         .unwrap(),
                 )
                 .unwrap();
-                pki::chain_for(d.tenant, csr.info.public_key.to_der().unwrap())
+                if d.candidate_rotated {
+                    pki::rotation_chain(
+                        d.tenant,
+                        csr.info.public_key.to_der().unwrap(),
+                        d.candidate_not_after,
+                    )
+                } else {
+                    pki::chain_until(
+                        d.tenant,
+                        csr.info.public_key.to_der().unwrap(),
+                        d.candidate_not_after,
+                    )
+                }
             };
             d.candidate_leaf = Some(
                 base64::engine::general_purpose::STANDARD
