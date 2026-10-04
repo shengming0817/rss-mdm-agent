@@ -639,7 +639,8 @@ export class VerifiedProviderSession {
     const controlled = configuration.permissions === "host_mediated";
     if (
       controlled
-        ? typeof admission?.tools?.propose !== "function" ||
+        ? typeof admission?.tools?.list !== "function" ||
+          typeof admission?.tools?.propose !== "function" ||
           typeof admission?.verifier?.verify !== "function"
         : configuration.permissions !== "tools_disabled" ||
           admission?.tools !== undefined ||

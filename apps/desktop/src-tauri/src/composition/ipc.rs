@@ -35,10 +35,10 @@ fn decode_connection(
 }
 // Production commands and generated UI contract share these signatures.
 macro_rules! commands {
-    ($($name:ident($input:ty) -> $output:ty = $method:ident),+ $(,)?) => {
+    ($($name:ident($input:ty) -> $output:ty = $method:ident, employee = $employee:literal),+ $(,)?) => {
         $(#[tauri::command]
         pub async fn $name(state: State<'_, DesktopRuntime>, generation: String, input: serde_json::Value) -> Result<$output> {
-            let handle = state.execution_for(&generation)?;
+            let handle = if $employee { state.policy_execution_for(&generation).await? } else { state.execution_for(&generation)? };
             let output = handle.$method(decode::<$input>(input)?).await;
             state.current(&generation)?;
             output
@@ -55,10 +55,15 @@ macro_rules! commands {
     }
 }
 commands! {
-    self_service_snapshot(SnapshotQuery) -> Snapshot = snapshot,
-    self_service_execute(execution_contract::BackendSelection) -> execution_contract::TaskSubmission = execute_ui,
-    self_service_confirm(execution_contract::BackendSelection) -> execution_contract::TaskSubmission = confirm_ui,
-    self_service_cancel(ActionRef) -> execution_app::BackendTaskView = cancel_ui,
+    self_service_observe_software(execution_contract::SoftwareReadChoice) -> execution_contract::BackendRequest = observe_software, employee = false,
+    self_service_policy_directory(PolicyDirectoryQuery) -> rss_mdm_agent_wire::runtime::SelfServiceDirectoryResponse = policy_directory, employee = true,
+    self_service_policy_invoke(execution_contract::PolicyChoice) -> execution_contract::BackendRequest = invoke_policy, employee = true,
+    self_service_policy_confirm(ActionRef) -> execution_contract::BackendRequest = confirm_policy, employee = true,
+    self_service_policy_status(ActionRef) -> PolicyStatus = policy_status, employee = true,
+    self_service_snapshot(SnapshotQuery) -> Snapshot = snapshot, employee = false,
+    self_service_execute(execution_contract::BackendSelection) -> execution_contract::TaskSubmission = execute_ui, employee = false,
+    self_service_confirm(execution_contract::BackendSelection) -> execution_contract::TaskSubmission = confirm_ui, employee = false,
+    self_service_cancel(ActionRef) -> execution_app::BackendTaskView = cancel_ui, employee = false,
 }
 #[tauri::command]
 pub async fn execution_task_details(
@@ -290,6 +295,11 @@ pub fn register<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder
         save_connection,
         test_users,
         select_test_user,
+        self_service_observe_software,
+        self_service_policy_directory,
+        self_service_policy_invoke,
+        self_service_policy_confirm,
+        self_service_policy_status,
         self_service_snapshot,
         self_service_execute,
         self_service_confirm,
@@ -404,6 +414,11 @@ mod tests {
             "ai_host_status",
             "ai_restart_host",
             "ai_export_diagnostics",
+            "self_service_observe_software",
+            "self_service_policy_directory",
+            "self_service_policy_invoke",
+            "self_service_policy_confirm",
+            "self_service_policy_status",
             "self_service_snapshot",
             "self_service_execute",
             "self_service_confirm",

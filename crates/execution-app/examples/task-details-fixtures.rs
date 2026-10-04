@@ -79,12 +79,16 @@ fn main() {
         ),
     ] {
         let request = BackendRequest {
-            offer: offer.clone(),
-            risk: Some(BackendRiskDecision {
+            action: PreparedAction::Offered {
+                offer: offer.clone(),
+            },
+            risk: Some(ExecutionRisk {
                 level: RiskLevel::Two,
-                policy: VersionedRef {
-                    id: id("fixture-risk"),
-                    revision: id("1"),
+                source: RiskSource::Policy {
+                    policy: VersionedRef {
+                        id: id("fixture-risk"),
+                        revision: id("1"),
+                    },
                 },
                 expires_at_unix_ms: 9_999_999_999_000,
             }),

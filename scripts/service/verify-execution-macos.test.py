@@ -218,7 +218,7 @@ finally: connection.close()
                         program=path.read_text();compile(program,str(path),'exec');programs.append(program)
                 def start(self): raise RuntimeError('stop before administrator authority')
                 def close(self): pass
-            with patch.object(acceptance.sys,'argv',['verify','--binary','/bin/sh','--desktop','/bin/sh','--backend',str(backend),'--output',str(output)]),patch.object(acceptance,'AdministratorSession',NoAuthority):
+            with patch.object(acceptance,'DEFAULT_CONFIG',root/'absent-default.json'), patch.object(acceptance.sys,'argv',['verify','--binary','/bin/sh','--desktop','/bin/sh','--backend',str(backend),'--output',str(output)]),patch.object(acceptance,'AdministratorSession',NoAuthority):
                 with self.assertRaisesRegex(RuntimeError,'stop before administrator authority'): acceptance.main()
             self.assertEqual(len(programs),4)
             receipt=json.loads((output/'receipt.json').read_text());self.assertEqual(receipt['cleanup'],'complete');self.assertFalse(receipt['installationCreated'])

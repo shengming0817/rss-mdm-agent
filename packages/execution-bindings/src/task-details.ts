@@ -13,6 +13,24 @@ export type BackendTaskView =
       value: ExecutionTaskDetails;
     };
 /**
+ * Public source of one Resource-declared parameter.
+ */
+export type ScriptParameterSource =
+  | {
+      kind: "fixed";
+      /**
+       * Administrator-selected scalar checked against the Resource schema.
+       */
+      value: string | boolean | number;
+    }
+  | {
+      kind: "input";
+    };
+/**
+ * Opaque local reference identifier; syntax validity is not authenticity.
+ */
+export type Id = string;
+/**
  * Closed preparation diagnosis without backend bodies or local paths.
  */
 export type BackendRequestFailure =
@@ -92,6 +110,52 @@ export type StopOutcome = "acknowledged" | "failed";
  */
 export interface BackendRequest {
   /**
+   * The sole immutable choice and appended backend association.
+   */
+  action:
+    | {
+        choice: SoftwareReadChoice;
+        /**
+         * Exact declared software definition; this is a software risk source.
+         */
+        definition: string;
+        /**
+         * Original preparation validity.
+         */
+        expiresAtUnixMs: number;
+        kind: "softwareRead";
+        /**
+         * Independently collected fact, appended once and never treated as installation success.
+         */
+        observation: SoftwareObservation | null;
+      }
+    | {
+        kind: "offered";
+        offer: BackendTask;
+      }
+    | {
+        actor: ScriptActor;
+        choice: PolicyChoice;
+        directory: SelfServiceDirectoryItem;
+        /**
+         * Bounded validity of the original preparation.
+         */
+        expiresAtUnixMs: number;
+        /**
+         * Native product login generation.
+         */
+        generation: string;
+        kind: "policy";
+        /**
+         * Eventual signed Offer; no task/attempt is invented before this exists.
+         */
+        offer: BackendTask1 | null;
+        /**
+         * Backend Run returned for the original request, absent until acceptance is known.
+         */
+        runId: Id | null;
+      };
+  /**
    * Explicit risk-two response; readiness alone never proves confirmation.
    */
   confirmation: BackendConfirmation | null;
@@ -99,7 +163,6 @@ export interface BackendRequest {
    * Diagnosis when preparation failed.
    */
   failure: BackendRequestFailure | null;
-  offer: BackendTask;
   /**
    * Monotonic journal revision.
    */
@@ -107,11 +170,12 @@ export interface BackendRequest {
   /**
    * Immutable trusted classification; absent for human requests or unknown AI risk.
    */
-  risk: BackendRiskDecision | null;
+  risk: ExecutionRisk | null;
   /**
    * Preparation state, separate from execution lifecycle.
    */
   state:
+    | "observed"
     | "awaitingConfirmation"
     | "ready"
     | "submitting"
@@ -131,60 +195,102 @@ export interface BackendRequest {
     | {
         config: VersionedRef1;
         /**
-         * Conversation reference used for audit correlation.
+         * Opaque local reference identifier; syntax validity is not authenticity.
          */
         conversation: string;
         kind: "ai";
         osSession: OsSessionRef2;
         /**
-         * Tool request reference used for audit correlation.
+         * Opaque local reference identifier; syntax validity is not authenticity.
          */
         toolCall: string;
       };
 }
 /**
- * Sole product confirmation, persisted together with the original AI request.
+ * Original read identity, independent of installation execution.
  */
-export interface BackendConfirmation {
+export interface SoftwareReadChoice {
+  input: SoftwareReadSelection;
   /**
-   * Trusted service time at the user's explicit response.
+   * Original query identity.
    */
-  confirmedAtUnixMs: number;
-  /**
-   * Exclusive deadline, bounded by the offer, policy and one-minute interaction limit.
-   */
-  expiresAtUnixMs: number;
-  osSession: OsSessionRef;
+  request: string;
 }
 /**
- * Actual original login, independently authenticated at confirmation and dispatch.
+ * The sole immutable query input.
  */
-export interface OsSessionRef {
-  account: OsAccountRef;
+export interface SoftwareReadSelection {
+  selection: BackendSelection;
   /**
-   * Origin device reference; it does not establish registration or target authority.
+   * One declared step in that definition.
    */
-  device: string;
-  /**
-   * Origin OS login/session reference, including an explicit test reference in fixtures.
-   */
-  session: string;
+  step: number;
 }
 /**
- * Login account at the origin; never implicitly equated to the product actor.
+ * Exact current signed offer projection.
  */
-export interface OsAccountRef {
+export interface BackendSelection {
   /**
-   * OS namespace of this reference or target; does not assert platform support.
+   * Original backend attempt.
    */
-  platform: "windows" | "macos" | "linux";
+  attempt: string;
   /**
-   * Opaque stable OS account reference, such as a SID/UID reference, not an authentication credential.
+   * Original request shown with the offer, used unchanged for recovery.
    */
-  subject: string;
+  request: string;
+  /**
+   * Revision shown to the user/model.
+   */
+  revision: string;
+  /**
+   * Backend task identity.
+   */
+  task: string;
 }
 /**
- * Exact offer and its display summary.
+ * Fresh native software fact, with collection time and no installer result claims.
+ */
+export interface SoftwareObservation {
+  /**
+   * Time of actual observation from the service clock.
+   */
+  collectedAtUnixMs: number;
+  /**
+   * Exact declared desired version, separate from the observed version.
+   */
+  expectedVersion: string;
+  /**
+   * Exact declared package.
+   */
+  package: string;
+  /**
+   * Completeness of this finite native observation; failed leaves the state Unknown.
+   */
+  quality: "complete" | "truncated" | "failed" | "partial";
+  /**
+   * Native receipt or product observation; unknown remains explicit.
+   */
+  state:
+    | {
+        kind: "absent";
+      }
+    | {
+        kind: "present";
+        /**
+         * Ecosystem version, preserved exactly.
+         */
+        version: string;
+      }
+    | {
+        kind: "unknown";
+        /**
+         * Closed detection failure, without paths or backend text.
+         */
+        reason: "unavailable" | "unrecognizedVersion" | "budgetExceeded";
+      };
+}
+/**
+ * Exact signed task projection.
  */
 export interface BackendTask {
   /**
@@ -256,9 +362,238 @@ export interface BackendStepSummary {
   version: string;
 }
 /**
+ * Authenticated product employee, checked against the signed authorization.
+ */
+export interface ScriptActor {
+  /**
+   * Identity instance.
+   */
+  instanceId: string;
+  /**
+   * Authenticated principal.
+   */
+  principalId: string;
+  /**
+   * Product tenant.
+   */
+  tenantId: string;
+}
+/**
+ * Immutable employee choice.
+ */
+export interface PolicyChoice {
+  /**
+   * Only Resource fields whose Policy source is Input.
+   */
+  parameters: {
+    [k: string]: unknown;
+  };
+  /**
+   * Policy from the current authorized directory.
+   */
+  policyId: string;
+  /**
+   * Exact current configuration revision.
+   */
+  policyRevision: number;
+  /**
+   * Immutable execution version.
+   */
+  policyVersion: string;
+  /**
+   * Stable request allocated before submission, reused after response loss.
+   */
+  request: string;
+}
+/**
+ * Formal backend directory DTO, including the Resource-owned schema.
+ */
+export interface SelfServiceDirectoryItem {
+  /**
+   * Resource-owned JSON Schema for full resolved parameters.
+   */
+  parameterSchema: {
+    [k: string]: unknown;
+  };
+  /**
+   * Complete source map; Fixed values cannot be overridden.
+   */
+  parameterSources: {
+    [k: string]: ScriptParameterSource;
+  };
+  /**
+   * Logical Policy identity.
+   */
+  policyId: string;
+  /**
+   * Current configuration CAS revision.
+   */
+  policyRevision: number;
+  /**
+   * Immutable execution version.
+   */
+  policyVersion: string;
+  resource: ScriptResource;
+  selfService: SelfServiceMetadata;
+}
+/**
+ * Exact selected Resource coordinates.
+ */
+export interface ScriptResource {
+  /**
+   * Logical Resource identity.
+   */
+  id: string;
+  /**
+   * Exact selected variant.
+   */
+  variant: string;
+  /**
+   * Immutable Resource version.
+   */
+  version: string;
+}
+/**
+ * Normalized presentation and invocation settings.
+ */
+export interface SelfServiceMetadata {
+  /**
+   * Effective administrator AI switch.
+   */
+  allowAi: boolean;
+  /**
+   * Presentation category.
+   */
+  category: string;
+  /**
+   * Intended purpose.
+   */
+  description: string;
+  /**
+   * Directory display name.
+   */
+  displayName: string;
+  /**
+   * Search terms.
+   */
+  keywords: string[];
+  /**
+   * Preconditions shown before invocation.
+   */
+  prerequisites: string;
+  /**
+   * Whether this script is published for self service.
+   */
+  published: boolean;
+  /**
+   * Effective risk level, one or two.
+   */
+  riskLevel: 1 | 2;
+  /**
+   * Expected effects shown before invocation.
+   */
+  sideEffects: string;
+}
+/**
+ * Exact displayed backend offer, without executable input or authorization claims.
+ */
+export interface BackendTask1 {
+  /**
+   * Backend attempt identity; reconnect never allocates a new attempt.
+   */
+  attempt: string;
+  /**
+   * Exclusive UTC Unix expiry in seconds.
+   */
+  expiresAt: number;
+  /**
+   * Deterministic original execution request used for status after response loss.
+   */
+  request: string;
+  /**
+   * Full signed offer revision.
+   */
+  revision: string;
+  /**
+   * Complete safe action preview, immutable with the offer revision.
+   */
+  summary:
+    | {
+        /**
+         * Account class selected by the backend.
+         */
+        identity: "system" | "user";
+        kind: "script";
+      }
+    | {
+        /**
+         * Install, uninstall or detection intent.
+         */
+        intent: "install" | "detect" | "uninstall";
+        kind: "software";
+        /**
+         * Ordered prerequisites and final package.
+         */
+        steps: BackendStepSummary[];
+      };
+  /**
+   * Backend task identity.
+   */
+  task: string;
+  /**
+   * Safe display text selected by the backend.
+   */
+  title: string;
+  /**
+   * Requires an explicit local user action before requesting Start.
+   */
+  userInitiated: boolean;
+}
+/**
+ * Sole product confirmation, persisted together with the original AI request.
+ */
+export interface BackendConfirmation {
+  /**
+   * Trusted service time at the user's explicit response.
+   */
+  confirmedAtUnixMs: number;
+  /**
+   * Exclusive deadline, bounded by the offer, policy and one-minute interaction limit.
+   */
+  expiresAtUnixMs: number;
+  osSession: OsSessionRef;
+}
+/**
+ * Actual original login, independently authenticated at confirmation and dispatch.
+ */
+export interface OsSessionRef {
+  account: OsAccountRef;
+  /**
+   * Origin device reference; it does not establish registration or target authority.
+   */
+  device: string;
+  /**
+   * Opaque local reference identifier; syntax validity is not authenticity.
+   */
+  session: string;
+}
+/**
+ * Login account at the origin; never implicitly equated to the product actor.
+ */
+export interface OsAccountRef {
+  /**
+   * OS namespace of this reference or target; does not assert platform support.
+   */
+  platform: "windows" | "macos" | "linux";
+  /**
+   * Opaque local reference identifier; syntax validity is not authenticity.
+   */
+  subject: string;
+}
+/**
  * Backend-authenticated classification of the exact offer, never an IPC claim.
  */
-export interface BackendRiskDecision {
+export interface ExecutionRisk {
   /**
    * Exclusive trusted decision deadline.
    */
@@ -267,18 +602,32 @@ export interface BackendRiskDecision {
    * Explicit effect classification selected by backend policy.
    */
   level: "zero" | "one" | "two" | "three";
-  policy: VersionedRef;
+  /**
+   * Exact backend risk policy revision.
+   */
+  source:
+    | {
+        kind: "policy";
+        policy: VersionedRef;
+      }
+    | {
+        /**
+         * Exact signed software definition and action.
+         */
+        definition: string;
+        kind: "software";
+      };
 }
 /**
- * Exact backend risk policy revision.
+ * Exact configuration revision.
  */
 export interface VersionedRef {
   /**
-   * Opaque reference identity; the revision must be supplied separately.
+   * Opaque local reference identifier; syntax validity is not authenticity.
    */
   id: string;
   /**
-   * Exact immutable revision reference; does not resolve or follow a moving alias.
+   * Opaque local reference identifier; syntax validity is not authenticity.
    */
   revision: string;
 }
@@ -292,7 +641,7 @@ export interface OsSessionRef1 {
    */
   device: string;
   /**
-   * Origin OS login/session reference, including an explicit test reference in fixtures.
+   * Opaque local reference identifier; syntax validity is not authenticity.
    */
   session: string;
 }
@@ -301,11 +650,11 @@ export interface OsSessionRef1 {
  */
 export interface VersionedRef1 {
   /**
-   * Opaque reference identity; the revision must be supplied separately.
+   * Opaque local reference identifier; syntax validity is not authenticity.
    */
   id: string;
   /**
-   * Exact immutable revision reference; does not resolve or follow a moving alias.
+   * Opaque local reference identifier; syntax validity is not authenticity.
    */
   revision: string;
 }
@@ -319,7 +668,7 @@ export interface OsSessionRef2 {
    */
   device: string;
   /**
-   * Origin OS login/session reference, including an explicit test reference in fixtures.
+   * Opaque local reference identifier; syntax validity is not authenticity.
    */
   session: string;
 }
@@ -379,25 +728,25 @@ export interface FrozenExecutionSummary {
   authority:
     | {
         /**
-         * Authority reference in this variant namespace; no proof of issuer authenticity.
+         * Opaque local reference identifier; syntax validity is not authenticity.
          */
         id: string;
         kind: "local";
       }
     | {
         /**
-         * Authority reference in this variant namespace; no proof of issuer authenticity.
+         * Opaque local reference identifier; syntax validity is not authenticity.
          */
         id: string;
         kind: "enterprise";
         /**
-         * Explicit enterprise tenant reference; local/test authority never fabricates a tenant.
+         * Opaque local reference identifier; syntax validity is not authenticity.
          */
         tenant: string;
       }
     | {
         /**
-         * Authority reference in this variant namespace; no proof of issuer authenticity.
+         * Opaque local reference identifier; syntax validity is not authenticity.
          */
         id: string;
         kind: "test";
@@ -431,12 +780,12 @@ export interface FrozenExecutionSummary {
   initiator:
     | {
         /**
-         * Exact server execution attempt.
+         * Opaque local reference identifier; syntax validity is not authenticity.
          */
         attempt: string;
         kind: "backend";
         /**
-         * Exact server task, independently verified by the host.
+         * Opaque local reference identifier; syntax validity is not authenticity.
          */
         task: string;
         /**
@@ -453,13 +802,13 @@ export interface FrozenExecutionSummary {
           | {
               config: VersionedRef1;
               /**
-               * Conversation reference used for audit correlation.
+               * Opaque local reference identifier; syntax validity is not authenticity.
                */
               conversation: string;
               kind: "ai";
               osSession: OsSessionRef2;
               /**
-               * Tool request reference used for audit correlation.
+               * Opaque local reference identifier; syntax validity is not authenticity.
                */
               toolCall: string;
             };
@@ -471,17 +820,17 @@ export interface FrozenExecutionSummary {
     | {
         config: VersionedRef3;
         /**
-         * Originating AI conversation reference in the provider namespace.
+         * Opaque local reference identifier; syntax validity is not authenticity.
          */
         conversation: string;
         kind: "ai";
         osSession: OsSessionRef4;
         /**
-         * Provider namespace, independent of product authentication.
+         * Opaque local reference identifier; syntax validity is not authenticity.
          */
         provider: string;
         /**
-         * Originating tool-call reference; cannot act as a product approval.
+         * Opaque local reference identifier; syntax validity is not authenticity.
          */
         toolCall: string;
       }
@@ -526,7 +875,7 @@ export interface FrozenExecutionSummary {
         account: OsAccountRef2;
         kind: "activeUser";
         /**
-         * Exact native login session; a new login for the same account is not interchangeable.
+         * Opaque local reference identifier; syntax validity is not authenticity.
          */
         session: string;
       };
@@ -548,11 +897,11 @@ export interface ExactArtifactRef {
  */
 export interface VersionedRef2 {
   /**
-   * Opaque reference identity; the revision must be supplied separately.
+   * Opaque local reference identifier; syntax validity is not authenticity.
    */
   id: string;
   /**
-   * Exact immutable revision reference; does not resolve or follow a moving alias.
+   * Opaque local reference identifier; syntax validity is not authenticity.
    */
   revision: string;
 }
@@ -629,7 +978,7 @@ export interface OsAccountRef1 {
    */
   platform: "windows" | "macos" | "linux";
   /**
-   * Opaque stable OS account reference, such as a SID/UID reference, not an authentication credential.
+   * Opaque local reference identifier; syntax validity is not authenticity.
    */
   subject: string;
 }
@@ -643,7 +992,7 @@ export interface OsSessionRef3 {
    */
   device: string;
   /**
-   * Origin OS login/session reference, including an explicit test reference in fixtures.
+   * Opaque local reference identifier; syntax validity is not authenticity.
    */
   session: string;
 }
@@ -652,11 +1001,11 @@ export interface OsSessionRef3 {
  */
 export interface VersionedRef3 {
   /**
-   * Opaque reference identity; the revision must be supplied separately.
+   * Opaque local reference identifier; syntax validity is not authenticity.
    */
   id: string;
   /**
-   * Exact immutable revision reference; does not resolve or follow a moving alias.
+   * Opaque local reference identifier; syntax validity is not authenticity.
    */
   revision: string;
 }
@@ -670,7 +1019,7 @@ export interface OsSessionRef4 {
    */
   device: string;
   /**
-   * Origin OS login/session reference, including an explicit test reference in fixtures.
+   * Opaque local reference identifier; syntax validity is not authenticity.
    */
   session: string;
 }
@@ -679,11 +1028,11 @@ export interface OsSessionRef4 {
  */
 export interface VersionedRef4 {
   /**
-   * Opaque reference identity; the revision must be supplied separately.
+   * Opaque local reference identifier; syntax validity is not authenticity.
    */
   id: string;
   /**
-   * Exact immutable revision reference; does not resolve or follow a moving alias.
+   * Opaque local reference identifier; syntax validity is not authenticity.
    */
   revision: string;
 }
@@ -709,11 +1058,11 @@ export interface ExactArtifactRef1 {
  */
 export interface VersionedRef5 {
   /**
-   * Opaque reference identity; the revision must be supplied separately.
+   * Opaque local reference identifier; syntax validity is not authenticity.
    */
   id: string;
   /**
-   * Exact immutable revision reference; does not resolve or follow a moving alias.
+   * Opaque local reference identifier; syntax validity is not authenticity.
    */
   revision: string;
 }
@@ -722,7 +1071,7 @@ export interface VersionedRef5 {
  */
 export interface Operation {
   /**
-   * Stable operation identifier owned by the catalog/authorization policy.
+   * Opaque local reference identifier; syntax validity is not authenticity.
    */
   action: string;
   resource: VersionedRef6;
@@ -732,11 +1081,11 @@ export interface Operation {
  */
 export interface VersionedRef6 {
   /**
-   * Opaque reference identity; the revision must be supplied separately.
+   * Opaque local reference identifier; syntax validity is not authenticity.
    */
   id: string;
   /**
-   * Exact immutable revision reference; does not resolve or follow a moving alias.
+   * Opaque local reference identifier; syntax validity is not authenticity.
    */
   revision: string;
 }
@@ -745,11 +1094,11 @@ export interface VersionedRef6 {
  */
 export interface VersionedRef7 {
   /**
-   * Opaque reference identity; the revision must be supplied separately.
+   * Opaque local reference identifier; syntax validity is not authenticity.
    */
   id: string;
   /**
-   * Exact immutable revision reference; does not resolve or follow a moving alias.
+   * Opaque local reference identifier; syntax validity is not authenticity.
    */
   revision: string;
 }
@@ -762,7 +1111,7 @@ export interface OsAccountRef2 {
    */
   platform: "windows" | "macos" | "linux";
   /**
-   * Opaque stable OS account reference, such as a SID/UID reference, not an authentication credential.
+   * Opaque local reference identifier; syntax validity is not authenticity.
    */
   subject: string;
 }
@@ -799,7 +1148,7 @@ export interface OsAccountRef3 {
    */
   platform: "windows" | "macos" | "linux";
   /**
-   * Opaque stable OS account reference, such as a SID/UID reference, not an authentication credential.
+   * Opaque local reference identifier; syntax validity is not authenticity.
    */
   subject: string;
 }
@@ -898,7 +1247,7 @@ export interface EvidenceRef {
   kind: "testResult" | "processExited" | "stateObserved";
   reference: VersionedRef8;
   /**
-   * Runner reference whose evidence is being recorded, including an explicit fixture runner in tests.
+   * Opaque local reference identifier; syntax validity is not authenticity.
    */
   runner: string;
 }
@@ -907,11 +1256,11 @@ export interface EvidenceRef {
  */
 export interface VersionedRef8 {
   /**
-   * Opaque reference identity; the revision must be supplied separately.
+   * Opaque local reference identifier; syntax validity is not authenticity.
    */
   id: string;
   /**
-   * Exact immutable revision reference; does not resolve or follow a moving alias.
+   * Opaque local reference identifier; syntax validity is not authenticity.
    */
   revision: string;
 }

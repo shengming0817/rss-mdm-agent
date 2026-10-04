@@ -294,6 +294,7 @@ struct Call {
     reply: tokio::sync::oneshot::Sender<Vec<u8>>,
 }
 struct OwnerThread {
+    fence: Option<std::sync::Arc<dyn host::SessionFence>>,
     sender: std::sync::mpsc::SyncSender<Call>,
     stopping: std::sync::Arc<AtomicBool>,
     progress: std::sync::Arc<Mutex<std::time::Instant>>,
@@ -301,6 +302,7 @@ struct OwnerThread {
 }
 impl OwnerThread {
     fn new(mut handler: Box<dyn Handler>) -> Result<Self, Error> {
+        let fence = handler.session_fence();
         let (sender, receiver) = std::sync::mpsc::sync_channel::<Call>(1);
         let stopping = std::sync::Arc::new(AtomicBool::new(false));
         let stopped = stopping.clone();
@@ -354,6 +356,7 @@ impl OwnerThread {
             })
             .map_err(|_| Error::Unavailable)?;
         Ok(Self {
+            fence,
             sender,
             stopping,
             progress,
@@ -425,19 +428,33 @@ async fn call(pipe: &mut NamedPipeServer, owner: &OwnerThread) -> Result<(), Err
     pipe.read_exact(&mut bytes)
         .await
         .map_err(|_| Error::Unavailable)?;
-    let (reply, received) = tokio::sync::oneshot::channel();
-    owner
-        .sender
-        .try_send(Call {
-            pid,
-            session,
-            connection,
-            _process: process,
-            bytes,
-            reply,
-        })
-        .map_err(|_| Error::Capacity)?;
-    let reply = received.await.map_err(|_| Error::Unavailable)?;
+    let peer = Peer {
+        pid,
+        session,
+        uid: None,
+        native: raw(&connection) as usize,
+    };
+    let fenced = owner
+        .fence
+        .as_deref()
+        .and_then(|f| host::dispatch_fence(f, &peer, &bytes));
+    let reply = if let Some(reply) = fenced {
+        reply
+    } else {
+        let (reply, received) = tokio::sync::oneshot::channel();
+        owner
+            .sender
+            .try_send(Call {
+                pid,
+                session,
+                connection,
+                _process: process,
+                bytes,
+                reply,
+            })
+            .map_err(|_| Error::Capacity)?;
+        received.await.map_err(|_| Error::Unavailable)?
+    };
     if reply.len() > host::FRAME_LIMIT {
         return Err(Error::Unavailable);
     }
@@ -471,11 +488,71 @@ async fn exchange(
         }
     }
 }
+fn drive_fence(
+    fence: std::sync::Arc<dyn host::SessionFence>,
+    name: String,
+    sddl: String,
+) -> Result<(), Error> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|_| Error::Unavailable)?;
+    runtime.block_on(async {
+        let mut pipe = listener(&name, &sddl)?;
+        while !stopping() {
+            tokio::select! {
+                connected = pipe.connect() => {
+                    connected.map_err(|_| Error::Unavailable)?;
+                    let request = async {
+                        let mut pid = 0; let mut session = 0;
+                        if unsafe { GetNamedPipeClientProcessId(pipe.as_raw_handle(), &mut pid) } == 0
+                            || unsafe { GetNamedPipeClientSessionId(pipe.as_raw_handle(), &mut session) } == 0 { return Err(Error::Denied); }
+                        let size = pipe.read_u32_le().await.map_err(|_| Error::Unavailable)? as usize;
+                        if size == 0 || size > 65536 { return Err(Error::InvalidInput); }
+                        let mut bytes = vec![0; size];
+                        pipe.read_exact(&mut bytes).await.map_err(|_| Error::Unavailable)?;
+                        let peer = Peer { pid, session, uid: None, native: pipe.as_raw_handle() as usize };
+                        let reply = host::dispatch_fence(fence.as_ref(), &peer, &bytes).unwrap_or_else(|| host::encode_reply(host::Reply::Rejected));
+                        pipe.write_u32_le(reply.len() as u32).await.map_err(|_| Error::Unavailable)?;
+                        pipe.write_all(&reply).await.map_err(|_| Error::Unavailable)?;
+                        Ok::<(), Error>(())
+                    };
+                    // A control peer owns no execution or journal work. Its timeout may close
+                    // just this connection without interrupting the business owner.
+                    let _ = tokio::time::timeout(Duration::from_secs(3), request).await;
+                    pipe.disconnect().map_err(|_| Error::Unavailable)?;
+                },
+                _ = tokio::time::sleep(Duration::from_millis(100)) => (),
+            }
+        }
+        Ok(())
+    })
+}
 fn drive(handler: Box<dyn Handler>, system: bool) -> Result<(), Error> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .map_err(|_| Error::Unavailable)?;
+    let control = if system {
+        handler
+            .session_fence()
+            .map(|fence| {
+                let (name, sddl) = endpoint(system)?;
+                std::thread::Builder::new()
+                    .name("execution-session-fence".into())
+                    .spawn(move || {
+                        let result = drive_fence(fence, format!("{name}.session-fence"), sddl);
+                        if result.is_err() {
+                            stop();
+                        }
+                        result
+                    })
+                    .map_err(|_| Error::Unavailable)
+            })
+            .transpose()?
+    } else {
+        None
+    };
     let mut owner = OwnerThread::new(handler)?;
     let outcome = runtime.block_on(async {
         let (name, sddl) = endpoint(system)?;
@@ -503,7 +580,11 @@ fn drive(handler: Box<dyn Handler>, system: bool) -> Result<(), Error> {
     if let Err(error) = outcome {
         record(Stage::Ingress, error);
     }
-    outcome.and(owner.finish())
+    stop();
+    let control = control
+        .map(|thread| thread.join().unwrap_or(Err(Error::Unavailable)))
+        .unwrap_or(Ok(()));
+    outcome.and(control).and(owner.finish())
 }
 /// Read-only mechanism probe. No production admission context is constructed.
 pub fn query_trusted(
@@ -511,7 +592,10 @@ pub fn query_trusted(
     system: bool,
     policy: &crate::host::PeerPolicy,
 ) -> Result<Vec<u8>, Error> {
-    let (name, _) = endpoint(system)?;
+    let (mut name, _) = endpoint(system)?;
+    if system && host::is_employee_revocation(bytes) {
+        name.push_str(".session-fence");
+    }
     query_at(bytes, system.then_some(0), name, policy)
 }
 /// Address a helper by an OS-derived subject/session; verify its live token and installed image.

@@ -36,9 +36,18 @@ export interface DeliveryReceipt {
 }
 /** Business mapping and authoritative reconciliation belong to the composition root. */
 export interface DeliveryRouter {
+  catalog?(
+    namespace: Namespace,
+    budget: Budget,
+    binding: Pick<
+      import("@rss-mdm-agent/ai-contract").ProviderConfiguration,
+      "provider" | "config"
+    >,
+  ): ReturnType<ToolEndpoint["list"]>;
   prepare(
     namespace: Namespace,
     proposal: Proposal,
+    commandId?: string,
   ): Result<{
     operationId: string;
     target: string;
@@ -110,9 +119,11 @@ export class Deliveries {
   ): Promise<Result<ToolReply>> {
     try {
       proposal = JSON.parse(boundedJson(proposal, defaultLimits)) as Proposal;
-      const prepared = this.router.prepare(namespace, proposal);
+      const prepared = this.router.prepare(namespace, proposal, commandId);
       if (!prepared.ok) return prepared;
       const { operationId, target, permission } = prepared.value;
+      // Native callback identity chooses the durable operation, but is not a second product wire field.
+      proposal = { name: proposal.name, arguments: proposal.arguments };
       if (
         !isId(operationId) ||
         !isId(target) ||

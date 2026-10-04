@@ -2,7 +2,7 @@
 use execution_contract::{Digest, Id, RequestId, VersionedRef};
 use serde::{Deserialize, Serialize};
 /// Current desktop/system IPC. No negotiation or legacy parser exists.
-pub const IPC_VERSION: u8 = 10;
+pub const IPC_VERSION: u8 = 11;
 /// Current protected installation document format.
 pub const DEPLOYMENT_VERSION: u32 = 3;
 
@@ -461,6 +461,19 @@ pub enum ClientOrigin {
         tool_call: Id,
     },
 }
+/// Native-only bearer handoff, never included in renderer, AI schema or journal records.
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct EmployeeSession {
+    /// Only the employee secret, not the cookie or CSRF header.
+    pub credential: zeroize::Zeroizing<String>,
+    /// Native verified product employee.
+    pub actor: rss_mdm_agent_wire::runtime::ScriptActor,
+    /// Exact native product login generation.
+    pub generation: Id,
+    /// Current session expiry; never extended by an invocation.
+    pub expires_at_unix_ms: u64,
+}
 /// Local IPC V7 carries backend task references, never executable plans or authority claims.
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(
@@ -470,6 +483,42 @@ pub enum ClientOrigin {
     deny_unknown_fields
 )]
 pub enum Request {
+    /// Finite native software observation; service selects only the exact signed detector.
+    ObserveSoftware {
+        /// Stable query and exact current signed selection.
+        choice: execution_contract::SoftwareReadChoice,
+        /// Origin attested by the native peer.
+        origin: ClientOrigin,
+    },
+    /// Bind or revoke the native employee session for this authenticated login.
+    EmployeeSession {
+        /// None revokes all pending self-service for this login.
+        value: Option<EmployeeSession>,
+    },
+    /// Query the current Policy directory; origin is attested by the native bridge.
+    PolicyDirectory {
+        /// Backend page cursor.
+        after: Option<Id>,
+        /// Trusted native origin.
+        origin: ClientOrigin,
+    },
+    /// Freeze a Policy choice in the unique journal; neither source nor confirmation is a model field.
+    InvokePolicy {
+        /// Exact directory choice and Input values.
+        choice: execution_contract::PolicyChoice,
+        /// Trusted native origin.
+        origin: ClientOrigin,
+    },
+    /// Sole employee response to the original risk-two Policy preparation.
+    ConfirmPolicy {
+        /// Original stable request.
+        request: RequestId,
+    },
+    /// Authorized result of the original Policy invocation.
+    PolicyStatus {
+        /// Stable original request.
+        request: RequestId,
+    },
     /// Read safe installation and execution readiness; never execution permission.
     ServiceStatus {},
     /// Read public machine registration progress.
@@ -531,6 +580,25 @@ struct Envelope {
     rename_all_fields = "camelCase"
 )]
 pub enum Reply {
+    /// Native employee handoff accepted; no enterprise permission is granted.
+    EmployeeBound,
+    /// Formal authorized Policy directory, not an execution permit.
+    PolicyDirectory {
+        /// Current server projection.
+        value: rss_mdm_agent_wire::runtime::SelfServiceDirectoryResponse,
+    },
+    /// Original request state, including preparation before any backend Run exists.
+    PolicyRequest {
+        /// Same authoritative journal record.
+        value: Box<execution_contract::BackendRequest>,
+    },
+    /// No request was persisted by this sole execution owner.
+    PolicyAbsent,
+    /// Structured server-authorized status/result.
+    PolicyStatus {
+        /// Original invocation's durable server observation.
+        value: rss_mdm_agent_wire::runtime::SelfServiceStatus,
+    },
     /// Safe readiness projection from the authenticated system owner.
     ServiceStatus {
         /// Closed service diagnostic.
@@ -689,7 +757,40 @@ impl ServiceClient {
     }
 }
 /// The native OS service owns one handler; ticks and calls are serialized by the owner loop.
+pub trait SessionFence: Send + Sync {
+    /// Authenticate the native peer and invalidate its employee grants without business IO.
+    fn revoke(&self, peer: &Peer) -> Reply;
+}
+/// Only a current, bounded native employee revocation bypasses the serial business handler.
+#[cfg(windows)]
+pub(crate) fn is_employee_revocation(bytes: &[u8]) -> bool {
+    bytes.len() <= 65536
+        && serde_json::from_slice::<Envelope>(bytes).is_ok_and(|e| {
+            e.version == IPC_VERSION
+                && matches!(e.request, Request::EmployeeSession { value: None })
+        })
+}
+/// Decode a current revocation and dispatch only its authenticated ephemeral fence.
+pub fn dispatch_fence(fence: &dyn SessionFence, peer: &Peer, bytes: &[u8]) -> Option<Vec<u8>> {
+    if bytes.len() > 65536 {
+        return None;
+    }
+    let envelope: Envelope = serde_json::from_slice(bytes).ok()?;
+    if envelope.version != IPC_VERSION {
+        return None;
+    }
+    match envelope.request {
+        Request::EmployeeSession { value: None } => Some(encode_reply(fence.revoke(peer))),
+        _ => None,
+    }
+}
+/// Native lifecycle handler; all business work remains serialized by its owner.
 pub trait Handler: Send {
+    /// Optional authenticated revocation which performs no execution or journal IO.
+    fn session_fence(&self) -> Option<std::sync::Arc<dyn SessionFence>> {
+        None
+    }
+
     /// Current installed client pins. Production handlers must supply these before listening.
     fn peer_policy(&self) -> Option<PeerPolicy> {
         None

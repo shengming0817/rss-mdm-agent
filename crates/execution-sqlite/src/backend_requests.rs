@@ -64,12 +64,29 @@ impl Store {
                 matches!(next.state, S::Ready | S::Cancelled | S::Failed)
             }
             Some(S::Ready) => matches!(next.state, S::Submitting | S::Cancelled | S::Failed),
-            Some(S::Submitting) => matches!(next.state, S::Cancelled | S::Failed),
-            Some(S::Cancelled | S::Failed) => false,
+            Some(S::Submitting) => matches!(
+                next.state,
+                S::Submitting | S::Observed | S::Cancelled | S::Failed
+            ),
+            Some(S::Observed | S::Cancelled | S::Failed) => false,
         };
+        if (next.state == S::Observed)
+            != matches!(
+                &next.action,
+                execution_contract::PreparedAction::SoftwareRead {
+                    observation: Some(_),
+                    ..
+                }
+            )
+        {
+            return Err(Error::InvalidInput);
+        }
         if !transition
             || !next.valid_product_gate()
-            || !next.offer.user_initiated
+            || next
+                .action
+                .offer()
+                .is_some_and(|offer| !offer.user_initiated)
             || matches!(
                 next.trigger,
                 execution_contract::BackendTrigger::Automatic {}
@@ -78,7 +95,7 @@ impl Store {
         {
             return Err(Error::InvalidInput);
         }
-        if next.offer.request != scope.request_id
+        if next.action.request() != &scope.request_id
             || next.revision != expected.map_or(1, |p| p.revision.saturating_add(1))
         {
             return Err(Error::InvalidInput);
@@ -89,7 +106,7 @@ impl Store {
             return Err(Error::Conflict);
         }
         if expected.is_some_and(|p| {
-            p.offer != next.offer
+            !p.action.same_choice(&next.action)
                 || p.trigger != next.trigger
                 || p.risk != next.risk
                 || (p.confirmation != next.confirmation

@@ -123,7 +123,7 @@ class Installation(unittest.TestCase):
                         if failure=='restart': raise module.subprocess.CalledProcessError(5,args)
                         loaded=True
                     return SimpleNamespace(returncode=0)
-                with patch.object(module,'candidate',side_effect=[old,new]), patch.object(module,'verify_registered',return_value=42), patch.object(module.os,'kill',side_effect=ProcessLookupError), patch.object(module,'publish_config') as published:
+                with patch.object(module,'DEFAULT_CONFIG',home/'absent-default.json'), patch.object(module,'candidate',side_effect=[old,new]), patch.object(module,'verify_registered',return_value=42), patch.object(module.os,'kill',side_effect=ProcessLookupError), patch.object(module,'publish_config') as published:
                     with patch.object(module.subprocess,'run',side_effect=run):
                         call=lambda: module.refresh(plist,label,'system',f'system/{label}',program,Path('/old/config'),Path('/new/service'),Path('/new/config'))
                         if failure:

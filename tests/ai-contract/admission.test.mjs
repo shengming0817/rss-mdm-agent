@@ -231,7 +231,10 @@ test("fork runs the child's controlled verifier and closes it after denial", asy
     permissions: "host_mediated",
   };
   const admission = {
-    tools: { propose: async () => assert.fail("not a tool call") },
+    tools: {
+      list: async () => ({ ok: true, value: [] }),
+      propose: async () => assert.fail("not a tool call"),
+    },
     verifier: {
       verify: async () =>
         ++verifications === 1

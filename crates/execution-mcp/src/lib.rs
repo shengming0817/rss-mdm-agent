@@ -100,3 +100,105 @@ impl<S: ExecutionServicePort> ExecutionMcp<S> {
         session.failure().map_or(result, Err)
     }
 }
+
+/// Deterministic MCP identity bound to Policy configuration and immutable execution version.
+pub fn policy_tool_name(item: &rss_mdm_agent_wire::runtime::SelfServiceDirectoryItem) -> String {
+    use sha2::{Digest, Sha256};
+    let hash = format!(
+        "{:x}",
+        Sha256::digest(format!("{}:{}", item.policy_revision, item.policy_version))
+    );
+    format!("policy_{}_{}", item.policy_id.simple(), &hash[..16])
+}
+/// Project only Input fields from the Resource-owned schema; full resolved validation remains in the service.
+pub fn policy_tool(
+    item: &rss_mdm_agent_wire::runtime::SelfServiceDirectoryItem,
+) -> Result<serde_json::Value, ServiceError> {
+    use rss_mdm_agent_wire::runtime::ScriptParameterSource;
+    if !item.self_service.published
+        || !item.self_service.allow_ai
+        || !matches!(item.self_service.risk_level, 1 | 2)
+    {
+        return Err(ServiceError::Denied);
+    }
+    let mut schema = item.parameter_schema.clone();
+    let object = schema.as_object_mut().ok_or(ServiceError::InvalidInput)?;
+    let input = |key: &str| {
+        matches!(
+            item.parameter_sources.get(key),
+            Some(ScriptParameterSource::Input {})
+        )
+    };
+    if let Some(properties) = object
+        .get_mut("properties")
+        .and_then(serde_json::Value::as_object_mut)
+    {
+        properties.retain(|key, _| input(key));
+    }
+    if let Some(required) = object
+        .get_mut("required")
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        required.retain(|value| value.as_str().is_some_and(input));
+    }
+    object.insert("additionalProperties".into(), false.into());
+    project_parameter_schema(&mut schema)?;
+    Ok(
+        serde_json::json!({"name": policy_tool_name(item), "description": format!("{}\n{}\nCategory: {}\nKeywords: {}\nPrerequisites: {}\nSide effects: {}", item.self_service.display_name, item.self_service.description, item.self_service.category, item.self_service.keywords.join(", "), item.self_service.prerequisites, item.self_service.side_effects), "inputSchema": schema, "annotations": {"readOnlyHint": item.self_service.risk_level == 1, "openWorldHint": false, "idempotentHint": false}}),
+    )
+}
+
+// The JS transport accepts only exactly representable integers. Project that intersection;
+// the service still validates resolved parameters against the untouched Resource schema.
+fn project_parameter_schema(schema: &mut serde_json::Value) -> Result<(), ServiceError> {
+    const SAFE: i64 = 9_007_199_254_740_991;
+    let object = schema.as_object_mut().ok_or(ServiceError::InvalidInput)?;
+    if object.get("type").and_then(serde_json::Value::as_str) == Some("integer") {
+        for (keyword, edge, lower) in [("minimum", -SAFE, true), ("maximum", SAFE, false)] {
+            let bound = object.get(keyword).and_then(serde_json::Value::as_f64);
+            if bound.is_some_and(|value| {
+                if lower {
+                    value > SAFE as f64
+                } else {
+                    value < -SAFE as f64
+                }
+            }) {
+                return Err(ServiceError::InvalidInput);
+            }
+            if bound.is_none_or(|value| {
+                if lower {
+                    value < edge as f64
+                } else {
+                    value > edge as f64
+                }
+            }) {
+                object.insert(keyword.into(), edge.into());
+            }
+        }
+    }
+    if let Some(properties) = object
+        .get_mut("properties")
+        .and_then(serde_json::Value::as_object_mut)
+    {
+        for child in properties.values_mut() {
+            project_parameter_schema(child)?;
+        }
+    }
+    if let Some(items) = object.get_mut("items") {
+        project_parameter_schema(items)?;
+    }
+    fn transport_safe(value: &serde_json::Value) -> bool {
+        match value {
+            serde_json::Value::Number(number) => number
+                .as_f64()
+                .is_some_and(|n| n.is_finite() && (n.fract() != 0.0 || n.abs() <= SAFE as f64)),
+            serde_json::Value::Array(values) => values.iter().all(transport_safe),
+            serde_json::Value::Object(values) => values.values().all(transport_safe),
+            _ => true,
+        }
+    }
+    if !transport_safe(schema) {
+        return Err(ServiceError::InvalidInput);
+    }
+    Ok(())
+}

@@ -481,7 +481,7 @@ pub(crate) fn startup_failure(error: Error) -> execution_contract::ProcessFailur
         | Error::CertificateExpired
         | Error::CredentialRevoked
         | Error::CredentialRetired => K::Unbound,
-        Error::Denied | Error::Untrusted => K::Denied,
+        Error::Denied | Error::Untrusted | Error::NotFound => K::Denied,
         Error::Protocol | Error::Configuration => K::InvalidInput,
         Error::Schema | Error::Unsupported => K::Unsupported,
         Error::Capacity => K::Capacity,

@@ -105,20 +105,6 @@ const assembly: readonly [string, any, (i: Initialization) => any][] = [
 ];
 export const TOOL_PROFILE = {
   question: "ask_user_question",
-  proposal: {
-    name: "host_propose",
-    description:
-      "Propose a business operation to the host. This tool does not grant execution authority.",
-    parameters: {
-      type: "object",
-      properties: {
-        name: { type: "string" },
-        arguments: { type: "object", additionalProperties: true },
-      },
-      required: ["name", "arguments"],
-      additionalProperties: false,
-    },
-  },
 };
 const modelConfiguration = (i: Initialization) => ({
   protocol: "chat-completions" as const,
@@ -133,7 +119,7 @@ export const COMPOSITION_ID = digest([
   manifest.dependencies,
   TOOL_PROFILE,
   modelConfiguration.toString(),
-  "native;deny-guard-v1;question;host-propose;chat-completions;checkpoint",
+  "native;deny-guard-v1;question;resource-tools;chat-completions;checkpoint",
 ]);
 export const ACTIVE_PROFILE_ID = digest([
   COMPOSITION_ID,

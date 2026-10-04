@@ -3,6 +3,7 @@ import type {
   BackendTask,
   ExecutionTaskDetails,
   Snapshot,
+  SelfServicePort,
 } from "../../apps/desktop/src/self-service/types";
 export function executionTask(): ExecutionTaskDetails {
   return structuredClone(fixtures.running) as ExecutionTaskDetails;
@@ -44,3 +45,27 @@ export function resourceOffer(): BackendTask {
     },
   };
 }
+
+/** Empty formal directory is explicit fixture data, never a production fallback. */
+export const policyFixturePort: Pick<
+  SelfServicePort,
+  | "policy_directory"
+  | "policy_invoke"
+  | "policy_confirm"
+  | "policy_status"
+  | "observe_software"
+> = {
+  policy_directory: async () => ({ items: [], nextCursor: null, asOf: 1000 }),
+  policy_invoke: async () => {
+    throw new Error("fixture policy not configured");
+  },
+  policy_confirm: async () => {
+    throw new Error("fixture policy not configured");
+  },
+  policy_status: async () => {
+    throw new Error("fixture policy not configured");
+  },
+  observe_software: async () => {
+    throw new Error("fixture detector not configured");
+  },
+};

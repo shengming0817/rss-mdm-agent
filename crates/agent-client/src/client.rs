@@ -114,7 +114,10 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         if let Some(pending) = &state.pending {
             secrets.push(self.secrets.resolve(&pending.secret_reference)?);
         }
-        Ok(crate::CredentialRedactor(secrets))
+        Ok(crate::CredentialRedactor {
+            device: secrets,
+            employee: Vec::new(),
+        })
     }
     /// Bounded retained transport tasks; reading this list does not grant another Start.
     pub fn pending_tasks(&self, limit: usize) -> Result<Vec<Uuid>, Error> {
@@ -204,7 +207,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         self.runtime_error(&bytes)?;
         Err(Error::Protocol)
     }
-    fn runtime_error(&self, bytes: &[u8]) -> Result<(), Error> {
+    pub(crate) fn runtime_error(&self, bytes: &[u8]) -> Result<(), Error> {
         let body: wire::ErrorBody = decode(bytes)?;
         use rss_mdm_agent_wire::enroll::ErrorCode as E;
         use wire::ErrorCode as R;
@@ -646,6 +649,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         materials: &Materials,
     ) -> Result<Start, Error> {
         if matches!(offer.payload(),wire::TaskPayload::Software(v) if v.start_mode==wire::SoftwareStartMode::UserInitiated)
+            || matches!(offer.payload(),wire::TaskPayload::Script(v) if matches!(v.authorization, wire::ScriptAuthorization::SelfService { .. }))
         {
             return Err(Error::Denied);
         }

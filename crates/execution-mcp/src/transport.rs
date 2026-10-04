@@ -356,8 +356,14 @@ impl<S: ExecutionServicePort> Service<RoleServer> for BoundedService<S> {
         let cancelled = context.ct.clone();
         let tool = matches!(&request, ClientRequest::CallToolRequest(_));
         let timeout_error = match &request {
-            ClientRequest::CallToolRequest(call) => ToolKind::from_name(&call.params.name)
-                .map_or(ServiceError::Unavailable, ToolKind::timeout_error),
+            ClientRequest::CallToolRequest(call) => ToolKind::from_name(&call.params.name).map_or(
+                if call.params.name.starts_with("policy_") {
+                    ServiceError::OutcomeUnknown
+                } else {
+                    ServiceError::Unavailable
+                },
+                ToolKind::timeout_error,
+            ),
             _ => ServiceError::Unavailable,
         };
         let outcome = tokio::select! {

@@ -66,7 +66,7 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
         let scope = Scope {
             authority: self.binding.authority.clone(),
             actor: caller.actor.clone(),
-            request_id: next.offer.request.clone(),
+            request_id: next.action.request().clone(),
         };
         let host = Host::new(&self.host, &self.binding, &self.config, Some(caller));
         Ok(self

@@ -3,6 +3,8 @@ import { computed, nextTick, ref, onMounted, onUnmounted } from "vue";
 import type { Controller } from "./controller";
 import type { BackendTask } from "./types";
 import TaskDetail from "./TaskDetail.vue";
+import PolicySelfService from "./PolicySelfService.vue";
+import PolicyPreparation from "./PolicyPreparation.vue";
 import { Package, Terminal, Sparkles } from "@rss-mdm-agent/ui";
 import { resourceKey } from "../assistant/resource-context";
 const props = defineProps<{
@@ -41,14 +43,6 @@ const groups = computed(() =>
       items:
         s.snapshot?.available.filter(
           (item) => item.summary.kind === "software",
-        ) ?? [],
-    },
-    {
-      kind: "script",
-      label: "工具与脚本",
-      items:
-        s.snapshot?.available.filter(
-          (item) => item.summary.kind === "script",
         ) ?? [],
     },
   ].filter(
@@ -143,6 +137,12 @@ function failureLabel(value: string) {
       当前执行服务返回的资源 · 不代表完整企业目录或已安装清单。
     </p>
     <p v-if="s.error" class="error" role="alert">{{ s.error }}</p>
+    <PolicySelfService
+      v-if="s.page !== 'software'"
+      :port="c.port"
+      :records="s.snapshot?.preparations ?? []"
+      @changed="c.refresh"
+    />
     <section v-if="s.snapshot" aria-label="后台任务">
       <section
         v-for="group in groups"
@@ -220,6 +220,12 @@ function failureLabel(value: string) {
           <li v-for="(step, index) in resource.summary.steps" :key="index">
             {{ step.package }} · {{ step.version }} ·
             {{ step.identity === "system" ? "系统账号" : "当前用户" }}
+            <button
+              :disabled="s.busy || s.uncertain"
+              @click="c.observe(resource, index)"
+            >
+              检测当前状态
+            </button>
           </li>
         </ol>
         <p v-else>
@@ -277,56 +283,78 @@ function failureLabel(value: string) {
       <section class="preparation-list" aria-label="准备中的请求">
         <h3 v-if="s.snapshot.preparations.length">准备中的请求</h3>
         <article
-          v-for="pending in s.snapshot.preparations"
-          :key="pending.offer.request"
+          v-for="pending in s.snapshot.preparations.filter(
+            (p) => p.action.kind === 'offered',
+          )"
+          :key="
+            pending.action.kind === 'offered'
+              ? pending.action.offer.request
+              : ''
+          "
+          v-show="pending.action.kind === 'offered'"
         >
-          <strong>{{ pending.offer.title }}</strong>
-          <template v-if="pending.offer.summary.kind === 'software'">
-            <p>操作：{{ operationLabel(pending.offer.summary.intent) }}</p>
-            <ol>
-              <li
-                v-for="(step, index) in pending.offer.summary.steps"
-                :key="index"
+          <template v-if="pending.action.kind === 'offered'">
+            <strong>{{ pending.action.offer.title }}</strong>
+            <template v-if="pending.action.offer.summary.kind === 'software'">
+              <p>
+                操作：{{ operationLabel(pending.action.offer.summary.intent) }}
+              </p>
+              <ol>
+                <li
+                  v-for="(step, index) in pending.action.offer.summary.steps"
+                  :key="index"
+                >
+                  {{ step.package }} {{ step.version }} ·
+                  {{ step.identity === "system" ? "系统账号" : "当前用户" }}
+                </li>
+              </ol>
+            </template>
+            <p v-else>
+              后台固定脚本 ·
+              {{
+                pending.action.offer.summary.identity === "system"
+                  ? "系统账号"
+                  : "当前用户"
+              }}
+            </p>
+            <p v-if="pending.trigger.kind === 'ai'">
+              AI 风险：{{ pending.risk?.level ?? "后台未提供" }}
+            </p>
+            <p>
+              {{ stateLabel(pending.state)
+              }}<span v-if="pending.failure">
+                ·
+                {{ failureLabel(pending.failure) }}</span
               >
-                {{ step.package }} {{ step.version }} ·
-                {{ step.identity === "system" ? "系统账号" : "当前用户" }}
-              </li>
-            </ol>
-          </template>
-          <p v-else>
-            后台固定脚本 ·
-            {{
-              pending.offer.summary.identity === "system"
-                ? "系统账号"
-                : "当前用户"
-            }}
-          </p>
-          <p v-if="pending.trigger.kind === 'ai'">
-            AI 风险：{{ pending.risk?.level ?? "后台未提供" }}
-          </p>
-          <p>
-            {{ stateLabel(pending.state)
-            }}<span v-if="pending.failure">
-              ·
-              {{ failureLabel(pending.failure) }}</span
+            </p>
+            <button
+              v-if="pending.state === 'awaitingConfirmation'"
+              :disabled="s.busy || s.uncertain"
+              @click="c.confirmPreparation(pending.action.offer)"
             >
-          </p>
-          <button
-            v-if="pending.state === 'awaitingConfirmation'"
-            :disabled="s.busy || s.uncertain"
-            @click="c.confirmPreparation(pending.offer)"
-          >
-            确认此操作
-          </button>
-          <button
-            v-if="!['failed', 'cancelled'].includes(pending.state)"
-            :disabled="s.busy"
-            @click="c.cancel(pending.offer.request)"
-          >
-            撤销请求
-          </button>
+              确认此操作
+            </button>
+            <button
+              v-if="!['failed', 'cancelled'].includes(pending.state)"
+              :disabled="s.busy"
+              @click="c.cancel(pending.action.offer.request)"
+            >
+              撤销请求
+            </button>
+          </template>
         </article>
       </section>
+      <PolicyPreparation
+        v-for="pending in s.snapshot.preparations.filter(
+          (p) => p.action.kind === 'softwareRead',
+        )"
+        :key="
+          pending.action.kind === 'softwareRead'
+            ? pending.action.choice.request
+            : ''
+        "
+        :record="pending"
+      />
       <section class="execution-records" aria-label="执行记录">
         <h3 v-if="s.snapshot.requests.length">执行记录</h3>
         <button

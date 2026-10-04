@@ -275,6 +275,1424 @@
   },
   {
     "annotations": { "openWorldHint": false, "readOnlyHint": true },
+    "description": "Current employee-authorized script tools. Policy publication, allowAi and risk are verified for this AI origin.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "description": "Empty arguments for current directory and capability queries.",
+      "title": "Empty",
+      "type": "object"
+    },
+    "name": "execution_policy_tools",
+    "outputSchema": {
+      "$defs": {
+        "ErrorView": {
+          "description": "Protocol error payload; optional catalog diagnostic is produced only from static C03 errors.",
+          "properties": { "code": { "$ref": "#/$defs/ServiceError" } },
+          "required": ["code"],
+          "type": "object"
+        },
+        "ServiceError": {
+          "description": "Static safe errors. An implementation must never attach raw backend diagnostics.",
+          "oneOf": [
+            {
+              "const": "invalidLimits",
+              "description": "Invalid host configuration.",
+              "type": "string"
+            },
+            {
+              "const": "unbound",
+              "description": "No authenticated host/service binding; startup must fail.",
+              "type": "string"
+            },
+            {
+              "const": "denied",
+              "description": "Subject/delegation/target is not authorized.",
+              "type": "string"
+            },
+            {
+              "const": "notFound",
+              "description": "Object absent within the authorized namespace; do not reveal another namespace.",
+              "type": "string"
+            },
+            {
+              "const": "conflict",
+              "description": "Stable operation ID already names different content.",
+              "type": "string"
+            },
+            {
+              "const": "expired",
+              "description": "Exact reference or trusted authorization is no longer current.",
+              "type": "string"
+            },
+            {
+              "const": "unsupported",
+              "description": "Capability not implemented; never weaken required protection.",
+              "type": "string"
+            },
+            {
+              "const": "unavailable",
+              "description": "Service unavailable; submission may require querying the original ID.",
+              "type": "string"
+            },
+            {
+              "const": "outcomeUnknown",
+              "description": "Acceptance cannot be determined; query/retry the original operationRequestId.",
+              "type": "string"
+            },
+            {
+              "const": "invalidInput",
+              "description": "Invalid request data.",
+              "type": "string"
+            },
+            {
+              "const": "limit",
+              "description": "A configured byte, collection or concurrency budget was exceeded.",
+              "type": "string"
+            },
+            {
+              "const": "cancelled",
+              "description": "Current RPC wait ended. This is not business cancellation.",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "One output schema for both success and tool-level failure.",
+      "oneOf": [
+        {
+          "properties": {
+            "result": { "items": true, "type": "array" },
+            "status": { "const": "ok", "type": "string" }
+          },
+          "required": ["status", "result"],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "error": { "$ref": "#/$defs/ErrorView" },
+            "status": { "const": "error", "type": "string" }
+          },
+          "required": ["status", "error"],
+          "type": "object"
+        }
+      ],
+      "title": "ToolOutput",
+      "type": "object"
+    }
+  },
+  {
+    "annotations": { "openWorldHint": false, "readOnlyHint": true },
+    "description": "Read structured status and result for the original Policy request. Unknown never permits another invocation.",
+    "inputSchema": {
+      "$defs": {
+        "RequestId": {
+          "description": "Local execution request identity.",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+          "type": "string"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "description": "Authorized lookup/cancellation within the host-bound namespace.",
+      "properties": {
+        "operationRequestId": {
+          "$ref": "#/$defs/RequestId",
+          "description": "Business identity, never inferred from a JSON-RPC ID."
+        }
+      },
+      "required": ["operationRequestId"],
+      "title": "OperationRequest",
+      "type": "object"
+    },
+    "name": "execution_policy_status",
+    "outputSchema": {
+      "$defs": {
+        "ErrorView": {
+          "description": "Protocol error payload; optional catalog diagnostic is produced only from static C03 errors.",
+          "properties": { "code": { "$ref": "#/$defs/ServiceError" } },
+          "required": ["code"],
+          "type": "object"
+        },
+        "ServiceError": {
+          "description": "Static safe errors. An implementation must never attach raw backend diagnostics.",
+          "oneOf": [
+            {
+              "const": "invalidLimits",
+              "description": "Invalid host configuration.",
+              "type": "string"
+            },
+            {
+              "const": "unbound",
+              "description": "No authenticated host/service binding; startup must fail.",
+              "type": "string"
+            },
+            {
+              "const": "denied",
+              "description": "Subject/delegation/target is not authorized.",
+              "type": "string"
+            },
+            {
+              "const": "notFound",
+              "description": "Object absent within the authorized namespace; do not reveal another namespace.",
+              "type": "string"
+            },
+            {
+              "const": "conflict",
+              "description": "Stable operation ID already names different content.",
+              "type": "string"
+            },
+            {
+              "const": "expired",
+              "description": "Exact reference or trusted authorization is no longer current.",
+              "type": "string"
+            },
+            {
+              "const": "unsupported",
+              "description": "Capability not implemented; never weaken required protection.",
+              "type": "string"
+            },
+            {
+              "const": "unavailable",
+              "description": "Service unavailable; submission may require querying the original ID.",
+              "type": "string"
+            },
+            {
+              "const": "outcomeUnknown",
+              "description": "Acceptance cannot be determined; query/retry the original operationRequestId.",
+              "type": "string"
+            },
+            {
+              "const": "invalidInput",
+              "description": "Invalid request data.",
+              "type": "string"
+            },
+            {
+              "const": "limit",
+              "description": "A configured byte, collection or concurrency budget was exceeded.",
+              "type": "string"
+            },
+            {
+              "const": "cancelled",
+              "description": "Current RPC wait ended. This is not business cancellation.",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "One output schema for both success and tool-level failure.",
+      "oneOf": [
+        {
+          "properties": {
+            "result": true,
+            "status": { "const": "ok", "type": "string" }
+          },
+          "required": ["status", "result"],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "error": { "$ref": "#/$defs/ErrorView" },
+            "status": { "const": "error", "type": "string" }
+          },
+          "required": ["status", "error"],
+          "type": "object"
+        }
+      ],
+      "title": "ToolOutput",
+      "type": "object"
+    }
+  },
+  {
+    "annotations": { "openWorldHint": false, "readOnlyHint": true },
+    "description": "Collect a fresh bounded native software fact from one current signed definition step. No installation or script execution.",
+    "inputSchema": {
+      "$defs": {
+        "BackendSelection": {
+          "additionalProperties": false,
+          "description": "A selection references exact backend content and carries no script or local catalog model.",
+          "properties": {
+            "attempt": {
+              "$ref": "#/$defs/Id",
+              "description": "Original backend attempt."
+            },
+            "request": {
+              "$ref": "#/$defs/RequestId",
+              "description": "Original request shown with the offer, used unchanged for recovery."
+            },
+            "revision": {
+              "$ref": "#/$defs/Digest",
+              "description": "Revision shown to the user/model."
+            },
+            "task": {
+              "$ref": "#/$defs/Id",
+              "description": "Backend task identity."
+            }
+          },
+          "required": ["request", "task", "attempt", "revision"],
+          "type": "object"
+        },
+        "Digest": {
+          "description": "Lowercase SHA-256 bytes expressed as hex; a digest alone grants no trust.",
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "Id": {
+          "description": "Opaque local reference identifier; syntax validity is not authenticity.",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+          "type": "string"
+        },
+        "RequestId": {
+          "description": "Local execution request identity.",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+          "type": "string"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "description": "Model-visible selection for a finite native software detector; no arbitrary selector or command.",
+      "properties": {
+        "selection": {
+          "$ref": "#/$defs/BackendSelection",
+          "description": "Exact current signed offer projection."
+        },
+        "step": {
+          "description": "One declared step in that definition.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": ["selection", "step"],
+      "title": "SoftwareReadSelection",
+      "type": "object"
+    },
+    "name": "execution_software_observe",
+    "outputSchema": {
+      "$defs": {
+        "BackendConfirmation": {
+          "additionalProperties": false,
+          "description": "Sole product confirmation, persisted together with the original AI request.",
+          "properties": {
+            "confirmedAtUnixMs": {
+              "description": "Trusted service time at the user's explicit response.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "expiresAtUnixMs": {
+              "description": "Exclusive deadline, bounded by the offer, policy and one-minute interaction limit.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "osSession": {
+              "$ref": "#/$defs/OsSessionRef",
+              "description": "Actual original login, independently authenticated at confirmation and dispatch."
+            }
+          },
+          "required": ["osSession", "confirmedAtUnixMs", "expiresAtUnixMs"],
+          "type": "object"
+        },
+        "BackendIdentity": {
+          "description": "Display-only account class, never OS identity evidence.",
+          "oneOf": [
+            {
+              "const": "system",
+              "description": "System service execution.",
+              "type": "string"
+            },
+            {
+              "const": "user",
+              "description": "Bound active user helper execution.",
+              "type": "string"
+            }
+          ]
+        },
+        "BackendRequest": {
+          "additionalProperties": false,
+          "description": "User intent retained in the sole execution journal before a frozen execution exists.",
+          "properties": {
+            "action": {
+              "$ref": "#/$defs/PreparedAction",
+              "description": "The sole immutable choice and appended backend association."
+            },
+            "confirmation": {
+              "anyOf": [
+                { "$ref": "#/$defs/BackendConfirmation" },
+                { "type": "null" }
+              ],
+              "description": "Explicit risk-two response; readiness alone never proves confirmation."
+            },
+            "failure": {
+              "anyOf": [
+                { "$ref": "#/$defs/BackendRequestFailure" },
+                { "type": "null" }
+              ],
+              "description": "Diagnosis when preparation failed."
+            },
+            "revision": {
+              "description": "Monotonic journal revision.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "risk": {
+              "anyOf": [
+                { "$ref": "#/$defs/ExecutionRisk" },
+                { "type": "null" }
+              ],
+              "description": "Immutable trusted classification; absent for human requests or unknown AI risk."
+            },
+            "state": {
+              "$ref": "#/$defs/BackendRequestState",
+              "description": "Preparation state, separate from execution lifecycle."
+            },
+            "trigger": {
+              "$ref": "#/$defs/BackendTrigger",
+              "description": "OS-authenticated original trigger; never accepted from an IPC request body."
+            }
+          },
+          "required": ["action", "trigger", "revision", "state"],
+          "type": "object"
+        },
+        "BackendRequestFailure": {
+          "description": "Closed preparation diagnosis without backend bodies or local paths.",
+          "oneOf": [
+            {
+              "const": "riskUnknown",
+              "description": "No backend-authenticated risk information is available.",
+              "type": "string"
+            },
+            {
+              "const": "riskBlocked",
+              "description": "Backend policy prohibits this AI action.",
+              "type": "string"
+            },
+            {
+              "const": "preparationFailed",
+              "description": "A required local resource or backend Start could not be obtained.",
+              "type": "string"
+            },
+            {
+              "const": "interrupted",
+              "description": "The service restarted before committing an execution intent.",
+              "type": "string"
+            },
+            {
+              "const": "expired",
+              "description": "The original offer expired.",
+              "type": "string"
+            },
+            {
+              "const": "revoked",
+              "description": "Backend authorization was revoked.",
+              "type": "string"
+            }
+          ]
+        },
+        "BackendRequestState": {
+          "description": "Preparation state only; none of these values authorizes physical execution.",
+          "oneOf": [
+            {
+              "const": "observed",
+              "description": "A bounded native observation was collected; no execution attempt or side effect exists.",
+              "type": "string"
+            },
+            {
+              "const": "awaitingConfirmation",
+              "description": "Risk-two AI action awaiting its sole explicit product confirmation.",
+              "type": "string"
+            },
+            {
+              "const": "ready",
+              "description": "Product gate is satisfied; this still grants no backend Start or OS authority.",
+              "type": "string"
+            },
+            {
+              "const": "submitting",
+              "description": "Preparing or obtaining the original backend Start.",
+              "type": "string"
+            },
+            {
+              "const": "failed",
+              "description": "Preparation failed before an execution intent existed.",
+              "type": "string"
+            },
+            {
+              "const": "cancelled",
+              "description": "The local proposal/selection was withdrawn.",
+              "type": "string"
+            }
+          ]
+        },
+        "BackendSelection": {
+          "additionalProperties": false,
+          "description": "A selection references exact backend content and carries no script or local catalog model.",
+          "properties": {
+            "attempt": {
+              "$ref": "#/$defs/Id",
+              "description": "Original backend attempt."
+            },
+            "request": {
+              "$ref": "#/$defs/RequestId",
+              "description": "Original request shown with the offer, used unchanged for recovery."
+            },
+            "revision": {
+              "$ref": "#/$defs/Digest",
+              "description": "Revision shown to the user/model."
+            },
+            "task": {
+              "$ref": "#/$defs/Id",
+              "description": "Backend task identity."
+            }
+          },
+          "required": ["request", "task", "attempt", "revision"],
+          "type": "object"
+        },
+        "BackendStepSummary": {
+          "additionalProperties": false,
+          "description": "Exact software coordinate displayed before user confirmation.",
+          "properties": {
+            "identity": {
+              "$ref": "#/$defs/BackendIdentity",
+              "description": "Execution account class."
+            },
+            "package": {
+              "description": "Exact package selected by the backend.",
+              "type": "string"
+            },
+            "version": {
+              "description": "Exact version; no implicit latest.",
+              "type": "string"
+            }
+          },
+          "required": ["package", "version", "identity"],
+          "type": "object"
+        },
+        "BackendTask": {
+          "additionalProperties": false,
+          "description": "Exact displayed backend offer, without executable input or authorization claims.",
+          "properties": {
+            "attempt": {
+              "$ref": "#/$defs/Id",
+              "description": "Backend attempt identity; reconnect never allocates a new attempt."
+            },
+            "expiresAt": {
+              "description": "Exclusive UTC Unix expiry in seconds.",
+              "format": "int64",
+              "type": "integer"
+            },
+            "request": {
+              "$ref": "#/$defs/RequestId",
+              "description": "Deterministic original execution request used for status after response loss."
+            },
+            "revision": {
+              "$ref": "#/$defs/Digest",
+              "description": "Full signed offer revision."
+            },
+            "summary": {
+              "$ref": "#/$defs/BackendTaskSummary",
+              "description": "Complete safe action preview, immutable with the offer revision."
+            },
+            "task": {
+              "$ref": "#/$defs/Id",
+              "description": "Backend task identity."
+            },
+            "title": {
+              "description": "Safe display text selected by the backend.",
+              "type": "string"
+            },
+            "userInitiated": {
+              "description": "Requires an explicit local user action before requesting Start.",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "task",
+            "attempt",
+            "revision",
+            "request",
+            "title",
+            "summary",
+            "expiresAt",
+            "userInitiated"
+          ],
+          "type": "object"
+        },
+        "BackendTaskSummary": {
+          "description": "Safe preview bound to the complete signed offer revision.",
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "Fixed backend script; executable input is not exposed to the UI.",
+              "properties": {
+                "identity": {
+                  "$ref": "#/$defs/BackendIdentity",
+                  "description": "Account class selected by the backend."
+                },
+                "kind": { "const": "script", "type": "string" }
+              },
+              "required": ["kind", "identity"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Complete ordered software action preview.",
+              "properties": {
+                "intent": {
+                  "$ref": "#/$defs/SoftwareOperation",
+                  "description": "Install, uninstall or detection intent."
+                },
+                "kind": { "const": "software", "type": "string" },
+                "steps": {
+                  "description": "Ordered prerequisites and final package.",
+                  "items": { "$ref": "#/$defs/BackendStepSummary" },
+                  "type": "array"
+                }
+              },
+              "required": ["kind", "intent", "steps"],
+              "type": "object"
+            }
+          ]
+        },
+        "BackendTrigger": {
+          "description": "Provenance for a task already authorized by the backend; never a local enterprise approval.",
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "Automatic backend assignment.",
+              "properties": {
+                "kind": { "const": "automatic", "type": "string" }
+              },
+              "required": ["kind"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "An authenticated user selected an offered task in the trusted desktop.",
+              "properties": {
+                "kind": { "const": "human", "type": "string" },
+                "osSession": {
+                  "$ref": "#/$defs/OsSessionRef",
+                  "description": "Actual native account and login session, supplied by ingress."
+                }
+              },
+              "required": ["kind", "osSession"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Trusted desktop submitted the user's confirmed AI proposal.",
+              "properties": {
+                "config": {
+                  "$ref": "#/$defs/VersionedRef",
+                  "description": "Native AI connection configuration, not a provider identity grant."
+                },
+                "conversation": {
+                  "$ref": "#/$defs/Id",
+                  "description": "Conversation reference used for audit correlation."
+                },
+                "kind": { "const": "ai", "type": "string" },
+                "osSession": {
+                  "$ref": "#/$defs/OsSessionRef",
+                  "description": "Actual native account and login session, supplied by ingress."
+                },
+                "toolCall": {
+                  "$ref": "#/$defs/Id",
+                  "description": "Tool request reference used for audit correlation."
+                }
+              },
+              "required": [
+                "kind",
+                "osSession",
+                "config",
+                "conversation",
+                "toolCall"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "DeviceId": {
+          "description": "Device reference, not verified registration evidence.",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+          "type": "string"
+        },
+        "Digest": {
+          "description": "Lowercase SHA-256 bytes expressed as hex; a digest alone grants no trust.",
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "ErrorView": {
+          "description": "Protocol error payload; optional catalog diagnostic is produced only from static C03 errors.",
+          "properties": { "code": { "$ref": "#/$defs/ServiceError" } },
+          "required": ["code"],
+          "type": "object"
+        },
+        "ExecutionRisk": {
+          "additionalProperties": false,
+          "description": "Backend-authenticated classification of the exact offer, never an IPC claim.",
+          "properties": {
+            "expiresAtUnixMs": {
+              "description": "Exclusive trusted decision deadline.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "level": {
+              "$ref": "#/$defs/RiskLevel",
+              "description": "Explicit effect classification selected by backend policy."
+            },
+            "source": {
+              "$ref": "#/$defs/RiskSource",
+              "description": "Exact backend risk policy revision."
+            }
+          },
+          "required": ["level", "source", "expiresAtUnixMs"],
+          "type": "object"
+        },
+        "Id": {
+          "description": "Opaque local reference identifier; syntax validity is not authenticity.",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+          "type": "string"
+        },
+        "OsAccountRef": {
+          "additionalProperties": false,
+          "description": "Opaque account reference in an OS namespace, independent of product or provider identity.",
+          "properties": {
+            "platform": {
+              "$ref": "#/$defs/Platform",
+              "description": "OS namespace of this reference or target; does not assert platform support."
+            },
+            "subject": {
+              "$ref": "#/$defs/Id",
+              "description": "Opaque stable OS account reference, such as a SID/UID reference, not an authentication credential."
+            }
+          },
+          "required": ["platform", "subject"],
+          "type": "object"
+        },
+        "OsSessionRef": {
+          "additionalProperties": false,
+          "description": "Claimed OS login provenance at the request origin, separate from target and run-as identity.",
+          "properties": {
+            "account": {
+              "$ref": "#/$defs/OsAccountRef",
+              "description": "Login account at the origin; never implicitly equated to the product actor."
+            },
+            "device": {
+              "$ref": "#/$defs/DeviceId",
+              "description": "Origin device reference; it does not establish registration or target authority."
+            },
+            "session": {
+              "$ref": "#/$defs/Id",
+              "description": "Origin OS login/session reference, including an explicit test reference in fixtures."
+            }
+          },
+          "required": ["device", "account", "session"],
+          "type": "object"
+        },
+        "OutputQuality": {
+          "description": "Quality of the captured result, independent from the exit code.",
+          "oneOf": [
+            {
+              "const": "complete",
+              "description": "All required output was decoded and structurally valid.",
+              "type": "string"
+            },
+            {
+              "const": "truncated",
+              "description": "Capture was truncated by the output budget.",
+              "type": "string"
+            },
+            {
+              "const": "failed",
+              "description": "Encoding, JSON shape, row bound or process outcome failed.",
+              "type": "string"
+            },
+            {
+              "const": "partial",
+              "description": "A process or pipe is still unaccounted for.",
+              "type": "string"
+            }
+          ]
+        },
+        "PackageValue": {
+          "description": "Exact ecosystem text: no SemVer, case folding, alias lookup or normalization.\nAccepts 1..=1024 UTF-8 bytes without control characters, including '+' and '~'.",
+          "type": "string"
+        },
+        "Platform": {
+          "description": "Target OS semantics for validation; an enum value is not a platform support claim.",
+          "oneOf": [
+            {
+              "const": "windows",
+              "description": "Windows target/account namespace.",
+              "type": "string"
+            },
+            {
+              "const": "macos",
+              "description": "macOS target/account namespace.",
+              "type": "string"
+            },
+            {
+              "const": "linux",
+              "description": "Linux host/account design namespace; does not assert rss-mdm product support for managed Linux devices.",
+              "type": "string"
+            }
+          ]
+        },
+        "PolicyChoice": {
+          "additionalProperties": false,
+          "description": "Employee input; caller source and confirmation are supplied only by trusted native code.",
+          "properties": {
+            "parameters": {
+              "additionalProperties": true,
+              "description": "Only Resource fields whose Policy source is Input.",
+              "type": "object"
+            },
+            "policyId": {
+              "$ref": "#/$defs/Id",
+              "description": "Policy from the current authorized directory."
+            },
+            "policyRevision": {
+              "description": "Exact current configuration revision.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "policyVersion": {
+              "$ref": "#/$defs/Id",
+              "description": "Immutable execution version."
+            },
+            "request": {
+              "$ref": "#/$defs/RequestId",
+              "description": "Stable request allocated before submission, reused after response loss."
+            }
+          },
+          "required": [
+            "request",
+            "policyId",
+            "policyRevision",
+            "policyVersion",
+            "parameters"
+          ],
+          "type": "object"
+        },
+        "PreparedAction": {
+          "description": "One preparation reference, before or after a signed Offer has arrived.",
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "A bounded native observation authorized by an exact current signed software definition.",
+              "properties": {
+                "choice": {
+                  "$ref": "#/$defs/SoftwareReadChoice",
+                  "description": "Original read identity, independent of installation execution."
+                },
+                "definition": {
+                  "$ref": "#/$defs/Digest",
+                  "description": "Exact declared software definition; this is a software risk source."
+                },
+                "expiresAtUnixMs": {
+                  "description": "Original preparation validity.",
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "kind": { "const": "softwareRead", "type": "string" },
+                "observation": {
+                  "anyOf": [
+                    { "$ref": "#/$defs/SoftwareObservation" },
+                    { "type": "null" }
+                  ],
+                  "description": "Independently collected fact, appended once and never treated as installation success."
+                }
+              },
+              "required": ["kind", "choice", "definition", "expiresAtUnixMs"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Existing offered software selection.",
+              "properties": {
+                "kind": { "const": "offered", "type": "string" },
+                "offer": {
+                  "$ref": "#/$defs/BackendTask",
+                  "description": "Exact signed task projection."
+                }
+              },
+              "required": ["kind", "offer"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Policy invocation and its eventual exact Offer, held in the same journal record.",
+              "properties": {
+                "actor": {
+                  "$ref": "#/$defs/ScriptActor",
+                  "description": "Authenticated product employee, checked against the signed authorization."
+                },
+                "choice": {
+                  "$ref": "#/$defs/PolicyChoice",
+                  "description": "Immutable employee choice."
+                },
+                "directory": {
+                  "$ref": "#/$defs/SelfServiceDirectoryItem",
+                  "description": "Formal backend directory DTO, including the Resource-owned schema."
+                },
+                "expiresAtUnixMs": {
+                  "description": "Bounded validity of the original preparation.",
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "generation": {
+                  "$ref": "#/$defs/Id",
+                  "description": "Native product login generation."
+                },
+                "kind": { "const": "policy", "type": "string" },
+                "offer": {
+                  "anyOf": [
+                    { "$ref": "#/$defs/BackendTask" },
+                    { "type": "null" }
+                  ],
+                  "description": "Eventual signed Offer; no task/attempt is invented before this exists."
+                },
+                "runId": {
+                  "anyOf": [{ "$ref": "#/$defs/Id" }, { "type": "null" }],
+                  "description": "Backend Run returned for the original request, absent until acceptance is known."
+                }
+              },
+              "required": [
+                "kind",
+                "choice",
+                "directory",
+                "actor",
+                "generation",
+                "expiresAtUnixMs"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "RequestId": {
+          "description": "Local execution request identity.",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+          "type": "string"
+        },
+        "RiskLevel": {
+          "description": "Protected policy classification; never accepted as a request field.",
+          "oneOf": [
+            {
+              "const": "zero",
+              "description": "Pure computation without external effects.",
+              "type": "string"
+            },
+            {
+              "const": "one",
+              "description": "Bounded non-sensitive read.",
+              "type": "string"
+            },
+            {
+              "const": "two",
+              "description": "Explicitly permitted bounded side effects; AI requires user confirmation.",
+              "type": "string"
+            },
+            {
+              "const": "three",
+              "description": "Destructive or security-sensitive effects; AI is blocked.",
+              "type": "string"
+            }
+          ]
+        },
+        "RiskSource": {
+          "description": "Risk authority is explicit; local software rules never impersonate a Policy.",
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "Current server Policy decision, subsequently checked against the signed Offer.",
+              "properties": {
+                "kind": { "const": "policy", "type": "string" },
+                "policy": {
+                  "$ref": "#/$defs/VersionedRef",
+                  "description": "Exact configuration revision."
+                }
+              },
+              "required": ["kind", "policy"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Closed Rust rule for a verified software action.",
+              "properties": {
+                "definition": {
+                  "$ref": "#/$defs/Digest",
+                  "description": "Exact signed software definition and action."
+                },
+                "kind": { "const": "software", "type": "string" }
+              },
+              "required": ["kind", "definition"],
+              "type": "object"
+            }
+          ]
+        },
+        "ScriptActor": {
+          "additionalProperties": false,
+          "description": "Authenticated product user; contains no session credential.",
+          "properties": {
+            "instanceId": {
+              "description": "Identity instance.",
+              "format": "uuid",
+              "type": "string"
+            },
+            "principalId": {
+              "description": "Authenticated principal.",
+              "format": "uuid",
+              "type": "string"
+            },
+            "tenantId": {
+              "description": "Product tenant.",
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          "required": ["tenantId", "instanceId", "principalId"],
+          "type": "object"
+        },
+        "ScriptParameterSource": {
+          "description": "Public source of one Resource-declared parameter.",
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "Administrator literal.",
+              "properties": {
+                "kind": { "const": "fixed", "type": "string" },
+                "value": {
+                  "anyOf": [
+                    { "pattern": "^[^\\u0000]*$", "type": "string" },
+                    { "type": "boolean" },
+                    {
+                      "maximum": 9007199254740991,
+                      "minimum": -9007199254740991,
+                      "type": "integer"
+                    }
+                  ],
+                  "description": "Administrator-selected scalar checked against the Resource schema."
+                }
+              },
+              "required": ["kind", "value"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Required call-time input.",
+              "properties": { "kind": { "const": "input", "type": "string" } },
+              "required": ["kind"],
+              "type": "object"
+            }
+          ]
+        },
+        "ScriptResource": {
+          "additionalProperties": false,
+          "description": "Exact Resource identity accompanying its signed digest.",
+          "properties": {
+            "id": {
+              "description": "Logical Resource identity.",
+              "type": "string"
+            },
+            "variant": {
+              "description": "Exact selected variant.",
+              "type": "string"
+            },
+            "version": {
+              "description": "Immutable Resource version.",
+              "type": "string"
+            }
+          },
+          "required": ["id", "version", "variant"],
+          "type": "object"
+        },
+        "SelfServiceDirectoryItem": {
+          "additionalProperties": false,
+          "description": "One currently authorized script and its Resource-owned parameter schema.",
+          "properties": {
+            "parameterSchema": {
+              "description": "Resource-owned JSON Schema for full resolved parameters."
+            },
+            "parameterSources": {
+              "additionalProperties": {
+                "$ref": "#/$defs/ScriptParameterSource"
+              },
+              "description": "Complete source map; Fixed values cannot be overridden.",
+              "type": "object"
+            },
+            "policyId": {
+              "description": "Logical Policy identity.",
+              "format": "uuid",
+              "type": "string"
+            },
+            "policyRevision": {
+              "description": "Current configuration CAS revision.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "policyVersion": {
+              "description": "Immutable execution version.",
+              "format": "uuid",
+              "type": "string"
+            },
+            "resource": {
+              "$ref": "#/$defs/ScriptResource",
+              "description": "Exact selected Resource coordinates."
+            },
+            "selfService": {
+              "$ref": "#/$defs/SelfServiceMetadata",
+              "description": "Normalized presentation and invocation settings."
+            }
+          },
+          "required": [
+            "policyId",
+            "policyRevision",
+            "policyVersion",
+            "selfService",
+            "resource",
+            "parameterSources",
+            "parameterSchema"
+          ],
+          "type": "object"
+        },
+        "SelfServiceMetadata": {
+          "additionalProperties": false,
+          "description": "Published presentation and invocation settings; values are normalized by Policy CAS.",
+          "properties": {
+            "allowAi": {
+              "description": "Effective administrator AI switch.",
+              "type": "boolean"
+            },
+            "category": {
+              "description": "Presentation category.",
+              "type": "string"
+            },
+            "description": {
+              "description": "Intended purpose.",
+              "type": "string"
+            },
+            "displayName": {
+              "description": "Directory display name.",
+              "type": "string"
+            },
+            "keywords": {
+              "description": "Search terms.",
+              "items": { "type": "string" },
+              "type": "array"
+            },
+            "prerequisites": {
+              "description": "Preconditions shown before invocation.",
+              "type": "string"
+            },
+            "published": {
+              "description": "Whether this script is published for self service.",
+              "type": "boolean"
+            },
+            "riskLevel": {
+              "description": "Effective risk level, one or two.",
+              "enum": [1, 2],
+              "type": "integer"
+            },
+            "sideEffects": {
+              "description": "Expected effects shown before invocation.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "published",
+            "displayName",
+            "description",
+            "prerequisites",
+            "sideEffects",
+            "category",
+            "keywords",
+            "allowAi",
+            "riskLevel"
+          ],
+          "type": "object"
+        },
+        "ServiceError": {
+          "description": "Static safe errors. An implementation must never attach raw backend diagnostics.",
+          "oneOf": [
+            {
+              "const": "invalidLimits",
+              "description": "Invalid host configuration.",
+              "type": "string"
+            },
+            {
+              "const": "unbound",
+              "description": "No authenticated host/service binding; startup must fail.",
+              "type": "string"
+            },
+            {
+              "const": "denied",
+              "description": "Subject/delegation/target is not authorized.",
+              "type": "string"
+            },
+            {
+              "const": "notFound",
+              "description": "Object absent within the authorized namespace; do not reveal another namespace.",
+              "type": "string"
+            },
+            {
+              "const": "conflict",
+              "description": "Stable operation ID already names different content.",
+              "type": "string"
+            },
+            {
+              "const": "expired",
+              "description": "Exact reference or trusted authorization is no longer current.",
+              "type": "string"
+            },
+            {
+              "const": "unsupported",
+              "description": "Capability not implemented; never weaken required protection.",
+              "type": "string"
+            },
+            {
+              "const": "unavailable",
+              "description": "Service unavailable; submission may require querying the original ID.",
+              "type": "string"
+            },
+            {
+              "const": "outcomeUnknown",
+              "description": "Acceptance cannot be determined; query/retry the original operationRequestId.",
+              "type": "string"
+            },
+            {
+              "const": "invalidInput",
+              "description": "Invalid request data.",
+              "type": "string"
+            },
+            {
+              "const": "limit",
+              "description": "A configured byte, collection or concurrency budget was exceeded.",
+              "type": "string"
+            },
+            {
+              "const": "cancelled",
+              "description": "Current RPC wait ended. This is not business cancellation.",
+              "type": "string"
+            }
+          ]
+        },
+        "SoftwareDetectionFailure": {
+          "description": "Closed independent detection failures.",
+          "oneOf": [
+            {
+              "const": "unavailable",
+              "description": "Target or protected ancestor cannot be inspected.",
+              "type": "string"
+            },
+            {
+              "const": "unrecognizedVersion",
+              "description": "Installed bytes do not match a declared version.",
+              "type": "string"
+            },
+            {
+              "const": "budgetExceeded",
+              "description": "The independent observation exhausted its time, cancellation or byte bound.",
+              "type": "string"
+            }
+          ]
+        },
+        "SoftwareObservation": {
+          "additionalProperties": false,
+          "description": "Fresh native software fact, with collection time and no installer result claims.",
+          "properties": {
+            "collectedAtUnixMs": {
+              "description": "Time of actual observation from the service clock.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "expectedVersion": {
+              "description": "Exact declared desired version, separate from the observed version.",
+              "type": "string"
+            },
+            "package": {
+              "description": "Exact declared package.",
+              "type": "string"
+            },
+            "quality": {
+              "$ref": "#/$defs/OutputQuality",
+              "description": "Completeness of this finite native observation; failed leaves the state Unknown."
+            },
+            "state": {
+              "$ref": "#/$defs/SoftwareState",
+              "description": "Native receipt or product observation; unknown remains explicit."
+            }
+          },
+          "required": [
+            "quality",
+            "collectedAtUnixMs",
+            "package",
+            "expectedVersion",
+            "state"
+          ],
+          "type": "object"
+        },
+        "SoftwareOperation": {
+          "description": "One backend software intent, independent of individual process exit codes.",
+          "oneOf": [
+            {
+              "const": "install",
+              "description": "Install each exact version in the supplied order.",
+              "type": "string"
+            },
+            {
+              "const": "detect",
+              "description": "Independently observe each declared package.",
+              "type": "string"
+            },
+            {
+              "const": "uninstall",
+              "description": "Execute each explicit removal in the supplied order.",
+              "type": "string"
+            }
+          ]
+        },
+        "SoftwareReadChoice": {
+          "additionalProperties": false,
+          "description": "Native human read input with its preallocated stable request.",
+          "properties": {
+            "input": {
+              "$ref": "#/$defs/SoftwareReadSelection",
+              "description": "The sole immutable query input."
+            },
+            "request": {
+              "$ref": "#/$defs/RequestId",
+              "description": "Original query identity."
+            }
+          },
+          "required": ["request", "input"],
+          "type": "object"
+        },
+        "SoftwareReadSelection": {
+          "additionalProperties": false,
+          "description": "Model-visible selection for a finite native software detector; no arbitrary selector or command.",
+          "properties": {
+            "selection": {
+              "$ref": "#/$defs/BackendSelection",
+              "description": "Exact current signed offer projection."
+            },
+            "step": {
+              "description": "One declared step in that definition.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": ["selection", "step"],
+          "type": "object"
+        },
+        "SoftwareState": {
+          "description": "Independently observed software state; installer exit is never a value of this type.",
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "Declared installed target is authoritatively absent.",
+              "properties": { "kind": { "const": "absent", "type": "string" } },
+              "required": ["kind"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Installed bytes match one exact declared version proof.",
+              "properties": {
+                "kind": { "const": "present", "type": "string" },
+                "version": {
+                  "$ref": "#/$defs/PackageValue",
+                  "description": "Ecosystem version, preserved exactly."
+                }
+              },
+              "required": ["kind", "version"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Target is unreadable, changed concurrently, or contains unknown bytes.",
+              "properties": {
+                "kind": { "const": "unknown", "type": "string" },
+                "reason": {
+                  "$ref": "#/$defs/SoftwareDetectionFailure",
+                  "description": "Closed detection failure, without paths or backend text."
+                }
+              },
+              "required": ["kind", "reason"],
+              "type": "object"
+            }
+          ]
+        },
+        "VersionedRef": {
+          "additionalProperties": false,
+          "description": "Exact resource/configuration reference. Resolution and authenticity belong to the owner.",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/Id",
+              "description": "Opaque reference identity; the revision must be supplied separately."
+            },
+            "revision": {
+              "$ref": "#/$defs/Id",
+              "description": "Exact immutable revision reference; does not resolve or follow a moving alias."
+            }
+          },
+          "required": ["id", "revision"],
+          "type": "object"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "One output schema for both success and tool-level failure.",
+      "oneOf": [
+        {
+          "properties": {
+            "result": { "$ref": "#/$defs/BackendRequest" },
+            "status": { "const": "ok", "type": "string" }
+          },
+          "required": ["status", "result"],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "error": { "$ref": "#/$defs/ErrorView" },
+            "status": { "const": "error", "type": "string" }
+          },
+          "required": ["status", "error"],
+          "type": "object"
+        }
+      ],
+      "title": "ToolOutput",
+      "type": "object"
+    }
+  },
+  {
+    "annotations": { "openWorldHint": false, "readOnlyHint": true },
     "description": "Current bound-context capabilities. Unknown is not supported.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",

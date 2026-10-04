@@ -142,32 +142,31 @@ async function initialize(i: Initialization) {
     );
   });
   if (i.controlled)
-    ctx.tools.register({
-      ...TOOL_PROFILE.proposal,
-      output: {
-        schema: { type: "object", additionalProperties: true },
-        render: (_args, value) => [
-          { type: "text", text: JSON.stringify(value) },
-        ],
-      },
-      execute: async (args, exec) => {
-        verify();
-        if (
-          !record(args) ||
-          typeof args.name !== "string" ||
-          !record(args.arguments)
-        )
-          throw new NativeFault("invalid_input");
-        return waitCallback(
-          "proposal",
-          { name: args.name, arguments: args.arguments },
-          exec.signal,
-        );
-      },
-    });
+    for (const definition of i.tools) {
+      ctx.tools.register({
+        name: definition.name,
+        description: definition.description ?? definition.name,
+        parameters: definition.inputSchema,
+        output: {
+          schema: { type: "object", additionalProperties: true },
+          render: (_args, value) => [
+            { type: "text", text: JSON.stringify(value) },
+          ],
+        },
+        execute: async (args, exec) => {
+          verify();
+          if (!record(args)) throw new NativeFault("invalid_input");
+          return waitCallback(
+            "proposal",
+            { name: definition.name, arguments: args },
+            exec.signal,
+          );
+        },
+      });
+    }
   const allowed = [
     TOOL_PROFILE.question,
-    ...(i.controlled ? [TOOL_PROFILE.proposal.name] : []),
+    ...(i.controlled ? i.tools.map((t) => t.name) : []),
   ];
   const verifyTools = sealTools(ctx, i.nativeSessionId, allowed, drift);
   verify = () => {

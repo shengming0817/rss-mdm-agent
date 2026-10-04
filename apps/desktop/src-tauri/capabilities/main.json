@@ -1,8 +1,15 @@
 {
   "identifier": "main",
-  "description": "Local main window: S1 execution service and private AI transport.",
-  "windows": ["main"],
+  "description": "Local main window: controlled execution service and private AI transport.",
+  "windows": [
+    "main"
+  ],
   "permissions": [
+    "allow-self-service-policy-directory",
+    "allow-self-service-policy-invoke",
+    "allow-self-service-policy-confirm",
+    "allow-self-service-policy-status",
+    "allow-self-service-observe-software",
     "allow-self-service-snapshot",
     "allow-self-service-execute",
     "allow-self-service-confirm",

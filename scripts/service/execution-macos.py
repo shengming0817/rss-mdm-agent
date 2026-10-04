@@ -6,6 +6,8 @@ import json
 import re
 import hashlib
 from pathlib import Path
+
+DEFAULT_CONFIG = Path('/Library/Application Support/RSS MDM Agent/execution.json')
 import plistlib
 import stat
 import subprocess
@@ -44,7 +46,7 @@ def candidate(binary, config):
         '=cdhash H"' + cdhash + '"', str(binary)], check=True, capture_output=True, text=True)
     result = subprocess.run([str(binary), '--config', str(config), '--validate-installation'], check=True, capture_output=True, text=True)
     value = json.loads(result.stdout)
-    if value['version'] != 3 or value['ipc_version'] != 10 or value['service']['path'] != str(binary):
+    if value['version'] != 3 or value['ipc_version'] != 11 or value['service']['path'] != str(binary):
         raise RuntimeError('candidate deployment/protocol mismatch')
     return value
 
@@ -112,7 +114,7 @@ def refresh(plist, label, domain, endpoint, program, config, next_binary, next_c
         for subject in old['helper_work_roots']:
             if registered(f'gui/{subject}/com.rss-mdm.agent.execution.user'):
                 raise RuntimeError('remove the matching helper in its actual login before system refresh')
-        default = Path('/Library/Application Support/RSS MDM Agent/execution.json')
+        default = DEFAULT_CONFIG
         if default != config and default.exists():
             for path in [default, *default.parents]:
                 metadata = path.lstat()

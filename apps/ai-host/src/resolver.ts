@@ -100,14 +100,22 @@ export function localResolver(
                   ) =>
                     process.platform === "darwin" &&
                     process.arch === "arm64" &&
-                    session.binding.provider === "codex" &&
-                    session.binding.providerVersion === "0.155.0" &&
+                    ((session.binding.provider === "codex" &&
+                      session.binding.providerVersion === "0.155.0") ||
+                      (session.binding.provider === "claude" &&
+                        /^claude-agent-sdk-0\.3\.277\/claude-code-[0-9.]+$/.test(
+                          session.binding.providerVersion,
+                        )) ||
+                      (session.binding.provider === "deepseek" &&
+                        /^harness-0\.1\.6-alpha\.2\.[a-f0-9]{64}$/.test(
+                          session.binding.providerVersion,
+                        ))) &&
                     session.capabilities.tools === "host_mediated"
                       ? {
                           ok: true as const,
                           value: {
                             platform: "darwin-arm64",
-                            verificationRef: "codex-0.155.0-controlled",
+                            verificationRef: `${session.binding.provider}-${session.binding.providerVersion}-controlled`,
                           },
                         }
                       : {

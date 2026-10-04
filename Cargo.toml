@@ -1,5 +1,5 @@
 [workspace]
-members = ["apps/agent-service", "crates/agent-client", "crates/execution-runner", "crates/execution-ipc", "crates/native-process", "crates/platform-private-storage", "crates/platform-credentials", "crates/installation-security", "apps/desktop/src-tauri", "crates/execution-contract", "crates/ai-session-contract", "crates/execution-interaction", "crates/execution-capability", "crates/execution-admission", "crates/service-catalog", "crates/execution-approval", "crates/execution-lifecycle", "crates/script-plan", "crates/execution-mcp", "crates/execution-sqlite", "crates/execution-app"]
+members = ["apps/agent-service", "crates/agent-client", "crates/execution-runner", "crates/execution-ipc", "crates/native-process", "crates/platform-private-storage", "crates/platform-credentials", "crates/installation-security", "apps/desktop/src-tauri", "crates/execution-contract", "crates/ai-session-contract", "crates/execution-interaction", "crates/execution-capability", "crates/execution-admission", "crates/execution-approval", "crates/execution-lifecycle", "crates/script-plan", "crates/execution-mcp", "crates/execution-sqlite", "crates/execution-app"]
 exclude = ["vendor/tauri-plugin-wdio-webdriver"]
 resolver = "2"
 
@@ -10,8 +10,9 @@ rust-version = "1.96"
 license = "MIT"
 
 [workspace.dependencies]
-rss-mdm-agent-wire = { git = "https://dev.azure.com/shengming0923/rss/_git/rss-mdm", rev = "407b3febaf5192f397bedf5e0b64c57f75a1285f", version = "=1.0.0" }
-rss-mdm-resource = { git = "https://dev.azure.com/shengming0923/rss/_git/rss-mdm", rev = "407b3febaf5192f397bedf5e0b64c57f75a1285f", version = "=0.1.0" }
+zeroize = { version = "=1.8.2", features = ["serde"] }
+rss-mdm-agent-wire = { git = "https://dev.azure.com/shengming0923/rss/_git/rss-mdm", rev = "149c34d5f30e74ce7f9f82740a841330befeb4a8", version = "=1.0.0" }
+rss-mdm-resource = { git = "https://dev.azure.com/shengming0923/rss/_git/rss-mdm", rev = "149c34d5f30e74ce7f9f82740a841330befeb4a8", version = "=0.1.0" }
 rustls = { version = "=0.23.45", default-features = false, features = ["std", "ring", "tls12"] }
 x509-cert = "=0.2.5"
 der = { version = "=0.7.10", features = ["alloc", "derive", "oid"] }

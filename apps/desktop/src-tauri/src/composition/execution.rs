@@ -4,8 +4,12 @@ use execution_app::{BackendTaskView, Error, ExecutionStatus, TaskPhase};
 use execution_contract::*;
 use execution_ipc::host::{ClientOrigin, Reply, Request, ServiceClient};
 use execution_mcp as mcp;
+use sha2::Digest as _;
 use std::{
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
     time::{SystemTime, UNIX_EPOCH},
 };
 use tokio_util::sync::CancellationToken;
@@ -39,6 +43,8 @@ pub struct ExecutionHandle {
     origin: ClientOrigin,
     permits: Arc<tokio::sync::Semaphore>,
     wire: Arc<Mutex<()>>,
+    employee_possible: Arc<AtomicBool>,
+    employee_initialized: Arc<AtomicBool>,
 }
 impl ExecutionHandle {
     pub fn new() -> Self {
@@ -48,6 +54,8 @@ impl ExecutionHandle {
             origin: ClientOrigin::Desktop {},
             permits: Arc::new(tokio::sync::Semaphore::new(16)),
             wire: Arc::new(Mutex::new(())),
+            employee_possible: Arc::new(AtomicBool::new(false)),
+            employee_initialized: Arc::new(AtomicBool::new(false)),
         }
     }
     pub fn with_trusted_users(mut self, users: Arc<Mutex<super::users::Users>>) -> Self {
@@ -100,6 +108,19 @@ impl ExecutionHandle {
             let client = ServiceClient::installed().inspect_err(|error| {
                 eprintln!("RSS_EXECUTION_IPC_FAILURE stage=installation code={error:?}");
             })?;
+            if matches!(&request, Request::EmployeeSession { value: Some(_) }) {
+                // No protected installation means no handoff was attempted. Once transport
+                // can begin, retain uncertainty until a separate authenticated revoke ACK.
+                bound.employee_possible.store(true, Ordering::Release);
+                if !bound.employee_initialized.load(Ordering::Acquire) {
+                    match client.request(Request::EmployeeSession { value: None })? {
+                        Reply::EmployeeBound => {
+                            bound.employee_initialized.store(true, Ordering::Release)
+                        }
+                        _ => return Err(Error::OutcomeUnknown),
+                    }
+                }
+            }
             client.request(request).inspect_err(|error| {
                 eprintln!("RSS_EXECUTION_IPC_FAILURE stage=request code={error:?}");
             })
@@ -111,6 +132,112 @@ impl ExecutionHandle {
             Reply::Rejected => Err(Error::Denied),
             Reply::Unavailable => Err(Error::OutcomeUnknown),
             reply => Ok(reply),
+        }
+    }
+    pub async fn revoke_employee(&self) -> ui::Result<()> {
+        if !self.employee_possible.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        let possible = self.employee_possible.clone();
+        tokio::task::spawn_blocking(move || {
+            // This control request never takes the business semaphore or transport lock.
+            let client = ServiceClient::installed()?;
+            match client.request(Request::EmployeeSession { value: None })? {
+                Reply::EmployeeBound => {
+                    possible.store(false, Ordering::Release);
+                    Ok(())
+                }
+                _ => Err(Error::OutcomeUnknown),
+            }
+        })
+        .await
+        .map_err(|_| bad(Error::OutcomeUnknown))?
+        .map_err(bad)
+    }
+    pub async fn employee(
+        &self,
+        value: Option<execution_ipc::host::EmployeeSession>,
+    ) -> ui::Result<()> {
+        if value.is_none() {
+            return self.revoke_employee().await;
+        }
+        match self
+            .request(Request::EmployeeSession { value })
+            .await
+            .map_err(bad)?
+        {
+            Reply::EmployeeBound => Ok(()),
+            _ => Err(bad(Error::Denied)),
+        }
+    }
+    pub async fn policy_directory(
+        &self,
+        input: ui::PolicyDirectoryQuery,
+    ) -> ui::Result<rss_mdm_agent_wire::runtime::SelfServiceDirectoryResponse> {
+        match self
+            .request(Request::PolicyDirectory {
+                after: input.after,
+                origin: self.origin.clone(),
+            })
+            .await
+            .map_err(bad)?
+        {
+            Reply::PolicyDirectory { value } => Ok(value),
+            _ => Err(bad(Error::Denied)),
+        }
+    }
+    pub async fn invoke_policy(&self, choice: PolicyChoice) -> ui::Result<BackendRequest> {
+        match self
+            .request(Request::InvokePolicy {
+                choice,
+                origin: self.origin.clone(),
+            })
+            .await
+            .map_err(bad)?
+        {
+            Reply::PolicyRequest { value } => Ok(*value),
+            _ => Err(bad(Error::OutcomeUnknown)),
+        }
+    }
+    pub async fn confirm_policy(&self, input: ui::ActionRef) -> ui::Result<BackendRequest> {
+        match self
+            .request(Request::ConfirmPolicy {
+                request: input.request_id,
+            })
+            .await
+            .map_err(bad)?
+        {
+            Reply::PolicyRequest { value } => Ok(*value),
+            _ => Err(bad(Error::OutcomeUnknown)),
+        }
+    }
+    pub async fn policy_status(&self, input: ui::ActionRef) -> ui::Result<ui::PolicyStatus> {
+        match self
+            .request(Request::PolicyStatus {
+                request: input.request_id,
+            })
+            .await
+            .map_err(bad)?
+        {
+            Reply::PolicyRequest { value } => Ok(ui::PolicyStatus::Preparation { value }),
+            Reply::PolicyStatus { value } => Ok(ui::PolicyStatus::Run {
+                value: Box::new(value),
+            }),
+            Reply::PolicyAbsent => Ok(ui::PolicyStatus::Absent),
+            _ => Err(bad(Error::OutcomeUnknown)),
+        }
+    }
+    pub async fn observe_software(&self, choice: SoftwareReadChoice) -> ui::Result<BackendRequest> {
+        match self
+            .request(Request::ObserveSoftware {
+                choice,
+                origin: self.origin.clone(),
+            })
+            .await
+            .map_err(bad)?
+        {
+            Reply::PolicyRequest { value } => Ok(*value),
+            _ => Err(bad(Error::OutcomeUnknown)),
         }
     }
     pub async fn close(&self) {
@@ -263,6 +390,129 @@ impl mcp::ExecutionServicePort for ExecutionHandle {
             _ => Err(mcp::ServiceError::Unavailable),
         }
     }
+    async fn observe_software(
+        &self,
+        input: SoftwareReadSelection,
+        _: CancellationToken,
+    ) -> Result<BackendRequest, mcp::ServiceError> {
+        let ClientOrigin::Ai { tool_call, .. } = &self.origin else {
+            return Err(mcp::ServiceError::Denied);
+        };
+        let request = RequestId::new(
+            uuid::Uuid::parse_str(tool_call.as_str())
+                .map_err(|_| mcp::ServiceError::InvalidInput)?
+                .to_string(),
+        )
+        .map_err(|_| mcp::ServiceError::InvalidInput)?;
+        self.observe_software(SoftwareReadChoice { request, input })
+            .await
+            .map_err(|_| mcp::ServiceError::Unavailable)
+    }
+    async fn policy_tools(
+        &self,
+        _: CancellationToken,
+    ) -> Result<Vec<serde_json::Value>, mcp::ServiceError> {
+        if !matches!(self.origin, ClientOrigin::Ai { .. }) {
+            return Err(mcp::ServiceError::Denied);
+        }
+        let mut after = None;
+        let mut tools = Vec::new();
+        for _ in 0..16 {
+            let page = self
+                .policy_directory(ui::PolicyDirectoryQuery { after })
+                .await
+                .map_err(|_| mcp::ServiceError::Unavailable)?;
+            for item in page.items {
+                match mcp::policy_tool(&item) {
+                    Ok(tool) => tools.push(tool),
+                    Err(mcp::ServiceError::InvalidInput) => {
+                        eprintln!(
+                            "RSS_POLICY_TOOL_UNSUPPORTED name={}",
+                            mcp::policy_tool_name(&item)
+                        );
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+            after = page
+                .next_cursor
+                .map(|id| Id::new(id.to_string()))
+                .transpose()
+                .map_err(|_| mcp::ServiceError::InvalidInput)?;
+            if after.is_none() {
+                return Ok(tools);
+            }
+            if tools.len() >= 128 {
+                return Err(mcp::ServiceError::Limit);
+            }
+        }
+        Err(mcp::ServiceError::Limit)
+    }
+    async fn invoke_policy(
+        &self,
+        name: &str,
+        args: serde_json::Map<String, serde_json::Value>,
+        _: CancellationToken,
+    ) -> Result<BackendRequest, mcp::ServiceError> {
+        let ClientOrigin::Ai { tool_call, .. } = &self.origin else {
+            return Err(mcp::ServiceError::Denied);
+        };
+        let request = RequestId::new(
+            uuid::Uuid::parse_str(tool_call.as_str())
+                .map_err(|_| mcp::ServiceError::InvalidInput)?
+                .to_string(),
+        )
+        .map_err(|_| mcp::ServiceError::InvalidInput)?;
+        let mut after = None;
+        for _ in 0..16 {
+            let page = self
+                .policy_directory(ui::PolicyDirectoryQuery { after })
+                .await
+                .map_err(|_| mcp::ServiceError::Unavailable)?;
+            for item in page.items {
+                if mcp::policy_tool_name(&item) == name {
+                    mcp::policy_tool(&item)?;
+                    return self
+                        .invoke_policy(PolicyChoice {
+                            request,
+                            policy_id: Id::new(item.policy_id.to_string())
+                                .map_err(|_| mcp::ServiceError::InvalidInput)?,
+                            policy_revision: item.policy_revision,
+                            policy_version: Id::new(item.policy_version.to_string())
+                                .map_err(|_| mcp::ServiceError::InvalidInput)?,
+                            parameters: args.into_iter().collect(),
+                        })
+                        .await
+                        .map_err(|_| mcp::ServiceError::OutcomeUnknown);
+                }
+            }
+            after = page
+                .next_cursor
+                .map(|id| Id::new(id.to_string()))
+                .transpose()
+                .map_err(|_| mcp::ServiceError::InvalidInput)?;
+            if after.is_none() {
+                break;
+            }
+        }
+        Err(mcp::ServiceError::Denied)
+    }
+    async fn policy_status(
+        &self,
+        request: mcp::OperationRequest,
+        _: CancellationToken,
+    ) -> Result<serde_json::Value, mcp::ServiceError> {
+        let value = self
+            .policy_status(ui::ActionRef {
+                request_id: request.operation_request_id,
+            })
+            .await
+            .map_err(|_| mcp::ServiceError::Unavailable)?;
+        if matches!(value, ui::PolicyStatus::Absent) {
+            return Err(mcp::ServiceError::NotFound);
+        }
+        serde_json::to_value(value).map_err(|_| mcp::ServiceError::Unavailable)
+    }
     async fn capabilities(
         &self,
         _: CancellationToken,
@@ -332,10 +582,10 @@ fn selection_reply(input: &BackendSelection, reply: Reply) -> Result<TaskSubmiss
             confirmation_required,
         }),
         Reply::Pending { value }
-            if value.offer.request == input.request
-                && value.offer.task == input.task
-                && value.offer.attempt == input.attempt
-                && value.offer.revision == input.revision =>
+            if value.action.offer().ok_or(Error::InvalidInput)?.request == input.request
+                && value.action.offer().ok_or(Error::InvalidInput)?.task == input.task
+                && value.action.offer().ok_or(Error::InvalidInput)?.attempt == input.attempt
+                && value.action.offer().ok_or(Error::InvalidInput)?.revision == input.revision =>
         {
             if matches!(
                 value.state,
@@ -344,7 +594,7 @@ fn selection_reply(input: &BackendSelection, reply: Reply) -> Result<TaskSubmiss
                 return Err(Error::Denied);
             }
             Ok(TaskSubmission {
-                request: value.offer.request,
+                request: value.action.request().clone(),
                 confirmation_required: value.state == BackendRequestState::AwaitingConfirmation,
             })
         }
@@ -359,9 +609,22 @@ fn pending_operation(value: execution_contract::BackendRequest) -> mcp::Operatio
         process: None,
         assessment: None,
         cancel_requested: value.state == BackendRequestState::Cancelled,
-        operation_request_id: value.offer.request,
-        content_digest: value.offer.revision,
+        operation_request_id: value.action.request().clone(),
+        content_digest: value
+            .action
+            .offer()
+            .map(|o| o.revision.clone())
+            .unwrap_or_else(|| {
+                Digest::new(format!(
+                    "{:x}",
+                    sha2::Sha256::digest(
+                        serde_json::to_vec(&value.action).expect("typed preparation")
+                    )
+                ))
+                .expect("digest")
+            }),
         phase: match value.state {
+            BackendRequestState::Observed => mcp::OperationPhase::ExecutionEnded,
             BackendRequestState::Failed => mcp::OperationPhase::Failed,
             BackendRequestState::Cancelled => mcp::OperationPhase::Cancelled,
             _ => mcp::OperationPhase::Waiting,
@@ -384,16 +647,18 @@ mod selection_tests {
             revision: Digest::new("a".repeat(64)).unwrap(),
         };
         let original = BackendRequest {
-            offer: BackendTask {
-                request: selection.request.clone(),
-                task: selection.task.clone(),
-                attempt: selection.attempt.clone(),
-                revision: selection.revision.clone(),
-                title: "original".into(),
-                expires_at: 100,
-                user_initiated: true,
-                summary: BackendTaskSummary::Script {
-                    identity: BackendIdentity::System,
+            action: PreparedAction::Offered {
+                offer: BackendTask {
+                    request: selection.request.clone(),
+                    task: selection.task.clone(),
+                    attempt: selection.attempt.clone(),
+                    revision: selection.revision.clone(),
+                    title: "original".into(),
+                    expires_at: 100,
+                    user_initiated: true,
+                    summary: BackendTaskSummary::Script {
+                        identity: BackendIdentity::System,
+                    },
                 },
             },
             trigger: BackendTrigger::Automatic {},
@@ -436,11 +701,14 @@ mod selection_tests {
         }
         for field in 0..4 {
             let mut value = original.clone();
+            let PreparedAction::Offered { offer } = &mut value.action else {
+                unreachable!()
+            };
             match field {
-                0 => value.offer.request = RequestId::new("other-request").unwrap(),
-                1 => value.offer.task = Id::new("other-task").unwrap(),
-                2 => value.offer.attempt = Id::new("other-attempt").unwrap(),
-                _ => value.offer.revision = Digest::new("b".repeat(64)).unwrap(),
+                0 => offer.request = RequestId::new("other-request").unwrap(),
+                1 => offer.task = Id::new("other-task").unwrap(),
+                2 => offer.attempt = Id::new("other-attempt").unwrap(),
+                _ => offer.revision = Digest::new("b".repeat(64)).unwrap(),
             }
             assert!(selection_reply(
                 &selection,

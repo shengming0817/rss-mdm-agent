@@ -68,7 +68,9 @@ async function crashAfterRustAcceptance(
   proposal,
   router,
 ) {
-  const prepared = unwrap(router.prepare(session.namespace, proposal));
+  const prepared = unwrap(
+    router.prepare(session.namespace, proposal, command.commandId),
+  );
   const child = fork(
     new URL("./execution-crash-driver.mjs", import.meta.url),
     [

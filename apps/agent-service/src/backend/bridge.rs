@@ -48,10 +48,66 @@ pub struct ExecutionBridge<P> {
     consumer: Id,
     policy: P,
 }
+impl ExecutionBridge<agent_client::CredentialRedactor> {
+    pub(crate) fn protect_employee(
+        &mut self,
+        value: &std::sync::Arc<zeroize::Zeroizing<String>>,
+    ) -> Result<(), Error> {
+        self.policy.protect_employee(value)
+    }
+}
 impl<P: OutputPolicy> ExecutionBridge<P> {
     /// Select one stable consumer and independently trusted output policy.
     pub fn new(consumer: Id, policy: P) -> Self {
         Self { consumer, policy }
+    }
+    pub(crate) fn protect_status(
+        &self,
+        mut status: wire::SelfServiceStatus,
+    ) -> Result<wire::SelfServiceStatus, Error> {
+        fn protect<P: OutputPolicy>(
+            policy: &P,
+            value: &mut serde_json::Value,
+        ) -> Result<(), Error> {
+            match value {
+                serde_json::Value::String(text) => *text = policy.redact(text)?,
+                serde_json::Value::Array(values) => {
+                    for value in values {
+                        protect(policy, value)?;
+                    }
+                }
+                serde_json::Value::Object(values) => {
+                    let old = std::mem::take(values);
+                    for (key, mut value) in old {
+                        protect(policy, &mut value)?;
+                        let key = policy.redact(&key)?;
+                        if values.insert(key, value).is_some() {
+                            return Err(Error::Untrusted);
+                        }
+                    }
+                }
+                _ => (),
+            }
+            Ok(())
+        }
+        if let Some(result) = &mut status.result {
+            let original = result.output.clone();
+            protect(&self.policy, &mut result.output)?;
+            if result.output != original {
+                result.schema_valid = false;
+                result.trusted = false;
+            }
+            let d = &result.diagnostics;
+            result.diagnostics = wire::TaskDiagnostics::new(
+                self.policy.redact(d.stdout())?,
+                self.policy.redact(d.stderr())?,
+                d.duration_ms(),
+                d.executed_at(),
+                d.failure(),
+            )
+            .map_err(|_| Error::Protocol)?;
+        }
+        Ok(status)
     }
     /// Check materials and current host prerequisites BEFORE requesting a remote Start.
     /// Scripts and ordered software each bind to one immutable local intent.
@@ -504,6 +560,7 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
                     wire::OutputQuality::Failed,
                     serde_json::Value::Null,
                     diagnostics,
+                    i64::try_from(evidence.observed_at_unix_ms / 1000).map_err(|_| Error::Clock)?,
                 )?),
                 wire::TaskPayload::Software(spec) => {
                     wire::TaskEvent::SoftwareResult(software_result(
@@ -569,6 +626,7 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
                     quality,
                     output,
                     diagnostics,
+                    i64::try_from(evidence.observed_at_unix_ms / 1000).map_err(|_| Error::Clock)?,
                 )?)
             }
             _ => return Err(Error::Unsupported),

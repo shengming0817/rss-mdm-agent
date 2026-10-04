@@ -77,9 +77,16 @@ export interface ConnectionOptions {
   readonly profile: "conversation" | "controlled_tools";
 }
 /** Only a proposal/result bridge; it cannot issue execution permits or approve a plan. */
+export type McpTool = import("@modelcontextprotocol/sdk/types.js").Tool;
 export interface ToolEndpoint {
+  /** Native MCP descriptors from the authenticated service; no independent product tool schema. */
+  list(
+    budget: Budget,
+  ): Promise<
+    Result<readonly import("@modelcontextprotocol/sdk/types.js").Tool[]>
+  >;
   propose(
-    proposal: { name: Id; arguments: Record<string, unknown> },
+    proposal: { name: Id; arguments: Record<string, unknown>; callId?: Id },
     budget: Budget,
   ): Promise<
     Result<{

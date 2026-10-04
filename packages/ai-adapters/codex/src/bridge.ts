@@ -19,20 +19,6 @@ import {
 import { bounded, limits } from "./support.js";
 
 export const HOST_SERVER = "rss_host";
-export const HOST_TOOL = {
-  name: "propose",
-  description:
-    "Submit a business tool proposal to the authenticated host; this does not grant execution authority.",
-  inputSchema: {
-    type: "object" as const,
-    properties: {
-      name: { type: "string" },
-      arguments: { type: "object", additionalProperties: true },
-    },
-    required: ["name", "arguments"],
-    additionalProperties: false,
-  },
-};
 function toolResult(
   disposition: "returned" | "rejected" | "unavailable",
   text: string,
@@ -40,7 +26,14 @@ function toolResult(
   return {
     isError: disposition !== "returned",
     content: [{ type: "text" as const, text }],
-    structuredContent: { rssHostResult: { disposition, text } },
+    ...(() => {
+      try {
+        return { structuredContent: JSON.parse(text) };
+      } catch {
+        return {};
+      }
+    })(),
+    _meta: { "com.rss-mdm/host-disposition": disposition },
   };
 }
 /** Incarnation-local endpoint. Native tools never receive an execution permit. */
@@ -49,10 +42,19 @@ export class ToolBridge {
   private connections = new Set<Server>();
   private abort = new AbortController();
   readonly token = randomUUID();
+  catalog: readonly import("@modelcontextprotocol/sdk/types.js").Tool[] = [];
   url?: string;
   constructor(
     private readonly endpoint: ToolEndpoint,
     private readonly canPropose: () => boolean,
+    private readonly observe?: (proposal: {
+      name: string;
+      arguments: Record<string, unknown>;
+      callId: string;
+    }) => (result: {
+      disposition: "returned" | "rejected" | "unavailable";
+      text: string;
+    }) => void,
   ) {
     this.server = createServer(async (request, response) => {
       const actual = Buffer.from(request.headers.authorization ?? ""),
@@ -78,7 +80,7 @@ export class ToolBridge {
       });
       this.connections.add(mcp);
       mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
-        tools: [HOST_TOOL],
+        tools: this.catalog,
       }));
       mcp.setRequestHandler(ListResourcesRequestSchema, async () => ({
         resources: [],
@@ -92,28 +94,23 @@ export class ToolBridge {
       mcp.setRequestHandler(CallToolRequestSchema, async ({ params }) => {
         const input = params.arguments;
         if (
-          params.name !== HOST_TOOL.name ||
+          !this.catalog.some((tool) => tool.name === params.name) ||
           !input ||
-          Object.keys(input).sort().join(",") !== "arguments,name" ||
-          !isId(input.name) ||
-          !input.arguments ||
-          typeof input.arguments !== "object" ||
-          Array.isArray(input.arguments) ||
+          Array.isArray(input) ||
           !this.canPropose()
         )
-          return toolResult("unavailable", "Host proposal unavailable");
+          return toolResult("unavailable", "Tool unavailable");
+        const proposal = {
+          name: params.name,
+          arguments: input,
+          callId: randomUUID(),
+        };
+        const observed = this.observe?.(proposal);
         try {
           boundedJson(input, limits);
           const result = await withinBudget(
             () => ({ timeoutMs: 30000, signal: this.abort.signal }),
-            (budget) =>
-              this.endpoint.propose(
-                {
-                  name: input.name as string,
-                  arguments: input.arguments as Record<string, unknown>,
-                },
-                budget,
-              ),
+            (budget) => this.endpoint.propose(proposal, budget),
           );
           if (!result.ok || this.abort.signal.aborted)
             throw new Error("unavailable");
@@ -126,8 +123,23 @@ export class ToolBridge {
             result.value.text.length > 65536
           )
             throw new Error("invalid host result");
-          return toolResult(result.value.disposition, result.value.text);
+          const response = toolResult(
+            result.value.disposition,
+            result.value.text,
+          );
+          if (
+            result.value.disposition === "returned" &&
+            this.catalog.find((t) => t.name === params.name)?.outputSchema &&
+            !("structuredContent" in response)
+          )
+            throw new Error("Missing structured tool output");
+          observed?.(result.value);
+          return response;
         } catch {
+          observed?.({
+            disposition: "unavailable",
+            text: "Host proposal unavailable",
+          });
           return toolResult("unavailable", "Host proposal unavailable");
         }
       });
@@ -150,6 +162,15 @@ export class ToolBridge {
     this.server.headersTimeout = 5000;
   }
   async start(budget: Budget): Promise<void> {
+    const listed = await bounded(this.endpoint.list(budget), budget);
+    if (
+      !listed.ok ||
+      listed.value.length > 128 ||
+      listed.value.some((t) => !isId(t.name))
+    )
+      throw new Error("Tool discovery unavailable");
+    boundedJson(listed.value, limits);
+    this.catalog = structuredClone(listed.value);
     await bounded(
       new Promise<void>((resolve, reject) => {
         this.server.once("error", reject);

@@ -11,6 +11,16 @@ export function nativePort(): SelfServicePort | null {
   if (!isTauri()) return null;
   const generation = userGeneration();
   return {
+    policy_directory: (input) =>
+      invoke("self_service_policy_directory", { input, generation }),
+    policy_invoke: (input) =>
+      invoke("self_service_policy_invoke", { input, generation }),
+    policy_confirm: (input) =>
+      invoke("self_service_policy_confirm", { input, generation }),
+    policy_status: (input) =>
+      invoke("self_service_policy_status", { input, generation }),
+    observe_software: (input) =>
+      invoke("self_service_observe_software", { input, generation }),
     snapshot: (input) =>
       invoke<Snapshot>("self_service_snapshot", { input, generation }),
     execute: (input) =>

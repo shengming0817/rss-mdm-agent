@@ -249,6 +249,7 @@ test("controlled admission requires a trusted verifier and binds immutable evide
   let calls = 0,
     verified = 0;
   const tools = {
+    list: async () => ({ ok: true, value: [] }),
     propose: async () => ({
       ok: true,
       value: { disposition: "rejected", text: "fixture" },
@@ -576,6 +577,7 @@ test("verified resume re-admits the new incarnation and the exact endpoint", asy
     },
   };
   const tools = {
+    list: async () => ({ ok: true, value: [] }),
     propose: async () => {
       throw new Error("unused");
     },
@@ -647,7 +649,10 @@ for (const operation of ["open", "resume"])
       const config = {
         ...configuration,
         permissions: "host_mediated",
-        tools: { propose: async () => {} },
+        tools: {
+          list: async () => ({ ok: true, value: [] }),
+          propose: async () => {},
+        },
         verifier: {
           verify: async () => {
             if (throws) throw new Error("PRIVATE_CANARY");
