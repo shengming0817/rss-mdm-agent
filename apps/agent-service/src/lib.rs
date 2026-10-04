@@ -5,13 +5,13 @@ pub mod deployment;
 mod error;
 mod material_gc;
 mod recovery;
-mod service;
 mod registration;
+mod service;
 pub mod software_worker;
-use rss_mdm_agent_wire::runtime as wire;
 use agent_client::{Clock, Error, IdentityProvider};
 pub use backend::plan::{Interpreter, SoftwareManager, SoftwareManagerKind};
 use base64::Engine;
+use rss_mdm_agent_wire::runtime as wire;
 pub use service::{DeviceService, ExecutionConfig, ProductionStartup, UserResources};
 use std::{
     path::Path,
@@ -55,7 +55,9 @@ impl DeviceSecrets {
     }
 }
 impl IdentityProvider for DeviceSecrets {
-    fn import_secret(&self, reference: &str, secret: &wire::Secret) -> Result<(), Error> { self.import_bootstrap(reference, secret) }
+    fn import_secret(&self, reference: &str, secret: &wire::Secret) -> Result<(), Error> {
+        self.import_bootstrap(reference, secret)
+    }
     fn resolve(&self, reference: &str) -> Result<wire::Secret, Error> {
         let bytes = self.0.read(reference)?;
         wire::Secret::parse(&base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&*bytes))
@@ -72,7 +74,6 @@ impl IdentityProvider for DeviceSecrets {
     fn key(&self, reference: &str) -> Result<Arc<dyn rustls::sign::SigningKey>, Error> {
         self.0.signing_key(reference, false)
     }
-
 }
 /// Actual UTC plus an in-process monotonic watermark; durable watermarks remain in existing SQLite.
 #[derive(Clone)]

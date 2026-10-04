@@ -165,6 +165,55 @@ mod tests {
         }
     }
     #[test]
+    fn nonexportable_device_key_reopens_and_signs_without_interaction() {
+        let root = std::env::temp_dir()
+            .canonicalize()
+            .unwrap()
+            .join(format!("device-keychain-{}", std::process::id()));
+        std::fs::create_dir(&root).unwrap();
+        let _cleanup = Isolated(root.clone());
+        let keychain =
+            Keychain::create_file(&root.join("old.keychain"), "isolated-test-password").unwrap();
+        assert_eq!(
+            keychain
+                .open_device_key("machine-key")
+                .err()
+                .unwrap()
+                .kind(),
+            io::ErrorKind::NotFound
+        );
+        let key = keychain.create_device_key("machine-key").unwrap();
+        let public = key.public_spki().unwrap();
+        let signature = key
+            .sign(SignatureScheme::Pkcs1Sha256, b"machine proof")
+            .unwrap();
+        assert_eq!(signature.len(), 256);
+        drop(key);
+        let reopened = keychain.open_device_key("machine-key").unwrap();
+        assert_eq!(public, reopened.public_spki().unwrap());
+        assert_eq!(
+            signature,
+            reopened
+                .sign(SignatureScheme::Pkcs1Sha256, b"machine proof")
+                .unwrap()
+        );
+        assert_eq!(
+            reopened
+                .sign(SignatureScheme::PssSha256, b"machine proof")
+                .unwrap()
+                .len(),
+            256
+        );
+        assert_eq!(
+            keychain
+                .create_device_key("machine-key")
+                .unwrap()
+                .public_spki()
+                .unwrap(),
+            public
+        );
+    }
+    #[test]
     #[allow(deprecated)] // Upstream exposes no setter for the test's explicit isolated search list.
     fn a_changed_default_does_not_hide_a_secret_in_the_isolated_search_list() {
         let root = std::env::temp_dir()

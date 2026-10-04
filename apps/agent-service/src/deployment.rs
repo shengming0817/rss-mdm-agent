@@ -1,9 +1,9 @@
-use rss_mdm_agent_wire::runtime as wire;
 use crate::ProductionStartup;
 use crate::{DeviceSecrets, DeviceService, ExecutionConfig, SystemClock};
 use agent_client::{Client, Config, Error, Limits, OpenMode, Transport};
 use base64::Engine;
 use execution_ipc::host::{current_subject, PeerPolicy};
+use rss_mdm_agent_wire::runtime as wire;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -39,7 +39,10 @@ impl Deployment {
             Ok(()) => Ok(Box::new(crate::registration::RegistrationOwner::new(self)?)),
             Err(error) => {
                 execution_ipc::record_startup_failure(startup_failure(error));
-                Ok(Box::new(Diagnostic { policy: self.clients, readiness: execution_ipc::host::Readiness::NotReady }))
+                Ok(Box::new(Diagnostic {
+                    policy: self.clients,
+                    readiness: execution_ipc::host::Readiness::NotReady,
+                }))
             }
         }
     }
@@ -52,7 +55,8 @@ impl Deployment {
         let value: Self = serde_json::from_slice(&bytes).map_err(|_| Error::Configuration)?;
         if value.version != execution_ipc::host::DEPLOYMENT_VERSION
             || value.ipc_version != execution_ipc::host::IPC_VERSION
-            || value.installation_id.is_nil() || !value.device_ca_file.is_absolute()
+            || value.installation_id.is_nil()
+            || !value.device_ca_file.is_absolute()
             || !value.state_root.is_absolute()
             || !value.execution.material_root.is_absolute()
             || value.execution.material_root.starts_with(&value.state_root)
@@ -64,8 +68,13 @@ impl Deployment {
         {
             return Err(Error::Configuration);
         }
-        value.registration_clients.validate().map_err(crate::error::app_error)?;
-        if value.registration_clients.images.len() != 1 || !value.registration_clients.interactive { return Err(Error::Configuration); }
+        value
+            .registration_clients
+            .validate()
+            .map_err(crate::error::app_error)?;
+        if value.registration_clients.images.len() != 1 || !value.registration_clients.interactive {
+            return Err(Error::Configuration);
+        }
         value.clients.validate().map_err(crate::error::app_error)?;
         value
             .service
@@ -159,7 +168,8 @@ impl Deployment {
             architecture,
             keys,
             transport: Transport::Https,
-            device_ca_pem: installation_security::read_protected(&self.device_ca_file).map_err(|_| Error::Configuration)?,
+            device_ca_pem: installation_security::read_protected(&self.device_ca_file)
+                .map_err(|_| Error::Configuration)?,
             ca_pem: self
                 .ca_file
                 .as_ref()
@@ -183,12 +193,8 @@ impl Deployment {
         Ok(format!(
             "{:x}",
             Sha256::digest(
-                serde_json::to_vec(&(
-                    &self.origin,
-                    self.tenant,
-                    self.installation_id
-                ))
-                .map_err(|_| Error::Configuration)?
+                serde_json::to_vec(&(&self.origin, self.tenant, self.installation_id))
+                    .map_err(|_| Error::Configuration)?
             )
         ))
     }
@@ -196,36 +202,78 @@ impl Deployment {
     pub(crate) fn preflight(&self) -> Result<(), Error> {
         let network = self.network()?;
         let root = &self.state_root;
-        if never_initialized(root)? { return Ok(()); }
-        if platform_private_storage::read(&root.join("identity-binding"), 128)? != self.namespace()?.as_bytes() { return Err(Error::Identity); }
+        if never_initialized(root)? {
+            return Ok(());
+        }
+        if platform_private_storage::read(&root.join("identity-binding"), 128)?
+            != self.namespace()?.as_bytes()
+        {
+            return Err(Error::Identity);
+        }
         agent_client::validate_existing(&root.join("communication"), &network)?;
-        if root.join("execution-initialized").exists() && !root.join("execution.sqlite").exists() { return Err(Error::Storage); }
+        if root.join("execution-initialized").exists() && !root.join("execution.sqlite").exists() {
+            return Err(Error::Storage);
+        }
         if root.join("execution.sqlite").exists() {
             let binding = agent_client::inspect_binding(&root.join("communication"), &network)?;
-            let (context, _) = crate::backend::plan::context(network.origin.as_str(), network.tenant, &binding)?;
-            execution_sqlite::Store::validate_existing(&root.join("execution.sqlite"), &context.authority, crate::backend::plan::storage_limits()).map_err(|_| Error::Schema)?;
+            let (context, _) =
+                crate::backend::plan::context(network.origin.as_str(), network.tenant, &binding)?;
+            execution_sqlite::Store::validate_existing(
+                &root.join("execution.sqlite"),
+                &context.authority,
+                crate::backend::plan::storage_limits(),
+            )
+            .map_err(|_| Error::Schema)?;
         }
         Ok(())
     }
-    pub(crate) fn communication(&self, create: bool) -> Result<Client<DeviceSecrets, SystemClock>, Error> {
+    pub(crate) fn communication(
+        &self,
+        create: bool,
+    ) -> Result<Client<DeviceSecrets, SystemClock>, Error> {
         self.require_service()?;
         self.preflight()?;
         let namespace = self.namespace()?;
         let root = &self.state_root;
         let absent = never_initialized(root)?;
-        if absent && !create { return Err(Error::Identity); }
+        if absent && !create {
+            return Err(Error::Identity);
+        }
         if absent {
             platform_private_storage::directory(root)?;
             installation_security::protected(root).map_err(|_| Error::Storage)?;
-            platform_private_storage::write_new(&root.join("identity-binding"), namespace.as_bytes())?;
-            for path in [root.join("communication"), root.join("secrets")] { platform_private_storage::directory(&path)?; }
+            platform_private_storage::write_new(
+                &root.join("identity-binding"),
+                namespace.as_bytes(),
+            )?;
+            for path in [root.join("communication"), root.join("secrets")] {
+                platform_private_storage::directory(&path)?;
+            }
         }
         let secrets = DeviceSecrets::open(&root.join("secrets"), &namespace)?;
-        if absent { secrets.bind_storage(root)?; } else { secrets.verify_storage(root)?; }
-        Client::open(&root.join("communication"), self.network()?, if absent { OpenMode::Create } else { OpenMode::Existing }, secrets, SystemClock::new()?)
+        if absent {
+            secrets.bind_storage(root)?;
+        } else {
+            secrets.verify_storage(root)?;
+        }
+        Client::open(
+            &root.join("communication"),
+            self.network()?,
+            if absent {
+                OpenMode::Create
+            } else {
+                OpenMode::Existing
+            },
+            secrets,
+            SystemClock::new()?,
+        )
     }
     /// Import protected grant metadata and its secret, then drive the original certificate lifecycle.
-    pub async fn initialize(&self, grant: agent_client::GrantImport, secret: &wire::Secret) -> Result<(), Error> {
+    pub async fn initialize(
+        &self,
+        grant: agent_client::GrantImport,
+        secret: &wire::Secret,
+    ) -> Result<(), Error> {
         let mut client = self.communication(true)?;
         let reference = format!("bootstrap-{}", grant.operation_id);
         client.import_bootstrap_secret(&reference, secret)?;
@@ -239,20 +287,49 @@ impl Deployment {
         client.renew_certificate().await?;
         Ok(())
     }
-    pub(crate) fn activate(&self, client: Client<DeviceSecrets, SystemClock>) -> Result<crate::service::ServiceHandle, Error> {
-        self.device_service(client)?.spawn(self.clients.clone(), self.helper_policy())
+    pub(crate) fn activate(
+        &self,
+        client: Client<DeviceSecrets, SystemClock>,
+    ) -> Result<crate::service::ServiceHandle, Error> {
+        self.device_service(client)?
+            .spawn(self.clients.clone(), self.helper_policy())
     }
-    fn device_service(&self, client: Client<DeviceSecrets, SystemClock>) -> Result<DeviceService, Error> {
+    fn device_service(
+        &self,
+        client: Client<DeviceSecrets, SystemClock>,
+    ) -> Result<DeviceService, Error> {
         platform_private_storage::directory(&self.execution.work_root)?;
-        execution_runner::staging::initialize(&self.execution.material_root).map_err(crate::error::app_error)?;
+        execution_runner::staging::initialize(&self.execution.material_root)
+            .map_err(crate::error::app_error)?;
         let journal = self.state_root.join("execution.sqlite");
-        let service = DeviceService::open(client, &journal, if journal.exists() { ProductionStartup::Open } else { ProductionStartup::Create }, self.execution.clone(), SystemClock::new()?, self.helpers())?;
+        let service = DeviceService::open(
+            client,
+            &journal,
+            if journal.exists() {
+                ProductionStartup::Open
+            } else {
+                ProductionStartup::Create
+            },
+            self.execution.clone(),
+            SystemClock::new()?,
+            self.helpers(),
+        )?;
         let marker = self.state_root.join("execution-initialized");
-        if !marker.exists() { platform_private_storage::write_new(&marker, self.namespace()?.as_bytes())?; }
+        if !marker.exists() {
+            platform_private_storage::write_new(&marker, self.namespace()?.as_bytes())?;
+        }
         Ok(service)
     }
     pub(crate) fn helper_policy(&self) -> Option<PeerPolicy> {
-        if self.helper_work_roots.is_empty() { None } else { Some(PeerPolicy { images: vec![self.service.clone()], subjects: self.helper_work_roots.keys().cloned().collect(), interactive: true }) }
+        if self.helper_work_roots.is_empty() {
+            None
+        } else {
+            Some(PeerPolicy {
+                images: vec![self.service.clone()],
+                subjects: self.helper_work_roots.keys().cloned().collect(),
+                interactive: true,
+            })
+        }
     }
     /// Read-only refresh preflight while the current service remains running.
     /// No identity initialization, journal recovery or secret import is allowed here.
@@ -396,13 +473,21 @@ impl Deployment {
 pub(crate) fn startup_failure(error: Error) -> execution_contract::ProcessFailureKind {
     use execution_contract::ProcessFailureKind as K;
     match error {
-        Error::Identity | Error::CertificateExpired | Error::CredentialRevoked | Error::CredentialRetired => K::Unbound,
+        Error::Identity
+        | Error::CertificateExpired
+        | Error::CredentialRevoked
+        | Error::CredentialRetired => K::Unbound,
         Error::Denied | Error::Untrusted => K::Denied,
         Error::Protocol | Error::Configuration => K::InvalidInput,
         Error::Schema | Error::Unsupported => K::Unsupported,
         Error::Capacity => K::Capacity,
         Error::Conflict => K::Conflict,
-        Error::Storage | Error::Unavailable | Error::Clock | Error::Expired | Error::IssuanceUnknown | Error::ActivationUnknown => K::Unavailable,
+        Error::Storage
+        | Error::Unavailable
+        | Error::Clock
+        | Error::Expired
+        | Error::IssuanceUnknown
+        | Error::ActivationUnknown => K::Unavailable,
     }
 }
 
@@ -514,7 +599,11 @@ mod tests {
             ca_file: None,
             installation_id: uuid::Uuid::new_v4(),
             device_ca_file: PathBuf::new(),
-            registration_clients: PeerPolicy { images: vec![image.clone()], subjects: vec![], interactive: true },
+            registration_clients: PeerPolicy {
+                images: vec![image.clone()],
+                subjects: vec![],
+                interactive: true,
+            },
             state_root: PathBuf::new(),
             service: image.clone(),
             clients: PeerPolicy {

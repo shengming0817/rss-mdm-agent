@@ -64,9 +64,24 @@ pub enum RegistrationPhase {
     /// Original request or credential is rejected.
     Rejected,
 }
+/// Local interpretation of the retained device credential; never an authorization grant.
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum CredentialStatus {
+    /// No activated certificate exists.
+    Absent,
+    /// Current certificate and binding are retained.
+    Active,
+    /// Certificate expired; retain identity and journal.
+    Expired,
+    /// Server revoked the credential or registration.
+    Revoked,
+    /// A later activation retired the certificate.
+    Retired,
+}
 /// A bounded machine request preview; contains no key handles, secrets or certificate bodies.
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema, PartialEq, Eq)]
-#[serde(rename_all="camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RegistrationStatus {
     /// Closed lifecycle phase.
     pub phase: RegistrationPhase,
@@ -78,6 +93,8 @@ pub struct RegistrationStatus {
     pub public_key_fingerprint: Option<String>,
     /// A durable registration exists, independent of runtime readiness.
     pub registered: bool,
+    /// Exact retained credential state, independent of a pending authorization.
+    pub credential: CredentialStatus,
 }
 /// Closed presentation combining local installation checks and authenticated service facts.
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema, PartialEq, Eq)]

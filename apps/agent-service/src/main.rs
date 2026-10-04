@@ -1,7 +1,7 @@
 //! The sole production execution service. Initialization is explicit and never a startup fallback.
 use rss_mdm_agent_wire::runtime as wire;
 mod error;
-use agent_client::{Error};
+use agent_client::Error;
 use agent_service::deployment::Deployment;
 use execution_ipc::host::Request;
 use std::{io::Read, path::PathBuf, sync::atomic::AtomicBool};
@@ -49,7 +49,11 @@ fn run() -> Result<(), Error> {
         return serve(Box::new(deployment.user_helper()?), false);
     }
     if args.len() == 2 && args[0] == "--import-grant" {
-        let grant: agent_client::GrantImport = serde_json::from_slice(&installation_security::read_protected(std::path::Path::new(&args[1])).map_err(|_| Error::Configuration)?).map_err(|_| Error::Configuration)?;
+        let grant: agent_client::GrantImport = serde_json::from_slice(
+            &installation_security::read_protected(std::path::Path::new(&args[1]))
+                .map_err(|_| Error::Configuration)?,
+        )
+        .map_err(|_| Error::Configuration)?;
         let mut bytes = zeroize::Zeroizing::new(Vec::new());
         std::io::stdin().take(65).read_to_end(&mut bytes)?;
         let password = wire::Secret::parse(
@@ -65,7 +69,12 @@ fn run() -> Result<(), Error> {
             .block_on(deployment.initialize(grant, &password));
     }
     if args.len() == 1 && args[0] == "--renew-certificate" {
-        return tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().map_err(|_| Error::Unavailable)?.block_on(deployment.renew());
+        return tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .map_err(|_| Error::Unavailable)?
+            .block_on(deployment.renew());
     }
     let request = match args.as_slice() {
         [arg] if arg == "--query" => Some(Request::Tasks { after: None }),

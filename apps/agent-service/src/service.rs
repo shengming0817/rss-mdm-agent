@@ -1,15 +1,15 @@
-use rss_mdm_agent_wire::runtime as wire;
 use crate::error::app_error as map_app_error;
 use crate::{
     backend::{self, host::EnterpriseHost, offered, plan, ExecutionBridge},
     DeviceSecrets, Interpreter, SystemClock,
 };
-use agent_client::{Client, CredentialRedactor, Error, Materials, Offer, IdentityProvider};
+use agent_client::{Client, CredentialRedactor, Error, IdentityProvider, Materials, Offer};
 use execution_app::{AppConfig, ExecutionApp, RequestContext};
 use execution_contract::{
     BackendRequest, BackendRequestFailure, BackendRequestState, BackendTrigger, RequestId,
 };
 use execution_runner::{MaterialRegistry, NativeRunner};
+use rss_mdm_agent_wire::runtime as wire;
 use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
@@ -393,7 +393,10 @@ impl<S: IdentityProvider> DeviceService<S> {
         let claim = match network(self.client.claim(), &mut self.core, commands).await {
             Ok(v) => v,
             Err(e) => {
-                if matches!(e, Error::CredentialRevoked | Error::CredentialRetired | Error::CertificateExpired) {
+                if matches!(
+                    e,
+                    Error::CredentialRevoked | Error::CredentialRetired | Error::CertificateExpired
+                ) {
                     self.core.host.revoked.store(true, Ordering::Release);
                     self.core
                         .app
@@ -528,7 +531,10 @@ impl<S: IdentityProvider> DeviceService<S> {
     }
     fn drive_error(&mut self, error: Error) {
         eprintln!("agent_drive: {error}");
-        if matches!(error, Error::CredentialRevoked | Error::CredentialRetired | Error::CertificateExpired) {
+        if matches!(
+            error,
+            Error::CredentialRevoked | Error::CredentialRetired | Error::CertificateExpired
+        ) {
             self.core.host.revoked.store(true, Ordering::Release);
             if let Err(error) = self.core.revoke_preparations() {
                 eprintln!("agent_revoke_preparation: {error}");
@@ -875,7 +881,9 @@ impl Core {
                     self.stopping = true;
                     Ok(Reply::Unavailable)
                 }
-                LocalRequest::Operation(Request::RegistrationStatus {} | Request::RequestRegistration {}) => Ok(Reply::Rejected),
+                LocalRequest::Operation(
+                    Request::RegistrationStatus {} | Request::RequestRegistration {},
+                ) => Ok(Reply::Rejected),
                 LocalRequest::Operation(Request::Tasks { after }) => {
                     let mut value = self
                         .app
