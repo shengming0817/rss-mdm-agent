@@ -138,8 +138,12 @@ class BackendLifecycleTests(unittest.TestCase):
     def test_prepared_administrator_programs_remain_valid_before_authority(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);backend=root/'backend';output=root/'output'
-            info={'origin':'http://127.0.0.1:1','tenant':'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','key':'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'}
-            backend.write_text('#!/usr/bin/python3\nimport sys,json\nprint('+repr(json.dumps(info))+',flush=True)\nfor line in sys.stdin: pass\n');backend.chmod(0o700)
+            info={'origin':'https://localhost:1','tenant':'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','key':'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+                  'caPem':(Path(__file__).resolve().parents[2]/'tests/agent-protocol/pki/root-test-ca.pem').read_text()}
+            grant={'operationId':'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+                   'grant':{'wireVersion':1,'grantId':'cccccccc-cccc-4ccc-8ccc-cccccccccccc','state':'available','platform':'macos','expiresAt':1700000300}}
+            # Only preparation is exercised: stop before administrator authority or TLS use.
+            backend.write_text('#!/usr/bin/python3\nimport sys,json\nprint('+repr(json.dumps(info))+',flush=True)\nfor line in sys.stdin:\n assert json.loads(line)["kind"]=="grant"\n print('+repr(json.dumps(grant))+',flush=True)\n');backend.chmod(0o700)
             programs=[]
             class NoAuthority:
                 reader=None
