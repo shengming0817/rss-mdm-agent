@@ -356,6 +356,19 @@ if (release && !windows) {
   run("/usr/bin/xcrun", ["stapler", "staple", packagePath]);
   run("/usr/bin/xcrun", ["stapler", "validate", packagePath]);
 }
+const completedSource = sourceEvidence(root);
+for (const key of [
+  "head",
+  "sourceSha256",
+  "cargoLockSha256",
+  "pnpmLockSha256",
+  "node",
+  "pnpm",
+])
+  if (source[key] !== completedSource[key])
+    throw Error(
+      "Source or toolchain changed during installer build; candidate is not deliverable",
+    );
 writeFileSync(
   join(output, "package-manifest.json"),
   JSON.stringify(
