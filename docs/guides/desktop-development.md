@@ -78,6 +78,9 @@ make ci CI_BASE=origin/develop # 按影响范围；ci-full 强制全量，ci-pla
 
 macOS 的正式 `make ci` / `make ci-full` 对整个 Node 与 Rust 检查过程取得 worktree 独占租约，并将 Cargo `target` 放进默认四槽的本机缓存池；同一 worktree 优先复用槽位，槽位换属时清理旧产物。`AGENT_TARGET_POOL_N` 可设置 1–32 个槽，`AGENT_TARGET_POOL_ROOT` 可指定专用空目录或已标记的池目录。分配器短时竞争最多等待 2 秒；槽满或同一 worktree 已有受管运行时立即失败，原运行结束后重试。`make ci-plan` 不占槽；Windows 仍使用原入口。受管运行拒绝外部 `CARGO_TARGET_DIR`、`CARGO_BUILD_TARGET_DIR` 和自定义 rustc wrapper。
 
+CI 与独立 `pnpm test:ai-*`、`pnpm check:boundaries`、`pnpm bundle:ai-host` 由各自父进程统一准备依赖；同次运行复用选中 Node 包、生成绑定检查、Rust fixture 与 worker runtime。临时可执行文件和 worker runtime 随父进程结束清理，不从旧 CI 回执或固定旧目录恢复。测试文件直接执行时需要父进程提供本轮产物，请使用对应 pnpm 入口；输入、工具链或产物变化会阻断复用，重新执行入口即可。发布与开发 runtime 继续使用各自既有目录和 manifest。
+
+
 定向 Rust 验证可用 `python3 scripts/build-run.py -- cargo test --locked -p <包名>` 复用同一槽位机制。直接运行 `cargo` 使用仓内 `target`；直接运行 `pnpm` 或 `cargo` 不取得 CI 的 worktree 租约，避免与同一 checkout 的正式 CI 同时修改仓内 Node 产物或运行回执。旧仓内 `target` 不自动迁移或删除。
 
 浏览器开发使用显式 fixture 装配；样本不作为真实桌面/AI 验收。真实模型与原生窗口验收仅覆盖 macOS arm64、manifest 固定的 Codex；不要求 Windows/Linux 或三个引擎完成同一 E2E。受控服务验收覆盖 macOS 固定候选的真实执行与效果；开发机不执行 Windows 编译、测试、打包或真机验收，已完成实现项按[验证规则](../rules/verification-scope.md#开发机平台验证与实现项关闭)关闭并记录 Windows 未验证。独立平台安全矩阵、正式签名、公证、版本升级及 T3 企业身份按对应 owner 的有效范围另行验收。

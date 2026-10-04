@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import {
   cpSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -114,19 +115,33 @@ test("runtime digest survives verbatim staging and rejects changed JS and binari
 test("AI host build removes orphaned compiler output before packing", (t) => {
   const root = fileURLToPath(new URL("../", import.meta.url));
   const destination = mkdtempSync(join(tmpdir(), "rss-ai-host-pack-"));
+  const isolated = join(destination, "isolated");
+  cpSync(join(root, "apps/ai-host"), isolated, {
+    recursive: true,
+    filter: (source) => !["node_modules", "dist"].includes(basename(source)),
+  });
+  symlinkSync(
+    join(root, "apps/ai-host/node_modules"),
+    join(isolated, "node_modules"),
+    "dir",
+  );
   const orphans = [
-    join(root, "apps/ai-host/dist/claude-provider.js"),
-    join(root, "apps/ai-host/dist/claude-provider.d.ts"),
+    join(isolated, "dist/claude-provider.js"),
+    join(isolated, "dist/claude-provider.d.ts"),
   ];
   t.after(() => {
     rmSync(destination, { recursive: true, force: true });
     for (const orphan of orphans) rmSync(orphan, { force: true });
   });
-  mkdirSync(join(root, "apps/ai-host/dist"), { recursive: true });
+  mkdirSync(join(isolated, "dist"), { recursive: true });
   writeFileSync(orphans[0], "throw new Error('orphaned output');\n");
   writeFileSync(orphans[1], "export declare const orphaned: true;\n");
 
-  run("pnpm", ["build:ai-host"], root);
+  run("pnpm", ["--dir", isolated, "run", "compile"], root);
+  assert.ok(
+    orphans.every((path) => !existsSync(path)),
+    "real Host compilation cleans isolated orphan output",
+  );
   const artifacts = packHost(root, destination);
   const deployed = materializeDeploymentLock(root, destination);
   const source = load(readFileSync(join(root, "pnpm-lock.yaml"), "utf8"));

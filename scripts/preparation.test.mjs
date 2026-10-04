@@ -18,7 +18,7 @@ import {
 } from "./preparation.mjs";
 import { executeSteps, runCommand } from "./ci-plan.mjs";
 
-function fixture(t, failed = false) {
+function fixture(t, failed = false, setup = () => {}) {
   const root = mkdtempSync(join(tmpdir(), "agent-preparation-test-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   mkdirSync(join(root, "crates/sample"), { recursive: true });
@@ -30,6 +30,7 @@ function fixture(t, failed = false) {
       packageManager: "pnpm@11.4.0",
     }),
   );
+  setup(root);
   const env = { ...process.env };
   for (const key of [
     contextKey,
@@ -44,6 +45,20 @@ function fixture(t, failed = false) {
     execute: async (command, args) => {
       calls.push([command, ...args]);
       if (failed) return { status: 1 };
+      if (command === "pnpm") {
+        for (let index = 0; index < args.length; index++)
+          if (args[index] === "--filter") {
+            const name = args[index + 1].split("/").at(-1);
+            mkdirSync(join(root, "packages", name, "dist"), {
+              recursive: true,
+            });
+            writeFileSync(
+              join(root, "packages", name, "dist/index.js"),
+              `export const owner = ${JSON.stringify(name)};`,
+            );
+          }
+        return { status: 0 };
+      }
       const example = args[args.indexOf("--example") + 1];
       const executable = join(root, "compiler-output");
       writeFileSync(executable, `executable: ${example}`);
@@ -88,6 +103,50 @@ test("one Cargo preparation serves independent Node processes and fixture restar
   assert.equal(
     preparedArtifact("execution", root, preparation.env),
     executable,
+  );
+});
+
+test("shared Node dependency closure compiles each package once and rejects changed dist", async (t) => {
+  const { root, preparation, calls } = fixture(t, false, (root) => {
+    mkdirSync(join(root, "apps"));
+    for (const [name, dependencies] of [
+      ["producer", {}],
+      ["first", { "@rss-mdm-agent/producer": "workspace:*" }],
+      ["second", { "@rss-mdm-agent/producer": "workspace:*" }],
+    ]) {
+      mkdirSync(join(root, "packages", name), { recursive: true });
+      writeFileSync(
+        join(root, "packages", name, "package.json"),
+        JSON.stringify({
+          name: `@rss-mdm-agent/${name}`,
+          dependencies,
+          scripts: { compile: "compiler" },
+        }),
+      );
+    }
+  });
+  await preparation.ensure([
+    "node:@rss-mdm-agent/first",
+    "node:@rss-mdm-agent/second",
+    "node:@rss-mdm-agent/first",
+  ]);
+  const compiled = calls.flatMap(([, ...args]) =>
+    args.filter((_, index) => args[index - 1] === "--filter"),
+  );
+  assert.deepEqual(
+    compiled.sort(),
+    ["first", "producer", "second"].map((name) => `@rss-mdm-agent/${name}`),
+  );
+  const path = preparedArtifact(
+    "node:@rss-mdm-agent/producer",
+    root,
+    preparation.env,
+  );
+  writeFileSync(join(path, "orphan.js"), "stale compiler output");
+  assert.throws(
+    () =>
+      preparedArtifact("node:@rss-mdm-agent/producer", root, preparation.env),
+    /missing or changed/,
   );
 });
 

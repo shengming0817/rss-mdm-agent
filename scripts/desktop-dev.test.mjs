@@ -72,6 +72,10 @@ function fixture(t) {
     "rust-toolchain.toml",
     "crates/execution-app/src/lib.rs",
     "scripts/check-execution-bindings.mjs",
+    "scripts/preparation.mjs",
+    "scripts/prepared-entry.mjs",
+    "scripts/preparation-entries.mjs",
+    "scripts/build-worker-runtime.mjs",
     "tests/assistant/execution-fixtures.json",
     "scripts/bundle-ai-host.mjs",
     "scripts/ai-host-artifacts.mjs",
@@ -120,6 +124,10 @@ test("fingerprint includes dirty Host, adapter, contract, lock, Node and added/d
     "package.json",
     "crates/execution-app/src/lib.rs",
     "scripts/check-execution-bindings.mjs",
+    "scripts/preparation.mjs",
+    "scripts/prepared-entry.mjs",
+    "scripts/preparation-entries.mjs",
+    "scripts/build-worker-runtime.mjs",
     "scripts/cargo-target.mjs",
   ]) {
     const before = developmentFingerprint(root);
@@ -254,6 +262,10 @@ test("release stage rejects development, absent and unknown manifest kinds", (t)
   for (const name of [
     "stage-desktop-runtime.mjs",
     "ai-host-artifacts.mjs",
+    "preparation.mjs",
+    "ci-plan.mjs",
+    "ci-result.mjs",
+    "preparation-entries.mjs",
     "cargo-target.mjs",
   ]) {
     write(`scripts/${name}`, readFileSync(new URL(name, import.meta.url)));

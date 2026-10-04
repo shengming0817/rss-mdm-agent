@@ -74,9 +74,9 @@ test("affected Cargo packages replace workspace and JS build includes producer c
     "--locked",
   ]);
   assert.deepEqual(plan.find((s) => s.name === "workspace build inputs").args, [
-    "--filter",
-    "@rss-mdm-agent/ui...",
-    "build",
+    "scripts/prepared-entry.mjs",
+    "build:workspace",
+    "@rss-mdm-agent/ui",
   ]);
   assert.equal(
     plan.find((s) => s.name === "Claude SDK adapter").selected,
@@ -94,10 +94,41 @@ test("full preserves every gate, collection continues after failure and spawn er
     if (count === 1) throw Error("spawn failure");
     return { status: count === 2 ? 7 : 0 };
   });
-  assert.equal(count, steps.length);
+  assert.equal(results.length, steps.length);
+  assert.equal(
+    count,
+    results.filter((result) => result.outcome !== "skipped").length,
+  );
+  assert.equal(
+    results.find((result) => result.name === "workspace build inputs").reason,
+    "prerequisite:frozen dependencies",
+  );
   assert.equal(results[0].outcome, "failed");
   assert.equal(results[1].status, 7);
   assert.equal(results.at(-1).outcome, "passed");
+});
+
+test("CI records explicit preparation and uses a full worker for shared private/Host gates", () => {
+  const full = planSteps(steps, { ...impact(), full: true });
+  const host = full.find((step) => step.name === "AI Host lifecycle");
+  const store = full.find((step) => step.name === "AI SQLite recovery");
+  assert.ok(host.requirements.includes("execution"));
+  assert.ok(host.requirements.includes("worker"));
+  assert.ok(store.requirements.includes("worker"));
+  assert.ok(!store.requirements.includes("privateWorker"));
+  const partial = planSteps(
+    steps,
+    impact([], ["@rss-mdm-agent/ai-store-sqlite"]),
+  );
+  assert.ok(
+    partial
+      .find((step) => step.name === "AI SQLite recovery")
+      .requirements.includes("privateWorker"),
+  );
+  assert.deepEqual(
+    full.find((step) => step.name === "boundaries").dependencies,
+    ["frozen dependencies"],
+  );
 });
 
 test("plan preserves formal evidence; execution retires gate receipts but retains manual acceptance", () => {
