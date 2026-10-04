@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
-import Ajv from "ajv";
+import Ajv, { type AnySchema } from "ajv";
 import type {
   SelfServicePort,
   SelfServiceDirectoryItem,
@@ -25,9 +25,16 @@ const directory = ref<SelfServiceDirectoryItem[]>([]),
   error = ref("");
 const fieldErrors = ref(new Map<string, string>());
 const ajv = new Ajv({ strict: false, allErrors: true });
-const validator = computed(
-  () => selected.value && ajv.compile(selected.value.parameterSchema),
-);
+function isSchema(value: unknown): value is AnySchema {
+  return (
+    typeof value === "boolean" ||
+    (typeof value === "object" && value !== null && !Array.isArray(value))
+  );
+}
+const validator = computed(() => {
+  const schema = selected.value?.parameterSchema;
+  return isSchema(schema) ? ajv.compile(schema) : undefined;
+});
 let epoch = 0;
 const finished = computed(() => {
   if (status.value?.kind === "absent") return true;
