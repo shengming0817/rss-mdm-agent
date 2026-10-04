@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
+import Ajv from "ajv";
 import type {
   SelfServicePort,
   SelfServiceDirectoryItem,
@@ -22,8 +23,14 @@ const directory = ref<SelfServiceDirectoryItem[]>([]),
   status = ref<PolicyStatus>(),
   busy = ref(false),
   error = ref("");
+const fieldErrors = ref<Record<string, string>>({});
+const ajv = new Ajv({ strict: false, allErrors: true });
+const validator = computed(
+  () => selected.value && ajv.compile(selected.value.parameterSchema),
+);
 let epoch = 0;
 const finished = computed(() => {
+  if (status.value?.kind === "absent") return true;
   if (status.value?.kind === "preparation")
     return ["failed", "cancelled"].includes(status.value.value.state);
   if (status.value?.kind === "run")
@@ -33,6 +40,14 @@ const finished = computed(() => {
     );
   return false;
 });
+function editAbsent() {
+  if (status.value?.kind !== "absent" || busy.value) return;
+  request.value = "";
+  status.value = undefined;
+  choice.value = undefined;
+  error.value = "";
+  if (!selected.value) void refresh();
+}
 function newRequest() {
   if (!finished.value || busy.value) return;
   request.value = "";
@@ -102,18 +117,51 @@ function select(item: SelfServiceDirectoryItem) {
   selected.value = item;
   choice.value = undefined;
   inputs.value = {};
+  fieldErrors.value = {};
+}
+function options(schema: any): unknown[] | undefined {
+  return (
+    schema.enum ??
+    ("const" in schema
+      ? [schema.const]
+      : schema.type === "boolean"
+        ? [true, false]
+        : undefined)
+  );
 }
 function preview() {
   if (!selected.value || busy.value || request.value) return;
   try {
-    const parameters = Object.fromEntries(
-      fields.value.map((field) => [
-        field.name,
-        field.schema.type === "string"
-          ? (inputs.value[field.name] ?? "")
-          : JSON.parse(inputs.value[field.name] ?? ""),
+    fieldErrors.value = {};
+    const parameters: Record<string, unknown> = {};
+    for (const field of fields.value) {
+      try {
+        const value =
+          options(field.schema) || field.schema.type !== "string"
+            ? JSON.parse(inputs.value[field.name] ?? "")
+            : (inputs.value[field.name] ?? "");
+        parameters[field.name] = value;
+      } catch {
+        fieldErrors.value[field.name] = "请填写有效的字段值。";
+      }
+    }
+    const resolvedParameters = Object.fromEntries(
+      Object.entries(selected.value.parameterSources).map(([name, source]) => [
+        name,
+        source.kind === "fixed" ? source.value : parameters[name],
       ]),
     );
+    if (!validator.value?.(resolvedParameters)) {
+      for (const issue of validator.value?.errors ?? []) {
+        const name =
+          issue.instancePath.split("/")[1] || issue.params.missingProperty;
+        if (name) fieldErrors.value[name] = `不符合字段要求：${issue.message}`;
+      }
+    }
+    if (Object.keys(fieldErrors.value).length) {
+      error.value = "请修正标出的参数后再核对。";
+      return;
+    }
     choice.value = {
       request: crypto.randomUUID(),
       policyId: selected.value.policyId,
@@ -240,17 +288,44 @@ watch(
       <label v-for="field in fields" :key="field.name"
         >{{ field.schema.title ?? field.name
         }}<span>{{ field.schema.description }}</span
-        ><input
-          v-if="field.schema.type === 'string'"
+        ><select
+          v-if="options(field.schema)"
           v-model="inputs[field.name]"
-          :required="
-            (selected.parameterSchema as any)?.required?.includes(field.name)
-          "
+          required
+        >
+          <option disabled value="">请选择</option>
+          <option
+            v-for="value in options(field.schema)"
+            :key="JSON.stringify(value)"
+            :value="JSON.stringify(value)"
+          >
+            {{ typeof value === "string" ? value : JSON.stringify(value) }}
+          </option></select
+        ><input
+          v-else-if="field.schema.type === 'string'"
+          v-model="inputs[field.name]"
+          required
+          :minlength="field.schema.minLength"
+          :maxlength="field.schema.maxLength"
         /><textarea
           v-else
           v-model="inputs[field.name]"
           placeholder="按字段要求填写 JSON 值"
-        /></label
+        /><small
+          v-if="
+            field.schema.minLength != null || field.schema.maxLength != null
+          "
+        >
+          长度：{{ field.schema.minLength ?? 0 }} 至
+          {{ field.schema.maxLength ?? "不限" }} </small
+        ><small
+          v-if="field.schema.minimum != null || field.schema.maximum != null"
+        >
+          范围：{{ field.schema.minimum ?? "不限" }} 至
+          {{ field.schema.maximum ?? "不限" }} </small
+        ><span v-if="fieldErrors[field.name]" role="alert">{{
+          fieldErrors[field.name]
+        }}</span></label
       ><button :disabled="busy">核对执行参数</button>
     </form>
     <section v-if="choice && !request" aria-label="人工执行确认">
@@ -272,6 +347,10 @@ watch(
     </section>
     <section v-if="request">
       <p>原请求：{{ request }}</p>
+      <template v-if="status?.kind === 'absent'">
+        <p>原请求未创建；可以修改参数或重新选择脚本。</p>
+        <button :disabled="busy" @click="editAbsent">修改参数</button>
+      </template>
       <button v-if="finished" :disabled="busy" @click="newRequest">
         发起新任务
       </button>

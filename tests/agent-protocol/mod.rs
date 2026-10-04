@@ -112,6 +112,7 @@ pub struct Data {
     pub self_service_directory: Option<SelfServiceDirectoryResponse>,
     pub invocations: BTreeMap<Uuid, (Value, SelfServiceAccepted)>,
     pub invocation_reply_lost: bool,
+    pub invocation_unaccepted: bool,
     pub response_override: Option<(String, Value)>,
     pub grant: Option<enroll::GrantReceipt>,
     pub issuance: Uuid,
@@ -320,6 +321,7 @@ impl Server {
             self_service_directory: None,
             invocations: BTreeMap::new(),
             invocation_reply_lost: false,
+            invocation_unaccepted: false,
             response_override: None,
             grant: None,
             issuance: Uuid::new_v4(),
@@ -987,6 +989,12 @@ fn employee_response(d: &mut Data, uri: &Uri, headers: &HeaderMap, value: Value)
         let Ok(input) = serde_json::from_value::<SelfServiceInvoke>(value.clone()) else {
             return StatusCode::BAD_REQUEST.into_response();
         };
+        if d.invocation_unaccepted {
+            return runtime_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                ErrorCode::ServiceUnavailable,
+            );
+        }
         let accepted = if let Some((old, accepted)) = d.invocations.get(&input.operation_id) {
             if old != &value {
                 return StatusCode::CONFLICT.into_response();

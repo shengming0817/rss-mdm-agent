@@ -717,6 +717,34 @@ fn policy_mcp_descriptor_preserves_resource_input_constraints_and_versions() {
     assert!(!validator.is_valid(&json!({"name":"x".repeat(33)})));
     assert!(!validator.is_valid(&json!({})));
     assert_eq!(descriptor["annotations"]["readOnlyHint"], false);
+    let saved = item.parameter_schema.clone();
+    item.parameter_schema["properties"]["name"] =
+        json!({"type":"array","items":{"type":"integer","minimum":i64::MIN,"maximum":i64::MAX}});
+    let descriptor = policy_tool(&item).unwrap();
+    assert_eq!(
+        descriptor["inputSchema"]["properties"]["name"]["items"]["maximum"],
+        9_007_199_254_740_991_i64
+    );
+    assert_eq!(
+        descriptor["inputSchema"]["properties"]["name"]["items"]["minimum"],
+        -9_007_199_254_740_991_i64
+    );
+    assert_eq!(
+        item.parameter_schema["properties"]["name"]["items"]["maximum"],
+        i64::MAX
+    );
+    for unsupported in [
+        json!({"type":"integer","minimum":i64::MAX}),
+        json!({"type":"integer","const":i64::MAX}),
+        json!({"type":"integer","enum":[1,i64::MAX]}),
+    ] {
+        item.parameter_schema["properties"]["name"] = unsupported;
+        assert!(matches!(
+            policy_tool(&item),
+            Err(ServiceError::InvalidInput)
+        ));
+    }
+    item.parameter_schema = saved;
     let original = policy_tool_name(&item);
     item.policy_revision += 1;
     assert_ne!(policy_tool_name(&item), original);

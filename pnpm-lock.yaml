@@ -110,6 +110,9 @@ importers:
       '@tauri-apps/api':
         specifier: 2.11.1
         version: 2.11.1
+      ajv:
+        specifier: 8.20.0
+        version: 8.20.0
       vue:
         specifier: 3.5.38
         version: 3.5.38(typescript@5.6.2)

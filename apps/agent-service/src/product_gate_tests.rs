@@ -1652,3 +1652,163 @@ async fn settled_software_observation_replays_the_original_fact_and_never_create
     assert_ne!(originals[0], originals[1]);
     assert!(!c._server.data.lock().unwrap().started);
 }
+
+#[tokio::test]
+async fn durable_ready_policy_resumes_original_uuid_from_each_native_entrypoint() {
+    use execution_ipc::host::Request;
+    for entry in 0..3 {
+        let mut c = Case::new(Some(RiskLevel::Two)).await;
+        let mut directory = protocol::policy_directory_fixture();
+        directory.self_service.risk_level = if entry == 2 { 2 } else { 1 };
+        c._server.data.lock().unwrap().self_service_directory =
+            Some(wire::SelfServiceDirectoryResponse {
+                items: vec![directory.clone()],
+                next_cursor: None,
+                as_of: c._server.time.now().unwrap(),
+            });
+        c.employee("generation-one").await;
+        let choice = PolicyChoice {
+            request: RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap(),
+            policy_id: plan::id(directory.policy_id.to_string()).unwrap(),
+            policy_revision: directory.policy_revision,
+            policy_version: plan::id(directory.policy_version.to_string()).unwrap(),
+            parameters: std::collections::BTreeMap::from([(
+                "name".into(),
+                serde_json::json!("Acme"),
+            )]),
+        };
+        let invoke = Request::InvokePolicy {
+            choice: choice.clone(),
+            origin: c.selection.origin.clone(),
+        };
+        let Reply::PolicyRequest { value } = c.policy_call(invoke).await else {
+            panic!("initial preparation")
+        };
+        let value = if entry == 2 {
+            let Reply::PolicyRequest { value } = c
+                .policy_call(Request::ConfirmPolicy {
+                    request: choice.request.clone(),
+                })
+                .await
+            else {
+                panic!("confirmation")
+            };
+            value
+        } else {
+            value
+        };
+        let mut restored = *value;
+        let original = RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap();
+        if let PreparedAction::Policy { choice, run_id, .. } = &mut restored.action {
+            choice.request = original.clone();
+            *run_id = None;
+        }
+        restored.state = BackendRequestState::Ready;
+        restored.revision = 1;
+        c.service
+            .core
+            .app
+            .record_backend_request(&c.service.core.caller(), None, &restored)
+            .unwrap();
+        let request = match entry {
+            0 => Request::InvokePolicy {
+                choice: match &restored.action {
+                    PreparedAction::Policy { choice, .. } => choice.clone(),
+                    _ => unreachable!(),
+                },
+                origin: c.selection.origin.clone(),
+            },
+            1 => Request::PolicyStatus {
+                request: original.clone(),
+            },
+            _ => Request::ConfirmPolicy {
+                request: original.clone(),
+            },
+        };
+        let Reply::PolicyRequest { value } = c.policy_call(request).await else {
+            panic!("Ready recovery")
+        };
+        assert_eq!(value.state, BackendRequestState::Submitting);
+        assert_eq!(value.action.request(), &original);
+        assert!(c
+            ._server
+            .data
+            .lock()
+            .unwrap()
+            .invocations
+            .contains_key(&uuid::Uuid::parse_str(original.as_str()).unwrap()));
+    }
+}
+#[tokio::test]
+async fn unaccepted_policy_expiry_is_durable_and_status_remains_read_only() {
+    use execution_ipc::host::Request;
+    let mut c = Case::new(Some(RiskLevel::Two)).await;
+    let mut directory = protocol::policy_directory_fixture();
+    directory.self_service.risk_level = 1;
+    c._server.data.lock().unwrap().self_service_directory =
+        Some(wire::SelfServiceDirectoryResponse {
+            items: vec![directory.clone()],
+            next_cursor: None,
+            as_of: c._server.time.now().unwrap(),
+        });
+    c.employee("generation-one").await;
+    c._server.data.lock().unwrap().invocation_unaccepted = true;
+    let original = RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap();
+    let choice = PolicyChoice {
+        request: original.clone(),
+        policy_id: plan::id(directory.policy_id.to_string()).unwrap(),
+        policy_revision: directory.policy_revision,
+        policy_version: plan::id(directory.policy_version.to_string()).unwrap(),
+        parameters: std::collections::BTreeMap::from([("name".into(), serde_json::json!("Acme"))]),
+    };
+    let Reply::PolicyRequest { value } = c
+        .policy_call(Request::InvokePolicy {
+            choice,
+            origin: c.selection.origin.clone(),
+        })
+        .await
+    else {
+        panic!("unaccepted invocation")
+    };
+    assert_eq!(value.state, BackendRequestState::Submitting);
+    // Restore an already-expired durable record at the interrupted submission boundary.
+    // SystemClock intentionally rejects artificial forward movement, so the expiry is fixed
+    // before the initial journal insert, preserving the immutable preparation contract.
+    let mut expired = *value;
+    let original = RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap();
+    if let PreparedAction::Policy {
+        choice,
+        expires_at_unix_ms,
+        ..
+    } = &mut expired.action
+    {
+        choice.request = original.clone();
+        *expires_at_unix_ms = c.service.core.host.clock.millis().unwrap() - 1;
+    }
+    expired.risk.as_mut().unwrap().expires_at_unix_ms = expired.action.expires_at_unix_ms();
+    expired.state = BackendRequestState::Ready;
+    expired.revision = 1;
+    c.service
+        .core
+        .app
+        .record_backend_request(&c.service.core.caller(), None, &expired)
+        .unwrap();
+    c.service
+        .core
+        .transition(&original, BackendRequestState::Submitting, None)
+        .unwrap();
+    c._server.data.lock().unwrap().invocation_unaccepted = false;
+    for _ in 0..2 {
+        let Reply::PolicyRequest { value } = c
+            .policy_call(Request::PolicyStatus {
+                request: original.clone(),
+            })
+            .await
+        else {
+            panic!("expiry status")
+        };
+        assert_eq!(value.state, BackendRequestState::Failed);
+        assert_eq!(value.failure, Some(BackendRequestFailure::Expired));
+    }
+    assert!(c._server.data.lock().unwrap().invocations.is_empty());
+}

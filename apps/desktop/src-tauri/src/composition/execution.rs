@@ -423,7 +423,16 @@ impl mcp::ExecutionServicePort for ExecutionHandle {
                 .await
                 .map_err(|_| mcp::ServiceError::Unavailable)?;
             for item in page.items {
-                tools.push(mcp::policy_tool(&item)?);
+                match mcp::policy_tool(&item) {
+                    Ok(tool) => tools.push(tool),
+                    Err(mcp::ServiceError::InvalidInput) => {
+                        eprintln!(
+                            "RSS_POLICY_TOOL_UNSUPPORTED name={}",
+                            mcp::policy_tool_name(&item)
+                        );
+                    }
+                    Err(error) => return Err(error),
+                }
             }
             after = page
                 .next_cursor

@@ -89,7 +89,10 @@ function resolved() {
       >
         撤销原请求
       </button>
-      <p v-if="record.failure">{{ record.failure }}</p>
+      <p v-if="record.failure === 'expired'">
+        本地授权已到期，停止提交。仍可查询原请求的后台结果。
+      </p>
+      <p v-else-if="record.failure">{{ record.failure }}</p>
     </template>
     <template v-else-if="record.action.kind === 'softwareRead'">
       <h3>软件状态检测</h3>

@@ -406,7 +406,7 @@ impl<S: IdentityProvider> DeviceService<S> {
                         return Err(Error::Conflict);
                     }
                     Reply::PolicyRequest {
-                        value: Box::new(previous),
+                        value: Box::new(self.send_policy(previous, &employee, commands).await?),
                     }
                 } else {
                     let mut after = None;
@@ -499,7 +499,14 @@ impl<S: IdentityProvider> DeviceService<S> {
                     .backend_request(&self.core.caller(), request)
                     .map_err(map_app_error)?
                     .ok_or(Error::Denied)?;
-                self.core.current_policy_login(&previous)?;
+                if let Err(error) = self.core.current_policy_login(&previous) {
+                    if error != Error::Expired {
+                        return Err(error);
+                    }
+                    return Ok(Reply::PolicyRequest {
+                        value: Box::new(self.expire_policy(&previous)?),
+                    });
+                }
                 if trigger_subject(&previous.trigger) != Some(command.subject.as_str())
                     || previous.trigger_os_session() != command.binding.as_ref()
                 {
@@ -507,7 +514,7 @@ impl<S: IdentityProvider> DeviceService<S> {
                 }
                 if previous.state != BackendRequestState::AwaitingConfirmation {
                     return Ok(Reply::PolicyRequest {
-                        value: Box::new(previous),
+                        value: Box::new(self.send_policy(previous, &employee, commands).await?),
                     });
                 }
                 let BackendTrigger::Ai { os_session, .. } = &previous.trigger else {
@@ -562,11 +569,19 @@ impl<S: IdentityProvider> DeviceService<S> {
                 }
                 if matches!(
                     previous.state,
-                    BackendRequestState::AwaitingConfirmation
-                        | BackendRequestState::Ready
-                        | BackendRequestState::Failed
-                        | BackendRequestState::Cancelled
+                    BackendRequestState::AwaitingConfirmation | BackendRequestState::Ready
                 ) {
+                    Reply::PolicyRequest {
+                        value: Box::new(if generation == &employee.generation {
+                            self.send_policy(previous, &employee, commands).await?
+                        } else {
+                            previous
+                        }),
+                    }
+                } else if previous.state == BackendRequestState::Cancelled
+                    || (previous.state == BackendRequestState::Failed
+                        && previous.failure != Some(BackendRequestFailure::Expired))
+                {
                     Reply::PolicyRequest {
                         value: Box::new(previous),
                     }
@@ -602,22 +617,36 @@ impl<S: IdentityProvider> DeviceService<S> {
         }
         Ok(result)
     }
+    fn expire_policy(&mut self, record: &BackendRequest) -> Result<BackendRequest, Error> {
+        self.core
+            .transition(
+                record.action.request(),
+                BackendRequestState::Failed,
+                Some(BackendRequestFailure::Expired),
+            )?
+            .ok_or(Error::Conflict)
+    }
     async fn send_policy(
         &mut self,
         record: BackendRequest,
         employee: &EmployeeSession,
         commands: &mut tokio::sync::mpsc::Receiver<Command>,
     ) -> Result<BackendRequest, Error> {
-        if record.state == BackendRequestState::AwaitingConfirmation {
-            return Ok(record);
-        }
         if !matches!(
             record.state,
-            BackendRequestState::Ready | BackendRequestState::Submitting
+            BackendRequestState::AwaitingConfirmation
+                | BackendRequestState::Ready
+                | BackendRequestState::Submitting
         ) {
             return Ok(record);
         }
-        self.core.current_policy_login(&record)?;
+        match self.core.current_policy_login(&record) {
+            Err(Error::Expired) => return self.expire_policy(&record),
+            result => result?,
+        }
+        if record.state == BackendRequestState::AwaitingConfirmation {
+            return Ok(record);
+        }
         let PreparedAction::Policy { choice, run_id, .. } = &record.action else {
             return Err(Error::Protocol);
         };

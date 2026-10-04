@@ -95,3 +95,74 @@ test("remounted history queries its original UUID and does not invoke again", as
   expect(policy_invoke).not.toHaveBeenCalled();
   expect(wrapper.text()).not.toContain("目标设备 / OS 账号");
 });
+
+test("enum and length constraints prevent invalid confirmation; absent restores editing", async () => {
+  const item = (
+    record("fixture").action as Extract<
+      BackendRequest["action"],
+      { kind: "policy" }
+    >
+  ).directory;
+  item.parameterSchema = {
+    type: "object",
+    properties: {
+      mode: { type: "string", enum: ["safe", "full"] },
+      name: { type: "string", minLength: 2, maxLength: 4 },
+    },
+    required: ["mode", "name"],
+    additionalProperties: false,
+  };
+  item.parameterSources = { mode: { kind: "input" }, name: { kind: "input" } };
+  const policy_invoke = vi
+    .fn()
+    .mockRejectedValue(new Error("rejected before creation"));
+  const port = {
+    policy_directory: async () => ({
+      items: [item],
+      nextCursor: null,
+      asOf: 1,
+    }),
+    policy_invoke,
+    policy_status: async () => ({ kind: "absent" }),
+  } as unknown as SelfServicePort;
+  const wrapper = mount(PolicySelfService, { props: { port, records: [] } });
+  await flushPromises();
+  await wrapper
+    .findAll("button")
+    .find((b) => b.text() === "Policy")!
+    .trigger("click");
+  expect(wrapper.findAll("option").map((o) => o.text())).toEqual([
+    "请选择",
+    "safe",
+    "full",
+  ]);
+  await wrapper.find("select").setValue(JSON.stringify("safe"));
+  await wrapper.find("input").setValue("x");
+  await wrapper.find("form").trigger("submit");
+  expect(wrapper.find('[aria-label="人工执行确认"]').exists()).toBe(false);
+  expect(wrapper.find('[role="alert"]').exists()).toBe(true);
+  await wrapper.find("input").setValue("Acme");
+  await wrapper.find("form").trigger("submit");
+  await wrapper
+    .findAll("button")
+    .find((b) => b.text() === "确认并执行")!
+    .trigger("click");
+  await flushPromises();
+  expect(policy_invoke.mock.calls[0][0].parameters).toEqual({
+    mode: "safe",
+    name: "Acme",
+  });
+  await wrapper
+    .findAll("button")
+    .find((b) => b.text() === "查询原请求")!
+    .trigger("click");
+  await flushPromises();
+  expect(wrapper.text()).toContain("原请求未创建");
+  await wrapper
+    .findAll("button")
+    .find((b) => b.text() === "修改参数")!
+    .trigger("click");
+  expect(wrapper.find("form").exists()).toBe(true);
+  expect(wrapper.find("input").element.value).toBe("Acme");
+  expect(policy_invoke).toHaveBeenCalledTimes(1);
+});
