@@ -1186,3 +1186,89 @@ async fn imports_authorized_grant_over_real_tls_without_replacing_the_operation(
     assert_eq!(data.certificate_calls.len(), 1);
     assert_eq!(data.activation_calls.len(), 1);
 }
+
+#[tokio::test]
+async fn employee_self_service_uses_device_mtls_and_recovers_the_original_uuid() {
+    let server = Server::tls().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    let directory = policy_directory_fixture();
+    server.data.lock().unwrap().self_service_directory = Some(SelfServiceDirectoryResponse {
+        items: vec![directory.clone()],
+        next_cursor: None,
+        as_of: 1,
+    });
+    let secret = "c".repeat(64);
+    let query = SelfServiceDirectory {
+        source: ScriptCaller::Ai,
+        after: None,
+    };
+    assert!(matches!(
+        client
+            .self_service_directory("not-an-identity-cookie", &query)
+            .await,
+        Err(Error::Identity)
+    ));
+    assert!(client
+        .self_service_directory(&"d".repeat(64), &query)
+        .await
+        .is_err());
+    assert_eq!(
+        client
+            .self_service_directory(&secret, &query)
+            .await
+            .unwrap()
+            .items[0]
+            .policy_revision,
+        2
+    );
+    let input = SelfServiceInvoke {
+        operation_id: Uuid::new_v4(),
+        policy_id: directory.policy_id,
+        policy_revision: directory.policy_revision,
+        policy_version: directory.policy_version,
+        source: ScriptCaller::Ai,
+        confirmed: true,
+        parameters: std::collections::BTreeMap::from([("name".into(), serde_json::json!("Acme"))]),
+    };
+    server.data.lock().unwrap().invocation_reply_lost = true;
+    assert!(matches!(
+        client.invoke_self_service(&secret, &input).await,
+        Err(Error::Unavailable)
+    ));
+    drop(client);
+    let client = server.client(&root, OpenMode::Existing);
+    let status = client
+        .self_service_status(&secret, input.operation_id)
+        .await
+        .unwrap();
+    let retry = client.invoke_self_service(&secret, &input).await.unwrap();
+    assert_eq!(status.run_id, retry.run_id);
+    assert_eq!(server.data.lock().unwrap().invocations.len(), 1);
+    assert!(matches!(
+        client.self_service_status(&secret, Uuid::new_v4()).await,
+        Err(Error::NotFound)
+    ));
+    server.data.lock().unwrap().response_override = Some((
+        "invocations".into(),
+        serde_json::json!({"requestId":Uuid::new_v4(),"runId":retry.run_id,"policyId":input.policy_id,"policyRevision":input.policy_revision,"policyVersion":input.policy_version}),
+    ));
+    assert!(matches!(
+        client.invoke_self_service(&secret, &input).await,
+        Err(Error::Untrusted)
+    ));
+    let data = server.data.lock().unwrap();
+    assert!(data
+        .employee_calls
+        .iter()
+        .any(|(uri, _)| uri.ends_with("scripts?source=ai")));
+    assert!(data
+        .employee_calls
+        .iter()
+        .filter(|(uri, _)| uri.ends_with("invocations"))
+        .all(|(_, body)| body["operationId"] == input.operation_id.to_string()));
+    assert!(!serde_json::to_string(&data.employee_calls)
+        .unwrap()
+        .contains(&secret));
+}

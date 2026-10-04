@@ -412,7 +412,13 @@ async fn real_https_registration_reports_script_software_and_journal_results() {
         )
         .await;
     assert!(!admin.group_contains(&group, &device).await);
-    for (software, uninstall) in [(true, false), (false, false), (true, true), (false, true)] {
+    for (software, uninstall, self_service) in [
+        (true, false, false),
+        (false, false, false),
+        (true, true, false),
+        (false, true, false),
+        (false, false, true),
+    ] {
         let (resource, admission) = admin.resource(software, &package).await;
         let action = if software {
             json!({"kind":"software","resource":{"kind":"software","id":resource,"version":"v1","variants":{"macos_aarch64":"default"}},"intent":if uninstall { "explicit_uninstall" } else { "required_install" },"delivery":{"kind":"direct"},"admissionOperation":admission.unwrap(),"runLifetimeSeconds":600,"rollout":{"stages":[{"scope":scope,"opensAt":0}]}})
@@ -420,13 +426,70 @@ async fn real_https_registration_reports_script_software_and_journal_results() {
             json!({"kind":"execution","resource":{"id":resource,"version":"v1","platform":"macos","architecture":"aarch64","variant":"default"},"parameters":{},"runLifetimeSeconds":300})
         };
         let policy = Uuid::new_v4();
-        admin
+        let mut definition = json!({"scope":scope,"action":action});
+        if self_service {
+            definition["action"]["schedule"] = json!({"trigger":{"kind":"manual"},"misfire":{"kind":"coalesce_one"},"notBefore":0,"until":null,"jitterSeconds":0,"window":null});
+            definition["selfService"] = json!({"published":true,"displayName":"Read installed software","description":"Explicit live consumer fixture","prerequisites":"Authenticated employee","sideEffects":"None","category":"Inventory","keywords":["inventory"],"allowAi":true,"riskLevel":1});
+        }
+        let published = admin
             .write(
                 &format!("/api/v1/policies/{policy}"),
                 0,
-                json!({"action":"put","enabled":true,"definition":{"scope":scope,"action":action}}),
+                json!({"action":"put","enabled":true,"definition":definition}),
             )
             .await;
+        let original = if self_service {
+            let secret = admin.cookies.get("__Host-identity-session").unwrap();
+            let directory = client
+                .self_service_directory(
+                    secret,
+                    &wire::SelfServiceDirectory {
+                        source: wire::ScriptCaller::Ai,
+                        after: None,
+                    },
+                )
+                .await
+                .unwrap();
+            let selected = directory
+                .items
+                .iter()
+                .find(|item| item.policy_id == policy)
+                .expect("published Policy in authorized real directory");
+            assert_eq!(
+                selected.policy_revision,
+                published["revision"].as_u64().unwrap()
+            );
+            assert_eq!(selected.self_service.risk_level, 1);
+            let invoke = wire::SelfServiceInvoke {
+                operation_id: Uuid::new_v4(),
+                policy_id: policy,
+                policy_revision: selected.policy_revision,
+                policy_version: selected.policy_version,
+                source: wire::ScriptCaller::Ai,
+                confirmed: false,
+                parameters: BTreeMap::new(),
+            };
+            let accepted = client.invoke_self_service(secret, &invoke).await.unwrap();
+            assert_eq!(
+                client
+                    .invoke_self_service(secret, &invoke)
+                    .await
+                    .unwrap()
+                    .run_id,
+                accepted.run_id
+            );
+            assert_eq!(
+                client
+                    .self_service_status(secret, invoke.operation_id)
+                    .await
+                    .unwrap()
+                    .run_id,
+                accepted.run_id
+            );
+            Some(invoke)
+        } else {
+            None
+        };
         let offer = tokio::time::timeout(Duration::from_secs(30), async {
             loop {
                 if let Some(offer) = client.claim().await.unwrap().offer {
@@ -491,7 +554,35 @@ async fn real_https_registration_reports_script_software_and_journal_results() {
         let prepared = bridge
             .prepare(&offer, &materials, &app, &caller, &plan)
             .unwrap();
-        let start = client.request_start(&offer, &materials).await.unwrap();
+        let start = if self_service {
+            let TaskPayload::Script(spec) = offer.payload() else {
+                panic!("self-service script")
+            };
+            let wire::ScriptAuthorization::SelfService {
+                request_id,
+                source,
+                confirmed,
+                policy_revision,
+                ..
+            } = &spec.authorization
+            else {
+                panic!("signed authorization")
+            };
+            assert_eq!(*request_id, original.as_ref().unwrap().operation_id);
+            assert_eq!(*source, wire::ScriptCaller::Ai);
+            assert!(!confirmed);
+            assert_eq!(*policy_revision, published["revision"].as_u64().unwrap());
+            assert!(matches!(
+                client.request_start(&offer, &materials).await,
+                Err(agent_client::Error::Denied)
+            ));
+            client
+                .start_user_initiated(&offer, &materials)
+                .await
+                .unwrap()
+        } else {
+            client.request_start(&offer, &materials).await.unwrap()
+        };
         bridge
             .dispatch(&mut client, start, &materials, &mut app, prepared)
             .unwrap();
@@ -532,6 +623,22 @@ async fn real_https_registration_reports_script_software_and_journal_results() {
             1
         );
         assert_eq!(runner.inner.dispatch_count(), 1);
+        if let Some(original) = &original {
+            let status = client
+                .self_service_status(
+                    admin.cookies.get("__Host-identity-session").unwrap(),
+                    original.operation_id,
+                )
+                .await
+                .unwrap();
+            assert_eq!(status.request_id, original.operation_id);
+            let result = status
+                .result
+                .expect("formal structured self-service result");
+            assert!(result.collected_at > 0 && result.received_at >= result.collected_at);
+            assert!(result.schema_valid && result.budget_valid && result.trusted);
+            assert!(result.output["installed"].is_array());
+        }
         assert_eq!(
             bridge
                 .flush(&mut client, offer.task_id(), &mut app, 64)

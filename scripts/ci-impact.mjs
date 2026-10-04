@@ -112,6 +112,10 @@ export const testOwners = [
   ["tests/ai-access", npm("ai-client")],
   ["tests/ai-access", npm("ai-ui-bridge")],
   ["tests/ai-store-recovery", npm("ai-store-sqlite")],
+  ...["claude", "codex"].map((name) => [
+    "tests/ai-adapters/tool-catalog.mjs",
+    npm(`ai-adapter-${name}`),
+  ]),
   ["tests/ai-adapters/claude", npm("ai-adapter-claude")],
   ["tests/ai-adapters/codex", npm("ai-adapter-codex")],
   ["tests/ai-adapters/deepseek", npm("ai-adapter-deepseek")],

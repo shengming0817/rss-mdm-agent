@@ -50,6 +50,7 @@ pub struct PolicyDirectoryQuery {
 #[derive(Clone, Serialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum PolicyStatus {
+    Absent,
     Preparation {
         value: execution_contract::BackendRequest,
     },

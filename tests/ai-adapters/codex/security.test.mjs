@@ -3,6 +3,7 @@ import {
   providerStage,
 } from "../../../packages/ai-contract/dist/index.js";
 import { replaceStage } from "../../../packages/ai-contract/dist/index.js";
+import { toolCatalog } from "../tool-catalog.mjs";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { getEventListeners } from "node:events";
@@ -86,6 +87,7 @@ test("completed MCP proposals release the bridge lifetime cancellation links", a
   let calls = 0;
   const bridge = new ToolBridge(
     {
+      list: toolCatalog(["fast", "slow", "close", "blocked"]),
       propose: async () => {
         if (++calls % 2) throw new Error("host rejected");
         return { ok: true, value: { disposition: "returned", text: "done" } };
@@ -106,8 +108,8 @@ test("completed MCP proposals release the bridge lifetime cancellation links", a
     assert.equal(
       (
         await client.callTool({
-          name: "propose",
-          arguments: { name: "fast", arguments: {} },
+          name: "fast",
+          arguments: {},
         })
       ).isError,
       i % 2 === 0,
@@ -129,6 +131,7 @@ test(
     let entered;
     const bridge = new ToolBridge(
       {
+        list: toolCatalog(["fast", "slow", "close", "blocked"]),
         propose: async (proposal, requestBudget) => {
           received.push(requestBudget.signal);
           entered?.();
@@ -156,8 +159,7 @@ test(
       }),
     );
     t.after(() => client.close());
-    const call = (name) =>
-      client.callTool({ name: "propose", arguments: { name, arguments: {} } });
+    const call = (name) => client.callTool({ name, arguments: {} });
     assert.equal((await call("slow")).isError, true);
     assert.equal(
       received[0].aborted,
@@ -201,6 +203,7 @@ test("bridge rejects foreign callers and exposes no readable resources", async (
   let proposals = 0;
   const bridge = new ToolBridge(
     {
+      list: toolCatalog(["fast", "slow", "close", "blocked"]),
       propose: async () => {
         proposals++;
         return {
@@ -244,7 +247,7 @@ test("bridge rejects foreign callers and exposes no readable resources", async (
   t.after(() => client.close());
   assert.deepEqual(
     (await client.listTools()).tools.map((tool) => tool.name),
-    ["propose"],
+    ["fast", "slow", "close", "blocked"],
   );
   assert.deepEqual((await client.listResources()).resources, []);
   assert.deepEqual(
@@ -255,8 +258,8 @@ test("bridge rejects foreign callers and exposes no readable resources", async (
     client.readResource({ uri: "file:///must-not-exist" }),
   );
   const unavailable = await client.callTool({
-    name: "propose",
-    arguments: { name: "blocked", arguments: {} },
+    name: "blocked",
+    arguments: {},
   });
   assert.equal(unavailable.isError, true);
   assert.equal(proposals, 0);
@@ -417,6 +420,7 @@ for (const disposition of ["rejected", "returned"]) {
       const s = await nativeFixture(t, {
         controlled: true,
         endpoint: {
+          list: toolCatalog(["inventory.read"]),
           propose: async (proposal) => {
             calls.push(proposal);
             return {
@@ -434,8 +438,8 @@ for (const disposition of ["rejected", "returned"]) {
               },
               functionCall(
                 "proposal-call",
-                "propose",
-                { name: "inventory.read", arguments: { device: "one" } },
+                "inventory.read",
+                { device: "one" },
                 "mcp__rss_host",
               ),
               responseCompleted("response-proposal"),
@@ -462,13 +466,15 @@ for (const disposition of ["rejected", "returned"]) {
         [
           "list_mcp_resource_templates",
           "list_mcp_resources",
-          "mcp__rss_host__propose",
+          "mcp__rss_host__inventory.read",
           "read_mcp_resource",
         ].sort(),
       );
-      assert.deepEqual(calls, [
-        { name: "inventory.read", arguments: { device: "one" } },
-      ]);
+      assert.ok(calls.every((call) => /^[a-f0-9-]{36}$/.test(call.callId)));
+      assert.deepEqual(
+        calls.map(({ callId, ...proposal }) => proposal),
+        [{ name: "inventory.read", arguments: { device: "one" } }],
+      );
       const tool = result.observations.find(
         (value) => value.body?.type === "tool_result",
       );

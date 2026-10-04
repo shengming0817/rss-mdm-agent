@@ -112,33 +112,6 @@ for (const provider of engines) {
             },
           },
         );
-        if (provider !== "codex") {
-          const empty = await peer.client.restore(
-            (
-              await peer.client.createSession({
-                sessionId: crypto.randomUUID(),
-              })
-            ).sessionId,
-          );
-          await assert.rejects(
-            peer.client.submit(command(empty.namespace.sessionId, "rejected")),
-            /unsupported_capability/,
-          );
-          assert.equal(f.model.requests.length, 0);
-          peer.close();
-          assert.equal(await stop(app), 0, stderr);
-          const store = unwrap(
-            openSqliteStore({ path: f.config.databasePath, mode: "open" }),
-          );
-          try {
-            const rejected = unwrap(await store.session(empty.namespace));
-            assert.deepEqual(rejected.stages, []);
-            assert.equal(rejected.currentStageId, undefined);
-          } finally {
-            unwrap(await store.close(budget()));
-          }
-          return;
-        }
         const view = await peer.client.restore(
             (
               await peer.client.createSession({
@@ -148,45 +121,7 @@ for (const provider of engines) {
           ),
           id = view.namespace.sessionId;
 
-        f.model.replies.push((res) => {
-          const responseId = "catalog-proposal";
-          const events = [
-            { type: "response.created", response: { id: responseId } },
-            {
-              type: "response.output_item.done",
-              output_index: 0,
-              item: {
-                type: "function_call",
-                call_id: "catalog-call",
-                name: "propose",
-                namespace: "mcp__rss_host",
-                arguments: JSON.stringify({
-                  name: "execution_tasks",
-                  arguments: {},
-                }),
-              },
-            },
-            {
-              type: "response.completed",
-              response: {
-                id: responseId,
-                usage: {
-                  input_tokens: 1,
-                  input_tokens_details: null,
-                  output_tokens: 1,
-                  output_tokens_details: null,
-                  total_tokens: 2,
-                },
-              },
-            },
-          ];
-          res.writeHead(200, { "content-type": "text/event-stream" });
-          for (const event of events)
-            res.write(
-              `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`,
-            );
-          res.end();
-        });
+        f.model.tool("execution_tasks", {}, "catalog-call");
         f.model.text("catalog read");
         await peer.client.submit(
           command(id, "catalog", "GOLDEN_INSTALL 安装办公套件"),
@@ -231,46 +166,18 @@ for (const provider of engines) {
           permissionKind = choice;
           const method =
             choice === "execute" ? "execution_execute" : "execution_cancel";
-          f.model.replies.push((res) => {
-            const events = [
-              { type: "response.created", response: { id: commandId } },
-              {
-                type: "response.output_item.done",
-                output_index: 0,
-                item: {
-                  type: "function_call",
-                  call_id: commandId,
-                  name: "propose",
-                  namespace: "mcp__rss_host",
-                  arguments: JSON.stringify({
-                    name: method,
-                    arguments:
-                      choice === "execute"
-                        ? (({ request, task, attempt, revision }) => ({
-                            request,
-                            task,
-                            attempt,
-                            revision,
-                          }))(result.result[0])
-                        : { operationRequestId: result.result[0].request },
-                  }),
-                },
-              },
-              {
-                type: "response.completed",
-                response: {
-                  id: commandId,
-                  usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
-                },
-              },
-            ];
-            res.writeHead(200, { "content-type": "text/event-stream" });
-            for (const event of events)
-              res.write(
-                `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`,
-              );
-            res.end();
-          });
+          f.model.tool(
+            method,
+            choice === "execute"
+              ? (({ request, task, attempt, revision }) => ({
+                  request,
+                  task,
+                  attempt,
+                  revision,
+                }))(result.result[0])
+              : { operationRequestId: result.result[0].request },
+            commandId,
+          );
           f.model.text("execution decision recorded");
           await peer.client.submit(command(id, commandId));
           await until(
@@ -320,7 +227,7 @@ for (const provider of engines) {
         );
         try {
           const session = unwrap(await store.session(view.namespace));
-          assert.equal(activeStage(session).binding.providerVersion, "0.155.0");
+          assert.equal(activeStage(session).binding.provider, provider);
           assertNativeSession(
             provider,
             session,

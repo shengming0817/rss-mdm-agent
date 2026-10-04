@@ -143,6 +143,6 @@ pub fn policy_tool(
     }
     object.insert("additionalProperties".into(), false.into());
     Ok(
-        serde_json::json!({"name": policy_tool_name(item), "description": format!("{}\n{}\nPrerequisites: {}\nSide effects: {}", item.self_service.display_name, item.self_service.description, item.self_service.prerequisites, item.self_service.side_effects), "inputSchema": schema, "annotations": {"readOnlyHint": item.self_service.risk_level == 1, "openWorldHint": false, "idempotentHint": false}}),
+        serde_json::json!({"name": policy_tool_name(item), "description": format!("{}\n{}\nCategory: {}\nKeywords: {}\nPrerequisites: {}\nSide effects: {}", item.self_service.display_name, item.self_service.description, item.self_service.category, item.self_service.keywords.join(", "), item.self_service.prerequisites, item.self_service.side_effects), "inputSchema": schema, "annotations": {"readOnlyHint": item.self_service.risk_level == 1, "openWorldHint": false, "idempotentHint": false}}),
     )
 }

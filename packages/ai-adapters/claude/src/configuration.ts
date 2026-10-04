@@ -127,7 +127,10 @@ export function sdkOptions(resolved: ResolvedClaudeConfiguration): Options {
     cwd: config.workingDirectory,
     env,
     ...(resolved.model ? { model: resolved.model } : {}),
-    tools: ["AskUserQuestion"],
+    tools:
+      config.permissions === "host_mediated"
+        ? ["AskUserQuestion", "ToolSearch"]
+        : ["AskUserQuestion"],
     allowedTools: [],
     permissionMode: "default",
     allowDangerouslySkipPermissions: false,

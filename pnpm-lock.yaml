@@ -141,6 +141,9 @@ importers:
       '@rss-mdm-agent/ai-contract':
         specifier: workspace:*
         version: link:../../ai-contract
+      zod:
+        specifier: 4.6.5
+        version: 4.6.5
 
   packages/ai-adapters/codex:
     dependencies:

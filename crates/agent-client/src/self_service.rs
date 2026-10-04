@@ -17,7 +17,11 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
     ) -> Result<T, Error> {
         self.active()?;
         self.now()?;
-        if secret.is_empty() || secret.len() > 4096 {
+        if secret.len() != 64
+            || !secret
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        {
             return Err(Error::Identity);
         }
         let mut request = self

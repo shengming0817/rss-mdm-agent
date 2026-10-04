@@ -4,6 +4,7 @@ import {
   fixtureProviderSession,
   fixtureSession,
 } from "../../../packages/ai-contract/dist/testing/index.js";
+import { toolCatalog } from "../tool-catalog.mjs";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createModelServer } from "./model-fixture.mjs";
@@ -78,6 +79,7 @@ async function fixture(t, replies, controlled = false) {
       ? {
           permissions: "host_mediated",
           tools: {
+            list: toolCatalog(["install-app", "resume-proposal"]),
             propose: async (proposal) => {
               tools.push(proposal);
               return {
@@ -306,8 +308,8 @@ test(
           {
             type: "tool_use",
             id: "tool_bridge",
-            name: "mcp__rss_host__propose",
-            input: { name: "install-app", arguments: { approval: true } },
+            name: "mcp__rss_host__install-app",
+            input: { approval: true },
           },
         ],
         text("done"),
@@ -380,9 +382,11 @@ test(
     };
     const result = await run(adapter, session.binding, command("controlled"));
     assert.equal(unverifiedCalls, 0);
-    assert.deepEqual(f.tools, [
-      { name: "install-app", arguments: { approval: true } },
-    ]);
+    assert.ok(f.tools.every((call) => /^[a-f0-9-]{36}$/.test(call.callId)));
+    assert.deepEqual(
+      f.tools.map(({ callId, ...proposal }) => proposal),
+      [{ name: "install-app", arguments: { approval: true } }],
+    );
     assert.equal(existsSync(join(f.cwd, "native-bypass-marker")), false);
     assert.equal(
       JSON.stringify(f.requests).includes("RSS_PRIVATE_CANARY_NOT_FOR_MODEL"),
@@ -390,7 +394,11 @@ test(
     );
     assert.deepEqual(
       f.requests[0].tools.map((t) => t.name).sort(),
-      ["AskUserQuestion", "mcp__rss_host__propose"].sort(),
+      [
+        "AskUserQuestion",
+        "mcp__rss_host__install-app",
+        "mcp__rss_host__resume-proposal",
+      ].sort(),
     );
     const denied = f.requests
       .slice(1)
@@ -560,8 +568,8 @@ test(
           {
             type: "tool_use",
             id: "tool_resume",
-            name: "mcp__rss_host__propose",
-            input: { name: "resume-proposal", arguments: {} },
+            name: "mcp__rss_host__resume-proposal",
+            input: {},
           },
         ],
         text("resumed"),
@@ -605,7 +613,11 @@ test(
     );
     assert.equal(f.verifications[1].endpoint, f.configuration.tools);
     await run(second, resumed.binding, command("after-resume"));
-    assert.deepEqual(f.tools, [{ name: "resume-proposal", arguments: {} }]);
+    assert.ok(f.tools.every((call) => /^[a-f0-9-]{36}$/.test(call.callId)));
+    assert.deepEqual(
+      f.tools.map(({ callId, ...proposal }) => proposal),
+      [{ name: "resume-proposal", arguments: {} }],
+    );
     assert.ok(
       JSON.stringify(f.requests[1].messages).includes("controlled-history"),
     );

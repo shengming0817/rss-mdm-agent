@@ -1042,3 +1042,200 @@ async fn running_owner_publishes_current_credential_and_safe_status_without_exec
         matches!(reply, Reply::ServiceStatus { value } if value.readiness == Readiness::NotReady)
     );
 }
+
+impl Case {
+    async fn policy_call(&mut self, request: execution_ipc::host::Request) -> Reply {
+        let (reply, receive) = tokio::sync::oneshot::channel();
+        self.service.core.enqueue_policy(Command {
+            request: LocalRequest::Operation(request),
+            subject: self.selection.subject.clone(),
+            session: self.selection.session,
+            binding: Some(self.selection.binding.clone()),
+            reply,
+        });
+        let (_sender, mut commands) = tokio::sync::mpsc::channel(1);
+        self.service.drive_policy(&mut commands).await.unwrap();
+        receive.await.unwrap()
+    }
+    async fn employee(&mut self, generation: &str) {
+        assert!(matches!(
+            self.policy_call(execution_ipc::host::Request::EmployeeSession {
+                value: Some(execution_ipc::host::EmployeeSession {
+                    credential: zeroize::Zeroizing::new("c".repeat(64)),
+                    actor: wire::ScriptActor {
+                        tenant_id: self.service.client.configuration().tenant,
+                        instance_id: uuid::Uuid::from_u128(2),
+                        principal_id: uuid::Uuid::from_u128(3)
+                    },
+                    generation: plan::id(generation).unwrap(),
+                    expires_at_unix_ms: self.service.core.host.clock.millis().unwrap() + 120_000,
+                })
+            })
+            .await,
+            Reply::EmployeeBound
+        ));
+    }
+}
+#[tokio::test]
+async fn policy_confirmation_is_single_exact_and_bound_to_employee_generation() {
+    use execution_ipc::host::Request;
+    let mut c = Case::new(Some(RiskLevel::Two)).await;
+    let directory = protocol::policy_directory_fixture();
+    c._server.data.lock().unwrap().self_service_directory =
+        Some(wire::SelfServiceDirectoryResponse {
+            items: vec![directory.clone()],
+            next_cursor: None,
+            as_of: c._server.time.now().unwrap(),
+        });
+    c.employee("generation-one").await;
+    let choice = PolicyChoice {
+        request: RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap(),
+        policy_id: plan::id(directory.policy_id.to_string()).unwrap(),
+        policy_revision: directory.policy_revision,
+        policy_version: plan::id(directory.policy_version.to_string()).unwrap(),
+        parameters: std::collections::BTreeMap::from([("name".into(), serde_json::json!("Acme"))]),
+    };
+    let invoke = Request::InvokePolicy {
+        choice: choice.clone(),
+        origin: c.selection.origin.clone(),
+    };
+    let Reply::PolicyRequest { value: pending } = c.policy_call(invoke.clone()).await else {
+        panic!("policy preparation")
+    };
+    assert_eq!(pending.state, BackendRequestState::AwaitingConfirmation);
+    assert!(c._server.data.lock().unwrap().invocations.is_empty());
+    assert_eq!(pending.risk.as_ref().unwrap().level, RiskLevel::Two);
+    assert_eq!(pending.action.request(), &choice.request);
+    let Reply::PolicyRequest { value: replay } = c.policy_call(invoke.clone()).await else {
+        panic!("original replay")
+    };
+    assert_eq!(pending, replay);
+    // No caller may override an administrator Fixed field or change the original choice.
+    let mut changed = choice.clone();
+    changed
+        .parameters
+        .insert("path".into(), serde_json::json!("/Library"));
+    assert!(matches!(
+        c.policy_call(Request::InvokePolicy {
+            choice: changed,
+            origin: c.selection.origin.clone()
+        })
+        .await,
+        Reply::Rejected
+    ));
+    c.employee("generation-two").await;
+    assert!(matches!(
+        c.policy_call(Request::ConfirmPolicy {
+            request: choice.request.clone()
+        })
+        .await,
+        Reply::Rejected
+    ));
+    assert!(!c
+        .service
+        .core
+        .policy_readable(
+            &choice.request,
+            &c.selection.subject,
+            Some(&c.selection.binding)
+        )
+        .unwrap());
+    assert!(c._server.data.lock().unwrap().invocations.is_empty());
+    c.employee("generation-one").await;
+    c._server.data.lock().unwrap().invocation_reply_lost = true;
+    let Reply::PolicyRequest { value: submitted } = c
+        .policy_call(Request::ConfirmPolicy {
+            request: choice.request.clone(),
+        })
+        .await
+    else {
+        panic!("single confirmation")
+    };
+    assert_eq!(submitted.state, BackendRequestState::Submitting);
+    assert!(submitted.confirmation.is_some());
+    let data = c._server.data.lock().unwrap();
+    let input = &data.invocations.values().next().unwrap().0;
+    assert_eq!(input["source"], "ai");
+    assert_eq!(input["confirmed"], true);
+    assert_eq!(input["parameters"], serde_json::json!({"name":"Acme"}));
+    drop(data);
+    let Reply::PolicyStatus { value: status } = c
+        .policy_call(Request::PolicyStatus {
+            request: choice.request.clone(),
+        })
+        .await
+    else {
+        panic!("lost reply status")
+    };
+    assert_eq!(status.request_id.to_string(), choice.request.as_str());
+    assert_eq!(c._server.data.lock().unwrap().invocations.len(), 1);
+    c.policy_call(Request::EmployeeSession { value: None })
+        .await;
+    assert!(matches!(
+        c.policy_call(Request::PolicyStatus {
+            request: choice.request
+        })
+        .await,
+        Reply::Rejected
+    ));
+}
+#[tokio::test]
+async fn policy_low_risk_and_human_only_settings_have_separate_native_sources() {
+    use execution_ipc::host::Request;
+    for human in [false, true] {
+        let mut c = Case::new(Some(RiskLevel::Two)).await;
+        let mut directory = protocol::policy_directory_fixture();
+        directory.self_service.risk_level = 1;
+        directory.self_service.allow_ai = !human;
+        c._server.data.lock().unwrap().self_service_directory =
+            Some(wire::SelfServiceDirectoryResponse {
+                items: vec![directory.clone()],
+                next_cursor: None,
+                as_of: c._server.time.now().unwrap(),
+            });
+        c.employee("generation-one").await;
+        let choice = PolicyChoice {
+            request: RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap(),
+            policy_id: plan::id(directory.policy_id.to_string()).unwrap(),
+            policy_revision: directory.policy_revision,
+            policy_version: plan::id(directory.policy_version.to_string()).unwrap(),
+            parameters: std::collections::BTreeMap::from([(
+                "name".into(),
+                serde_json::json!("Acme"),
+            )]),
+        };
+        let origin = if human {
+            ClientOrigin::Desktop {}
+        } else {
+            c.selection.origin.clone()
+        };
+        let Reply::PolicyRequest { value } = c
+            .policy_call(Request::InvokePolicy {
+                choice: choice.clone(),
+                origin,
+            })
+            .await
+        else {
+            panic!("native source")
+        };
+        assert_eq!(value.state, BackendRequestState::Submitting);
+        assert!(value.confirmation.is_none());
+        assert_eq!(value.risk.is_none(), human);
+        let data = c._server.data.lock().unwrap();
+        let input = &data.invocations.values().next().unwrap().0;
+        assert_eq!(input["source"], if human { "human" } else { "ai" });
+        assert_eq!(input["confirmed"], false);
+        drop(data);
+        let mut stale = choice.clone();
+        stale.request = RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap();
+        stale.policy_revision += 1;
+        assert!(matches!(
+            c.policy_call(Request::InvokePolicy {
+                choice: stale,
+                origin: c.selection.origin.clone()
+            })
+            .await,
+            Reply::Rejected
+        ));
+    }
+}

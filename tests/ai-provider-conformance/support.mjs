@@ -1,3 +1,15 @@
+import { readFileSync } from "node:fs";
+const controlledToolNames = JSON.parse(
+  readFileSync(
+    new URL(
+      "../../packages/execution-bindings/src/tools.json",
+      import.meta.url,
+    ),
+    "utf8",
+  ),
+)
+  .filter((t) => t.name !== "execution_policy_tools")
+  .map((t) => t.name);
 import { CODEX_VERSION } from "../../packages/ai-adapters/codex/dist/runtime.js";
 import { PROVIDER_VERSION } from "../../packages/ai-adapters/claude/dist/configuration.js";
 import { HARNESS_VERSION } from "../../packages/ai-adapters/deepseek/dist/configuration.js";
@@ -91,6 +103,61 @@ export async function modelServer(provider) {
     apiUrl: `http://127.0.0.1:${server.address().port}${provider === "codex" ? "/v1" : ""}`,
     text(text = "native answer") {
       replies.push(value(text));
+    },
+    tool(name, args = {}, callId = "native-tool") {
+      if (provider === "claude")
+        replies.push([
+          {
+            type: "tool_use",
+            id: callId,
+            name: `mcp__rss_host__${name}`,
+            input: args,
+          },
+        ]);
+      else
+        replies.push((res) => {
+          res.writeHead(200, { "content-type": "text/event-stream" });
+          if (provider === "codex") {
+            for (const event of [
+              { type: "response.created", response: { id: callId } },
+              {
+                type: "response.output_item.done",
+                output_index: 0,
+                item: {
+                  type: "function_call",
+                  call_id: callId,
+                  name,
+                  namespace: "mcp__rss_host",
+                  arguments: JSON.stringify(args),
+                },
+              },
+              {
+                type: "response.completed",
+                response: {
+                  id: callId,
+                  usage: {
+                    input_tokens: 1,
+                    input_tokens_details: null,
+                    output_tokens: 1,
+                    output_tokens_details: null,
+                    total_tokens: 2,
+                  },
+                },
+              },
+            ])
+              res.write(
+                `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`,
+              );
+            res.end();
+          } else {
+            res.write(
+              `data: ${JSON.stringify({ id: callId, object: "chat.completion.chunk", choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: callId, type: "function", function: { name, arguments: JSON.stringify(args) } }] }, finish_reason: null }] })}\n\n`,
+            );
+            res.end(
+              `data: ${JSON.stringify({ id: callId, choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }] })}\n\ndata: [DONE]\n\n`,
+            );
+          }
+        });
     },
     question() {
       if (provider === "claude")
@@ -454,19 +521,25 @@ export function assertNativeSession(
   assert.ok(requests.length > 0);
   assert.deepEqual(
     nativeToolInventory(requests),
-    binding.provider === "codex"
+    (binding.provider === "codex"
       ? tools === "disabled"
         ? []
         : [
             "list_mcp_resource_templates",
             "list_mcp_resources",
-            "mcp__rss_host__propose",
+            ...controlledToolNames.map((name) => `mcp__rss_host__${name}`),
             "read_mcp_resource",
           ]
       : [
           binding.provider === "claude"
             ? "AskUserQuestion"
             : "ask_user_question",
-        ],
+          ...(tools === "disabled"
+            ? []
+            : controlledToolNames.map((name) =>
+                binding.provider === "claude" ? `mcp__rss_host__${name}` : name,
+              )),
+        ]
+    ).sort(),
   );
 }

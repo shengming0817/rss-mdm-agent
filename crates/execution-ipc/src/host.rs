@@ -592,6 +592,8 @@ pub enum Reply {
         /// Same authoritative journal record.
         value: Box<execution_contract::BackendRequest>,
     },
+    /// No request was persisted by this sole execution owner.
+    PolicyAbsent,
     /// Structured server-authorized status/result.
     PolicyStatus {
         /// Original invocation's durable server observation.

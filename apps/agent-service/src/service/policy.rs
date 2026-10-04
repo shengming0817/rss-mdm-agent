@@ -424,12 +424,14 @@ impl<S: IdentityProvider> DeviceService<S> {
                 }
             }
             Request::PolicyStatus { request } => {
-                let previous = self
+                let Some(previous) = self
                     .core
                     .app
                     .backend_request(&self.core.caller(), request)
                     .map_err(map_app_error)?
-                    .ok_or(Error::Denied)?;
+                else {
+                    return Ok(Reply::PolicyAbsent);
+                };
                 let PreparedAction::Policy {
                     actor, generation, ..
                 } = &previous.action
@@ -461,7 +463,9 @@ impl<S: IdentityProvider> DeviceService<S> {
                     )
                     .await
                     {
-                        Ok(value) => Reply::PolicyStatus { value },
+                        Ok(value) => Reply::PolicyStatus {
+                            value: self.bridge.protect_status(value)?,
+                        },
                         Err(Error::NotFound) => Reply::PolicyRequest {
                             value: Box::new(self.send_policy(previous, &employee, commands).await?),
                         },

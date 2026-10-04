@@ -108,6 +108,10 @@ impl IdentityProvider for Secrets {
 }
 pub struct Data {
     pub tls_required: bool,
+    pub employee_calls: Vec<(String, Value)>,
+    pub self_service_directory: Option<SelfServiceDirectoryResponse>,
+    pub invocations: BTreeMap<Uuid, (Value, SelfServiceAccepted)>,
+    pub invocation_reply_lost: bool,
     pub response_override: Option<(String, Value)>,
     pub grant: Option<enroll::GrantReceipt>,
     pub issuance: Uuid,
@@ -312,6 +316,10 @@ impl Server {
         let signer = Ed25519KeyPair::from_seed_unchecked(&[7; 32]).unwrap();
         let data = Arc::new(Mutex::new(Data {
             tls_required: tls,
+            employee_calls: vec![],
+            self_service_directory: None,
+            invocations: BTreeMap::new(),
+            invocation_reply_lost: false,
             response_override: None,
             grant: None,
             issuance: Uuid::new_v4(),
@@ -485,6 +493,87 @@ async fn handler(
     let value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
     if headers.contains_key("authorization") {
         return runtime_error(StatusCode::UNAUTHORIZED, ErrorCode::InvalidIdentity);
+    }
+    if path.contains("/self-service/") {
+        if d.activation.is_none()
+            || headers
+                .get("x-rss-user-session")
+                .and_then(|v| v.to_str().ok())
+                != Some(&"c".repeat(64))
+            || headers.contains_key("cookie")
+        {
+            return runtime_error(StatusCode::UNAUTHORIZED, ErrorCode::InvalidIdentity);
+        }
+        d.employee_calls.push((uri.to_string(), value.clone()));
+        if let Some((suffix, body)) = &d.response_override {
+            if path.ends_with(suffix) {
+                return axum::Json(body.clone()).into_response();
+            }
+        }
+        if path.ends_with("/scripts") {
+            return axum::Json(d.self_service_directory.clone().unwrap_or(
+                SelfServiceDirectoryResponse {
+                    items: vec![],
+                    next_cursor: None,
+                    as_of: d.time.now().unwrap(),
+                },
+            ))
+            .into_response();
+        }
+        if path.ends_with("/invocations") {
+            let Ok(input) = serde_json::from_value::<SelfServiceInvoke>(value.clone()) else {
+                return StatusCode::BAD_REQUEST.into_response();
+            };
+            let accepted = if let Some((old, accepted)) = d.invocations.get(&input.operation_id) {
+                if old != &value {
+                    return StatusCode::CONFLICT.into_response();
+                }
+                accepted.clone()
+            } else {
+                let accepted = SelfServiceAccepted {
+                    request_id: input.operation_id,
+                    run_id: Uuid::new_v4(),
+                    policy_id: input.policy_id,
+                    policy_revision: input.policy_revision,
+                    policy_version: input.policy_version,
+                };
+                d.invocations
+                    .insert(input.operation_id, (value, accepted.clone()));
+                accepted
+            };
+            if std::mem::take(&mut d.invocation_reply_lost) {
+                return runtime_error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    ErrorCode::ServiceUnavailable,
+                );
+            }
+            return (StatusCode::ACCEPTED, axum::Json(accepted)).into_response();
+        }
+        if let Some(id) = path
+            .rsplit('/')
+            .next()
+            .and_then(|id| Uuid::parse_str(id).ok())
+        {
+            if let Some((_, accepted)) = d.invocations.get(&id) {
+                return axum::Json(SelfServiceStatus {
+                    request_id: id,
+                    run_id: accepted.run_id,
+                    attempt_id: None,
+                    state: ScriptRunState {
+                        delivery: ScriptDelivery::Queued,
+                        execution: ScriptExecution::NotStarted,
+                        cancellation: ScriptCancellation::None,
+                        deadline: d.time.now().unwrap() + 300,
+                        started_at: None,
+                    },
+                    available_at: d.time.now().unwrap(),
+                    deadline: d.time.now().unwrap() + 300,
+                    result: None,
+                })
+                .into_response();
+            }
+        }
+        return StatusCode::NOT_FOUND.into_response();
     }
     if let Some((suffix, body)) = &d.response_override {
         if path.ends_with(suffix) {
@@ -932,4 +1021,15 @@ impl axum::extract::connect_info::Connected<axum::serve::IncomingStream<'_, TlsL
     fn connect_info(stream: axum::serve::IncomingStream<'_, TlsListener>) -> Self {
         stream.remote_addr().clone()
     }
+}
+
+/// Explicit protocol fixture, never production Policy authority.
+pub fn policy_directory_fixture() -> SelfServiceDirectoryItem {
+    serde_json::from_value(json!({
+        "policyId": Uuid::new_v4(), "policyRevision": 2, "policyVersion": Uuid::new_v4(),
+        "selfService": {"published":true, "displayName":"Repair", "description":"Test repair", "prerequisites":"Employee session", "sideEffects":"Restarts a fixture", "category":"Support", "keywords":["repair"], "allowAi":true, "riskLevel":2},
+        "resource":{"id":Uuid::new_v4().to_string(),"version":"v1","variant":"default"},
+        "parameterSources":{"name":{"kind":"input"}, "path":{"kind":"fixed","value":"/Applications"}},
+        "parameterSchema":{"type":"object","properties":{"name":{"type":"string","minLength":1,"maxLength":32},"path":{"type":"string","const":"/Applications"}},"required":["name","path"],"additionalProperties":false}
+    })).unwrap()
 }

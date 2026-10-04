@@ -686,3 +686,32 @@ async fn sdk_tracing_never_receives_raw_tool_arguments_metadata_or_cancel_reason
         assert!(!captured.contains(marker), "SDK leaked {marker}");
     }
 }
+
+#[test]
+fn policy_mcp_descriptor_preserves_resource_input_constraints_and_versions() {
+    use rss_mdm_agent_wire::runtime::SelfServiceDirectoryItem;
+    let mut item: SelfServiceDirectoryItem = serde_json::from_value(json!({
+        "policyId":"00000000-0000-4000-a000-000000000001","policyRevision":3,"policyVersion":"00000000-0000-4000-a000-000000000002",
+        "selfService":{"published":true,"allowAi":true,"riskLevel":2,"displayName":"Repair","description":"Repair app","prerequisites":"Employee","sideEffects":"Restart","category":"Support","keywords":[]},
+        "resource":{"id":"r","version":"v1","variant":"default"},
+        "parameterSources":{"name":{"kind":"input"},"path":{"kind":"fixed","value":"/Applications"}},
+        "parameterSchema":{"type":"object","properties":{"name":{"type":"string","maxLength":32},"path":{"type":"string"}},"required":["name","path"],"additionalProperties":false}
+    })).unwrap();
+    let descriptor = policy_tool(&item).unwrap();
+    let validator = jsonschema::validator_for(&descriptor["inputSchema"]).unwrap();
+    assert!(validator.is_valid(&json!({"name":"Acme"})));
+    assert!(!validator.is_valid(&json!({"name":"Acme","path":"/Library"})));
+    assert!(!validator.is_valid(&json!({"name":"x".repeat(33)})));
+    assert!(!validator.is_valid(&json!({})));
+    assert_eq!(descriptor["annotations"]["readOnlyHint"], false);
+    let original = policy_tool_name(&item);
+    item.policy_revision += 1;
+    assert_ne!(policy_tool_name(&item), original);
+    item.self_service.allow_ai = false;
+    assert!(matches!(policy_tool(&item), Err(ServiceError::Denied)));
+    item.self_service.allow_ai = true;
+    item.self_service.risk_level = 0;
+    assert!(matches!(policy_tool(&item), Err(ServiceError::Denied)));
+    item.self_service.risk_level = 3;
+    assert!(matches!(policy_tool(&item), Err(ServiceError::Denied)));
+}

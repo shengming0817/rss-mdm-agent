@@ -242,6 +242,13 @@ export class ClaudeAdapter implements ProviderAgentPort {
             return { behavior: "deny", message: "Tool unavailable" };
           const turn = session.active;
           if (
+            name === "ToolSearch" &&
+            session.configuration.permissions === "host_mediated" &&
+            !context.agentID &&
+            !context.mcpServer
+          )
+            return { behavior: "allow", updatedInput: copy(args) };
+          if (
             name === "AskUserQuestion" &&
             !context.agentID &&
             !context.mcpServer
@@ -275,7 +282,10 @@ export class ClaudeAdapter implements ProviderAgentPort {
                     !session.closing &&
                     !session.failed &&
                     input.session_id === binding.nativeSessionId &&
-                    ((input.tool_name === "AskUserQuestion" &&
+                    (((input.tool_name === "AskUserQuestion" ||
+                      (input.tool_name === "ToolSearch" &&
+                        session.configuration.permissions ===
+                          "host_mediated")) &&
                       !input.mcp_server) ||
                       this.isBridge(session, input.tool_name, input.mcp_server))
                       ? "ask"
@@ -311,7 +321,6 @@ export class ClaudeAdapter implements ProviderAgentPort {
         const server = createSdkMcpServer({
           name: "rss_host",
           version: "1.0.0",
-          alwaysLoad: true,
           tools: [],
         });
         server.instance.server.setRequestHandler(
@@ -685,7 +694,14 @@ export class ClaudeAdapter implements ProviderAgentPort {
       if (
         m.claude_code_version !== CLI_VERSION ||
         m.permissionMode !== "default" ||
-        m.tools.some((t) => !allowed.has(t)) ||
+        m.tools.some(
+          (t) =>
+            !allowed.has(t) &&
+            !(
+              t === "ToolSearch" &&
+              s.configuration.permissions === "host_mediated"
+            ),
+        ) ||
         [...allowed].some((t) => !m.tools.includes(t)) ||
         m.skills.length ||
         m.plugins.length ||

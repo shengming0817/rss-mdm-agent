@@ -22,6 +22,27 @@ const directory = ref<SelfServiceDirectoryItem[]>([]),
   status = ref<PolicyStatus>(),
   busy = ref(false),
   error = ref("");
+let epoch = 0;
+const finished = computed(() => {
+  if (status.value?.kind === "preparation")
+    return ["failed", "cancelled"].includes(status.value.value.state);
+  if (status.value?.kind === "run")
+    return (
+      ["succeeded", "failed"].includes(status.value.value.state.execution) ||
+      status.value.value.state.cancellation === "confirmed"
+    );
+  return false;
+});
+function newRequest() {
+  if (!finished.value || busy.value) return;
+  request.value = "";
+  choice.value = undefined;
+  selected.value = undefined;
+  status.value = undefined;
+  inputs.value = {};
+  error.value = "";
+  void refresh();
+}
 const fields = computed(() =>
   Object.entries(selected.value?.parameterSources ?? {})
     .filter(([, source]) => source.kind === "input")
@@ -44,11 +65,13 @@ const resolved = computed(() =>
 async function refresh() {
   if (!props.port || busy.value) return;
   busy.value = true;
+  const current = epoch;
   try {
     const items: SelfServiceDirectoryItem[] = [];
     let after: string | null = null;
     for (let page = 0; page < 16; page++) {
       const value = await props.port.policy_directory({ after });
+      if (current !== epoch) return;
       items.push(...value.items);
       after = value.nextCursor;
       if (!after) break;
@@ -68,9 +91,10 @@ async function refresh() {
       choice.value = undefined;
     }
   } catch {
+    if (current !== epoch) return;
     error.value = "请登录企业账户并连接执行服务后读取可用脚本。";
   } finally {
-    busy.value = false;
+    if (current === epoch) busy.value = false;
   }
 }
 function select(item: SelfServiceDirectoryItem) {
@@ -104,10 +128,14 @@ function preview() {
 }
 async function query() {
   if (!props.port || !request.value) return;
+  const current = epoch;
   try {
-    status.value = await props.port.policy_status({ requestId: request.value });
+    const value = await props.port.policy_status({ requestId: request.value });
+    if (current !== epoch) return;
+    status.value = value;
     emit("changed");
   } catch {
+    if (current !== epoch) return;
     error.value = "原请求状态未知；请稍后查询，勿重复执行。";
   }
 }
@@ -115,48 +143,57 @@ async function invoke() {
   if (!props.port || !choice.value || busy.value || request.value) return;
   request.value = choice.value.request;
   busy.value = true;
+  const current = epoch;
   try {
     const value = await props.port.policy_invoke(choice.value);
+    if (current !== epoch) return;
     status.value = { kind: "preparation", value };
     emit("changed");
   } catch {
+    if (current !== epoch) return;
     error.value = "提交回执未确认；保留原请求并查询状态，勿重复执行。";
   } finally {
-    busy.value = false;
+    if (current === epoch) busy.value = false;
   }
 }
 async function confirm(id: string) {
   if (!props.port || busy.value) return;
   busy.value = true;
   request.value = id;
+  const current = epoch;
   try {
-    status.value = {
-      kind: "preparation",
-      value: await props.port.policy_confirm({ requestId: id }),
-    };
+    const value = await props.port.policy_confirm({ requestId: id });
+    if (current !== epoch) return;
+    status.value = { kind: "preparation", value };
     emit("changed");
   } catch {
+    if (current !== epoch) return;
     error.value = "确认回执未知；请查询原请求，勿重复确认。";
   } finally {
-    busy.value = false;
+    if (current === epoch) busy.value = false;
   }
 }
 async function cancel(id: string) {
   if (!props.port || busy.value) return;
   busy.value = true;
+  const current = epoch;
   try {
     await props.port.cancel({ requestId: id });
+    if (current !== epoch) return;
     emit("changed");
   } catch {
+    if (current !== epoch) return;
     error.value = "撤销回执未确认，请查询原请求。";
   } finally {
-    busy.value = false;
+    if (current === epoch) busy.value = false;
   }
 }
 onMounted(refresh);
 watch(
   () => currentUser.value?.generation,
   () => {
+    epoch += 1;
+    busy.value = false;
     directory.value = [];
     selected.value = undefined;
     choice.value = undefined;
@@ -227,6 +264,9 @@ watch(
     </section>
     <section v-if="request">
       <p>原请求：{{ request }}</p>
+      <button v-if="finished" :disabled="busy" @click="newRequest">
+        发起新任务
+      </button>
       <button :disabled="busy" @click="query">查询原请求</button
       ><PolicyPreparation
         v-if="status?.kind === 'preparation'"

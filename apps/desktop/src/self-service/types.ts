@@ -713,6 +713,9 @@ export type StopOutcome = "acknowledged" | "failed";
  */
 export type PolicyStatus =
   | {
+      kind: "absent";
+    }
+  | {
       kind: "preparation";
       value: BackendRequest;
     }

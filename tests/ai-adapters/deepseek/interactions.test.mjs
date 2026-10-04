@@ -113,12 +113,7 @@ test("controlled profile has only question + proposal and checkpoints before hos
   env = await environment(
     t,
     (_b, res, n) =>
-      n === 1
-        ? tool(res, "host_propose", {
-            name: "test_operation",
-            arguments: { value: 7 },
-          })
-        : completion(res),
+      n === 1 ? tool(res, "test_operation", { value: 7 }) : completion(res),
     (config) => {
       config.permissions = "host_mediated";
       config.verifier = {
@@ -131,6 +126,20 @@ test("controlled profile has only question + proposal and checkpoints before hos
         }),
       };
       config.tools = {
+        list: async () => ({
+          ok: true,
+          value: [
+            {
+              name: "test_operation",
+              inputSchema: {
+                type: "object",
+                properties: { value: { type: "integer" } },
+                required: ["value"],
+                additionalProperties: false,
+              },
+            },
+          ],
+        }),
         propose: async (proposal) => {
           proposals++;
           assert.equal(proposal.name, "test_operation");
@@ -166,14 +175,14 @@ test("controlled profile has only question + proposal and checkpoints before hos
   assert.equal(events.at(-1)?.body?.outcome, "completed");
   assert.equal(proposals, 1);
   const schema = env.requests[0].tools.find(
-    (t) => t.function.name === "host_propose",
+    (t) => t.function.name === "test_operation",
   ).function.parameters;
   assert.equal(schema.type, "object");
-  assert.deepEqual(schema.required, ["name", "arguments"]);
-  assert.equal(schema.properties.arguments.type, "object");
+  assert.deepEqual(schema.required, ["value"]);
+  assert.equal(schema.properties.value.type, "integer");
   assert.deepEqual(env.requests[0].tools.map((t) => t.function.name).sort(), [
     "ask_user_question",
-    "host_propose",
+    "test_operation",
   ]);
   assert.ok(events.some((e) => e.body?.type === "tool_proposal"));
   assert.ok(events.some((e) => e.body?.type === "tool_result"));
@@ -184,7 +193,7 @@ for (const name of [
   "run_code",
   "delegate",
   "mcp__evil",
-  "host_propose",
+  "test_operation",
   "read_file",
   "write_file",
   "browser",

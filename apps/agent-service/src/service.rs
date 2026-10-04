@@ -738,6 +738,14 @@ impl Core {
         let now = self.host.clock.millis()?;
         if !selection.matches(&offer)
             || !offer.user_initiated
+            || !matches!(
+                offer.summary,
+                execution_contract::BackendTaskSummary::Software {
+                    intent: execution_contract::SoftwareOperation::Install
+                        | execution_contract::SoftwareOperation::Uninstall,
+                    ..
+                }
+            )
             || now / 1000 >= u64::try_from(offer.expires_at).map_err(|_| Error::Clock)?
         {
             return Err(Error::Denied);

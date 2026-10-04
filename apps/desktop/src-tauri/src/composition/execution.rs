@@ -178,6 +178,7 @@ impl ExecutionHandle {
         {
             Reply::PolicyRequest { value } => Ok(ui::PolicyStatus::Preparation { value: *value }),
             Reply::PolicyStatus { value } => Ok(ui::PolicyStatus::Run { value }),
+            Reply::PolicyAbsent => Ok(ui::PolicyStatus::Absent),
             _ => Err(bad(Error::OutcomeUnknown)),
         }
     }
@@ -453,6 +454,9 @@ impl mcp::ExecutionServicePort for ExecutionHandle {
             })
             .await
             .map_err(|_| mcp::ServiceError::Unavailable)?;
+        if matches!(value, ui::PolicyStatus::Absent) {
+            return Err(mcp::ServiceError::NotFound);
+        }
         serde_json::to_value(value).map_err(|_| mcp::ServiceError::Unavailable)
     }
     async fn capabilities(
