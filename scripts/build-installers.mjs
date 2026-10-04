@@ -7,6 +7,7 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { join, resolve } from "node:path";
@@ -297,6 +298,8 @@ if (windows) {
     .replaceAll("@OUTPUT@", packagePath)
     .replaceAll("@ID@", id)
     .replaceAll("@VERSION@", version)
+    .replaceAll("@SERVICE_SHA256@", candidate.service.sha256)
+    .replaceAll("@SERVICE_SIZE@", String(statSync(service).size))
     .replaceAll("@MACHINE@", process.arch === "arm64" ? "0xaa64" : "0x8664");
   const file = join(output, "installer.nsi");
   writeFileSync(file, script);
