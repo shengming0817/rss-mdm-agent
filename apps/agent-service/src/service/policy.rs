@@ -794,6 +794,11 @@ impl<S: IdentityProvider> DeviceService<S> {
         observed.state = BackendRequestState::Observed;
         if let PreparedAction::SoftwareRead { observation, .. } = &mut observed.action {
             *observation = Some(SoftwareObservation {
+                quality: if matches!(state, SoftwareState::Unknown { .. }) {
+                    OutputQuality::Failed
+                } else {
+                    OutputQuality::Complete
+                },
                 collected_at_unix_ms: self.core.host.clock.millis()?,
                 package: step.action.package.clone(),
                 expected_version: step.action.version.clone(),

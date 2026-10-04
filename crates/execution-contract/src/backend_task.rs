@@ -406,6 +406,8 @@ pub struct SoftwareReadChoice {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SoftwareObservation {
+    /// Completeness of this finite native observation; failed leaves the state Unknown.
+    pub quality: crate::OutputQuality,
     /// Time of actual observation from the service clock.
     pub collected_at_unix_ms: u64,
     /// Exact declared package.

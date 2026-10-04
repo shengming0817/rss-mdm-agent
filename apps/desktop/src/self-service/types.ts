@@ -107,6 +107,13 @@ export type Id = string;
  */
 export type Digest = string;
 /**
+ * Quality of the captured result, independent from the exit code.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "OutputQuality".
+ */
+export type OutputQuality = "complete" | "truncated" | "failed" | "partial";
+/**
  * Independently observed software state; installer exit is never a value of this type.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
@@ -678,13 +685,6 @@ export type ProcessFailureKind =
   | "supervision"
   | "outputValidation";
 /**
- * Quality of the captured result, independent from the exit code.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "OutputQuality2".
- */
-export type OutputQuality2 = "complete" | "truncated" | "failed" | "partial";
-/**
  * Safe software diagnostic; contains no paths, source coordinates or captured output.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
@@ -740,9 +740,9 @@ export type TaskFailure =
  * Output completeness controls whether collection facts may be accepted.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "OutputQuality".
+ * via the `definition` "OutputQuality2".
  */
-export type OutputQuality = "complete" | "partial" | "truncated" | "failed";
+export type OutputQuality2 = "complete" | "partial" | "truncated" | "failed";
 /**
  * Public cancellation observation.
  *
@@ -951,6 +951,10 @@ export interface SoftwareObservation {
    * Exact declared package.
    */
   package: string;
+  /**
+   * Completeness of this finite native observation; failed leaves the state Unknown.
+   */
+  quality: OutputQuality;
   /**
    * Native receipt or product observation; unknown remains explicit.
    */
@@ -1597,7 +1601,7 @@ export interface ProcessSummary {
   /**
    * Capture/decoding quality, not a business success bit.
    */
-  quality: OutputQuality2;
+  quality: OutputQuality;
   /**
    * Explicit full-scope proof; false means unproven.
    */
@@ -1770,7 +1774,7 @@ export interface ScriptRunResult {
   /**
    * Original completeness classification.
    */
-  quality: OutputQuality;
+  quality: OutputQuality2;
   /**
    * Server receipt timestamp in Unix seconds.
    */

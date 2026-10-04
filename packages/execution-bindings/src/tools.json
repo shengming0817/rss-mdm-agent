@@ -1009,6 +1009,31 @@
           "required": ["device", "account", "session"],
           "type": "object"
         },
+        "OutputQuality": {
+          "description": "Quality of the captured result, independent from the exit code.",
+          "oneOf": [
+            {
+              "const": "complete",
+              "description": "All required output was decoded and structurally valid.",
+              "type": "string"
+            },
+            {
+              "const": "truncated",
+              "description": "Capture was truncated by the output budget.",
+              "type": "string"
+            },
+            {
+              "const": "failed",
+              "description": "Encoding, JSON shape, row bound or process outcome failed.",
+              "type": "string"
+            },
+            {
+              "const": "partial",
+              "description": "A process or pipe is still unaccounted for.",
+              "type": "string"
+            }
+          ]
+        },
         "PackageValue": {
           "description": "Exact ecosystem text: no SemVer, case folding, alias lookup or normalization.\nAccepts 1..=1024 UTF-8 bytes without control characters, including '+' and '~'.",
           "type": "string"
@@ -1515,12 +1540,17 @@
               "description": "Exact declared package.",
               "type": "string"
             },
+            "quality": {
+              "$ref": "#/$defs/OutputQuality",
+              "description": "Completeness of this finite native observation; failed leaves the state Unknown."
+            },
             "state": {
               "$ref": "#/$defs/SoftwareState",
               "description": "Native receipt or product observation; unknown remains explicit."
             }
           },
           "required": [
+            "quality",
             "collectedAtUnixMs",
             "package",
             "expectedVersion",

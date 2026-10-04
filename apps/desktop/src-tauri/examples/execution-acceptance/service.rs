@@ -104,7 +104,7 @@ impl ExecutionServicePort for FixtureService {
     }
     async fn invoke_policy(
         &self,
-        name: String,
+        name: &str,
         arguments: serde_json::Map<String, serde_json::Value>,
         _: CancellationToken,
     ) -> Result<BackendRequest, ServiceError> {

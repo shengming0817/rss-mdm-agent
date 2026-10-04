@@ -35,13 +35,15 @@ fn only_current_envelope_calls_the_handler() {
         );
         assert_eq!(spy.0, 0);
     }
+    let current = serde_json::to_vec(
+        &serde_json::json!({"version":IPC_VERSION,"request":{"method":"status","request":"r"}}),
+    )
+    .unwrap();
+    let reply: serde_json::Value =
+        serde_json::from_slice(&dispatch(&mut spy, &peer, &current)).unwrap();
     assert_eq!(
-        dispatch(
-            &mut spy,
-            &peer,
-            br#"{"version":10,"request":{"method":"status","request":"r"}}"#
-        ),
-        br#"{"version":10,"reply":{"kind":"unavailable"}}"#
+        reply,
+        serde_json::json!({"version":IPC_VERSION,"reply":{"kind":"unavailable"}})
     );
     assert_eq!(spy.0, 1);
 }

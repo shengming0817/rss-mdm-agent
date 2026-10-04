@@ -264,6 +264,10 @@ export interface SoftwareObservation {
    */
   package: string;
   /**
+   * Completeness of this finite native observation; failed leaves the state Unknown.
+   */
+  quality: "complete" | "truncated" | "failed" | "partial";
+  /**
    * Native receipt or product observation; unknown remains explicit.
    */
   state:

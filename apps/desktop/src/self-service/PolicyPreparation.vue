@@ -89,10 +89,12 @@ function resolved() {
     </template>
     <template v-else-if="record.action.kind === 'softwareRead'">
       <h3>软件状态检测</h3>
+      <p>规则：{{ record.action.definition }} · 有限原生软件查询</p>
       <p>请求：{{ request() }} · {{ record.state }}</p>
       <template v-if="record.action.observation"
         ><p>
-          {{ record.action.observation.package }} · 目标版本
+          {{ record.action.observation.package }} ·
+          {{ record.action.observation.quality }} · 目标版本
           {{ record.action.observation.expectedVersion }}
         </p>
         <p>
