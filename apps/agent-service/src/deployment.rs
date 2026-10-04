@@ -1,9 +1,11 @@
 use crate::ProductionStartup;
 use crate::{DeviceSecrets, DeviceService, ExecutionConfig, SystemClock};
+use agent_api::runtime as wire;
+#[cfg(test)]
+use agent_client::protocol::CapabilityExt;
 use agent_client::{Client, Config, Error, Limits, OpenMode, Transport};
 use base64::Engine;
 use execution_ipc::host::{current_subject, PeerPolicy};
-use rss_mdm_agent_wire::runtime as wire;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -295,7 +297,7 @@ impl Deployment {
     pub async fn initialize(
         &self,
         grant: agent_client::GrantImport,
-        secret: &wire::Secret,
+        secret: &agent_client::Secret,
     ) -> Result<(), Error> {
         grant.validate(
             self.network()?.platform,

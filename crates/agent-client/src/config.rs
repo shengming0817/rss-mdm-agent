@@ -1,3 +1,4 @@
+use crate::protocol::*;
 use crate::{wire, Error};
 use std::{collections::BTreeMap, time::Duration};
 use url::Url;
@@ -138,11 +139,11 @@ impl Config {
 /// References are frozen by the communication owner before network operations.
 pub trait IdentityProvider {
     /// Resolve an existing protected bootstrap secret.
-    fn resolve(&self, reference: &str) -> Result<wire::Secret, Error>;
+    fn resolve(&self, reference: &str) -> Result<crate::Secret, Error>;
     /// Import an administrator-provided secret once, without overwriting an existing value.
-    fn import_secret(&self, reference: &str, secret: &wire::Secret) -> Result<(), Error>;
+    fn import_secret(&self, reference: &str, secret: &crate::Secret) -> Result<(), Error>;
     /// Create once; exact retries must return the original protected secret.
-    fn create_secret(&self, reference: &str) -> Result<wire::Secret, Error>;
+    fn create_secret(&self, reference: &str) -> Result<crate::Secret, Error>;
     /// Create once during explicit enrollment preparation; never overwrite a key.
     fn create_key(
         &self,

@@ -14,10 +14,11 @@ pub(crate) struct Store {
     _lock: File,
 }
 pub(crate) fn encode(v: &impl Serialize) -> Result<Vec<u8>, Error> {
+    agent_api::validate(v).map_err(|_| Error::Protocol)?;
     serde_json_canonicalizer::to_vec(v).map_err(|_| Error::Protocol)
 }
 pub(crate) fn decode<T: DeserializeOwned>(b: &[u8]) -> Result<T, Error> {
-    serde_json::from_slice(b).map_err(|_| Error::Protocol)
+    agent_api::decode(b).map_err(|_| Error::Protocol)
 }
 pub(crate) fn hash(b: &[u8]) -> String {
     format!("{:x}", Sha256::digest(b))

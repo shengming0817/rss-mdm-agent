@@ -2,6 +2,7 @@
 //! ref: windows-sys 0.61.2 Win32/System/Services; windows 0.61.3 TaskScheduler.
 use super::worker_evidence::WorkerEvidence;
 use super::*;
+use agent_client::protocol::*;
 use std::{
     os::windows::ffi::{OsStrExt, OsStringExt},
     ptr::{null, null_mut},
@@ -393,7 +394,7 @@ pub(super) fn execution_resources(
     {
         installation_security::protected(&powershell).map_err(|_| Error::Identity)?;
         interpreters.push(crate::Interpreter {
-            profile: rss_mdm_agent_wire::runtime::ExecutorProfile::PowerShell7,
+            profile: agent_api::runtime::ExecutorProfile::PowerShell7,
             image: Artifact {
                 sha256: hash(&std::fs::read(&powershell)?),
                 path: powershell,

@@ -1,43 +1,46 @@
 use super::plan;
+use agent_api::runtime as wire;
+use agent_client::protocol::*;
 use agent_client::{Error, Offer};
-use rss_mdm_agent_wire::runtime as wire;
 pub(crate) fn offered(offer: &Offer) -> Result<execution_contract::BackendTask, Error> {
     use sha2::{Digest as _, Sha256};
     let bytes = serde_json::to_vec(offer.payload()).map_err(|_| Error::Protocol)?;
     Ok(execution_contract::BackendTask {
         summary: match offer.payload() {
-            wire::TaskPayload::Script(p) => execution_contract::BackendTaskSummary::Script {
+            wire::TaskPayload::TaskSpec(p) => execution_contract::BackendTaskSummary::Script {
                 identity: display_identity(p.run_as),
             },
-            wire::TaskPayload::Software(p) => execution_contract::BackendTaskSummary::Software {
-                intent: match p.intent {
-                    wire::SoftwareTaskIntent::Install => {
-                        execution_contract::SoftwareOperation::Install
-                    }
-                    wire::SoftwareTaskIntent::Uninstall => {
-                        execution_contract::SoftwareOperation::Uninstall
-                    }
-                    wire::SoftwareTaskIntent::Detect => {
-                        execution_contract::SoftwareOperation::Detect
-                    }
-                },
-                steps: p
-                    .steps
-                    .iter()
-                    .map(|step| execution_contract::BackendStepSummary {
-                        package: step.action.package.clone(),
-                        version: step.action.version.clone(),
-                        identity: display_identity(match step.target {
-                            wire::SoftwareExecutionTarget::Device => {
-                                wire::ExecutionIdentity::System
-                            }
-                            wire::SoftwareExecutionTarget::User { .. } => {
-                                wire::ExecutionIdentity::LoggedInUser
-                            }
-                        }),
-                    })
-                    .collect(),
-            },
+            wire::TaskPayload::SoftwareTaskSpec(p) => {
+                execution_contract::BackendTaskSummary::Software {
+                    intent: match p.intent {
+                        wire::SoftwareTaskIntent::Install => {
+                            execution_contract::SoftwareOperation::Install
+                        }
+                        wire::SoftwareTaskIntent::Uninstall => {
+                            execution_contract::SoftwareOperation::Uninstall
+                        }
+                        wire::SoftwareTaskIntent::Detect => {
+                            execution_contract::SoftwareOperation::Detect
+                        }
+                    },
+                    steps: p
+                        .steps
+                        .iter()
+                        .map(|step| execution_contract::BackendStepSummary {
+                            package: step.action.package.clone(),
+                            version: step.action.version.clone(),
+                            identity: display_identity(match step.target {
+                                wire::SoftwareExecutionTarget::Device => {
+                                    wire::ExecutionIdentity::System
+                                }
+                                wire::SoftwareExecutionTarget::User { .. } => {
+                                    wire::ExecutionIdentity::LoggedInUser
+                                }
+                            }),
+                        })
+                        .collect(),
+                }
+            }
             _ => return Err(Error::Unsupported),
         },
         request: super::request_id(offer)?,
@@ -46,7 +49,7 @@ pub(crate) fn offered(offer: &Offer) -> Result<execution_contract::BackendTask, 
         revision: execution_contract::Digest::new(format!("{:x}", Sha256::digest(bytes)))
             .map_err(|_| Error::Protocol)?,
         title: match offer.payload() {
-            wire::TaskPayload::Software(p) => p
+            wire::TaskPayload::SoftwareTaskSpec(p) => p
                 .steps
                 .last()
                 .map(|s| format!("{} {}", s.action.package, s.action.version))
@@ -54,8 +57,8 @@ pub(crate) fn offered(offer: &Offer) -> Result<execution_contract::BackendTask, 
             _ => format!("Task {}", offer.task_id()),
         },
         expires_at: offer.payload().expires_at(),
-        user_initiated: matches!(offer.payload(),wire::TaskPayload::Software(p) if p.start_mode==wire::SoftwareStartMode::UserInitiated)
-            || matches!(offer.payload(),wire::TaskPayload::Script(p) if matches!(p.authorization,wire::ScriptAuthorization::SelfService { .. })),
+        user_initiated: matches!(offer.payload(),wire::TaskPayload::SoftwareTaskSpec(p) if p.start_mode==wire::SoftwareStartMode::UserInitiated)
+            || matches!(offer.payload(),wire::TaskPayload::TaskSpec(p) if matches!(p.authorization,wire::ScriptAuthorization::SelfService { .. })),
     })
 }
 

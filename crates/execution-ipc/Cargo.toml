@@ -7,7 +7,7 @@ license.workspace = true
 publish = false
 
 [dependencies]
-rss-mdm-agent-wire.workspace = true
+agent-api.workspace = true
 zeroize.workspace = true
 execution-contract = { path = "../execution-contract" }
 execution-app = { path = "../execution-app" }

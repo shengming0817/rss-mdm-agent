@@ -1,6 +1,11 @@
 //! Agent V1 communication and bounded content delivery; execution remains journal-owned.
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
+pub mod protocol;
+#[cfg(test)]
+use protocol::*;
+mod software_validation;
+pub use agent_api::Secret;
 mod delivery;
 mod redaction;
 pub use delivery::{AbandonmentAck, Association, FrozenAbandonment, FrozenResult, ResultAck};
@@ -15,11 +20,11 @@ pub use tls::validate_public_ca;
 mod config;
 mod content;
 mod store;
+/// Generated values for the backend-owned HTTP API.
+use agent_api::runtime as wire;
 pub use client::*;
 pub use config::*;
 pub use content::{ContentFile, Materials};
-/// The protocol's single producer.
-use rss_mdm_agent_wire::runtime as wire;
 pub use store::{inspect_binding, validate_existing, validate_identity, validate_stored_identity};
 /// Closed errors, without secrets, response bodies or backend paths.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -92,8 +97,8 @@ impl From<std::io::Error> for Error {
         Self::Storage
     }
 }
-impl From<wire::WireError> for Error {
-    fn from(_: wire::WireError) -> Self {
+impl From<agent_api::DecodeError> for Error {
+    fn from(_: agent_api::DecodeError) -> Self {
         Self::Protocol
     }
 }
@@ -106,3 +111,7 @@ mod chunk_recovery;
 #[cfg(test)]
 #[path = "../../../tests/agent-protocol/mod.rs"]
 mod test_support;
+
+#[cfg(test)]
+#[path = "../tests/unit/api_encoding.rs"]
+mod api_encoding;

@@ -14,7 +14,7 @@ url.workspace = true
 uuid = "=1.26.0"
 
 [dependencies]
-rss-mdm-agent-wire.workspace = true
+agent-api.workspace = true
 platform-private-storage = { path = "../../../crates/platform-private-storage" }
 platform-credentials = { path = "../../../crates/platform-credentials" }
 aes-gcm = { version = "=0.10.3", features = ["zeroize"] }

@@ -1,6 +1,6 @@
 //! Borrowed inputs from the producer's current closed software model.
 use crate::Error;
-use rss_mdm_agent_wire::runtime as wire;
+use agent_api::runtime as wire;
 /// Borrowed commands; no alternate persisted software schema or compatibility decoder.
 pub struct SoftwareCommands<'a> {
     /// Install identity and shared mutation budget.

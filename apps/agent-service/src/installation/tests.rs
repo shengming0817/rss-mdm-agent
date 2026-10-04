@@ -5,18 +5,15 @@ fn bootstrap_is_current_only_and_never_accepts_inline_secrets() {
     let material: Bootstrap = serde_json::from_value(value.clone()).unwrap();
     material
         .grant
-        .validate(rss_mdm_agent_wire::runtime::TaskPlatform::Windows, 0)
+        .validate(agent_api::runtime::TaskPlatform::Windows, 0)
         .unwrap();
     assert!(material
         .grant
-        .validate(rss_mdm_agent_wire::runtime::TaskPlatform::Macos, 0)
+        .validate(agent_api::runtime::TaskPlatform::Macos, 0)
         .is_err());
     assert!(material
         .grant
-        .validate(
-            rss_mdm_agent_wire::runtime::TaskPlatform::Windows,
-            9999999999
-        )
+        .validate(agent_api::runtime::TaskPlatform::Windows, 9999999999)
         .is_err());
     let mut extra = value.clone();
     extra["secret"] = "CANARY_SECRET".into();

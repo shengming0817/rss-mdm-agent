@@ -297,7 +297,7 @@ impl Session {
             .ok_or_else(invalid)?;
         Ok(execution_ipc::host::EmployeeSession {
             credential: zeroize::Zeroizing::new(secret.to_owned()),
-            actor: rss_mdm_agent_wire::runtime::ScriptActor {
+            actor: agent_api::runtime::ScriptActor {
                 tenant_id: Uuid::parse_str(&self.organization.tenant_id).map_err(|_| invalid())?,
                 instance_id: Uuid::parse_str(&self.instance).map_err(|_| invalid())?,
                 principal_id: Uuid::parse_str(&self.principal).map_err(|_| invalid())?,

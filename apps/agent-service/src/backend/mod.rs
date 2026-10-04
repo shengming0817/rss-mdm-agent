@@ -1,6 +1,6 @@
 //! Backend-to-local execution adapter; neither transport nor journal authority.
+use agent_api::runtime as wire;
 use agent_client::{Error, Offer};
-use rss_mdm_agent_wire::runtime as wire;
 use sha2::Digest as _;
 mod bridge;
 pub(crate) mod commands;
@@ -18,21 +18,21 @@ pub(crate) fn request_id(offer: &Offer) -> Result<execution_contract::RequestId,
     fn encode(value: &impl serde::Serialize) -> Result<Vec<u8>, Error> {
         serde_json_canonicalizer::to_vec(value).map_err(|_| Error::Protocol)
     }
-    if let wire::TaskPayload::Script(v) = offer.payload() {
+    if let wire::TaskPayload::TaskSpec(v) = offer.payload() {
         if let wire::ScriptAuthorization::SelfService { request_id, .. } = &v.authorization {
             return execution_contract::RequestId::new(request_id.to_string())
                 .map_err(|_| Error::Protocol);
         }
     }
     let bytes = match offer.payload() {
-        wire::TaskPayload::Script(v) => encode(&(
+        wire::TaskPayload::TaskSpec(v) => encode(&(
             v.tenant_id,
             &v.device_id,
             v.registration_id,
             v.generation,
             v.task_id,
         ))?,
-        wire::TaskPayload::Software(v) => encode(&(
+        wire::TaskPayload::SoftwareTaskSpec(v) => encode(&(
             v.tenant_id,
             &v.device_id,
             v.registration_id,
@@ -45,8 +45,6 @@ pub(crate) fn request_id(offer: &Offer) -> Result<execution_contract::RequestId,
         .map_err(|_| Error::Protocol)
 }
 
-#[cfg(test)]
-mod live_mdm;
 #[cfg(test)]
 pub(crate) mod test_support;
 #[cfg(test)]

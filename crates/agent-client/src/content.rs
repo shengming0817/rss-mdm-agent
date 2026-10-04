@@ -1,3 +1,4 @@
+use crate::protocol::*;
 use crate::{
     store::{encode, hash, private},
     wire, Client, Clock, Error, IdentityProvider, Offer,
@@ -415,10 +416,10 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
 
 fn artifacts(payload: &wire::TaskPayload) -> Result<Vec<(String, u64, [u8; 32])>, Error> {
     Ok(match payload {
-        wire::TaskPayload::Script(v) => {
+        wire::TaskPayload::TaskSpec(v) => {
             vec![("script".into(), v.content.length, v.content.sha256)]
         }
-        wire::TaskPayload::Software(v) => v
+        wire::TaskPayload::SoftwareTaskSpec(v) => v
             .steps
             .iter()
             .flat_map(|v| {

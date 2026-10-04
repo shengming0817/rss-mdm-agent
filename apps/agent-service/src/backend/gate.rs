@@ -1,10 +1,11 @@
 //! Product gate proof bound to a verified backend task, never supplied by IPC or the model.
 //! ref: rustls 0.23.45 rustls/src/verify.rs (2976d90): private verification markers.
 use super::{offered, request_id};
+use agent_api::runtime as wire;
+use agent_client::protocol::*;
 use agent_client::{Error, Offer, Start};
 use execution_admission::{ai_execution_gate, ExecutionGate};
 use execution_contract::*;
-use rss_mdm_agent_wire::runtime as wire;
 
 /// A decoded backend risk decision tied to its authenticated full offer revision.
 /// Backend scripts and built-in software rules have distinct authority identities.
@@ -20,7 +21,7 @@ impl TrustedRisk {
             .ok()?
             .checked_mul(1000)?;
         let (level, source) = match offer.payload() {
-            wire::TaskPayload::Script(spec) => match &spec.authorization {
+            wire::TaskPayload::TaskSpec(spec) => match &spec.authorization {
                 wire::ScriptAuthorization::SelfService {
                     policy_id,
                     policy_revision,
@@ -43,7 +44,7 @@ impl TrustedRisk {
                 ),
                 _ => return None,
             },
-            wire::TaskPayload::Software(spec) => {
+            wire::TaskPayload::SoftwareTaskSpec(spec) => {
                 let level = match spec.intent {
                     wire::SoftwareTaskIntent::Install | wire::SoftwareTaskIntent::Uninstall => {
                         RiskLevel::Two

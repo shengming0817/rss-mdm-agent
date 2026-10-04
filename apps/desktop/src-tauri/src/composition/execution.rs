@@ -173,7 +173,7 @@ impl ExecutionHandle {
     pub async fn policy_directory(
         &self,
         input: ui::PolicyDirectoryQuery,
-    ) -> ui::Result<rss_mdm_agent_wire::runtime::SelfServiceDirectoryResponse> {
+    ) -> ui::Result<agent_api::runtime::SelfServiceDirectoryResponse> {
         match self
             .request(Request::PolicyDirectory {
                 after: input.after,

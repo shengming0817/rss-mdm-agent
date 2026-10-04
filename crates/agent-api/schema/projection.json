@@ -1,0 +1,1531 @@
+{
+  "objectNames": {
+    "bytes|sha256": "OutputManifest",
+    "data|index|manifest": "OutputChunk",
+    "collectedAt|diagnostics|exitCode|manifest|quality": "ChunkedTaskResult",
+    "architecture|capabilities|executionContext|platform": "RuntimeProfile",
+    "csr|lifetimeSeconds|operationId|platform|secret|wireVersion": "GrantRequest",
+    "expiresAt|grantId|platform|state|wireVersion": "GrantReceipt",
+    "csr|grantId|operationId|runtime|secret|wireVersion": "CertificateRequest",
+    "activateBefore|certificateChain|issuanceId|operationId|wireVersion": "Candidate",
+    "issuanceId|operationId|wireVersion": "ActivationRequest",
+    "issuanceId|operationId|runtime|wireVersion": "ActivationReceipt",
+    "grantId|operationId|secret|wireVersion": "StatusRequest",
+    "activation|grant|issuanceId|issuanceUnknown": "Progress",
+    "certificateChain|operationId|wireVersion": "RecoverIssuance",
+    "code|issuanceId": "ErrorBody",
+    "csr|installationOperation|operationId|runtime|secret|wireVersion": "NativeGrantRequest",
+    "grant|publicKeyFingerprint": "AuthorizationRequest",
+    "architecture|attemptId|deviceId|entry|expiresAt|generation|organization|permit|platform|registrationId|taskId|tenantId|wireVersion": "EnrollmentTaskSpec",
+    "capabilities|collections|deviceId|epoch|generation|operationId|registrationId|source|wireVersion": "BindingProfile",
+    "field|value": "FieldValue",
+    "body|collection|observedAt|reportId|sequence|wireVersion": "ReportRequest",
+    "intake|receivedAt|reportId|wireVersion": "ReportAck",
+    "ack|observation|projection": "ReportStatus",
+    "code": "ErrorBody",
+    "instanceId|principalId|tenantId": "ScriptActor",
+    "id|variant|version": "ScriptResource",
+    "confirmed|operationId|parameters|policyId|policyRevision|policyVersion|source": "SelfServiceInvoke",
+    "after|source": "SelfServiceDirectory",
+    "allowAi|category|description|displayName|keywords|prerequisites|published|riskLevel|sideEffects": "SelfServiceMetadata",
+    "asOf|items|nextCursor": "SelfServiceDirectoryResponse",
+    "parameterSchema|parameterSources|policyId|policyRevision|policyVersion|resource|selfService": "SelfServiceDirectoryItem",
+    "policyId|policyRevision|policyVersion|requestId|runId": "SelfServiceAccepted",
+    "cancellation|deadline|delivery|execution|startedAt": "ScriptRunState",
+    "attemptId|availableAt|deadline|requestId|result|runId|state": "SelfServiceStatus",
+    "budgetValid|collectedAt|diagnostics|exitCode|output|outputReference|quality|receivedAt|schemaValid|trusted": "ScriptRunResult",
+    "attemptId|taskId": "TaskCancellation",
+    "cancellations|task|wireVersion": "TaskClaimResponse",
+    "accepted|cancelRequested|permit|wireVersion": "TaskEventAck",
+    "durationMs|executedAt|failure|stderr|stdout": "TaskDiagnostics",
+    "collectedAt|diagnostics|exitCode|output|quality": "TaskResult",
+    "attemptId|event|executionContext|operationId|wireVersion": "TaskEventRequest",
+    "executionContext|operationId|profiles|wireVersion": "TaskClaimRequest",
+    "length|sha256": "TaskContent",
+    "architecture|arguments|attemptId|authorization|content|deadline|deviceId|environment|expiresAt|generation|maxRows|outputBytes|parameters|permit|platform|profile|registrationId|resource|resourceDigest|runAs|sqlParameters|taskId|tenantId|timeoutSeconds|wireVersion": "TaskSpec",
+    "key|length|sha256": "SoftwareTaskArtifact",
+    "architecture|entries|platform|schema": "SoftwareTaskBundle",
+    "behavior|downgrade|package|reboot|signatures|version": "SoftwareTaskAction",
+    "action|artifacts|export|target": "SoftwareTaskStep",
+    "architecture|attemptId|definitionDigest|deviceId|executionContext|expiresAt|generation|intent|permit|platform|registrationId|startMode|steps|taskId|tenantId|wireVersion": "SoftwareTaskSpec",
+    "keyId|payload|signature": "SignedTask",
+    "interactiveUser|msixSideload|msixUnsigned|osVersion|revision|sourceCredentials|systemBroker": "SoftwareExecutionContext",
+    "administrator|identity|sessionId": "SoftwareInteractiveUser",
+    "reference|source": "SoftwareReadCredential",
+    "resource|sha256|version": "SoftwareExportDependency",
+    "length|sha256|url": "SoftwareExportArtifact",
+    "artifacts|definitionDigest|dependencies|documentSha256|publication|resource|resourceDigest|resourceVersion|ring|source|sourceDigest|tenantId": "SoftwareExportBinding",
+    "after|before|diagnostics|identity|index|package|process|rebootRequired|stepDigest|target": "SoftwareStepResult",
+    "definitionDigest|intent|steps": "SoftwareTaskResult",
+    "reboot|success": "SoftwareTaskExitCodes",
+    "arguments|environment|exitCodes|outputBytes|runAs|timeoutSeconds": "SoftwareTaskInvocation",
+    "entry|interpreter|invocation": "SoftwareTaskScript",
+    "installer|invocation": "SoftwareTaskRemoval",
+    "detect|install|installer|scope|uninstall|upgrade|upgradeInvocation": "SoftwareTaskNative",
+    "detect|install|installer|layout|scope|uninstall|upgrade|upgradeInvocation": "SoftwareTaskExe",
+    "archive|detect|install|manifest|uninstall": "SoftwareTaskBundleBehavior",
+    "bundleId|path|targetName|version": "SoftwareTaskMacApplication",
+    "image|invocation|payload|scope|upgrade|volume": "SoftwareTaskDmg",
+    "architecture|name|publisher|resourceId|version": "SoftwareTaskMsixIdentity",
+    "identity|length|path|sha256": "SoftwareTaskMsixMember",
+    "allowUnsigned|container|dependencies|deployment|identity|invocation|minimumOs|requireSideload|uninstall|upgrade": "SoftwareTaskMsix",
+    "artifact|mechanism|publisher": "SoftwareTaskSignature",
+    "itemKey|key|manual|nullable|platforms|searchable|sensitivity|sources|unit|valueType|version": "FieldDefinition",
+    "dataset|fields|source|version": "CollectionDefinition"
+  },
+  "enumNames": {
+    "available|consumed|expired|pending|revoked": {
+      "name": "GrantState",
+      "variants": {
+        "pending": "Pending",
+        "available": "Available",
+        "consumed": "Consumed",
+        "revoked": "Revoked",
+        "expired": "Expired"
+      }
+    },
+    "activation_unknown|certificate_expired|credential_retired|credential_revoked|grant_expired|grant_revoked|invalid_identity|issuance_unknown|malformed_request|operation_conflict|permission_denied|registration_limit|service_unavailable": {
+      "name": "EnrollmentErrorCode",
+      "variants": {
+        "malformed_request": "MalformedRequest",
+        "invalid_identity": "InvalidIdentity",
+        "permission_denied": "PermissionDenied",
+        "grant_revoked": "GrantRevoked",
+        "grant_expired": "GrantExpired",
+        "registration_limit": "RegistrationLimit",
+        "operation_conflict": "OperationConflict",
+        "issuance_unknown": "IssuanceUnknown",
+        "activation_unknown": "ActivationUnknown",
+        "credential_revoked": "CredentialRevoked",
+        "certificate_expired": "CertificateExpired",
+        "credential_retired": "CredentialRetired",
+        "service_unavailable": "ServiceUnavailable"
+      }
+    },
+    "failed|opened|third_party_conflict|unknown|unsupported|user_required": {
+      "name": "EnrollmentEntryOutcome",
+      "variants": {
+        "opened": "Opened",
+        "user_required": "UserRequired",
+        "third_party_conflict": "ThirdPartyConflict",
+        "unsupported": "Unsupported",
+        "failed": "Failed",
+        "unknown": "Unknown"
+      }
+    },
+    "inventory.collect.v1|mdm.enrollment.v1|software.brew.bottle.user.v1|software.bundle.macos.system.v1|software.bundle.macos.user.v1|software.bundle.windows.system.v1|software.bundle.windows.user.v1|software.dmg.app.system.v1|software.dmg.app.user.v1|software.dmg.pkg.system.v1|software.exe.system.v1|software.exe.user.v1|software.msi.system.v1|software.msi.user.v1|software.msix.provisioning.system.v1|software.msix.registration.user.v1|software.pkg.system.v1|software.winget.system.v1|software.winget.user.v1|task.execute.v1": {
+      "name": "Capability",
+      "variants": {
+        "inventory.collect.v1": "InventoryCollectionV1",
+        "task.execute.v1": "TaskExecuteV1",
+        "software.msi.system.v1": "SoftwareMsiSystemV1",
+        "software.msi.user.v1": "SoftwareMsiUserV1",
+        "software.pkg.system.v1": "SoftwarePkgSystemV1",
+        "software.bundle.windows.system.v1": "SoftwareBundleWindowsSystemV1",
+        "software.bundle.windows.user.v1": "SoftwareBundleWindowsUserV1",
+        "software.bundle.macos.system.v1": "SoftwareBundleMacosSystemV1",
+        "software.bundle.macos.user.v1": "SoftwareBundleMacosUserV1",
+        "software.winget.system.v1": "SoftwareWingetSystemV1",
+        "software.winget.user.v1": "SoftwareWingetUserV1",
+        "software.brew.bottle.user.v1": "SoftwareBrewBottleUserV1",
+        "software.exe.system.v1": "SoftwareExeSystemV1",
+        "software.exe.user.v1": "SoftwareExeUserV1",
+        "software.dmg.app.system.v1": "SoftwareDmgAppSystemV1",
+        "software.dmg.app.user.v1": "SoftwareDmgAppUserV1",
+        "software.dmg.pkg.system.v1": "SoftwareDmgPkgSystemV1",
+        "software.msix.registration.user.v1": "SoftwareMsixRegistrationUserV1",
+        "software.msix.provisioning.system.v1": "SoftwareMsixProvisioningSystemV1",
+        "mdm.enrollment.v1": "MdmEnrollmentV1"
+      }
+    },
+    "agent.builtin": {
+      "name": "ReportSource",
+      "variants": {
+        "agent.builtin": "AgentBuiltin"
+      }
+    },
+    "CollectionFailed|PermissionDenied|TemporarilyUnavailable": {
+      "name": "FailureCode",
+      "variants": {
+        "PermissionDenied": "PermissionDenied",
+        "TemporarilyUnavailable": "TemporarilyUnavailable",
+        "CollectionFailed": "CollectionFailed"
+      }
+    },
+    "Durable": {
+      "name": "IntakeStatus",
+      "variants": {
+        "Durable": "Durable"
+      }
+    },
+    "NeedSnapshotCollectionFailed|NeedSnapshotPartial|Pending|Snapshot|Stale": {
+      "name": "ObservationStatus",
+      "variants": {
+        "Pending": "Pending",
+        "Snapshot": "Snapshot",
+        "NeedSnapshotPartial": "NeedSnapshotPartial",
+        "NeedSnapshotCollectionFailed": "NeedSnapshotCollectionFailed",
+        "Stale": "Stale"
+      }
+    },
+    "Applied|NotApplicable|Pending": {
+      "name": "ProjectionStatus",
+      "variants": {
+        "Pending": "Pending",
+        "Applied": "Applied",
+        "NotApplicable": "NotApplicable"
+      }
+    },
+    "certificate_expired|credential_retired|credential_revoked|invalid_identity|malformed_request|operation_conflict|operation_unknown|permission_denied|range_not_satisfiable|report_not_found|service_unavailable|task_not_found|unsupported_capability|unsupported_wire": {
+      "name": "RuntimeErrorCode",
+      "variants": {
+        "malformed_request": "MalformedRequest",
+        "unsupported_wire": "UnsupportedWire",
+        "unsupported_capability": "UnsupportedCapability",
+        "invalid_identity": "InvalidIdentity",
+        "credential_revoked": "CredentialRevoked",
+        "certificate_expired": "CertificateExpired",
+        "credential_retired": "CredentialRetired",
+        "report_not_found": "ReportNotFound",
+        "permission_denied": "PermissionDenied",
+        "task_not_found": "TaskNotFound",
+        "range_not_satisfiable": "RangeNotSatisfiable",
+        "operation_conflict": "OperationConflict",
+        "operation_unknown": "OperationUnknown",
+        "service_unavailable": "ServiceUnavailable"
+      }
+    },
+    "ai|human": {
+      "name": "ScriptCaller",
+      "variants": {
+        "human": "Human",
+        "ai": "Ai"
+      }
+    },
+    "failed|not_started|running|succeeded|unknown|waiting_reboot": {
+      "name": "ScriptExecution",
+      "variants": {
+        "not_started": "NotStarted",
+        "running": "Running",
+        "succeeded": "Succeeded",
+        "failed": "Failed",
+        "waiting_reboot": "WaitingReboot",
+        "unknown": "Unknown"
+      }
+    },
+    "confirmed|none|requested": {
+      "name": "ScriptCancellation",
+      "variants": {
+        "none": "None",
+        "requested": "Requested",
+        "confirmed": "Confirmed"
+      }
+    },
+    "complete|failed|partial|truncated": {
+      "name": "OutputQuality",
+      "variants": {
+        "complete": "Complete",
+        "partial": "Partial",
+        "truncated": "Truncated",
+        "failed": "Failed"
+      }
+    },
+    "cancelled|capture_failed|launch_failed|non_zero_exit|output_limit|timed_out": {
+      "name": "TaskFailure",
+      "variants": {
+        "launch_failed": "LaunchFailed",
+        "timed_out": "TimedOut",
+        "cancelled": "Cancelled",
+        "non_zero_exit": "NonZeroExit",
+        "output_limit": "OutputLimit",
+        "capture_failed": "CaptureFailed"
+      }
+    },
+    "bash|osquery|posix_sh|power_shell7": {
+      "name": "ExecutorProfile",
+      "variants": {
+        "power_shell7": "PowerShell7",
+        "posix_sh": "PosixSh",
+        "bash": "Bash",
+        "osquery": "Osquery"
+      }
+    },
+    "logged_in_user|system": {
+      "name": "ExecutionIdentity",
+      "variants": {
+        "system": "System",
+        "logged_in_user": "LoggedInUser"
+      }
+    },
+    "offer|start": {
+      "name": "TaskPermit",
+      "variants": {
+        "offer": "Offer",
+        "start": "Start"
+      }
+    },
+    "detect|install|uninstall": {
+      "name": "SoftwareTaskIntent",
+      "variants": {
+        "install": "Install",
+        "detect": "Detect",
+        "uninstall": "Uninstall"
+      }
+    },
+    "automatic|user_initiated": {
+      "name": "SoftwareStartMode",
+      "variants": {
+        "automatic": "Automatic",
+        "user_initiated": "UserInitiated"
+      }
+    },
+    "forbid|report": {
+      "name": "SoftwareTaskReboot",
+      "variants": {
+        "forbid": "Forbid",
+        "report": "Report"
+      }
+    },
+    "allow|deny": {
+      "name": "SoftwareTaskDowngrade",
+      "variants": {
+        "deny": "Deny",
+        "allow": "Allow"
+      }
+    },
+    "macos|windows": {
+      "name": "TaskPlatform",
+      "variants": {
+        "windows": "Windows",
+        "macos": "Macos"
+      }
+    },
+    "aarch64|x86_64": {
+      "name": "TaskArchitecture",
+      "variants": {
+        "x86_64": "X86_64",
+        "aarch64": "Aarch64"
+      }
+    },
+    "pilot|production|test": {
+      "name": "SoftwareExportRing",
+      "variants": {
+        "test": "Test",
+        "pilot": "Pilot",
+        "production": "Production"
+      }
+    },
+    "system|user": {
+      "name": "SoftwareTaskScope",
+      "variants": {
+        "system": "System",
+        "user": "User"
+      }
+    },
+    "deny|in_place|uninstall_then_install": {
+      "name": "SoftwareTaskUpgrade",
+      "variants": {
+        "in_place": "InPlace",
+        "uninstall_then_install": "UninstallThenInstall",
+        "deny": "Deny"
+      }
+    },
+    "bash|posix_sh|power_shell7": {
+      "name": "SoftwareTaskInterpreter",
+      "variants": {
+        "power_shell7": "PowerShell7",
+        "posix_sh": "PosixSh",
+        "bash": "Bash"
+      }
+    },
+    "aarch64|neutral|x86_64": {
+      "name": "SoftwareTaskMsixArchitecture",
+      "variants": {
+        "x86_64": "X86_64",
+        "aarch64": "Aarch64",
+        "neutral": "Neutral"
+      }
+    },
+    "apple_developer_id|authenticode|msix": {
+      "name": "SoftwareTaskSignatureMechanism",
+      "variants": {
+        "authenticode": "Authenticode",
+        "apple_developer_id": "AppleDeveloperId",
+        "msix": "Msix"
+      }
+    },
+    "sensitive|standard": {
+      "name": "Sensitivity",
+      "variants": {
+        "standard": "Standard",
+        "sensitive": "Sensitive"
+      }
+    },
+    "agent.builtin|mdm.apple|mdm.windows": {
+      "name": "ReportSource",
+      "variants": {
+        "mdm.apple": "MdmApple",
+        "mdm.windows": "MdmWindows",
+        "agent.builtin": "AgentBuiltin"
+      }
+    }
+  },
+  "integerWidths": {
+    "OutputManifest.bytes": "u32",
+    "OutputChunk.index": "u16",
+    "ChunkedTaskResult.collectedAt": "i64",
+    "GrantRequest.wireVersion": "u8",
+    "GrantReceipt.wireVersion": "u8",
+    "GrantReceipt.expiresAt": "i64",
+    "CertificateRequest.wireVersion": "u8",
+    "Candidate.wireVersion": "u8",
+    "Candidate.activateBefore": "i64",
+    "ActivationRequest.wireVersion": "u8",
+    "ActivationReceipt.wireVersion": "u8",
+    "StatusRequest.wireVersion": "u8",
+    "RecoverIssuance.wireVersion": "u8",
+    "NativeGrantRequest.wireVersion": "u8",
+    "EnrollmentTaskSpec.wireVersion": "u8",
+    "EnrollmentTaskSpec.generation": "u64",
+    "EnrollmentTaskSpec.expiresAt": "i64",
+    "BindingProfile.wireVersion": "u8",
+    "BindingProfile.generation": "u64",
+    "ReportRequest.wireVersion": "u8",
+    "ReportRequest.sequence": "u64",
+    "ReportRequest.observedAt": "i64",
+    "ReportAck.wireVersion": "u8",
+    "ReportAck.receivedAt": "i64",
+    "SelfServiceInvoke.policyRevision": "u64",
+    "SelfServiceMetadata.riskLevel": "u8",
+    "SelfServiceDirectoryResponse.asOf": "i64",
+    "SelfServiceDirectoryItem.policyRevision": "u64",
+    "SelfServiceAccepted.policyRevision": "u64",
+    "ScriptRunState.deadline": "i64",
+    "SelfServiceStatus.availableAt": "i64",
+    "SelfServiceStatus.deadline": "i64",
+    "ScriptRunResult.collectedAt": "i64",
+    "ScriptRunResult.receivedAt": "i64",
+    "ScriptOutputReference.bytes": "u64",
+    "TaskClaimResponse.wireVersion": "u8",
+    "TaskEventAck.wireVersion": "u8",
+    "TaskDiagnostics.durationMs": "u64",
+    "TaskDiagnostics.executedAt": "i64",
+    "TaskResult.collectedAt": "i64",
+    "TaskEventRequest.wireVersion": "u8",
+    "TaskClaimRequest.wireVersion": "u8",
+    "TaskContent.length": "u64",
+    "TaskSpec.wireVersion": "u8",
+    "TaskSpec.generation": "u64",
+    "TaskSpec.expiresAt": "i64",
+    "TaskSpec.deadline": "i64",
+    "TaskSpec.timeoutSeconds": "u32",
+    "TaskSpec.outputBytes": "u32",
+    "TaskSpec.maxRows": "u16",
+    "SoftwareTaskArtifact.length": "u64",
+    "SoftwareTaskBundleEntry.length": "u64",
+    "SoftwareTaskBundle.schema": "u32",
+    "SoftwareTaskSpec.wireVersion": "u8",
+    "SoftwareTaskSpec.generation": "u64",
+    "SoftwareTaskSpec.expiresAt": "i64",
+    "SoftwareExecutionContext.revision": "u64",
+    "SoftwareExportArtifact.length": "u64",
+    "SoftwareStepResult.index": "u8",
+    "SoftwareTaskInvocation.timeoutSeconds": "u32",
+    "SoftwareTaskInvocation.outputBytes": "u32",
+    "SoftwareTaskMsixMember.length": "u64",
+    "FieldDefinition.version": "u64",
+    "ScriptAuthorization.self_service.policyRevision": "u64",
+    "ScriptAuthorization.self_service.riskLevel": "u8",
+    "ScriptDelivery.claimed.leaseUntil": "i64",
+    "ScriptDelivery.received.leaseUntil": "i64",
+    "SoftwareDetectionObservation.present.observedAt": "i64",
+    "SoftwareDetectionObservation.absent.observedAt": "i64",
+    "SoftwareProcessObservation.exited.code": "i32",
+    "SoftwareTaskDmgPayload.contained_pkg.length": "u64",
+    "ValueType.string.maxLength": "u32",
+    "ValueType.array.maxItems": "u32",
+    "TaskResult.exitCode": "i32",
+    "ChunkedTaskResult.exitCode": "i32",
+    "OutputManifest.sha256": "u8",
+    "GrantRequest.lifetimeSeconds": "u32",
+    "ScriptRunState.startedAt": "i64",
+    "ScriptRunResult.exitCode": "i32",
+    "TaskContent.sha256": "u8",
+    "TaskSpec.resourceDigest": "u8",
+    "SoftwareTaskArtifact.sha256": "u8",
+    "SoftwareTaskSpec.definitionDigest": "u8",
+    "SoftwareExecutionContext.osVersion": "u16",
+    "SoftwareExportDependency.sha256": "u8",
+    "SoftwareExportArtifact.sha256": "u8",
+    "SoftwareExportBinding.publication": "u8",
+    "SoftwareExportBinding.sourceDigest": "u8",
+    "SoftwareExportBinding.resourceDigest": "u8",
+    "SoftwareExportBinding.definitionDigest": "u8",
+    "SoftwareExportBinding.documentSha256": "u8",
+    "SoftwareStepResult.stepDigest": "u8",
+    "SoftwareTaskResult.definitionDigest": "u8",
+    "SoftwareTaskExitCodes.success": "i32",
+    "SoftwareTaskExitCodes.reboot": "i32",
+    "SoftwareTaskMsixIdentity.version": "u16",
+    "SoftwareTaskMsixMember.sha256": "u8",
+    "SoftwareTaskMsix.minimumOs": "u16",
+    "FieldDefinition.sources": "u16"
+  },
+  "fieldOrder": {
+    "OutputManifest": [
+      "bytes",
+      "sha256"
+    ],
+    "OutputChunk": [
+      "manifest",
+      "index",
+      "data"
+    ],
+    "ChunkedTaskResult": [
+      "exitCode",
+      "quality",
+      "diagnostics",
+      "manifest",
+      "collectedAt"
+    ],
+    "RuntimeProfile": [
+      "capabilities",
+      "platform",
+      "architecture",
+      "executionContext"
+    ],
+    "GrantRequest": [
+      "wireVersion",
+      "operationId",
+      "secret",
+      "platform",
+      "lifetimeSeconds",
+      "csr"
+    ],
+    "GrantReceipt": [
+      "wireVersion",
+      "grantId",
+      "state",
+      "expiresAt",
+      "platform"
+    ],
+    "CertificateRequest": [
+      "wireVersion",
+      "operationId",
+      "grantId",
+      "secret",
+      "csr",
+      "runtime"
+    ],
+    "Candidate": [
+      "wireVersion",
+      "issuanceId",
+      "operationId",
+      "certificateChain",
+      "activateBefore"
+    ],
+    "ActivationRequest": [
+      "wireVersion",
+      "issuanceId",
+      "operationId"
+    ],
+    "ActivationReceipt": [
+      "wireVersion",
+      "issuanceId",
+      "operationId",
+      "runtime"
+    ],
+    "StatusRequest": [
+      "wireVersion",
+      "grantId",
+      "operationId",
+      "secret"
+    ],
+    "Progress": [
+      "grant",
+      "issuanceId",
+      "issuanceUnknown",
+      "activation"
+    ],
+    "RecoverIssuance": [
+      "wireVersion",
+      "operationId",
+      "certificateChain"
+    ],
+    "ErrorBody": [
+      "code"
+    ],
+    "NativeGrantRequest": [
+      "wireVersion",
+      "operationId",
+      "installationOperation",
+      "secret",
+      "csr",
+      "runtime"
+    ],
+    "AuthorizationRequest": [
+      "grant",
+      "publicKeyFingerprint"
+    ],
+    "EnrollmentTaskSpec": [
+      "wireVersion",
+      "tenantId",
+      "deviceId",
+      "platform",
+      "architecture",
+      "registrationId",
+      "generation",
+      "taskId",
+      "attemptId",
+      "permit",
+      "expiresAt",
+      "organization",
+      "entry"
+    ],
+    "BindingProfile": [
+      "wireVersion",
+      "operationId",
+      "deviceId",
+      "registrationId",
+      "generation",
+      "source",
+      "epoch",
+      "capabilities",
+      "collections"
+    ],
+    "FieldValue": [
+      "field",
+      "value"
+    ],
+    "ReportRequest": [
+      "wireVersion",
+      "reportId",
+      "sequence",
+      "observedAt",
+      "collection",
+      "body"
+    ],
+    "ReportAck": [
+      "wireVersion",
+      "reportId",
+      "receivedAt",
+      "intake"
+    ],
+    "ReportStatus": [
+      "ack",
+      "observation",
+      "projection"
+    ],
+    "ScriptActor": [
+      "tenantId",
+      "instanceId",
+      "principalId"
+    ],
+    "ScriptResource": [
+      "id",
+      "version",
+      "variant"
+    ],
+    "SelfServiceInvoke": [
+      "operationId",
+      "policyId",
+      "policyRevision",
+      "policyVersion",
+      "source",
+      "confirmed",
+      "parameters"
+    ],
+    "SelfServiceDirectory": [
+      "source",
+      "after"
+    ],
+    "SelfServiceMetadata": [
+      "published",
+      "displayName",
+      "description",
+      "prerequisites",
+      "sideEffects",
+      "category",
+      "keywords",
+      "allowAi",
+      "riskLevel"
+    ],
+    "SelfServiceDirectoryResponse": [
+      "items",
+      "nextCursor",
+      "asOf"
+    ],
+    "SelfServiceDirectoryItem": [
+      "policyId",
+      "policyRevision",
+      "policyVersion",
+      "selfService",
+      "resource",
+      "parameterSources",
+      "parameterSchema"
+    ],
+    "SelfServiceAccepted": [
+      "requestId",
+      "runId",
+      "policyId",
+      "policyRevision",
+      "policyVersion"
+    ],
+    "ScriptRunState": [
+      "delivery",
+      "execution",
+      "cancellation",
+      "deadline",
+      "startedAt"
+    ],
+    "SelfServiceStatus": [
+      "requestId",
+      "runId",
+      "attemptId",
+      "state",
+      "availableAt",
+      "deadline",
+      "result"
+    ],
+    "ScriptRunResult": [
+      "collectedAt",
+      "receivedAt",
+      "exitCode",
+      "quality",
+      "schemaValid",
+      "budgetValid",
+      "output",
+      "outputReference",
+      "diagnostics",
+      "trusted"
+    ],
+    "ScriptOutputReference": [
+      "bytes",
+      "sha256"
+    ],
+    "TaskCancellation": [
+      "taskId",
+      "attemptId"
+    ],
+    "TaskClaimResponse": [
+      "wireVersion",
+      "task",
+      "cancellations"
+    ],
+    "TaskEventAck": [
+      "wireVersion",
+      "accepted",
+      "permit",
+      "cancelRequested"
+    ],
+    "TaskDiagnostics": [
+      "stdout",
+      "stderr",
+      "durationMs",
+      "executedAt",
+      "failure"
+    ],
+    "TaskResult": [
+      "exitCode",
+      "quality",
+      "output",
+      "diagnostics",
+      "collectedAt"
+    ],
+    "TaskEventRequest": [
+      "wireVersion",
+      "operationId",
+      "attemptId",
+      "event",
+      "executionContext"
+    ],
+    "TaskClaimRequest": [
+      "wireVersion",
+      "operationId",
+      "profiles",
+      "executionContext"
+    ],
+    "TaskContent": [
+      "length",
+      "sha256"
+    ],
+    "TaskSpec": [
+      "wireVersion",
+      "tenantId",
+      "deviceId",
+      "platform",
+      "architecture",
+      "registrationId",
+      "generation",
+      "taskId",
+      "attemptId",
+      "permit",
+      "expiresAt",
+      "resourceDigest",
+      "resource",
+      "authorization",
+      "parameters",
+      "deadline",
+      "content",
+      "profile",
+      "sqlParameters",
+      "runAs",
+      "arguments",
+      "environment",
+      "timeoutSeconds",
+      "outputBytes",
+      "maxRows"
+    ],
+    "SoftwareTaskArtifact": [
+      "key",
+      "length",
+      "sha256"
+    ],
+    "SoftwareTaskBundleEntry": [
+      "length",
+      "sha256"
+    ],
+    "SoftwareTaskBundle": [
+      "schema",
+      "platform",
+      "architecture",
+      "entries"
+    ],
+    "SoftwareTaskAction": [
+      "package",
+      "version",
+      "behavior",
+      "signatures",
+      "reboot",
+      "downgrade"
+    ],
+    "SoftwareTaskStep": [
+      "action",
+      "artifacts",
+      "export",
+      "target"
+    ],
+    "SoftwareTaskSpec": [
+      "wireVersion",
+      "tenantId",
+      "deviceId",
+      "platform",
+      "architecture",
+      "registrationId",
+      "generation",
+      "taskId",
+      "attemptId",
+      "permit",
+      "expiresAt",
+      "executionContext",
+      "steps",
+      "definitionDigest",
+      "intent",
+      "startMode"
+    ],
+    "SignedTask": [
+      "payload",
+      "keyId",
+      "signature"
+    ],
+    "SoftwareExecutionContext": [
+      "revision",
+      "msixSideload",
+      "msixUnsigned",
+      "osVersion",
+      "systemBroker",
+      "interactiveUser",
+      "sourceCredentials"
+    ],
+    "SoftwareInteractiveUser": [
+      "identity",
+      "sessionId",
+      "administrator"
+    ],
+    "SoftwareReadCredential": [
+      "source",
+      "reference"
+    ],
+    "SoftwareExportDependency": [
+      "resource",
+      "version",
+      "sha256"
+    ],
+    "SoftwareExportArtifact": [
+      "url",
+      "length",
+      "sha256"
+    ],
+    "SoftwareExportBinding": [
+      "source",
+      "tenantId",
+      "ring",
+      "publication",
+      "sourceDigest",
+      "resource",
+      "resourceVersion",
+      "resourceDigest",
+      "definitionDigest",
+      "documentSha256",
+      "dependencies",
+      "artifacts"
+    ],
+    "SoftwareStepResult": [
+      "index",
+      "stepDigest",
+      "target",
+      "package",
+      "identity",
+      "before",
+      "after",
+      "process",
+      "rebootRequired",
+      "diagnostics"
+    ],
+    "SoftwareTaskResult": [
+      "intent",
+      "definitionDigest",
+      "steps"
+    ],
+    "SoftwareTaskExitCodes": [
+      "success",
+      "reboot"
+    ],
+    "SoftwareTaskInvocation": [
+      "runAs",
+      "arguments",
+      "environment",
+      "timeoutSeconds",
+      "outputBytes",
+      "exitCodes"
+    ],
+    "SoftwareTaskScript": [
+      "interpreter",
+      "entry",
+      "invocation"
+    ],
+    "SoftwareTaskRemoval": [
+      "installer",
+      "invocation"
+    ],
+    "SoftwareTaskNative": [
+      "installer",
+      "scope",
+      "install",
+      "upgradeInvocation",
+      "upgrade",
+      "uninstall",
+      "detect"
+    ],
+    "SoftwareTaskExe": [
+      "installer",
+      "scope",
+      "install",
+      "upgradeInvocation",
+      "upgrade",
+      "uninstall",
+      "layout",
+      "detect"
+    ],
+    "SoftwareTaskBundleBehavior": [
+      "archive",
+      "manifest",
+      "install",
+      "uninstall",
+      "detect"
+    ],
+    "SoftwareTaskMacApplication": [
+      "path",
+      "bundleId",
+      "version",
+      "targetName"
+    ],
+    "SoftwareTaskDmg": [
+      "image",
+      "volume",
+      "scope",
+      "invocation",
+      "upgrade",
+      "payload"
+    ],
+    "SoftwareTaskMsixIdentity": [
+      "name",
+      "publisher",
+      "version",
+      "architecture",
+      "resourceId"
+    ],
+    "SoftwareTaskMsixMember": [
+      "path",
+      "identity",
+      "length",
+      "sha256"
+    ],
+    "SoftwareTaskMsix": [
+      "container",
+      "identity",
+      "dependencies",
+      "deployment",
+      "minimumOs",
+      "requireSideload",
+      "allowUnsigned",
+      "uninstall",
+      "invocation",
+      "upgrade"
+    ],
+    "SoftwareTaskSignature": [
+      "artifact",
+      "mechanism",
+      "publisher"
+    ],
+    "FieldDefinition": [
+      "key",
+      "version",
+      "valueType",
+      "nullable",
+      "manual",
+      "sources",
+      "platforms",
+      "sensitivity",
+      "unit",
+      "searchable",
+      "itemKey"
+    ],
+    "CollectionDefinition": [
+      "dataset",
+      "version",
+      "source",
+      "fields"
+    ]
+  },
+  "enumPayloads": {
+    "TaskEvent": {
+      "result": "TaskResult",
+      "output_chunk": "OutputChunk",
+      "chunked_result": "ChunkedTaskResult",
+      "software_result": "SoftwareTaskResult"
+    },
+    "TaskPayload": {
+      "Script": "TaskSpec",
+      "Software": "SoftwareTaskSpec",
+      "Enrollment": "EnrollmentTaskSpec"
+    },
+    "SoftwareTaskBehavior": {
+      "msi": "SoftwareTaskNative",
+      "pkg": "SoftwareTaskNative",
+      "bundle": "SoftwareTaskBundleBehavior",
+      "winget": "SoftwareTaskNative",
+      "brew": "SoftwareTaskNative",
+      "exe": "SoftwareTaskExe",
+      "dmg": "SoftwareTaskDmg",
+      "msix": "SoftwareTaskMsix"
+    }
+  },
+  "enumFieldOrder": {
+    "ReportBody": {
+      "Failed": [
+        "code"
+      ]
+    },
+    "ScriptAuthorization": {
+      "policy": [
+        "policyId",
+        "policyVersion"
+      ],
+      "remote_operation": [
+        "operationId"
+      ],
+      "self_service": [
+        "requestId",
+        "actor",
+        "source",
+        "policyId",
+        "policyRevision",
+        "policyVersion",
+        "allowAi",
+        "riskLevel",
+        "confirmed"
+      ]
+    },
+    "ScriptParameterSource": {
+      "fixed": [
+        "value"
+      ]
+    },
+    "ScriptDelivery": {
+      "claimed": [
+        "attempt",
+        "leaseUntil"
+      ],
+      "received": [
+        "attempt",
+        "leaseUntil"
+      ]
+    },
+    "TaskEvent": {
+      "enrollment_result": [
+        "outcome"
+      ]
+    },
+    "SoftwareExecutionTarget": {
+      "user": [
+        "identity",
+        "sessionId"
+      ]
+    },
+    "SoftwareTaskExport": {
+      "winget": [
+        "binding",
+        "uri",
+        "identifier"
+      ],
+      "brew": [
+        "binding",
+        "uri",
+        "commit",
+        "tap",
+        "credentialReference"
+      ]
+    },
+    "SoftwareObservedIdentity": {
+      "msi_product": [
+        "productCode"
+      ],
+      "pkg_receipt": [
+        "receipt"
+      ],
+      "mac_application": [
+        "bundleId",
+        "targetName"
+      ],
+      "registry": [
+        "scope",
+        "key",
+        "value"
+      ],
+      "file": [
+        "scope",
+        "path"
+      ],
+      "controlled_detector": [
+        "entry"
+      ],
+      "msix_registration": [
+        "identity"
+      ],
+      "msix_provisioning": [
+        "identity"
+      ]
+    },
+    "SoftwareDetectionObservation": {
+      "present": [
+        "version",
+        "evidenceSha256",
+        "observedAt"
+      ],
+      "absent": [
+        "evidenceSha256",
+        "observedAt"
+      ],
+      "unknown": [
+        "diagnostic"
+      ]
+    },
+    "SoftwareProcessObservation": {
+      "exited": [
+        "code"
+      ],
+      "failed": [
+        "failure"
+      ]
+    },
+    "SoftwareTaskDmgPayload": {
+      "app_copy": [
+        "application",
+        "uninstall"
+      ],
+      "contained_pkg": [
+        "path",
+        "length",
+        "sha256",
+        "receipt",
+        "uninstall"
+      ]
+    },
+    "SoftwareTaskMsixContainer": {
+      "package": [
+        "installer"
+      ],
+      "bundle": [
+        "installer",
+        "members"
+      ]
+    },
+    "SoftwareTaskUser": {
+      "exact": [
+        "identity"
+      ]
+    },
+    "SoftwareTaskMsixDeployment": {
+      "target_user_registration": [
+        "target"
+      ]
+    },
+    "SoftwareTaskDetection": {
+      "msi_product": [
+        "productCode",
+        "version"
+      ],
+      "pkg_receipt": [
+        "receipt",
+        "version"
+      ],
+      "registry": [
+        "scope",
+        "key",
+        "value",
+        "version"
+      ],
+      "file": [
+        "scope",
+        "path",
+        "version",
+        "sha256"
+      ],
+      "script": [
+        "command"
+      ]
+    },
+    "ValueType": {
+      "string": [
+        "maxLength",
+        "allowEmpty"
+      ],
+      "enum": [
+        "values"
+      ],
+      "array": [
+        "items",
+        "maxItems"
+      ],
+      "object": [
+        "properties"
+      ]
+    }
+  },
+  "variantNames": {
+    "GrantState": {
+      "pending": "Pending",
+      "available": "Available",
+      "consumed": "Consumed",
+      "revoked": "Revoked",
+      "expired": "Expired"
+    },
+    "ErrorCode": {
+      "malformed_request": "MalformedRequest",
+      "unsupported_wire": "UnsupportedWire",
+      "unsupported_capability": "UnsupportedCapability",
+      "invalid_identity": "InvalidIdentity",
+      "credential_revoked": "CredentialRevoked",
+      "certificate_expired": "CertificateExpired",
+      "credential_retired": "CredentialRetired",
+      "report_not_found": "ReportNotFound",
+      "permission_denied": "PermissionDenied",
+      "task_not_found": "TaskNotFound",
+      "range_not_satisfiable": "RangeNotSatisfiable",
+      "operation_conflict": "OperationConflict",
+      "operation_unknown": "OperationUnknown",
+      "service_unavailable": "ServiceUnavailable"
+    },
+    "EnrollmentEntryOutcome": {
+      "opened": "Opened",
+      "user_required": "UserRequired",
+      "third_party_conflict": "ThirdPartyConflict",
+      "unsupported": "Unsupported",
+      "failed": "Failed",
+      "unknown": "Unknown"
+    },
+    "Capability": {
+      "inventory.collect.v1": "InventoryCollectionV1",
+      "task.execute.v1": "TaskExecuteV1",
+      "software.msi.system.v1": "SoftwareMsiSystemV1",
+      "software.msi.user.v1": "SoftwareMsiUserV1",
+      "software.pkg.system.v1": "SoftwarePkgSystemV1",
+      "software.bundle.windows.system.v1": "SoftwareBundleWindowsSystemV1",
+      "software.bundle.windows.user.v1": "SoftwareBundleWindowsUserV1",
+      "software.bundle.macos.system.v1": "SoftwareBundleMacosSystemV1",
+      "software.bundle.macos.user.v1": "SoftwareBundleMacosUserV1",
+      "software.winget.system.v1": "SoftwareWingetSystemV1",
+      "software.winget.user.v1": "SoftwareWingetUserV1",
+      "software.brew.bottle.user.v1": "SoftwareBrewBottleUserV1",
+      "software.exe.system.v1": "SoftwareExeSystemV1",
+      "software.exe.user.v1": "SoftwareExeUserV1",
+      "software.dmg.app.system.v1": "SoftwareDmgAppSystemV1",
+      "software.dmg.app.user.v1": "SoftwareDmgAppUserV1",
+      "software.dmg.pkg.system.v1": "SoftwareDmgPkgSystemV1",
+      "software.msix.registration.user.v1": "SoftwareMsixRegistrationUserV1",
+      "software.msix.provisioning.system.v1": "SoftwareMsixProvisioningSystemV1",
+      "mdm.enrollment.v1": "MdmEnrollmentV1"
+    },
+    "ReportSource": {
+      "mdm.apple": "MdmApple",
+      "mdm.windows": "MdmWindows",
+      "agent.builtin": "AgentBuiltin"
+    },
+    "FailureCode": {
+      "PermissionDenied": "PermissionDenied",
+      "TemporarilyUnavailable": "TemporarilyUnavailable",
+      "CollectionFailed": "CollectionFailed"
+    },
+    "ReportBody": {
+      "Snapshot": "Snapshot",
+      "Partial": "Partial",
+      "Failed": "Failed"
+    },
+    "IntakeStatus": {
+      "Durable": "Durable"
+    },
+    "ObservationStatus": {
+      "Pending": "Pending",
+      "Snapshot": "Snapshot",
+      "NeedSnapshotPartial": "NeedSnapshotPartial",
+      "NeedSnapshotCollectionFailed": "NeedSnapshotCollectionFailed",
+      "Stale": "Stale"
+    },
+    "ProjectionStatus": {
+      "Pending": "Pending",
+      "Applied": "Applied",
+      "NotApplicable": "NotApplicable"
+    },
+    "ScriptCaller": {
+      "human": "Human",
+      "ai": "Ai"
+    },
+    "ScriptAuthorization": {
+      "policy": "Policy",
+      "remote_operation": "RemoteOperation",
+      "self_service": "SelfService"
+    },
+    "ScriptParameterSource": {
+      "fixed": "Fixed",
+      "input": "Input"
+    },
+    "ScriptDelivery": {
+      "queued": "Queued",
+      "claimed": "Claimed",
+      "received": "Received"
+    },
+    "ScriptExecution": {
+      "not_started": "NotStarted",
+      "running": "Running",
+      "succeeded": "Succeeded",
+      "failed": "Failed",
+      "waiting_reboot": "WaitingReboot",
+      "unknown": "Unknown"
+    },
+    "ScriptCancellation": {
+      "none": "None",
+      "requested": "Requested",
+      "confirmed": "Confirmed"
+    },
+    "TaskEvent": {
+      "received": "Received",
+      "start": "Start",
+      "cancelled": "Cancelled",
+      "result": "Result",
+      "output_chunk": "OutputChunk",
+      "chunked_result": "ChunkedResult",
+      "software_result": "SoftwareResult",
+      "enrollment_result": "EnrollmentResult"
+    },
+    "OutputQuality": {
+      "complete": "Complete",
+      "partial": "Partial",
+      "truncated": "Truncated",
+      "failed": "Failed"
+    },
+    "TaskFailure": {
+      "launch_failed": "LaunchFailed",
+      "timed_out": "TimedOut",
+      "cancelled": "Cancelled",
+      "non_zero_exit": "NonZeroExit",
+      "output_limit": "OutputLimit",
+      "capture_failed": "CaptureFailed"
+    },
+    "ExecutorProfile": {
+      "power_shell7": "PowerShell7",
+      "posix_sh": "PosixSh",
+      "bash": "Bash",
+      "osquery": "Osquery"
+    },
+    "ExecutionIdentity": {
+      "system": "System",
+      "logged_in_user": "LoggedInUser"
+    },
+    "TaskPermit": {
+      "offer": "Offer",
+      "start": "Start"
+    },
+    "SoftwareTaskIntent": {
+      "install": "Install",
+      "detect": "Detect",
+      "uninstall": "Uninstall"
+    },
+    "SoftwareStartMode": {
+      "automatic": "Automatic",
+      "user_initiated": "UserInitiated"
+    },
+    "SoftwareTaskReboot": {
+      "forbid": "Forbid",
+      "report": "Report"
+    },
+    "SoftwareTaskDowngrade": {
+      "deny": "Deny",
+      "allow": "Allow"
+    },
+    "TaskPayload": {
+      "Script": "Script",
+      "Software": "Software",
+      "Enrollment": "Enrollment"
+    },
+    "TaskPlatform": {
+      "windows": "Windows",
+      "macos": "Macos"
+    },
+    "TaskArchitecture": {
+      "x86_64": "X86_64",
+      "aarch64": "Aarch64"
+    },
+    "SoftwareExecutionTarget": {
+      "device": "Device",
+      "user": "User"
+    },
+    "SoftwareExportRing": {
+      "test": "Test",
+      "pilot": "Pilot",
+      "production": "Production"
+    },
+    "SoftwareTaskExport": {
+      "direct": "Direct",
+      "winget": "Winget",
+      "brew": "Brew"
+    },
+    "SoftwareObservedIdentity": {
+      "msi_product": "MsiProduct",
+      "pkg_receipt": "PkgReceipt",
+      "mac_application": "MacApplication",
+      "registry": "Registry",
+      "file": "File",
+      "controlled_detector": "ControlledDetector",
+      "msix_registration": "MsixRegistration",
+      "msix_provisioning": "MsixProvisioning"
+    },
+    "SoftwareDetectionObservation": {
+      "present": "Present",
+      "absent": "Absent",
+      "unknown": "Unknown"
+    },
+    "SoftwareProcessObservation": {
+      "not_run": "NotRun",
+      "exited": "Exited",
+      "failed": "Failed"
+    },
+    "SoftwareTaskScope": {
+      "system": "System",
+      "user": "User"
+    },
+    "SoftwareTaskUpgrade": {
+      "in_place": "InPlace",
+      "uninstall_then_install": "UninstallThenInstall",
+      "deny": "Deny"
+    },
+    "SoftwareTaskInterpreter": {
+      "power_shell7": "PowerShell7",
+      "posix_sh": "PosixSh",
+      "bash": "Bash"
+    },
+    "SoftwareTaskDmgPayload": {
+      "app_copy": "AppCopy",
+      "contained_pkg": "ContainedPkg"
+    },
+    "SoftwareTaskMsixArchitecture": {
+      "x86_64": "X86_64",
+      "aarch64": "Aarch64",
+      "neutral": "Neutral"
+    },
+    "SoftwareTaskMsixContainer": {
+      "package": "Package",
+      "bundle": "Bundle"
+    },
+    "SoftwareTaskUser": {
+      "active_interactive": "ActiveInteractive",
+      "exact": "Exact"
+    },
+    "SoftwareTaskMsixDeployment": {
+      "target_user_registration": "TargetUserRegistration",
+      "device_provisioning": "DeviceProvisioning"
+    },
+    "SoftwareTaskDetection": {
+      "msi_product": "MsiProduct",
+      "pkg_receipt": "PkgReceipt",
+      "registry": "Registry",
+      "file": "File",
+      "script": "Script"
+    },
+    "SoftwareTaskBehavior": {
+      "msi": "Msi",
+      "pkg": "Pkg",
+      "bundle": "Bundle",
+      "winget": "Winget",
+      "brew": "Brew",
+      "exe": "Exe",
+      "dmg": "Dmg",
+      "msix": "Msix"
+    },
+    "SoftwareTaskSignatureMechanism": {
+      "authenticode": "Authenticode",
+      "apple_developer_id": "AppleDeveloperId",
+      "msix": "Msix"
+    },
+    "Scalar": {
+      "string": "String",
+      "integer": "Integer",
+      "number": "Number",
+      "array": "Array",
+      "object": "Object",
+      "boolean": "Boolean",
+      "time": "Time"
+    },
+    "ValueType": {
+      "string": "String",
+      "enum": "Enum",
+      "integer": "Integer",
+      "number": "Number",
+      "boolean": "Boolean",
+      "time": "Time",
+      "array": "Array",
+      "object": "Object"
+    },
+    "Sensitivity": {
+      "standard": "Standard",
+      "sensitive": "Sensitive"
+    },
+    "CollectedValue": {
+      "value": "Value",
+      "null": "Null",
+      "deleted": "Deleted",
+      "unsupported": "Unsupported"
+    }
+  },
+  "sets": {
+    "SoftwareTaskExitCodes.success": true,
+    "SoftwareTaskExitCodes.reboot": true,
+    "FieldDefinition.platforms": true
+  },
+  "enrollFieldOrder": {
+    "ErrorBody": [
+      "code",
+      "issuanceId"
+    ]
+  }
+}

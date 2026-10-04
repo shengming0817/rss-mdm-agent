@@ -45,9 +45,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "agent-api"
+version = "0.1.0"
+dependencies = [
+ "base64 0.23.1",
+ "jsonschema",
+ "ordered-float",
+ "quote",
+ "schemars 0.8.22",
+ "schemars 1.2.2",
+ "serde",
+ "serde_json",
+ "sha2",
+ "syn 2.0.119",
+ "thiserror 2.0.20",
+ "toml 1.1.5+spec-1.1.0",
+ "typify",
+ "uuid",
+ "zeroize",
+]
+
+[[package]]
 name = "agent-client"
 version = "0.1.0"
 dependencies = [
+ "agent-api",
  "axum",
  "base64 0.23.1",
  "der",
@@ -58,7 +80,6 @@ dependencies = [
  "platform-private-storage",
  "reqwest",
  "ring",
- "rss-mdm-agent-wire",
  "rusqlite",
  "rustls",
  "rustls-platform-verifier",
@@ -81,6 +102,7 @@ dependencies = [
 name = "agent-service"
 version = "0.1.0"
 dependencies = [
+ "agent-api",
  "agent-client",
  "axum",
  "base64 0.23.1",
@@ -106,7 +128,6 @@ dependencies = [
  "quick-xml",
  "reqwest",
  "ring",
- "rss-mdm-agent-wire",
  "rusqlite",
  "rustls",
  "schemars 1.2.2",
@@ -941,7 +962,6 @@ checksum = "9ed9a281f7bc9b7576e61468ba615a66a5c8cfdff42420a70aa82701a3b1e292"
 dependencies = [
  "block-buffer",
  "crypto-common",
- "subtle",
 ]
 
 [[package]]
@@ -962,7 +982,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1130,7 +1150,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1185,8 +1205,8 @@ dependencies = [
 name = "execution-contract"
 version = "0.1.0"
 dependencies = [
+ "agent-api",
  "jsonschema",
- "rss-mdm-agent-wire",
  "schemars 1.2.2",
  "serde",
  "serde_json",
@@ -1210,12 +1230,12 @@ dependencies = [
 name = "execution-ipc"
 version = "0.1.0"
 dependencies = [
+ "agent-api",
  "cc",
  "execution-app",
  "execution-contract",
  "installation-security",
  "libc",
- "rss-mdm-agent-wire",
  "schemars 1.2.2",
  "serde",
  "serde_json",
@@ -1240,12 +1260,12 @@ dependencies = [
 name = "execution-mcp"
 version = "0.1.0"
 dependencies = [
+ "agent-api",
  "execution-contract",
  "execution-lifecycle",
  "futures-util",
  "jsonschema",
  "rmcp",
- "rss-mdm-agent-wire",
  "schemars 1.2.2",
  "serde",
  "serde_json",
@@ -1275,12 +1295,12 @@ dependencies = [
  "native-process",
  "platform-private-storage",
  "plist",
- "rss-mdm-resource",
  "rusqlite",
  "script-plan",
  "serde",
  "serde_json",
  "sha2",
+ "sqlparser",
  "thiserror 2.0.20",
  "tokio",
  "windows-sys 0.61.2",
@@ -1768,7 +1788,7 @@ dependencies = [
  "gobject-sys 0.21.5",
  "libc",
  "system-deps 7.0.8",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1989,15 +2009,6 @@ name = "hex"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
-
-[[package]]
-name = "hmac"
-version = "0.12.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6c49c37c09c17a53d937dfbb742eb3a961d65a994e6bcdcf37e7399d0cc8ab5e"
-dependencies = [
- "digest",
-]
 
 [[package]]
 name = "html5ever"
@@ -3619,7 +3630,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3857,32 +3868,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "rss-contract"
-version = "0.1.0"
-source = "git+https://dev.azure.com/shengming0923/rss/_git/rss?rev=c83978d9b43d40f6663dc923c3e2afb3e9f51895#c83978d9b43d40f6663dc923c3e2afb3e9f51895"
-
-[[package]]
-name = "rss-mdm-agent-wire"
-version = "1.0.0"
-source = "git+https://dev.azure.com/shengming0923/rss/_git/rss-mdm?rev=149c34d5f30e74ce7f9f82740a841330befeb4a8#149c34d5f30e74ce7f9f82740a841330befeb4a8"
-dependencies = [
- "base64 0.22.1",
- "ring",
- "rss-mdm-inventory",
- "schemars 1.2.2",
- "serde",
- "serde_json",
- "sha2",
- "url",
- "uuid",
- "zeroize",
-]
-
-[[package]]
 name = "rss-mdm-desktop"
 version = "0.1.0"
 dependencies = [
  "aes-gcm",
+ "agent-api",
  "ai-session-contract",
  "constant_time_eq",
  "execution-admission",
@@ -3906,7 +3896,6 @@ dependencies = [
  "platform-private-storage",
  "proc-macro2",
  "reqwest",
- "rss-mdm-agent-wire",
  "rusqlite",
  "schemars 1.2.2",
  "serde",
@@ -3926,71 +3915,6 @@ dependencies = [
  "windows-sys 0.61.2",
  "windows-version",
  "zeroize",
-]
-
-[[package]]
-name = "rss-mdm-inventory"
-version = "0.1.0"
-source = "git+https://dev.azure.com/shengming0923/rss/_git/rss-mdm?rev=149c34d5f30e74ce7f9f82740a841330befeb4a8#149c34d5f30e74ce7f9f82740a841330befeb4a8"
-dependencies = [
- "ordered-float",
- "rss-contract",
- "rss-observation",
- "serde",
- "serde_json",
- "sha2",
-]
-
-[[package]]
-name = "rss-mdm-resource"
-version = "0.1.0"
-source = "git+https://dev.azure.com/shengming0923/rss/_git/rss-mdm?rev=149c34d5f30e74ce7f9f82740a841330befeb4a8#149c34d5f30e74ce7f9f82740a841330befeb4a8"
-dependencies = [
- "jsonschema",
- "rss-contract",
- "rss-request-context",
- "serde",
- "serde_json",
- "sha2",
- "sqlparser",
-]
-
-[[package]]
-name = "rss-observation"
-version = "0.1.0"
-source = "git+https://dev.azure.com/shengming0923/rss/_git/rss?rev=c83978d9b43d40f6663dc923c3e2afb3e9f51895#c83978d9b43d40f6663dc923c3e2afb3e9f51895"
-dependencies = [
- "rss-contract",
- "rss-redact",
- "rss-request-context",
- "serde",
- "serde_json",
- "sha2",
- "thiserror 2.0.20",
-]
-
-[[package]]
-name = "rss-redact"
-version = "0.1.0"
-source = "git+https://dev.azure.com/shengming0923/rss/_git/rss?rev=c83978d9b43d40f6663dc923c3e2afb3e9f51895#c83978d9b43d40f6663dc923c3e2afb3e9f51895"
-dependencies = [
- "hmac",
- "icu_properties",
- "rss-contract",
- "sha2",
- "thiserror 2.0.20",
- "time",
- "uuid",
- "zeroize",
-]
-
-[[package]]
-name = "rss-request-context"
-version = "0.1.0"
-source = "git+https://dev.azure.com/shengming0923/rss/_git/rss?rev=c83978d9b43d40f6663dc923c3e2afb3e9f51895#c83978d9b43d40f6663dc923c3e2afb3e9f51895"
-dependencies = [
- "thiserror 2.0.20",
- "uuid",
 ]
 
 [[package]]
@@ -4032,7 +3956,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4090,7 +4014,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5117,7 +5041,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6029,7 +5953,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
