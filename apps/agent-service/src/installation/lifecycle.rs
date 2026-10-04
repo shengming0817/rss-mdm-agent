@@ -460,9 +460,9 @@ fn prior_format(
 ) -> Result<serde_json::Value, Error> {
     let object = value.as_object_mut().ok_or(Error::Configuration)?;
     if object.get("version").and_then(|v| v.as_u64()) != Some(version)
-        || !object
+        || object
             .remove(field)
-            .is_some_and(|v| v.as_str().is_some_and(|s| !s.is_empty()))
+            .is_none_or(|v| v.as_str().is_none_or(str::is_empty))
     {
         return Err(Error::Configuration);
     }

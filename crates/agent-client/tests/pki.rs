@@ -51,22 +51,23 @@ async fn committed_renewal_is_recovered_over_anonymous_https_after_expiry_withou
     client.drive_pki().await.unwrap();
     assert_eq!(client.registration().unwrap(), binding);
     client.runtime_readiness().unwrap();
-    let data = server.data.lock().unwrap();
-    assert_eq!(data.renewal_lookup_authenticated, vec![false]);
-    assert_eq!(
-        data.renewal_lookup_calls[0]["operationId"],
-        frozen["pending"]["operation"]
-    );
-    assert_eq!(
-        data.certificate_calls[1]["operationId"],
-        frozen["pending"]["certificate_operation"]
-    );
-    assert_eq!(data.certificate_calls[1]["csr"], frozen["pending"]["csr"]);
-    assert_eq!(
-        data.activation_calls[1]["operationId"],
-        frozen["pending"]["activation_operation"]
-    );
-    drop(data);
+    {
+        let data = server.data.lock().unwrap();
+        assert_eq!(data.renewal_lookup_authenticated, vec![false]);
+        assert_eq!(
+            data.renewal_lookup_calls[0]["operationId"],
+            frozen["pending"]["operation"]
+        );
+        assert_eq!(
+            data.certificate_calls[1]["operationId"],
+            frozen["pending"]["certificate_operation"]
+        );
+        assert_eq!(data.certificate_calls[1]["csr"], frozen["pending"]["csr"]);
+        assert_eq!(
+            data.activation_calls[1]["operationId"],
+            frozen["pending"]["activation_operation"]
+        );
+    }
     assert_eq!(client.flush_reports(1).await.unwrap(), 1);
     assert!(server
         .data

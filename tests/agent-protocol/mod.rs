@@ -576,18 +576,7 @@ async fn handler(
     peer: Result<ConnectInfo<TlsIdentity>, axum::extract::rejection::ExtensionRejection>,
     bytes: Bytes,
 ) -> Response {
-    let pause = {
-        let mut d = data.lock().unwrap();
-        if uri.path().ends_with("/claim") && d.claim_pause.is_some() {
-            d.claim_waiting = true;
-            d.claim_pause.clone()
-        } else if uri.path().ends_with("/enroll/status") && d.status_pause.is_some() {
-            d.status_waiting = true;
-            d.status_pause.clone()
-        } else {
-            None
-        }
-    };
+    let pause = response_pause(&mut data.lock().unwrap(), uri.path());
     if let Some(pause) = pause {
         pause.notified().await;
     }
@@ -651,6 +640,17 @@ async fn handler(
                 ErrorCode::ServiceUnavailable
             },
         )
+    }
+}
+fn response_pause(d: &mut Data, path: &str) -> Option<Arc<tokio::sync::Notify>> {
+    if path.ends_with("/claim") && d.claim_pause.is_some() {
+        d.claim_waiting = true;
+        d.claim_pause.clone()
+    } else if path.ends_with("/enroll/status") && d.status_pause.is_some() {
+        d.status_waiting = true;
+        d.status_pause.clone()
+    } else {
+        None
     }
 }
 fn runtime_error(status: StatusCode, code: ErrorCode) -> Response {

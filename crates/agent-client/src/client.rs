@@ -184,14 +184,12 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         self.store.time(self.clock.now()?)
     }
     pub(crate) fn active(&self) -> Result<(), Error> {
-        self.identity_state()?.active_identity(self.now()?)?;
+        let identity = self.identity_state()?;
+        identity.check_runtime_failure()?;
+        let now = self.now()?;
+        identity.active_identity(now)?;
         let trust = self.verified_trust()?;
-        self.identity_state()?.validate_runtime(
-            &self.store.cfg,
-            &self.secrets,
-            self.now()?,
-            &trust,
-        )?;
+        identity.validate_runtime(&self.store.cfg, &self.secrets, now, &trust)?;
         Ok(())
     }
 

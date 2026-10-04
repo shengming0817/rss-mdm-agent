@@ -9,10 +9,14 @@ pub(crate) struct IdentityState {
     pub failure: Option<enroll::ErrorCode>,
 }
 impl IdentityState {
-    pub(crate) fn active_identity(&self, now: i64) -> Result<&Active, Error> {
+    pub(crate) fn check_runtime_failure(&self) -> Result<(), Error> {
         if let Some(code) = self.failure.filter(|code| blocks_runtime(*code)) {
             return Err(enrollment_error(code));
         }
+        Ok(())
+    }
+    pub(crate) fn active_identity(&self, now: i64) -> Result<&Active, Error> {
+        self.check_runtime_failure()?;
         let active = self.active.as_ref().ok_or(Error::Identity)?;
         agent_api::validate(&active.receipt).map_err(|_| Error::Protocol)?;
         if now < active.not_before {

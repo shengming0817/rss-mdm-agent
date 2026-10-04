@@ -14,6 +14,7 @@ import json
 import os
 from pathlib import Path
 import re
+import resource
 import shutil
 import signal
 import stat
@@ -27,10 +28,21 @@ LOCK_ROOT = Path.home() / '.cache/rss-mdm-agent-build-locks'
 POOL_MARKER = '.agent-target-pool-v1'
 LOCK_WAIT_SECONDS = 2
 MAX_POOL_SLOTS = 32
+MIN_DESCRIPTORS = 2048
 
 
 def log(message):
     print(f'agent-build: {message}', file=sys.stderr, flush=True)
+
+
+def descriptor_budget():
+    # ref: Python 3.11 library/resource.html; only this runner and its children inherit the limit.
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    if soft == resource.RLIM_INFINITY or soft >= MIN_DESCRIPTORS:
+        return
+    if hard != resource.RLIM_INFINITY and hard < MIN_DESCRIPTORS:
+        raise ValueError(f'build requires at least {MIN_DESCRIPTORS} file descriptors; hard limit is {hard}')
+    resource.setrlimit(resource.RLIMIT_NOFILE, (MIN_DESCRIPTORS, hard))
 
 
 def directory(path):
@@ -264,6 +276,7 @@ def main(argv):
         raise ValueError('usage: build-run.py -- COMMAND [ARG...]')
     if LEASE_ENV in os.environ:
         raise ValueError('nested build runner is not allowed; inherit the existing lease')
+    descriptor_budget()
     env = os.environ.copy()
     identity = subprocess.run(['/usr/bin/git', 'rev-parse', '--show-toplevel'],
                               capture_output=True, text=True)

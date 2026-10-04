@@ -983,6 +983,7 @@ async fn renewal_and_revoked_restart_keep_the_existing_journal_authority() {
         records
     );
     let (_sender, mut commands) = tokio::sync::mpsc::channel(1);
+    select_pki_refresh(&case._root.path);
     assert_eq!(
         service.drive(&mut commands).await.unwrap_err(),
         Error::CredentialRevoked
@@ -1813,6 +1814,23 @@ async fn unaccepted_policy_expiry_is_durable_and_status_remains_read_only() {
     assert!(c._server.data.lock().unwrap().invocations.is_empty());
 }
 
+fn select_pki_refresh(root: &std::path::Path) {
+    let sql = rusqlite::Connection::open(root.join("communication.sqlite")).unwrap();
+    let body: Vec<u8> = sql
+        .query_row("SELECT body FROM state WHERE key='pki'", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    let mut pki: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    pki["refresh_at"] = 0.into();
+    pki["retry_at"] = 0.into();
+    sql.execute(
+        "UPDATE state SET body=?1 WHERE key='pki'",
+        [serde_json::to_vec(&pki).unwrap()],
+    )
+    .unwrap();
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn fresh_revocation_and_crl_expiry_close_admission_while_pending_status_waits() {
     for revocation in [true, false] {
@@ -1847,21 +1865,7 @@ async fn fresh_revocation_and_crl_expiry_close_admission_while_pending_status_wa
         }
         // Select the refresh deterministically through the existing SQLite seam; the server still
         // supplies actual signed CRLs and the communication owner performs all production validation.
-        let sql = rusqlite::Connection::open(c._root.path.join("communication.sqlite")).unwrap();
-        let body: Vec<u8> = sql
-            .query_row("SELECT body FROM state WHERE key='pki'", [], |row| {
-                row.get(0)
-            })
-            .unwrap();
-        let mut pki: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        pki["refresh_at"] = 0.into();
-        pki["retry_at"] = 0.into();
-        sql.execute(
-            "UPDATE state SET body=?1 WHERE key='pki'",
-            [serde_json::to_vec(&pki).unwrap()],
-        )
-        .unwrap();
-        drop(sql);
+        select_pki_refresh(&c._root.path);
         let data = c._server.data.clone();
         let (_sender, mut commands) = tokio::sync::mpsc::channel(1);
         let mut observed = false;

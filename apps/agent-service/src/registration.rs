@@ -457,7 +457,9 @@ mod tests {
                 .unwrap()
                 .unwrap();
                 worker.join().unwrap();
-                assert_eq!(shared.lock().unwrap().readiness, Readiness::Ready);
+                // Registered handoff publishes readiness only after the execution owner assembles.
+                assert_eq!(shared.lock().unwrap().readiness, Readiness::NotReady);
+                client.runtime_readiness().unwrap();
                 assert!(shared.lock().unwrap().status.registered);
                 assert_eq!(client.registration().unwrap(), binding);
                 assert_eq!(server.data.lock().unwrap().certificate_calls.len(), 1);
