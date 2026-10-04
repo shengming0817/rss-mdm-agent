@@ -3,12 +3,13 @@ use crate::{
     backend::{self, host::EnterpriseHost, offered, plan, ExecutionBridge},
     DeviceSecrets, Interpreter, SystemClock,
 };
-use agent_client::{wire, Client, CredentialRedactor, Error, Materials, Offer, SecretProvider};
+use agent_client::{Client, CredentialRedactor, Error, IdentityProvider, Materials, Offer};
 use execution_app::{AppConfig, ExecutionApp, RequestContext};
 use execution_contract::{
     BackendRequest, BackendRequestFailure, BackendRequestState, BackendTrigger, RequestId,
 };
 use execution_runner::{MaterialRegistry, NativeRunner};
+use rss_mdm_agent_wire::runtime as wire;
 use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
@@ -87,15 +88,16 @@ impl UserResources {
 }
 /// One device communication owner and one authoritative execution journal.
 /// The OS service supplies this assembly; no fixture runner or authority is selectable.
-pub struct DeviceService<S: SecretProvider = DeviceSecrets> {
+pub struct DeviceService<S: IdentityProvider = DeviceSecrets> {
     pub(crate) client: Client<S, SystemClock>,
     pub(crate) core: Core,
     pub(crate) bridge: ExecutionBridge<CredentialRedactor>,
     waiting: Option<(Offer, Materials)>,
     next_network: std::time::Instant,
+    next_enrollment: std::time::Instant,
     recovering: bool,
 }
-impl<S: SecretProvider> DeviceService<S> {
+impl<S: IdentityProvider> DeviceService<S> {
     /// Open an already registered device. Create/open selection never follows an error fallback.
     pub fn open(
         client: Client<S, SystemClock>,
@@ -208,6 +210,7 @@ impl<S: SecretProvider> DeviceService<S> {
             bridge: ExecutionBridge::new(plan::id("backend-results")?, output),
             waiting: None,
             next_network: std::time::Instant::now(),
+            next_enrollment: std::time::Instant::now(),
             recovering: true,
         })
     }
@@ -221,6 +224,16 @@ impl<S: SecretProvider> DeviceService<S> {
         }
         if self.core.stopping {
             return Ok(());
+        }
+        if self.client.has_pending_enrollment()?
+            && std::time::Instant::now() >= self.next_enrollment
+        {
+            self.core.reconcile()?;
+            self.next_enrollment = std::time::Instant::now() + std::time::Duration::from_secs(2);
+            network(self.client.drive_enrollment(), &mut self.core, commands).await?;
+            if self.client.enrollment_status()?.phase == agent_client::EnrollmentPhase::Active {
+                self.core.host.revoked.store(false, Ordering::Release);
+            }
         }
         if self.core.host.revoked.load(Ordering::Acquire) {
             self.core.revoke_preparations()?;
@@ -392,7 +405,10 @@ impl<S: SecretProvider> DeviceService<S> {
         let claim = match network(self.client.claim(), &mut self.core, commands).await {
             Ok(v) => v,
             Err(e) => {
-                if e == Error::Identity {
+                if matches!(
+                    e,
+                    Error::CredentialRevoked | Error::CredentialRetired | Error::CertificateExpired
+                ) {
                     self.core.host.revoked.store(true, Ordering::Release);
                     self.core
                         .app
@@ -495,6 +511,10 @@ impl<S: SecretProvider> DeviceService<S> {
         let (sender, mut commands) = tokio::sync::mpsc::channel(32);
         let finished = Arc::new(AtomicBool::new(false));
         let done = finished.clone();
+        let registration = Arc::new(Mutex::new(crate::registration::project(
+            self.client.enrollment_status()?,
+        )));
+        let published = registration.clone();
         let (completed, completion) = std::sync::mpsc::sync_channel(1);
         std::thread::Builder::new().name("rss-device-owner".into()).spawn(move||{
             struct Finished(Arc<AtomicBool>);impl Drop for Finished{fn drop(&mut self){self.0.store(true,Ordering::Release);}}
@@ -510,6 +530,7 @@ impl<S: SecretProvider> DeviceService<S> {
                             _=timer.tick()=>{if let Err(error)=self.drive(&mut commands).await{self.drive_error(error);}}
                         }
                         if self.core.selected.is_some(){if let Err(error)=self.drive(&mut commands).await{self.drive_error(error);}}
+                        *published.lock().map_err(|_| Error::Unavailable)? = crate::registration::project(self.client.enrollment_status()?);
                     }
                     self.stop()
                 })
@@ -522,12 +543,16 @@ impl<S: SecretProvider> DeviceService<S> {
             policy,
             helper_policy,
             finished,
+            registration,
             completion,
         })
     }
     fn drive_error(&mut self, error: Error) {
         eprintln!("agent_drive: {error}");
-        if error == Error::Identity {
+        if matches!(
+            error,
+            Error::CredentialRevoked | Error::CredentialRetired | Error::CertificateExpired
+        ) {
             self.core.host.revoked.store(true, Ordering::Release);
             if let Err(error) = self.core.revoke_preparations() {
                 eprintln!("agent_revoke_preparation: {error}");
@@ -874,6 +899,9 @@ impl Core {
                     self.stopping = true;
                     Ok(Reply::Unavailable)
                 }
+                LocalRequest::Operation(
+                    Request::RegistrationStatus {} | Request::RequestRegistration {},
+                ) => Ok(Reply::Rejected),
                 LocalRequest::Operation(Request::Tasks { after }) => {
                     let mut value = self
                         .app
@@ -1080,8 +1108,25 @@ pub struct ServiceHandle {
     helper_policy: Option<execution_ipc::host::PeerPolicy>,
     finished: Arc<AtomicBool>,
     completion: std::sync::mpsc::Receiver<Result<(), Error>>,
+    registration: Arc<Mutex<execution_ipc::host::RegistrationStatus>>,
 }
 impl ServiceHandle {
+    pub(crate) fn service_status(&self) -> execution_ipc::host::Reply {
+        self.call(
+            LocalRequest::Operation(execution_ipc::host::Request::ServiceStatus {}),
+            String::new(),
+            0,
+            None,
+        )
+    }
+    pub(crate) fn registration_status(&self) -> execution_ipc::host::Reply {
+        match self.registration.lock() {
+            Ok(value) => execution_ipc::host::Reply::RegistrationStatus {
+                value: value.clone(),
+            },
+            Err(_) => execution_ipc::host::Reply::Unavailable,
+        }
+    }
     fn call(
         &self,
         request: LocalRequest,

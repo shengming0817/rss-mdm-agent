@@ -1,4 +1,4 @@
-//! Agent V6 communication and bounded content delivery; execution remains journal-owned.
+//! Agent V1 communication and bounded content delivery; execution remains journal-owned.
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 mod delivery;
@@ -6,6 +6,10 @@ mod redaction;
 pub use delivery::{AbandonmentAck, Association, FrozenAbandonment, FrozenResult, ResultAck};
 pub use redaction::CredentialRedactor;
 mod client;
+mod enrollment;
+mod identity;
+mod tls;
+pub use enrollment::{EnrollmentPhase, EnrollmentStatus, GrantImport};
 mod config;
 mod content;
 mod store;
@@ -13,8 +17,8 @@ pub use client::*;
 pub use config::*;
 pub use content::{ContentFile, Materials};
 /// The protocol's single producer.
-pub use rss_mdm_agent_wire as wire;
-pub use store::inspect_registration;
+use rss_mdm_agent_wire::runtime as wire;
+pub use store::{inspect_binding, validate_existing, validate_identity};
 /// Closed errors, without secrets, response bodies or backend paths.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum Error {
@@ -36,6 +40,21 @@ pub enum Error {
     /// Retry the same operation in a later bounded drive.
     #[error("Agent transport unavailable")]
     Unavailable,
+    /// The device certificate is expired; retain its registration and journal.
+    #[error("Agent certificate expired")]
+    CertificateExpired,
+    /// The active credential was revoked.
+    #[error("Agent credential revoked")]
+    CredentialRevoked,
+    /// A newer certificate retired this credential; recover its original activation.
+    #[error("Agent credential retired")]
+    CredentialRetired,
+    /// Original signing result is unknown; never issue again.
+    #[error("Agent certificate issuance unknown")]
+    IssuanceUnknown,
+    /// Original activation result is unknown.
+    #[error("Agent activation unknown")]
+    ActivationUnknown,
     /// A budget was exhausted before new work.
     #[error("Agent capacity exhausted")]
     Capacity,

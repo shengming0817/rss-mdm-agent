@@ -1,9 +1,7 @@
 {
   "identifier": "main",
   "description": "Local main window: S1 execution service and private AI transport.",
-  "windows": [
-    "main"
-  ],
+  "windows": ["main"],
   "permissions": [
     "allow-self-service-snapshot",
     "allow-self-service-execute",
@@ -21,6 +19,8 @@
     "allow-select-test-user",
     "allow-save-connection",
     "allow-execution-service-status",
+    "allow-agent-registration-status",
+    "allow-agent-request-registration",
     "allow-select-guest",
     "allow-account-logout",
     "allow-account-status",

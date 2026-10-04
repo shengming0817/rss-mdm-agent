@@ -104,6 +104,14 @@ export function createFixturePorts() {
           }>("state")
         ).service;
       },
+      registration: () =>
+        rpc<
+          import("../../apps/desktop/src/settings/service-contract").RegistrationStatus
+        >("registration"),
+      requestRegistration: () =>
+        rpc<
+          import("../../apps/desktop/src/settings/service-contract").RegistrationStatus
+        >("registration-request", {}),
     },
   };
   return { assistantServices: services, selfServicePort, environment, rpc };

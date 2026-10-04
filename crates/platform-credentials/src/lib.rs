@@ -1,5 +1,7 @@
 //! OS credential primitives. Product names, references, formats and key sizes belong to callers.
 use std::io;
+mod device_key;
+pub use device_key::{DeviceKey, SignatureScheme};
 #[cfg(windows)]
 mod windows;
 #[cfg(windows)]
@@ -26,9 +28,16 @@ impl Keychain {
         Ok(Self(keychain))
     }
     pub fn disable_interaction() -> io::Result<NonInteractiveGuard> {
-        security_framework::os::macos::keychain::SecKeychain::disable_user_interaction()
-            .map(|guard| NonInteractiveGuard { _guard: guard })
-            .map_err(io::Error::other)
+        use security_framework::os::macos::keychain::SecKeychain;
+        let mut state = INTERACTION
+            .lock()
+            .map_err(|_| io::Error::other("keychain interaction unavailable"))?;
+        if state.guards == 0 && SecKeychain::user_interaction_allowed().map_err(io::Error::other)? {
+            state.disabled =
+                Some(SecKeychain::disable_user_interaction().map_err(io::Error::other)?);
+        }
+        state.guards += 1;
+        Ok(NonInteractiveGuard { _private: () })
     }
 
     pub fn open(scope: Scope) -> io::Result<Self> {
@@ -73,13 +82,7 @@ impl Keychain {
         &self,
         operation: impl FnOnce() -> io::Result<T>,
     ) -> io::Result<T> {
-        use security_framework::os::macos::keychain::SecKeychain;
-        let allowed = SecKeychain::user_interaction_allowed().map_err(io::Error::other)?;
-        let _guard = if allowed {
-            Some(SecKeychain::disable_user_interaction().map_err(io::Error::other)?)
-        } else {
-            None
-        };
+        let _guard = Self::disable_interaction()?;
         operation()
     }
 }
@@ -107,7 +110,30 @@ pub fn random_bytes(length: usize) -> io::Result<Vec<u8>> {
 
 #[cfg(target_os = "macos")]
 pub struct NonInteractiveGuard {
-    _guard: security_framework::os::macos::keychain::KeychainUserInteractionLock,
+    _private: (),
+}
+#[cfg(target_os = "macos")]
+struct InteractionState {
+    guards: usize,
+    disabled: Option<security_framework::os::macos::keychain::KeychainUserInteractionLock>,
+}
+#[cfg(target_os = "macos")]
+static INTERACTION: std::sync::Mutex<InteractionState> = std::sync::Mutex::new(InteractionState {
+    guards: 0,
+    disabled: None,
+});
+#[cfg(target_os = "macos")]
+impl Drop for NonInteractiveGuard {
+    fn drop(&mut self) {
+        // The Security switch is process-wide. Restore it only after every overlapping
+        // operation exits; nested guards do not retain the mutex during an OS call.
+        if let Ok(mut state) = INTERACTION.lock() {
+            state.guards -= 1;
+            if state.guards == 0 {
+                drop(state.disabled.take());
+            }
+        }
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -160,6 +186,122 @@ mod tests {
                     .output();
             }
             let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    #[test]
+    fn nonexportable_device_key_reopens_and_signs_without_interaction() {
+        let root = std::env::temp_dir()
+            .canonicalize()
+            .unwrap()
+            .join(format!("device-keychain-{}", std::process::id()));
+        std::fs::create_dir(&root).unwrap();
+        let _cleanup = Isolated(root.clone());
+        let keychain =
+            Keychain::create_file(&root.join("old.keychain"), "isolated-test-password").unwrap();
+        assert_eq!(
+            keychain
+                .open_device_key("machine-key")
+                .err()
+                .unwrap()
+                .kind(),
+            io::ErrorKind::NotFound
+        );
+        let key = keychain.create_device_key("machine-key").unwrap();
+        let public = key.public_spki().unwrap();
+        let signature = key
+            .sign(SignatureScheme::Pkcs1Sha256, b"machine proof")
+            .unwrap();
+        assert_eq!(signature.len(), 256);
+        drop(key);
+        let reopened = keychain.open_device_key("machine-key").unwrap();
+        assert_eq!(public, reopened.public_spki().unwrap());
+        assert_eq!(
+            signature,
+            reopened
+                .sign(SignatureScheme::Pkcs1Sha256, b"machine proof")
+                .unwrap()
+        );
+        assert_eq!(
+            reopened
+                .sign(SignatureScheme::PssSha256, b"machine proof")
+                .unwrap()
+                .len(),
+            256
+        );
+        assert_eq!(
+            keychain
+                .create_device_key("machine-key")
+                .unwrap()
+                .public_spki()
+                .unwrap(),
+            public
+        );
+        let executable = root.join("updated-key-test");
+        std::fs::copy(std::env::current_exe().unwrap(), &executable).unwrap();
+        let child = |denied: bool| {
+            std::process::Command::new(&executable)
+                .args([
+                    "--ignored",
+                    "--exact",
+                    "tests::device_key_child",
+                    "--test-threads=1",
+                ])
+                .env("RSS_TEST_KEYCHAIN", root.join("old.keychain"))
+                .env("RSS_TEST_KEY_DENIED", if denied { "yes" } else { "no" })
+                .output()
+                .unwrap()
+        };
+        let result = child(false);
+        assert!(
+            result.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr)
+        );
+        assert!(std::process::Command::new("/usr/bin/codesign")
+            .args([
+                "--force",
+                "--sign",
+                "-",
+                "--identifier",
+                "rss.untrusted-key-test"
+            ])
+            .arg(&executable)
+            .status()
+            .unwrap()
+            .success());
+        let result = child(true);
+        assert!(
+            result.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr)
+        );
+    }
+    #[test]
+    #[ignore = "child process of nonexportable_device_key_reopens_and_signs_without_interaction"]
+    fn device_key_child() {
+        use security_framework::os::macos::keychain::SecKeychain;
+        let allowed = SecKeychain::user_interaction_allowed().unwrap();
+        let first = Keychain::disable_interaction().unwrap();
+        let second = Keychain::disable_interaction().unwrap();
+        drop(first);
+        assert!(!SecKeychain::user_interaction_allowed().unwrap());
+        drop(second);
+        assert_eq!(SecKeychain::user_interaction_allowed().unwrap(), allowed);
+        let path = std::path::PathBuf::from(std::env::var_os("RSS_TEST_KEYCHAIN").unwrap());
+        let keychain = Keychain::open_file(&path).unwrap();
+        let key = keychain.open_device_key("machine-key");
+        if std::env::var("RSS_TEST_KEY_DENIED").unwrap() == "yes" {
+            assert!(key.is_err());
+        } else {
+            assert_eq!(
+                key.unwrap()
+                    .sign(SignatureScheme::PssSha256, b"updated image")
+                    .unwrap()
+                    .len(),
+                256
+            );
         }
     }
     #[test]

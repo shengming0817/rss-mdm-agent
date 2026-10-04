@@ -36,6 +36,15 @@ impl Store {
         if !root.is_dir() {
             return Err(Error::Storage);
         }
+        let path = root.join("communication.sqlite");
+        if path.exists() {
+            drop(read_existing(root, &cfg)?);
+            if matches!(mode, OpenMode::Create) {
+                return Err(Error::Storage);
+            }
+        } else if matches!(mode, OpenMode::Existing) {
+            return Err(Error::Storage);
+        }
         let lock_path = root.join("client.lock");
         let lock = match platform_private_storage::create_new(&lock_path) {
             Ok(f) => f,
@@ -45,7 +54,6 @@ impl Store {
             Err(_) => return Err(Error::Storage),
         };
         lock.try_lock_exclusive().map_err(|_| Error::Storage)?;
-        let path = root.join("communication.sqlite");
         let binding = encode(&(
             cfg.origin.as_str(),
             cfg.tenant,
@@ -67,7 +75,7 @@ impl Store {
                     CREATE TABLE tasks(id TEXT PRIMARY KEY,body BLOB NOT NULL);
                     CREATE TABLE requests(key TEXT PRIMARY KEY,task TEXT NOT NULL,source TEXT,body BLOB NOT NULL,accepted INTEGER NOT NULL DEFAULT 0 CHECK(accepted IN(0,1)));
                     CREATE TABLE cache_refs(task TEXT NOT NULL,name TEXT NOT NULL,PRIMARY KEY(task,name));
-                    PRAGMA application_id=1380008771; PRAGMA user_version=4;")?;
+                    PRAGMA application_id=1380008771; PRAGMA user_version=5;")?;
                 tx.execute("INSERT INTO metadata VALUES(1,?1,0,0)", [binding])?;
                 tx.execute(
                     "INSERT INTO state VALUES('execution_context',?1)",
@@ -120,11 +128,10 @@ impl Store {
         )?;
         Ok(())
     }
-    pub fn registration(&self) -> Result<wire::RegistrationReceipt, Error> {
-        self.get("registration")?.ok_or(Error::Identity)
-    }
-    pub fn secret_reference(&self) -> Result<String, Error> {
-        self.get("credential")?.ok_or(Error::Identity)
+    pub fn registration(&self) -> Result<wire::BindingProfile, Error> {
+        self.get::<crate::identity::IdentityState>("identity")?
+            .and_then(|state| state.active.map(|active| active.receipt.runtime))
+            .ok_or(Error::Identity)
     }
 }
 
@@ -140,7 +147,7 @@ fn read_existing(root: &Path, cfg: &Config) -> Result<Connection, Error> {
     let reader = Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
     let version: u32 = reader.pragma_query_value(None, "user_version", |r| r.get(0))?;
     let app: u32 = reader.pragma_query_value(None, "application_id", |r| r.get(0))?;
-    if version != 4 || app != 1380008771 {
+    if version != 5 || app != 1380008771 {
         return Err(Error::Schema);
     }
     let binding = encode(&(
@@ -159,23 +166,34 @@ fn read_existing(root: &Path, cfg: &Config) -> Result<Connection, Error> {
     }
     Ok(reader)
 }
-/// Inspect the existing registration and endpoint binding without locks, writes or startup recovery.
-pub fn inspect_registration(root: &Path, cfg: &Config) -> Result<wire::RegistrationReceipt, Error> {
+/// Validate storage format and deployment binding without locks, writes or recovery.
+pub fn validate_existing(root: &Path, cfg: &Config) -> Result<(), Error> {
+    drop(read_existing(root, cfg)?);
+    Ok(())
+}
+/// Inspect the sole active binding without locks, writes or startup recovery.
+pub fn inspect_binding(root: &Path, cfg: &Config) -> Result<wire::BindingProfile, Error> {
+    read_identity(root, cfg)?
+        .active
+        .map(|active| active.receipt.runtime)
+        .ok_or(Error::Identity)
+}
+/// Validate the current runtime identity without locks, writes, recovery or key creation.
+/// Historical binding inspection remains independent for local journal recovery.
+pub fn validate_identity(
+    root: &Path,
+    cfg: &Config,
+    provider: &impl crate::IdentityProvider,
+    clock: &impl crate::Clock,
+) -> Result<wire::BindingProfile, Error> {
+    Ok(read_identity(root, cfg)?
+        .validate_runtime(cfg, provider, clock.now()?)?
+        .clone())
+}
+fn read_identity(root: &Path, cfg: &Config) -> Result<crate::identity::IdentityState, Error> {
     let reader = read_existing(root, cfg)?;
-    let blocked: Option<Vec<u8>> = reader
-        .query_row("SELECT body FROM state WHERE key='blocked'", [], |r| {
-            r.get(0)
-        })
-        .optional()?;
-    if blocked
-        .map(|b| decode::<bool>(&b))
-        .transpose()?
-        .unwrap_or(false)
-    {
-        return Err(Error::Identity);
-    }
     let body: Vec<u8> = reader.query_row(
-        "SELECT CASE WHEN length(body)<=?1 THEN body END FROM state WHERE key='registration'",
+        "SELECT CASE WHEN length(body)<=?1 THEN body END FROM state WHERE key='identity'",
         [cfg.limits.response_bytes],
         |r| r.get(0),
     )?;

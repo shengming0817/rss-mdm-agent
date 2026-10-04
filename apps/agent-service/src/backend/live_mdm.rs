@@ -4,9 +4,10 @@ use super::bridge::ExecutionBridge;
 use super::test_support::local::create_app;
 use super::test_support::*;
 use crate::protocol_test_support as support;
-use agent_client::wire::*;
 use agent_client::*;
 use base64::Engine;
+use rss_mdm_agent_wire::runtime as wire;
+use rss_mdm_agent_wire::runtime::*;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -21,9 +22,13 @@ use uuid::Uuid;
 #[serde(deny_unknown_fields)]
 struct LiveConfig {
     #[serde(deserialize_with = "parse_url")]
-    origin: url::Url,
+    management_origin: url::Url,
+    #[serde(deserialize_with = "parse_url")]
+    agent_origin: url::Url,
     tenant: Uuid,
-    ca_file: PathBuf,
+    management_ca_file: PathBuf,
+    agent_ca_file: PathBuf,
+    device_ca_file: PathBuf,
     admin_password_file: PathBuf,
     admin_login: String,
     key_id: String,
@@ -75,9 +80,6 @@ impl Admin {
         }
         if let Some(csrf) = &self.csrf {
             request = request.header("x-csrf-token", csrf);
-        }
-        if path == "/api/v3/enrollments" {
-            request = request.header("idempotency-key", Uuid::new_v4().to_string());
         }
         if let Some(body) = body {
             request = request.json(&body);
@@ -192,7 +194,7 @@ impl Admin {
     }
     async fn resource(&mut self, software: bool, package: &str) -> (Uuid, Option<Value>) {
         let resource = Uuid::new_v4();
-        let path = format!("/api/v4/resources/{resource}");
+        let path = format!("/api/v1/resources/{resource}");
         let bytes = if software {
             b"controlled software fixture".as_slice()
         } else {
@@ -201,7 +203,7 @@ impl Admin {
         let digest = Sha256::digest(bytes).to_vec();
         let declaration = if software {
             let source = Uuid::new_v4().to_string();
-            let source_path = format!("/api/v3/software/sources/{source}/revisions/1");
+            let source_path = format!("/api/v1/software/sources/{source}/revisions/1");
             let created=self.write(&source_path,0,json!({"action":"register","definition":{"id":source,"revision":"1","protocol":{"kind":"private"}}})).await;
             self.write(
                 &source_path,
@@ -225,13 +227,13 @@ impl Admin {
         self.write(&path, 0, json!({"action":"create","kind":kind}))
             .await;
         self.write(&path,1,json!({"action":"version","version":"v1","kind":kind,"variants":[{"platform":"macos","architecture":"aarch64","key":"default","declaration":declaration}]})).await;
-        self.request(reqwest::Method::POST,&format!("/api/v3/resources/{resource}/content?version=v1&variant=default&platform=macos&architecture=aarch64&operation={}",Uuid::new_v4()),None,Some(bytes)).await;
+        self.request(reqwest::Method::POST,&format!("/api/v1/resources/{resource}/content?version=v1&variant=default&platform=macos&architecture=aarch64&operation={}",Uuid::new_v4()),None,Some(bytes)).await;
         self.write(&path, 2, json!({"action":"activate","version":"v1"}))
             .await;
         let admission = if software {
             Some(
                 self.write(
-                    &format!("/api/v3/software/resources/{resource}/versions/v1"),
+                    &format!("/api/v1/software/resources/{resource}/versions/v1"),
                     0,
                     json!({"action":"approve","evidence":["controlled-protocol-test"]}),
                 )
@@ -254,7 +256,7 @@ async fn real_https_registration_reports_script_software_and_journal_results() {
         &platform_private_storage::read(std::path::Path::new(&path), 16384).unwrap(),
     )
     .unwrap();
-    let ca = std::fs::read(&fixture.ca_file).unwrap();
+    let ca = std::fs::read(&fixture.management_ca_file).unwrap();
     let config = Config {
         execution_context: wire::SoftwareExecutionContext {
             revision: 1,
@@ -265,7 +267,7 @@ async fn real_https_registration_reports_script_software_and_journal_results() {
             msix_sideload: false,
             msix_unsigned: false,
         },
-        origin: fixture.origin.clone(),
+        origin: fixture.agent_origin.clone(),
         tenant: fixture.tenant,
         platform: TaskPlatform::Macos,
         architecture: TaskArchitecture::Aarch64,
@@ -277,7 +279,8 @@ async fn real_https_registration_reports_script_software_and_journal_results() {
         )]),
         limits: Limits::test_defaults(),
         transport: Transport::Https,
-        ca_pem: Some(ca.clone()),
+        ca_pem: Some(std::fs::read(&fixture.agent_ca_file).unwrap()),
+        device_ca_pem: std::fs::read(&fixture.device_ca_file).unwrap(),
     };
     let mut admin = Admin {
         http: reqwest::Client::builder()
@@ -287,7 +290,7 @@ async fn real_https_registration_reports_script_software_and_journal_results() {
             .add_root_certificate(reqwest::Certificate::from_pem(&ca).unwrap())
             .build()
             .unwrap(),
-        origin: fixture.origin.clone(),
+        origin: fixture.management_origin.clone(),
         cookies: BTreeMap::new(),
         csrf: None,
     };
@@ -298,7 +301,7 @@ async fn real_https_registration_reports_script_software_and_journal_results() {
     admin
         .request(
             reqwest::Method::POST,
-            &format!("/api/v2/tenants/{}/login", fixture.tenant),
+            &format!("/api/v1/identity/tenants/{}/login", fixture.tenant),
             Some(json!({"login":fixture.admin_login,"password":password})),
             None,
         )
@@ -336,36 +339,30 @@ async fn real_https_registration_reports_script_software_and_journal_results() {
         .map(|p| json!({"operation":p,"scope":{"kind":"all_devices"}})),
     );
     admin.request(reqwest::Method::PUT,&format!("/api/v1/authorization/rules/{}",Uuid::new_v4()),Some(json!({"operationId":Uuid::new_v4(),"expectedRevision":0,"value":{"subject":{"kind":"user","user":{"instanceId":authority["instanceId"],"tenantId":fixture.tenant,"principalId":authority["principalId"]}},"grants":grants}})),None).await;
-    let device = format!("agent-live-{}", Uuid::new_v4());
     let secrets = Secrets::new();
-    use ring::rand::SecureRandom;
-    for key in ["password", "credential"] {
-        let mut bytes = [0u8; 32];
-        ring::rand::SystemRandom::new().fill(&mut bytes).unwrap();
-        secrets.0.lock().unwrap().insert(
-            key.into(),
-            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes),
-        );
-    }
-    let enrollment=admin.request(reqwest::Method::POST,"/api/v3/enrollments",Some(json!({"deviceId":device,"password":secrets.resolve("password").unwrap().expose(),"source":"agent.builtin"})),None).await;
     let root = Root::new();
     let mut client = Client::open(&root.path, config, OpenMode::Create, secrets, Utc).unwrap();
     client.set_profiles(vec![ExecutorProfile::PosixSh]).unwrap();
-    let receipt = client
-        .register(
-            Uuid::new_v4(),
-            Uuid::parse_str(enrollment["enrollmentId"].as_str().unwrap()).unwrap(),
-            "password",
-            "credential",
-            vec![
-                Capability::InventoryCollectionV6,
-                Capability::TaskExecuteV6,
-                Capability::SoftwarePkgSystemV6,
-            ],
-        )
+    let status = client
+        .request_authorization(vec![
+            Capability::InventoryCollectionV1,
+            Capability::TaskExecuteV1,
+            Capability::SoftwarePkgSystemV1,
+        ])
         .await
         .unwrap();
-    assert_eq!(receipt.device_id, device);
+    let grant = status.grant_id.expect("machine authorization request");
+    admin
+        .request(
+            reqwest::Method::POST,
+            &format!("/api/v1/agent-grants/{grant}/approve"),
+            Some(json!({"operationId":Uuid::new_v4()})),
+            None,
+        )
+        .await;
+    client.drive_enrollment().await.unwrap();
+    let receipt = client.registration().unwrap();
+    let device = receipt.device_id.clone();
     let report = client
         .queue_report(
             "inventory",
@@ -381,14 +378,14 @@ async fn real_https_registration_reports_script_software_and_journal_results() {
         report
     );
     let scope = Uuid::new_v4();
-    let scope_created=admin.write(&format!("/api/v2/scopes/{scope}"),0,json!({"action":"put","definition":{"targets":[{"kind":"device","id":device}],"limitations":null,"exclusions":[]}})).await;
+    let scope_created=admin.write(&format!("/api/v1/scopes/{scope}"),0,json!({"action":"put","definition":{"targets":[{"kind":"device","id":device}],"limitations":null,"exclusions":[]}})).await;
     let task = scope_created["task"].as_str().unwrap();
     tokio::time::timeout(Duration::from_secs(30), async {
         loop {
             let status = admin
                 .request(
                     reqwest::Method::GET,
-                    &format!("/api/v2/scopes/{scope}/tasks/{task}"),
+                    &format!("/api/v1/scopes/{scope}/tasks/{task}"),
                     None,
                     None,
                 )
@@ -403,7 +400,7 @@ async fn real_https_registration_reports_script_software_and_journal_results() {
     .await
     .expect("live Scope resolution");
     let package = format!("Agent.LiveFixture.{}", Uuid::new_v4());
-    let group = format!("/api/v2/groups/{}", Uuid::new_v4());
+    let group = format!("/api/v1/groups/{}", Uuid::new_v4());
     admin
         .write(
             &group,
@@ -425,7 +422,7 @@ async fn real_https_registration_reports_script_software_and_journal_results() {
         let policy = Uuid::new_v4();
         admin
             .write(
-                &format!("/api/v3/policies/{policy}"),
+                &format!("/api/v1/policies/{policy}"),
                 0,
                 json!({"action":"put","enabled":true,"definition":{"scope":scope,"action":action}}),
             )
@@ -548,7 +545,7 @@ async fn real_https_registration_reports_script_software_and_journal_results() {
         let runs = admin
             .request(
                 reqwest::Method::GET,
-                &format!("/api/v2/policies/{policy}/runs"),
+                &format!("/api/v1/policies/{policy}/runs"),
                 None,
                 None,
             )
@@ -559,7 +556,7 @@ async fn real_https_registration_reports_script_software_and_journal_results() {
                 .request(
                     reqwest::Method::GET,
                     &format!(
-                        "/api/v2/devices/{device}/collections/{}",
+                        "/api/v1/devices/{device}/collections/{}",
                         offer.payload().attempt_id()
                     ),
                     None,
@@ -574,7 +571,7 @@ async fn real_https_registration_reports_script_software_and_journal_results() {
             let rollout = admin
                 .request(
                     reqwest::Method::GET,
-                    &format!("/api/v2/policies/{policy}/software/rollout"),
+                    &format!("/api/v1/policies/{policy}/software/rollout"),
                     None,
                     None,
                 )

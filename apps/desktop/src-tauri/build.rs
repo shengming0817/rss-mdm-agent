@@ -104,6 +104,8 @@ fn main() {
             "account_login",
             "select_test_user",
             "execution_service_status",
+            "agent_registration_status",
+            "agent_request_registration",
             "appearance_snapshot",
             "development_assembly",
             "ai_host_status",

@@ -56,7 +56,7 @@ impl Limits {
 pub struct Config {
     /// Fixed origin with no credential/query/fragment/path prefix.
     pub origin: Url,
-    /// Trusted tenant, absent from RegistrationReceipt.
+    /// Trusted tenant, absent from BindingProfile.
     pub tenant: Uuid,
     /// Actual OS.
     pub platform: wire::TaskPlatform,
@@ -72,6 +72,8 @@ pub struct Config {
     pub transport: Transport,
     /// Optional additional deployment CA.
     pub ca_pem: Option<Vec<u8>>,
+    /// Explicit direct issuer of Agent device certificates, separate from HTTPS trust.
+    pub device_ca_pem: Vec<u8>,
 }
 impl Config {
     /// Validate before storage or I/O.
@@ -89,6 +91,8 @@ impl Config {
         };
         if o.as_str().len() > 2048
             || !network
+            || self.device_ca_pem.is_empty()
+            || self.device_ca_pem.len() > 32768
             || self.tenant.is_nil()
             || o.path() != "/"
             || !o.username().is_empty()
@@ -130,12 +134,22 @@ impl Config {
         Ok(())
     }
 }
-/// Host-owned immutable secret references; platform persistence belongs to #2564.
-pub trait SecretProvider {
-    /// Resolve an already protected password or credential.
+/// Platform-owned bootstrap secrets and non-exportable device signing keys.
+/// References are frozen by the communication owner before network operations.
+pub trait IdentityProvider {
+    /// Resolve an existing protected bootstrap secret.
     fn resolve(&self, reference: &str) -> Result<wire::Secret, Error>;
-    /// Create-once and protect a random credential before any request.
-    fn credential(&self, reference: &str) -> Result<wire::Secret, Error>;
+    /// Import an administrator-provided secret once, without overwriting an existing value.
+    fn import_secret(&self, reference: &str, secret: &wire::Secret) -> Result<(), Error>;
+    /// Create once; exact retries must return the original protected secret.
+    fn create_secret(&self, reference: &str) -> Result<wire::Secret, Error>;
+    /// Create once during explicit enrollment preparation; never overwrite a key.
+    fn create_key(
+        &self,
+        reference: &str,
+    ) -> Result<std::sync::Arc<dyn rustls::sign::SigningKey>, Error>;
+    /// Open the exact existing key. Missing/denied must not create a replacement.
+    fn key(&self, reference: &str) -> Result<std::sync::Arc<dyn rustls::sign::SigningKey>, Error>;
 }
 /// Independently reliable UTC.
 pub trait Clock {

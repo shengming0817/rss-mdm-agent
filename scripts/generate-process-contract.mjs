@@ -22,10 +22,11 @@ if (process.argv.includes("--check")) {
     throw new Error("process contract drift");
 } else writeFileSync(path, text);
 
-const service = JSON.parse(await helperOutput("serviceSchema"));
-const serviceSchema = service;
+const serviceSchema = JSON.parse(await helperOutput("serviceSchema"));
+const registrationSchema = serviceSchema["x-rss-registration-schema"];
+delete serviceSchema["x-rss-registration-schema"];
 const versionPath = "packages/execution-bindings/src/service-version.mjs";
-const versionText = `// @generated from execution-ipc::host::IPC_VERSION. Do not edit.\nexport const IPC_VERSION = ${serviceSchema["x-rss-ipc-version"]};\n`;
+const versionText = `// @generated from execution-ipc::host::IPC_VERSION. Do not edit.\nexport const IPC_VERSION = ${serviceSchema["x-rss-ipc-version"]};\nexport const DEPLOYMENT_VERSION = ${serviceSchema["x-rss-deployment-version"]};\n`;
 if (process.argv.includes("--check")) {
   if (readFileSync(versionPath, "utf8") !== versionText)
     throw new Error("service version drift");
@@ -33,10 +34,14 @@ if (process.argv.includes("--check")) {
 
 const servicePath = "apps/desktop/src/settings/service-contract.ts";
 const serviceText = await format(
-  await compile(service, "ServiceView", {
+  (await compile(serviceSchema, "ServiceView", {
     bannerComment:
-      "// @generated from execution-ipc::host::ServiceView. Do not edit.",
-  }),
+      "// @generated from execution-ipc::host::{ServiceView, RegistrationStatus}. Do not edit.",
+  })) +
+    "\n" +
+    (await compile(registrationSchema, "RegistrationStatus", {
+      bannerComment: "",
+    })),
   { parser: "typescript" },
 );
 if (process.argv.includes("--check")) {

@@ -8,7 +8,7 @@
 
 构建 `cargo build --release -p agent-service --bin rss-execution-service`。生产服务与 user helper 使用同一二进制；原 execution-runner 二进制装配已删除。系统服务独占凭据和执行 journal，helper 不初始化业务数据库。
 
-由管理员准备受保护的部署 JSON：macOS 默认 `/Library/Application Support/RSS MDM Agent/execution.json`，Windows 为 ProgramData 下同一产品目录的 `execution.json`。格式由 `apps/agent-service/src/deployment.rs` 持有，使用当前格式显式配置 version、ipc_version、HTTPS origin、tenant、signing_keys、enrollment、registration_operation、state_root、service 产物 pin、clients OS 主体/程序 pin、execution 的 work_root/material_root/interpreters/managers/processes，以及每个已登记用户的 helper_work_roots。解释器和包管理器使用完整路径和固定摘要，不使用 PATH 查找。material_root 与 state_root 分离。
+由管理员准备受保护的部署 JSON：macOS 默认 `/Library/Application Support/RSS MDM Agent/execution.json`，Windows 为 ProgramData 下同一产品目录的 `execution.json`。格式由 `apps/agent-service/src/deployment.rs` 持有，使用当前格式显式配置 version、ipc_version、HTTPS origin、tenant、signing_keys、installation_id、独立 device_ca_file、registration_clients 桌面程序/用户 pin、state_root、service 产物 pin、clients OS 主体/程序 pin、execution 的 work_root/material_root/interpreters/managers/processes，以及每个已登记用户的 helper_work_roots。解释器和包管理器使用完整路径和固定摘要，不使用 PATH 查找。material_root 与 state_root 分离。
 
 桌面与后台 Agent 的组织 CA 以根 `.env` 的 `RSS_MDM_CA_FILE` 为统一部署输入。它指向部署方明确提供的单个 PEM CA 公共证书；留空使用默认信任。桌面构建嵌入公共证书，Agent 的 `execution.json.ca_file` 是由该输入生成的运行配置，不是桌面的配置来源。生成新安装配置时先准备包含程序 pins、工作目录、注册身份等完整字段的模板，然后执行：
 
@@ -18,7 +18,7 @@ node scripts/agent-organization.mjs --config /private/execution-template.json --
 
 `--ca-output` 是 CA 在设备上的最终绝对路径，生成器写入同一公共证书并记录该路径；省略私有 CA 时无需该参数。输出配置与 CA 为 0644（公开信息），安装后的父目录须允许用户 helper 遍历、文件由管理员持有且普通用户不可写；凭据和状态目录保持原有保护。输出文件必须不存在，不覆盖既有部署；保持模板的其它字段，仅替换组织地址、租户和 CA。按原安装要求将配置与证书置于管理员保护的最终路径，再进行首次注册。部署不同设备时使用目标设备对应的绝对路径。现有设备不要通过生成新身份或重新注册来更新 CA；沿用原身份，按受控刷新流程发布新配置。更新 CA 后桌面重新构建、Agent 重新加载；不修改系统信任。CA 私钥不分发，任务签名公钥与组织 HTTPS CA 分开管理。
 
-首次注册由系统账号运行 `rss-execution-service --config <受保护配置> --initialize`，通过标准输入传入 enrollment secret；秘密不得放入 argv、JSON、日志或 shell 历史。注册重试使用同一配置、注册操作和 OS 秘密。初始化遇到已有不支持的数据库或缺失的原注册状态时拒绝，保留原文件；不能换目录、清库或重新注册来绕过未决任务。
+首次注册可由固定桌面在本机服务设置中发起授权请求，再在组织网页核对请求编号及公钥指纹并批准。导入网页生成的材料时，由系统账号运行 `rss-execution-service --config <受保护配置> --import-grant <受保护 GrantImport JSON>`，通过标准输入传入一次性授权 secret；秘密不得放入 argv、JSON、日志或 shell 历史。注册重试使用同一配置、原 grant/CSR/签发/激活操作和 OS 密钥。人工换证先停止原 owner，再运行 `--renew-certificate`；保持原 Registration、存储位置和 journal。初始化遇到已有不支持的数据库或缺失的原注册状态时拒绝，保留原文件；不能换目录、清库或重新注册来绕过未决任务。
 
 macOS 系统注册：`python3 scripts/service/execution-macos.py install --scope system --binary <root 拥有的绝对产物路径> --config <受保护配置>`，需要管理员执行。用户在自己的 GUI 登录中运行同一安装脚本，改为 `--scope user`；程序参数固定为 `--user-helper`，只注册当前实际 OS 会话。`--config` 可省略以使用默认部署路径。状态查询用 `rss-execution-service --config <配置> --query`，客户端和服务必须互相匹配真实 OS 身份与程序 pin。
 
@@ -26,9 +26,9 @@ Windows 使用 PowerShell 7 运行 `scripts/service/execution-windows.ps1 -Actio
 
 卸载将 install/Install 改为 remove/Remove，并提供原始精确二进制和配置路径。install 拒绝已有注册；卸载核对归属，只移除注册，不删除凭据、journal、材料或审计。生产桌面读取默认受保护部署 pin；自定义配置用于显式命令行部署和隔离验收，不作为桌面失败后的回退。
 
-本地执行 V7、桌面/系统 IPC V9、SQLite schema 9 拒绝旧格式；远程 Agent 使用 V6，通信 SQLite 使用 schema 4。远程旧协议和旧通信库明确拒绝，保留原文件，不迁移、自动换库或重新注册。测试执行器仅用于测试专用装配。按实际运行的平台分别记录编译、测试与验收结果；开发机不承担 Windows 验证，未执行的环境不记为通过。
+本地执行 V7、桌面/系统 IPC V10、SQLite schema 9 拒绝旧格式；远程 Agent 使用 V1，通信 SQLite 使用 schema 5。远程旧协议和旧通信库明确拒绝，保留原文件，不迁移、自动换库或重新注册。测试执行器仅用于测试专用装配。按实际运行的平台分别记录编译、测试与验收结果；开发机不承担 Windows 验证，未执行的环境不记为通过。
 
-本次合同切换仅支持新部署。旧节点先由旧服务完成任务、清理与结果补传；未决事实保留并阻止对应节点切换。旧库即使无未决任务也不提供原地 schema 迁移，保留原身份、凭据与 journal；新环境使用独立空库显式注册 V6。不得自动换库、清库或重注册原节点。
+本次合同切换仅支持新部署。旧节点先由旧服务完成任务、清理与结果补传；未决事实保留并阻止对应节点切换。旧库即使无未决任务也不提供原地 schema 迁移，保留原身份、凭据与 journal；新环境使用独立空库显式注册 V1。不得自动换库、清库或重注册原节点。
 
 软件脚本检测器在退出码为 0 且完整捕获 stdout 时读取一个严格 JSON 对象：`{"kind":"absent"}` 或 `{"kind":"present","version":"固定版本"}`。其它输出、截断或无法核实的执行活动保持 Unknown；检测事实与安装进程退出分别记入同一 journal。
 
@@ -51,7 +51,7 @@ Windows 使用 PowerShell 7 运行 `scripts/service/execution-windows.ps1 -Actio
 
 真实 osquery 接缝使用 `OSQUERY_TEST_BINARY=<已独立验证的官方二进制绝对路径> python3 scripts/build-run.py -- cargo test --locked -p execution-runner --test osquery -- --ignored`。macOS 必须保留官方 `.app` 完整结构以验证签名，单独复制 Mach-O 文件会破坏签名。该测试验证固定参数、字面量绑定和成功零行；不替代系统服务身份或完整平台部署验收。可复现候选为官方 5.23.1 的 `osquery-5.23.1_1.macos_arm64.tar.gz`，SHA-256 为 `5484f0b62e05a7b2fa9d6e43f038915ea2b7ce063d59bd671ede0cf8dd0552da`。
 
-执行上下文使用本机数值 OS 版本和认证 helper 的登录世代，待确认注册与 claim 保留原上下文。生产编译器消费当前远程 V6 的 MSI、PKG、Bundle、离线 EXE、MSIX 和 DMG；WinGet/Brew 原生发布源仍不支持。EXE 仅执行完整离线布局、显式参数和明确卸载入口；退出码与重启按源任务策略解释，不自动重启。实际启动 EXE 后，当前 V6 没有可信外部安装会话完成协议，因此保留真实退出码与重启事实，同时报告 Unknown、保留离线布局与排他；Job 归零或检测命中不解除该限制。MSIX 明确区分目标用户注册与未来用户设备 provisioning，后者不改写已有用户注册；只查询既有侧载/依赖，不导入证书、改策略或终止应用。DMG 用镜像的完整长度/SHA256 确认内容身份，只读挂载并精确选择 app/内含 PKG，不计算独立 app 目录摘要；app 保留内部链接与 quarantine，经原生签名/Gatekeeper 检查再复制或原子替换。运行中应用拒绝替换/删除；普通 app 卸载直接核对声明的目标、Bundle ID、版本、上下文、签名与架构，不挂载镜像或比较镜像目录；删除使用本次尝试的短期对象快照和私有隔离，失败保留清理记录。卸载不清理用户数据。挂载、staging 和物理阶段在同一 attempt 中核算，Unknown 保留证据与排他，不重新执行安装。DMG 在原 invocation 内预留最多四分之一预算用于清理，取消/超时/重启后的恢复只使用原冻结 Cleanup 和递增日志序号；清理资源不改写未知安装事实，原活动未证明结束时仍保留排他。内含 PKG 必须通过原生签名与 Gatekeeper；未签名包被拒绝。
+执行上下文使用本机数值 OS 版本和认证 helper 的登录世代，待确认注册与 claim 保留原上下文。生产编译器消费当前远程 V1 的 MSI、PKG、Bundle、离线 EXE、MSIX 和 DMG；WinGet/Brew 原生发布源仍不支持。EXE 仅执行完整离线布局、显式参数和明确卸载入口；退出码与重启按源任务策略解释，不自动重启。实际启动 EXE 后，当前 V1 没有可信外部安装会话完成协议，因此保留真实退出码与重启事实，同时报告 Unknown、保留离线布局与排他；Job 归零或检测命中不解除该限制。MSIX 明确区分目标用户注册与未来用户设备 provisioning，后者不改写已有用户注册；只查询既有侧载/依赖，不导入证书、改策略或终止应用。DMG 用镜像的完整长度/SHA256 确认内容身份，只读挂载并精确选择 app/内含 PKG，不计算独立 app 目录摘要；app 保留内部链接与 quarantine，经原生签名/Gatekeeper 检查再复制或原子替换。运行中应用拒绝替换/删除；普通 app 卸载直接核对声明的目标、Bundle ID、版本、上下文、签名与架构，不挂载镜像或比较镜像目录；删除使用本次尝试的短期对象快照和私有隔离，失败保留清理记录。卸载不清理用户数据。挂载、staging 和物理阶段在同一 attempt 中核算，Unknown 保留证据与排他，不重新执行安装。DMG 在原 invocation 内预留最多四分之一预算用于清理，取消/超时/重启后的恢复只使用原冻结 Cleanup 和递增日志序号；清理资源不改写未知安装事实，原活动未证明结束时仍保留排他。内含 PKG 必须通过原生签名与 Gatekeeper；未签名包被拒绝。
 
 验收入口可加 `--dmg-app <已公证 app>`，将固定候选装入只读镜像，经真实 HTTPS、系统服务、SQLite 与认证 IPC 验证安装及精确卸载；测试不修改签名信任或 quarantine。
 
@@ -147,3 +147,5 @@ resume 同样在拒绝前后核验这些前提，不把撤销、旧产物或 off
 检查点含请求关联数据，按测试主体受控交接；不含授权秘密。resume 要求 offer 仍未过期。
 脚本不创建账户、不自动注销，不使用 sudo 切 UID 代替 GUI 登录。缺环境时保留未执行，
 不得把这两个场景或 Windows 计为通过。
+
+Agent 部署生成使用 `.env` 的 RSS_AGENT_ORIGIN、可选 RSS_AGENT_CA_FILE 与必填 RSS_AGENT_DEVICE_CA_FILE；桌面管理 origin/CA 继续独立配置。模板明确提供已安装 device_ca_file；生成器只写新文件，不覆盖原身份材料。设备证书经原生 CNG/daemon Keychain 签名完成 mTLS；HTTPS 默认验证和任务签名验证始终保留。

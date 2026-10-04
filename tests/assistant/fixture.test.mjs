@@ -64,6 +64,22 @@ test("browser factory and native Vite plugin share the same scenario and RPC own
   assert.deepEqual(state.service, f.serviceView());
   assert.equal(state.service.status.readiness.phase, "registrationRequired");
   assert.equal((await fetch(origin + "/__fixture/snapshot")).status, 500);
+  const registration = async () =>
+    (await fetch(origin + "/__fixture/registration")).json();
+  assert.equal((await registration()).phase, "unregistered");
+  const request = async (input) =>
+    fetch(origin + "/__fixture/registration-request", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  assert.equal((await request({ tenant: "caller-override" })).status, 500);
+  assert.equal((await registration()).phase, "unregistered");
+  const pending = await (await request({})).json();
+  assert.equal(pending.phase, "awaitingAuthorization");
+  assert.equal(pending.registered, false);
+  assert.deepEqual(await (await request({})).json(), pending);
+  assert.deepEqual(await registration(), pending);
+  assert.equal((await fetch(origin + "/__fixture/snapshot")).status, 500);
 });
 
 test("fixture supplies isolated current identity and Host operations with generation fencing", async (t) => {

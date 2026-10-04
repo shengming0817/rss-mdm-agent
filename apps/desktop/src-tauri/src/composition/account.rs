@@ -297,7 +297,7 @@ impl Session {
     ) -> Result<Self> {
         let response = client
             .post(format!(
-                "{}/api/v2/tenants/{}/login",
+                "{}/api/v1/identity/tenants/{}/login",
                 organization.origin, organization.tenant_id
             ))
             .header(header::ORIGIN, &organization.origin)
@@ -397,7 +397,10 @@ impl Session {
             self.request(
                 Stage::Session,
                 Method::GET,
-                &format!("/api/v2/tenants/{}/session", self.organization.tenant_id),
+                &format!(
+                    "/api/v1/identity/tenants/{}/session",
+                    self.organization.tenant_id
+                ),
             )
             .await?,
             Stage::Session,
@@ -437,7 +440,7 @@ impl Session {
                 Stage::Logout,
                 Method::POST,
                 &format!(
-                    "/api/v2/tenants/{}/session/logout",
+                    "/api/v1/identity/tenants/{}/session/logout",
                     self.organization.tenant_id
                 ),
             )
@@ -924,12 +927,15 @@ pub(super) mod http_tests {
         }
         session.logout().await.unwrap();
         let requests = task.await.unwrap();
-        assert!(requests[0].starts_with("POST /api/v2/tenants/"));
+        assert!(requests[0].starts_with(&format!("POST /api/v1/identity/tenants/{TENANT}/login ")));
         assert!(requests[0].contains("password-canary"));
         assert!(!requests[0].contains("cookie-canary"));
+        assert!(requests[1].starts_with(&format!("GET /api/v1/identity/tenants/{TENANT}/session ")));
         assert!(requests[1].contains("cookie-canary"));
         assert!(requests[2].starts_with("GET /api/v1/authorization "));
-        assert!(requests[3].contains("/session/logout"));
+        assert!(requests[3].starts_with(&format!(
+            "POST /api/v1/identity/tenants/{TENANT}/session/logout "
+        )));
         assert!(requests[3].contains("csrf-canary"));
     }
     #[tokio::test]

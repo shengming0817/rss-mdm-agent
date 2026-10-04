@@ -1,6 +1,7 @@
-use agent_client::{wire, Error, Materials, Offer};
+use agent_client::{Error, Materials, Offer};
 use execution_contract::*;
 use execution_runner::Artifacts;
+use rss_mdm_agent_wire::runtime as wire;
 use script_plan::{compile_invocation, ScriptInvocationInput, ScriptProfile};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -55,7 +56,7 @@ pub(crate) fn platform() -> Result<Platform, Error> {
 pub(crate) fn context(
     origin: &str,
     tenant: uuid::Uuid,
-    r: &wire::RegistrationReceipt,
+    r: &wire::BindingProfile,
 ) -> Result<(execution_app::ServiceBinding, ActorId), Error> {
     use sha2::{Digest as _, Sha256};
     let bytes = serde_json::to_vec(&(origin, r.registration_id, r.generation))

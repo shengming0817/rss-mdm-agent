@@ -2,9 +2,9 @@
 use execution_contract::{Digest, Id, RequestId, VersionedRef};
 use serde::{Deserialize, Serialize};
 /// Current desktop/system IPC. No negotiation or legacy parser exists.
-pub const IPC_VERSION: u8 = 9;
+pub const IPC_VERSION: u8 = 10;
 /// Current protected installation document format.
-pub const DEPLOYMENT_VERSION: u32 = 2;
+pub const DEPLOYMENT_VERSION: u32 = 3;
 
 /// Safe readiness facts; connecting never grants execution authority.
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema, PartialEq, Eq)]
@@ -40,6 +40,61 @@ impl ServiceStatus {
             readiness,
         }
     }
+}
+/// Public registration phases, independent of enterprise execution permissions.
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum RegistrationPhase {
+    /// No explicit machine registration request exists.
+    Unregistered,
+    /// Preparing the exact persisted request.
+    Preparing,
+    /// User authorization is pending.
+    AwaitingAuthorization,
+    /// Original grant is authorized.
+    Authorized,
+    /// Candidate activation is pending.
+    Activating,
+    /// Active binding is persisted.
+    Active,
+    /// Original CA issuance needs recovery.
+    IssuanceUnknown,
+    /// Original activation needs recovery.
+    ActivationUnknown,
+    /// Original request or credential is rejected.
+    Rejected,
+}
+/// Local interpretation of the retained device credential; never an authorization grant.
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum CredentialStatus {
+    /// No activated certificate exists.
+    Absent,
+    /// Current certificate and binding are retained.
+    Active,
+    /// Certificate expired; retain identity and journal.
+    Expired,
+    /// Server revoked the credential or registration.
+    Revoked,
+    /// A later activation retired the certificate.
+    Retired,
+}
+/// A bounded machine request preview; contains no key handles, secrets or certificate bodies.
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RegistrationStatus {
+    /// Closed lifecycle phase.
+    pub phase: RegistrationPhase,
+    /// Server grant selected by the machine owner.
+    pub grant_id: Option<String>,
+    /// Original authorization deadline.
+    pub expires_at: Option<i64>,
+    /// SHA256 of the exact request public key.
+    pub public_key_fingerprint: Option<String>,
+    /// A durable registration exists, independent of runtime readiness.
+    pub registered: bool,
+    /// Exact retained credential state, independent of a pending authorization.
+    pub credential: CredentialStatus,
 }
 /// Closed presentation combining local installation checks and authenticated service facts.
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema, PartialEq, Eq)]
@@ -417,6 +472,10 @@ pub enum ClientOrigin {
 pub enum Request {
     /// Read safe installation and execution readiness; never execution permission.
     ServiceStatus {},
+    /// Read public machine registration progress.
+    RegistrationStatus {},
+    /// Explicitly request browser authorization for this configured installation.
+    RequestRegistration {},
     /// List authorized local projections and the current offered task.
     Tasks {
         /// Exclusive journal page cursor.
@@ -476,6 +535,11 @@ pub enum Reply {
     ServiceStatus {
         /// Closed service diagnostic.
         value: ServiceStatus,
+    },
+    /// Public registration projection, with no credentials or device key references.
+    RegistrationStatus {
+        /// Closed public progress.
+        value: RegistrationStatus,
     },
     /// Existing journal state.
     Status {
