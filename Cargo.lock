@@ -3852,11 +3852,12 @@ source = "git+https://dev.azure.com/shengming0923/rss/_git/rss?rev=c83978d9b43d4
 [[package]]
 name = "rss-mdm-agent-wire"
 version = "1.0.0"
-source = "git+https://dev.azure.com/shengming0923/rss/_git/rss-mdm?rev=407b3febaf5192f397bedf5e0b64c57f75a1285f#407b3febaf5192f397bedf5e0b64c57f75a1285f"
+source = "git+https://dev.azure.com/shengming0923/rss/_git/rss-mdm?rev=149c34d5f30e74ce7f9f82740a841330befeb4a8#149c34d5f30e74ce7f9f82740a841330befeb4a8"
 dependencies = [
  "base64 0.22.1",
  "ring",
  "rss-mdm-inventory",
+ "schemars 1.2.2",
  "serde",
  "serde_json",
  "sha2",
@@ -3917,7 +3918,7 @@ dependencies = [
 [[package]]
 name = "rss-mdm-inventory"
 version = "0.1.0"
-source = "git+https://dev.azure.com/shengming0923/rss/_git/rss-mdm?rev=407b3febaf5192f397bedf5e0b64c57f75a1285f#407b3febaf5192f397bedf5e0b64c57f75a1285f"
+source = "git+https://dev.azure.com/shengming0923/rss/_git/rss-mdm?rev=149c34d5f30e74ce7f9f82740a841330befeb4a8#149c34d5f30e74ce7f9f82740a841330befeb4a8"
 dependencies = [
  "ordered-float",
  "rss-contract",
@@ -3930,7 +3931,7 @@ dependencies = [
 [[package]]
 name = "rss-mdm-resource"
 version = "0.1.0"
-source = "git+https://dev.azure.com/shengming0923/rss/_git/rss-mdm?rev=407b3febaf5192f397bedf5e0b64c57f75a1285f#407b3febaf5192f397bedf5e0b64c57f75a1285f"
+source = "git+https://dev.azure.com/shengming0923/rss/_git/rss-mdm?rev=149c34d5f30e74ce7f9f82740a841330befeb4a8#149c34d5f30e74ce7f9f82740a841330befeb4a8"
 dependencies = [
  "jsonschema",
  "rss-contract",
@@ -4172,6 +4173,7 @@ dependencies = [
  "schemars_derive 1.2.2",
  "serde",
  "serde_json",
+ "uuid",
 ]
 
 [[package]]
@@ -4470,19 +4472,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
-]
-
-[[package]]
-name = "service-catalog"
-version = "0.1.0"
-dependencies = [
- "execution-contract",
- "jsonschema",
- "schemars 1.2.2",
- "serde",
- "serde_json",
- "serde_json_canonicalizer",
- "sha2",
 ]
 
 [[package]]
@@ -5112,7 +5101,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix",
  "windows-sys 0.59.0",
