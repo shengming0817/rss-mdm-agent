@@ -239,29 +239,35 @@
     }
   },
   "denied": {
+    "action": {
+      "kind": "offered",
+      "offer": {
+        "attempt": "backend-attempt",
+        "expiresAt": 9999999999,
+        "request": "request-1",
+        "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "summary": {
+          "intent": "install",
+          "kind": "software",
+          "steps": [
+            { "identity": "system", "package": "办公套件", "version": "1.0" }
+          ]
+        },
+        "task": "backend-task",
+        "title": "办公套件",
+        "userInitiated": true
+      }
+    },
     "confirmation": null,
     "failure": "revoked",
-    "offer": {
-      "attempt": "backend-attempt",
-      "expiresAt": 9999999999,
-      "request": "request-1",
-      "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "summary": {
-        "intent": "install",
-        "kind": "software",
-        "steps": [
-          { "identity": "system", "package": "办公套件", "version": "1.0" }
-        ]
-      },
-      "task": "backend-task",
-      "title": "办公套件",
-      "userInitiated": true
-    },
     "revision": 1,
     "risk": {
       "expiresAtUnixMs": 9999999999000,
       "level": "two",
-      "policy": { "id": "fixture-risk", "revision": "1" }
+      "source": {
+        "kind": "policy",
+        "policy": { "id": "fixture-risk", "revision": "1" }
+      }
     },
     "state": "failed",
     "trigger": {
@@ -367,29 +373,35 @@
     }
   },
   "proposed": {
+    "action": {
+      "kind": "offered",
+      "offer": {
+        "attempt": "backend-attempt",
+        "expiresAt": 9999999999,
+        "request": "request-1",
+        "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "summary": {
+          "intent": "install",
+          "kind": "software",
+          "steps": [
+            { "identity": "system", "package": "办公套件", "version": "1.0" }
+          ]
+        },
+        "task": "backend-task",
+        "title": "办公套件",
+        "userInitiated": true
+      }
+    },
     "confirmation": null,
     "failure": null,
-    "offer": {
-      "attempt": "backend-attempt",
-      "expiresAt": 9999999999,
-      "request": "request-1",
-      "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "summary": {
-        "intent": "install",
-        "kind": "software",
-        "steps": [
-          { "identity": "system", "package": "办公套件", "version": "1.0" }
-        ]
-      },
-      "task": "backend-task",
-      "title": "办公套件",
-      "userInitiated": true
-    },
     "revision": 1,
     "risk": {
       "expiresAtUnixMs": 9999999999000,
       "level": "two",
-      "policy": { "id": "fixture-risk", "revision": "1" }
+      "source": {
+        "kind": "policy",
+        "policy": { "id": "fixture-risk", "revision": "1" }
+      }
     },
     "state": "awaitingConfirmation",
     "trigger": {

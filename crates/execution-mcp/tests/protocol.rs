@@ -108,7 +108,7 @@ async fn discovery_exposes_backend_references_and_rejects_old_script_and_catalog
         .await;
     let list = w.recv().await;
     let tools = list["result"]["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 5);
+    assert_eq!(tools.len(), 8);
     for tool in tools {
         jsonschema::draft202012::new(&tool["inputSchema"]).unwrap();
         jsonschema::draft202012::new(&tool["outputSchema"]).unwrap();
@@ -394,7 +394,7 @@ async fn official_rmcp_client_can_consume_the_bounded_service() {
             .unwrap()
             .tools
             .len(),
-        5
+        8
     );
     client.cancel().await.unwrap();
     timeout(Duration::from_secs(2), task)
@@ -558,6 +558,19 @@ async fn every_tool_advertises_and_times_out_according_to_its_effects() {
     let tools = list["result"]["tools"].as_array().unwrap();
     let operation = json!({"operationRequestId":"original-id"});
     let cases = [
+        ("execution_policy_tools", json!({}), true, "unavailable"),
+        (
+            "execution_policy_status",
+            operation.clone(),
+            true,
+            "unavailable",
+        ),
+        (
+            "execution_software_observe",
+            json!({"selection": p, "step": 0}),
+            true,
+            "unavailable",
+        ),
         ("execution_tasks", json!({}), true, "unavailable"),
         ("execution_capabilities", json!({}), true, "unavailable"),
         ("execution_status", operation.clone(), true, "unavailable"),
@@ -685,4 +698,61 @@ async fn sdk_tracing_never_receives_raw_tool_arguments_metadata_or_cancel_reason
     ] {
         assert!(!captured.contains(marker), "SDK leaked {marker}");
     }
+}
+
+#[test]
+fn policy_mcp_descriptor_preserves_resource_input_constraints_and_versions() {
+    use rss_mdm_agent_wire::runtime::SelfServiceDirectoryItem;
+    let mut item: SelfServiceDirectoryItem = serde_json::from_value(json!({
+        "policyId":"00000000-0000-4000-a000-000000000001","policyRevision":3,"policyVersion":"00000000-0000-4000-a000-000000000002",
+        "selfService":{"published":true,"allowAi":true,"riskLevel":2,"displayName":"Repair","description":"Repair app","prerequisites":"Employee","sideEffects":"Restart","category":"Support","keywords":[]},
+        "resource":{"id":"r","version":"v1","variant":"default"},
+        "parameterSources":{"name":{"kind":"input"},"path":{"kind":"fixed","value":"/Applications"}},
+        "parameterSchema":{"type":"object","properties":{"name":{"type":"string","maxLength":32},"path":{"type":"string"}},"required":["name","path"],"additionalProperties":false}
+    })).unwrap();
+    let descriptor = policy_tool(&item).unwrap();
+    let validator = jsonschema::validator_for(&descriptor["inputSchema"]).unwrap();
+    assert!(validator.is_valid(&json!({"name":"Acme"})));
+    assert!(!validator.is_valid(&json!({"name":"Acme","path":"/Library"})));
+    assert!(!validator.is_valid(&json!({"name":"x".repeat(33)})));
+    assert!(!validator.is_valid(&json!({})));
+    assert_eq!(descriptor["annotations"]["readOnlyHint"], false);
+    let saved = item.parameter_schema.clone();
+    item.parameter_schema["properties"]["name"] =
+        json!({"type":"array","items":{"type":"integer","minimum":i64::MIN,"maximum":i64::MAX}});
+    let descriptor = policy_tool(&item).unwrap();
+    assert_eq!(
+        descriptor["inputSchema"]["properties"]["name"]["items"]["maximum"],
+        9_007_199_254_740_991_i64
+    );
+    assert_eq!(
+        descriptor["inputSchema"]["properties"]["name"]["items"]["minimum"],
+        -9_007_199_254_740_991_i64
+    );
+    assert_eq!(
+        item.parameter_schema["properties"]["name"]["items"]["maximum"],
+        i64::MAX
+    );
+    for unsupported in [
+        json!({"type":"integer","minimum":i64::MAX}),
+        json!({"type":"integer","const":i64::MAX}),
+        json!({"type":"integer","enum":[1,i64::MAX]}),
+    ] {
+        item.parameter_schema["properties"]["name"] = unsupported;
+        assert!(matches!(
+            policy_tool(&item),
+            Err(ServiceError::InvalidInput)
+        ));
+    }
+    item.parameter_schema = saved;
+    let original = policy_tool_name(&item);
+    item.policy_revision += 1;
+    assert_ne!(policy_tool_name(&item), original);
+    item.self_service.allow_ai = false;
+    assert!(matches!(policy_tool(&item), Err(ServiceError::Denied)));
+    item.self_service.allow_ai = true;
+    item.self_service.risk_level = 0;
+    assert!(matches!(policy_tool(&item), Err(ServiceError::Denied)));
+    item.self_service.risk_level = 3;
+    assert!(matches!(policy_tool(&item), Err(ServiceError::Denied)));
 }

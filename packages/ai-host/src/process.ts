@@ -239,12 +239,13 @@ export class WorkerPort implements ProviderAgentPort {
         this.launchId,
         async (method, data, b) => {
           if (
-            method !== "propose" ||
+            !["propose", "list"].includes(method) ||
             this.closing ||
-            !this.toolsAdmitted ||
+            (method === "propose" && !this.toolsAdmitted) ||
             !this.bridge
           )
             return fail("permission_denied");
+          if (method === "list") return this.bridge.list(b);
           const proposal = data as {
             name: string;
             arguments: Record<string, unknown>;

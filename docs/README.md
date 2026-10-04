@@ -35,4 +35,3 @@
 
 - [本机安全服务架构](architecture/local-service.md)与[实验室指南](guides/local-service-lab.md)：唯一系统服务、开发 fixture、显式候选刷新与平台验收边界。
 - [本机安全服务来源](reference/local-service.md)：固定上游 revision、公开平台接口和运行包校验来源。
-- [服务目录](../crates/service-catalog/README.md)：参数投影、精确资源绑定与后端边界。

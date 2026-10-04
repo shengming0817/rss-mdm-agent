@@ -10,6 +10,8 @@ import hashlib
 import json
 import os
 from pathlib import Path
+
+DEFAULT_CONFIG = Path('/Library/Application Support/RSS MDM Agent/execution.json')
 import re
 import shlex
 import subprocess
@@ -1311,7 +1313,7 @@ def main():
         result = subprocess.run(['/bin/launchctl', 'print', domain], capture_output=True)
         if result.returncode != 113:
             raise RuntimeError('existing or unqueryable execution registration; refusing replacement')
-    default_config = Path('/Library/Application Support/RSS MDM Agent/execution.json')
+    default_config = DEFAULT_CONFIG
     if args.desktop and (default_config.exists() or default_config.is_symlink()):
         raise RuntimeError('default deployment exists; refusing to replace another installation')
     args.output.mkdir(mode=0o700, parents=True, exist_ok=False)
@@ -1353,7 +1355,7 @@ def main():
         installer.chmod(0o600)
         system_installer_source = installer_source
         shutil.copyfile(lab / 'tls.pem', inputs / 'tls.pem')
-        deployment = dict(version=4, ipc_version=10, origin=info['origin'].rstrip('/'), tenant=info['tenant'],
+        deployment = dict(version=4, ipc_version=11, origin=info['origin'].rstrip('/'), tenant=info['tenant'],
                           signing_keys={'test': info['key']}, ca_file=str(protected / 'ca.pem'),
                           installation_id=str(uuid.uuid4()), installation_artifact=hashlib.sha256(args.binary.read_bytes()).hexdigest(), device_ca_file=str(protected / 'device-ca.pem'),
                           state_root=str(protected / 'state'),

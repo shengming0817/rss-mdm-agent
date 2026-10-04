@@ -307,7 +307,7 @@ test(
       [
         "list_mcp_resource_templates",
         "list_mcp_resources",
-        "mcp__rss_host__propose",
+        "mcp__rss_host__inventory_read",
         "read_mcp_resource",
       ].sort(),
     );

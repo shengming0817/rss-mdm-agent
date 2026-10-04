@@ -520,7 +520,10 @@ async function copy(text: string) {
           </details>
           <ExecutionActivity
             v-else-if="
-              row.delivery && row.delivery.proposal.name === 'execution_execute'
+              row.delivery &&
+              (row.delivery.proposal.name === 'execution_execute' ||
+                row.delivery.proposal.name.startsWith('policy_') ||
+                row.delivery.proposal.name === 'execution_software_observe')
             "
             :controller="c"
             :operation-id="row.key"

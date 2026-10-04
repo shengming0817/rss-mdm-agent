@@ -14,6 +14,7 @@ pub struct Lifecycle {
     quitting: bool,
     closing_view: bool,
     shutdown_complete: Arc<AtomicBool>,
+    shutdown_failed: Arc<AtomicBool>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -25,6 +26,9 @@ enum Exit {
 
 impl Lifecycle {
     fn exit_requested(&mut self, code: Option<i32>) -> Exit {
+        if self.shutdown_failed.swap(false, Ordering::AcqRel) {
+            self.quitting = false;
+        }
         if self.quitting {
             return if self.shutdown_complete.load(Ordering::Acquire) {
                 Exit::Allow
@@ -72,9 +76,19 @@ impl Lifecycle {
                     api.prevent_exit();
                     let app = app.clone();
                     let completed = self.shutdown_complete.clone();
+                    let failed = self.shutdown_failed.clone();
                     tauri::async_runtime::spawn(async move {
                         #[cfg(not(feature = "dev-fixture"))]
-                        app.state::<DesktopRuntime>().shutdown().await;
+                        {
+                            let runtime = app.state::<DesktopRuntime>();
+                            runtime.shutdown().await;
+                            if !runtime.closed() {
+                                failed.store(true, Ordering::Release);
+                                return;
+                            }
+                        }
+                        #[cfg(feature = "dev-fixture")]
+                        let _ = failed;
                         completed.store(true, Ordering::Release);
                         app.exit(code);
                     });
@@ -118,6 +132,18 @@ mod tests {
         assert_eq!(lifecycle.exit_requested(None), Exit::KeepAlive);
         lifecycle.shutdown_complete.store(true, Ordering::Release);
         assert_eq!(lifecycle.exit_requested(Some(1)), Exit::Allow);
+    }
+
+    #[test]
+    fn unconfirmed_shutdown_blocks_exit_and_allows_an_explicit_retry() {
+        let mut lifecycle = Lifecycle::default();
+        assert_eq!(lifecycle.exit_requested(Some(0)), Exit::Shutdown(0));
+        assert_eq!(lifecycle.exit_requested(Some(0)), Exit::KeepAlive);
+        lifecycle.shutdown_failed.store(true, Ordering::Release);
+        assert_eq!(lifecycle.exit_requested(Some(0)), Exit::Shutdown(0));
+        assert_eq!(lifecycle.exit_requested(Some(0)), Exit::KeepAlive);
+        lifecycle.shutdown_complete.store(true, Ordering::Release);
+        assert_eq!(lifecycle.exit_requested(Some(0)), Exit::Allow);
     }
 
     #[test]

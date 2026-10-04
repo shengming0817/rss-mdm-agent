@@ -88,9 +88,11 @@ impl Case {
         service.core.available_risk = level.map(|level| {
             TrustedRisk::fixture(
                 &offer,
-                BackendRiskDecision {
+                ExecutionRisk {
                     level,
-                    policy: plan::reference("backend-risk-policy", "1").unwrap(),
+                    source: execution_contract::RiskSource::Policy {
+                        policy: plan::reference("backend-risk-policy", "1").unwrap(),
+                    },
                     expires_at_unix_ms: clock.millis().unwrap() + 120_000,
                 },
             )
@@ -119,7 +121,9 @@ impl Case {
     }
     fn selection(&self, human: bool) -> Selection {
         let mut selection = Selection::from_record(&BackendRequest {
-            offer: offered(&self.offer).unwrap(),
+            action: execution_contract::PreparedAction::Offered {
+                offer: offered(&self.offer).unwrap(),
+            },
             trigger: self
                 .selection
                 .trigger(&self.service.core.host.binding.device)
@@ -158,9 +162,11 @@ async fn terminal_waiting_releases_capacity_without_changing_the_original_reques
         if cause == 2 {
             c.service.core.available_risk = Some(TrustedRisk::fixture(
                 &c.offer,
-                BackendRiskDecision {
+                ExecutionRisk {
                     level: RiskLevel::Two,
-                    policy: plan::reference("backend-risk-policy", "1").unwrap(),
+                    source: execution_contract::RiskSource::Policy {
+                        policy: plan::reference("backend-risk-policy", "1").unwrap(),
+                    },
                     expires_at_unix_ms: c.service.core.host.clock.millis().unwrap() - 1,
                 },
             ));
@@ -218,7 +224,7 @@ async fn terminal_waiting_releases_capacity_without_changing_the_original_reques
         c.service.next_network = std::time::Instant::now();
         c.service.drive(&mut commands).await.unwrap();
         let next = c.service.core.available.as_ref().unwrap().clone();
-        assert_ne!(next.request, original.offer.request);
+        assert_ne!(next.request, original.action.offer().unwrap().request);
         assert!(c.service.waiting.is_some());
         let mut human = c.selection(true);
         human.request = next.request;
@@ -305,7 +311,7 @@ async fn production_preparation_applies_the_risk_matrix_and_human_has_no_gate() 
         c.service.core.start_task(selection).unwrap();
         let r = c.record();
         let expected = match level {
-            Some(RiskLevel::Zero | RiskLevel::One) => BackendRequestState::Ready,
+            Some(RiskLevel::One) => BackendRequestState::Ready,
             Some(RiskLevel::Two) => BackendRequestState::AwaitingConfirmation,
             _ => BackendRequestState::Failed,
         };
@@ -423,10 +429,10 @@ async fn signed_start_needs_the_current_confirmed_request_and_frozen_action() {
         "../../../crates/execution-contract/tests/fixtures/plan.json"
     ))
     .unwrap();
-    spec.request.request_id = record.offer.request.clone();
+    spec.request.request_id = record.action.offer().unwrap().request.clone();
     spec.request.initiator = Initiator::Backend {
-        task: record.offer.task.clone(),
-        attempt: record.offer.attempt.clone(),
+        task: record.action.offer().unwrap().task.clone(),
+        attempt: record.action.offer().unwrap().attempt.clone(),
         trigger: record.trigger.clone(),
     };
     let frozen = FrozenExecution::freeze(spec, &plan::storage_limits().input).unwrap();
@@ -990,8 +996,14 @@ async fn renewal_and_revoked_restart_keep_the_existing_journal_authority() {
         .backend_requests(&service.core.caller())
         .unwrap();
     assert_eq!(recovered.len(), records.len());
-    assert_eq!(recovered[0].offer.request, records[0].offer.request);
-    assert_eq!(recovered[0].offer.attempt, records[0].offer.attempt);
+    assert_eq!(
+        recovered[0].action.offer().unwrap().request,
+        records[0].action.offer().unwrap().request
+    );
+    assert_eq!(
+        recovered[0].action.offer().unwrap().attempt,
+        records[0].action.offer().unwrap().attempt
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1029,4 +1041,774 @@ async fn running_owner_publishes_current_credential_and_safe_status_without_exec
     assert!(
         matches!(reply, Reply::ServiceStatus { value } if value.readiness == Readiness::NotReady)
     );
+}
+
+impl Case {
+    async fn policy_call(&mut self, request: execution_ipc::host::Request) -> Reply {
+        let (reply, receive) = tokio::sync::oneshot::channel();
+        self.service.core.enqueue_policy(Command {
+            fence_epoch: self
+                .service
+                .core
+                .fences
+                .current(&self.selection.subject)
+                .unwrap(),
+            request: LocalRequest::operation(request),
+            subject: self.selection.subject.clone(),
+            session: self.selection.session,
+            binding: Some(self.selection.binding.clone()),
+            reply,
+        });
+        let (_sender, mut commands) = tokio::sync::mpsc::channel(1);
+        self.service.drive_policy(&mut commands).await.unwrap();
+        receive.await.unwrap()
+    }
+    async fn employee(&mut self, generation: &str) {
+        assert!(matches!(
+            self.policy_call(execution_ipc::host::Request::EmployeeSession {
+                value: Some(execution_ipc::host::EmployeeSession {
+                    credential: zeroize::Zeroizing::new("c".repeat(64)),
+                    actor: wire::ScriptActor {
+                        tenant_id: self.service.client.configuration().tenant,
+                        instance_id: uuid::Uuid::from_u128(2),
+                        principal_id: uuid::Uuid::from_u128(3)
+                    },
+                    generation: plan::id(generation).unwrap(),
+                    expires_at_unix_ms: self.service.core.host.clock.millis().unwrap() + 120_000,
+                })
+            })
+            .await,
+            Reply::EmployeeBound
+        ));
+    }
+}
+#[tokio::test]
+async fn policy_confirmation_is_single_exact_and_bound_to_employee_generation() {
+    use execution_ipc::host::Request;
+    let mut c = Case::new(Some(RiskLevel::Two)).await;
+    let directory = protocol::policy_directory_fixture();
+    c._server.data.lock().unwrap().self_service_directory =
+        Some(wire::SelfServiceDirectoryResponse {
+            items: vec![directory.clone()],
+            next_cursor: None,
+            as_of: c._server.time.now().unwrap(),
+        });
+    c.employee("generation-one").await;
+    let choice = PolicyChoice {
+        request: RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap(),
+        policy_id: plan::id(directory.policy_id.to_string()).unwrap(),
+        policy_revision: directory.policy_revision,
+        policy_version: plan::id(directory.policy_version.to_string()).unwrap(),
+        parameters: std::collections::BTreeMap::from([("name".into(), serde_json::json!("Acme"))]),
+    };
+    let invoke = Request::InvokePolicy {
+        choice: choice.clone(),
+        origin: c.selection.origin.clone(),
+    };
+    let Reply::PolicyRequest { value: pending } = c.policy_call(invoke.clone()).await else {
+        panic!("policy preparation")
+    };
+    assert_eq!(pending.state, BackendRequestState::AwaitingConfirmation);
+    assert!(c._server.data.lock().unwrap().invocations.is_empty());
+    assert_eq!(pending.risk.as_ref().unwrap().level, RiskLevel::Two);
+    assert_eq!(pending.action.request(), &choice.request);
+    let Reply::PolicyRequest { value: replay } = c.policy_call(invoke.clone()).await else {
+        panic!("original replay")
+    };
+    assert_eq!(pending, replay);
+    // No caller may override an administrator Fixed field or change the original choice.
+    let mut changed = choice.clone();
+    changed
+        .parameters
+        .insert("path".into(), serde_json::json!("/Library"));
+    assert!(matches!(
+        c.policy_call(Request::InvokePolicy {
+            choice: changed,
+            origin: c.selection.origin.clone()
+        })
+        .await,
+        Reply::Rejected
+    ));
+    c.employee("generation-two").await;
+    assert!(matches!(
+        c.policy_call(Request::ConfirmPolicy {
+            request: choice.request.clone()
+        })
+        .await,
+        Reply::Rejected
+    ));
+    assert!(c
+        .service
+        .core
+        .policy_readable(
+            &choice.request,
+            &c.selection.subject,
+            Some(&c.selection.binding)
+        )
+        .unwrap());
+    assert!(c._server.data.lock().unwrap().invocations.is_empty());
+    let Reply::PolicyRequest { value: historical } = c
+        .policy_call(Request::PolicyStatus {
+            request: choice.request.clone(),
+        })
+        .await
+    else {
+        panic!("same employee may read the original journal across Desktop generations")
+    };
+    assert_eq!(historical.action.request(), &choice.request);
+    assert_eq!(historical.state, BackendRequestState::AwaitingConfirmation);
+    c.employee("generation-one").await;
+    c._server.data.lock().unwrap().invocation_reply_lost = true;
+    let Reply::PolicyRequest { value: submitted } = c
+        .policy_call(Request::ConfirmPolicy {
+            request: choice.request.clone(),
+        })
+        .await
+    else {
+        panic!("single confirmation")
+    };
+    assert_eq!(submitted.state, BackendRequestState::Submitting);
+    assert!(submitted.confirmation.is_some());
+    {
+        let data = c._server.data.lock().unwrap();
+        let input = &data.invocations.values().next().unwrap().0;
+        assert_eq!(input["source"], "ai");
+        assert_eq!(input["confirmed"], true);
+        assert_eq!(input["parameters"], serde_json::json!({"name":"Acme"}));
+    }
+    let Reply::PolicyStatus { value: status } = c
+        .policy_call(Request::PolicyStatus {
+            request: choice.request.clone(),
+        })
+        .await
+    else {
+        panic!("lost reply status")
+    };
+    assert_eq!(status.request_id.to_string(), choice.request.as_str());
+    assert_eq!(c._server.data.lock().unwrap().invocations.len(), 1);
+    c.policy_call(Request::EmployeeSession { value: None })
+        .await;
+    assert!(matches!(
+        c.policy_call(Request::PolicyStatus {
+            request: choice.request
+        })
+        .await,
+        Reply::Rejected
+    ));
+}
+#[tokio::test]
+async fn policy_low_risk_and_human_only_settings_have_separate_native_sources() {
+    use execution_ipc::host::Request;
+    for human in [false, true] {
+        let mut c = Case::new(Some(RiskLevel::Two)).await;
+        let mut directory = protocol::policy_directory_fixture();
+        directory.self_service.risk_level = 1;
+        directory.self_service.allow_ai = !human;
+        c._server.data.lock().unwrap().self_service_directory =
+            Some(wire::SelfServiceDirectoryResponse {
+                items: vec![directory.clone()],
+                next_cursor: None,
+                as_of: c._server.time.now().unwrap(),
+            });
+        c.employee("generation-one").await;
+        let choice = PolicyChoice {
+            request: RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap(),
+            policy_id: plan::id(directory.policy_id.to_string()).unwrap(),
+            policy_revision: directory.policy_revision,
+            policy_version: plan::id(directory.policy_version.to_string()).unwrap(),
+            parameters: std::collections::BTreeMap::from([(
+                "name".into(),
+                serde_json::json!("Acme"),
+            )]),
+        };
+        let origin = if human {
+            ClientOrigin::Desktop {}
+        } else {
+            c.selection.origin.clone()
+        };
+        let Reply::PolicyRequest { value } = c
+            .policy_call(Request::InvokePolicy {
+                choice: choice.clone(),
+                origin,
+            })
+            .await
+        else {
+            panic!("native source")
+        };
+        assert_eq!(value.state, BackendRequestState::Submitting);
+        assert!(value.confirmation.is_none());
+        assert_eq!(value.risk.is_none(), human);
+        {
+            let data = c._server.data.lock().unwrap();
+            let input = &data.invocations.values().next().unwrap().0;
+            assert_eq!(input["source"], if human { "human" } else { "ai" });
+            assert_eq!(input["confirmed"], false);
+        }
+        let mut stale = choice.clone();
+        stale.request = RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap();
+        stale.policy_revision += 1;
+        assert!(matches!(
+            c.policy_call(Request::InvokePolicy {
+                choice: stale,
+                origin: c.selection.origin.clone()
+            })
+            .await,
+            Reply::Rejected
+        ));
+    }
+}
+
+#[tokio::test]
+async fn policy_offer_binds_the_original_journal_and_signed_start_before_dispatch() {
+    use execution_ipc::host::Request;
+    for level in [1, 2] {
+        for change in 0..5 {
+            let mut c = Case::new(None).await;
+            c.service.release_waiting();
+            let mut directory = protocol::policy_directory_fixture();
+            directory.self_service.risk_level = level;
+            c._server.data.lock().unwrap().self_service_directory =
+                Some(wire::SelfServiceDirectoryResponse {
+                    items: vec![directory.clone()],
+                    next_cursor: None,
+                    as_of: c._server.time.now().unwrap(),
+                });
+            c.employee("generation-one").await;
+            let choice = PolicyChoice {
+                request: RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap(),
+                policy_id: plan::id(directory.policy_id.to_string()).unwrap(),
+                policy_revision: directory.policy_revision,
+                policy_version: plan::id(directory.policy_version.to_string()).unwrap(),
+                parameters: std::collections::BTreeMap::from([(
+                    "name".into(),
+                    serde_json::json!("Acme"),
+                )]),
+            };
+            assert!(matches!(
+                c.policy_call(Request::InvokePolicy {
+                    choice: choice.clone(),
+                    origin: c.selection.origin.clone()
+                })
+                .await,
+                Reply::PolicyRequest { .. }
+            ));
+            if level == 2 {
+                assert!(matches!(
+                    c.policy_call(Request::ConfirmPolicy {
+                        request: choice.request.clone()
+                    })
+                    .await,
+                    Reply::PolicyRequest { .. }
+                ));
+            }
+            let record = c
+                .service
+                .core
+                .app
+                .backend_request(&c.service.core.caller(), &choice.request)
+                .unwrap()
+                .unwrap();
+            let accepted = c
+                ._server
+                .data
+                .lock()
+                .unwrap()
+                .invocations
+                .values()
+                .next()
+                .unwrap()
+                .1
+                .clone();
+            {
+                let mut data = c._server.data.lock().unwrap();
+                data.script();
+                let wire::TaskPayload::Script(mut spec) =
+                    data.offer.as_ref().unwrap().payload.clone()
+                else {
+                    unreachable!()
+                };
+                spec.task_id = accepted.run_id;
+                data.task = accepted.run_id;
+                spec.resource = directory.resource.clone();
+                spec.parameters = std::collections::BTreeMap::from([
+                    ("name".into(), serde_json::json!("Acme")),
+                    ("path".into(), serde_json::json!("/Applications")),
+                ]);
+                spec.authorization = wire::ScriptAuthorization::SelfService {
+                    request_id: accepted.request_id,
+                    actor: wire::ScriptActor {
+                        tenant_id: data.tenant,
+                        instance_id: uuid::Uuid::from_u128(2),
+                        principal_id: uuid::Uuid::from_u128(3),
+                    },
+                    source: wire::ScriptCaller::Ai,
+                    policy_id: directory.policy_id,
+                    policy_revision: directory.policy_revision,
+                    policy_version: directory.policy_version,
+                    allow_ai: true,
+                    risk_level: level,
+                    confirmed: level == 2,
+                };
+                match change {
+                    1 => {
+                        spec.parameters
+                            .insert("path".into(), serde_json::json!("/Library"));
+                    }
+                    2 => spec.resource.version = "v2".into(),
+                    3 => {
+                        if let wire::ScriptAuthorization::SelfService { actor, .. } =
+                            &mut spec.authorization
+                        {
+                            actor.principal_id = uuid::Uuid::new_v4();
+                        }
+                    }
+                    4 => {
+                        if let wire::ScriptAuthorization::SelfService {
+                            policy_revision, ..
+                        } = &mut spec.authorization
+                        {
+                            *policy_revision += 1;
+                        }
+                    }
+                    _ => (),
+                }
+                data.offer = Some(data.signed(wire::TaskPayload::Script(spec)));
+                data.explicit_offers = true;
+            }
+            // Every alternative is independently signed and actually verified by the HTTP client.
+            let offer = c.service.client.claim().await.unwrap().offer.unwrap();
+            if change != 0 {
+                assert!(c.service.bind_policy_offer(&offer).is_err());
+                assert_eq!(
+                    c.service
+                        .core
+                        .app
+                        .backend_request(&c.service.core.caller(), &choice.request)
+                        .unwrap()
+                        .unwrap(),
+                    record
+                );
+                assert!(!c._server.data.lock().unwrap().started);
+                continue;
+            }
+            let selection = c.service.bind_policy_offer(&offer).unwrap();
+            assert_eq!(selection.request, choice.request);
+            let bound = c
+                .service
+                .core
+                .app
+                .backend_request(&c.service.core.caller(), &choice.request)
+                .unwrap()
+                .unwrap();
+            assert_eq!(bound.trigger, record.trigger);
+            assert_eq!(bound.confirmation, record.confirmation);
+            let materials = c.service.client.prepare(&offer).await.unwrap();
+            c.service.client.received(&offer).await.unwrap();
+            let start = c
+                .service
+                .client
+                .start_user_initiated(&offer, &materials)
+                .await
+                .unwrap();
+            let mut input: ExecutionInput = serde_json::from_str(include_str!(
+                "../../../crates/execution-contract/tests/fixtures/plan.json"
+            ))
+            .unwrap();
+            input.request.request_id = choice.request.clone();
+            input.request.initiator = Initiator::Backend {
+                task: plan::id(offer.task_id().to_string()).unwrap(),
+                attempt: plan::id(offer.attempt_id().to_string()).unwrap(),
+                trigger: bound.trigger.clone(),
+            };
+            let frozen = FrozenExecution::freeze(input, &plan::storage_limits().input).unwrap();
+            let risk = TrustedRisk::from_offer(&offer);
+            assert!(ProductGateProof::verify_start(
+                &offer,
+                &start,
+                &frozen,
+                Some(&bound),
+                risk.as_ref(),
+                c.service.core.host.clock.millis().unwrap()
+            )
+            .is_ok());
+            // A revoke which ACKs while HTTP is in flight invalidates this same generation.
+            let admission = c.service.core.policy_fence(&bound).unwrap().unwrap();
+            c.service.core.fences.revoke(&c.selection.subject).unwrap();
+            assert!(admission.0.admit(&admission.1, admission.2).is_err());
+            assert!(c.service.core.current_policy_login(&bound).is_err());
+            c.employee("generation-two").await;
+            assert!(c.service.bind_policy_offer(&offer).is_err());
+            assert_eq!(
+                c.service
+                    .core
+                    .app
+                    .backend_request(&c.service.core.caller(), &choice.request)
+                    .unwrap()
+                    .unwrap(),
+                bound
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn revoked_generation_cannot_rebind_from_a_queued_native_handoff() {
+    let mut c = Case::new(None).await;
+    c.employee("generation-one").await;
+    let epoch = c.service.core.fences.current(&c.selection.subject).unwrap();
+    c.service.core.fences.revoke(&c.selection.subject).unwrap();
+    let (reply, receive) = tokio::sync::oneshot::channel();
+    c.service.core.enqueue_policy(Command {
+        fence_epoch: epoch,
+        subject: c.selection.subject.clone(),
+        session: c.selection.session,
+        binding: Some(c.selection.binding.clone()),
+        request: LocalRequest::operation(execution_ipc::host::Request::EmployeeSession {
+            value: Some(execution_ipc::host::EmployeeSession {
+                credential: zeroize::Zeroizing::new("c".repeat(64)),
+                actor: wire::ScriptActor {
+                    tenant_id: c.service.client.configuration().tenant,
+                    instance_id: uuid::Uuid::from_u128(2),
+                    principal_id: uuid::Uuid::from_u128(3),
+                },
+                generation: plan::id("generation-one").unwrap(),
+                expires_at_unix_ms: c.service.core.host.clock.millis().unwrap() + 60000,
+            }),
+        }),
+        reply,
+    });
+    let (_sender, mut commands) = tokio::sync::mpsc::channel(1);
+    c.service.drive_policy(&mut commands).await.unwrap();
+    assert!(matches!(receive.await.unwrap(), Reply::Rejected));
+}
+
+#[tokio::test]
+async fn software_observation_rejects_unselected_definition_without_creating_an_attempt() {
+    use execution_ipc::host::Request;
+    let mut c = Case::new(None).await;
+    for change in 0..5 {
+        let mut selected = BackendSelection {
+            request: c.selection.request.clone(),
+            task: c.selection.task.clone(),
+            attempt: c.selection.attempt.clone(),
+            revision: c.selection.revision.clone(),
+        };
+        match change {
+            0 => selected.request = RequestId::new("different").unwrap(),
+            1 => selected.task = plan::id("different").unwrap(),
+            2 => selected.attempt = plan::id("different").unwrap(),
+            3 => selected.revision = Digest::new("f".repeat(64)).unwrap(),
+            _ => (),
+        }
+        let choice = SoftwareReadChoice {
+            request: RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap(),
+            input: SoftwareReadSelection {
+                selection: selected,
+                step: if change == 4 { 100 } else { 0 },
+            },
+        };
+        assert!(matches!(
+            c.policy_call(Request::ObserveSoftware {
+                choice: choice.clone(),
+                origin: c.selection.origin.clone()
+            })
+            .await,
+            Reply::Rejected
+        ));
+        assert!(c
+            .service
+            .core
+            .app
+            .backend_request(&c.service.core.caller(), &choice.request)
+            .unwrap()
+            .is_none());
+        assert!(c
+            .service
+            .core
+            .app
+            .frozen_input(&c.service.core.caller(), &choice.request)
+            .is_err());
+    }
+    assert!(!c._server.data.lock().unwrap().started);
+}
+
+#[tokio::test]
+async fn settled_software_observation_replays_the_original_fact_and_never_creates_execution() {
+    // The fixture supplies a trusted selection; the production native collector and SQLite
+    // transition are real. This test does not claim proof of a registered OS helper session.
+    use execution_ipc::host::Request;
+    let mut c = Case::new(None).await;
+    let definition = Digest::new("a".repeat(64)).unwrap();
+    let mut originals = vec![];
+    for unavailable in [false, true] {
+        let request = RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap();
+        let choice = SoftwareReadChoice {
+            request: request.clone(),
+            input: SoftwareReadSelection {
+                selection: BackendSelection {
+                    request: c.selection.request.clone(),
+                    task: c.selection.task.clone(),
+                    attempt: c.selection.attempt.clone(),
+                    revision: c.selection.revision.clone(),
+                },
+                step: 0,
+            },
+        };
+        let now = c.service.core.host.clock.millis().unwrap();
+        let record = BackendRequest {
+            action: PreparedAction::SoftwareRead {
+                choice: choice.clone(),
+                definition: definition.clone(),
+                expires_at_unix_ms: now + 60000,
+                observation: None,
+            },
+            trigger: c
+                .selection
+                .trigger(&c.service.core.host.binding.device)
+                .unwrap(),
+            risk: Some(ExecutionRisk {
+                level: RiskLevel::One,
+                source: RiskSource::Software {
+                    definition: definition.clone(),
+                },
+                expires_at_unix_ms: now + 60000,
+            }),
+            confirmation: None,
+            revision: 1,
+            state: BackendRequestState::Ready,
+            failure: None,
+        };
+        let observed = c
+            .service
+            .core
+            .record_software_observation(
+                record,
+                || {
+                    execution_runner::software::observe_native(
+                        &SoftwareDetector::PkgReceipt {
+                            receipt: if unavailable {
+                                "../../invalid".into()
+                            } else {
+                                format!("com.rss-mdm.uninstalled-test-{}", std::process::id())
+                            },
+                            version: PackageValue::new("1").unwrap(),
+                        },
+                        &RunAs::System {
+                            platform: Platform::Macos,
+                        },
+                    )
+                    .map_err(crate::error::app_error)
+                },
+                "fixture-package".into(),
+                "1".into(),
+            )
+            .unwrap();
+        assert_eq!(observed.state, BackendRequestState::Observed);
+        assert!(observed.confirmation.is_none());
+        let PreparedAction::SoftwareRead {
+            observation: Some(fact),
+            ..
+        } = &observed.action
+        else {
+            panic!("collected fact")
+        };
+        assert_eq!(
+            fact.quality,
+            if unavailable {
+                OutputQuality::Failed
+            } else {
+                OutputQuality::Complete
+            }
+        );
+        assert!(fact.collected_at_unix_ms >= now);
+        assert!(c
+            .service
+            .core
+            .app
+            .frozen_input(&c.service.core.caller(), &request)
+            .is_err());
+        let Reply::PolicyRequest { value } = c
+            .policy_call(Request::ObserveSoftware {
+                choice: choice.clone(),
+                origin: c.selection.origin.clone(),
+            })
+            .await
+        else {
+            panic!("original journal fact")
+        };
+        assert_eq!(*value, observed);
+        let mut changed = choice;
+        changed.input.step += 1;
+        assert!(matches!(
+            c.policy_call(Request::ObserveSoftware {
+                choice: changed,
+                origin: c.selection.origin.clone()
+            })
+            .await,
+            Reply::Rejected
+        ));
+        originals.push(observed.action.request().clone());
+    }
+    assert_ne!(originals[0], originals[1]);
+    assert!(!c._server.data.lock().unwrap().started);
+}
+
+#[tokio::test]
+async fn durable_ready_policy_resumes_original_uuid_from_each_native_entrypoint() {
+    use execution_ipc::host::Request;
+    for entry in 0..3 {
+        let mut c = Case::new(Some(RiskLevel::Two)).await;
+        let mut directory = protocol::policy_directory_fixture();
+        directory.self_service.risk_level = if entry == 2 { 2 } else { 1 };
+        c._server.data.lock().unwrap().self_service_directory =
+            Some(wire::SelfServiceDirectoryResponse {
+                items: vec![directory.clone()],
+                next_cursor: None,
+                as_of: c._server.time.now().unwrap(),
+            });
+        c.employee("generation-one").await;
+        let choice = PolicyChoice {
+            request: RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap(),
+            policy_id: plan::id(directory.policy_id.to_string()).unwrap(),
+            policy_revision: directory.policy_revision,
+            policy_version: plan::id(directory.policy_version.to_string()).unwrap(),
+            parameters: std::collections::BTreeMap::from([(
+                "name".into(),
+                serde_json::json!("Acme"),
+            )]),
+        };
+        let invoke = Request::InvokePolicy {
+            choice: choice.clone(),
+            origin: c.selection.origin.clone(),
+        };
+        let Reply::PolicyRequest { value } = c.policy_call(invoke).await else {
+            panic!("initial preparation")
+        };
+        let value = if entry == 2 {
+            let Reply::PolicyRequest { value } = c
+                .policy_call(Request::ConfirmPolicy {
+                    request: choice.request.clone(),
+                })
+                .await
+            else {
+                panic!("confirmation")
+            };
+            value
+        } else {
+            value
+        };
+        let mut restored = *value;
+        let original = RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap();
+        if let PreparedAction::Policy { choice, run_id, .. } = &mut restored.action {
+            choice.request = original.clone();
+            *run_id = None;
+        }
+        restored.state = BackendRequestState::Ready;
+        restored.revision = 1;
+        c.service
+            .core
+            .app
+            .record_backend_request(&c.service.core.caller(), None, &restored)
+            .unwrap();
+        let request = match entry {
+            0 => Request::InvokePolicy {
+                choice: match &restored.action {
+                    PreparedAction::Policy { choice, .. } => choice.clone(),
+                    _ => unreachable!(),
+                },
+                origin: c.selection.origin.clone(),
+            },
+            1 => Request::PolicyStatus {
+                request: original.clone(),
+            },
+            _ => Request::ConfirmPolicy {
+                request: original.clone(),
+            },
+        };
+        let Reply::PolicyRequest { value } = c.policy_call(request).await else {
+            panic!("Ready recovery")
+        };
+        assert_eq!(value.state, BackendRequestState::Submitting);
+        assert_eq!(value.action.request(), &original);
+        assert!(c
+            ._server
+            .data
+            .lock()
+            .unwrap()
+            .invocations
+            .contains_key(&uuid::Uuid::parse_str(original.as_str()).unwrap()));
+    }
+}
+#[tokio::test]
+async fn unaccepted_policy_expiry_is_durable_and_status_remains_read_only() {
+    use execution_ipc::host::Request;
+    let mut c = Case::new(Some(RiskLevel::Two)).await;
+    let mut directory = protocol::policy_directory_fixture();
+    directory.self_service.risk_level = 1;
+    c._server.data.lock().unwrap().self_service_directory =
+        Some(wire::SelfServiceDirectoryResponse {
+            items: vec![directory.clone()],
+            next_cursor: None,
+            as_of: c._server.time.now().unwrap(),
+        });
+    c.employee("generation-one").await;
+    c._server.data.lock().unwrap().invocation_unaccepted = true;
+    let original = RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap();
+    let choice = PolicyChoice {
+        request: original.clone(),
+        policy_id: plan::id(directory.policy_id.to_string()).unwrap(),
+        policy_revision: directory.policy_revision,
+        policy_version: plan::id(directory.policy_version.to_string()).unwrap(),
+        parameters: std::collections::BTreeMap::from([("name".into(), serde_json::json!("Acme"))]),
+    };
+    let Reply::PolicyRequest { value } = c
+        .policy_call(Request::InvokePolicy {
+            choice,
+            origin: c.selection.origin.clone(),
+        })
+        .await
+    else {
+        panic!("unaccepted invocation")
+    };
+    assert_eq!(value.state, BackendRequestState::Submitting);
+    // Restore an already-expired durable record at the interrupted submission boundary.
+    // SystemClock intentionally rejects artificial forward movement, so the expiry is fixed
+    // before the initial journal insert, preserving the immutable preparation contract.
+    let mut expired = *value;
+    let original = RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap();
+    if let PreparedAction::Policy {
+        choice,
+        expires_at_unix_ms,
+        ..
+    } = &mut expired.action
+    {
+        choice.request = original.clone();
+        *expires_at_unix_ms = c.service.core.host.clock.millis().unwrap() - 1;
+    }
+    expired.risk.as_mut().unwrap().expires_at_unix_ms = expired.action.expires_at_unix_ms();
+    expired.state = BackendRequestState::Ready;
+    expired.revision = 1;
+    c.service
+        .core
+        .app
+        .record_backend_request(&c.service.core.caller(), None, &expired)
+        .unwrap();
+    c.service
+        .core
+        .transition(&original, BackendRequestState::Submitting, None)
+        .unwrap();
+    c._server.data.lock().unwrap().invocation_unaccepted = false;
+    for _ in 0..2 {
+        let Reply::PolicyRequest { value } = c
+            .policy_call(Request::PolicyStatus {
+                request: original.clone(),
+            })
+            .await
+        else {
+            panic!("expiry status")
+        };
+        assert_eq!(value.state, BackendRequestState::Failed);
+        assert_eq!(value.failure, Some(BackendRequestFailure::Expired));
+    }
+    assert!(c._server.data.lock().unwrap().invocations.is_empty());
 }

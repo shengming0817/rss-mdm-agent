@@ -64,13 +64,172 @@ pub enum RiskLevel {
 /// Backend-authenticated classification of the exact offer, never an IPC claim.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct BackendRiskDecision {
+pub struct ExecutionRisk {
     /// Explicit effect classification selected by backend policy.
     pub level: RiskLevel,
     /// Exact backend risk policy revision.
-    pub policy: VersionedRef,
+    pub source: RiskSource,
     /// Exclusive trusted decision deadline.
     pub expires_at_unix_ms: u64,
+}
+/// Risk authority is explicit; local software rules never impersonate a Policy.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
+pub enum RiskSource {
+    /// Current server Policy decision, subsequently checked against the signed Offer.
+    Policy {
+        /// Exact configuration revision.
+        policy: VersionedRef,
+    },
+    /// Closed Rust rule for a verified software action.
+    Software {
+        /// Exact signed software definition and action.
+        definition: Digest,
+    },
+}
+/// Employee input; caller source and confirmation are supplied only by trusted native code.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PolicyChoice {
+    /// Stable request allocated before submission, reused after response loss.
+    pub request: RequestId,
+    /// Policy from the current authorized directory.
+    pub policy_id: Id,
+    /// Exact current configuration revision.
+    pub policy_revision: u64,
+    /// Immutable execution version.
+    pub policy_version: Id,
+    /// Only Resource fields whose Policy source is Input.
+    pub parameters: std::collections::BTreeMap<String, serde_json::Value>,
+}
+/// One preparation reference, before or after a signed Offer has arrived.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub enum PreparedAction {
+    /// A bounded native observation authorized by an exact current signed software definition.
+    SoftwareRead {
+        /// Original read identity, independent of installation execution.
+        choice: SoftwareReadChoice,
+        /// Exact declared software definition; this is a software risk source.
+        definition: Digest,
+        /// Original preparation validity.
+        expires_at_unix_ms: u64,
+        /// Independently collected fact, appended once and never treated as installation success.
+        observation: Option<SoftwareObservation>,
+    },
+    /// Existing offered software selection.
+    Offered {
+        /// Exact signed task projection.
+        offer: BackendTask,
+    },
+    /// Policy invocation and its eventual exact Offer, held in the same journal record.
+    Policy {
+        /// Immutable employee choice.
+        choice: PolicyChoice,
+        /// Formal backend directory DTO, including the Resource-owned schema.
+        directory: Box<rss_mdm_agent_wire::runtime::SelfServiceDirectoryItem>,
+        /// Backend Run returned for the original request, absent until acceptance is known.
+        run_id: Option<Id>,
+        /// Eventual signed Offer; no task/attempt is invented before this exists.
+        offer: Option<BackendTask>,
+        /// Authenticated product employee, checked against the signed authorization.
+        actor: rss_mdm_agent_wire::runtime::ScriptActor,
+        /// Native product login generation.
+        generation: Id,
+        /// Bounded validity of the original preparation.
+        expires_at_unix_ms: u64,
+    },
+}
+impl Eq for PreparedAction {}
+impl PartialEq for PreparedAction {
+    fn eq(&self, other: &Self) -> bool {
+        // The producer DTO has no PartialEq; compare its structural JSON, never a display name.
+        serde_json::to_value(self)
+            .ok()
+            .zip(serde_json::to_value(other).ok())
+            .is_some_and(|(a, b)| a == b)
+    }
+}
+impl PreparedAction {
+    /// Original stable request, independent of the arrival of a task.
+    pub fn request(&self) -> &RequestId {
+        match self {
+            Self::SoftwareRead { choice, .. } => &choice.request,
+            Self::Offered { offer } => &offer.request,
+            Self::Policy { choice, .. } => &choice.request,
+        }
+    }
+    /// Actual Offer only; absence cannot be treated as a fabricated task.
+    pub fn offer(&self) -> Option<&BackendTask> {
+        match self {
+            Self::SoftwareRead { .. } => None,
+            Self::Offered { offer } => Some(offer),
+            Self::Policy { offer, .. } => offer.as_ref(),
+        }
+    }
+    /// The same immutable choice; only acceptance and eventual Offer may be appended.
+    pub fn same_choice(&self, other: &Self) -> bool {
+        let mut a = self.clone();
+        let mut b = other.clone();
+        for action in [&mut a, &mut b] {
+            if let Self::SoftwareRead { observation, .. } = action {
+                *observation = None;
+            }
+            if let Self::Policy { run_id, offer, .. } = action {
+                *run_id = None;
+                *offer = None;
+            }
+        }
+        a == b
+            && match (self, other) {
+                (
+                    Self::SoftwareRead {
+                        observation: old, ..
+                    },
+                    Self::SoftwareRead { observation, .. },
+                ) => old
+                    .as_ref()
+                    .is_none_or(|value| observation.as_ref() == Some(value)),
+                (
+                    Self::Policy {
+                        run_id: old_run,
+                        offer: old_offer,
+                        ..
+                    },
+                    Self::Policy { run_id, offer, .. },
+                ) => {
+                    old_run
+                        .as_ref()
+                        .is_none_or(|old| run_id.as_ref() == Some(old))
+                        && old_offer
+                            .as_ref()
+                            .is_none_or(|old| offer.as_ref() == Some(old))
+                        && offer
+                            .as_ref()
+                            .is_none_or(|offer| run_id.as_ref() == Some(&offer.task))
+                }
+                _ => true,
+            }
+    }
+    /// Preparation validity independent of transport lease changes.
+    pub fn expires_at_unix_ms(&self) -> u64 {
+        match self {
+            Self::SoftwareRead {
+                expires_at_unix_ms, ..
+            } => *expires_at_unix_ms,
+            Self::Offered { offer } => u64::try_from(offer.expires_at)
+                .unwrap_or(0)
+                .saturating_mul(1000),
+            Self::Policy {
+                expires_at_unix_ms, ..
+            } => *expires_at_unix_ms,
+        }
+    }
 }
 /// Sole product confirmation, persisted together with the original AI request.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -124,6 +283,8 @@ pub struct BackendStepSummary {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum BackendRequestState {
+    /// A bounded native observation was collected; no execution attempt or side effect exists.
+    Observed,
     /// Risk-two AI action awaiting its sole explicit product confirmation.
     AwaitingConfirmation,
     /// Product gate is satisfied; this still grants no backend Start or OS authority.
@@ -156,12 +317,12 @@ pub enum BackendRequestFailure {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct BackendRequest {
-    /// Exact offer and its display summary.
-    pub offer: BackendTask,
+    /// The sole immutable choice and appended backend association.
+    pub action: PreparedAction,
     /// OS-authenticated original trigger; never accepted from an IPC request body.
     pub trigger: crate::BackendTrigger,
     /// Immutable trusted classification; absent for human requests or unknown AI risk.
-    pub risk: Option<BackendRiskDecision>,
+    pub risk: Option<ExecutionRisk>,
     /// Explicit risk-two response; readiness alone never proves confirmation.
     pub confirmation: Option<BackendConfirmation>,
     /// Monotonic journal revision.
@@ -173,6 +334,15 @@ pub struct BackendRequest {
 }
 
 impl BackendRequest {
+    /// Actual native login bound to the original employee action.
+    pub fn trigger_os_session(&self) -> Option<&Id> {
+        match &self.trigger {
+            crate::BackendTrigger::Human { os_session }
+            | crate::BackendTrigger::Ai { os_session, .. } => Some(&os_session.session),
+            _ => None,
+        }
+    }
+
     /// Check stored product-gate shape. DTO validity alone never authenticates risk or consent.
     pub fn valid_product_gate(&self) -> bool {
         use BackendRequestState as S;
@@ -191,7 +361,7 @@ impl BackendRequest {
                     return false;
                 }
                 match risk.level {
-                    RiskLevel::Zero | RiskLevel::One => {
+                    RiskLevel::One => {
                         self.confirmation.is_none() && self.state != S::AwaitingConfirmation
                     }
                     RiskLevel::Two => match &self.confirmation {
@@ -202,17 +372,48 @@ impl BackendRequest {
                                 && answer.expires_at_unix_ms
                                     <= answer.confirmed_at_unix_ms.saturating_add(60_000)
                                 && answer.expires_at_unix_ms <= risk.expires_at_unix_ms
-                                && u64::try_from(self.offer.expires_at)
-                                    .ok()
-                                    .and_then(|v| v.checked_mul(1000))
-                                    .is_some_and(|until| answer.expires_at_unix_ms <= until)
+                                && answer.expires_at_unix_ms <= self.action.expires_at_unix_ms()
                                 && self.state != S::AwaitingConfirmation
                         }
                     },
-                    RiskLevel::Three => terminal && self.confirmation.is_none(),
+                    RiskLevel::Zero | RiskLevel::Three => terminal && self.confirmation.is_none(),
                 }
             }
             crate::BackendTrigger::Automatic {} => false,
         }
     }
+}
+
+/// Model-visible selection for a finite native software detector; no arbitrary selector or command.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SoftwareReadSelection {
+    /// Exact current signed offer projection.
+    pub selection: BackendSelection,
+    /// One declared step in that definition.
+    pub step: u32,
+}
+/// Native human read input with its preallocated stable request.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SoftwareReadChoice {
+    /// Original query identity.
+    pub request: RequestId,
+    /// The sole immutable query input.
+    pub input: SoftwareReadSelection,
+}
+/// Fresh native software fact, with collection time and no installer result claims.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SoftwareObservation {
+    /// Completeness of this finite native observation; failed leaves the state Unknown.
+    pub quality: crate::OutputQuality,
+    /// Time of actual observation from the service clock.
+    pub collected_at_unix_ms: u64,
+    /// Exact declared package.
+    pub package: String,
+    /// Exact declared desired version, separate from the observed version.
+    pub expected_version: String,
+    /// Native receipt or product observation; unknown remains explicit.
+    pub state: crate::SoftwareState,
 }

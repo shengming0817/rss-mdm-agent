@@ -42,3 +42,82 @@ pub fn receipt_state(
         },
     ))
 }
+
+/// Read only closed platform-native identities. Script and other detectors are denied.
+/// The caller must authorize the exact signed definition and live OS subject before using this port.
+pub fn observe_native(
+    detector: &execution_contract::SoftwareDetector,
+    run_as: &execution_contract::RunAs,
+) -> Result<execution_contract::SoftwareState, execution_app::Error> {
+    if !matches!(
+        detector,
+        execution_contract::SoftwareDetector::PkgReceipt { .. }
+            | execution_contract::SoftwareDetector::MsiProduct { .. }
+    ) {
+        return Err(execution_app::Error::Denied);
+    }
+    Ok(native_detection::detect(detector, run_as))
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod observation_tests {
+    use super::*;
+    use execution_contract::*;
+    #[test]
+    fn native_observation_reads_receipts_and_preserves_unavailable_platform_evidence() {
+        let run_as = RunAs::System {
+            platform: Platform::Macos,
+        };
+        let expected = PackageValue::new("1").unwrap();
+        let receipt = format!("com.rss-mdm.uninstalled-test-{}", std::process::id());
+        let input: ExecutionInput = serde_json::from_str(include_str!(
+            "../../../execution-contract/tests/fixtures/software.json"
+        ))
+        .unwrap();
+        let invocation = input.execution.software_program().unwrap().steps[0]
+            .install
+            .clone();
+        assert_eq!(
+            observe_native(
+                &SoftwareDetector::Script {
+                    invocation: Box::new(invocation)
+                },
+                &run_as
+            ),
+            Err(execution_app::Error::Denied)
+        );
+        assert!(matches!(
+            observe_native(
+                &SoftwareDetector::PkgReceipt {
+                    receipt,
+                    version: expected.clone()
+                },
+                &run_as
+            )
+            .unwrap(),
+            SoftwareState::Absent {}
+        ));
+        assert!(matches!(
+            observe_native(
+                &SoftwareDetector::PkgReceipt {
+                    receipt: "../../etc".into(),
+                    version: expected.clone()
+                },
+                &run_as
+            )
+            .unwrap(),
+            SoftwareState::Unknown { .. }
+        ));
+        assert!(matches!(
+            observe_native(
+                &SoftwareDetector::MsiProduct {
+                    product_code: "{00000000-0000-0000-0000-000000000001}".into(),
+                    version: expected
+                },
+                &run_as
+            )
+            .unwrap(),
+            SoftwareState::Unknown { .. }
+        ));
+    }
+}

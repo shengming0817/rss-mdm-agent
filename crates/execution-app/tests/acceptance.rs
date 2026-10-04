@@ -337,7 +337,7 @@ fn newer_schema_retains_read_only_startup_diagnostic() {
     };
     assert_eq!(
         format!("{error:?}"),
-        "UnsupportedSchema { found: 999, supported: 9 }"
+        "UnsupportedSchema { found: 999, supported: 10 }"
     );
     assert_eq!(std::fs::read(&db.path).unwrap(), before);
     assert_eq!(runner.dispatch_count(), 0);
@@ -2372,7 +2372,7 @@ fn old_schema_reports_exact_versions_and_keeps_bytes() {
     };
     assert_eq!(
         error.to_string(),
-        "execution database schema 4 is unsupported; required schema 9; preserve the existing database; initialization and automatic migration are disabled"
+        "execution database schema 4 is unsupported; required schema 10; preserve the existing database; initialization and automatic migration are disabled"
     );
     assert_eq!(std::fs::read(&db.path).unwrap(), before);
 }
@@ -2673,22 +2673,24 @@ fn backend_preparation_is_durable_bound_and_never_dispatches_without_start() {
         panic!("human fixture")
     };
     let original = BackendRequest {
-        offer: BackendTask {
-            request: request("backend-intent"),
-            task: id("task"),
-            attempt: id("attempt"),
-            revision: Digest::new("a".repeat(64)).unwrap(),
-            title: "Exact backend task".into(),
-            summary: BackendTaskSummary::Software {
-                intent: SoftwareOperation::Uninstall,
-                steps: vec![BackendStepSummary {
-                    package: "fixed".into(),
-                    version: "1.0".into(),
-                    identity: BackendIdentity::User,
-                }],
+        action: PreparedAction::Offered {
+            offer: BackendTask {
+                request: request("backend-intent"),
+                task: id("task"),
+                attempt: id("attempt"),
+                revision: Digest::new("a".repeat(64)).unwrap(),
+                title: "Exact backend task".into(),
+                summary: BackendTaskSummary::Software {
+                    intent: SoftwareOperation::Uninstall,
+                    steps: vec![BackendStepSummary {
+                        package: "fixed".into(),
+                        version: "1.0".into(),
+                        identity: BackendIdentity::User,
+                    }],
+                },
+                expires_at: 60,
+                user_initiated: true,
             },
-            expires_at: 60,
-            user_initiated: true,
         },
         trigger: BackendTrigger::Human { os_session },
         risk: None,
@@ -2704,13 +2706,16 @@ fn backend_preparation_is_durable_bound_and_never_dispatches_without_start() {
     drop(app);
     let mut app = reopen_app(&db.path, host, runner.clone(), AppConfig::test_defaults(1)).unwrap();
     assert_eq!(
-        app.backend_request(&caller(), &original.offer.request)
+        app.backend_request(&caller(), original.action.request())
             .unwrap(),
         Some(original.clone())
     );
     let mut replaced = original.clone();
     replaced.revision = 2;
-    replaced.offer.revision = Digest::new("b".repeat(64)).unwrap();
+    let PreparedAction::Offered { offer } = &mut replaced.action else {
+        unreachable!()
+    };
+    offer.revision = Digest::new("b".repeat(64)).unwrap();
     assert!(app
         .record_backend_request(&caller(), Some(&original), &replaced)
         .is_err());

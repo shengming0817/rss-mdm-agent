@@ -570,6 +570,9 @@ export class SessionHost implements HostPort {
       return fail("unsupported_capability");
     }
     const tools: ToolEndpoint = {
+      list: (b) =>
+        this.options.delivery?.router.catalog?.(namespace, b, configuration) ??
+        Promise.resolve(fail("unsupported_capability")),
       propose: (proposal, b) => this.propose(namespace, proposal, b),
     };
     const admission = resolved.admission
@@ -785,6 +788,18 @@ export class SessionHost implements HostPort {
         toolObserved = false,
         toolViolation = false;
       const tools: ToolEndpoint = {
+        list: async () =>
+          ok([
+            {
+              name: "connection_probe",
+              description: "Check this connection without a device operation.",
+              inputSchema: {
+                type: "object",
+                properties: {},
+                additionalProperties: false,
+              },
+            },
+          ]),
         propose: async (proposal) => {
           if (
             !probing ||

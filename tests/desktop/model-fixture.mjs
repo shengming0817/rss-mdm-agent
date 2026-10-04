@@ -51,9 +51,9 @@ function propose(response, callId, name, args) {
       item: {
         type: "function_call",
         call_id: callId,
-        name: "propose",
+        name,
         namespace: "mcp__rss_host",
-        arguments: JSON.stringify({ name, arguments: args }),
+        arguments: JSON.stringify(args),
       },
     },
   ]);

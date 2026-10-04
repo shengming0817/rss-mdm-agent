@@ -275,6 +275,16 @@ export class DeepSeekAdapter implements ProviderAgentPort {
               apiKey: resolved.apiKey,
               apiUrl: resolved.apiUrl,
               controlled: c.permissions === "host_mediated",
+              tools:
+                c.permissions === "host_mediated"
+                  ? await (async () => {
+                      const result =
+                        await this.options.tools!.list(remaining());
+                      if (!result.ok)
+                        throw new NativeFault("interaction_unavailable");
+                      return result.value;
+                    })()
+                  : [],
               restore: !!previous,
               composition: COMPOSITION_ID,
               ...(previous?.nativeRequestId
@@ -667,7 +677,10 @@ export class DeepSeekAdapter implements ProviderAgentPort {
           text: string;
         } = { disposition: "unavailable", text: "Tool unavailable" };
         try {
-          const result = await bounded(endpoint.propose(proposal, b), b);
+          const result = await bounded(
+            endpoint.propose({ ...proposal, callId: e.callbackId }, b),
+            b,
+          );
           if (
             result.ok &&
             ["returned", "rejected", "unavailable"].includes(

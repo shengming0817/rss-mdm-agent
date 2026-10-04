@@ -10,8 +10,14 @@ const selfServiceCommands = [
   "self_service_execute",
   "self_service_confirm",
   "self_service_cancel",
+  "self_service_policy_directory",
+  "self_service_policy_invoke",
+  "self_service_policy_confirm",
+  "self_service_policy_status",
+  "self_service_observe_software",
 ];
 const assistantCommands = [
+  "self_service_policy_confirm",
   "self_service_confirm",
   "self_service_cancel",
   "ai_connect",
@@ -105,6 +111,8 @@ export function checkSource(file, source) {
       ]
     : ["vue"];
   allowed.push(...(uiImports[file] ?? []));
+  if (file === "apps/desktop/src/self-service/PolicySelfService.vue")
+    allowed.push("ajv");
   if (nativeAdapters.has(file)) allowed.push("@tauri-apps/api/core");
   if (assistant)
     allowed.push(
@@ -255,6 +263,9 @@ export function checkSource(file, source) {
       "apps/desktop/src/App.vue": ["setInterval", "clearInterval"],
       "apps/desktop/src/Workspace.vue": ["HTMLElement", "ResizeObserver"],
       "apps/desktop/src/assistant/resource-context.ts": ["JSON"],
+      "apps/desktop/src/self-service/PolicyPreparation.vue": ["JSON"],
+      "apps/desktop/src/self-service/PolicySelfService.vue": ["JSON", "crypto"],
+      "apps/desktop/src/self-service/controller.ts": ["crypto"],
       "apps/desktop/src/appearance.ts": [
         "Promise",
         "Error",
@@ -322,15 +333,19 @@ export function checkSource(file, source) {
             "apps/desktop/src/settings/ConnectionSettings.vue",
             "apps/desktop/src/assistant/native.ts",
             "apps/desktop/src/self-service/native.ts",
+            "apps/desktop/src/self-service/PolicySelfService.vue",
           ].includes(file) && name === "../test-users"
         ) &&
         !(
           [
             "apps/desktop/src/assistant/controller.ts",
             "apps/desktop/src/assistant/resource-context.ts",
+            "apps/desktop/src/assistant/ExecutionActivity.vue",
           ].includes(file) && name === "../self-service/types"
         ) &&
         !(
+          (file === "apps/desktop/src/assistant/ExecutionActivity.vue" &&
+            name === "../self-service/PolicyPreparation.vue") ||
           (file === "apps/desktop/src/assistant/ExecutionDetails.vue" &&
             name === "../self-service/RequestOrigin.vue") ||
           (file === "apps/desktop/src/self-service/SelfService.vue" &&
@@ -470,7 +485,22 @@ export function checkSource(file, source) {
         : ts.isElementAccessExpression(node)
           ? staticText(node.argumentExpression)
           : null;
-      if (ts.isElementAccessExpression(node) && member === null)
+      const dataRoots = {
+        "apps/desktop/src/self-service/PolicyPreparation.vue": [
+          "action.choice.parameters",
+        ],
+        "apps/desktop/src/self-service/PolicySelfService.vue": [
+          "inputs.value",
+          "_ctx.inputs",
+          "choice.value?.parameters",
+          "(selected.value?.parameterSchema as any)?.properties",
+        ],
+      };
+      const dataIndex =
+        ts.isElementAccessExpression(node) &&
+        (dataRoots[file] ?? []).includes(node.expression.getText(ast)) &&
+        !(ts.isCallExpression(node.parent) && node.parent.expression === node);
+      if (ts.isElementAccessExpression(node) && member === null && !dataIndex)
         errors.push(
           `${file}: dynamic member access is not a presentation capability`,
         );
@@ -553,13 +583,14 @@ export function checkTree(treeRoot = root, executable) {
     Object.keys(desktop.dependencies ?? {})
       .sort()
       .join() !==
-      "@rss-mdm-agent/ai-client,@rss-mdm-agent/ai-contract,@rss-mdm-agent/ai-ui-bridge,@rss-mdm-agent/execution-bindings,@rss-mdm-agent/ui,@tauri-apps/api,vue" ||
+      "@rss-mdm-agent/ai-client,@rss-mdm-agent/ai-contract,@rss-mdm-agent/ai-ui-bridge,@rss-mdm-agent/execution-bindings,@rss-mdm-agent/ui,@tauri-apps/api,ajv,vue" ||
+    desktop.dependencies?.ajv !== "8.20.0" ||
     desktop.dependencies?.["@tauri-apps/api"] !== "2.11.1" ||
     Object.keys(desktop.optionalDependencies ?? {}).length ||
     Object.keys(desktop.peerDependencies ?? {}).length
   )
     errors.push(
-      "desktop production dependencies must be UI, public AI contract/client/bridge, generated execution bindings, Vue and pinned Tauri core only",
+      "desktop production dependencies must be UI, public AI contract/client/bridge, generated execution bindings, pinned Ajv schema validation, Vue and pinned Tauri core only",
     );
   const config = JSON.parse(read("apps/desktop/src-tauri/tauri.conf.json"));
   const capabilityFiles = files(
@@ -693,6 +724,7 @@ export function checkTree(treeRoot = root, executable) {
         'syn = { version = "=2.0.119", features = ["full", "visit"] }',
         'proc-macro2 = "=1.0.107"',
         'execution-contract = { path = "../../../crates/execution-contract" }',
+        "rss-mdm-agent-wire.workspace = true",
         'tauri = { workspace = true, features = ["test"] }',
       ],
     ],

@@ -41,6 +41,7 @@ export interface AssistantServices {
   ): Promise<BackendTaskView>;
   /** Explicit human action; models cannot invoke this native presentation callback. */
   confirmTask?(task: BackendTask): Promise<void>;
+  confirmPolicy?(request: string): Promise<void>;
   cancelTask?(request: string): Promise<void>;
 }
 export interface PermissionView {
@@ -886,14 +887,22 @@ export function createAssistant(
     if (
       !session ||
       !delivery ||
-      delivery.proposal.name !== "execution_execute" ||
+      !(
+        delivery.proposal.name === "execution_execute" ||
+        delivery.proposal.name.startsWith("policy_") ||
+        delivery.proposal.name === "execution_software_observe"
+      ) ||
       !services?.taskDetails
     )
       throw new ClientError("unavailable");
-    const requestId = operationRequestId(
-      delivery.proposal.name,
-      delivery.proposal.arguments,
-    );
+    const requestId =
+      delivery.proposal.name.startsWith("policy_") ||
+      delivery.proposal.name === "execution_software_observe"
+        ? operationId
+        : operationRequestId(
+            delivery.proposal.name,
+            delivery.proposal.arguments,
+          );
     if (!requestId) throw new ClientError("invalid_input");
     const owner = new AbortController();
     const abort = () => owner.abort();
@@ -912,7 +921,9 @@ export function createAssistant(
       const actualRequest =
         result.kind === "execution"
           ? result.value.status.operationRequestId
-          : result.value.offer.request;
+          : result.value.action.kind === "offered"
+            ? result.value.action.offer.request
+            : result.value.action.choice.request;
       if (
         current !== epoch ||
         signal.aborted ||
@@ -1031,6 +1042,10 @@ export function createAssistant(
     permission,
     taskDetails,
     executionDetails,
+    async confirmPolicyPreparation(request: string) {
+      if (!services?.confirmPolicy) throw new ClientError("unavailable");
+      await services.confirmPolicy(request);
+    },
     async confirmPreparation(task: BackendTask) {
       if (!services?.confirmTask) throw new ClientError("unavailable");
       await services.confirmTask(task);

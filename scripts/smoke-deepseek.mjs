@@ -283,6 +283,19 @@ async function main() {
         },
       },
       tools: {
+        list: async () => ({
+          ok: true,
+          value: [
+            {
+              name: "test_probe",
+              inputSchema: {
+                type: "object",
+                properties: {},
+                additionalProperties: false,
+              },
+            },
+          ],
+        }),
         propose: async (proposal) => {
           assert.equal(proposal.name, "test_probe");
           proposals++;
@@ -320,7 +333,7 @@ async function main() {
     const request = {
       ...prompt(
         "controlled",
-        'First call ask_user_question with one question id q, text "Run a test probe?", options yes/no. After the user answers yes, call host_propose exactly once with name test_probe and arguments {}. Finally reply only done. These are test tools, not device operations.',
+        'First call ask_user_question with one question id q, text "Run a test probe?", options yes/no. After the user answers yes, call test_probe exactly once with arguments {}. Finally reply only done. These are test tools, not device operations.',
       ),
       sessionId: controlled.namespace.sessionId,
     };

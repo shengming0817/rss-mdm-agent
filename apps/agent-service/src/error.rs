@@ -22,7 +22,7 @@ fn unsupported_execution_database_preserves_the_schema_diagnosis() {
     assert_eq!(
         app_error(execution_app::Error::UnsupportedSchema {
             found: 8,
-            supported: 9
+            supported: 10
         }),
         Error::Schema
     );

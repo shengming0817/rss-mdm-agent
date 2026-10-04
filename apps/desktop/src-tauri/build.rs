@@ -89,6 +89,11 @@ fn main() {
     }
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(
         tauri_build::AppManifest::new().commands(&[
+            "self_service_policy_directory",
+            "self_service_policy_invoke",
+            "self_service_policy_confirm",
+            "self_service_policy_status",
+            "self_service_observe_software",
             "self_service_snapshot",
             "self_service_execute",
             "self_service_confirm",

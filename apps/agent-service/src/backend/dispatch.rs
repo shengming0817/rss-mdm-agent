@@ -104,6 +104,7 @@ pub(crate) async fn submit<S: IdentityProvider>(
         {
             return Err(Error::Denied);
         }
+        service.core.current_policy_login(&current)?;
         Some(current)
     } else {
         None
@@ -155,6 +156,17 @@ pub(crate) async fn submit<S: IdentityProvider>(
         service.core.available_risk.as_ref(),
         service.core.host.clock.millis()?,
     )?;
+    // Linearize revocation with the sole owner's irreversible runner delivery.
+    // This guard spans synchronous admission only; no HTTP wait holds it.
+    let admission = record
+        .as_ref()
+        .map(|record| service.core.policy_fence(record))
+        .transpose()?
+        .flatten();
+    let _fence = admission
+        .as_ref()
+        .map(|(fences, subject, epoch)| fences.admit(subject, *epoch))
+        .transpose()?;
     service
         .core
         .host

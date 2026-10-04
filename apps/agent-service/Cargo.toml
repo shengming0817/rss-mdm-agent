@@ -11,6 +11,7 @@ name = "rss-execution-service"
 path = "src/main.rs"
 
 [dependencies]
+jsonschema.workspace = true
 rss-mdm-agent-wire.workspace = true
 rustls.workspace = true
 script-plan = { path = "../../crates/script-plan" }

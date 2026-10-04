@@ -186,6 +186,9 @@ impl DesktopRuntime {
         if matches!(self.host.lock().unwrap().owner, Host::Closed) || expected != self.epoch() {
             return self.status();
         }
+        if self.execution.revoke_employee().await.is_err() {
+            return self.status();
+        }
         self.detach_views().await;
         if let Some(process) = self.process() {
             let reaped = process.close().await;
@@ -232,6 +235,9 @@ impl DesktopRuntime {
     }
     pub fn current(&self, generation: &str) -> ui::Result<ai_session_contract::UserContext> {
         let _switch = self.switching.try_lock().map_err(|_| unavailable())?;
+        self.current_locked(generation)
+    }
+    fn current_locked(&self, generation: &str) -> ui::Result<ai_session_contract::UserContext> {
         if self.cleanup_pending.load(Ordering::Acquire) {
             return Err(unavailable());
         }
@@ -245,6 +251,25 @@ impl DesktopRuntime {
         self.execution
             .for_caller(context.user.user_id.as_str())
             .map_err(|_| unavailable())
+    }
+    pub async fn policy_execution_for(&self, generation: &str) -> ui::Result<ExecutionHandle> {
+        self.verify_account().await?;
+        let _switch = self.switching.lock().await;
+        let context = self.current_locked(generation)?;
+        let handle = self
+            .execution
+            .for_caller(context.user.user_id.as_str())
+            .map_err(|_| unavailable())?;
+        let employee = self
+            .account
+            .lock()
+            .await
+            .as_ref()
+            .ok_or_else(unavailable)?
+            .employee(generation)?;
+        handle.employee(Some(employee)).await?;
+        self.current_locked(generation)?;
+        Ok(handle)
     }
     pub fn account_status(&self) -> ui::Result<ai_session_contract::AccountStatus> {
         Ok(ai_session_contract::AccountStatus {
@@ -286,6 +311,7 @@ impl DesktopRuntime {
     }
     async fn retry_cleanup(&self) -> ui::Result<()> {
         if self.cleanup_pending.load(Ordering::Acquire) {
+            self.execution.revoke_employee().await?;
             if let Some(process) = self.process() {
                 if !process.close().await {
                     return Err(unavailable());
@@ -296,6 +322,14 @@ impl DesktopRuntime {
         Ok(())
     }
     async fn revoke_locked(&self) -> ui::Result<()> {
+        if let Err(error) = self.execution.revoke_employee().await {
+            self.cleanup_pending.store(true, Ordering::Release);
+            self.detach_views().await;
+            if let Some(process) = self.process() {
+                process.close().await;
+            }
+            return Err(error);
+        }
         self.retry_cleanup().await?;
         let previous = self.users.lock().map_err(|_| unavailable())?.page().current;
         let cleared = self.users.lock().map_err(|_| unavailable())?.clear();
@@ -378,6 +412,12 @@ impl DesktopRuntime {
             let result = self.account_result(Err(error));
             retirement?;
             return result;
+        }
+        // Bind only the native service boundary. The AI pipe receives no credential.
+        if let Some(account) = self.account.lock().await.as_ref() {
+            let current = self.users.lock().map_err(|_| unavailable())?.current()?;
+            let employee = account.employee(current.generation.as_str())?;
+            let _ = self.execution.employee(Some(employee)).await;
         }
         Ok(())
     }
@@ -543,6 +583,16 @@ impl DesktopRuntime {
     }
     pub async fn shutdown(&self) {
         let _switch = self.switching.lock().await;
+        if self.execution.revoke_employee().await.is_err() {
+            // Preserve the unresolved retirement; a subsequent identity cannot be activated.
+            self.cleanup_pending.store(true, Ordering::Release);
+            eprintln!("RSS_EMPLOYEE_RETIREMENT_UNCONFIRMED");
+            self.detach_views().await;
+            if let Some(process) = self.process() {
+                process.close().await;
+            }
+            return;
+        }
         self.detach_views().await;
         if let Some(process) = self.process() {
             process.close().await;
@@ -596,6 +646,12 @@ mod tests {
         assert!(!status.to_string().contains(root.to_str().unwrap()));
         let user = runtime.select_user("Alice").await.unwrap();
         assert!(runtime.execution_for(user.generation.as_str()).is_ok());
+        {
+            let _switch = runtime.switching.lock().await;
+            assert!(runtime.current(user.generation.as_str()).is_err());
+            assert!(runtime.current_locked(user.generation.as_str()).is_ok());
+            assert!(runtime.current_locked("retired-generation").is_err());
+        }
         let generation = status["generation"].as_u64().unwrap();
         let (first, second) =
             tokio::join!(runtime.restart(generation), runtime.restart(generation));

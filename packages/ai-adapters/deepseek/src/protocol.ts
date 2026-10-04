@@ -28,6 +28,7 @@ export interface Initialization {
   apiKey: string;
   apiUrl: string;
   controlled: boolean;
+  tools: readonly import("@rss-mdm-agent/ai-contract").McpTool[];
   restore: boolean;
   composition: string;
   previousRequestId?: string;
@@ -241,9 +242,15 @@ export function decodeRequest(raw: unknown): RequestFrame {
         "composition",
       ];
       check(
-        fields(v, [...keys, "controlled", "restore"], ["previousRequestId"]) &&
+        fields(
+          v,
+          [...keys, "controlled", "restore", "tools"],
+          ["previousRequestId"],
+        ) &&
           strings(v, keys) &&
           typeof v.controlled === "boolean" &&
+          Array.isArray(v.tools) &&
+          v.tools.length <= 128 &&
           typeof v.restore === "boolean" &&
           (v.previousRequestId === undefined ||
             typeof v.previousRequestId === "string"),

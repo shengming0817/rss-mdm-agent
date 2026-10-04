@@ -17,7 +17,7 @@ import time
 import tempfile
 import urllib.request
 
-REVISION = '407b3febaf5192f397bedf5e0b64c57f75a1285f'
+REVISION = '149c34d5f30e74ce7f9f82740a841330befeb4a8'
 AGENT = Path(__file__).resolve().parents[1]
 
 

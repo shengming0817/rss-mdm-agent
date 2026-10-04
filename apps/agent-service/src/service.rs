@@ -6,10 +6,12 @@ use crate::{
 use agent_client::{Client, CredentialRedactor, Error, IdentityProvider, Materials, Offer};
 use execution_app::{AppConfig, ExecutionApp, RequestContext};
 use execution_contract::{
-    BackendRequest, BackendRequestFailure, BackendRequestState, BackendTrigger, RequestId,
+    BackendRequest, BackendRequestFailure, BackendRequestState, BackendTrigger, PreparedAction,
+    RequestId,
 };
 use execution_runner::{MaterialRegistry, NativeRunner};
 use rss_mdm_agent_wire::runtime as wire;
+mod policy;
 use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
@@ -206,6 +208,10 @@ impl<S: IdentityProvider> DeviceService<S> {
                 selected: None,
                 stopping: false,
                 recovery_cursor: None,
+                employees: Default::default(),
+                fences: Default::default(),
+                credential_leases: Default::default(),
+                policy_commands: Default::default(),
             },
             bridge: ExecutionBridge::new(plan::id("backend-results")?, output),
             waiting: None,
@@ -222,6 +228,8 @@ impl<S: IdentityProvider> DeviceService<S> {
         while let Ok(command) = commands.try_recv() {
             self.core.handle(command);
         }
+        self.prune_credentials()?;
+        self.drive_policy(commands).await?;
         if self.core.stopping {
             return Ok(());
         }
@@ -456,6 +464,14 @@ impl<S: IdentityProvider> DeviceService<S> {
             self.core.available = Some(offered(&offer)?);
             network(self.client.received(&offer), &mut self.core, commands).await?;
             let materials = network(self.client.prepare(&offer), &mut self.core, commands).await?;
+            if matches!(offer.payload(),wire::TaskPayload::Script(p) if matches!(p.authorization,wire::ScriptAuthorization::SelfService {..}))
+            {
+                let selection = self.bind_policy_offer(&offer)?;
+                backend::submit(self, offer, materials, Some(selection), commands).await?;
+                self.core.available = None;
+                self.core.available_risk = None;
+                return Ok(());
+            }
             if matches!(offer.payload(),wire::TaskPayload::Software(p) if p.start_mode==wire::SoftwareStartMode::UserInitiated)
             {
                 self.waiting = Some((offer, materials));
@@ -508,6 +524,7 @@ impl<S: IdentityProvider> DeviceService<S> {
         if let Some(policy) = &helper_policy {
             policy.validate().map_err(crate::error::app_error)?;
         }
+        let fences = self.core.fences.clone();
         let (sender, mut commands) = tokio::sync::mpsc::channel(32);
         let finished = Arc::new(AtomicBool::new(false));
         let done = finished.clone();
@@ -540,6 +557,7 @@ impl<S: IdentityProvider> DeviceService<S> {
         })?;
         Ok(ServiceHandle {
             sender,
+            fences,
             policy,
             helper_policy,
             finished,
@@ -593,12 +611,18 @@ pub(crate) struct Core {
     pub(crate) selected: Option<Selection>,
     pub(crate) stopping: bool,
     pub(crate) recovery_cursor: Option<RequestId>,
+    employees: policy::Employees,
+    fences: Arc<policy::Fences>,
+    credential_leases: std::collections::BTreeMap<RequestId, Arc<zeroize::Zeroizing<String>>>,
+    policy_commands: policy::Commands,
 }
 impl Core {
     fn reconcile(&mut self) -> Result<(), Error> {
+        // Each network tick advances one request. Historical pages must not monopolize
+        // the single owner while an HTTP deadline or revocation command is pending.
         let page = self
             .app
-            .service_tasks(self.recovery_cursor.as_ref(), 64)
+            .service_tasks(self.recovery_cursor.as_ref(), 1)
             .map_err(crate::error::app_error)?;
         for item in &page.items {
             let request = &item.status.operation_request_id;
@@ -629,11 +653,11 @@ impl Core {
         {
             if !self
                 .app
-                .has_service_execution(&record.offer.request, &self.host.binding.device)
+                .has_service_execution(&record.action.request().clone(), &self.host.binding.device)
                 .map_err(crate::error::app_error)?
             {
                 self.transition(
-                    &record.offer.request,
+                    &record.action.request().clone(),
                     BackendRequestState::Failed,
                     Some(BackendRequestFailure::Revoked),
                 )?;
@@ -676,7 +700,9 @@ impl Core {
         };
         if matches!(
             previous.state,
-            BackendRequestState::Cancelled | BackendRequestState::Failed
+            BackendRequestState::Observed
+                | BackendRequestState::Cancelled
+                | BackendRequestState::Failed
         ) {
             return Ok(Some(previous));
         }
@@ -690,7 +716,6 @@ impl Core {
         Ok(Some(next))
     }
     fn start_task(&mut self, selection: Selection) -> Result<execution_ipc::host::Reply, Error> {
-        use execution_admission::{ai_execution_gate, ExecutionGate};
         use execution_ipc::host::Reply;
         if self.host.revoked.load(Ordering::Acquire) {
             return Err(Error::Denied);
@@ -700,14 +725,17 @@ impl Core {
             .backend_request(&self.caller(), &selection.request)
             .map_err(map_app_error)?
         {
-            if !selection.matches(&previous.offer)
+            if !previous
+                .action
+                .offer()
+                .is_some_and(|offer| selection.matches(offer))
                 || previous.trigger != selection.trigger(&self.host.binding.device)?
             {
                 return Err(Error::Conflict);
             }
             // Replays never confirm, change provenance, or create a new attempt.
             if previous.state == BackendRequestState::Ready
-                && self.available.as_ref() == Some(&previous.offer)
+                && self.available.as_ref() == previous.action.offer()
             {
                 self.selected = Some(Selection::from_record(&previous)?);
             }
@@ -719,6 +747,14 @@ impl Core {
         let now = self.host.clock.millis()?;
         if !selection.matches(&offer)
             || !offer.user_initiated
+            || !matches!(
+                offer.summary,
+                execution_contract::BackendTaskSummary::Software {
+                    intent: execution_contract::SoftwareOperation::Install
+                        | execution_contract::SoftwareOperation::Uninstall,
+                    ..
+                }
+            )
             || now / 1000 >= u64::try_from(offer.expires_at).map_err(|_| Error::Clock)?
         {
             return Err(Error::Denied);
@@ -739,12 +775,12 @@ impl Core {
                     Some(BackendRequestFailure::Expired),
                 )
             } else {
-                match ai_execution_gate(risk.as_ref().map(|r| r.level)) {
-                    ExecutionGate::Direct => (BackendRequestState::Ready, None),
-                    ExecutionGate::Confirmation => {
+                match risk.as_ref().map(|r| r.level) {
+                    Some(execution_contract::RiskLevel::One) => (BackendRequestState::Ready, None),
+                    Some(execution_contract::RiskLevel::Two) => {
                         (BackendRequestState::AwaitingConfirmation, None)
                     }
-                    ExecutionGate::Blocked => (
+                    _ => (
                         BackendRequestState::Failed,
                         Some(if risk.is_none() {
                             BackendRequestFailure::RiskUnknown
@@ -758,7 +794,9 @@ impl Core {
             (BackendRequestState::Ready, None)
         };
         let next = BackendRequest {
-            offer: offer.clone(),
+            action: PreparedAction::Offered {
+                offer: offer.clone(),
+            },
             trigger,
             risk,
             confirmation: None,
@@ -797,7 +835,10 @@ impl Core {
         let BackendTrigger::Ai { os_session, .. } = &previous.trigger else {
             return Err(Error::Denied);
         };
-        if !selection.matches(&previous.offer)
+        if !previous
+            .action
+            .offer()
+            .is_some_and(|offer| selection.matches(offer))
             || !same_login(&previous.trigger, &selection)
             || previous
                 .risk
@@ -811,20 +852,25 @@ impl Core {
                 value: Box::new(previous),
             });
         }
-        if self.available.as_ref() != Some(&previous.offer) {
+        if self.available.as_ref() != previous.action.offer() {
             return Err(Error::Denied);
         }
         let now = self.host.clock.millis()?;
         let risk = self
             .available_risk
             .as_ref()
-            .and_then(|r| r.decision(&previous.offer.revision))
+            .and_then(|r| {
+                previous
+                    .action
+                    .offer()
+                    .and_then(|offer| r.decision(&offer.revision))
+            })
             .ok_or(Error::Denied)?;
         if previous.risk.as_ref() != Some(risk) {
             return Err(Error::Denied);
         }
         let until = now.saturating_add(60_000).min(risk.expires_at_unix_ms).min(
-            u64::try_from(previous.offer.expires_at)
+            u64::try_from(previous.action.offer().ok_or(Error::Denied)?.expires_at)
                 .map_err(|_| Error::Clock)?
                 .checked_mul(1000)
                 .ok_or(Error::Clock)?,
@@ -845,9 +891,9 @@ impl Core {
             .map_err(map_app_error)?;
         self.selected = Some(Selection::from_record(&next)?);
         Ok(Reply::Queued {
-            request: next.offer.request,
-            task: next.offer.task,
-            attempt: next.offer.attempt,
+            request: next.action.request().clone(),
+            task: next.action.offer().ok_or(Error::Denied)?.task.clone(),
+            attempt: next.action.offer().ok_or(Error::Denied)?.attempt.clone(),
             confirmation_required: false,
         })
     }
@@ -880,12 +926,34 @@ impl Core {
     }
     fn handle(&mut self, command: Command) {
         use execution_ipc::host::{Reply, Request};
+        if matches!(
+            command.request.as_operation(),
+            Some(
+                execution_ipc::host::Request::EmployeeSession { .. }
+                    | execution_ipc::host::Request::ObserveSoftware { .. }
+                    | execution_ipc::host::Request::PolicyDirectory { .. }
+                    | execution_ipc::host::Request::InvokePolicy { .. }
+                    | execution_ipc::host::Request::ConfirmPolicy { .. }
+                    | execution_ipc::host::Request::PolicyStatus { .. }
+            )
+        ) {
+            self.enqueue_policy(command);
+            return;
+        }
         if command.reply.is_closed() {
             return;
         }
         let reply = (|| -> Result<Reply, Error> {
-            match command.request {
-                LocalRequest::Operation(Request::ServiceStatus {}) => {
+            match command.request.into_operation() {
+                Some(
+                    Request::EmployeeSession { .. }
+                    | Request::ObserveSoftware { .. }
+                    | Request::PolicyDirectory { .. }
+                    | Request::InvokePolicy { .. }
+                    | Request::ConfirmPolicy { .. }
+                    | Request::PolicyStatus { .. },
+                ) => Err(Error::Denied),
+                Some(Request::ServiceStatus {}) => {
                     let readiness = if self.host.revoked.load(Ordering::Acquire) {
                         execution_ipc::host::Readiness::NotReady
                     } else {
@@ -895,14 +963,14 @@ impl Core {
                         value: execution_ipc::host::ServiceStatus::new(readiness),
                     })
                 }
-                LocalRequest::Stop => {
+                None => {
                     self.stopping = true;
                     Ok(Reply::Unavailable)
                 }
-                LocalRequest::Operation(
-                    Request::RegistrationStatus {} | Request::RequestRegistration {},
-                ) => Ok(Reply::Rejected),
-                LocalRequest::Operation(Request::Tasks { after }) => {
+                Some(Request::RegistrationStatus {} | Request::RequestRegistration {}) => {
+                    Ok(Reply::Rejected)
+                }
+                Some(Request::Tasks { after }) => {
                     let mut value = self
                         .app
                         .tasks(&self.caller(), after.as_ref(), 64)
@@ -910,6 +978,13 @@ impl Core {
                     value.items.retain(|item| {
                         self.can_read(&item.action.request_id, &command.subject)
                             .unwrap_or(false)
+                            && self
+                                .policy_readable(
+                                    &item.action.request_id,
+                                    &command.subject,
+                                    command.binding.as_ref(),
+                                )
+                                .unwrap_or(false)
                     });
                     Ok(Reply::Tasks {
                         value,
@@ -921,18 +996,28 @@ impl Core {
                             .into_iter()
                             .filter(|p| {
                                 trigger_subject(&p.trigger) == Some(command.subject.as_str())
-                                    && !self
+                                    && self
+                                        .policy_readable(
+                                            p.action.request(),
+                                            &command.subject,
+                                            command.binding.as_ref(),
+                                        )
+                                        .unwrap_or(false)
+                                    && (matches!(
+                                        p.action,
+                                        execution_contract::PreparedAction::Policy { .. }
+                                    ) || !self
                                         .app
                                         .has_service_execution(
-                                            &p.offer.request,
+                                            &p.action.request().clone(),
                                             &self.host.binding.device,
                                         )
-                                        .unwrap_or(true)
+                                        .unwrap_or(true))
                             })
                             .collect(),
                     })
                 }
-                LocalRequest::Operation(Request::StartTask {
+                Some(Request::StartTask {
                     request,
                     task,
                     attempt,
@@ -948,19 +1033,24 @@ impl Core {
                     binding: command.binding.ok_or(Error::Denied)?,
                     origin,
                 }),
-                LocalRequest::Operation(Request::ConfirmTask { selection }) => {
-                    self.confirm_task(Selection {
-                        request: selection.request,
-                        task: selection.task,
-                        attempt: selection.attempt,
-                        revision: selection.revision,
-                        subject: command.subject,
-                        session: command.session,
-                        binding: command.binding.ok_or(Error::Denied)?,
-                        origin: execution_ipc::host::ClientOrigin::Desktop {},
-                    })
-                }
-                LocalRequest::Operation(Request::Status { request }) => {
+                Some(Request::ConfirmTask { selection }) => self.confirm_task(Selection {
+                    request: selection.request,
+                    task: selection.task,
+                    attempt: selection.attempt,
+                    revision: selection.revision,
+                    subject: command.subject,
+                    session: command.session,
+                    binding: command.binding.ok_or(Error::Denied)?,
+                    origin: execution_ipc::host::ClientOrigin::Desktop {},
+                }),
+                Some(Request::Status { request }) => {
+                    if !self.policy_readable(
+                        &request,
+                        &command.subject,
+                        command.binding.as_ref(),
+                    )? {
+                        return Err(Error::Denied);
+                    }
                     if let Some(value) = self.pending(&request, &command.subject)? {
                         return Ok(Reply::Pending {
                             value: Box::new(value),
@@ -976,7 +1066,14 @@ impl Core {
                             .map_err(crate::error::app_error)?,
                     })
                 }
-                LocalRequest::Operation(Request::Details { request }) => {
+                Some(Request::Details { request }) => {
+                    if !self.policy_readable(
+                        &request,
+                        &command.subject,
+                        command.binding.as_ref(),
+                    )? {
+                        return Err(Error::Denied);
+                    }
                     if let Some(value) = self.pending(&request, &command.subject)? {
                         return Ok(Reply::Pending {
                             value: Box::new(value),
@@ -993,10 +1090,21 @@ impl Core {
                         ),
                     })
                 }
-                LocalRequest::Operation(Request::Cancel { request }) => {
+                Some(Request::Cancel { request }) => {
+                    if !self.policy_readable(
+                        &request,
+                        &command.subject,
+                        command.binding.as_ref(),
+                    )? {
+                        return Err(Error::Denied);
+                    }
                     if let Some(value) = self.pending(&request, &command.subject)? {
                         let value = self
-                            .transition(&value.offer.request, BackendRequestState::Cancelled, None)?
+                            .transition(
+                                &value.action.request().clone(),
+                                BackendRequestState::Cancelled,
+                                None,
+                            )?
                             .ok_or(Error::Conflict)?;
                         if self.selected.as_ref().is_some_and(|s| s.request == request) {
                             self.selected = None;
@@ -1045,11 +1153,29 @@ impl Core {
     }
 }
 enum LocalRequest {
-    Operation(execution_ipc::host::Request),
+    Operation(Box<execution_ipc::host::Request>),
     Stop,
+}
+impl LocalRequest {
+    fn operation(request: execution_ipc::host::Request) -> Self {
+        Self::Operation(Box::new(request))
+    }
+    fn as_operation(&self) -> Option<&execution_ipc::host::Request> {
+        match self {
+            Self::Operation(request) => Some(request),
+            Self::Stop => None,
+        }
+    }
+    fn into_operation(self) -> Option<execution_ipc::host::Request> {
+        match self {
+            Self::Operation(request) => Some(*request),
+            Self::Stop => None,
+        }
+    }
 }
 pub(crate) struct Command {
     request: LocalRequest,
+    fence_epoch: u64,
     subject: String,
     session: u32,
     binding: Option<execution_contract::Id>,
@@ -1104,6 +1230,7 @@ pub(crate) async fn network_loop<T>(
 /// Native callbacks forward bounded commands to the only journal/network owner.
 pub struct ServiceHandle {
     sender: tokio::sync::mpsc::Sender<Command>,
+    fences: Arc<policy::Fences>,
     policy: execution_ipc::host::PeerPolicy,
     helper_policy: Option<execution_ipc::host::PeerPolicy>,
     finished: Arc<AtomicBool>,
@@ -1113,7 +1240,7 @@ pub struct ServiceHandle {
 impl ServiceHandle {
     pub(crate) fn service_status(&self) -> execution_ipc::host::Reply {
         self.call(
-            LocalRequest::Operation(execution_ipc::host::Request::ServiceStatus {}),
+            LocalRequest::operation(execution_ipc::host::Request::ServiceStatus {}),
             String::new(),
             0,
             None,
@@ -1138,6 +1265,7 @@ impl ServiceHandle {
         if self
             .sender
             .try_send(Command {
+                fence_epoch: self.fences.current(&subject).unwrap_or(u64::MAX),
                 request,
                 subject,
                 session,
@@ -1171,6 +1299,13 @@ impl ServiceHandle {
     }
 }
 impl execution_ipc::host::Handler for ServiceHandle {
+    fn session_fence(&self) -> Option<Arc<dyn execution_ipc::host::SessionFence>> {
+        Some(Arc::new(policy::NativeFence {
+            policy: self.policy.clone(),
+            fences: self.fences.clone(),
+            finished: self.finished.clone(),
+        }))
+    }
     fn peer_policy(&self) -> Option<execution_ipc::host::PeerPolicy> {
         let mut policy = self.policy.clone();
         if let Some(helper) = &self.helper_policy {
@@ -1208,7 +1343,7 @@ impl execution_ipc::host::Handler for ServiceHandle {
         match peer.authenticate(&self.policy) {
             Ok(subject) => match peer.session_binding() {
                 Ok(binding) => self.call(
-                    LocalRequest::Operation(request),
+                    LocalRequest::operation(request),
                     subject,
                     peer.session(),
                     Some(binding),
@@ -1308,10 +1443,10 @@ impl Selection {
             _ => return Err(Error::Denied),
         };
         Ok(Self {
-            request: record.offer.request.clone(),
-            task: record.offer.task.clone(),
-            attempt: record.offer.attempt.clone(),
-            revision: record.offer.revision.clone(),
+            request: record.action.request().clone(),
+            task: record.action.offer().ok_or(Error::Denied)?.task.clone(),
+            attempt: record.action.offer().ok_or(Error::Denied)?.attempt.clone(),
+            revision: record.action.offer().ok_or(Error::Denied)?.revision.clone(),
             subject: os_session.account.subject.as_str().into(),
             session: os_session
                 .session

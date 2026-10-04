@@ -40,7 +40,8 @@
   "dependencies": {
     "canonicalize": "5.0.0",
     "jsonc-parser": "3.3.1",
-    "@noble/hashes": "2.0.1"
+    "@noble/hashes": "2.0.1",
+    "@modelcontextprotocol/sdk": "1.30.0"
   },
   "devDependencies": {
     "@agentclientprotocol/sdk": "1.4.0",

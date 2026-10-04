@@ -86,7 +86,7 @@ test("deny guard wins over later allow, rejects nested/delegated callers and inv
     let calls = 0,
       drifts = 0;
     const definition = {
-      name: "host_propose",
+      name: "test_operation",
       description: "test bridge",
       parameters: {},
       output: { schema: { type: "null" }, render: () => [] },
@@ -99,7 +99,7 @@ test("deny guard wins over later allow, rejects nested/delegated callers and inv
     const verify = sealTools(
       ctx,
       "guard-session",
-      ["ask_user_question", "host_propose"],
+      ["ask_user_question", "test_operation"],
       () => drifts++,
     );
     const handle = await ctx.agents.create({
@@ -110,7 +110,7 @@ test("deny guard wins over later allow, rejects nested/delegated callers and inv
     const call = (patch) =>
       ctx.tools.execute({
         callId: ToolCallId("test-call"),
-        name: "host_propose",
+        name: "test_operation",
         arguments: {},
         agent: handle.agent,
         signal: new AbortController().signal,

@@ -1,3 +1,4 @@
+import { toolCatalog } from "../tool-catalog.mjs";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { mkdtemp, mkdir, realpath, rm } from "node:fs/promises";
@@ -104,12 +105,15 @@ export async function nativeFixture(
   };
   const admission = controlled
     ? {
-        tools: endpoint ?? {
-          propose: async () => ({
-            ok: true,
-            value: { disposition: "rejected", text: "fixture denial" },
-          }),
-        },
+        tools: endpoint
+          ? { list: toolCatalog(["inventory.read"]), ...endpoint }
+          : {
+              list: toolCatalog(["inventory.read"]),
+              propose: async () => ({
+                ok: true,
+                value: { disposition: "rejected", text: "fixture denial" },
+              }),
+            },
         verifier: {
           verify: async () => ({
             ok: true,

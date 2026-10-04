@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import ExecutionDetails from "./ExecutionDetails.vue";
+import PolicyPreparation from "../self-service/PolicyPreparation.vue";
 import { taskPresentation } from "./execution-presentation";
 import type { AssistantController } from "./controller";
 import type { BackendTaskView } from "@rss-mdm-agent/execution-bindings/task-details";
@@ -93,8 +94,17 @@ async function act(confirm: boolean) {
   if (view?.kind !== "pending" || busy.value) return;
   busy.value = true;
   try {
-    if (confirm) await props.controller.confirmPreparation(view.value.offer);
-    else await props.controller.cancelPreparation(view.value.offer.request);
+    const action = view.value.action;
+    if (confirm && action.kind === "policy")
+      await props.controller.confirmPolicyPreparation(action.choice.request);
+    else if (confirm && action.kind === "offered")
+      await props.controller.confirmPreparation(action.offer);
+    else
+      await props.controller.cancelPreparation(
+        action.kind === "offered"
+          ? action.offer.request
+          : action.choice.request,
+      );
   } catch {
     error.value = "操作回执未确认，请查询原请求状态";
   } finally {
@@ -211,41 +221,51 @@ function failureLabel(value: string) {
     class="execution-activity"
     aria-label="设备操作"
   >
-    <strong>设备操作 · {{ details.value.offer.title }}</strong>
-    <template v-if="details.value.offer.summary.kind === 'software'">
-      <p>操作：{{ operationLabel(details.value.offer.summary.intent) }}</p>
-      <ol>
-        <li
-          v-for="(step, index) in details.value.offer.summary.steps"
-          :key="index"
-        >
-          {{ step.package }} {{ step.version }} ·
-          {{ step.identity === "system" ? "系统账号" : "当前用户" }}
-        </li>
-      </ol>
+    <PolicyPreparation
+      v-if="details.value.action.kind !== 'offered'"
+      :record="details.value"
+      :disabled="busy"
+      @confirm="act(true)"
+      @cancel="act(false)"
+    />
+    <template v-else>
+      <strong>设备操作 · {{ details.value.action.offer.title }}</strong>
+      <template v-if="details.value.action.offer.summary.kind === 'software'">
+        <p>
+          操作：{{ operationLabel(details.value.action.offer.summary.intent) }}
+        </p>
+        <ol>
+          <li
+            v-for="(step, index) in details.value.action.offer.summary.steps"
+            :key="index"
+          >
+            {{ step.package }} {{ step.version }} ·
+            {{ step.identity === "system" ? "系统账号" : "当前用户" }}
+          </li>
+        </ol>
+      </template>
+      <p>AI 风险：{{ details.value.risk?.level ?? "后台未提供" }}</p>
+      <p>
+        {{ stateLabel(details.value.state) }}
+      </p>
+      <p v-if="details.value.failure">
+        {{ failureLabel(details.value.failure) }}
+      </p>
+      <button
+        v-if="details.value.state === 'awaitingConfirmation'"
+        :disabled="busy"
+        @click="act(true)"
+      >
+        确认上述操作
+      </button>
+      <button
+        v-if="!['failed', 'cancelled'].includes(details.value.state)"
+        :disabled="busy"
+        @click="act(false)"
+      >
+        撤销请求
+      </button>
     </template>
-    <p>AI 风险：{{ details.value.risk?.level ?? "后台未提供" }}</p>
-    <p>
-      {{ stateLabel(details.value.state) }}
-    </p>
-    <p v-if="details.value.failure">
-      {{ failureLabel(details.value.failure) }}
-    </p>
-    <button
-      v-if="details.value.state === 'awaitingConfirmation'"
-      :disabled="busy"
-      @click="act(true)"
-    >
-      确认上述操作
-    </button>
-    <button
-      v-if="!['failed', 'cancelled'].includes(details.value.state)"
-      :disabled="busy"
-      @click="act(false)"
-    >
-      撤销请求
-    </button>
-
     <p v-if="error" role="alert">{{ error }}</p>
     <button :disabled="loading" @click="refresh">刷新状态</button>
   </section>

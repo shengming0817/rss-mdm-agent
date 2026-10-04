@@ -125,6 +125,29 @@ impl ExecutionServicePort for TestService {
             Err(ServiceError::Unbound)
         }
     }
+    async fn policy_tools(
+        &self,
+        _: CancellationToken,
+    ) -> Result<Vec<serde_json::Value>, ServiceError> {
+        self.capabilities(CancellationToken::new()).await?;
+        Ok(Vec::new())
+    }
+    async fn policy_status(
+        &self,
+        _: OperationRequest,
+        _: CancellationToken,
+    ) -> Result<serde_json::Value, ServiceError> {
+        self.capabilities(CancellationToken::new()).await?;
+        Err(ServiceError::Denied)
+    }
+    async fn observe_software(
+        &self,
+        _: execution_contract::SoftwareReadSelection,
+        _: CancellationToken,
+    ) -> Result<execution_contract::BackendRequest, ServiceError> {
+        self.capabilities(CancellationToken::new()).await?;
+        Err(ServiceError::Denied)
+    }
     async fn tasks(&self, _: CancellationToken) -> Result<Vec<BackendTask>, ServiceError> {
         self.authorize()?;
         tokio::time::sleep(Duration::from_millis(
