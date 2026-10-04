@@ -31,7 +31,7 @@ pub enum Error {
     /// No conforming configuration is active. Reads and safe recovery remain available.
     #[error("new execution disabled")]
     Degraded,
-    /// This build has no production identity/bootstrap/runner adapter.
+    /// The requested execution operation or adapter is unsupported.
     #[error("execution mode unsupported")]
     Unsupported,
     /// A fixed capacity was exhausted.

@@ -6,6 +6,11 @@ rust-version.workspace = true
 license.workspace = true
 publish = false
 
+[features]
+default = []
+# Explicit fixtures use the same application and rule core as production.
+test-support = []
+
 [dependencies]
 execution-contract = { path = "../execution-contract" }
 execution-capability = { path = "../execution-capability" }
@@ -21,8 +26,12 @@ sha2.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
-execution-sqlite = { path = "../execution-sqlite" }
+execution-sqlite = { path = "../execution-sqlite", features = ["test-support"] }
 rusqlite.workspace = true
+
+[[example]]
+name = "task-details-fixtures"
+required-features = ["test-support"]
 
 [lints.clippy]
 cognitive_complexity = "warn"

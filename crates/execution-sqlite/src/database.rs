@@ -51,6 +51,7 @@ impl Store {
     }
     /// Explicit S1 bootstrap into a precreated private directory. Existing files are never
     /// overwritten. Local/enterprise authorities use explicit production bootstrap instead.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn initialize_test(
         path: &Path,
         authority: Authority,

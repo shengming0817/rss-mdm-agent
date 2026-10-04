@@ -1241,6 +1241,7 @@ dependencies = [
  "execution-contract",
  "execution-interaction",
  "execution-lifecycle",
+ "execution-sqlite",
  "platform-private-storage",
  "rusqlite",
  "schemars 1.2.2",

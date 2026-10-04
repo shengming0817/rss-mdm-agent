@@ -51,11 +51,14 @@ objc2-foundation = { version = "=0.3.2", default-features = false, features = ["
 [features]
 default = ["custom-protocol"]
 dev-fixture = []
+# Only explicit acceptance/example consumers select this feature.
+test-support = ["execution-app/test-support"]
 native-e2e = ["dep:tauri-plugin-wdio-webdriver"]
 custom-protocol = ["tauri/custom-protocol"]
 
 [dev-dependencies]
-execution-sqlite = { path = "../../../crates/execution-sqlite" }
+execution-app = { path = "../../../crates/execution-app", features = ["test-support"] }
+execution-sqlite = { path = "../../../crates/execution-sqlite", features = ["test-support"] }
 execution-interaction = { path = "../../../crates/execution-interaction" }
 execution-admission = { path = "../../../crates/execution-admission" }
 execution-approval = { path = "../../../crates/execution-approval" }
@@ -72,3 +75,7 @@ windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Syst
 windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Security_Credentials", "Win32_UI_Controls_Dialogs", "Win32_UI_WindowsAndMessaging", "Win32_Graphics_Gdi", "Win32_System_Com", "Win32_UI_Shell"] }
 windows = { version = "=0.61.3", features = ["UI_ViewManagement", "Win32_Graphics_Dwm", "Win32_UI_Accessibility", "Win32_UI_WindowsAndMessaging"] }
 windows-version = "=0.1.7"
+
+[[example]]
+name = "execution-acceptance-server"
+required-features = ["test-support"]

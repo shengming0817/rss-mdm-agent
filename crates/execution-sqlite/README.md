@@ -8,7 +8,9 @@
 
 ## 文件、容量与恢复
 
-initialize_test 在同一私有目录的独立临时文件中完成迁移、checkpoint 和关闭，再通过不覆盖 hard link 原子发布全新数据库；中断只留下未发布的隔离文件，显式重试不会读取或接管它。已发布数据库只通过 open 恢复。废弃的 .execution-bootstrap-* 及其 sidecar 由管理员在确认没有初始化任务后清理；当前没有自动清理器。该发布要求所在文件系统支持同目录 hard link。初始化要求绝对规范路径和预建私有目录；open 只打开已有库。Unix 检查目录/数据库/WAL/SHM/journal 无组或其他用户权限、拒绝符号链接，文件创建为 0600。WAL + synchronous=FULL + foreign_keys=ON，macOS 同时启用 fullfsync/checkpoint_fullfsync；busy wait 显式有界。没有损坏重建、备用路径或隐式 authority 替换。Windows ACL 与真实 AI/用户进程隔离属于后续平台接线，不由文件 mode 测试代替。
+生产组合根显式使用 initialize_production，Test authority 被拒绝。initialize_test 与 fixture limits 仅在非默认 `test-support` 下提供；测试支持同时启用应用的 fixture API，并复用同一 journal 实现。
+
+两种初始化入口均在同一私有目录的独立临时文件中完成迁移、checkpoint 和关闭，再通过不覆盖 hard link 原子发布全新数据库；中断只留下未发布的隔离文件，显式重试不会读取或接管它。已发布数据库只通过 open 恢复。废弃的 .execution-bootstrap-* 及其 sidecar 由管理员在确认没有初始化任务后清理；当前没有自动清理器。该发布要求所在文件系统支持同目录 hard link。初始化要求绝对规范路径和预建私有目录；open 只打开已有库。Unix 检查目录/数据库/WAL/SHM/journal 无组或其他用户权限、拒绝符号链接，文件创建为 0600。WAL + synchronous=FULL + foreign_keys=ON，macOS 同时启用 fullfsync/checkpoint_fullfsync；busy wait 显式有界。没有损坏重建、备用路径或隐式 authority 替换。Windows ACL 与真实 AI/用户进程隔离属于后续平台接线，不由文件 mode 测试代替。
 
 只接受当前持久格式；版本或完整性不支持时保留原文件并失败，不提供兼容读取、自动重建或历史导入。已打开连接仍须复核 authority 与格式。
 
@@ -20,7 +22,7 @@ initialize_test 在同一私有目录的独立临时文件中完成迁移、chec
 | Configuration | 修正显式 Limits 或 SQLite 持久化配置 |
 | OperationCommitUnknown | 查询或重交同一 operationRequestId；绝不能换 ID 重跑 runner |
 | ConfirmationCommitUnknown | 以同一 scope/consumer/event 重试 confirm；它没有 operation receipt |
-| BootstrapUnpublished | 初始化 migration 提交失败，目标库未发布；诊断存储或显式重试同一路径的 initialize_test |
+| BootstrapUnpublished | 初始化 migration 提交失败，目标库未发布；诊断存储或显式重试同一路径的对应初始化入口 |
 
 BootstrapUnpublished 仅来自发布前的 migration 提交；其它文件系统错误仍为 Storage。若初始化在发布后发生错误，保留目标文件并通过 open 核查，不能覆盖或重建 authority。
 

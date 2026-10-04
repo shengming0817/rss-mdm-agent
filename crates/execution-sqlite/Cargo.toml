@@ -6,6 +6,10 @@ rust-version.workspace = true
 license.workspace = true
 publish = false
 
+[features]
+default = []
+test-support = ["execution-app/test-support"]
+
 [dependencies]
 execution-app = { path = "../execution-app" }
 platform-private-storage = { path = "../platform-private-storage" }
@@ -21,6 +25,10 @@ serde_json.workspace = true
 serde_json_canonicalizer.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
+
+[dev-dependencies]
+# Integration tests consume the library, where cfg(test) is not enabled.
+execution-sqlite = { path = ".", features = ["test-support"] }
 
 [[test]]
 name = "acceptance"
