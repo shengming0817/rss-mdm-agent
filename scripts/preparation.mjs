@@ -66,18 +66,28 @@ const checks = {
   ai: ["generate-ai-contract.mjs", ["runtimeSchema"], ["--check"]],
   codex: ["generate-codex-protocol.mjs", [], ["--check"]],
 };
+// ref: Git object-file.c@v2.51.0 (format_object_header / stream_object_signature)
+// Frame both paths and payloads: embedded NUL/path bytes in file content cannot
+// impersonate a subsequent entry, and links/directories have distinct types.
+function hashEntry(digest, type, name, bytes = "") {
+  const path = Buffer.from(name),
+    content = Buffer.from(bytes);
+  digest.update(`${type}\0${path.length}\0${content.length}\0`);
+  digest.update(path);
+  digest.update(content);
+}
 export function treeDigest(path) {
   const digest = createHash("sha256");
   function visit(current, name) {
     const stat = lstatSync(current);
-    digest.update(name + "\0");
     if (stat.isDirectory()) {
-      digest.update("dir\0");
+      hashEntry(digest, "dir", name);
       for (const child of readdirSync(current).sort())
         visit(join(current, child), `${name}/${child}`);
-    } else if (stat.isFile()) digest.update(readFileSync(current));
+    } else if (stat.isFile())
+      hashEntry(digest, "file", name, readFileSync(current));
     else if (stat.isSymbolicLink())
-      digest.update(`link\0${readlinkSync(current)}`);
+      hashEntry(digest, "link", name, readlinkSync(current));
     else throw Error(`unsupported prepared input: ${current}`);
   }
   visit(path, ".");
@@ -107,11 +117,10 @@ export function sourceDigest(directory) {
           continue;
         visit(`${name}/${child}`);
       }
-    } else if (stat.isFile()) {
-      digest.update(`${name}\0file\0${stat.size}\0`);
-      digest.update(readFileSync(path));
-    } else if (stat.isSymbolicLink())
-      digest.update(`${name}\0link\0${readlinkSync(path)}\0`);
+    } else if (stat.isFile())
+      hashEntry(digest, "file", name, readFileSync(path));
+    else if (stat.isSymbolicLink())
+      hashEntry(digest, "link", name, readlinkSync(path));
   }
   for (const name of [
     "Cargo.toml",
@@ -161,6 +170,9 @@ function toolchain(directory, env) {
       cwd: directory,
       env,
       encoding: "utf8",
+      // ref: Node.js lib/child_process.js@v24.14.1 (spawnSync timeout/killSignal).
+      timeout: 10000,
+      killSignal: "SIGKILL",
     }).trim();
   return {
     node: process.versions.node,
@@ -386,7 +398,7 @@ export class Preparation {
         [
           "build",
           "--locked",
-          "--message-format=json",
+          "--message-format=json-render-diagnostics",
           "-p",
           pkg,
           "--example",
@@ -474,7 +486,7 @@ export class Preparation {
           "build",
           "--release",
           "--locked",
-          "--message-format=json",
+          "--message-format=json-render-diagnostics",
           "-p",
           "native-process",
           "-p",

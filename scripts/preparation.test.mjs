@@ -1,12 +1,15 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawnSync, spawn } from "node:child_process";
 import {
   mkdtempSync,
   mkdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
+  readdirSync,
+  chmodSync,
+  symlinkSync,
 } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -16,6 +19,7 @@ import {
   preparedArtifact,
   sourceDigest,
   assertPreparedRun,
+  treeDigest,
 } from "./preparation.mjs";
 import { executeSteps, runCommand } from "./ci-plan.mjs";
 
@@ -336,3 +340,85 @@ test("deliverable publication guard rejects source/toolchain changes and cancell
     /cancelled/,
   );
 });
+
+test("artifact entry framing rejects payloads that impersonate deleted files or links", async (t) => {
+  const { root, preparation } = fixture(t);
+  await preparation.ensure(["execution"]);
+  const directory = join(preparation.directory, "worker");
+  mkdirSync(directory);
+  writeFileSync(join(directory, "a.js"), "first");
+  writeFileSync(join(directory, "b.js"), "second");
+  preparation.record("worker", directory);
+  const digest = treeDigest(directory);
+  writeFileSync(join(directory, "a.js"), "first./b.js\0second");
+  rmSync(join(directory, "b.js"));
+  assert.notEqual(treeDigest(directory), digest);
+  assert.throws(
+    () => preparedArtifact("worker", root, preparation.env),
+    /changed prepared artifact/,
+  );
+  writeFileSync(join(directory, "a.js"), "link\0destination");
+  const fileDigest = treeDigest(directory);
+  rmSync(join(directory, "a.js"));
+  symlinkSync("destination", join(directory, "a.js"));
+  assert.notEqual(treeDigest(directory), fileDigest);
+});
+
+test(
+  "a hanging tool probe is forcibly bounded and releases its run after cancellation",
+  { timeout: 15000 },
+  async (t) => {
+    const { root } = fixture(t);
+    const bin = join(root, "bin");
+    mkdirSync(bin);
+    const marker = join(root, "probe-started");
+    writeFileSync(
+      join(bin, "pnpm"),
+      `#!${process.execPath}\nimport {writeFileSync} from 'node:fs';writeFileSync(${JSON.stringify(marker)},String(process.pid));process.on('SIGTERM',()=>{});setInterval(()=>{},1000);`,
+    );
+    chmodSync(join(bin, "pnpm"), 0o755);
+    const module = new URL("./preparation.mjs", import.meta.url).href;
+    const env = { ...process.env, PATH: bin + ":" + process.env.PATH };
+    delete env[contextKey];
+    delete env._AGENT_BUILD_LEASE;
+    const child = spawn(
+      process.execPath,
+      [
+        "--input-type=module",
+        "-e",
+        `import {withPreparation} from ${JSON.stringify(module)};await withPreparation(['execution'],()=>{throw Error('must not consume')},{directory:process.argv[1]});`,
+        root,
+      ],
+      { env, stdio: ["ignore", "pipe", "pipe"] },
+    );
+    let stderr = "";
+    child.stderr.on("data", (bytes) => (stderr += bytes));
+    const closed = new Promise((resolve, reject) => {
+      child.on("error", reject);
+      child.on("close", (code, signal) => resolve({ code, signal }));
+    });
+    t.after(() => {
+      child.kill("SIGKILL");
+    });
+    const start = performance.now();
+    while (!readdirSync(root).includes("probe-started")) {
+      assert.ok(performance.now() - start < 3000, "probe did not start");
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    child.kill("SIGTERM");
+    const result = await closed;
+    assert.notEqual(result.code, 0);
+    assert.match(stderr, /ETIMEDOUT/);
+    assert.ok(
+      performance.now() - start < 13000,
+      "probe exceeded its bounded timeout",
+    );
+    const probePid = Number(readFileSync(marker, "utf8"));
+    assert.throws(() => process.kill(probePid, 0), { code: "ESRCH" });
+    assert.deepEqual(
+      readdirSync(join(root, ".local-ci-runs")),
+      [],
+      "owning run cleans preparation directory",
+    );
+  },
+);
