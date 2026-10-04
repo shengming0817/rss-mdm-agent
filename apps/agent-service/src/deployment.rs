@@ -23,6 +23,8 @@ pub struct Deployment {
     pub signing_keys: BTreeMap<String, String>,
     pub ca_file: Option<PathBuf>,
     pub installation_id: uuid::Uuid,
+    /// SHA256 of the fixed, public installation candidate manifest.
+    pub installation_artifact: String,
     pub device_ca_file: PathBuf,
     pub registration_clients: PeerPolicy,
     pub state_root: PathBuf,
@@ -49,13 +51,14 @@ impl Deployment {
     pub fn default_path() -> Result<PathBuf, Error> {
         installation_security::deployment_path().map_err(|_| Error::Configuration)
     }
-    pub fn load(path: &Path) -> Result<Self, Error> {
+    pub(crate) fn metadata(path: &Path) -> Result<Self, Error> {
         let bytes =
             installation_security::read_protected(path).map_err(|_| Error::Configuration)?;
         let value: Self = serde_json::from_slice(&bytes).map_err(|_| Error::Configuration)?;
         if value.version != execution_ipc::host::DEPLOYMENT_VERSION
             || value.ipc_version != execution_ipc::host::IPC_VERSION
             || value.installation_id.is_nil()
+            || !crate::installation::digest_valid(&value.installation_artifact)
             || !value.device_ca_file.is_absolute()
             || !value.state_root.is_absolute()
             || !value.execution.material_root.is_absolute()
@@ -68,6 +71,10 @@ impl Deployment {
         {
             return Err(Error::Configuration);
         }
+        Ok(value)
+    }
+    pub fn load(path: &Path) -> Result<Self, Error> {
+        let value = Self::metadata(path)?;
         value
             .registration_clients
             .validate()
@@ -80,6 +87,12 @@ impl Deployment {
             .service
             .verify(&value.service.path)
             .map_err(|_| Error::Configuration)?;
+        for image in std::iter::once(&value.service)
+            .chain(value.clients.images.iter())
+            .chain(value.registration_clients.images.iter())
+        {
+            crate::installation::validate_native_artifact(image)?;
+        }
         value.network()?.validate()?;
         Ok(value)
     }
@@ -133,13 +146,12 @@ impl Deployment {
         } else {
             return Err(Error::Unsupported);
         };
-        let architecture = if cfg!(target_arch = "aarch64") {
-            wire::TaskArchitecture::Aarch64
-        } else if cfg!(target_arch = "x86_64") {
-            wire::TaskArchitecture::X86_64
-        } else {
-            return Err(Error::Unsupported);
-        };
+        let architecture =
+            match installation_security::Target::current().map_err(|_| Error::Unsupported)? {
+                installation_security::Target::WindowsAmd64 => wire::TaskArchitecture::X86_64,
+                installation_security::Target::WindowsArm64
+                | installation_security::Target::MacosArm64 => wire::TaskArchitecture::Aarch64,
+            };
         let keys = self
             .signing_keys
             .iter()
@@ -274,8 +286,13 @@ impl Deployment {
         grant: agent_client::GrantImport,
         secret: &wire::Secret,
     ) -> Result<(), Error> {
+        grant.validate(
+            self.network()?.platform,
+            agent_client::Clock::now(&SystemClock::new()?)?,
+        )?;
         let mut client = self.communication(true)?;
         let reference = format!("bootstrap-{}", grant.operation_id);
+        client.validate_grant_import(&grant, &reference, &self.capabilities())?;
         client.import_bootstrap_secret(&reference, secret)?;
         client.import_grant(grant, &reference, self.capabilities())?;
         client.drive_enrollment().await?;
@@ -336,27 +353,30 @@ impl Deployment {
     pub fn validate_persistent(&self) -> Result<(), Error> {
         self.require_service()?;
         self.preflight()?;
+        if never_initialized(&self.state_root)? {
+            return Ok(());
+        }
         let namespace = self.namespace()?;
-        installation_security::protected(&self.state_root).map_err(|_| Error::Storage)?;
-        validate_markers(&self.state_root, &namespace)?;
         let secrets = DeviceSecrets::open(&self.state_root.join("secrets"), &namespace)?;
         secrets.verify_storage(&self.state_root)?;
-        let network = self.network()?;
-        let registration = agent_client::validate_identity(
+        let registration = agent_client::validate_stored_identity(
             &self.state_root.join("communication"),
-            &network,
+            &self.network()?,
             &secrets,
-            &SystemClock::new()?,
         )?;
-        let (binding, _) =
-            crate::backend::plan::context(network.origin.as_str(), network.tenant, &registration)?;
-        execution_sqlite::Store::validate_existing(
-            &self.state_root.join("execution.sqlite"),
-            &binding.authority,
-            crate::backend::plan::storage_limits(),
-        )
-        .map_err(|_| Error::Storage)?;
-        platform_private_storage::validate(&self.execution.work_root)?;
+        if self.state_root.join("execution-initialized").exists() {
+            validate_markers(&self.state_root, &namespace)?;
+            let registration = registration.ok_or(Error::Identity)?;
+            let (binding, _) =
+                crate::backend::plan::context(self.origin.as_str(), self.tenant, &registration)?;
+            execution_sqlite::Store::validate_existing(
+                &self.state_root.join("execution.sqlite"),
+                &binding.authority,
+                crate::backend::plan::storage_limits(),
+            )
+            .map_err(|_| Error::Storage)?;
+            platform_private_storage::validate(&self.execution.work_root)?;
+        }
         Ok(())
     }
     pub fn open(&self) -> Result<DeviceService, Error> {
@@ -601,6 +621,7 @@ mod tests {
             tenant: uuid::Uuid::new_v4(),
             signing_keys: Default::default(),
             ca_file: None,
+            installation_artifact: "a".repeat(64),
             installation_id: uuid::Uuid::new_v4(),
             device_ca_file: PathBuf::new(),
             registration_clients: PeerPolicy {
