@@ -151,7 +151,7 @@ fn run<S: agent_client::IdentityProvider, C: agent_client::Clock, O>(
             if snapshot.status.registered {
                 drop(snapshot);
                 let owner = activate(client.take().ok_or(Error::Storage)?)?;
-                shared.lock().map_err(|_| Error::Unavailable)?.readiness = Readiness::Ready;
+                shared.lock().map_err(|_| Error::Unavailable)?.readiness = Readiness::NotReady;
                 return Ok(Some(owner));
             }
         }
@@ -167,29 +167,22 @@ fn run<S: agent_client::IdentityProvider, C: agent_client::Clock, O>(
                 let result = if status.phase == EnrollmentPhase::Unregistered {
                     runtime
                         .block_on(until_stopped(
-                            value.request_authorization(capabilities.clone()),
+                            async {
+                                value.drive_pki().await?;
+                                value.request_authorization(capabilities.clone()).await
+                            },
                             &stopping,
                         ))
                         .map(|_| ())
                 } else {
-                    runtime.block_on(until_stopped(value.drive_enrollment(), &stopping))
+                    runtime.block_on(until_stopped(value.drive_pki(), &stopping))
                 };
                 record_result(result, value, &shared)?;
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 if let Some(value) = &mut client {
-                    let status = value.enrollment_status()?;
-                    if matches!(
-                        status.phase,
-                        EnrollmentPhase::Preparing
-                            | EnrollmentPhase::AwaitingAuthorization
-                            | EnrollmentPhase::Authorized
-                            | EnrollmentPhase::Activating
-                            | EnrollmentPhase::IssuanceUnknown
-                            | EnrollmentPhase::ActivationUnknown
-                    ) {
-                        let result =
-                            runtime.block_on(until_stopped(value.drive_enrollment(), &stopping));
+                    if value.has_pending_enrollment()? {
+                        let result = runtime.block_on(until_stopped(value.drive_pki(), &stopping));
                         record_result(result, value, &shared)?;
                     }
                 }
@@ -328,6 +321,29 @@ mod tests {
     use agent_api::runtime::Capability;
     use agent_client::{IdentityProvider, OpenMode};
     struct InterruptedSecret(crate::protocol_test_support::Secrets);
+    impl agent_client::MachineTrust for InterruptedSecret {
+        fn read_certificate(
+            &self,
+            store: agent_client::MachineStore,
+            der: &[u8],
+        ) -> Result<bool, Error> {
+            self.0.read_certificate(store, der)
+        }
+        fn add_certificate(
+            &self,
+            store: agent_client::MachineStore,
+            der: &[u8],
+        ) -> Result<agent_client::CertificateAdd, Error> {
+            self.0.add_certificate(store, der)
+        }
+        fn delete_certificate(
+            &self,
+            store: agent_client::MachineStore,
+            der: &[u8],
+        ) -> Result<(), Error> {
+            self.0.delete_certificate(store, der)
+        }
+    }
     impl agent_client::IdentityProvider for InterruptedSecret {
         fn resolve(&self, reference: &str) -> Result<agent_client::Secret, Error> {
             self.0.resolve(reference)

@@ -25,11 +25,21 @@ pub(crate) struct EnterpriseHost {
     pub materials: MaterialRegistry,
     pub subject: String,
     pub current: Arc<Mutex<Option<Arc<BackendPermit>>>>,
+    pub identity_until: Arc<std::sync::atomic::AtomicU64>,
     pub revoked: Arc<std::sync::atomic::AtomicBool>,
 }
 impl EnterpriseHost {
+    pub(crate) fn identity_ready(&self) -> bool {
+        !self.revoked.load(std::sync::atomic::Ordering::Acquire)
+            && self.clock.millis().is_ok_and(|now| {
+                now / 1000
+                    < self
+                        .identity_until
+                        .load(std::sync::atomic::Ordering::Acquire)
+            })
+    }
     fn permit(&self, plan: &FrozenExecution) -> Result<Arc<BackendPermit>, Error> {
-        if self.revoked.load(std::sync::atomic::Ordering::Acquire) {
+        if !self.identity_ready() {
             return Err(Error::Denied);
         }
         let permit = self
