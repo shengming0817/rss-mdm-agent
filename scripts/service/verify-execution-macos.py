@@ -55,7 +55,7 @@ def security_matrix():
     rows['cross_user']['reason'] = 'second real GUI login required; sudo -u is not evidence'
     rows['login_generation']['reason'] = 'isolated logout/login and retained old request required'
     rows['legacy_challenge'] = dict(status='notApplicable',
-        reason='IPC V10 has no challenge; NSXPC one-shot/5s lifetime and backend offer expiry replace it',
+        reason='Current IPC has no challenge; NSXPC one-shot/5s lifetime and backend offer expiry replace it',
         source='crates/execution-ipc/src/{host.rs,macos_service.m}')
     return dict(platform='macOS', scenarios=rows, status='notExecuted')
 
