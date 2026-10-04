@@ -2,6 +2,17 @@
 #[path = "src/organization_config.rs"]
 mod organization_config;
 
+// ref: Tauri crates/tauri-utils/src/acl/build.rs@tauri-utils-v2.9.3
+fn write_if_changed(path: &std::path::Path, bytes: &[u8]) {
+    match std::fs::read(path) {
+        Ok(current) if current == bytes => return,
+        Ok(_) => (),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
+        Err(error) => panic!("read generated input {}: {error}", path.display()),
+    }
+    std::fs::write(path, bytes).expect("write generated build input");
+}
+
 fn main() {
     println!("cargo:rerun-if-env-changed=RSS_BUILD_MDM_ORGANIZATION");
     println!("cargo:rerun-if-changed=src/organization_config.rs");
@@ -14,12 +25,11 @@ fn main() {
             .normalize()
             .unwrap_or_else(|error| panic!("{error}"))
             });
-    std::fs::write(
-        std::path::Path::new(&std::env::var("OUT_DIR").expect("OUT_DIR"))
+    write_if_changed(
+        &std::path::Path::new(&std::env::var("OUT_DIR").expect("OUT_DIR"))
             .join("default_organization.json"),
-        serde_json::to_vec(&organization).expect("default organization JSON"),
-    )
-    .expect("compiled default organization");
+        &serde_json::to_vec(&organization).expect("default organization JSON"),
+    );
     let private_link = "../../../crates/native-process/private-link-v1.json";
     println!("cargo:rerun-if-changed={private_link}");
     let contract: serde_json::Value =
@@ -43,15 +53,27 @@ fn main() {
         magic[1].as_u64().expect("magic byte"),
         magic[2].as_u64().expect("magic byte"),
     );
-    std::fs::write(
-        std::path::Path::new(&std::env::var("OUT_DIR").expect("OUT_DIR"))
+    write_if_changed(
+        &std::path::Path::new(&std::env::var("OUT_DIR").expect("OUT_DIR"))
             .join("private_link_contract.rs"),
-        generated,
-    )
-    .expect("generated private-link Rust contract");
+        generated.as_bytes(),
+    );
     let manifest = "resources/ai-host-runtime/manifest.json";
-    println!("cargo:rerun-if-changed={manifest}");
-    if let Ok(bytes) = std::fs::read(manifest) {
+    // ref: Cargo src/cargo/core/compiler/fingerprint/mod.rs@0.97.0
+    // Subscribe to a real directory while optional assembly is absent. Once staged,
+    // the manifest itself detects modification and deletion without scanning Node modules.
+    let bytes = match std::fs::read(manifest) {
+        Ok(bytes) => {
+            println!("cargo:rerun-if-changed={manifest}");
+            Some(bytes)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            println!("cargo:rerun-if-changed=resources");
+            None
+        }
+        Err(error) => panic!("read staged runtime manifest: {error}"),
+    };
+    if let Some(bytes) = bytes {
         let candidate: serde_json::Value =
             serde_json::from_slice(&bytes).expect("staged runtime manifest");
         let digest = candidate["runtimeTreeSha256"]
