@@ -776,7 +776,18 @@ def root_refresh_security(root, binary, config, installer_source, phase):
     assert json.loads(config.read_bytes()) == before_document
     assert all(hashlib.sha256(Path(p).read_bytes()).hexdigest()==digest for p,digest in identities.items())
     after_stop=dict(originalPid=pid,newPid=new_pid,identityDigests=identities,configurationUnchanged=True)
-    journal_after=journal_proof(journal)
+    # PID publication precedes the new owner's WAL startup. During sidecar
+    # replacement a read-only SQLite reader can temporarily fail to open it.
+    # ref: sqlite.org/wal.html sections 5 and 9; never bypass WAL with immutable=1.
+    deadline=time.monotonic()+15
+    while True:
+        try:
+            journal_after=journal_proof(journal)
+            break
+        except sqlite3.OperationalError as error:
+            if str(error) not in ('unable to open database file','database is locked') or not journal.is_file() or time.monotonic()>=deadline:
+                raise
+            time.sleep(.05)
     assert {row['request']:(row['snapshot']['attempts'],(row['snapshot'].get('attempt') or {}).get('id'))
         for row in journal_after['records']}==original_attempts, 'refresh changed durable request/attempt facts'
     return dict(preflight=preflight,afterStop=after_stop,journalBefore=journal_before,journalAfter=journal_after,
