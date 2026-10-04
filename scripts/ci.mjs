@@ -135,6 +135,9 @@ export async function runCI(
           return {
             status: error.blocked ? null : 1,
             error,
+            ...(preparationOnly
+              ? { execution: "preparation", preparedInputs: requirements }
+              : {}),
             ...(error.blocked
               ? { blocked: `preparation:${error.blocked}` }
               : {}),

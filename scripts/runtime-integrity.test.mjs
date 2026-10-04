@@ -234,11 +234,12 @@ test("worker staging can replace the same destination twice without stale files 
   });
 });
 
-for (const cancelled of [false, true])
+for (const mode of ["failure", "cancellation", "unapproved runtime"])
   test(
-    `previous passed runtime is rejected after preparation ${cancelled ? "cancellation" : "failure"}`,
+    `previous passed runtime is rejected after ${mode}`,
     { timeout: 15000 },
     async (t) => {
+      const cancelled = mode === "cancellation";
       const source = fileURLToPath(new URL("../", import.meta.url));
       const root = mkdtempSync(
         join(tmpdir(), "rss-bundle-preparation-failure-"),
@@ -300,6 +301,11 @@ else { console.error('fixture preparation failure'); process.exit(31); }
       );
       chmodSync(command, 0o755);
       env.PATH = `${bin}:${env.PATH}`;
+      if (mode === "unapproved runtime") {
+        const manifest = JSON.parse(readFileSync(join(root, "package.json")));
+        manifest.engines.node = "0.0.0";
+        writeFileSync(join(root, "package.json"), JSON.stringify(manifest));
+      }
       let code,
         stderr = "";
       if (cancelled) {
@@ -329,7 +335,12 @@ else { console.error('fixture preparation failure'); process.exit(31); }
         );
         code = result.status;
         stderr = result.stderr;
-        assert.match(stderr, /fixture preparation failure/);
+        assert.match(
+          stderr,
+          mode === "unapproved runtime"
+            ? /approved|artifact|runtime/i
+            : /fixture preparation failure/,
+        );
       }
       assert.notEqual(code, 0, stderr);
       assert.equal(

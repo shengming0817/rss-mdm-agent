@@ -23,32 +23,33 @@ import {
 } from "./ai-host-artifacts.mjs";
 import { developmentFingerprint } from "./desktop-dev-runtime.mjs";
 const development = process.argv.includes("--development");
-const root = fileURLToPath(new URL("../", import.meta.url)),
-  start = development ? developmentFingerprint(root) : undefined;
-const { version, target, sha256, sqlite } = runtimeArtifact(
+const root = fileURLToPath(new URL("../", import.meta.url));
+const directory = join(
   root,
-  `${process.platform}-${process.arch}`,
+  development
+    ? ".local-ci-runs/ai-host-dev-runtime"
+    : ".local-ci-runs/ai-host-runtime",
 );
+// Retire the previous candidate before any preparation or packaging can fail.
+rmSync(join(directory, "manifest.json"), { force: true });
+const cache = join(root, ".cache/ai-host");
 const windows = process.platform === "win32";
 const suffix = windows ? ".exe" : "";
 const extension = windows ? "zip" : "tar.gz";
-const directory = join(
-    root,
-    development
-      ? ".local-ci-runs/ai-host-dev-runtime"
-      : ".local-ci-runs/ai-host-runtime",
-  ),
-  cache = join(root, ".cache/ai-host"),
-  archive = join(cache, `node-v${version}-${target}.${extension}`),
-  scratch = mkdtempSync(join(tmpdir(), "rss-host-node-"));
-// Retire the previous candidate before any preparation or packaging can fail.
-rmSync(join(directory, "manifest.json"), { force: true });
+let start, version, target, sha256, sqlite, scratch;
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
 let stage = "Node archive verification",
   behaviorPassed = false,
   failure,
   runtimeTreeSha256;
 try {
+  start = development ? developmentFingerprint(root) : undefined;
+  ({ version, target, sha256, sqlite } = runtimeArtifact(
+    root,
+    `${process.platform}-${process.arch}`,
+  ));
+  scratch = mkdtempSync(join(tmpdir(), "rss-host-node-"));
+  const archive = join(cache, `node-v${version}-${target}.${extension}`);
   stage = "AI Host preparation";
   await using preparation = await prepareRun([
     "node:@rss-mdm-agent/ai-host-app",
@@ -56,6 +57,7 @@ try {
     "worker",
     "execution",
   ]);
+  stage = "Node archive verification";
   mkdirSync(cache, { recursive: true });
   if (!existsSync(archive) || hash(readFileSync(archive)) !== sha256) {
     const response = await fetch(
@@ -137,7 +139,7 @@ try {
   failure = `${stage}: ${error}`;
   process.exitCode = 1;
 } finally {
-  rmSync(scratch, { recursive: true, force: true });
+  if (scratch) rmSync(scratch, { recursive: true, force: true });
   const end = development ? developmentFingerprint(root) : undefined,
     sourceUnchanged = !development || start === end;
   const deliverable = behaviorPassed && sourceUnchanged;
