@@ -57,6 +57,10 @@ pub struct GrantImport {
     pub grant: enroll::GrantReceipt,
 }
 impl<S: IdentityProvider, C: Clock> Client<S, C> {
+    /// Whether an original certificate operation remains to be recovered.
+    pub fn has_pending_enrollment(&self) -> Result<bool, Error> {
+        Ok(self.identity_state()?.pending.is_some())
+    }
     /// Import only bootstrap secret material through the platform owner.
     pub fn import_bootstrap_secret(
         &self,
@@ -86,8 +90,10 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         let phase = match failure {
             Some(enroll::ErrorCode::IssuanceUnknown) => EnrollmentPhase::IssuanceUnknown,
             Some(enroll::ErrorCode::ActivationUnknown) => EnrollmentPhase::ActivationUnknown,
-            Some(_) => EnrollmentPhase::Rejected,
-            None => match &state.pending {
+            Some(code) if code != enroll::ErrorCode::ServiceUnavailable => {
+                EnrollmentPhase::Rejected
+            }
+            _ => match &state.pending {
                 Some(p) if p.candidate.is_some() => EnrollmentPhase::Activating,
                 Some(p)
                     if p.grant.as_ref().is_some_and(|g| {

@@ -212,6 +212,65 @@ mod tests {
                 .unwrap(),
             public
         );
+        let executable = root.join("updated-key-test");
+        std::fs::copy(std::env::current_exe().unwrap(), &executable).unwrap();
+        let child = |denied: bool| {
+            std::process::Command::new(&executable)
+                .args([
+                    "--ignored",
+                    "--exact",
+                    "tests::device_key_child",
+                    "--test-threads=1",
+                ])
+                .env("RSS_TEST_KEYCHAIN", root.join("old.keychain"))
+                .env("RSS_TEST_KEY_DENIED", if denied { "yes" } else { "no" })
+                .output()
+                .unwrap()
+        };
+        let result = child(false);
+        assert!(
+            result.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr)
+        );
+        assert!(std::process::Command::new("/usr/bin/codesign")
+            .args([
+                "--force",
+                "--sign",
+                "-",
+                "--identifier",
+                "rss.untrusted-key-test"
+            ])
+            .arg(&executable)
+            .status()
+            .unwrap()
+            .success());
+        let result = child(true);
+        assert!(
+            result.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr)
+        );
+    }
+    #[test]
+    #[ignore = "child process of nonexportable_device_key_reopens_and_signs_without_interaction"]
+    fn device_key_child() {
+        let path = std::path::PathBuf::from(std::env::var_os("RSS_TEST_KEYCHAIN").unwrap());
+        let keychain = Keychain::open_file(&path).unwrap();
+        let key = keychain.open_device_key("machine-key");
+        if std::env::var("RSS_TEST_KEY_DENIED").unwrap() == "yes" {
+            assert!(key.is_err());
+        } else {
+            assert_eq!(
+                key.unwrap()
+                    .sign(SignatureScheme::PssSha256, b"updated image")
+                    .unwrap()
+                    .len(),
+                256
+            );
+        }
     }
     #[test]
     #[allow(deprecated)] // Upstream exposes no setter for the test's explicit isolated search list.

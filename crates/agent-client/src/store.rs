@@ -173,17 +173,31 @@ pub fn validate_existing(root: &Path, cfg: &Config) -> Result<(), Error> {
 }
 /// Inspect the sole active binding without locks, writes or startup recovery.
 pub fn inspect_binding(root: &Path, cfg: &Config) -> Result<wire::BindingProfile, Error> {
+    read_identity(root, cfg)?
+        .active
+        .map(|active| active.receipt.runtime)
+        .ok_or(Error::Identity)
+}
+/// Validate the current runtime identity without locks, writes, recovery or key creation.
+/// Historical binding inspection remains independent for local journal recovery.
+pub fn validate_identity(
+    root: &Path,
+    cfg: &Config,
+    provider: &impl crate::IdentityProvider,
+    clock: &impl crate::Clock,
+) -> Result<wire::BindingProfile, Error> {
+    Ok(read_identity(root, cfg)?
+        .validate_runtime(cfg, provider, clock.now()?)?
+        .clone())
+}
+fn read_identity(root: &Path, cfg: &Config) -> Result<crate::identity::IdentityState, Error> {
     let reader = read_existing(root, cfg)?;
     let body: Vec<u8> = reader.query_row(
         "SELECT CASE WHEN length(body)<=?1 THEN body END FROM state WHERE key='identity'",
         [cfg.limits.response_bytes],
         |r| r.get(0),
     )?;
-    let state: crate::identity::IdentityState = decode(&body)?;
-    state
-        .active
-        .map(|active| active.receipt.runtime)
-        .ok_or(Error::Identity)
+    decode(&body)
 }
 
 fn sidecars(path: &Path) -> Result<(), Error> {

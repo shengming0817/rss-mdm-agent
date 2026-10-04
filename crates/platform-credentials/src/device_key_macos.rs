@@ -5,7 +5,7 @@ use core_foundation::{
     array::CFArray,
     base::{CFType, TCFType},
     boolean::CFBoolean,
-    data::{CFData, CFDataRef},
+    data::CFData,
     dictionary::CFDictionary,
     number::CFNumber,
     string::{CFString, CFStringRef},
@@ -44,9 +44,9 @@ extern "C" {
         description: *mut CFStringRef,
         prompt: *mut PromptSelector,
     ) -> i32;
-    fn SecTrustedApplicationCopyData(
+    fn SecTrustedApplicationValidateWithPath(
         application: *const std::ffi::c_void,
-        data: *mut CFDataRef,
+        path: *const std::ffi::c_char,
     ) -> i32;
     fn SecAccessCreate(
         description: CFStringRef,
@@ -300,16 +300,6 @@ impl DeviceKey {
                 .as_encoded_bytes(),
         )
         .map_err(|_| denied())?;
-        let mut expected = std::ptr::null();
-        // SAFETY: Valid current image path and owned application output.
-        if unsafe { SecTrustedApplicationCreateFromPath(path.as_ptr(), &mut expected) } != 0
-            || expected.is_null()
-        {
-            return Err(denied());
-        }
-        // SAFETY: Successful create transfers one trusted application reference.
-        let expected = unsafe { CFType::wrap_under_create_rule(expected) };
-        let expected = application_data(&expected)?;
         for acl in acls.iter() {
             let mut applications = std::ptr::null();
             let mut description = std::ptr::null();
@@ -334,9 +324,15 @@ impl DeviceKey {
             }
             // SAFETY: Successful copy transfers an application array.
             let applications = unsafe { CFArray::<CFType>::wrap_under_create_rule(applications) };
-            if applications.len() != 1
-                || application_data(&*applications.get(0).ok_or_else(denied)?)?.bytes()
-                    != expected.bytes()
+            if applications.len() != 1 {
+                return Err(denied());
+            }
+            let application = applications.get(0).ok_or_else(denied)?;
+            // SAFETY: OS-owned trusted application and NUL-terminated current image path.
+            // Validate the original code requirement, rather than its informational path.
+            if unsafe {
+                SecTrustedApplicationValidateWithPath(application.as_CFTypeRef(), path.as_ptr())
+            } != 0
             {
                 return Err(denied());
             }
@@ -362,16 +358,4 @@ impl DeviceKey {
             )
             .map_err(|_| denied())
     }
-}
-
-fn application_data(application: &CFType) -> io::Result<CFData> {
-    let mut data = std::ptr::null();
-    // SAFETY: Trusted application from Security's ACL/create API and valid output pointer.
-    if unsafe { SecTrustedApplicationCopyData(application.as_CFTypeRef(), &mut data) } != 0
-        || data.is_null()
-    {
-        return Err(denied());
-    }
-    // SAFETY: Successful copy transfers an owned CFData.
-    Ok(unsafe { CFData::wrap_under_create_rule(data) })
 }

@@ -178,36 +178,14 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         self.store.time(self.clock.now()?)
     }
     pub(crate) fn active(&self) -> Result<(), Error> {
-        let state = self.identity_state()?;
-        if let Some(failure) = state
-            .failure
-            .filter(|code| crate::identity::blocks_runtime(*code))
-        {
-            return Err(crate::identity::enrollment_error(failure));
-        }
-        let active = state.active.ok_or(Error::Identity)?;
-        let now = self.clock.now()?;
-        if now < active.not_before {
-            return Err(Error::Clock);
-        }
-        if now >= active.not_after {
-            return Err(Error::CertificateExpired);
-        }
-        let (before, after, device) = crate::tls::validity(
+        self.identity_state()?.validate_runtime(
             &self.store.cfg,
-            &active.chain,
-            &active.key_reference,
             &self.secrets,
-            now,
+            self.clock.now()?,
         )?;
-        if before != active.not_before
-            || after != active.not_after
-            || device != active.receipt.runtime.device_id
-        {
-            return Err(Error::Identity);
-        }
         Ok(())
     }
+
     pub(crate) fn url(&self, path: &str) -> Result<url::Url, Error> {
         self.store
             .cfg

@@ -5,7 +5,10 @@ use execution_ipc::host::{
     CredentialStatus, Handler, Peer, PeerPolicy, Readiness, RegistrationPhase, RegistrationStatus,
     Reply, Request, ServiceStatus,
 };
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    mpsc, Arc, Mutex,
+};
 
 pub(crate) fn project(value: EnrollmentStatus) -> RegistrationStatus {
     let phase = match value.phase {
@@ -43,7 +46,6 @@ struct Snapshot {
 }
 enum Command {
     Request,
-    Stop,
 }
 /// Native callbacks read a public snapshot and enqueue an explicit fixed-context request.
 pub(crate) struct RegistrationOwner {
@@ -55,6 +57,7 @@ pub(crate) struct RegistrationOwner {
     owner: Option<crate::service::ServiceHandle>,
     thread: Option<std::thread::JoinHandle<()>>,
     failed: bool,
+    stopping: Arc<AtomicBool>,
 }
 impl RegistrationOwner {
     pub(crate) fn new(deployment: Deployment) -> Result<Self, Error> {
@@ -71,13 +74,15 @@ impl RegistrationOwner {
         }));
         let (commands, requests) = mpsc::sync_channel(8);
         let (completed, completion) = mpsc::sync_channel(1);
+        let stopping = Arc::new(AtomicBool::new(false));
+        let stop = stopping.clone();
         let shared = snapshot.clone();
         let policy = deployment.clients.clone();
         let registration_policy = deployment.registration_clients.clone();
         let thread = std::thread::Builder::new()
             .name("rss-registration-owner".into())
             .spawn(move || {
-                let result = drive(deployment, shared.clone(), requests);
+                let result = drive(deployment, shared.clone(), requests, stop);
                 if let Err(error) = &result {
                     execution_ipc::record_startup_failure(super::deployment::startup_failure(
                         *error,
@@ -98,6 +103,7 @@ impl RegistrationOwner {
             owner: None,
             thread: Some(thread),
             failed: false,
+            stopping,
         })
     }
 }
@@ -105,44 +111,70 @@ fn drive(
     deployment: Deployment,
     shared: Arc<Mutex<Snapshot>>,
     requests: mpsc::Receiver<Command>,
+    stopping: Arc<AtomicBool>,
 ) -> Result<Option<crate::service::ServiceHandle>, Error> {
-    let runtime = crate::service::owner_runtime()?;
     let exists = deployment
         .state_root
         .join("communication/communication.sqlite")
         .exists();
-    let mut client: Option<Client<DeviceSecrets, SystemClock>> = if exists {
+    let client: Option<Client<DeviceSecrets, SystemClock>> = if exists {
         Some(deployment.communication(false)?)
     } else {
         None
     };
+    run(
+        client,
+        deployment.capabilities(),
+        shared,
+        requests,
+        stopping,
+        || deployment.communication(true),
+        |client| deployment.activate(client),
+    )
+}
+fn run<S: agent_client::IdentityProvider, C: agent_client::Clock, O>(
+    mut client: Option<Client<S, C>>,
+    capabilities: Vec<rss_mdm_agent_wire::runtime::Capability>,
+    shared: Arc<Mutex<Snapshot>>,
+    requests: mpsc::Receiver<Command>,
+    stopping: Arc<AtomicBool>,
+    mut open: impl FnMut() -> Result<Client<S, C>, Error>,
+    activate: impl FnOnce(Client<S, C>) -> Result<O, Error>,
+) -> Result<Option<O>, Error> {
+    let runtime = crate::service::owner_runtime()?;
     loop {
+        if stopping.load(Ordering::Acquire) {
+            return Ok(None);
+        }
         if let Some(value) = &client {
             let status = value.enrollment_status()?;
             let mut snapshot = shared.lock().map_err(|_| Error::Unavailable)?;
             snapshot.status = project(status);
-            if snapshot.status.registered && snapshot.status.phase == RegistrationPhase::Active {
+            if snapshot.status.registered {
                 drop(snapshot);
-                let owner = deployment.activate(client.take().ok_or(Error::Storage)?)?;
+                let owner = activate(client.take().ok_or(Error::Storage)?)?;
                 shared.lock().map_err(|_| Error::Unavailable)?.readiness = Readiness::Ready;
                 return Ok(Some(owner));
             }
         }
         let command = requests.recv_timeout(std::time::Duration::from_secs(2));
         match command {
-            Ok(Command::Stop) | Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(None),
+            Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(None),
             Ok(Command::Request) => {
                 if client.is_none() {
-                    client = Some(deployment.communication(true)?);
+                    client = Some(open()?);
                 }
                 let value = client.as_mut().ok_or(Error::Storage)?;
                 let status = value.enrollment_status()?;
                 let result = if status.phase == EnrollmentPhase::Unregistered {
                     runtime
-                        .block_on(value.request_authorization(deployment.capabilities()))
+                        .block_on(until_stopped(
+                            value.request_authorization(capabilities.clone()),
+                            &stopping,
+                        ))
                         .map(|_| ())
                 } else {
-                    runtime.block_on(value.drive_enrollment())
+                    runtime.block_on(until_stopped(value.drive_enrollment(), &stopping))
                 };
                 record_result(result, value, &shared)?;
             }
@@ -158,7 +190,8 @@ fn drive(
                             | EnrollmentPhase::IssuanceUnknown
                             | EnrollmentPhase::ActivationUnknown
                     ) {
-                        let result = runtime.block_on(value.drive_enrollment());
+                        let result =
+                            runtime.block_on(until_stopped(value.drive_enrollment(), &stopping));
                         record_result(result, value, &shared)?;
                     }
                 }
@@ -166,9 +199,22 @@ fn drive(
         }
     }
 }
-fn record_result(
+async fn until_stopped<T>(
+    future: impl std::future::Future<Output = Result<T, Error>>,
+    stopping: &AtomicBool,
+) -> Result<T, Error> {
+    tokio::select! {
+        result = future => result,
+        _ = async {
+            while !stopping.load(Ordering::Acquire) {
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+        } => Err(Error::Unavailable),
+    }
+}
+fn record_result<S: agent_client::IdentityProvider, C: agent_client::Clock>(
     result: Result<(), Error>,
-    client: &Client<DeviceSecrets, SystemClock>,
+    client: &Client<S, C>,
     shared: &Arc<Mutex<Snapshot>>,
 ) -> Result<(), Error> {
     if let Err(error) = result {
@@ -218,6 +264,9 @@ impl Handler for RegistrationOwner {
                         return Reply::Unavailable;
                     }
                 }
+                if let Some(owner) = &self.owner {
+                    return owner.registration_status();
+                }
                 match self.snapshot.lock() {
                     Ok(v) => Reply::RegistrationStatus {
                         value: v.status.clone(),
@@ -232,7 +281,7 @@ impl Handler for RegistrationOwner {
                     return Reply::Rejected;
                 }
                 if let Some(owner) = &mut self.owner {
-                    return owner.handle(peer, Request::ServiceStatus {});
+                    return owner.service_status();
                 }
                 match self.snapshot.lock() {
                     Ok(v) => Reply::ServiceStatus {
@@ -259,7 +308,7 @@ impl Handler for RegistrationOwner {
         self.owner.as_mut().map_or(Ok(()), Handler::tick)
     }
     fn stop(&mut self) -> Result<(), execution_app::Error> {
-        let _ = self.commands.try_send(Command::Stop);
+        self.stopping.store(true, Ordering::Release);
         if let Some(thread) = self.thread.take() {
             thread
                 .join()
@@ -271,5 +320,179 @@ impl Handler for RegistrationOwner {
             }
         }
         self.owner.as_mut().map_or(Ok(()), Handler::stop)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::protocol_test_support::{Root, Server};
+    use agent_client::OpenMode;
+    use rss_mdm_agent_wire::runtime::Capability;
+    fn snapshot() -> Arc<Mutex<Snapshot>> {
+        Arc::new(Mutex::new(Snapshot {
+            status: project(EnrollmentStatus {
+                phase: EnrollmentPhase::Unregistered,
+                grant_id: None,
+                expires_at: None,
+                public_key_fingerprint: None,
+                registered: false,
+                failure: None,
+            }),
+            readiness: Readiness::RegistrationRequired,
+        }))
+    }
+    fn capabilities() -> Vec<Capability> {
+        vec![Capability::InventoryCollectionV1, Capability::TaskExecuteV1]
+    }
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn registration_owner_recovers_transient_failure_without_another_request() {
+        for restart in [false, true] {
+            let server = Server::tls().await;
+            let root = Root::new();
+            server.data.lock().unwrap().registration_failure = true;
+            let client = if restart {
+                let mut value = server.client(&root, OpenMode::Create);
+                assert!(matches!(
+                    value.request_authorization(capabilities()).await,
+                    Err(Error::Unavailable)
+                ));
+                drop(value);
+                Some(server.client(&root, OpenMode::Existing))
+            } else {
+                None
+            };
+            let cfg = server.config();
+            let secrets = server.secrets.clone();
+            let time = server.time.clone();
+            let shared = snapshot();
+            let published = shared.clone();
+            let (sender, receiver) = mpsc::sync_channel(8);
+            let (completed, completion) = mpsc::channel();
+            let worker = std::thread::spawn(move || {
+                let result = run(
+                    client,
+                    capabilities(),
+                    published,
+                    receiver,
+                    Arc::new(AtomicBool::new(false)),
+                    || {
+                        Client::open(
+                            &root.path,
+                            cfg.clone(),
+                            OpenMode::Create,
+                            secrets.clone(),
+                            time.clone(),
+                        )
+                    },
+                    |client| client.registration(),
+                );
+                let _ = completed.send(result);
+            });
+            if !restart {
+                sender.send(Command::Request).unwrap();
+            }
+            let result = tokio::task::spawn_blocking(move || {
+                completion.recv_timeout(std::time::Duration::from_secs(8))
+            })
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+            assert!(result.is_some());
+            worker.join().unwrap();
+            assert!(shared.lock().unwrap().status.registered);
+            assert_eq!(
+                shared.lock().unwrap().status.phase,
+                RegistrationPhase::Active
+            );
+            let data = server.data.lock().unwrap();
+            assert_eq!(data.certificate_calls.len(), 1);
+            assert_eq!(data.activation_calls.len(), 1);
+        }
+    }
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn full_registration_queue_cannot_drop_stop() {
+        let server = Server::tls().await;
+        server.data.lock().unwrap().registration_failure = true;
+        let root = Root::new();
+        let cfg = server.config();
+        let secrets = server.secrets.clone();
+        let time = server.time.clone();
+        let (commands, requests) = mpsc::sync_channel(8);
+        let (started, start) = mpsc::channel();
+        let (release, released) = mpsc::channel();
+        let (completed, completion) = mpsc::sync_channel(1);
+        let shared = snapshot();
+        let published = shared.clone();
+        let stopping = Arc::new(AtomicBool::new(false));
+        let stop = stopping.clone();
+        let thread = std::thread::spawn(move || {
+            let result = run(
+                None,
+                capabilities(),
+                published,
+                requests,
+                stop,
+                || {
+                    started.send(()).unwrap();
+                    released
+                        .recv_timeout(std::time::Duration::from_secs(4))
+                        .unwrap();
+                    Client::open(
+                        &root.path,
+                        cfg.clone(),
+                        OpenMode::Create,
+                        secrets.clone(),
+                        time.clone(),
+                    )
+                },
+                |_| -> Result<crate::service::ServiceHandle, Error> {
+                    panic!("stop precedes activation")
+                },
+            );
+            completed.send(result).unwrap();
+        });
+        let policy = PeerPolicy {
+            images: vec![],
+            subjects: vec![],
+            interactive: true,
+        };
+        let mut owner = RegistrationOwner {
+            policy: policy.clone(),
+            registration_policy: policy,
+            snapshot: shared,
+            commands,
+            completion,
+            owner: None,
+            thread: Some(thread),
+            failed: false,
+            stopping,
+        };
+        owner.commands.send(Command::Request).unwrap();
+        tokio::task::spawn_blocking(move || start.recv_timeout(std::time::Duration::from_secs(3)))
+            .await
+            .unwrap()
+            .unwrap();
+        for _ in 0..8 {
+            owner.commands.try_send(Command::Request).unwrap();
+        }
+        assert!(owner.commands.try_send(Command::Request).is_err());
+        let observed = owner.stopping.clone();
+        let shutdown = tokio::task::spawn_blocking(move || owner.stop());
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while !observed.load(Ordering::Acquire) {
+                tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .unwrap();
+        release.send(()).unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(4), shutdown)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert_eq!(server.data.lock().unwrap().certificate_calls.len(), 0);
     }
 }

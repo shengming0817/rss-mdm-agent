@@ -342,8 +342,12 @@ impl Deployment {
         let secrets = DeviceSecrets::open(&self.state_root.join("secrets"), &namespace)?;
         secrets.verify_storage(&self.state_root)?;
         let network = self.network()?;
-        let registration =
-            agent_client::inspect_binding(&self.state_root.join("communication"), &network)?;
+        let registration = agent_client::validate_identity(
+            &self.state_root.join("communication"),
+            &network,
+            &secrets,
+            &SystemClock::new()?,
+        )?;
         let (binding, _) =
             crate::backend::plan::context(network.origin.as_str(), network.tenant, &registration)?;
         execution_sqlite::Store::validate_existing(

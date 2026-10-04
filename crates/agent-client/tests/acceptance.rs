@@ -785,3 +785,132 @@ async fn unknown_issuance_never_submits_another_certificate_operation() {
     assert_eq!(server.data.lock().unwrap().certificate_calls.len(), 1);
     assert_eq!(server.secrets.0.lock().unwrap().clone(), secrets);
 }
+
+#[tokio::test]
+async fn manual_renewal_keeps_binding_tasks_reports_and_original_recovery_operations() {
+    let server = Server::tls().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    let binding = client.registration().unwrap();
+    let offer = client.claim().await.unwrap().offer.unwrap();
+    let task = offer.task_id();
+    client
+        .queue_report(
+            "inventory",
+            ReportBody::Failed {
+                code: FailureCode::CollectionFailed,
+            },
+            1,
+        )
+        .unwrap();
+    server.data.lock().unwrap().activation_failure = true;
+    assert_eq!(
+        client.renew_certificate().await.unwrap_err(),
+        Error::ActivationUnknown
+    );
+    let secrets = server.secrets.0.lock().unwrap().clone();
+    let (candidate, operation) = {
+        let data = server.data.lock().unwrap();
+        assert_ne!(
+            data.certificate_calls[0]["operationId"],
+            data.certificate_calls[1]["operationId"]
+        );
+        assert_ne!(
+            data.certificate_calls[0]["csr"],
+            data.certificate_calls[1]["csr"]
+        );
+        (data.issuance, data.activation.clone().unwrap().operation_id)
+    };
+    drop(client);
+    let mut client = server.client(&root, OpenMode::Existing);
+    client.renew_certificate().await.unwrap();
+    assert_eq!(client.registration().unwrap(), binding);
+    assert_eq!(client.pending_tasks(8).unwrap(), vec![task]);
+    assert_eq!(client.flush_reports(1).await.unwrap(), 1);
+    assert_eq!(server.secrets.0.lock().unwrap().clone(), secrets);
+    let data = server.data.lock().unwrap();
+    assert_eq!(data.certificate_calls.len(), 2);
+    assert_eq!(data.activation_calls.len(), 2);
+    assert_eq!(data.activation.as_ref().unwrap().issuance_id, candidate);
+    assert_eq!(data.activation.as_ref().unwrap().operation_id, operation);
+}
+#[tokio::test]
+async fn readonly_identity_preflight_shares_runtime_rules_and_preserves_state() {
+    use rss_mdm_agent_wire::enroll::ErrorCode;
+    let server = Server::tls().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    let cfg = client.configuration().clone();
+    let binding = client.registration().unwrap();
+    let validate =
+        || agent_client::validate_identity(&root.path, &cfg, &server.secrets, &server.time);
+    assert_eq!(validate().unwrap(), binding); // Validates while the original owner holds its lease.
+    let secrets = server.secrets.0.lock().unwrap().clone();
+    for value in server.secrets.0.lock().unwrap().values_mut() {
+        if value == "fixture-key" {
+            *value = "fixture-renewal-key".into();
+        }
+    }
+    assert!(matches!(validate(), Err(Error::Identity)));
+    *server.secrets.0.lock().unwrap() = secrets.clone();
+    server
+        .secrets
+        .0
+        .lock()
+        .unwrap()
+        .retain(|_, value| value != "fixture-key");
+    assert_eq!(validate().unwrap_err(), Error::Identity);
+    *server.secrets.0.lock().unwrap() = secrets.clone();
+    let mut wrong_issuer = cfg.clone();
+    {
+        use base64::Engine;
+        use der::{Decode, EncodePem};
+        let leaf = x509_cert::Certificate::from_der(
+            &base64::engine::general_purpose::STANDARD
+                .decode(&support::pki::chain(server.config().tenant)[0])
+                .unwrap(),
+        )
+        .unwrap();
+        wrong_issuer.device_ca_pem = leaf.to_pem(der::pem::LineEnding::LF).unwrap().into_bytes();
+    }
+    assert_eq!(
+        agent_client::validate_identity(&root.path, &wrong_issuer, &server.secrets, &server.time)
+            .unwrap_err(),
+        Error::Identity
+    );
+    server.time.set(4_070_908_800);
+    assert_eq!(validate().unwrap_err(), Error::CertificateExpired);
+    server.time.set(1_700_000_000);
+    drop(client);
+    let path = root.path.join("communication.sqlite");
+    for (code, expected) in [
+        (ErrorCode::CredentialRevoked, Error::CredentialRevoked),
+        (ErrorCode::CredentialRetired, Error::CredentialRetired),
+        (ErrorCode::CertificateExpired, Error::CertificateExpired),
+    ] {
+        let db = rusqlite::Connection::open(&path).unwrap();
+        let bytes: Vec<u8> = db
+            .query_row("SELECT body FROM state WHERE key='identity'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        let mut state: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        state["failure"] = serde_json::to_value(code).unwrap();
+        db.execute(
+            "UPDATE state SET body=?1 WHERE key='identity'",
+            [serde_json::to_vec(&state).unwrap()],
+        )
+        .unwrap();
+        drop(db);
+        let before = std::fs::read(&path).unwrap();
+        assert_eq!(validate().unwrap_err(), expected);
+        assert_eq!(
+            agent_client::inspect_binding(&root.path, &cfg).unwrap(),
+            binding
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        assert_eq!(*server.secrets.0.lock().unwrap(), secrets);
+    }
+}

@@ -20,6 +20,9 @@ const DEVICE: &[u8] = include_bytes!("pki/device-test-key.pk8");
 pub fn key() -> Arc<dyn SigningKey> {
     signing_key(DEVICE)
 }
+pub fn renewal_key() -> Arc<dyn SigningKey> {
+    signing_key(include_bytes!("pki/renewal-test-key.pk8"))
+}
 fn signing_key(bytes: &[u8]) -> Arc<dyn SigningKey> {
     rustls::crypto::ring::sign::any_supported_type(&rustls::pki_types::PrivateKeyDer::Pkcs8(
         rustls::pki_types::PrivatePkcs8KeyDer::from(bytes.to_vec()),

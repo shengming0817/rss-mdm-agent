@@ -869,3 +869,163 @@ async fn service_assembly_creates_and_reopens_journal_with_its_actual_budgets() 
     }
     assert!(journal.is_file());
 }
+
+#[tokio::test]
+async fn renewal_and_revoked_restart_keep_the_existing_journal_authority() {
+    let mut case = Case::new(None).await;
+    let binding = case.service.client.registration().unwrap();
+    let records = case
+        .service
+        .core
+        .app
+        .backend_requests(&case.service.core.caller())
+        .unwrap();
+    assert!(!records.is_empty());
+    case._server.data.lock().unwrap().activation_failure = true;
+    assert_eq!(
+        case.service.client.renew_certificate().await.unwrap_err(),
+        Error::ActivationUnknown
+    );
+    let config = case.service.core.config.clone();
+    let helpers = case.service.core.helpers.clone();
+    let journal = case._root.path.join("execution.sqlite");
+    let cfg = case._server.config();
+    let secrets = case._server.secrets.clone();
+    let clock = SystemClock::new().unwrap();
+    drop(case.service);
+    let mut client = Client::open(
+        &case._root.path,
+        cfg.clone(),
+        OpenMode::Existing,
+        secrets.clone(),
+        clock.clone(),
+    )
+    .unwrap();
+    client.renew_certificate().await.unwrap();
+    assert_eq!(client.registration().unwrap(), binding);
+    let service = DeviceService::assemble(
+        client,
+        &journal,
+        ProductionStartup::Open,
+        config.clone(),
+        clock.clone(),
+        helpers.clone(),
+        execution_runner::staging::MaterialRoot::open_fixture,
+    )
+    .unwrap();
+    assert_eq!(
+        service
+            .core
+            .app
+            .backend_requests(&service.core.caller())
+            .unwrap(),
+        records
+    );
+    drop(service);
+    let mut client = Client::open(
+        &case._root.path,
+        cfg.clone(),
+        OpenMode::Existing,
+        secrets.clone(),
+        clock.clone(),
+    )
+    .unwrap();
+    case._server.data.lock().unwrap().denied = true;
+    client
+        .queue_report(
+            "inventory",
+            wire::ReportBody::Failed {
+                code: wire::FailureCode::CollectionFailed,
+            },
+            1,
+        )
+        .unwrap();
+    assert_eq!(
+        client.flush_reports(1).await.unwrap_err(),
+        Error::CredentialRevoked
+    );
+    drop(client);
+    let client = Client::open(
+        &case._root.path,
+        cfg,
+        OpenMode::Existing,
+        secrets,
+        clock.clone(),
+    )
+    .unwrap();
+    assert_eq!(
+        client.enrollment_status().unwrap().phase,
+        agent_client::EnrollmentPhase::Rejected
+    );
+    let mut service = DeviceService::assemble(
+        client,
+        &journal,
+        ProductionStartup::Open,
+        config,
+        clock,
+        helpers,
+        execution_runner::staging::MaterialRoot::open_fixture,
+    )
+    .unwrap();
+    assert_eq!(
+        service
+            .core
+            .app
+            .backend_requests(&service.core.caller())
+            .unwrap(),
+        records
+    );
+    let (_sender, mut commands) = tokio::sync::mpsc::channel(1);
+    assert_eq!(
+        service.drive(&mut commands).await.unwrap_err(),
+        Error::CredentialRevoked
+    );
+    service.drive_error(Error::CredentialRevoked);
+    service.drive(&mut commands).await.unwrap(); // Local reconcile remains available.
+    assert!(service.core.host.revoked.load(Ordering::Acquire));
+    let recovered = service
+        .core
+        .app
+        .backend_requests(&service.core.caller())
+        .unwrap();
+    assert_eq!(recovered.len(), records.len());
+    assert_eq!(recovered[0].offer.request, records[0].offer.request);
+    assert_eq!(recovered[0].offer.attempt, records[0].offer.attempt);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn running_owner_publishes_current_credential_and_safe_status_without_execution_authority() {
+    use execution_ipc::host::{
+        CredentialStatus, Handler, PeerPolicy, Readiness, RegistrationPhase,
+    };
+    let case = Case::new(None).await;
+    let data = case._server.data.clone();
+    let image = case.service.core.config.interpreters[0].image.clone();
+    let policy = PeerPolicy {
+        images: vec![image],
+        subjects: vec!["0".into()],
+        interactive: false,
+    };
+    let mut owner = case.service.spawn(policy, None).unwrap();
+    assert!(
+        matches!(owner.registration_status(), Reply::RegistrationStatus { value } if value.credential == CredentialStatus::Active)
+    );
+    data.lock().unwrap().denied = true;
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            if matches!(owner.registration_status(), Reply::RegistrationStatus { value }
+                if value.registered && value.phase == RegistrationPhase::Rejected && value.credential == CredentialStatus::Revoked) { break; }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    }).await.unwrap();
+    let reply = tokio::task::spawn_blocking(move || {
+        let status = owner.service_status();
+        owner.stop().unwrap();
+        status
+    })
+    .await
+    .unwrap();
+    assert!(
+        matches!(reply, Reply::ServiceStatus { value } if value.readiness == Readiness::NotReady)
+    );
+}

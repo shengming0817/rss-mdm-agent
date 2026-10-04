@@ -1,5 +1,5 @@
 #![allow(dead_code)]
-mod pki;
+pub(crate) mod pki;
 use agent_client::*;
 use axum::{
     body::{Body, Bytes},
@@ -88,24 +88,22 @@ impl IdentityProvider for Secrets {
         self.resolve(id)
     }
     fn create_key(&self, id: &str) -> Result<Arc<dyn rustls::sign::SigningKey>, Error> {
-        self.0
-            .lock()
-            .unwrap()
-            .entry(id.into())
-            .or_insert_with(|| "fixture-key".into());
+        let mut values = self.0.lock().unwrap();
+        let next = if values.values().any(|v| v == "fixture-key") {
+            "fixture-renewal-key"
+        } else {
+            "fixture-key"
+        };
+        values.entry(id.into()).or_insert_with(|| next.into());
+        drop(values);
         self.key(id)
     }
     fn key(&self, id: &str) -> Result<Arc<dyn rustls::sign::SigningKey>, Error> {
-        if self
-            .0
-            .lock()
-            .unwrap()
-            .get(id)
-            .is_none_or(|v| v != "fixture-key")
-        {
-            return Err(Error::Identity);
+        match self.0.lock().unwrap().get(id).map(String::as_str) {
+            Some("fixture-key") => Ok(pki::key()),
+            Some("fixture-renewal-key") => Ok(pki::renewal_key()),
+            _ => Err(Error::Identity),
         }
-        Ok(pki::key())
     }
 }
 pub struct Data {
@@ -114,6 +112,7 @@ pub struct Data {
     pub issuance: Uuid,
     pub profile: Option<enroll::RuntimeProfile>,
     pub activation: Option<enroll::ActivationReceipt>,
+    pub binding: Option<BindingProfile>,
     pub bootstrap: Option<String>,
     pub tenant: Uuid,
     pub registration: Uuid,
@@ -304,6 +303,7 @@ impl Server {
             issuance: Uuid::new_v4(),
             profile: None,
             activation: None,
+            binding: None,
             bootstrap: None,
             tenant: Uuid::new_v4(),
             registration: Uuid::new_v4(),
@@ -514,6 +514,14 @@ fn enrollment_response(d: &mut Data, action: &str, value: Value) -> Response {
     match action {
         "requests" | "renewal-grants" => {
             let request: enroll::GrantRequest = serde_json::from_value(value).unwrap();
+            if action == "renewal-grants" && d.operation != Some(request.operation_id) {
+                assert!(d.binding.is_some(), "renewal requires an active binding");
+                d.operation = None;
+                d.grant = None;
+                d.activation = None;
+                d.profile = None;
+                d.issuance = Uuid::new_v4();
+            }
             if d.operation.is_some_and(|old| old != request.operation_id) {
                 return (
                     StatusCode::CONFLICT,
@@ -606,7 +614,8 @@ fn enrollment_response(d: &mut Data, action: &str, value: Value) -> Response {
             d.activation_calls.push(value.clone());
             let request: enroll::ActivationRequest = serde_json::from_value(value).unwrap();
             assert_eq!(request.issuance_id, d.issuance);
-            let profile: BindingProfile = serde_json::from_value(json!({"wireVersion":1,"operationId":d.operation,"deviceId":"device-1","registrationId":d.registration,"generation":1,"source":"agent.builtin","epoch":d.epoch,"capabilities":d.profile.as_ref().unwrap().capabilities,"collections":collections()})).unwrap();
+            let profile: BindingProfile = d.binding.clone().unwrap_or_else(|| serde_json::from_value(json!({"wireVersion":1,"operationId":d.operation,"deviceId":"device-1","registrationId":d.registration,"generation":1,"source":"agent.builtin","epoch":d.epoch,"capabilities":d.profile.as_ref().unwrap().capabilities,"collections":collections()})).unwrap());
+            d.binding = Some(profile.clone());
             let receipt = enroll::ActivationReceipt {
                 wire_version: 1,
                 issuance_id: d.issuance,

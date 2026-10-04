@@ -8,6 +8,34 @@ pub(crate) struct IdentityState {
     pub pending: Option<Pending>,
     pub failure: Option<enroll::ErrorCode>,
 }
+impl IdentityState {
+    pub(crate) fn validate_runtime(
+        &self,
+        cfg: &crate::Config,
+        provider: &impl IdentityProvider,
+        now: i64,
+    ) -> Result<&runtime::BindingProfile, Error> {
+        if let Some(code) = self.failure.filter(|code| blocks_runtime(*code)) {
+            return Err(enrollment_error(code));
+        }
+        let active = self.active.as_ref().ok_or(Error::Identity)?;
+        if now < active.not_before {
+            return Err(Error::Clock);
+        }
+        if now >= active.not_after {
+            return Err(Error::CertificateExpired);
+        }
+        let (before, after, device) =
+            crate::tls::validity(cfg, &active.chain, &active.key_reference, provider, now)?;
+        if before != active.not_before
+            || after != active.not_after
+            || device != active.receipt.runtime.device_id
+        {
+            return Err(Error::Identity);
+        }
+        Ok(&active.receipt.runtime)
+    }
+}
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Active {

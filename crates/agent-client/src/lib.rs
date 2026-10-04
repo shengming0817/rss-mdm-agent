@@ -18,7 +18,7 @@ pub use config::*;
 pub use content::{ContentFile, Materials};
 /// The protocol's single producer.
 use rss_mdm_agent_wire::runtime as wire;
-pub use store::{inspect_binding, validate_existing};
+pub use store::{inspect_binding, validate_existing, validate_identity};
 /// Closed errors, without secrets, response bodies or backend paths.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum Error {
