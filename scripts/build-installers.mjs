@@ -308,9 +308,25 @@ if (windows) {
   const postinstall = `#!/bin/sh\nset -eu\nprofile="/Library/Application Support/RSS MDM Agent/install-profile.json"\nif [ -f "$profile" ]; then\n  "${installed}/rss-execution-service" --installation apply --candidate "${installed}/candidate.json" --profile "$profile"\nelse\n  "${installed}/rss-execution-service" --installation apply --candidate "${installed}/candidate.json"\nfi\n`;
   writeFileSync(join(scripts, "postinstall"), postinstall, { mode: 0o755 });
   const component = join(output, "component.pkg");
+  // A fixed version must never relocate to a discovered development/previous app bundle.
+  const components = join(output, "components.plist");
+  writeFileSync(
+    components,
+    `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><array><dict>
+<key>RootRelativeBundlePath</key><string>RSS MDM Agent.app</string>
+<key>BundleIsRelocatable</key><false/>
+<key>BundleIsVersionChecked</key><false/>
+<key>BundleHasStrictIdentifier</key><true/>
+<key>BundleOverwriteAction</key><string>upgrade</string>
+</dict></array></plist>\n`,
+  );
   run("/usr/bin/pkgbuild", [
     "--root",
     payload,
+    "--component-plist",
+    components,
     "--install-location",
     installed,
     "--identifier",
