@@ -375,7 +375,7 @@ pub(super) fn execution_resources(
 }
 pub(super) fn preflight_desktop_entry(candidate: &Candidate) -> Result<(), Error> {
     let alias = Path::new("/Applications/RSS MDM Agent.app");
-    installation_security::protected(Path::new("/Applications")).map_err(|_| Error::Identity)?;
+    installation_security::applications_directory().map_err(|_| Error::Identity)?;
     if let Ok(metadata) = std::fs::symlink_metadata(alias) {
         if !metadata.is_symlink()
             || metadata.uid() != 0

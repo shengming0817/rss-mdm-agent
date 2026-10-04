@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 const MAX_FRAME: usize = 65536;
 #[cfg(target_os = "macos")]
 mod macos;
+#[cfg(target_os = "macos")]
+pub use macos::applications_directory;
 mod policy;
 mod target;
 pub use target::Target;

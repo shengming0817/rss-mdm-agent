@@ -12,6 +12,23 @@ pub(crate) fn acl_empty(path: &std::path::Path) -> Result<(), Rejected> {
     }
     Ok(())
 }
+/// /Applications is a shared administrator-writable discovery directory, never an image pin.
+pub fn applications_directory() -> Result<(), Rejected> {
+    use std::os::unix::fs::MetadataExt;
+    let path = std::path::Path::new("/Applications");
+    super::protected(path.parent().ok_or(Rejected)?)?;
+    acl_empty(path)?;
+    let metadata = std::fs::symlink_metadata(path).map_err(|_| Rejected)?;
+    if !metadata.is_dir()
+        || metadata.file_type().is_symlink()
+        || metadata.uid() != 0
+        || metadata.gid() != 80
+        || metadata.mode() & 0o002 != 0
+    {
+        return Err(Rejected);
+    }
+    Ok(())
+}
 
 #[cfg(test)]
 mod permission_tests {
