@@ -587,6 +587,54 @@ mod tests {
         );
         std::fs::remove_dir_all(root).unwrap();
     }
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn old_communication_format_blocks_deployment_preflight_before_local_preparation() {
+        use base64::Engine;
+        let root = crate::protocol_test_support::Root::new();
+        let mut deployment: Deployment = serde_json::from_value(serde_json::json!({
+            "version": execution_ipc::host::DEPLOYMENT_VERSION,
+            "ipc_version": execution_ipc::host::IPC_VERSION,
+            "origin":"https://localhost:443/", "tenant": uuid::Uuid::new_v4(),
+            "installation_id":uuid::Uuid::new_v4(),
+            "signing_keys":{"test":base64::engine::general_purpose::URL_SAFE_NO_PAD.encode([1u8;32])},
+            // Public, root-protected host bundle; no root writes or native key creation in this test.
+            "device_ca_file":"/private/etc/ssl/cert.pem", "ca_file":null,
+            "state_root":root.path,
+            "service":{"path":"/unused","sha256":"a".repeat(64),"cdhash":null},
+            "clients":{"images":[],"subjects":[],"interactive":false},
+            "registration_clients":{"images":[],"subjects":[],"interactive":true},
+            "helper_work_roots":{},
+            "execution":{"work_root":root.path.join("work"), "material_root":root.path.join("materials"),
+                "interpreters":[],"managers":[],"processes":1}
+        })).unwrap();
+        // Preflight precedes protected credential storage for both initialization and startup.
+        platform_private_storage::write_new(
+            &root.path.join("identity-binding"),
+            deployment.namespace().unwrap().as_bytes(),
+        )
+        .unwrap();
+        let communication = root.path.join("communication");
+        platform_private_storage::directory(&communication).unwrap();
+        let db = communication.join("communication.sqlite");
+        drop(platform_private_storage::create_new(&db).unwrap());
+        let connection = rusqlite::Connection::open(&db).unwrap();
+        connection
+            .execute_batch("PRAGMA application_id=1380008771; PRAGMA user_version=4;")
+            .unwrap();
+        drop(connection);
+        let before = std::fs::read(&db).unwrap();
+        assert_eq!(deployment.preflight(), Err(Error::Schema));
+        assert_eq!(std::fs::read(&db).unwrap(), before);
+        assert!(!communication.join("client.lock").exists());
+        assert!(!root.path.join("secrets").exists());
+        assert!(!deployment.execution.work_root.exists());
+        assert!(!deployment.execution.material_root.exists());
+        // A different installation is rejected before it can interpret this old store.
+        deployment.installation_id = uuid::Uuid::new_v4();
+        assert_eq!(deployment.preflight(), Err(Error::Identity));
+        assert_eq!(std::fs::read(&db).unwrap(), before);
+    }
     #[test]
     fn review_regression_native_capability_requires_its_interpreter() {
         let image = installation_security::Artifact {

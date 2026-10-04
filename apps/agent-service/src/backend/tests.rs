@@ -1263,6 +1263,49 @@ async fn revoked_and_expired_unknown_keeps_original_execution_and_association() 
     assert_eq!(retained.request(), association.request());
     assert_eq!(retained.digest(), case.plan.digest());
     assert_eq!(retained.local_attempt(), Some(&attempt));
+    // A separately registered V1 deployment cannot inherit this journal or pending task.
+    let next_server = Server::new().await;
+    let next_root = Root::new();
+    let mut next_client = next_server.client(&next_root, OpenMode::Create);
+    next_server.register(&mut next_client).await;
+    let next_offer = next_client.claim().await.unwrap().offer.unwrap();
+    let mut next_host = local::TestHost::new();
+    next_host.template = adapted_plan(false, "device-1", &next_offer);
+    let old_journal = std::fs::read(&case.db.path).unwrap();
+    assert!(reopen_app(
+        &case.db.path,
+        next_host,
+        case.runner.clone(),
+        execution_app::AppConfig::test_defaults(76)
+    )
+    .is_err());
+    assert_eq!(std::fs::read(&case.db.path).unwrap(), old_journal);
+    assert!(next_client.association(case.task).unwrap().is_none());
+    assert_eq!(
+        next_client.pending_tasks(8).unwrap(),
+        vec![next_offer.task_id()]
+    );
+    assert!(next_server.data.lock().unwrap().start_ops.is_empty());
+    for changed in [0, 1, 2, 3] {
+        let mut cfg = case.server.config();
+        match changed {
+            0 => cfg.origin = next_server.url.clone(),
+            1 => cfg.tenant = next_client.configuration().tenant,
+            2 => cfg.platform = TaskPlatform::Windows,
+            _ => cfg.architecture = TaskArchitecture::X86_64,
+        }
+        // Historical inspection is read-only and validates deployment binding before identity.
+        let before = std::fs::read(case.root.path.join("communication.sqlite")).unwrap();
+        assert_eq!(
+            agent_client::inspect_binding(&case.root.path, &cfg),
+            Err(Error::Identity)
+        );
+        assert_eq!(
+            std::fs::read(case.root.path.join("communication.sqlite")).unwrap(),
+            before
+        );
+    }
+    assert_eq!(case.runner.inner.dispatch_count(), 1);
     // Revocation blocks fresh communication, while later facts may settle this same journal.
     case.runner
         .capture

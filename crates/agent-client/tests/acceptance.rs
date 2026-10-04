@@ -466,8 +466,18 @@ async fn prior_communication_schema_preserves_registration_pending_delivery_and_
     drop(client);
     let path = root.path.join("communication.sqlite");
     let db = rusqlite::Connection::open(&path).unwrap();
-    db.pragma_update(None, "user_version", 3).unwrap();
+    db.pragma_update(None, "user_version", 4).unwrap();
     drop(db);
+    // Snapshot all existing entries; rejection must not initialize a lock or sidecar.
+    let entries = || {
+        let mut v: Vec<_> = std::fs::read_dir(&root.path)
+            .unwrap()
+            .map(|v| v.unwrap().file_name())
+            .collect();
+        v.sort();
+        v
+    };
+    let before_entries = entries();
     let before = std::fs::read(&path).unwrap();
     assert!(matches!(
         Client::open(
@@ -479,14 +489,34 @@ async fn prior_communication_schema_preserves_registration_pending_delivery_and_
         ),
         Err(Error::Schema)
     ));
-    assert!(Client::open(
-        &root.path,
-        server.config(),
-        OpenMode::Create,
-        server.secrets.clone(),
-        server.time.clone()
-    )
-    .is_err());
+    assert!(matches!(
+        Client::open(
+            &root.path,
+            server.config(),
+            OpenMode::Create,
+            server.secrets.clone(),
+            server.time.clone()
+        ),
+        Err(Error::Schema)
+    ));
+    assert_eq!(
+        agent_client::validate_existing(&root.path, &server.config()),
+        Err(Error::Schema)
+    );
+    assert_eq!(
+        agent_client::inspect_binding(&root.path, &server.config()),
+        Err(Error::Schema)
+    );
+    assert_eq!(
+        agent_client::validate_identity(
+            &root.path,
+            &server.config(),
+            &server.secrets,
+            &server.time
+        ),
+        Err(Error::Schema)
+    );
+    assert_eq!(entries(), before_entries);
     assert_eq!(std::fs::read(&path).unwrap(), before);
     for (path, bytes) in material_bytes {
         assert_eq!(std::fs::read(path).unwrap(), bytes);
@@ -980,4 +1010,139 @@ async fn readonly_identity_preflight_shares_runtime_rules_and_preserves_state() 
         assert_eq!(std::fs::read(&path).unwrap(), before);
         assert_eq!(*server.secrets.0.lock().unwrap(), secrets);
     }
+}
+
+#[tokio::test]
+async fn obsolete_wire_and_signing_domain_never_accept_a_task() {
+    use base64::Engine;
+    let server = Server::tls().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    let signed = server.data.lock().unwrap().offer.clone().unwrap();
+    let response =
+        serde_json::to_value(TaskClaimResponse::new(Some(signed.clone()), vec![]).unwrap())
+            .unwrap();
+    let mut obsolete_version = response.clone();
+    obsolete_version["wireVersion"] = 6.into();
+    let mut obsolete_task = response.clone();
+    obsolete_task["task"]["payload"]["wireVersion"] = 6.into();
+    let mut old_domain = signed.payload.signing_bytes("test").unwrap();
+    // Only mutate the historical domain separator: the payload stays valid V1.
+    let version = old_domain.windows(3).position(|v| v == b"-v1").unwrap() + 2;
+    old_domain[version] = b'6';
+    let mut obsolete_signature = signed.clone();
+    obsolete_signature.signature = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(
+        server
+            .data
+            .lock()
+            .unwrap()
+            .signer
+            .sign(&old_domain)
+            .as_ref(),
+    );
+    let obsolete_signature =
+        serde_json::to_value(TaskClaimResponse::new(Some(obsolete_signature), vec![]).unwrap())
+            .unwrap();
+    for (body, expected) in [
+        (obsolete_version, Error::Protocol),
+        (obsolete_task, Error::Protocol),
+        (obsolete_signature, Error::Untrusted),
+    ] {
+        server.data.lock().unwrap().response_override = Some(("/claim".into(), body));
+        assert!(matches!(client.claim().await, Err(error) if error == expected));
+        assert!(client.pending_tasks(8).unwrap().is_empty());
+        let data = server.data.lock().unwrap();
+        assert!(data.content_calls.is_empty());
+        assert!(data.start_ops.is_empty());
+    }
+    server.data.lock().unwrap().response_override = None;
+    assert!(client.claim().await.unwrap().offer.is_some());
+}
+
+#[tokio::test]
+async fn obsolete_ack_preserves_the_original_report_for_retry() {
+    let server = Server::tls().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    let report = client
+        .queue_report(
+            "inventory",
+            ReportBody::Failed {
+                code: FailureCode::CollectionFailed,
+            },
+            1,
+        )
+        .unwrap();
+    server.data.lock().unwrap().response_override = Some((
+        "/reports".into(),
+        serde_json::json!({
+            "wireVersion":6,"reportId":report,"acceptedAt":1
+        }),
+    ));
+    assert_eq!(client.flush_reports(1).await, Err(Error::Protocol));
+    drop(client);
+    server.data.lock().unwrap().response_override = None;
+    let mut client = server.client(&root, OpenMode::Existing);
+    assert_eq!(client.flush_reports(1).await.unwrap(), 1);
+    assert_eq!(server.data.lock().unwrap().reports.len(), 1);
+    assert!(server
+        .data
+        .lock()
+        .unwrap()
+        .reports
+        .contains_key(&report.to_string()));
+}
+
+#[tokio::test]
+async fn obsolete_activation_capability_preserves_active_binding_and_candidate() {
+    use rss_mdm_agent_wire::enroll;
+    let server = Server::tls().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    let binding = client.registration().unwrap();
+    server.data.lock().unwrap().activation_failure = true;
+    assert_eq!(
+        client.renew_certificate().await.unwrap_err(),
+        Error::ActivationUnknown
+    );
+    let (operation, mut response, calls) = {
+        let data = server.data.lock().unwrap();
+        (
+            data.operation.unwrap(),
+            serde_json::to_value(enroll::EnrollmentState {
+                wire_version: 1,
+                grant: data.grant.clone().unwrap(),
+                issuance_id: Some(data.issuance),
+                issuance_unknown: false,
+                activation: data.activation.clone(),
+            })
+            .unwrap(),
+            data.activation_calls.len(),
+        )
+    };
+    response["activation"]["runtime"]["capabilities"][0] = "inventory.collection.v6".into();
+    server.data.lock().unwrap().response_override =
+        Some((format!("/requests/by-operation/{operation}"), response));
+    drop(client);
+    let mut client = server.client(&root, OpenMode::Existing);
+    let identity = || {
+        rusqlite::Connection::open(root.path.join("communication.sqlite"))
+            .unwrap()
+            .query_row("SELECT body FROM state WHERE key='identity'", [], |r| {
+                r.get::<_, Vec<u8>>(0)
+            })
+            .unwrap()
+    };
+    let before = identity();
+    assert_eq!(client.drive_enrollment().await, Err(Error::Protocol));
+    assert_eq!(identity(), before);
+    assert_eq!(client.registration().unwrap(), binding);
+    assert!(client.has_pending_enrollment().unwrap());
+    server.data.lock().unwrap().response_override = None;
+    client.drive_enrollment().await.unwrap();
+    assert_eq!(client.registration().unwrap(), binding);
+    assert_eq!(server.data.lock().unwrap().activation_calls.len(), calls);
 }
