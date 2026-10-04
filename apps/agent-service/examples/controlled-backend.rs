@@ -1,8 +1,9 @@
+use rss_mdm_agent_wire::runtime as wire;
 //! Controlled signed protocol participant for the installed-service macOS acceptance harness.
 //! Only test targets include this fixture; it is never a production transport mode.
 #[path = "../../../tests/agent-protocol/mod.rs"]
 mod protocol;
-use agent_client::wire;
+use rss_mdm_agent_wire::runtime;
 use base64::Engine;
 use ring::signature::KeyPair;
 use std::io::{BufRead, Write};

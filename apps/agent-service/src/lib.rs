@@ -6,9 +6,10 @@ mod error;
 mod material_gc;
 mod recovery;
 mod service;
+mod registration;
 pub mod software_worker;
-pub use agent_client::wire;
-use agent_client::{Clock, Error, SecretProvider};
+use rss_mdm_agent_wire::runtime as wire;
+use agent_client::{Clock, Error, IdentityProvider};
 pub use backend::plan::{Interpreter, SoftwareManager, SoftwareManagerKind};
 use base64::Engine;
 pub use service::{DeviceService, ExecutionConfig, ProductionStartup, UserResources};
@@ -43,7 +44,7 @@ impl DeviceSecrets {
         Ok(Self(secrets::SecretStore::open(root, namespace)?))
     }
     /// Import the server-issued enrollment secret once, without overwrite or plaintext persistence.
-    pub fn import_enrollment(&self, reference: &str, value: &wire::Secret) -> Result<(), Error> {
+    pub fn import_bootstrap(&self, reference: &str, value: &wire::Secret) -> Result<(), Error> {
         let bytes = zeroize::Zeroizing::new(
             base64::engine::general_purpose::URL_SAFE_NO_PAD
                 .decode(value.expose())
@@ -53,17 +54,25 @@ impl DeviceSecrets {
         Ok(())
     }
 }
-impl SecretProvider for DeviceSecrets {
+impl IdentityProvider for DeviceSecrets {
+    fn import_secret(&self, reference: &str, secret: &wire::Secret) -> Result<(), Error> { self.import_bootstrap(reference, secret) }
     fn resolve(&self, reference: &str) -> Result<wire::Secret, Error> {
         let bytes = self.0.read(reference)?;
         wire::Secret::parse(&base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&*bytes))
             .map_err(|_| Error::Identity)
     }
-    fn credential(&self, reference: &str) -> Result<wire::Secret, Error> {
+    fn create_secret(&self, reference: &str) -> Result<wire::Secret, Error> {
         let bytes = self.0.credential(reference)?;
         wire::Secret::parse(&base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&*bytes))
             .map_err(|_| Error::Identity)
     }
+    fn create_key(&self, reference: &str) -> Result<Arc<dyn rustls::sign::SigningKey>, Error> {
+        self.0.signing_key(reference, true)
+    }
+    fn key(&self, reference: &str) -> Result<Arc<dyn rustls::sign::SigningKey>, Error> {
+        self.0.signing_key(reference, false)
+    }
+
 }
 /// Actual UTC plus an in-process monotonic watermark; durable watermarks remain in existing SQLite.
 #[derive(Clone)]

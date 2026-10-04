@@ -1,5 +1,6 @@
 //! Backend-to-local execution adapter; neither transport nor journal authority.
-use agent_client::{wire, Error, Offer};
+use rss_mdm_agent_wire::runtime as wire;
+use agent_client::{Error, Offer};
 use sha2::Digest as _;
 mod bridge;
 mod commands;
@@ -34,7 +35,7 @@ pub(crate) fn request_id(offer: &Offer) -> Result<execution_contract::RequestId,
         ))?,
         _ => return Err(Error::Unsupported),
     };
-    execution_contract::RequestId::new(format!("agent-v6-{:x}", sha2::Sha256::digest(&bytes)))
+    execution_contract::RequestId::new(format!("agent-v1-{:x}", sha2::Sha256::digest(&bytes)))
         .map_err(|_| Error::Protocol)
 }
 

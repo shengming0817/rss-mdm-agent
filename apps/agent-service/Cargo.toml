@@ -11,6 +11,8 @@ name = "rss-execution-service"
 path = "src/main.rs"
 
 [dependencies]
+rss-mdm-agent-wire.workspace = true
+rustls.workspace = true
 script-plan = { path = "../../crates/script-plan" }
 platform-private-storage = { path = "../../crates/platform-private-storage" }
 platform-credentials = { path = "../../crates/platform-credentials" }
@@ -51,6 +53,9 @@ plist = "=1.10.1"
 libc = "=0.2.189"
 
 [dev-dependencies]
+x509-cert.workspace = true
+der.workspace = true
+spki.workspace = true
 execution-app = { path = "../../crates/execution-app", features = ["test-support"] }
 execution-sqlite = { path = "../../crates/execution-sqlite", features = ["test-support"] }
 execution-runner = { path = "../../crates/execution-runner", features = ["test-support"] }

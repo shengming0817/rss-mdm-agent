@@ -1,6 +1,7 @@
 //! Fixed physical software operations run by the existing service image and authenticated helper.
 //! This module has no journal, network client, authorization decision or task queue.
-use agent_client::{wire, Error};
+use rss_mdm_agent_wire::runtime as wire;
+use agent_client::{Error};
 use execution_contract::*;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::PathBuf};

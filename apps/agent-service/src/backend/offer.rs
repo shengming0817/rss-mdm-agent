@@ -1,5 +1,6 @@
+use rss_mdm_agent_wire::runtime as wire;
 use super::plan;
-use agent_client::{wire, Error, Offer};
+use agent_client::{Error, Offer};
 pub(crate) fn offered(offer: &Offer) -> Result<execution_contract::BackendTask, Error> {
     use sha2::{Digest as _, Sha256};
     let bytes = serde_json::to_vec(offer.payload()).map_err(|_| Error::Protocol)?;

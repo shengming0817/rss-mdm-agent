@@ -1,5 +1,5 @@
 use crate::{
-    store::{decode, encode, hash, Store},
+    store::{decode, encode, Store},
     wire, *,
 };
 use reqwest::{Method, Response, StatusCode};
@@ -48,16 +48,6 @@ pub struct Claim {
     /// Exact remote attempts that must be reconciled/stopped by the host.
     pub cancellations: Vec<wire::TaskCancellation>,
 }
-#[derive(Serialize, Deserialize, PartialEq)]
-struct Enrollment {
-    operation: Uuid,
-    enrollment: Uuid,
-    password: String,
-    credential: String,
-    capabilities: Vec<wire::Capability>,
-    fingerprint: String,
-    execution_context: wire::SoftwareExecutionContext,
-}
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ClaimState {
@@ -75,7 +65,7 @@ pub struct ResumedStart {
     /// Locked, reverified complete cached materials; recovery never downloads new bytes.
     pub materials: Materials,
 }
-/// Explicitly driven V6 client; SQLite transactions never cross HTTP awaits.
+/// Explicitly driven V1 client; SQLite transactions never cross HTTP awaits.
 /// A private-root lease permits one driving owner; bounded HTTP tasks never access its state.
 pub struct Client<S, C> {
     pub(crate) store: Store,
@@ -85,7 +75,7 @@ pub struct Client<S, C> {
     profiles: Vec<wire::ExecutorProfile>,
     pub(crate) delivery_owner: Uuid,
 }
-impl<S: SecretProvider, C: Clock> Client<S, C> {
+impl<S: IdentityProvider, C: Clock> Client<S, C> {
     /// Set current configured executors for future polls; a pending retry retains its exact input.
     pub fn set_profiles(&mut self, profiles: Vec<wire::ExecutorProfile>) -> Result<(), Error> {
         wire::TaskClaimRequest::new(Uuid::new_v4(), profiles.clone(), self.execution_context()?)?;
@@ -116,14 +106,15 @@ impl<S: SecretProvider, C: Clock> Client<S, C> {
     }
     /// Protect known device/enrollment credentials in task results without discarding ordinary output.
     pub fn output_policy(&self) -> Result<crate::CredentialRedactor, Error> {
-        let enrollment = self
-            .store
-            .get::<Enrollment>("enrollment")?
-            .ok_or(Error::Identity)?;
-        Ok(crate::CredentialRedactor(vec![
-            self.credential()?,
-            self.secrets.resolve(&enrollment.password)?,
-        ]))
+        let state = self.identity_state()?;
+        let mut secrets = Vec::new();
+        if let Some(reference) = state.active.as_ref().map(|v| &v.secret_reference) {
+            secrets.push(self.secrets.resolve(reference)?);
+        }
+        if let Some(pending) = &state.pending {
+            secrets.push(self.secrets.resolve(&pending.secret_reference)?);
+        }
+        Ok(crate::CredentialRedactor(secrets))
     }
     /// Bounded retained transport tasks; reading this list does not grant another Start.
     pub fn pending_tasks(&self, limit: usize) -> Result<Vec<Uuid>, Error> {
@@ -162,22 +153,12 @@ impl<S: SecretProvider, C: Clock> Client<S, C> {
         clock: C,
     ) -> Result<Self, Error> {
         config.validate()?;
-        // ref: reqwest 0.13.5 src/async_impl/client.rs (explicit redirect/TLS/timeouts).
-        let mut builder = reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .no_proxy()
-            .connect_timeout(config.limits.connect_timeout)
-            .read_timeout(config.limits.read_timeout)
-            .https_only(config.transport == Transport::Https);
-        if let Some(pem) = &config.ca_pem {
-            builder = builder.add_root_certificate(
-                reqwest::Certificate::from_pem(pem).map_err(|_| Error::Configuration)?,
-            );
-        }
-        let http = builder.build().map_err(|_| Error::Configuration)?;
+        let store = Store::open(root, config, mode)?;
+        let state = store.get::<crate::identity::IdentityState>("identity")?.unwrap_or_default();
+        let http = crate::tls::client(&store.cfg, state.active.as_ref().map(|v| (&v.key_reference, v.chain.as_slice())), &secrets)?;
         Ok(Self {
             delivery_owner: Uuid::new_v4(),
-            store: Store::open(root, config, mode)?,
+            store,
             http,
             secrets,
             clock,
@@ -188,145 +169,56 @@ impl<S: SecretProvider, C: Clock> Client<S, C> {
         self.store.time(self.clock.now()?)
     }
     pub(crate) fn active(&self) -> Result<(), Error> {
-        if self.store.get::<bool>("blocked")?.unwrap_or(false) {
-            return Err(Error::Identity);
+        let state = self.identity_state()?;
+        if let Some(failure) = state.failure.filter(|code| crate::identity::blocks_runtime(*code)) {
+            return Err(crate::identity::enrollment_error(failure));
         }
+        let active = state.active.ok_or(Error::Identity)?;
+        let now = self.clock.now()?;
+        if now < active.not_before { return Err(Error::Clock); }
+        if now >= active.not_after { return Err(Error::CertificateExpired); }
+        let (before, after, device) = crate::tls::validity(&self.store.cfg, &active.chain, &active.key_reference, &self.secrets, now)?;
+        if before != active.not_before || after != active.not_after || device != active.receipt.runtime.device_id { return Err(Error::Identity); }
         Ok(())
     }
-    pub(crate) fn credential(&self) -> Result<wire::Secret, Error> {
-        self.active()?;
-        self.secrets.resolve(&self.store.secret_reference()?)
-    }
     pub(crate) fn url(&self, path: &str) -> Result<url::Url, Error> {
-        self.store
-            .cfg
-            .origin
-            .join(&format!("api/agent/v6/{path}"))
-            .map_err(|_| Error::Configuration)
+        self.store.cfg.origin.join(&format!("api/v1/agent/runtime/{path}")).map_err(|_| Error::Configuration)
     }
     pub(crate) async fn checked_response(&self, response: Response) -> Result<Response, Error> {
-        self.check_status(response.status())?;
-        Ok(response)
+        if response.status().is_success() { return Ok(response); }
+        let max = self.store.cfg.limits.response_bytes;
+        let bytes = bounded(response, max).await?;
+        self.runtime_error(&bytes)?;
+        Err(Error::Protocol)
     }
-    fn check_status(&self, status: StatusCode) -> Result<(), Error> {
-        match status {
-            s if s.is_success() => Ok(()),
-            StatusCode::UNAUTHORIZED => {
-                self.store.put("blocked", &true)?;
-                Err(Error::Identity)
-            }
-            StatusCode::FORBIDDEN => Err(Error::Denied),
-            StatusCode::CONFLICT => Err(Error::Conflict),
-            StatusCode::TOO_MANY_REQUESTS => Err(Error::Unavailable),
-            s if s.is_server_error() => Err(Error::Unavailable),
-            _ => Err(Error::Protocol),
-        }
+    fn runtime_error(&self, bytes: &[u8]) -> Result<(), Error> {
+        let body: wire::ErrorBody = decode(bytes)?;
+        use wire::ErrorCode as R;
+        use rss_mdm_agent_wire::enroll::ErrorCode as E;
+        let error = match body.code {
+            R::CredentialRevoked => { self.identity_failure(E::CredentialRevoked)?; Error::CredentialRevoked }
+            R::CertificateExpired => { self.identity_failure(E::CertificateExpired)?; Error::CertificateExpired }
+            R::CredentialRetired => { self.identity_failure(E::CredentialRetired)?; Error::CredentialRetired }
+            R::InvalidIdentity => Error::Identity,
+            R::PermissionDenied => Error::Denied,
+            R::OperationConflict => Error::Conflict,
+            R::OperationUnknown | R::ServiceUnavailable => Error::Unavailable,
+            _ => Error::Protocol,
+        };
+        Err(error)
     }
-    async fn json<T: DeserializeOwned>(
-        &self,
-        method: Method,
-        path: &str,
-        body: Option<&[u8]>,
-        authenticated: bool,
-    ) -> Result<T, Error> {
+    async fn json<T: DeserializeOwned>(&self, method: Method, path: &str, body: Option<&[u8]>) -> Result<T, Error> {
         self.active()?;
         self.now()?;
-        let mut request = self
-            .http
-            .request(method, self.url(path)?)
-            .timeout(self.store.cfg.limits.request_timeout);
-        if authenticated {
-            request = request.bearer_auth(self.credential()?.expose());
-        }
-        if let Some(body) = body {
-            request = request
-                .header("content-type", "application/json")
-                .body(body.to_owned());
-        }
+        let mut request = self.http.request(method, self.url(path)?).timeout(self.store.cfg.limits.request_timeout);
+        if let Some(body) = body { request = request.header("content-type", "application/json").body(body.to_owned()); }
         let max = self.store.cfg.limits.response_bytes;
         let (status, bytes) = json_transport(request, max).await?;
-        self.check_status(status)?;
+        if !status.is_success() { self.runtime_error(&bytes)?; }
         decode(&bytes)
     }
-    /// Registration replay preserves the operation and protected secret references.
-    /// Use a new private namespace for a new registration; old pending data is preserved.
-    pub async fn register(
-        &mut self,
-        operation: Uuid,
-        enrollment: Uuid,
-        password_reference: &str,
-        credential_reference: &str,
-        capabilities: Vec<wire::Capability>,
-    ) -> Result<wire::RegistrationReceipt, Error> {
-        // Producer-owned MdmEnrollmentV6 opens the standard OS MDM enrollment UI;
-        // it is distinct from this Agent registration and unsupported by this client.
-        if password_reference.is_empty()
-            || credential_reference.is_empty()
-            || password_reference.len() > 256
-            || credential_reference.len() > 256
-            || capabilities.contains(&wire::Capability::MdmEnrollmentV6)
-        {
-            return Err(Error::Configuration);
-        }
-        let context = self
-            .store
-            .get::<Enrollment>("enrollment")?
-            .map(|v| v.execution_context)
-            .unwrap_or(self.execution_context()?);
-        let request = wire::RegistrationRequest::new(
-            operation,
-            enrollment,
-            self.secrets.resolve(password_reference)?,
-            self.secrets.credential(credential_reference)?,
-            capabilities.clone(),
-            self.store.cfg.platform,
-            self.store.cfg.architecture,
-            context.clone(),
-        )?;
-        let body = encode(&request)?;
-        let record = Enrollment {
-            operation,
-            enrollment,
-            password: password_reference.into(),
-            credential: credential_reference.into(),
-            capabilities: capabilities.clone(),
-            fingerprint: hash(&body),
-            execution_context: context,
-        };
-        if let Some(old) = self.store.get::<Enrollment>("enrollment")? {
-            if old != record {
-                return Err(Error::Conflict);
-            }
-        } else {
-            self.store.put("enrollment", &record)?;
-        }
-        let receipt: wire::RegistrationReceipt = self
-            .json(Method::POST, "registrations", Some(&body), false)
-            .await?;
-        if receipt.operation_id != operation
-            || receipt.source != wire::ReportSource::AgentBuiltin
-            || receipt.capabilities != capabilities
-        {
-            return Err(Error::Protocol);
-        }
-        if self
-            .store
-            .get::<wire::RegistrationReceipt>("registration")?
-            .is_some_and(|old| old != receipt)
-        {
-            self.store.put("blocked", &true)?;
-            return Err(Error::Identity);
-        }
-        let tx = self.store.conn.unchecked_transaction()?;
-        tx.execute("INSERT INTO state VALUES('registration',?1) ON CONFLICT(key) DO UPDATE SET body=excluded.body",[encode(&receipt)?])?;
-        tx.execute("INSERT INTO state VALUES('credential',?1) ON CONFLICT(key) DO UPDATE SET body=excluded.body",[encode(&credential_reference)?])?;
-        tx.commit()?;
-        Ok(receipt)
-    }
-    /// Current durable registration; no credential is returned.
-    pub fn registration(&self) -> Result<wire::RegistrationReceipt, Error> {
-        self.store.registration()
-    }
+    /// The sole durable runtime binding, derived from the activation receipt.
+    pub fn registration(&self) -> Result<wire::BindingProfile, Error> { self.store.registration() }
     /// Allocate report identity and sequence in the same transaction as its immutable body.
     pub fn queue_report(
         &mut self,
@@ -381,7 +273,7 @@ impl<S: SecretProvider, C: Clock> Client<S, C> {
         let mut sent = 0;
         for (id, body) in reports {
             let ack: wire::ReportAck = self
-                .json(Method::POST, "reports", Some(&body), true)
+                .json(Method::POST, "reports", Some(&body))
                 .await?;
             if ack.report_id.to_string() != id {
                 return Err(Error::Protocol);
@@ -396,7 +288,7 @@ impl<S: SecretProvider, C: Clock> Client<S, C> {
     /// Persistent intake/projection status is separate from delivery acknowledgement.
     pub async fn report_status(&self, id: Uuid) -> Result<wire::ReportStatus, Error> {
         let result: wire::ReportStatus = self
-            .json(Method::GET, &format!("reports/{id}"), None, true)
+            .json(Method::GET, &format!("reports/{id}"), None)
             .await?;
         if result.ack.report_id != id {
             return Err(Error::Protocol);
@@ -477,7 +369,7 @@ impl<S: SecretProvider, C: Clock> Client<S, C> {
             state.execution_context.clone(),
         )?)?;
         let result: wire::TaskClaimResponse = self
-            .json(Method::POST, "tasks/claim", Some(&body), true)
+            .json(Method::POST, "tasks/claim", Some(&body))
             .await?;
         let cancellations = result.cancellations().to_owned();
         let offer = if let Some(signed) = result.into_task() {
@@ -685,7 +577,6 @@ impl<S: SecretProvider, C: Clock> Client<S, C> {
             Method::POST,
             &format!("tasks/{task}/events"),
             Some(&encode(request)?),
-            true,
         )
         .await
     }
@@ -837,16 +728,13 @@ pub(crate) fn same_input(a: &wire::TaskPayload, b: &wire::TaskPayload) -> bool {
 }
 
 // Pure bounded transport; the caller owns all identity, decoding and storage decisions.
-async fn json_transport(
+pub(crate) async fn json_transport(
     request: reqwest::RequestBuilder,
     max: usize,
 ) -> Result<(StatusCode, Vec<u8>), Error> {
     let task = tokio::spawn(async move {
         let mut response = request.send().await.map_err(|_| Error::Unavailable)?;
         let status = response.status();
-        if !status.is_success() {
-            return Ok((status, Vec::new()));
-        }
         if !response
             .headers()
             .get("content-type")
@@ -874,6 +762,15 @@ async fn json_transport(
     // Dropping an owner operation cancels its transport instead of detaching it.
     let _cancel = CancelTransport(task.abort_handle());
     task.await.map_err(|_| Error::Unavailable)?
+}
+pub(crate) async fn bounded(mut response: Response, max: usize) -> Result<Vec<u8>, Error> {
+    if response.content_length().is_some_and(|n| n > max as u64) { return Err(Error::Capacity); }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(|_| Error::Unavailable)? {
+        if bytes.len().checked_add(chunk.len()).is_none_or(|n| n > max) { return Err(Error::Capacity); }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(bytes)
 }
 struct CancelTransport(tokio::task::AbortHandle);
 impl Drop for CancelTransport {

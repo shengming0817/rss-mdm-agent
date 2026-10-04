@@ -1,7 +1,8 @@
 use super::test_support::local::{create_app, reopen_app};
 use super::{bridge::ExecutionBridge, test_support::*};
 use crate::protocol_test_support::*;
-use agent_client::{wire::*, Client, Error, OpenMode};
+use rss_mdm_agent_wire::runtime::*;
+use agent_client::{Client, Error, OpenMode};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 #[tokio::test]

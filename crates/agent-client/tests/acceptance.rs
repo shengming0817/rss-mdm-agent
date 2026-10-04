@@ -1,9 +1,10 @@
-use agent_client::{wire::*, Client, Config, Error, Limits, OpenMode, Transport};
+use rss_mdm_agent_wire::runtime::*;
+use agent_client::{ Client, Config, Error, Limits, OpenMode, Transport};
 use url::Url;
 use uuid::Uuid;
 #[path = "../../../tests/agent-protocol/mod.rs"]
 mod support;
-use agent_client::wire::{TaskArchitecture, TaskPlatform};
+use rss_mdm_agent_wire::runtime::{TaskArchitecture, TaskPlatform};
 use support::*;
 #[tokio::test]
 async fn refresh_inspection_reads_live_binding_without_locking_or_creating_state() {
@@ -13,7 +14,7 @@ async fn refresh_inspection_reads_live_binding_without_locking_or_creating_state
     server.register(&mut client).await;
     let cfg = client.configuration().clone();
     let before = std::fs::read(root.path.join("communication.sqlite")).unwrap();
-    let registration = agent_client::inspect_registration(&root.path, &cfg).unwrap();
+    let registration = agent_client::inspect_binding(&root.path, &cfg).unwrap();
     assert_eq!(
         registration.registration_id,
         client.registration().unwrap().registration_id
@@ -21,7 +22,7 @@ async fn refresh_inspection_reads_live_binding_without_locking_or_creating_state
     let mut wrong = cfg.clone();
     wrong.tenant = Uuid::new_v4();
     assert!(matches!(
-        agent_client::inspect_registration(&root.path, &wrong),
+        agent_client::inspect_binding(&root.path, &wrong),
         Err(Error::Identity)
     ));
     assert_eq!(
@@ -29,7 +30,7 @@ async fn refresh_inspection_reads_live_binding_without_locking_or_creating_state
         std::fs::read(root.path.join("communication.sqlite")).unwrap()
     );
     let empty = Root::new();
-    assert!(agent_client::inspect_registration(&empty.path, &cfg).is_err());
+    assert!(agent_client::inspect_binding(&empty.path, &cfg).is_err());
     assert_eq!(std::fs::read_dir(&empty.path).unwrap().count(), 0);
 }
 
@@ -196,47 +197,14 @@ async fn register_report_recovery_and_exact_ack() {
     let root = Root::new();
     let mut client = server.client(&root, OpenMode::Create);
     server.data.lock().unwrap().registration_failure = true;
-    let operation = Uuid::new_v4();
-    let enrollment = Uuid::new_v4();
-    let capabilities = vec![Capability::InventoryCollectionV6, Capability::TaskExecuteV6];
-    assert_eq!(
-        client
-            .register(
-                operation,
-                enrollment,
-                "password",
-                "credential",
-                capabilities.clone()
-            )
-            .await
-            .unwrap_err(),
-        Error::Unavailable
-    );
+    let capabilities = vec![Capability::InventoryCollectionV1, Capability::TaskExecuteV1];
+    assert!(matches!(client.request_authorization(capabilities.clone()).await, Err(Error::Unavailable)));
+    let operation = server.data.lock().unwrap().operation;
     drop(client);
     let mut client = server.client(&root, OpenMode::Existing);
-    client
-        .register(
-            operation,
-            enrollment,
-            "password",
-            "credential",
-            capabilities.clone(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(
-        client
-            .register(
-                Uuid::new_v4(),
-                enrollment,
-                "password",
-                "credential",
-                capabilities
-            )
-            .await
-            .unwrap_err(),
-        Error::Conflict
-    );
+    client.request_authorization(capabilities.clone()).await.unwrap();
+    assert_eq!(server.data.lock().unwrap().operation, operation);
+    assert!(matches!(client.request_authorization(capabilities).await, Err(Error::Conflict)));
     let report = client
         .queue_report(
             "inventory",
@@ -520,7 +488,7 @@ async fn prior_communication_schema_preserves_registration_pending_delivery_and_
 #[test]
 fn configuration_rejects_untrusted_network_and_unbounded_budgets() {
     let mut cfg = Config {
-        execution_context: agent_client::wire::SoftwareExecutionContext {
+        execution_context: rss_mdm_agent_wire::runtime::SoftwareExecutionContext {
             revision: 1,
             os_version: [14, 0, 0, 0],
             system_broker: true,
@@ -537,6 +505,7 @@ fn configuration_rejects_untrusted_network_and_unbounded_budgets() {
         limits: Limits::test_defaults(),
         transport: Transport::Https,
         ca_pem: None,
+        device_ca_pem: b"fixture".to_vec(),
     };
     assert_eq!(cfg.validate(), Err(Error::Configuration));
     cfg.origin = Url::parse("http://127.0.0.1:8080").unwrap();

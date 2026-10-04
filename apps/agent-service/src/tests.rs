@@ -1,4 +1,5 @@
 //! Real HTTP/signatures/SQLite feeding the production compiler; OS execution is separately tested.
+use rss_mdm_agent_wire::runtime as wire;
 use super::*;
 use crate::backend::{host, plan, software};
 use crate::protocol_test_support as protocol;

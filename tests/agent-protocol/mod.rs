@@ -1,5 +1,6 @@
 #![allow(dead_code)]
-use agent_client::wire::*;
+mod pki;
+use rss_mdm_agent_wire::{enroll, runtime::*};
 use agent_client::*;
 use axum::{
     body::{Body, Bytes},
@@ -65,17 +66,33 @@ impl Secrets {
         ]))))
     }
 }
-impl SecretProvider for Secrets {
+impl IdentityProvider for Secrets {
     fn resolve(&self, id: &str) -> Result<Secret, Error> {
         Secret::parse(self.0.lock().unwrap().get(id).ok_or(Error::Identity)?)
             .map_err(|_| Error::Identity)
     }
-    fn credential(&self, id: &str) -> Result<Secret, Error> {
-        self.resolve(id)
+    fn import_secret(&self, id: &str, secret: &Secret) -> Result<(), Error> {
+        let mut values = self.0.lock().unwrap();
+        if values.get(id).is_some_and(|old| old != secret.expose()) { return Err(Error::Conflict); }
+        values.insert(id.into(), secret.expose().into()); Ok(())
+    }
+    fn create_secret(&self, id: &str) -> Result<Secret, Error> {
+        self.0.lock().unwrap().entry(id.into()).or_insert_with(|| "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".into()); self.resolve(id)
+    }
+    fn create_key(&self, id: &str) -> Result<Arc<dyn rustls::sign::SigningKey>, Error> {
+        self.0.lock().unwrap().entry(id.into()).or_insert_with(|| "fixture-key".into()); self.key(id)
+    }
+    fn key(&self, id: &str) -> Result<Arc<dyn rustls::sign::SigningKey>, Error> {
+        if self.0.lock().unwrap().get(id).is_none_or(|v| v != "fixture-key") { return Err(Error::Identity); }
+        Ok(pki::key())
     }
 }
 pub struct Data {
-    credential: Option<String>,
+    pub grant: Option<enroll::GrantReceipt>,
+    pub issuance: Uuid,
+    pub profile: Option<enroll::RuntimeProfile>,
+    pub activation: Option<enroll::ActivationReceipt>,
+    pub bootstrap: Option<String>,
     pub tenant: Uuid,
     pub registration: Uuid,
     pub epoch: Uuid,
@@ -136,7 +153,7 @@ impl Data {
         self.attempt = Uuid::new_v4();
         self.reset_current_task();
         let spec = TaskSpec {
-            wire_version: 6,
+            wire_version: 1,
             tenant_id: self.tenant,
             device_id: "device-1".into(),
             platform: TaskPlatform::Macos,
@@ -208,7 +225,7 @@ impl Data {
             .collect();
         let spec = SoftwareTaskSpec {
             execution_context: execution_context(),
-            wire_version: 6,
+            wire_version: 1,
             tenant_id: self.tenant,
             device_id: "device-1".into(),
             platform: TaskPlatform::Macos,
@@ -249,7 +266,7 @@ impl Server {
         let time = Time(Arc::new(AtomicI64::new(1)));
         let signer = Ed25519KeyPair::from_seed_unchecked(&[7; 32]).unwrap();
         let data = Arc::new(Mutex::new(Data {
-            credential: None,
+            grant: None, issuance: Uuid::new_v4(), profile: None, activation: None, bootstrap: None,
             tenant: Uuid::new_v4(),
             registration: Uuid::new_v4(),
             epoch: Uuid::new_v4(),
@@ -322,6 +339,7 @@ impl Server {
             limits: Limits::test_defaults(),
             transport: Transport::TestLoopback,
             ca_pem: None,
+            device_ca_pem: pki::ca(),
         }
     }
     pub fn client(&self, root: &Root, mode: OpenMode) -> Client<Secrets, Time> {
@@ -336,21 +354,9 @@ impl Server {
         client.set_profiles(vec![ExecutorProfile::PosixSh]).unwrap();
         client
     }
-    pub async fn register(&self, client: &mut Client<Secrets, Time>) -> RegistrationReceipt {
-        client
-            .register(
-                Uuid::new_v4(),
-                Uuid::new_v4(),
-                "password",
-                "credential",
-                vec![
-                    Capability::InventoryCollectionV6,
-                    Capability::TaskExecuteV6,
-                    Capability::SoftwarePkgSystemV6,
-                ],
-            )
-            .await
-            .unwrap()
+    pub async fn register(&self, client: &mut Client<Secrets, Time>) -> BindingProfile {
+        client.request_authorization(vec![Capability::InventoryCollectionV1, Capability::TaskExecuteV1, Capability::SoftwarePkgSystemV1]).await.unwrap();
+        client.registration().unwrap()
     }
 }
 impl Drop for Server {
@@ -378,46 +384,52 @@ async fn handler(
     }
     let mut d = data.lock().unwrap();
     let path = uri.path();
-    if path != "/api/agent/v6/registrations"
-        && (d.denied
-            || headers.get("authorization").and_then(|v| v.to_str().ok())
-                != d.credential
-                    .as_ref()
-                    .map(|v| format!("Bearer {v}"))
-                    .as_deref())
-    {
-        return StatusCode::UNAUTHORIZED.into_response();
-    }
     let value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
-    if path.ends_with("/registrations") {
-        registration_response(&mut d, value)
-    } else if path.ends_with("/reports") {
-        report_response(&mut d, value)
-    } else if path.ends_with("/claim") {
-        claim_response(&mut d, value)
-    } else if path.ends_with("/events") {
-        event_response(&mut d, value)
-    } else if path.ends_with("/content") {
-        content_response(&mut d, headers)
-    } else {
-        StatusCode::NOT_FOUND.into_response()
+    if headers.contains_key("authorization") { return runtime_error(StatusCode::UNAUTHORIZED, ErrorCode::InvalidIdentity); }
+    if let Some(action) = path.strip_prefix("/api/v1/agent/enroll/") { return enrollment_response(&mut d, action, value); }
+    if !path.starts_with("/api/v1/agent/runtime/") { return StatusCode::NOT_FOUND.into_response(); }
+    if d.denied { return runtime_error(StatusCode::UNAUTHORIZED, ErrorCode::CredentialRevoked); }
+    if d.activation.is_none() { return runtime_error(StatusCode::UNAUTHORIZED, ErrorCode::InvalidIdentity); }
+    let response = if path.ends_with("/reports") { report_response(&mut d, value) }
+        else if path.ends_with("/claim") { claim_response(&mut d, value) }
+        else if path.ends_with("/events") { event_response(&mut d, value) }
+        else if path.ends_with("/content") { content_response(&mut d, headers) }
+        else { StatusCode::NOT_FOUND.into_response() };
+    if response.status().is_success() { response } else {
+        let status = response.status();
+        runtime_error(status, if status == StatusCode::CONFLICT { ErrorCode::OperationConflict } else { ErrorCode::ServiceUnavailable })
     }
 }
-fn registration_response(d: &mut Data, value: Value) -> Response {
-    let operation = Uuid::parse_str(value["operationId"].as_str().unwrap()).unwrap();
-    if d.operation.is_some_and(|old| old != operation) {
-        return StatusCode::CONFLICT.into_response();
+fn runtime_error(status: StatusCode, code: ErrorCode) -> Response { (status, axum::Json(ErrorBody { code })).into_response() }
+fn enrollment_response(d: &mut Data, action: &str, value: Value) -> Response {
+    match action {
+        "requests" | "renewal-grants" => {
+            let request: enroll::GrantRequest = serde_json::from_value(value).unwrap();
+            if d.operation.is_some_and(|old| old != request.operation_id) { return (StatusCode::CONFLICT, axum::Json(enroll::ErrorBody { code: enroll::ErrorCode::OperationConflict, issuance_id: None })).into_response(); }
+            d.operation = Some(request.operation_id); d.bootstrap = Some(request.secret.expose().into());
+            let grant = d.grant.get_or_insert_with(|| enroll::GrantReceipt { wire_version: 1, grant_id: Uuid::new_v4(), state: enroll::GrantState::Available, platform: request.platform, expires_at: d.time.now().unwrap()+300 });
+            if std::mem::take(&mut d.registration_failure) { return (StatusCode::SERVICE_UNAVAILABLE, axum::Json(enroll::ErrorBody { code: enroll::ErrorCode::ServiceUnavailable, issuance_id: None })).into_response(); }
+            axum::Json(grant.clone()).into_response()
+        }
+        "status" => {
+            let request: enroll::StatusRequest = serde_json::from_value(value).unwrap();
+            assert_eq!(Some(request.operation_id), d.operation); assert_eq!(Some(request.secret.expose()), d.bootstrap.as_deref());
+            axum::Json(enroll::Progress { grant: d.grant.clone().unwrap(), issuance_id: d.profile.as_ref().map(|_| d.issuance), issuance_unknown: false, activation: d.activation.clone() }).into_response()
+        }
+        "certificates" => {
+            let request: enroll::CertificateRequest = serde_json::from_value(value).unwrap();
+            assert_eq!(Some(request.secret.expose()), d.bootstrap.as_deref());
+            d.profile = Some(request.runtime); d.grant.as_mut().unwrap().state = enroll::GrantState::Consumed;
+            axum::Json(enroll::Candidate { wire_version: 1, issuance_id: d.issuance, operation_id: request.operation_id, certificate_chain: pki::chain(d.tenant), activate_before: d.grant.as_ref().unwrap().expires_at }).into_response()
+        }
+        "activate" => {
+            let request: enroll::ActivationRequest = serde_json::from_value(value).unwrap(); assert_eq!(request.issuance_id, d.issuance);
+            let profile: BindingProfile = serde_json::from_value(json!({"wireVersion":1,"operationId":d.operation,"deviceId":"device-1","registrationId":d.registration,"generation":1,"source":"agent.builtin","epoch":d.epoch,"capabilities":d.profile.as_ref().unwrap().capabilities,"collections":collections()})).unwrap();
+            let receipt = enroll::ActivationReceipt { wire_version: 1, issuance_id: d.issuance, operation_id: request.operation_id, runtime: profile };
+            d.activation = Some(receipt.clone()); axum::Json(receipt).into_response()
+        }
+        _ => StatusCode::NOT_FOUND.into_response(),
     }
-    let credential = value["credential"].as_str().unwrap().to_owned();
-    if d.credential.as_ref().is_some_and(|old| old != &credential) {
-        return StatusCode::CONFLICT.into_response();
-    }
-    d.credential = Some(credential);
-    d.operation = Some(operation);
-    if std::mem::take(&mut d.registration_failure) {
-        return StatusCode::SERVICE_UNAVAILABLE.into_response();
-    }
-    (StatusCode::CREATED,axum::Json(json!({"wireVersion":6,"operationId":operation,"deviceId":"device-1","registrationId":d.registration,"generation":1,"source":"agent.builtin","epoch":d.epoch,"capabilities":value["capabilities"],"collections":collections()}))).into_response()
 }
 fn report_response(d: &mut Data, value: Value) -> Response {
     let id = value["reportId"].as_str().unwrap().to_owned();
@@ -430,7 +442,7 @@ fn report_response(d: &mut Data, value: Value) -> Response {
     if std::mem::take(&mut d.report_failure) {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     }
-    (StatusCode::ACCEPTED,axum::Json(json!({"wireVersion":6,"reportId":if d.bad_ack{Uuid::new_v4().to_string()}else{id},"receivedAt":1,"intake":"durable"}))).into_response()
+    (StatusCode::ACCEPTED,axum::Json(json!({"wireVersion":1,"reportId":if d.bad_ack{Uuid::new_v4().to_string()}else{id},"receivedAt":1,"intake":"durable"}))).into_response()
 }
 fn claim_response(d: &mut Data, value: Value) -> Response {
     let _: TaskClaimRequest = serde_json::from_value(value.clone()).unwrap();
@@ -611,7 +623,7 @@ fn content_response(d: &mut Data, headers: HeaderMap) -> Response {
         .unwrap()
 }
 
-pub fn collections() -> Vec<agent_client::wire::CollectionDefinition> {
+pub fn collections() -> Vec<rss_mdm_agent_wire::runtime::CollectionDefinition> {
     let fields:Vec<_>=["device.model","device.os.version"].into_iter().map(|key|json!({
         "key":key,"version":1,"valueType":{"kind":"string","maxLength":256,"allowEmpty":false},
         "nullable":false,"manual":false,"sources":{"agent.builtin":0},"platforms":["windows","macos"],

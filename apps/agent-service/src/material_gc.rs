@@ -1,9 +1,9 @@
 //! Disk reclamation belongs to DeviceService between submissions, never network reconciliation.
 use crate::DeviceService;
-use agent_client::{Error, SecretProvider};
+use agent_client::{Error, IdentityProvider};
 use std::collections::{BTreeMap, BTreeSet};
 
-impl<S: SecretProvider> DeviceService<S> {
+impl<S: IdentityProvider> DeviceService<S> {
     pub(crate) fn reclaim_between_submissions(&mut self) {
         if let Err(error) = self.reclaim_materials() {
             // A closed, path-free diagnostic. Incomplete proof preserves materials; normal

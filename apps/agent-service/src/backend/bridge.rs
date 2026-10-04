@@ -1,6 +1,7 @@
+use rss_mdm_agent_wire::runtime as wire;
 use super::request_id;
 use crate::error::app_error as map_app_error;
-use agent_client::{wire, Client, Clock, Error, Materials, Offer, SecretProvider, Start};
+use agent_client::{Client, Clock, Error, Materials, Offer, IdentityProvider, Start};
 fn encode(value: &impl serde::Serialize) -> Result<Vec<u8>, Error> {
     serde_json_canonicalizer::to_vec(value).map_err(|_| Error::Protocol)
 }
@@ -141,7 +142,7 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
     /// Submit a host-adapted immutable plan only with a currently valid Start.
     /// Preparation/adaptation must occur before requesting Start; this does no network I/O.
     pub fn dispatch<
-        S: SecretProvider,
+        S: IdentityProvider,
         C: Clock,
         H: AppHost,
         R: RunnerPort,
@@ -200,7 +201,7 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
     /// Repair only the transport association after an interrupted commit hand-off.
     /// The journal remains the authority for whether an attempt exists; this never dispatches.
     pub fn recover_binding<
-        S: SecretProvider,
+        S: IdentityProvider,
         C: Clock,
         H: AppHost,
         R: RunnerPort,
@@ -246,7 +247,7 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
     /// Settle an offer that never entered this authoritative journal. Cancellation ACK
     /// precedes releasing associations; any existing local execution remains journal-owned.
     pub fn prepare_abandonment<
-        S: SecretProvider,
+        S: IdentityProvider,
         C: Clock,
         H: AppHost,
         R: RunnerPort,
@@ -283,7 +284,7 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
         })
     }
     /// Send only transport work, leaving the execution owner free to reconcile and cancel.
-    pub async fn send_abandonment<S: SecretProvider, C: Clock>(
+    pub async fn send_abandonment<S: IdentityProvider, C: Clock>(
         &self,
         client: &mut Client<S, C>,
         pending: &mut PendingAbandonment,
@@ -295,7 +296,7 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
     }
     /// Release transport state only after the same journal still proves there is no execution.
     pub fn finish_abandonment<
-        S: SecretProvider,
+        S: IdentityProvider,
         C: Clock,
         H: AppHost,
         R: RunnerPort,
@@ -317,7 +318,7 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
     /// Convenience for callers that do not own a concurrent execution loop.
     #[cfg(test)]
     pub async fn abandon<
-        S: SecretProvider,
+        S: IdentityProvider,
         C: Clock,
         H: AppHost,
         R: RunnerPort,
@@ -334,7 +335,7 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
     }
     /// Reconcile one exact cancellation against its existing journal; absence never proves stop.
     pub fn cancel<
-        S: SecretProvider,
+        S: IdentityProvider,
         C: Clock,
         H: AppHost,
         R: RunnerPort,
@@ -359,7 +360,7 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
     /// Send one frozen result and precisely confirm its source events after durable remote ACK.
     /// Lost confirmations never cause another HTTP result request or runner dispatch.
     pub fn prepare_delivery<
-        S: SecretProvider,
+        S: IdentityProvider,
         C: Clock,
         H: AppHost,
         R: RunnerPort,
@@ -426,7 +427,7 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
         }))
     }
     /// Perform bounded HTTP delivery without borrowing the execution application.
-    pub async fn send_delivery<S: SecretProvider, C: Clock>(
+    pub async fn send_delivery<S: IdentityProvider, C: Clock>(
         &self,
         client: &mut Client<S, C>,
         pending: &mut PendingDelivery,
@@ -438,7 +439,7 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
     }
     /// Confirm original journal receipts after the durable HTTP acknowledgement.
     pub fn finish_delivery<
-        S: SecretProvider,
+        S: IdentityProvider,
         C: Clock,
         H: AppHost,
         R: RunnerPort,
@@ -461,7 +462,7 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
     /// Deliver synchronously for consumers without a concurrent execution-owner loop.
     #[cfg(test)]
     pub async fn flush<
-        S: SecretProvider,
+        S: IdentityProvider,
         C: Clock,
         H: AppHost,
         R: RunnerPort,
@@ -575,7 +576,7 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
     }
     /// Explicit terminal cleanup after every journal event has been confirmed.
     pub fn finish<
-        S: SecretProvider,
+        S: IdentityProvider,
         C: Clock,
         H: AppHost,
         R: RunnerPort,
@@ -918,7 +919,7 @@ fn software_result(
         definition_digest: spec.definition_digest,
         steps: results,
     };
-    result.validate_for(spec)?;
+    result.assess_for(spec)?;
     Ok(result)
 }
 

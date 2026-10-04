@@ -1,4 +1,5 @@
 //! Frozen physical recipes for EXE, MSIX and selected DMG payloads.
+use rss_mdm_agent_wire::runtime as wire;
 use super::*;
 use crate::software_worker::{WorkerOperation as O, WorkerRequest};
 use std::{io::Read, path::Path};

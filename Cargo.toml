@@ -10,6 +10,13 @@ rust-version = "1.96"
 license = "MIT"
 
 [workspace.dependencies]
+rss-mdm-agent-wire = { git = "https://dev.azure.com/shengming0923/rss/_git/rss-mdm", rev = "407b3febaf5192f397bedf5e0b64c57f75a1285f", version = "=1.0.0" }
+rss-mdm-resource = { git = "https://dev.azure.com/shengming0923/rss/_git/rss-mdm", rev = "407b3febaf5192f397bedf5e0b64c57f75a1285f", version = "=0.1.0" }
+rustls = { version = "=0.23.45", default-features = false, features = ["std", "ring", "tls12"] }
+x509-cert = "=0.2.5"
+der = { version = "=0.7.10", features = ["alloc", "derive", "oid"] }
+spki = "=0.7.3"
+
 tauri = { version = "=2.11.2", features = [] }
 tauri-build = { version = "=2.6.2", features = [] }
 serde = { version = "=1.0.229", features = ["derive"] }

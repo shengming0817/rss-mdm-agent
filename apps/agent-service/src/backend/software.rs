@@ -1,9 +1,10 @@
 //! Deterministic V7 compiler. The backend has already selected sources and ordered dependencies.
+use rss_mdm_agent_wire::runtime as wire;
 use crate::{
     backend::plan::{self, hex, id, reference},
     ExecutionConfig, SoftwareManagerKind,
 };
-use agent_client::{wire, Error, Materials, Offer};
+use agent_client::{Error, Materials, Offer};
 use execution_contract::*;
 use execution_runner::{Artifacts, SoftwareStepArtifacts};
 use script_plan::{compile_invocation, ScriptInvocationInput};
