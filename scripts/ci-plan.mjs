@@ -10,6 +10,22 @@ import {
 } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { stepResult } from "./ci-result.mjs";
+// ref: Node.js doc/api/child_process.md@v24.14.1 (.cmd execution).
+// Use pnpm's explicit JS CLI on Windows, as the existing packaging entry does.
+export function resolveCommand(
+  command,
+  args,
+  env = process.env,
+  platform = process.platform,
+) {
+  if (platform !== "win32" || command !== "pnpm") return { command, args };
+  const cli = env.npm_execpath;
+  if (!cli || !/\.[cm]?js$/.test(cli))
+    throw Error(
+      "Run Windows build tools from pnpm so its pinned CLI is explicit.",
+    );
+  return { command: process.execPath, args: [cli, ...args] };
+}
 const npm = (name) => `@rss-mdm-agent/${name}`;
 const groups = {
   "native driver authentication": ["desktop"],
@@ -154,6 +170,7 @@ export function runCommand(
       return;
     }
     const childEnv = options.env ?? process.env;
+    const invocation = resolveCommand(command, args, childEnv);
     const fds = leaseFds(childEnv, options.cwd, options.stdio);
     const managed = fds !== null;
     let stdio = managed
@@ -166,7 +183,7 @@ export function runCommand(
       stdio = Array.isArray(stdio) ? [...stdio] : ["ignore", "pipe", "inherit"];
       stdio[1] = "pipe";
     }
-    const child = spawn(command, args, {
+    const child = spawn(invocation.command, invocation.args, {
       ...options,
       env: childEnv,
       stdio,

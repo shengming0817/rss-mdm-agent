@@ -14,6 +14,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import assert from "node:assert/strict";
 import { load } from "js-yaml";
 import { preparedArtifact } from "./preparation.mjs";
+import { resolveCommand } from "./ci-plan.mjs";
 const runtimeRoots = [
   "bin",
   "node_modules",
@@ -29,15 +30,7 @@ const sourceDirectory = (name) =>
       ? `packages/ai-adapters/${name.slice("ai-adapter-".length)}`
       : `packages/${name}`;
 export function run(command, args, cwd, environment = process.env) {
-  if (process.platform === "win32" && command === "pnpm") {
-    const cli = process.env.npm_execpath;
-    if (!cli || !/\.[cm]?js$/.test(cli))
-      throw new Error(
-        "Run Windows build tools from pnpm so its pinned CLI is explicit.",
-      );
-    args = [cli, ...args];
-    command = process.execPath;
-  }
+  ({ command, args } = resolveCommand(command, args, environment));
   const result = spawnSync(command, args, {
     cwd,
     stdio: "inherit",

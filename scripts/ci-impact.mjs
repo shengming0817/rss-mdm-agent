@@ -2,15 +2,18 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync, realpathSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
+import { resolveCommand } from "./ci-plan.mjs";
 const git = process.platform === "win32" ? "git" : "/usr/bin/git";
 const npm = (name) => `@rss-mdm-agent/${name}`;
-const run = (root, command, args) =>
-  execFileSync(command, args, {
+const run = (root, command, args) => {
+  ({ command, args } = resolveCommand(command, args));
+  return execFileSync(command, args, {
     cwd: root,
     encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024,
     stdio: ["ignore", "pipe", "pipe"],
   });
+};
 const rootDocs = new Set([
   "README.md",
   "AGENTS.md",

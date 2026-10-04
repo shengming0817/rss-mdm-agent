@@ -16,7 +16,7 @@ import {
 import { createHash } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { runCommand } from "./ci-plan.mjs";
+import { runCommand, resolveCommand } from "./ci-plan.mjs";
 import { cargoTargetDir } from "./cargo-target.mjs";
 
 export const root = fileURLToPath(new URL("../", import.meta.url));
@@ -158,8 +158,9 @@ function configuration(directory, env) {
   });
 }
 function toolchain(directory, env, names) {
-  const read = (command, args) =>
-    execFileSync(command, args, {
+  const read = (command, args) => {
+    const invocation = resolveCommand(command, args, env);
+    return execFileSync(invocation.command, invocation.args, {
       cwd: directory,
       env,
       encoding: "utf8",
@@ -167,6 +168,7 @@ function toolchain(directory, env, names) {
       timeout: 10000,
       killSignal: "SIGKILL",
     }).trim();
+  };
   return {
     node: process.versions.node,
     ...Object.fromEntries(
@@ -321,6 +323,7 @@ export class Preparation {
       throw Error("preparation requires the pinned Node/pnpm toolchain");
   }
   async command(command, args, capture = false, env = this.env) {
+    ({ command, args } = resolveCommand(command, args, env));
     const start = performance.now();
     const result = await this.execute(command, args, {
       cwd: this.root,

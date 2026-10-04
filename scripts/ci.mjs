@@ -7,6 +7,7 @@ import { Preparation, root as sourceRoot } from "./preparation.mjs";
 import { steps as defaultSteps } from "./ci-steps.mjs";
 import {
   runCommand,
+  resolveCommand,
   planSteps,
   executeSteps,
   prepareEvidence,
@@ -28,7 +29,8 @@ function toolchain(root, env, report) {
     throw Error(`Node version must be ${manifest.engines.node}`);
   const pinned = /^pnpm@(\d+\.\d+\.\d+)$/.exec(manifest.packageManager);
   if (!pinned) throw Error("packageManager must pin an exact pnpm version");
-  const result = spawnSync("pnpm", ["--version"], {
+  const invocation = resolveCommand("pnpm", ["--version"], env);
+  const result = spawnSync(invocation.command, invocation.args, {
     cwd: root,
     env,
     encoding: "utf8",

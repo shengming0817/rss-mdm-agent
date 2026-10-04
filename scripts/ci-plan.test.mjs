@@ -20,12 +20,50 @@ import {
   executeSteps,
   prepareEvidence,
   publishPlan,
+  resolveCommand,
 } from "./ci-plan.mjs";
 const impact = (rustPackages = [], nodePackages = []) => ({
   full: false,
   rustPackages,
   nodePackages,
   packages: [...rustPackages, ...nodePackages],
+});
+
+test("pnpm CLI resolution preserves argv without a shell and rejects cmd launchers", async () => {
+  const root = mkdtempSync(join(tmpdir(), "pnpm cli "));
+  try {
+    const cli = join(root, "pnpm.mjs");
+    writeFileSync(cli, "console.log(JSON.stringify(process.argv.slice(2)))");
+    const args = ["--version", "literal $(command); & value"];
+    const invocation = resolveCommand(
+      "pnpm",
+      args,
+      { npm_execpath: cli },
+      "win32",
+    );
+    assert.equal(invocation.command, process.execPath);
+    const result = await runCommand(invocation.command, invocation.args, {
+      env: { ...process.env, _AGENT_BUILD_LEASE: undefined },
+      capture: true,
+    });
+    assert.equal(result.status, 0);
+    assert.deepEqual(JSON.parse(result.stdout), args);
+    assert.deepEqual(resolveCommand("pnpm", args, {}, "darwin"), {
+      command: "pnpm",
+      args,
+    });
+    assert.deepEqual(resolveCommand("cargo", args, {}, "win32"), {
+      command: "cargo",
+      args,
+    });
+    for (const cli of [undefined, "pnpm.cmd"])
+      assert.throws(
+        () => resolveCommand("pnpm", args, { npm_execpath: cli }, "win32"),
+        /pinned CLI/,
+      );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 const withoutBuildLease = (source = process.env) => {
   const env = { ...source };
