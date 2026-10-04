@@ -274,7 +274,14 @@ export async function executeSteps(
       result = { status: null, error };
     }
     record({
-      ...stepResult(name, [command, ...args], result),
+      ...stepResult(
+        name,
+        result.execution === "preparation" ? [] : [command, ...args],
+        result,
+      ),
+      ...(result.execution
+        ? { execution: result.execution, preparedInputs: result.preparedInputs }
+        : {}),
       ...(result.blocked ? { reason: result.blocked } : {}),
       outcome: result.blocked
         ? "skipped"

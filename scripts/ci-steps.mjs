@@ -18,7 +18,7 @@ export const steps = [
     "native service/process generated contracts",
     "node",
     ["scripts/generate-process-contract.mjs", "--check"],
-    ["check:process"],
+    ["processSchema", "serviceSchema", "serviceFixtures"],
   ],
   [
     "product harness tests",
@@ -35,7 +35,11 @@ export const steps = [
       "scripts/connection-source-results.test.mjs",
       "scripts/ai-contract-evolution.test.mjs",
     ],
-    ["node:@rss-mdm-agent/desktop", "node:@rss-mdm-agent/ai-host-app"],
+    [
+      "node:@rss-mdm-agent/desktop",
+      "node:@rss-mdm-agent/ai-host-app",
+      "native",
+    ],
   ],
   [
     "desktop native acceptance syntax",
@@ -47,7 +51,7 @@ export const steps = [
     "node",
     ["--check", "tests/desktop/model-fixture.mjs"],
   ],
-  ["AI generated contracts", "pnpm", ["check:ai-contract"], ["check:ai"]],
+  ["AI generated contracts", "pnpm", ["check:ai-contract"], ["runtimeSchema"]],
   [
     "AI contract conformance",
     "pnpm",
@@ -101,7 +105,7 @@ export const steps = [
       "execution",
     ],
   ],
-  ["Codex pinned protocol", "pnpm", ["check:codex-protocol"], ["check:codex"]],
+  ["Codex pinned protocol", "pnpm", ["check:codex-protocol"]],
   [
     "Codex native adapter",
     "pnpm",
@@ -130,11 +134,7 @@ export const steps = [
     "assistant product acceptance",
     "pnpm",
     ["check:assistant"],
-    [
-      "node:@rss-mdm-agent/desktop",
-      "node:@rss-mdm-agent/ai-host-app",
-      "worker",
-    ],
+    ["node:@rss-mdm-agent/desktop", "node:@rss-mdm-agent/ai-access"],
   ],
   ["types", "pnpm", ["typecheck"]],
   ["frontend format", "pnpm", ["format:check"]],

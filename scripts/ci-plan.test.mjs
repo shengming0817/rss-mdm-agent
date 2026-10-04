@@ -466,3 +466,26 @@ test("successful gates pass with uncommitted inputs and without a comparison ref
     f.close();
   }
 });
+
+test("a prepared gate records consumption rather than an unexecuted command", async () => {
+  const results = await executeSteps(
+    [
+      {
+        name: "frontend build",
+        command: "pnpm",
+        args: ["build"],
+        selected: true,
+      },
+    ],
+    "/unused",
+    () => ({
+      status: 0,
+      execution: "preparation",
+      preparedInputs: ["node:desktop"],
+    }),
+  );
+  assert.deepEqual(results[0].command, []);
+  assert.equal(results[0].execution, "preparation");
+  assert.deepEqual(results[0].preparedInputs, ["node:desktop"]);
+  assert.equal(results[0].outcome, "passed");
+});

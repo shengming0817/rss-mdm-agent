@@ -103,6 +103,10 @@ export async function runCI(
       preparation = new Preparation(root, {
         env,
         signal: controller.signal,
+        onCommand: (event) => {
+          (report.preparationCommands ??= []).push(event);
+          publish();
+        },
         onPrepared: (event) => {
           (report.preparations ??= []).push(event);
           publish();
@@ -115,7 +119,12 @@ export async function runCI(
       ) => {
         try {
           await preparation.ensure(requirements);
-          if (preparationOnly) return { status: 0 };
+          if (preparationOnly)
+            return {
+              status: 0,
+              execution: "preparation",
+              preparedInputs: requirements,
+            };
           const result = await runCommand(command, args, {
             ...options,
             env: preparation.directory ? preparation.env : env,

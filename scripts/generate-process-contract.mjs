@@ -1,9 +1,7 @@
-import { helperOutput, checkAlreadyPrepared } from "./preparation.mjs";
+import { helperOutput } from "./preparation.mjs";
 import { readFileSync, writeFileSync } from "node:fs";
 import { compile } from "json-schema-to-typescript";
 import { format } from "prettier";
-if (process.argv.includes("--check") && checkAlreadyPrepared("process"))
-  process.exit(0);
 const result = JSON.parse(await helperOutput("processSchema"));
 const schema = result;
 const privateLink = JSON.parse(

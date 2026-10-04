@@ -4,7 +4,10 @@ import assert from "node:assert/strict";
 import { mkdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
-await using run = await prepareRun(["node:@rss-mdm-agent/desktop"]);
+await using run = await prepareRun([
+  "node:@rss-mdm-agent/desktop",
+  "node:@rss-mdm-agent/ai-access",
+]);
 const { activeStage } = await import("../packages/ai-contract/dist/index.js");
 const { startFixture } = await import("../tests/assistant/server.mjs");
 const { unwrap, readSnapshot, surfaceCommit } = await import(

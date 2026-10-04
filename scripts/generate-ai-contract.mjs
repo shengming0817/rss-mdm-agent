@@ -1,8 +1,4 @@
-import {
-  withPreparation,
-  preparedArtifact,
-  checkAlreadyPrepared,
-} from "./preparation.mjs";
+import { withPreparation, preparedArtifact } from "./preparation.mjs";
 import { format } from "prettier";
 import ts from "typescript";
 import { createHash } from "node:crypto";
@@ -12,8 +8,6 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { checkContractBase } from "./ai-contract-evolution.mjs";
 const root = fileURLToPath(new URL("../", import.meta.url));
-if (process.argv.includes("--check") && checkAlreadyPrepared("ai"))
-  process.exit(0);
 const require = createRequire(
   new URL("../packages/ai-contract/package.json", import.meta.url),
 );

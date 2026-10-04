@@ -78,7 +78,7 @@ make ci CI_BASE=origin/develop # 按影响范围；ci-full 强制全量，ci-pla
 
 macOS 的正式 `make ci` / `make ci-full` 对整个 Node 与 Rust 检查过程取得 worktree 独占租约，并将 Cargo `target` 放进默认四槽的本机缓存池；同一 worktree 优先复用槽位，槽位换属时清理旧产物。`AGENT_TARGET_POOL_N` 可设置 1–32 个槽，`AGENT_TARGET_POOL_ROOT` 可指定专用空目录或已标记的池目录。分配器短时竞争最多等待 2 秒；槽满或同一 worktree 已有受管运行时立即失败，原运行结束后重试。`make ci-plan` 不占槽；Windows 仍使用原入口。受管运行拒绝外部 `CARGO_TARGET_DIR`、`CARGO_BUILD_TARGET_DIR` 和自定义 rustc wrapper。
 
-CI 在本轮准备阶段构建选中的包与 Rust helper，后续检查复用本轮产物；各包的 `build` 保持自身编译职责。独立测试使用对应 `pnpm test:ai-*` 或 `pnpm check:boundaries`，打包使用 `pnpm bundle:ai-host`，入口会准备自身所需依赖。测试文件直接执行需要父进程提供本轮 helper/runtime 路径；输入变化、缺失或损坏产物会阻断复用，不读取旧 CI 回执。临时准备目录随 owning run 结束清理，发布与开发 runtime 仍使用既有目录和 manifest。
+CI 在本轮准备阶段构建选中的包与 Rust helper，后续检查复用本轮产物；各包的 `build` 保持自身编译职责。独立测试使用对应 `pnpm test:ai-*` 或 `pnpm check:boundaries`，打包使用 `pnpm bundle:ai-host`，入口会准备自身所需依赖。消费 Rust helper/runtime 的测试文件直接执行时，需要父进程提供本轮产物路径；输入变化、缺失或损坏产物会阻断复用，不读取旧 CI 回执。临时准备目录随 owning run 结束清理，发布与开发 runtime 仍使用既有目录和 manifest。
 
 定向 Rust 验证可用 `python3 scripts/build-run.py -- cargo test --locked -p <包名>` 复用同一槽位机制。直接运行 `cargo` 使用仓内 `target`；直接运行 `pnpm` 或 `cargo` 不取得 CI 的 worktree 租约，避免与同一 checkout 的正式 CI 同时修改仓内 Node 产物或运行回执。旧仓内 `target` 不自动迁移或删除。
 

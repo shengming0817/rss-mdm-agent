@@ -58,13 +58,6 @@ const checks = {
     [],
   ],
   selfService: ["check-self-service-bindings.mjs", ["selfServiceSchema"], []],
-  process: [
-    "generate-process-contract.mjs",
-    ["processSchema", "serviceSchema", "serviceFixtures"],
-    ["--check"],
-  ],
-  ai: ["generate-ai-contract.mjs", ["runtimeSchema"], ["--check"]],
-  codex: ["generate-codex-protocol.mjs", [], ["--check"]],
 };
 // ref: Git object-file.c@v2.51.0 (format_object_header / stream_object_signature)
 // Frame both paths and payloads: embedded NUL/path bytes in file content cannot
@@ -266,6 +259,7 @@ export class Preparation {
       signal,
       execute = runCommand,
       onPrepared = () => {},
+      onCommand = () => {},
     } = {},
   ) {
     this.root = realpathSync(directory);
@@ -274,6 +268,7 @@ export class Preparation {
     this.signal = signal;
     this.execute = execute;
     this.onPrepared = onPrepared;
+    this.onCommand = onCommand;
     this.tools = { node: process.versions.node };
     this.artifacts = {};
     this.nodes = new Set();
@@ -326,12 +321,19 @@ export class Preparation {
       throw Error("preparation requires the pinned Node/pnpm toolchain");
   }
   async command(command, args, capture = false, env = this.env) {
+    const start = performance.now();
     const result = await this.execute(command, args, {
       cwd: this.root,
       env,
       stdio: "inherit",
       signal: this.signal,
       capture,
+    });
+    this.onCommand({
+      command: [command, ...args],
+      status: result.status,
+      signal: result.signal,
+      durationMs: performance.now() - start,
     });
     if (result.status !== 0)
       throw Error(
@@ -452,9 +454,11 @@ export class Preparation {
         ),
       ).filter((pkg) => resolve(pkg.path) !== this.root);
       if (!selected.length) throw Error(`unknown Node selection: ${filter}`);
-      for (const pkg of selected)
-        if (this.artifacts[`node:${pkg.name}`])
-          preparedArtifact(`node:${pkg.name}`, this.root, this.env);
+      const existing = selected.find(
+        (pkg) => this.artifacts[`node:${pkg.name}`],
+      );
+      if (existing)
+        preparedArtifact(`node:${existing.name}`, this.root, this.env);
       const needed = selected.filter(
         (pkg) => !this.artifacts[`node:${pkg.name}`],
       );
