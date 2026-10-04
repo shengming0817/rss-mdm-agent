@@ -22,7 +22,7 @@ import {
   runtimeTreeSha256 as hashRuntimeTree,
 } from "./ai-host-artifacts.mjs";
 import { developmentFingerprint } from "./desktop-dev-runtime.mjs";
-await withPreparation(
+process.exitCode = await withPreparation(
   [
     "node:@rss-mdm-agent/ai-host-app",
     "node:@rss-mdm-agent/ai-client",
@@ -186,5 +186,6 @@ await withPreparation(
       if (!sourceUnchanged)
         console.error("AI Host source changed during build; rerun pnpm dev");
     }
+    return process.exitCode ?? 0;
   },
 );
