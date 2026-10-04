@@ -412,6 +412,9 @@ async fn real_https_registration_reports_script_software_and_journal_results() {
         )
         .await;
     assert!(!admin.group_contains(&group, &device).await);
+    // Automatic and employee-initiated collection must update the same declared stream.
+    // Separate Resources create independent datasets whose disagreeing facts remain a conflict.
+    let (collection_resource, _) = admin.resource(false, &package).await;
     for (software, uninstall, self_service) in [
         (true, false, false),
         (false, false, false),
@@ -419,7 +422,11 @@ async fn real_https_registration_reports_script_software_and_journal_results() {
         (false, true, false),
         (false, false, true),
     ] {
-        let (resource, admission) = admin.resource(software, &package).await;
+        let (resource, admission) = if software {
+            admin.resource(true, &package).await
+        } else {
+            (collection_resource, None)
+        };
         let action = if software {
             json!({"kind":"software","resource":{"kind":"software","id":resource,"version":"v1","variants":{"macos_aarch64":"default"}},"intent":if uninstall { "explicit_uninstall" } else { "required_install" },"delivery":{"kind":"direct"},"admissionOperation":admission.unwrap(),"runLifetimeSeconds":600,"rollout":{"stages":[{"scope":scope,"opensAt":0}]}})
         } else {
@@ -700,7 +707,11 @@ async fn real_https_registration_reports_script_software_and_journal_results() {
             })
             .await
             .expect("accepted collection reaches the real Inventory projection");
-            assert_eq!(admin.group_contains(&group, &device).await, !uninstall);
+            assert_eq!(
+                admin.group_contains(&group, &device).await,
+                !uninstall,
+                "collection group membership: uninstall={uninstall}, self_service={self_service}"
+            );
         }
         if software {
             let rollout = admin
