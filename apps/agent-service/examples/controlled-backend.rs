@@ -2,6 +2,7 @@
 //! Only test targets include this fixture; it is never a production transport mode.
 #[path = "../../../tests/agent-protocol/mod.rs"]
 mod protocol;
+use agent_client::Clock;
 use base64::Engine;
 use ring::signature::KeyPair;
 use rss_mdm_agent_wire::runtime as wire;
@@ -9,7 +10,7 @@ use std::io::{BufRead, Write};
 
 #[tokio::main]
 async fn main() {
-    let server = protocol::Server::new().await;
+    let server = protocol::Server::tls().await;
     {
         let mut data = server.data.lock().unwrap();
         data.explicit_offers = true;
@@ -18,7 +19,7 @@ async fn main() {
         data.start_validity_seconds = 120;
         println!(
             "{}",
-            serde_json::json!({"origin": server.url.as_str(), "tenant":data.tenant,"key":base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(data.signer.public_key().as_ref())})
+            serde_json::json!({"origin": server.url.as_str(), "tenant":data.tenant,"key":base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(data.signer.public_key().as_ref()), "caPem":String::from_utf8(protocol::pki::ca()).unwrap()})
         );
     }
     let (tx, mut rx) = tokio::sync::mpsc::channel(4);
@@ -42,6 +43,26 @@ async fn main() {
                 let command: serde_json::Value = serde_json::from_str(&line).unwrap();
                 let mut data = server.data.lock().unwrap();
                 match command["kind"].as_str().unwrap() {
+                    "grant" => {
+                        assert!(data.grant.is_none(), "the fixture never replaces an existing grant");
+                        let operation = uuid::Uuid::new_v4();
+                        let grant = rss_mdm_agent_wire::enroll::GrantReceipt {
+                            wire_version:1, grant_id:uuid::Uuid::new_v4(),
+                            state:rss_mdm_agent_wire::enroll::GrantState::Available,
+                            platform:wire::TaskPlatform::Macos,
+                            expires_at:data.time.now().unwrap() + 3600,
+                        };
+                        data.operation = Some(operation);
+                        // Public fixture secret only. The installed service owns its real native key.
+                        data.bootstrap = Some("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".into());
+                        data.grant = Some(grant.clone());
+                        println!("{}", serde_json::to_string(&agent_client::GrantImport {
+                            operation_id:operation, grant,
+                        }).unwrap());
+                        std::io::stdout().flush().unwrap();
+                        continue;
+                    }
+
                     "script" => {
                         data.task = uuid::Uuid::new_v4();
                         data.bytes = command["body"].as_str().unwrap().as_bytes().to_vec();

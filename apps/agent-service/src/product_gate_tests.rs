@@ -639,6 +639,8 @@ async fn material_gc_scans_every_journal_page_and_waits_for_delivery_confirmatio
     // reconcile journal facts while that unregistered preview remains usable.
     c._server.time.set(c.service.core.host.clock.now().unwrap());
     let materials = c.service.client.prepare(&c.offer).await.unwrap();
+    // Keep the command producer alive: a closed channel is a real service stop.
+    let (_sender, mut commands) = tokio::sync::mpsc::channel(1);
     crate::service::network(
         async {
             tokio::time::sleep(std::time::Duration::from_millis(120)).await;
@@ -649,7 +651,7 @@ async fn material_gc_scans_every_journal_page_and_waits_for_delivery_confirmatio
                 .await
         },
         &mut c.service.core,
-        &mut tokio::sync::mpsc::channel(1).1,
+        &mut commands,
     )
     .await
     .unwrap();
@@ -677,10 +679,7 @@ async fn material_gc_scans_every_journal_page_and_waits_for_delivery_confirmatio
     );
     let prior_claims = c._server.data.lock().unwrap().claim_ops.len();
     c.service.next_network = std::time::Instant::now();
-    c.service
-        .drive(&mut tokio::sync::mpsc::channel(1).1)
-        .await
-        .unwrap();
+    c.service.drive(&mut commands).await.unwrap();
     assert!(
         c._server.data.lock().unwrap().claim_ops.len() > prior_claims,
         "a deferred GC must still receive remote cancellation/offer messages"
