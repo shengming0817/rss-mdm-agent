@@ -612,7 +612,7 @@ fn concurrent_instances_and_result_redelivery_do_not_duplicate_effects() {
             }));
         }
         for join in joins {
-            join.join().unwrap();
+            assert_eq!(join.join().unwrap().attempts, 1);
         }
     });
     assert_eq!(runner.dispatch_count(), 1);
@@ -2410,6 +2410,246 @@ fn initial_submission_reconciles_an_identical_begin_committed_during_preflight()
     assert_eq!(status.attempts, 1);
     assert_eq!(runner.dispatch_count(), 1);
     assert_eq!(db.count("attempts"), 1);
+}
+
+#[test]
+fn concurrent_initial_replay_returns_the_current_later_attempt() {
+    let db = Database::new();
+    let mut host = TestHost::new();
+    let mut spec = host.template.spec().clone();
+    spec.budget.max_attempts = 2;
+    host.template = FrozenExecution::freeze(spec, &test_execution_limits()).unwrap();
+    host.state.lock().unwrap().approval = true;
+    host.grant(2);
+    let p = host.template.clone();
+    let runner =
+        DeterministicTestRunner::new(id("test-runner"), TestScenario::NoEffect, 16).unwrap();
+    let mut app = open(&db, host.clone(), runner.clone(), false);
+    let path = db.path.clone();
+    let competing_host = host.clone();
+    let competing_runner = runner.clone();
+    host.state.lock().unwrap().capability_hook = Some((
+        1,
+        std::sync::Arc::new(move || {
+            let mut competing = reopen_app(
+                &path,
+                competing_host.clone(),
+                competing_runner.clone(),
+                AppConfig::test_defaults(1),
+            )
+            .unwrap();
+            let p = competing_host.template.clone();
+            let request = &p.spec().request.request_id;
+            assert_eq!(
+                competing.request_execution(&caller(), &p).unwrap().attempts,
+                1
+            );
+            competing.reconcile(request).unwrap();
+            assert_eq!(
+                competing
+                    .retry_execution(&caller(), request, &command("later"))
+                    .unwrap()
+                    .attempts,
+                2
+            );
+        }),
+    ));
+    let status = app.request_execution(&caller(), &p).unwrap();
+    assert_eq!(
+        status,
+        app.status(&caller(), &p.spec().request.request_id).unwrap()
+    );
+    assert_eq!(status.attempts, 2);
+    assert_eq!(runner.dispatch_count(), 2);
+    assert_eq!(db.count("attempts"), 2);
+    assert_eq!(db.count("approval_consumptions"), 2);
+}
+
+#[test]
+fn concurrent_retry_replay_resolves_changed_revision_and_rejected_receipts() {
+    for allowed in [true, false] {
+        let db = Database::new();
+        let mut host = TestHost::new();
+        let mut spec = host.template.spec().clone();
+        spec.budget.max_attempts = 3;
+        host.template = FrozenExecution::freeze(spec, &test_execution_limits()).unwrap();
+        host.state.lock().unwrap().approval = true;
+        host.grant(3);
+        let p = host.template.clone();
+        let request = &p.spec().request.request_id;
+        let runner =
+            DeterministicTestRunner::new(id("test-runner"), TestScenario::NoEffect, 16).unwrap();
+        let mut app = open(&db, host.clone(), runner.clone(), false);
+        app.request_execution(&caller(), &p).unwrap();
+        app.reconcile(request).unwrap();
+        let path = db.path.clone();
+        let competing_host = host.clone();
+        let competing_runner = runner.clone();
+        let next_capability = host.state.lock().unwrap().capabilities + 1;
+        host.state.lock().unwrap().capability_hook = Some((
+            next_capability,
+            std::sync::Arc::new(move || {
+                let mut competing = reopen_app(
+                    &path,
+                    competing_host.clone(),
+                    competing_runner.clone(),
+                    AppConfig::test_defaults(1),
+                )
+                .unwrap();
+                let request = &competing_host.template.spec().request.request_id;
+                assert_eq!(
+                    competing
+                        .retry_execution(&caller(), request, &command("other"))
+                        .unwrap()
+                        .attempts,
+                    2
+                );
+                competing.reconcile(request).unwrap();
+                competing_host.state.lock().unwrap().allow = allowed;
+                let status = competing
+                    .retry_execution(&caller(), request, &command("shared"))
+                    .unwrap();
+                assert_eq!(status.attempts, if allowed { 3 } else { 2 });
+                if !allowed {
+                    assert_eq!(status.admission, Some(AdmissionStatus::Denied));
+                }
+            }),
+        ));
+        let status = app
+            .retry_execution(&caller(), request, &command("shared"))
+            .unwrap();
+        assert_eq!(status, app.status(&caller(), request).unwrap());
+        let attempts = if allowed { 3 } else { 2 };
+        assert_eq!(status.attempts, attempts);
+        assert_eq!(runner.dispatch_count(), attempts as usize);
+        assert_eq!(db.count("attempts"), attempts as u64);
+        assert_eq!(db.count("approval_consumptions"), attempts as u64);
+        assert_eq!(
+            app.retry_execution(&caller(), request, &command("shared"))
+                .unwrap(),
+            status
+        );
+        assert_eq!(runner.dispatch_count(), attempts as usize);
+    }
+}
+
+#[test]
+fn concurrent_cancel_without_a_begin_receipt_remains_conflicting() {
+    let db = Database::new();
+    let host = TestHost::new();
+    let runner = DeterministicTestRunner::new(id("test-runner"), TestScenario::Wait, 16).unwrap();
+    let mut app = open(&db, host.clone(), runner.clone(), false);
+    let path = db.path.clone();
+    let competing_host = host.clone();
+    let competing_runner = runner.clone();
+    host.state.lock().unwrap().capability_hook = Some((
+        1,
+        std::sync::Arc::new(move || {
+            let mut competing = reopen_app(
+                &path,
+                competing_host.clone(),
+                competing_runner.clone(),
+                AppConfig::test_defaults(1),
+            )
+            .unwrap();
+            competing
+                .cancel(&caller(), &plan().spec().request.request_id)
+                .unwrap();
+        }),
+    ));
+    assert_eq!(
+        app.request_execution(&caller(), &plan()),
+        Err(Error::Conflict)
+    );
+    assert_eq!(runner.dispatch_count(), 0);
+    assert_eq!(db.count("attempts"), 0);
+}
+
+#[test]
+fn concurrent_retry_with_a_stale_begin_receipt_remains_conflicting() {
+    let db = Database::new();
+    let mut host = TestHost::new();
+    let mut spec = host.template.spec().clone();
+    spec.budget.max_attempts = 2;
+    host.template = FrozenExecution::freeze(spec, &test_execution_limits()).unwrap();
+    let p = host.template.clone();
+    let request = &p.spec().request.request_id;
+    let runner =
+        DeterministicTestRunner::new(id("test-runner"), TestScenario::NoEffect, 16).unwrap();
+    let mut app = open(&db, host.clone(), runner.clone(), false);
+    app.request_execution(&caller(), &p).unwrap();
+    app.reconcile(request).unwrap();
+    let path = db.path.clone();
+    let competing_host = host.clone();
+    let competing_runner = runner.clone();
+    let next_capability = host.state.lock().unwrap().capabilities + 1;
+    host.state.lock().unwrap().capability_hook = Some((
+        next_capability,
+        std::sync::Arc::new(move || {
+            let mut competing = reopen_app(
+                &path,
+                competing_host.clone(),
+                competing_runner.clone(),
+                AppConfig::test_defaults(1),
+            )
+            .unwrap();
+            competing
+                .cancel(
+                    &caller(),
+                    &competing_host.template.spec().request.request_id,
+                )
+                .unwrap();
+        }),
+    ));
+    let retry = command("stale");
+    assert_eq!(
+        app.retry_execution(&caller(), request, &retry),
+        Err(Error::Conflict)
+    );
+    let receipts = app.pull_results(&caller(), request, &id("ui"), 64).unwrap();
+    assert_eq!(receipts.last().unwrap().outcome, Outcome::Stale);
+    assert_eq!(
+        app.retry_execution(&caller(), request, &retry),
+        Err(Error::Conflict)
+    );
+    assert_eq!(runner.dispatch_count(), 1);
+    assert_eq!(db.count("attempts"), 1);
+}
+
+#[test]
+fn concurrent_replay_between_begin_commit_and_dispatch_has_no_dispatch_action() {
+    let db = Database::new();
+    let host = TestHost::new();
+    host.state.lock().unwrap().approval = true;
+    host.grant(1);
+    let runner = DeterministicTestRunner::new(id("test-runner"), TestScenario::Wait, 16).unwrap();
+    let mut app = open(&db, host.clone(), runner.clone(), false);
+    let path = db.path.clone();
+    let competing_host = host.clone();
+    let competing_runner = runner.clone();
+    host.state.lock().unwrap().capability_hook = Some((
+        3,
+        std::sync::Arc::new(move || {
+            let mut competing = reopen_app(
+                &path,
+                competing_host.clone(),
+                competing_runner.clone(),
+                AppConfig::test_defaults(1),
+            )
+            .unwrap();
+            let status = competing.request_execution(&caller(), &plan()).unwrap();
+            assert_eq!(status.phase, TaskPhase::Accepted);
+            assert_eq!(status.attempts, 1);
+            assert_eq!(competing_runner.dispatch_count(), 0);
+        }),
+    ));
+    assert_eq!(
+        app.request_execution(&caller(), &plan()).unwrap().attempts,
+        1
+    );
+    assert_eq!(runner.dispatch_count(), 1);
+    assert_eq!(db.count("attempts"), 1);
+    assert_eq!(db.count("approval_consumptions"), 1);
 }
 
 #[test]
