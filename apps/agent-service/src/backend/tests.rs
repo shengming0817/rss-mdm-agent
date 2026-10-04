@@ -1277,7 +1277,7 @@ async fn revoked_and_expired_unknown_keeps_original_execution_and_association() 
     };
     next_host.template = execution_contract::FrozenExecution::freeze(
         next_spec,
-        &execution_contract::test_execution_limits(),
+        &execution_app::test_execution_limits(),
     )
     .unwrap();
     let old_journal = std::fs::read(&case.db.path).unwrap();

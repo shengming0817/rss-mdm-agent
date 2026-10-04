@@ -598,8 +598,9 @@ mod tests {
             "origin":"https://localhost:443/", "tenant": uuid::Uuid::new_v4(),
             "installation_id":uuid::Uuid::new_v4(),
             "signing_keys":{"test":base64::engine::general_purpose::URL_SAFE_NO_PAD.encode([1u8;32])},
-            // Public, root-protected host bundle; no root writes or native key creation in this test.
-            "device_ca_file":"/private/etc/ssl/cert.pem", "ca_file":null,
+            // Bounded root-protected public bytes. Schema rejection precedes CA parsing;
+            // this preflight test does not assert PKI acceptance or create native keys.
+            "device_ca_file":"/private/etc/hosts", "ca_file":null,
             "state_root":root.path,
             "service":{"path":"/unused","sha256":"a".repeat(64),"cdhash":null},
             "clients":{"images":[],"subjects":[],"interactive":false},

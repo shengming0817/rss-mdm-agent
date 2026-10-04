@@ -620,18 +620,22 @@ def root_refresh_security(root, binary, config, installer_source, phase):
                 rows.append(dict(case=name,error=str(error),stderr=getattr(error,'stderr',None)))
             else: raise AssertionError('refresh negative unexpectedly admitted: '+name)
         finally:
-            if held:
-                if name=='communication_format' and held_source.exists():
-                    if legacy_bytes is not None and held_source.read_bytes()==legacy_bytes:
-                        held_source.unlink()
-                    else:
+            try:
+                if held:
+                    if name=='communication_format' and held_source.exists():
+                        try: preserved=legacy_bytes is not None and held_source.read_bytes()==legacy_bytes
+                        except OSError: preserved=False
+                        if preserved:
+                            held_source.unlink()
+                        else:
+                            unexpected=held_source.with_name(held_source.name+'.unexpected-'+uuid.uuid4().hex)
+                            held_source.rename(unexpected)
+                    if held_source.exists():
                         unexpected=held_source.with_name(held_source.name+'.unexpected-'+uuid.uuid4().hex)
                         held_source.rename(unexpected)
-                if held_source.exists():
-                    unexpected=held_source.with_name(held_source.name+'.unexpected-'+uuid.uuid4().hex)
-                    held_source.rename(unexpected)
-                held.rename(held_source)
-            if paused: os.kill(pid,signal.SIGCONT)
+                    held.rename(held_source)
+            finally:
+                if paused: os.kill(pid,signal.SIGCONT)
             if copied_plist: copied_plist.unlink(missing_ok=True)
             if actual!=next_config: actual.unlink(missing_ok=True)
             subprocess.run(['/bin/chmod','-N',str(next_config)],check=True)
