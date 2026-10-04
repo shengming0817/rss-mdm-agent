@@ -410,11 +410,191 @@ pub(super) fn execution_resources(
     });
     Ok(())
 }
-pub(super) fn preflight_desktop_entry(_: &Candidate) -> Result<(), Error> {
+const UNINSTALL_KEY: &str =
+    "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\RSS MDM Agent";
+fn known_folder(id: &::windows::core::GUID) -> Result<PathBuf, Error> {
+    use ::windows::Win32::{
+        System::Com::CoTaskMemFree,
+        UI::Shell::{SHGetKnownFolderPath, KF_FLAG_DEFAULT},
+    };
+    let value = unsafe { SHGetKnownFolderPath(id, KF_FLAG_DEFAULT, None) }
+        .map_err(|_| Error::Unavailable)?;
+    let result = unsafe { text(value.0) }.map(PathBuf::from);
+    unsafe {
+        CoTaskMemFree(Some(value.0.cast()));
+    }
+    result
+}
+pub(super) fn payload_parent() -> Result<PathBuf, Error> {
+    Ok(
+        known_folder(&::windows::Win32::UI::Shell::FOLDERID_ProgramFiles)?
+            .join("RSS MDM Agent\\versions"),
+    )
+}
+fn shortcut() -> Result<PathBuf, Error> {
+    Ok(
+        known_folder(&::windows::Win32::UI::Shell::FOLDERID_CommonPrograms)?
+            .join("RSS MDM Agent.lnk"),
+    )
+}
+fn shell_link() -> Result<::windows::Win32::UI::Shell::IShellLinkW, Error> {
+    use ::windows::Win32::{System::Com::*, UI::Shell::*};
+    unsafe { CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER) }
+        .map_err(|_| Error::Unavailable)
+}
+fn registry_value(name: &str) -> Result<Option<String>, Error> {
+    use windows_sys::Win32::System::Registry::*;
+    let mut buffer = vec![0u16; 32768];
+    let mut length = (buffer.len() * 2) as u32;
+    let status = unsafe {
+        RegGetValueW(
+            HKEY_LOCAL_MACHINE,
+            wide(UNINSTALL_KEY).as_ptr(),
+            wide(name).as_ptr(),
+            RRF_RT_REG_SZ | RRF_SUBKEY_WOW6464KEY,
+            null_mut(),
+            buffer.as_mut_ptr().cast(),
+            &mut length,
+        )
+    };
+    if status == ERROR_FILE_NOT_FOUND {
+        return Ok(None);
+    }
+    if status != 0 || length < 2 || length as usize > buffer.len() * 2 {
+        return Err(Error::Identity);
+    }
+    Ok(Some(
+        String::from_utf16(&buffer[..length as usize / 2 - 1]).map_err(|_| Error::Identity)?,
+    ))
+}
+fn retained_image(path: &Path, desktop: bool) -> Result<(), Error> {
+    let directory = Deployment::default_path()?
+        .parent()
+        .ok_or(Error::Configuration)?
+        .join("install-manifests");
+    if directory.exists() {
+        for entry in std::fs::read_dir(directory)?.take(128) {
+            let entry = entry?;
+            let bytes = installation_security::read_protected(&entry.path())
+                .map_err(|_| Error::Identity)?;
+            if entry.file_name() != OsString::from(format!("{}.json", hash(&bytes))) {
+                return Err(Error::Identity);
+            }
+            let candidate: Candidate =
+                serde_json::from_slice(&bytes).map_err(|_| Error::Identity)?;
+            if candidate.root.parent() == Some(payload_parent()?.as_path())
+                && path
+                    == if desktop {
+                        &candidate.desktop.path
+                    } else {
+                        &candidate.service.path
+                    }
+            {
+                return Ok(());
+            }
+        }
+    }
+    Err(Error::Identity)
+}
+pub(super) fn preflight_desktop_entry(candidate: &Candidate) -> Result<(), Error> {
+    use ::windows::{
+        core::{Interface, PCWSTR},
+        Win32::System::Com::{IPersistFile, STGM_READ},
+    };
+    if candidate.root.parent() != Some(payload_parent()?.as_path()) {
+        return Err(Error::Identity);
+    }
+    if let Some(image) = registry_value("ServiceImage")? {
+        retained_image(Path::new(&image), false)?;
+    } else if registry_value("DisplayName")?.is_some() {
+        return Err(Error::Identity);
+    }
+    let path = shortcut()?;
+    if path.exists() {
+        installation_security::protected(&path).map_err(|_| Error::Identity)?;
+        let link = shell_link()?;
+        let persist: IPersistFile = link.cast().map_err(|_| Error::Unavailable)?;
+        let mut buffer = vec![0u16; 32768];
+        unsafe {
+            persist
+                .Load(PCWSTR(wide(&path).as_ptr()), STGM_READ)
+                .map_err(|_| Error::Unavailable)?;
+            link.GetPath(&mut buffer, null_mut(), 0)
+                .map_err(|_| Error::Unavailable)?;
+        }
+        retained_image(Path::new(&unsafe { text(buffer.as_ptr()) }?), true)?;
+    }
     Ok(())
 }
-pub(super) fn desktop_entry(_: &Candidate) -> Result<(), Error> {
-    Ok(())
+pub(super) fn desktop_entry(candidate: &Candidate) -> Result<(), Error> {
+    use ::windows::{
+        core::{Interface, PCWSTR},
+        Win32::System::Com::IPersistFile,
+    };
+    use windows_sys::Win32::System::Registry::*;
+    preflight_desktop_entry(candidate)?;
+    let mut key = null_mut();
+    if unsafe {
+        RegCreateKeyExW(
+            HKEY_LOCAL_MACHINE,
+            wide(UNINSTALL_KEY).as_ptr(),
+            0,
+            null(),
+            0,
+            KEY_SET_VALUE | KEY_WOW64_64KEY,
+            null(),
+            &mut key,
+            null_mut(),
+        )
+    } != 0
+    {
+        return Err(Error::Unavailable);
+    }
+    let result = (|| {
+        let uninstaller = candidate.root.join("uninstall.exe");
+        for (name, value) in [
+            (
+                "ServiceImage",
+                candidate.service.path.to_string_lossy().into_owned(),
+            ),
+            ("DisplayName", "RSS MDM Agent".into()),
+            ("DisplayVersion", candidate.product_version.clone()),
+            ("UninstallString", quote(&uninstaller)?),
+            (
+                "QuietUninstallString",
+                format!("{} /S", quote(&uninstaller)?),
+            ),
+        ] {
+            let bytes = wide(value);
+            if unsafe {
+                RegSetValueExW(
+                    key,
+                    wide(name).as_ptr(),
+                    0,
+                    REG_SZ,
+                    bytes.as_ptr().cast(),
+                    (bytes.len() * 2) as u32,
+                )
+            } != 0
+            {
+                return Err(Error::Unavailable);
+            }
+        }
+        let path = shortcut()?;
+        public_directory(path.parent().ok_or(Error::Configuration)?)?;
+        let staged = path.with_extension(format!("pending-{}", uuid::Uuid::new_v4()));
+        let link = shell_link()?;
+        unsafe { link.SetPath(PCWSTR(wide(&candidate.desktop.path).as_ptr())) }
+            .map_err(|_| Error::Unavailable)?;
+        let persist: IPersistFile = link.cast().map_err(|_| Error::Unavailable)?;
+        unsafe { persist.Save(PCWSTR(wide(&staged).as_ptr()), true) }
+            .map_err(|_| Error::Unavailable)?;
+        replace(&staged, &path)
+    })();
+    unsafe {
+        RegCloseKey(key);
+    }
+    result
 }
 pub(super) fn quiescent(old: &Deployment, config: &Path) -> Result<(), Error> {
     let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
@@ -513,10 +693,10 @@ fn task_register(binary: &Path, config: &Path) -> Result<(), Error> {
     }
     if let Some(task) = task_get(&subject)? {
         task_owned(&task, &subject, binary, config)?;
-        return Ok(());
+        return task_start(&task);
     }
     let xml = format!(
-        r#"<?xml version="1.0"?><Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task"><Triggers><LogonTrigger><UserId>{}</UserId></LogonTrigger></Triggers><Principals><Principal id="User"><UserId>{}</UserId><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal></Principals><Settings><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><ExecutionTimeLimit>PT0S</ExecutionTimeLimit></Settings><Actions Context="User"><Exec><Command>{}</Command><Arguments>{}</Arguments></Exec></Actions></Task>"#,
+        r#"<?xml version="1.0"?><Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task"><Triggers><LogonTrigger><UserId>{}</UserId></LogonTrigger></Triggers><Principals><Principal id="User"><UserId>{}</UserId><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal></Principals><Settings><DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries><StopIfGoingOnBatteries>false</StopIfGoingOnBatteries><Enabled>true</Enabled><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><ExecutionTimeLimit>PT0S</ExecutionTimeLimit></Settings><Actions Context="User"><Exec><Command>{}</Command><Arguments>{}</Arguments></Exec></Actions></Task>"#,
         escape(&subject),
         escape(&subject),
         escape(binary.to_str().ok_or(Error::Configuration)?),
@@ -535,8 +715,25 @@ fn task_register(binary: &Path, config: &Path) -> Result<(), Error> {
         )
     }
     .map_err(|_| Error::Unavailable)?;
-    unsafe { task.Run(&empty) }.map_err(|_| Error::Unavailable)?;
-    Ok(())
+    task_start(&task)
+}
+fn task_start(
+    task: &::windows::Win32::System::TaskScheduler::IRegisteredTask,
+) -> Result<(), Error> {
+    use ::windows::Win32::System::{TaskScheduler::TASK_STATE_RUNNING, Variant::VARIANT};
+    if unsafe { task.State() }.map_err(|_| Error::Unavailable)? != TASK_STATE_RUNNING {
+        unsafe { task.Run(&VARIANT::default()) }.map_err(|_| Error::Unavailable)?;
+    }
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        if unsafe { task.State() }.map_err(|_| Error::Unavailable)? == TASK_STATE_RUNNING {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err(Error::Unavailable);
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
 }
 fn task_remove_subject(subject: &str, binary: &Path, config: &Path) -> Result<(), Error> {
     use ::windows::Win32::System::TaskScheduler::TASK_STATE_RUNNING;
@@ -569,6 +766,110 @@ fn task_stop(binary: &Path, config: &Path, remove: bool) -> Result<(), Error> {
 
 // A temporary SCM process inherits LocalSystem rather than treating an elevated user as SYSTEM.
 static WORKER: OnceLock<(String, PathBuf)> = OnceLock::new();
+pub(super) fn record(value: &outcome::Report) -> Result<(), Error> {
+    if let Some((_, path)) = WORKER.get() {
+        publish(&path.with_extension("result.json"), &json(value)?)?;
+    }
+    Ok(())
+}
+fn operation_root() -> Result<PathBuf, Error> {
+    Ok(Deployment::default_path()?
+        .parent()
+        .ok_or(Error::Configuration)?
+        .join("install-operations"))
+}
+fn read_result(path: &Path) -> Result<Option<outcome::Report>, Error> {
+    let result = path.with_extension("result.json");
+    if !result.exists() {
+        return Ok(None);
+    }
+    let bytes = installation_security::read_protected(&result).map_err(|_| Error::Identity)?;
+    if bytes.len() > 4096 {
+        return Err(Error::Capacity);
+    }
+    let report: outcome::Report =
+        serde_json::from_slice(&bytes).map_err(|_| Error::Configuration)?;
+    if report.version != 1 {
+        return Err(Error::Configuration);
+    }
+    Ok(Some(report))
+}
+fn worker_owned(handle: &Sc, name: &str, path: &Path) -> Result<(), Error> {
+    let mut buffer = vec![0usize; 8192];
+    let mut needed = 0;
+    if unsafe {
+        QueryServiceConfigW(
+            handle.0,
+            buffer.as_mut_ptr().cast(),
+            (buffer.len() * std::mem::size_of::<usize>()) as u32,
+            &mut needed,
+        )
+    } == 0
+    {
+        return Err(Error::Unavailable);
+    }
+    let value = unsafe { &*(buffer.as_ptr() as *const QUERY_SERVICE_CONFIGW) };
+    let image = unsafe { text(value.lpBinaryPathName) }?;
+    let suffix = format!(" --installation-worker {name} {}", quote(path)?);
+    if !image.ends_with(&suffix)
+        || !image.starts_with('"')
+        || unsafe { text(value.lpServiceStartName) }? != "LocalSystem"
+    {
+        return Err(Error::Identity);
+    }
+    // Requests/results are retained under the protected UUID operation root until native exit.
+    installation_security::protected(path).map_err(|_| Error::Identity)
+}
+fn worker_exited(report: &outcome::Report) -> Result<(), Error> {
+    if !report.terminal || report.process_id == 0 {
+        return Err(Error::Unavailable);
+    }
+    let process = unsafe { OpenProcess(SYNCHRONIZE, 0, report.process_id) };
+    if process.is_null() {
+        return if unsafe { GetLastError() } == ERROR_INVALID_PARAMETER {
+            Ok(())
+        } else {
+            Err(Error::Unavailable)
+        };
+    }
+    let process = Handle(process);
+    if unsafe { WaitForSingleObject(process.0, 20_000) } != WAIT_OBJECT_0 {
+        return Err(Error::Unavailable);
+    }
+    Ok(())
+}
+pub(super) fn operation_status(id: uuid::Uuid) -> Result<(), Error> {
+    let path = operation_root()?.join(format!("{id}.json"));
+    let name = format!("RssExecution-Install-{id}");
+    let report = read_result(&path)?;
+    let native = if let Some(handle) = service(&name)? {
+        worker_owned(&handle, &name, &path)?;
+        let status = state(&handle)?;
+        if status.dwCurrentState == SERVICE_STOPPED {
+            let complete = report.as_ref().is_some_and(|r| r.terminal);
+            if !complete {
+                return Err(Error::Unavailable);
+            }
+            // Querying a finished operation also reclaims its exact native worker/request.
+            worker_exited(report.as_ref().ok_or(Error::Unavailable)?)?;
+            if unsafe { DeleteService(handle.0) } == 0 {
+                return Err(Error::Unavailable);
+            }
+            std::fs::remove_file(&path)?;
+            "stopped"
+        } else {
+            "active"
+        }
+    } else {
+        "absent"
+    };
+    println!(
+        "{}",
+        serde_json::to_string(&serde_json::json!({"operation":id,"worker":native,"result":report}))
+            .map_err(|_| Error::Protocol)?
+    );
+    Ok(())
+}
 unsafe extern "system" fn control(
     _: u32,
     _: u32,
@@ -595,19 +896,30 @@ unsafe extern "system" fn worker_main(_: u32, _: *mut *mut u16) {
         SetServiceStatus(status, &value);
     }
     let result = (|| {
+        record(&outcome::snapshot())?;
         let args: Vec<String> = serde_json::from_slice(
             &installation_security::read_protected(path).map_err(|_| Error::Identity)?,
         )
         .map_err(|_| Error::Configuration)?;
         super::run(&args.into_iter().map(OsString::from).collect::<Vec<_>>())
     })();
+    if let Err(error) = result {
+        outcome::failed(error);
+    } else {
+        outcome::succeeded();
+    }
+    outcome::terminal();
+    let recorded = record(&outcome::snapshot());
     value.dwCurrentState = SERVICE_STOPPED;
-    value.dwWin32ExitCode = if result.is_ok() {
+    value.dwWin32ExitCode = if result.is_ok() && recorded.is_ok() {
         0
     } else {
         ERROR_SERVICE_SPECIFIC_ERROR
     };
-    value.dwServiceSpecificExitCode = if result.is_ok() { 0 } else { 1 };
+    value.dwServiceSpecificExitCode = match result.and(recorded) {
+        Ok(()) => 0,
+        Err(error) => error as u32 + 1,
+    };
     unsafe {
         SetServiceStatus(status, &value);
     }
@@ -645,10 +957,7 @@ pub(super) fn dispatch(args: &[OsString]) -> Result<bool, Error> {
         .map_err(|_| Error::Unsupported)?
         .verify_image(&binary)
         .map_err(|_| Error::Identity)?;
-    let root = Deployment::default_path()?
-        .parent()
-        .ok_or(Error::Configuration)?
-        .join("install-operations");
+    let root = operation_root()?;
     public_directory(&root)?;
     let id = uuid::Uuid::new_v4();
     let path = root.join(format!("{id}.json"));
@@ -658,6 +967,10 @@ pub(super) fn dispatch(args: &[OsString]) -> Result<bool, Error> {
         .collect::<Result<Vec<_>, _>>()?;
     write_new(&path, &json(&input)?)?;
     let name = format!("RssExecution-Install-{id}");
+    eprintln!(
+        "{}",
+        serde_json::json!({"operation":id,"state":"submitted"})
+    );
     let manager = manager()?;
     let image = wide(format!(
         "{} --installation-worker {} {}",
@@ -693,23 +1006,37 @@ pub(super) fn dispatch(args: &[OsString]) -> Result<bool, Error> {
         let deadline = Instant::now() + Duration::from_secs(180);
         loop {
             let status = state(&handle)?;
-            if status.dwCurrentState == SERVICE_STOPPED {
+            if status.dwCurrentState == SERVICE_STOPPED
+                && read_result(&path)?.is_some_and(|r| r.terminal)
+            {
                 if status.dwWin32ExitCode != 0 {
                     return Err(Error::Unavailable);
                 }
                 return Ok(true);
             }
             if Instant::now() >= deadline {
+                eprintln!(
+                    "{}",
+                    serde_json::json!({"operation":id,"state":"outcome-unknown","worker":"may-still-be-active","query":"--installation operation-status --operation <UUID>"})
+                );
                 return Err(Error::Unavailable);
             }
             std::thread::sleep(Duration::from_millis(50));
         }
     })();
-    if state(&handle)?.dwCurrentState == SERVICE_STOPPED {
+    let report = read_result(&path)?;
+    if state(&handle)?.dwCurrentState == SERVICE_STOPPED
+        && report.as_ref().is_some_and(|r| r.terminal)
+    {
+        worker_exited(report.as_ref().ok_or(Error::Unavailable)?)?;
+        eprintln!(
+            "{}",
+            serde_json::json!({"operation":id,"worker":"stopped","result":report})
+        );
         if unsafe { DeleteService(handle.0) } == 0 {
             return Err(Error::Unavailable);
         }
-        std::fs::remove_file(path)?;
+        std::fs::remove_file(&path)?;
     }
     result
 }
@@ -812,6 +1139,29 @@ impl Drop for ComApartment {
     }
 }
 
-pub(super) fn uninstall_payload(_: &Candidate) -> Result<(), Error> {
-    Err(Error::Unsupported)
+pub(super) fn uninstall_payload(candidate: &Candidate) -> Result<(), Error> {
+    use windows_sys::Win32::System::Registry::*;
+    preflight_desktop_entry(candidate)?;
+    if let Some(image) = registry_value("ServiceImage")? {
+        if Path::new(&image) != candidate.service.path {
+            return Err(Error::Identity);
+        }
+    }
+    retire_payload(candidate)?;
+    let path = shortcut()?;
+    if path.exists() {
+        std::fs::remove_file(path)?;
+    }
+    let status = unsafe {
+        RegDeleteKeyExW(
+            HKEY_LOCAL_MACHINE,
+            wide(UNINSTALL_KEY).as_ptr(),
+            KEY_WOW64_64KEY,
+            0,
+        )
+    };
+    if status != 0 && status != ERROR_FILE_NOT_FOUND {
+        return Err(Error::Unavailable);
+    }
+    Ok(())
 }

@@ -96,6 +96,17 @@ impl Deployment {
         value.network()?.validate()?;
         Ok(value)
     }
+    /// Retained state validation must survive removal of an old desktop payload.
+    pub fn load_persistent(path: &Path) -> Result<Self, Error> {
+        let value = Self::metadata(path)?;
+        value
+            .service
+            .verify(&value.service.path)
+            .map_err(|_| Error::Identity)?;
+        crate::installation::validate_native_artifact(&value.service)?;
+        value.network()?.validate()?;
+        Ok(value)
+    }
     pub fn server_policy(&self) -> PeerPolicy {
         PeerPolicy {
             images: vec![self.service.clone()],

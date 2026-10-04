@@ -31,6 +31,9 @@ pub(super) fn dispatch(_: &[OsString]) -> Result<bool, Error> {
     }
     Ok(false)
 }
+pub(super) fn operation_status(_: uuid::Uuid) -> Result<(), Error> {
+    Err(Error::Unsupported)
+}
 pub(super) fn public_directory(path: &Path) -> Result<(), Error> {
     if !path.is_absolute() {
         return Err(Error::Configuration);
@@ -168,9 +171,6 @@ pub(super) fn register(system: bool, binary: &Path, config: &Path) -> Result<(),
     } else {
         return Err(Error::Configuration);
     }
-    if registered(&endpoint)?.is_some() {
-        return Ok(());
-    }
     let domain = if system {
         "system".into()
     } else {
@@ -179,10 +179,17 @@ pub(super) fn register(system: bool, binary: &Path, config: &Path) -> Result<(),
             execution_ipc::host::current_subject().map_err(crate::error::app_error)?
         )
     };
-    let result = command(
-        Path::new("/bin/launchctl"),
-        &["bootstrap".into(), domain.into(), path.into()],
-    );
+    let result = match registered(&endpoint)? {
+        None => command(
+            Path::new("/bin/launchctl"),
+            &["bootstrap".into(), domain.into(), path.into()],
+        ),
+        Some(0) => command(
+            Path::new("/bin/launchctl"),
+            &["kickstart".into(), endpoint.clone().into()],
+        ),
+        Some(_) => Ok(Vec::new()),
+    };
     if let Err(error) = result {
         stop_endpoint(&endpoint)?;
         return Err(error);
@@ -196,7 +203,7 @@ pub(super) fn register(system: bool, binary: &Path, config: &Path) -> Result<(),
         }
     }
     // Registration and process startup are independent. A configured daemon must acquire a PID.
-    if system {
+    {
         let deadline = Instant::now() + Duration::from_secs(15);
         loop {
             if registered(&endpoint)?.is_some_and(|pid| pid != 0) {
@@ -411,6 +418,15 @@ pub(super) fn uninstall_payload(candidate: &Candidate) -> Result<(), Error> {
         }
         std::fs::remove_file(alias)?;
     }
-    std::fs::remove_dir_all(&candidate.root)?;
+    let retired = retire_payload(candidate)?;
+    if retired.exists() {
+        std::fs::remove_dir_all(retired)?;
+    }
     Ok(())
+}
+pub(super) fn payload_parent() -> Result<PathBuf, Error> {
+    Ok(Deployment::default_path()?
+        .parent()
+        .ok_or(Error::Configuration)?
+        .join("versions"))
 }

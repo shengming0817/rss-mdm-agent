@@ -27,6 +27,7 @@ impl Options {
                 "--profile",
                 "--envelope",
                 "--secret-file",
+                "--operation",
             ]
             .contains(&key)
                 || values.insert(key.into(), PathBuf::from(&pair[1])).is_some()
@@ -87,6 +88,16 @@ pub(super) fn run(args: &[OsString]) -> Result<(), Error> {
         );
         return Ok(());
     }
+    if action == "operation-status" {
+        let id = opts
+            .values
+            .get("--operation")
+            .and_then(|p| p.to_str())
+            .ok_or(Error::Configuration)?;
+        return platform::operation_status(
+            uuid::Uuid::parse_str(id).map_err(|_| Error::Configuration)?,
+        );
+    }
     if opts.system()? {
         if platform::dispatch(args)? {
             return Ok(());
@@ -96,11 +107,8 @@ pub(super) fn run(args: &[OsString]) -> Result<(), Error> {
     {
         return Err(Error::Identity);
     }
-    let _lock = if opts.system()? {
-        Some(installation_lock(&opts.config()?)?)
-    } else {
-        None
-    };
+    let _lock = installation_lock(&opts.config()?, opts.system()?)?;
+    outcome::phase("locked-preflight")?;
     match action.as_str() {
         "install" => {
             let binary = opts.path("--binary")?;
@@ -128,20 +136,14 @@ pub(super) fn run(args: &[OsString]) -> Result<(), Error> {
             if config != Deployment::default_path()? {
                 return Err(Error::Configuration);
             }
-            let deployment = Deployment::load(&config)?;
+            let deployment = Deployment::metadata(&config)?;
             let root = deployment
                 .service
                 .path
                 .parent()
                 .ok_or(Error::Configuration)?;
-            if root.parent()
-                != Some(
-                    config
-                        .parent()
-                        .ok_or(Error::Configuration)?
-                        .join("versions")
-                        .as_path(),
-                )
+            if opts.path("--binary")? != deployment.service.path
+                || root.parent() != Some(platform::payload_parent()?.as_path())
                 || [
                     &deployment.state_root,
                     &deployment.execution.material_root,
@@ -152,12 +154,15 @@ pub(super) fn run(args: &[OsString]) -> Result<(), Error> {
             {
                 return Err(Error::Identity);
             }
-            let (candidate, artifact) = Candidate::load(&root.join("candidate.json"))?;
-            if candidate.root != root || artifact != deployment.installation_artifact {
+            let candidate = Candidate::retained(&config, &deployment)?;
+            if candidate.root != root {
                 return Err(Error::Identity);
             }
+            outcome::phase("uninstall-quiescence")?;
             platform::quiescent(&deployment, &config)?;
+            outcome::phase("uninstall-registration")?;
             platform::remove(true, &deployment.service.path, &config)?;
+            outcome::phase("uninstall-payload")?;
             platform::uninstall_payload(&candidate)?;
         }
         "status" => {
@@ -251,26 +256,31 @@ fn refresh(
     next_config: &Path,
 ) -> Result<(), Error> {
     let old = Deployment::metadata(config)?;
+    outcome::phase("refresh-preflight")?;
     let next = Deployment::load(next_config)?;
     if old.service.path != current || next.service.path != candidate {
         return Err(Error::Identity);
     }
     preserved(&old, &next)?;
     if current.exists() {
-        Deployment::load(config)?;
+        Deployment::load_persistent(config)?;
         persistent(current, config)?;
     }
     persistent(candidate, next_config)?;
+    outcome::phase("refresh-quiescence")?;
     platform::quiescent(&old, config)?;
-    transition(|action| match action {
-        Step::StopCurrent => platform::stop(true, current, config),
-        Step::RemoveCurrent => platform::remove(true, current, config),
-        Step::PublishCandidate => publish(config, &json(&next)?),
-        Step::RegisterCandidate => platform::register(true, candidate, config),
-        Step::StopCandidate => platform::stop(true, candidate, config),
-        Step::RemoveCandidate => platform::remove(true, candidate, config),
-        Step::RestoreCurrent => publish(config, &json(&old)?),
-        Step::RegisterCurrent => platform::register(true, current, config),
+    transition(|action| {
+        outcome::phase(action.phase())?;
+        match action {
+            Step::StopCurrent => platform::stop(true, current, config),
+            Step::RemoveCurrent => platform::remove(true, current, config),
+            Step::PublishCandidate => publish(config, &json(&next)?),
+            Step::RegisterCandidate => platform::register(true, candidate, config),
+            Step::StopCandidate => platform::stop(true, candidate, config),
+            Step::RemoveCandidate => platform::remove(true, candidate, config),
+            Step::RestoreCurrent => publish(config, &json(&old)?),
+            Step::RegisterCurrent => platform::register(true, current, config),
+        }
     })
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -284,29 +294,53 @@ enum Step {
     RestoreCurrent,
     RegisterCurrent,
 }
+impl Step {
+    fn phase(self) -> &'static str {
+        match self {
+            Self::StopCurrent => "stop-current",
+            Self::RemoveCurrent => "remove-current",
+            Self::PublishCandidate => "publish-candidate",
+            Self::RegisterCandidate => "register-candidate",
+            Self::StopCandidate => "stop-candidate",
+            Self::RemoveCandidate => "remove-candidate",
+            Self::RestoreCurrent => "restore-current",
+            Self::RegisterCurrent => "register-current",
+        }
+    }
+}
 fn transition(mut perform: impl FnMut(Step) -> Result<(), Error>) -> Result<(), Error> {
     perform(Step::StopCurrent)?;
     if let Err(error) = perform(Step::RemoveCurrent) {
+        outcome::failed(error);
+        outcome::compensation("running");
         perform(Step::RegisterCurrent)?;
+        outcome::compensation("succeeded");
         return Err(error);
     }
     if let Err(error) = perform(Step::PublishCandidate) {
+        outcome::failed(error);
+        outcome::compensation("running");
         perform(Step::RestoreCurrent)?;
         perform(Step::RegisterCurrent)?;
+        outcome::compensation("succeeded");
         return Err(error);
     }
     if let Err(error) = perform(Step::RegisterCandidate) {
+        outcome::failed(error);
+        outcome::compensation("running");
         // Do not restore the old pointer until the candidate's activity is proven stopped.
         perform(Step::StopCandidate)?;
         perform(Step::RemoveCandidate)?;
         perform(Step::RestoreCurrent)?;
         perform(Step::RegisterCurrent)?;
+        outcome::compensation("succeeded");
         return Err(error);
     }
     Ok(())
 }
 
 fn apply(candidate_path: &Path, profile: Option<&PathBuf>, config: &Path) -> Result<(), Error> {
+    outcome::phase("candidate-preflight")?;
     let (candidate, artifact) = Candidate::load(candidate_path)?;
     let old = match std::fs::symlink_metadata(config) {
         Ok(_) => Some(Deployment::metadata(config)?),
@@ -328,6 +362,20 @@ fn apply(candidate_path: &Path, profile: Option<&PathBuf>, config: &Path) -> Res
     };
     platform::preflight_desktop_entry(&candidate)?;
     platform::public_directory(config.parent().ok_or(Error::Configuration)?)?;
+    let manifests = config
+        .parent()
+        .ok_or(Error::Configuration)?
+        .join("install-manifests");
+    platform::public_directory(&manifests)?;
+    let candidate_bytes =
+        installation_security::read_protected(candidate_path).map_err(|_| Error::Identity)?;
+    if hash(&candidate_bytes) != artifact {
+        return Err(Error::Identity);
+    }
+    retain_public(
+        &manifests.join(format!("{artifact}.json")),
+        &candidate_bytes,
+    )?;
     let mut next = candidate.deployment(artifact, profile, config)?;
     if let Some(old) = old {
         next.installation_id = old.installation_id;
@@ -355,9 +403,10 @@ fn apply(candidate_path: &Path, profile: Option<&PathBuf>, config: &Path) -> Res
             return Err(Error::Identity);
         }
         // Existing trust files are never overwritten, including failed or retired installations.
-        write_new(&next.device_ca_file, candidate.device_ca_pem.as_bytes())?;
+        outcome::phase("publish-trust")?;
+        retain_public(&next.device_ca_file, candidate.device_ca_pem.as_bytes())?;
         if let Some(ca) = &next.ca_file {
-            write_new(
+            retain_public(
                 ca,
                 candidate
                     .ca_pem
@@ -366,10 +415,13 @@ fn apply(candidate_path: &Path, profile: Option<&PathBuf>, config: &Path) -> Res
                     .as_bytes(),
             )?;
         }
-        write_new(config, &json(&next)?)?;
+        outcome::phase("publish-configuration")?;
+        publish_new(config, &json(&next)?)?;
         Deployment::load(config)?;
+        outcome::phase("register-candidate")?;
         platform::register(true, &next.service.path, config)?;
     }
+    outcome::phase("desktop-entry")?;
     platform::desktop_entry(&candidate)?;
     Ok(())
 }
@@ -444,16 +496,18 @@ mod tests {
     }
 }
 
-fn installation_lock(config: &Path) -> Result<std::fs::File, Error> {
+fn installation_lock(config: &Path, system: bool) -> Result<std::fs::File, Error> {
     let root = config.parent().ok_or(Error::Configuration)?;
-    platform::public_directory(root)?;
+    if system {
+        platform::public_directory(root)?;
+    }
     let path = root.join("installation.lock");
     let mut opts = std::fs::OpenOptions::new();
-    opts.read(true).write(true).create(true).truncate(false);
+    opts.read(true).write(system).create(system).truncate(false);
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
-        opts.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+        opts.mode(0o644).custom_flags(libc::O_NOFOLLOW);
     }
     let file = opts.open(&path)?;
     installation_security::protected(&path).map_err(|_| Error::Identity)?;

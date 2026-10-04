@@ -27,7 +27,9 @@
 
 初装从实际互动登录发现主体及 helper 路径；无人登录的静默初装必须提供管理员保护的 profile（`subjects` 与 `helper_work_roots`）。Windows EXE 接受 `/S /PROFILE=绝对路径`；macOS 可先固定 profile 于 `/Library/Application Support/RSS MDM Agent/install-profile.json` 再运行 `installer -pkg ... -target /`。桌面启动请求 Rust owner 注册当前配置用户的 helper，AI Host 随该桌面运行。
 
-卸载只移除匹配注册与程序；设备身份、Keychain / DPAPI 引用、通信库、journal、材料及用户数据保留。Windows 使用系统卸载入口或 `uninstall.exe /S`；macOS 管理员使用 `<受保护的服务程序> --installation uninstall`。重装核对 retained V4 上下文并复用安装 ID，原程序已移除时由新候选只读检查 retained 密钥与日志。没有隐式清库、换库或共享凭据删除入口。
+卸载只移除匹配注册与程序；设备身份、Keychain / DPAPI 引用、通信库、journal、材料及用户数据保留。Windows 使用系统卸载入口或 `uninstall.exe /S`；macOS 管理员使用 `<受保护的服务程序> --installation uninstall --binary <当前配置的服务程序>`。重装核对 retained V4 上下文并复用安装 ID，原程序已移除时由新候选只读检查 retained 密钥与日志。没有隐式清库、换库或共享凭据删除入口。程序先从 versions 退役到精确版本的 retired 目录；删除失败可用同一版本入口重试，不清理其它版本。
+
+Windows 安装操作返回 UUID 和不含输入内容的阶段回执。等待超时表示结果未知，worker 可能仍在运行；使用 `--installation operation-status --operation <UUID>` 核实，确认进程退出后回收该 worker。回执保留失败阶段、闭合错误、可得的原生退出码和补偿结果；超时后不要据命令退出自行删除正在使用的程序。
 
 ## 后台授权执行服务
 

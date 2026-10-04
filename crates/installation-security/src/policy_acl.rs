@@ -33,13 +33,27 @@ pub(crate) fn grant_allowed(
     if !(effective || product && propagated) {
         return true;
     }
-    trusted(subject, product) || mask & if product { WRITE } else { REPLACE } == 0
+    trusted(subject, product)
+        || mask
+            & if product || !directory {
+                WRITE
+            } else {
+                REPLACE
+            }
+            == 0
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     const USER: &str = "S-1-5-21-1-2-3-1001";
+    #[test]
+    fn os_files_reject_untrusted_writes() {
+        assert!(!grant_allowed(USER, 0x2, 0, false, false));
+        assert!(!grant_allowed(USER, 0x4000_0000, 0, false, false));
+        assert!(grant_allowed(INSTALLER, 0x1000_0000, 0, false, false));
+        assert!(grant_allowed(USER, 0x8000_0000, 0, false, false));
+    }
     #[test]
     fn ancestors_allow_sibling_creation_but_never_replacement() {
         for mask in [0x2, 0x4, 0x10, 0x100, 0x4000_0000, 0x8000_0000] {

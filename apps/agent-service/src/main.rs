@@ -39,6 +39,11 @@ fn run() -> Result<(), Error> {
     } else {
         Deployment::default_path()?
     };
+    if args.len() == 1 && args[0] == "--validate-persistent" {
+        Deployment::load_persistent(&path)?.validate_persistent()?;
+        println!("persistent identity and storage verified");
+        return Ok(());
+    }
     let deployment = Deployment::load(&path)?;
     if args.len() == 1 && args[0] == "--validate-installation" {
         deployment
@@ -49,11 +54,6 @@ fn run() -> Result<(), Error> {
             "{}",
             serde_json::to_string(&deployment).map_err(|_| Error::Protocol)?
         );
-        return Ok(());
-    }
-    if args.len() == 1 && args[0] == "--validate-persistent" {
-        deployment.validate_persistent()?;
-        println!("persistent identity and storage verified");
         return Ok(());
     }
     if args.len() == 1 && args[0] == "--user-helper" {

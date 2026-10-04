@@ -9,11 +9,39 @@ ShowInstDetails show
 !include "FileFunc.nsh"
 Var Profile
 Var Result
+; Establish the same protected public directory ACL as the native installation owner.
+Function ProtectedDirectory
+  Exch $R0
+  System::Call 'advapi32::ConvertStringSecurityDescriptorToSecurityDescriptorW(w "O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FRFX;;;BU)", i 1, *p .r4, p 0) i.r5'
+  ${If} $5 == 0
+    SetErrorLevel 1
+    Abort "Protected installation directory descriptor could not be created."
+  ${EndIf}
+  System::Call '*(i 12, p r4, i 0) p.r6'
+  ; SECURITY_ATTRIBUTES is 12 bytes on the 32-bit NSIS carrier.
+  System::Call 'kernel32::CreateDirectoryW(w "$R0", p r6) i.r5 ?e'
+  Pop $7
+  System::Free $6
+  System::Call 'kernel32::LocalFree(p r4) p'
+  ${If} $5 == 0
+  ${AndIf} $7 != 183
+    SetErrorLevel 1
+    Abort "Protected installation directory could not be created."
+  ${EndIf}
+  System::Call 'kernel32::GetFileAttributesW(w "$R0") i.r5'
+  IntOp $5 $5 & 0x400
+  ${If} $5 != 0
+    SetErrorLevel 1
+    Abort "Installation directories cannot be reparse points."
+  ${EndIf}
+  Pop $R0
+FunctionEnd
 Function .onInit
   SetRegView 64
   SetShellVarContext all
   System::Call 'kernel32::GetCurrentProcess() p.r0'
-  System::Call 'kernel32::IsWow64Process2(p r0, *i .r1, *i .r2) i.r3'
+  ; The plug-in supports *i pointers; zero the upper half before WORD outputs are written.
+  System::Call 'kernel32::IsWow64Process2(p r0, *i 0.r1, *i 0.r2) i.r3'
   ${If} $3 == 0
   ${OrIf} $2 != @MACHINE@
     MessageBox MB_ICONSTOP "This package requires its native Windows architecture."
@@ -31,8 +59,21 @@ Function .onInit
   ${GetOptions} $0 "/PROFILE=" $Profile
 FunctionEnd
 Section "Install"
-  SetOutPath "$INSTDIR\versions\@ID@"
-  File /r "@PAYLOAD@\*"
+  Push "$INSTDIR"
+  Call ProtectedDirectory
+  Push "$INSTDIR\versions"
+  Call ProtectedDirectory
+  ${IfNot} ${FileExists} "$INSTDIR\versions\@ID@\candidate.json"
+    ${If} ${FileExists} "$INSTDIR\versions\@ID@\*"
+      SetErrorLevel 1
+      Abort "An incomplete immutable payload is retained. Use a fresh package version."
+    ${EndIf}
+    Push "$INSTDIR\versions\@ID@"
+    Call ProtectedDirectory
+    SetOutPath "$INSTDIR\versions\@ID@"
+    File /r "@PAYLOAD@\*"
+    WriteUninstaller "$INSTDIR\versions\@ID@\uninstall.exe"
+  ${EndIf}
   StrCpy $0 '"$INSTDIR\versions\@ID@\rss-execution-service.exe" --installation apply --candidate "$INSTDIR\versions\@ID@\candidate.json"'
   ${If} $Profile != ""
     StrCpy $0 '$0 --profile "$Profile"'
@@ -42,27 +83,25 @@ Section "Install"
     SetErrorLevel $Result
     Abort "Installation validation or registration failed; retained device state was preserved."
   ${EndIf}
-  WriteUninstaller "$INSTDIR\uninstall.exe"
-  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\RSS MDM Agent" "DisplayName" "RSS MDM Agent"
-  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\RSS MDM Agent" "DisplayVersion" "@VERSION@"
-  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\RSS MDM Agent" "UninstallString" '$"$INSTDIR\uninstall.exe$"'
-  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\RSS MDM Agent" "QuietUninstallString" '$"$INSTDIR\uninstall.exe$" /S'
-  WriteRegStr HKLM "Software\RSS MDM Agent" "ServiceImage" "$INSTDIR\versions\@ID@\rss-execution-service.exe"
-  CreateShortcut "$SMPROGRAMS\RSS MDM Agent.lnk" "$INSTDIR\versions\@ID@\rss-mdm-desktop.exe"
 SectionEnd
 Section "Uninstall"
   SetRegView 64
   SetShellVarContext all
-  ReadRegStr $0 HKLM "Software\RSS MDM Agent" "ServiceImage"
-  ExecWait '"$0" --installation remove --binary "$0"' $Result
+  StrCpy $0 "$INSTDIR\versions\@ID@\rss-execution-service.exe"
+  StrCpy $1 $0
+  ${IfNot} ${FileExists} "$1"
+    StrCpy $1 "$INSTDIR\retired\@ID@\rss-execution-service.exe"
+  ${EndIf}
+  ExecWait '"$1" --installation uninstall --binary "$0"' $Result
   ${If} $Result != 0
     SetErrorLevel $Result
     Abort "Service removal was not confirmed. Close RSS MDM Agent and retry."
   ${EndIf}
-  Delete "$SMPROGRAMS\RSS MDM Agent.lnk"
-  DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\RSS MDM Agent"
-  DeleteRegKey HKLM "Software\RSS MDM Agent"
-  RMDir /r "$INSTDIR\versions"
-  Delete "$INSTDIR\uninstall.exe"
-  RMDir "$INSTDIR"
+  ; Only the version detached by the Rust owner can be deleted after its worker exits.
+  ClearErrors
+  RMDir /r "$INSTDIR\retired\@ID@"
+  ${If} ${Errors}
+    SetErrorLevel 1
+    Abort "The service was retired. Retry removal of this version's retired payload."
+  ${EndIf}
 SectionEnd

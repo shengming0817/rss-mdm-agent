@@ -3,6 +3,7 @@
 mod lifecycle;
 #[cfg(target_os = "macos")]
 mod macos;
+mod outcome;
 #[cfg(any(windows, test))]
 mod task_document;
 #[cfg(windows)]
@@ -101,6 +102,27 @@ pub fn hash(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 impl Candidate {
+    fn retained(config: &Path, deployment: &Deployment) -> Result<Self, Error> {
+        let path = config
+            .parent()
+            .ok_or(Error::Configuration)?
+            .join("install-manifests")
+            .join(format!("{}.json", deployment.installation_artifact));
+        let bytes = installation_security::read_protected(&path).map_err(|_| Error::Identity)?;
+        if hash(&bytes) != deployment.installation_artifact {
+            return Err(Error::Identity);
+        }
+        let candidate: Self = serde_json::from_slice(&bytes).map_err(|_| Error::Configuration)?;
+        if candidate.version != 1
+            || candidate.service.path != deployment.service.path
+            || candidate.origin != deployment.origin
+            || candidate.tenant != deployment.tenant
+            || candidate.target != Target::current().map_err(|_| Error::Unsupported)?
+        {
+            return Err(Error::Identity);
+        }
+        Ok(candidate)
+    }
     fn load(path: &Path) -> Result<(Self, String), Error> {
         let bytes =
             installation_security::read_protected(path).map_err(|_| Error::Configuration)?;
@@ -239,6 +261,33 @@ impl Candidate {
         })
     }
 }
+/// Move only the immutable version selected by the protected deployment out of the install namespace.
+/// Windows' NSIS carrier deletes this exact retired directory after the worker exits.
+fn retire_payload(candidate: &Candidate) -> Result<PathBuf, Error> {
+    let versions = candidate.root.parent().ok_or(Error::Configuration)?;
+    let retired = versions
+        .parent()
+        .ok_or(Error::Configuration)?
+        .join("retired");
+    platform::public_directory(&retired)?;
+    let target = retired.join(candidate.root.file_name().ok_or(Error::Configuration)?);
+    match std::fs::symlink_metadata(&candidate.root) {
+        Ok(metadata) => {
+            if !metadata.is_dir() || metadata.is_symlink() || target.exists() {
+                return Err(Error::Identity);
+            }
+            installation_security::protected(&candidate.root).map_err(|_| Error::Identity)?;
+            std::fs::rename(&candidate.root, &target)?;
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            if target.exists() {
+                installation_security::protected(&target).map_err(|_| Error::Identity)?;
+            }
+        }
+        Err(e) => return Err(e.into()),
+    }
+    Ok(target)
+}
 pub fn initialize(
     deployment: &Deployment,
     envelope: &Path,
@@ -305,6 +354,7 @@ fn utility(path: &Path, args: &[OsString]) -> Result<(std::process::ExitStatus, 
 fn command(path: &Path, args: &[OsString]) -> Result<Vec<u8>, Error> {
     let (status, bytes) = utility(path, args)?;
     if !status.success() {
+        outcome::native_failure(status.code());
         return Err(Error::Unavailable);
     }
     Ok(bytes)
@@ -323,9 +373,41 @@ fn write_new(path: &Path, bytes: &[u8]) -> Result<(), Error> {
         options.mode(0o644).custom_flags(libc::O_NOFOLLOW);
     }
     let mut file = options.open(path)?;
-    file.write_all(bytes)?;
-    file.sync_all()?;
-    installation_security::protected(path).map_err(|_| Error::Identity)
+    let result = (|| {
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        installation_security::protected(path).map_err(|_| Error::Identity)
+    })();
+    if result.is_err() {
+        drop(file);
+        let _ = std::fs::remove_file(path);
+    }
+    result
+}
+/// Publish a complete immutable file. Interrupted staging never occupies the final name.
+fn publish_new(path: &Path, bytes: &[u8]) -> Result<(), Error> {
+    let temporary = path.with_extension(format!("pending-{}", uuid::Uuid::new_v4()));
+    write_new(&temporary, bytes)?;
+    let result = (|| {
+        std::fs::hard_link(&temporary, path)?;
+        #[cfg(unix)]
+        std::fs::File::open(path.parent().ok_or(Error::Configuration)?)?.sync_all()?;
+        Ok(())
+    })();
+    let _ = std::fs::remove_file(&temporary);
+    result
+}
+fn retain_public(path: &Path, bytes: &[u8]) -> Result<(), Error> {
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => {
+            if installation_security::read_protected(path).map_err(|_| Error::Identity)? != bytes {
+                return Err(Error::Identity);
+            }
+            Ok(())
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => publish_new(path, bytes),
+        Err(e) => Err(e.into()),
+    }
 }
 fn publish(path: &Path, bytes: &[u8]) -> Result<(), Error> {
     let temporary = path.with_extension(format!("pending-{}", uuid::Uuid::new_v4()));
@@ -340,7 +422,15 @@ fn publish(path: &Path, bytes: &[u8]) -> Result<(), Error> {
 pub fn run(args: &[OsString]) -> Result<(), Error> {
     #[cfg(windows)]
     let _apartment = windows::ComApartment::new()?;
-    lifecycle::run(args)
+    let result = lifecycle::run(args);
+    if let Err(error) = result {
+        outcome::failed(error);
+        eprintln!(
+            "{}",
+            serde_json::to_string(&outcome::snapshot()).map_err(|_| Error::Protocol)?
+        );
+    }
+    result
 }
 
 #[cfg(test)]
