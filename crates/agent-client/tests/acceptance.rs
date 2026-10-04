@@ -844,7 +844,7 @@ async fn manual_renewal_keeps_binding_tasks_reports_and_original_recovery_operat
     let mut roots = rustls::RootCertStore::empty();
     roots
         .add(rustls::pki_types::CertificateDer::from(
-            x509_cert::Certificate::from_pem(&support::pki::ca())
+            x509_cert::Certificate::from_pem(support::pki::ca())
                 .unwrap()
                 .to_der()
                 .unwrap(),
