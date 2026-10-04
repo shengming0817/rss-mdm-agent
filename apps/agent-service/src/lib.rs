@@ -124,3 +124,5 @@ mod secrets;
 
 #[cfg(test)]
 mod production_storage;
+
+pub mod installation;

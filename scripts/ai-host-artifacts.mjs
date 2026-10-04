@@ -313,12 +313,16 @@ export function runtimeArtifact(root, target) {
     sha256: "6e50ce5498c0cebc20fd39ab3ff5df836ed2f8a31aa093cecad8497cff126d70",
     sqlite: "3.51.2",
   };
+  artifacts["24.14.1/win32-arm64"] = {
+    sha256: "a7b7c68490e4a8cde1921fe5a0cfb3001d53f9c839e416903e4f28e727b62f60",
+    sqlite: "3.51.2",
+  };
   const artifact = artifacts[`${version}/${target}`];
   if (!artifact)
     throw new Error(`No verified Node artifact for ${version}/${target}`);
   return {
     version,
-    target: target === "win32-x64" ? "win-x64" : target,
+    target: target.replace(/^win32-/, "win-"),
     ...artifact,
   };
 }

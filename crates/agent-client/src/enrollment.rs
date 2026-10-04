@@ -48,13 +48,35 @@ pub struct EnrollmentStatus {
     pub failure: Option<enroll::ErrorCode>,
 }
 /// Administrator-protected bootstrap metadata; the secret is resolved separately by reference.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct GrantImport {
     /// Original grant creation operation, required for exact status recovery.
+    #[schemars(
+        with = "String",
+        regex(
+            pattern = "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+        )
+    )]
     pub operation_id: Uuid,
     /// Server-issued grant.
+    #[schemars(schema_with = "grant_receipt_schema")]
     pub grant: enroll::GrantReceipt,
+}
+impl GrantImport {
+    /// Reject malformed, expired or foreign metadata before any initialization effect.
+    pub fn validate(&self, platform: runtime::TaskPlatform, now: i64) -> Result<(), Error> {
+        if self.operation_id.is_nil()
+            || self.grant.wire_version != enroll::API_VERSION
+            || self.grant.grant_id.is_nil()
+            || self.grant.platform != platform
+            || self.grant.state != enroll::GrantState::Available
+            || self.grant.expires_at <= now
+        {
+            return Err(Error::Protocol);
+        }
+        Ok(())
+    }
 }
 impl<S: IdentityProvider, C: Clock> Client<S, C> {
     /// Whether an original certificate operation remains to be recovered.
@@ -250,6 +272,30 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         self.drive_enrollment().await?;
         self.enrollment_status()
     }
+    /// Read-only admission before importing any bootstrap secret or creating a key.
+    pub fn validate_grant_import(
+        &self,
+        material: &GrantImport,
+        secret_reference: &str,
+        capabilities: &[runtime::Capability],
+    ) -> Result<(), Error> {
+        material.validate(self.store.cfg.platform, self.clock.now()?)?;
+        let state = self.identity_state()?;
+        if state.active.is_some() {
+            return Err(Error::Conflict);
+        }
+        if let Some(p) = state.pending {
+            if p.purpose != Purpose::Import
+                || p.operation != material.operation_id
+                || p.secret_reference != secret_reference
+                || p.profile.capabilities != capabilities
+                || p.grant.as_ref().is_some_and(|g| g != &material.grant)
+            {
+                return Err(Error::Conflict);
+            }
+        }
+        Ok(())
+    }
     /// Import an explicit grant without replacing existing identity or unknown operations.
     pub fn import_grant(
         &mut self,
@@ -257,14 +303,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         secret_reference: &str,
         capabilities: Vec<runtime::Capability>,
     ) -> Result<(), Error> {
-        if material.grant.wire_version != enroll::API_VERSION
-            || material.grant.grant_id.is_nil()
-            || material.grant.platform != self.store.cfg.platform
-            || material.grant.state != enroll::GrantState::Available
-            || material.grant.expires_at <= self.clock.now()?
-        {
-            return Err(Error::Protocol);
-        }
+        self.validate_grant_import(&material, secret_reference, &capabilities)?;
         self.secrets.resolve(secret_reference)?;
         self.prepare_enrollment(
             Purpose::Import,
@@ -522,4 +561,10 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         self.http = http;
         Ok(())
     }
+}
+
+fn grant_receipt_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    serde_json::json!({"$ref":"https://rss.example/agent/enroll/v1/GrantReceipt"})
+        .try_into()
+        .expect("static producer reference")
 }

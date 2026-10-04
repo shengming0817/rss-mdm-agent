@@ -183,3 +183,37 @@ pub(crate) fn validity(
     }
     Ok((before, after, device))
 }
+
+/// Validate a single public CA before publishing installation trust or initializing state.
+pub fn validate_public_ca(pem: &[u8]) -> Result<(), Error> {
+    let text = std::str::from_utf8(pem)
+        .map_err(|_| Error::Configuration)?
+        .trim();
+    let body = text
+        .strip_prefix("-----BEGIN CERTIFICATE-----")
+        .and_then(|s| s.strip_suffix("-----END CERTIFICATE-----"))
+        .ok_or(Error::Configuration)?;
+    if text.len() > 32768
+        || !body
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"+/=\r\n ".contains(&b))
+    {
+        return Err(Error::Configuration);
+    }
+    let certificate = x509_cert::Certificate::from_pem(text).map_err(|_| Error::Configuration)?;
+    if !certificate
+        .tbs_certificate
+        .get::<x509_cert::ext::pkix::BasicConstraints>()
+        .map_err(|_| Error::Configuration)?
+        .is_some_and(|(_, bc)| bc.ca)
+    {
+        return Err(Error::Configuration);
+    }
+    let mut roots = rustls::RootCertStore::empty();
+    roots
+        .add(CertificateDer::from(
+            certificate.to_der().map_err(|_| Error::Configuration)?,
+        ))
+        .map_err(|_| Error::Configuration)?;
+    Ok(())
+}

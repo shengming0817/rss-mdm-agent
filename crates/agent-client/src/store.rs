@@ -190,6 +190,26 @@ pub fn validate_identity(
         .validate_runtime(cfg, provider, clock.now()?)?
         .clone())
 }
+/// Read installation identity and all retained key references without opening a writer or
+/// requiring a currently usable certificate. Expiry/revocation do not permit replacing identity.
+pub fn validate_stored_identity(
+    root: &Path,
+    cfg: &Config,
+    provider: &impl crate::IdentityProvider,
+) -> Result<Option<wire::BindingProfile>, Error> {
+    let identity = read_identity(root, cfg)?;
+    if let Some(active) = &identity.active {
+        provider.key(&active.key_reference)?;
+        provider.resolve(&active.secret_reference)?;
+    }
+    if let Some(pending) = &identity.pending {
+        if pending.csr.is_some() {
+            provider.key(&pending.key_reference)?;
+        }
+        provider.resolve(&pending.secret_reference)?;
+    }
+    Ok(identity.active.map(|active| active.receipt.runtime))
+}
 fn read_identity(root: &Path, cfg: &Config) -> Result<crate::identity::IdentityState, Error> {
     let reader = read_existing(root, cfg)?;
     let body: Vec<u8> = reader.query_row(

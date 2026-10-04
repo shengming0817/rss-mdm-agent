@@ -8,8 +8,10 @@ publish = false
 
 [dependencies]
 serde.workspace = true
+schemars.workspace = true
 thiserror.workspace = true
 sha2.workspace = true
+constant_time_eq = "=0.4.2"
 
 [target.'cfg(unix)'.dependencies]
 libc = "=0.2.189"

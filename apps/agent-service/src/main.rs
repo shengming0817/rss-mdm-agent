@@ -1,10 +1,9 @@
 //! The sole production execution service. Initialization is explicit and never a startup fallback.
-use rss_mdm_agent_wire::runtime as wire;
 mod error;
 use agent_client::Error;
 use agent_service::deployment::Deployment;
 use execution_ipc::host::Request;
-use std::{io::Read, path::PathBuf, sync::atomic::AtomicBool};
+use std::{path::PathBuf, sync::atomic::AtomicBool};
 static STOP: AtomicBool = AtomicBool::new(false);
 #[cfg(target_os = "macos")]
 extern "C" fn stopped(_: i32) {
@@ -12,6 +11,18 @@ extern "C" fn stopped(_: i32) {
 }
 fn run() -> Result<(), Error> {
     let mut args = std::env::args_os().skip(1).collect::<Vec<_>>();
+    #[cfg(windows)]
+    if let [mode, name, path] = args.as_slice() {
+        if mode == "--installation-worker" {
+            return agent_service::installation::worker(
+                name.to_str().ok_or(Error::Configuration)?.into(),
+                PathBuf::from(path),
+            );
+        }
+    }
+    if args.first().is_some_and(|a| a == "--installation") {
+        return agent_service::installation::run(&args[1..]);
+    }
     if let [mode, path] = args.as_slice() {
         if mode == "--software-worker" {
             let code = agent_service::software_worker::run(std::path::Path::new(path))?;
@@ -28,6 +39,11 @@ fn run() -> Result<(), Error> {
     } else {
         Deployment::default_path()?
     };
+    if args.len() == 1 && args[0] == "--validate-persistent" {
+        Deployment::load_persistent(&path)?.validate_persistent()?;
+        println!("persistent identity and storage verified");
+        return Ok(());
+    }
     let deployment = Deployment::load(&path)?;
     if args.len() == 1 && args[0] == "--validate-installation" {
         deployment
@@ -40,33 +56,16 @@ fn run() -> Result<(), Error> {
         );
         return Ok(());
     }
-    if args.len() == 1 && args[0] == "--validate-persistent" {
-        deployment.validate_persistent()?;
-        println!("persistent identity and storage verified");
-        return Ok(());
-    }
     if args.len() == 1 && args[0] == "--user-helper" {
         return serve(Box::new(deployment.user_helper()?), false);
     }
-    if args.len() == 2 && args[0] == "--import-grant" {
-        let grant: agent_client::GrantImport = serde_json::from_slice(
-            &installation_security::read_protected(std::path::Path::new(&args[1]))
-                .map_err(|_| Error::Configuration)?,
-        )
-        .map_err(|_| Error::Configuration)?;
-        let mut bytes = zeroize::Zeroizing::new(Vec::new());
-        std::io::stdin().take(65).read_to_end(&mut bytes)?;
-        let password = wire::Secret::parse(
-            std::str::from_utf8(&bytes)
-                .map_err(|_| Error::Identity)?
-                .trim(),
-        )
-        .map_err(|_| Error::Identity)?;
-        return tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|_| Error::Unavailable)?
-            .block_on(deployment.initialize(grant, &password));
+    if args.len() == 2 && args[0] == "--initialize" {
+        let secret = agent_service::installation::stdin_secret()?;
+        return agent_service::installation::initialize(
+            &deployment,
+            std::path::Path::new(&args[1]),
+            &secret,
+        );
     }
     if args.len() == 1 && args[0] == "--renew-certificate" {
         return tokio::runtime::Builder::new_multi_thread()

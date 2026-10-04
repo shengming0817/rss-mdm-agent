@@ -15,11 +15,11 @@ const buildEnv = native
 if (
   !(
     (process.platform === "darwin" && process.arch === "arm64") ||
-    (process.platform === "win32" && process.arch === "x64")
+    (process.platform === "win32" && ["x64", "arm64"].includes(process.arch))
   )
 )
   throw new Error(
-    "Desktop candidate supports macOS arm64 and Windows x64 only.",
+    "Desktop candidate supports macOS arm64 and Windows amd64/arm64 only.",
   );
 run(
   "pnpm",
@@ -36,7 +36,9 @@ run(
           "--config",
           JSON.stringify({ build: { beforeBuildCommand: "" } }),
         ]
-      : []),
+      : process.platform === "win32"
+        ? ["--no-bundle"]
+        : []),
     "--config",
     process.platform === "win32"
       ? "src-tauri/tauri.windows.conf.json"
@@ -45,5 +47,3 @@ run(
   fileURLToPath(new URL("../apps/desktop", import.meta.url)),
   buildEnv,
 );
-
-if (process.platform === "win32") await import("./stage-windows-desktop.mjs");

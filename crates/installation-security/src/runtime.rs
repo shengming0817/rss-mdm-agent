@@ -6,7 +6,7 @@ use std::{
     path::{Component, Path},
 };
 
-pub(super) fn digest(root: &Path) -> std::io::Result<String> {
+pub fn digest(root: &Path) -> std::io::Result<String> {
     fn entry(hash: &mut Sha256, root: &Path, name: &Path) -> std::io::Result<()> {
         let path = root.join(name);
         let metadata = std::fs::symlink_metadata(&path)?;
@@ -94,7 +94,7 @@ fn invalid() -> std::io::Error {
     std::io::Error::other("invalid runtime tree")
 }
 
-pub(super) fn verify(root: &Path, manifest: &str, trusted: Option<&str>) -> std::io::Result<()> {
+pub fn verify(root: &Path, manifest: &str, trusted: Option<&str>) -> std::io::Result<()> {
     if manifest.len() != 64
         || !manifest
             .bytes()
@@ -119,7 +119,7 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
     #[test]
     fn canonical_digest_matches_packager_and_rejects_bytes_modes_links_and_forged_metadata() {
-        let root = std::env::temp_dir().join(format!("rss-tree-{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("rss-tree-{}", std::process::id()));
         for dir in ["bin", "node_modules"] {
             std::fs::create_dir_all(root.join(dir)).unwrap();
         }
@@ -141,7 +141,7 @@ mod tests {
         let expected = digest(&root).unwrap();
         let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
             .ancestors()
-            .nth(3)
+            .nth(2)
             .unwrap();
         let node = std::process::Command::new("node").args(["--input-type=module", "-e", "import{pathToFileURL}from'node:url';const m=await import(pathToFileURL(process.argv[1]).href);process.stdout.write(m.runtimeTreeSha256(process.argv[2]));"])
             .arg(repository.join("scripts/ai-host-artifacts.mjs")).arg(&root).output().unwrap();

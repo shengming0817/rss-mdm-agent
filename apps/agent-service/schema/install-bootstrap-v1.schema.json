@@ -1,0 +1,73 @@
+{
+  "$defs": {
+    "GrantImport": {
+      "additionalProperties": false,
+      "description": "Administrator-protected bootstrap metadata; the secret is resolved separately by reference.",
+      "properties": {
+        "grant": {
+          "$ref": "https://rss.example/agent/enroll/v1/GrantReceipt",
+          "description": "Server-issued grant."
+        },
+        "operationId": {
+          "description": "Original grant creation operation, required for exact status recovery.",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "operationId",
+        "grant"
+      ],
+      "type": "object"
+    },
+    "Target": {
+      "enum": [
+        "windows-amd64",
+        "windows-arm64",
+        "macos-arm64"
+      ],
+      "type": "string"
+    }
+  },
+  "$id": "urn:rss-mdm-agent:installation-bootstrap:1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "grant": {
+      "$ref": "#/$defs/GrantImport"
+    },
+    "installation_artifact": {
+      "pattern": "^[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "origin": {
+      "maxLength": 2048,
+      "pattern": "^https://",
+      "type": "string"
+    },
+    "target": {
+      "$ref": "#/$defs/Target"
+    },
+    "tenant": {
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+      "type": "string"
+    },
+    "version": {
+      "format": "uint8",
+      "maximum": 1,
+      "minimum": 1,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "version",
+    "origin",
+    "tenant",
+    "target",
+    "installation_artifact",
+    "grant"
+  ],
+  "title": "Bootstrap",
+  "type": "object",
+  "x-rss-enroll-schema-fingerprint": "8992983a33e04828771dcea61d508ef8590de145317a3e3f2ef5d3708eed27d5"
+}

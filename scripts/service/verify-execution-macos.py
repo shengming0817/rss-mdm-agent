@@ -55,7 +55,7 @@ def security_matrix():
     rows['cross_user']['reason'] = 'second real GUI login required; sudo -u is not evidence'
     rows['login_generation']['reason'] = 'isolated logout/login and retained old request required'
     rows['legacy_challenge'] = dict(status='notApplicable',
-        reason='IPC V10 has no challenge; NSXPC one-shot/5s lifetime and backend offer expiry replace it',
+        reason='Current IPC has no challenge; NSXPC one-shot/5s lifetime and backend offer expiry replace it',
         source='crates/execution-ipc/src/{host.rs,macos_service.m}')
     return dict(platform='macOS', scenarios=rows, status='notExecuted')
 
@@ -84,8 +84,13 @@ def summarize_security(matrix):
 
 class NativeProbe:
     def __init__(self, binary, config, log):
-        self.process = subprocess.Popen([str(binary), '--config', str(config)], stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE, stderr=log, text=True)
+        self.binary, self.config, self.log = binary, config, log
+        self.exchange = None
+        self._start()
+
+    def _start(self):
+        self.process = subprocess.Popen([str(self.binary), '--config', str(self.config)], stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE, stderr=self.log, text=True)
         self.exchange = BackendExchange(self.process, timeout=6)
         try:
             self.identity = self.exchange.read(time.monotonic() + 6)
@@ -133,7 +138,18 @@ class NativeProbe:
         finally: self.close_connection(connection)
 
     def close(self):
-        self.exchange.close()
+        if self.exchange is not None:
+            self.exchange.close()
+            self.exchange = None
+
+    @contextlib.contextmanager
+    def suspended(self):
+        if self.exchange is None: raise RuntimeError('native probe is already closed')
+        # A trusted non-service image must actually exit before the owner's
+        # quiescence check. Recreate it for subsequent authenticated assertions.
+        self.close()
+        try: yield
+        finally: self._start()
 
 
 def assert_native_reply(result, kind):
@@ -529,7 +545,8 @@ def complete_native_security(probe, matrix, query, command, package, package_rec
     run('/usr/bin/python3',str(installer),'remove','--scope','user','--binary',str(binary),'--config',str(config))
     native_stale_helper_security(probe,matrix,query,command,protected,prior,offset,package,package_receipt)
     security_begin(matrix,'refresh_preflight')
-    preflight=administrator.command('refresh_preflight')
+    with probe.suspended():
+        preflight=administrator.command('refresh_preflight')
     healthy=probe.request(dict(method='serviceStatus'));assert_native_reply(healthy,'serviceStatus')
     assert healthy['envelope']['reply']['value']['readiness']['phase']=='ready', 'preflight changed service readiness'
     assert healthy['peerPid']==preflight['preflight']['originalPid'], 'preflight replaced the original process'
@@ -540,7 +557,8 @@ def complete_native_security(probe, matrix, query, command, package, package_rec
     security_result(matrix,'helper_stale_endpoint',dict(pending,diagnostic=diagnostics))
     security_result(matrix,'refresh_preflight',dict(preflight['preflight'],healthy=healthy))
     security_begin(matrix,'refresh_after_stop')
-    results=administrator.command('refresh')
+    with probe.suspended():
+        results=administrator.command('refresh')
     security_result(matrix,'refresh_after_stop',results['afterStop'])
     run('/usr/bin/python3',str(installer),'install','--scope','user','--binary',str(binary),'--config',str(config))
     query()
@@ -604,13 +622,67 @@ def with_legacy_communication(path, operation):
             raise AssertionError('preflight changed candidate; originals restored; removed='+str(missing)+'; evidence retained: '+str(unexpected))
 
 
+def instrument_service_diagnostics(root, binary, config):
+    """Instrument only the frozen lab job after the production owner has registered it."""
+    import os, plistlib, re, subprocess, time
+    from pathlib import Path
+    root,binary,config=Path(root),Path(binary),Path(config)
+    path=Path('/Library/LaunchDaemons/com.rss-mdm.agent.execution.plist')
+    value=plistlib.loads(path.read_bytes())
+    assert value['Label']=='com.rss-mdm.agent.execution'
+    assert value['ProgramArguments']==[str(binary),'--config',str(config)]
+    log=root/'service-stderr.log'
+    metadata=log.stat()
+    assert metadata.st_uid==0 and metadata.st_mode & 0o777==0o600 and not log.is_symlink()
+    endpoint='system/com.rss-mdm.agent.execution'
+    subprocess.run(['/bin/launchctl','bootout',endpoint],check=True,capture_output=True)
+    value['StandardErrorPath']=str(log)
+    temporary=path.with_suffix('.diagnostics-'+str(os.getpid()))
+    fd=os.open(temporary,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o644)
+    with os.fdopen(fd,'wb') as stream: plistlib.dump(value,stream)
+    temporary.replace(path)
+    subprocess.run(['/bin/launchctl','bootstrap','system',str(path)],check=True,capture_output=True)
+    deadline=time.monotonic()+15
+    while time.monotonic()<deadline:
+        result=subprocess.run(['/bin/launchctl','print',endpoint],capture_output=True,text=True)
+        if result.returncode==0 and re.search(r'^\s*pid = [1-9][0-9]*\s*$',result.stdout,re.MULTILINE): return
+        time.sleep(.05)
+    raise TimeoutError('instrumented lab service did not start')
+
+
+def assert_refresh_refusal(stderr, case):
+    reports=[]
+    for line in stderr.splitlines():
+        try: value=json.loads(line)
+        except (ValueError, TypeError): continue
+        if isinstance(value,dict) and value.get('version')==1 and 'failure_phase' in value:
+            reports.append(value)
+    assert len(reports)==1, 'refresh needs one closed failure receipt'
+    report=reports[0]
+    phase='stop-current' if case=='registration' else 'refresh-preflight'
+    errors={'Identity'} if case in ('registration','tenant','origin','state_root') else {'Identity','Unavailable'}
+    assert report.get('state')=='failed' and report.get('failure_phase')==phase, 'unrelated refresh refusal phase'
+    assert report.get('error') in errors, 'unrelated refresh refusal category'
+    return report
+
+
 def root_refresh_security(root, binary, config, installer_source, phase):
     # This whole program is frozen before elevation; only the owned experiment is modified.
     import contextlib, copy, hashlib, io, json, os, plistlib, re, shutil, sqlite3, subprocess, time, uuid
     from pathlib import Path
     root,binary,config=Path(root),Path(binary),Path(config)
-    namespace={'__name__':'acceptance_owner','__builtins__':__builtins__}
-    exec(compile(installer_source,'<fixed installation owner>','exec'),namespace)
+    def candidate(image, path):
+        value=subprocess.run([str(image),'--config',str(path),'--validate-installation'],check=True,capture_output=True,text=True)
+        return json.loads(value.stdout)
+    def verify_registered(endpoint, arguments):
+        value=subprocess.run(['/bin/launchctl','print',endpoint],check=True,capture_output=True,text=True)
+        pid=int(re.search(r'^\s*pid = ([0-9]+)\s*$',value.stdout,re.MULTILINE)[1])
+        actual=subprocess.run(['/bin/ps','-p',str(pid),'-o','args='],check=True,capture_output=True,text=True).stdout.strip()
+        assert actual==' '.join(arguments)
+        return pid
+    def refresh(plist,label,domain,endpoint,arguments,current,next_binary,next_config):
+        subprocess.run([str(next_binary),'--installation','refresh','--binary',str(binary),'--config',str(current),'--candidate-binary',str(next_binary),'--candidate-config',str(next_config)],check=True,capture_output=True,text=True)
+    namespace=dict(candidate=candidate,verify_registered=verify_registered,refresh=refresh)
     plist=Path('/Library/LaunchDaemons/com.rss-mdm.agent.execution.plist')
     original=plist.read_bytes(); document=json.loads(config.read_text())
     args=[str(binary),'--config',str(config)]
@@ -662,8 +734,8 @@ def root_refresh_security(root, binary, config, installer_source, phase):
             if name not in ['mode','symlink','acl']: next_config.write_text(json.dumps(changed))
             target_plist=plist
             if name=='registration':
-                copied_plist=root/'unknown.plist';value=plistlib.loads(original);value['Label']='other'
-                copied_plist.write_bytes(plistlib.dumps(value));copied_plist.chmod(0o600);target_plist=copied_plist
+                value=plistlib.loads(original);value['Label']='other'
+                plist.write_bytes(plistlib.dumps(value))
             # Invalid candidates must fail before refresh can stop a running service.
             if name in ['mode','symlink','acl','hash','cdhash','version','ipc_version']:
                 operation=lambda: namespace['candidate'](binary,actual)
@@ -672,7 +744,9 @@ def root_refresh_security(root, binary, config, installer_source, phase):
                 operation=(lambda: with_legacy_communication(held_source,refresh)) if name=='communication_format' else refresh
             try: operation()
             except (RuntimeError,subprocess.CalledProcessError,FileNotFoundError) as error:
-                rows.append(dict(case=name,error=str(error),stderr=getattr(error,'stderr',None)))
+                stderr=getattr(error,'stderr',None)
+                receipt=None if name in ['mode','symlink','acl','hash','cdhash','version','ipc_version'] else assert_refresh_refusal(stderr or '',name)
+                rows.append(dict(case=name,error=str(error),stderr=stderr,receipt=receipt))
             else: raise AssertionError('refresh negative unexpectedly admitted: '+name)
         finally:
             try:
@@ -683,7 +757,7 @@ def root_refresh_security(root, binary, config, installer_source, phase):
                     held.rename(held_source)
             finally:
                 if paused: os.kill(pid,signal.SIGCONT)
-            if copied_plist: copied_plist.unlink(missing_ok=True)
+            if name=='registration': plist.write_bytes(original)
             if actual!=next_config: actual.unlink(missing_ok=True)
             subprocess.run(['/bin/chmod','-N',str(next_config)],check=True)
             next_config.unlink(missing_ok=True)
@@ -694,33 +768,26 @@ def root_refresh_security(root, binary, config, installer_source, phase):
     preflight=dict(rows=rows,originalPid=pid,configurationUnchanged=True,identityDigests=identities)
     if phase=='preflight':
         return dict(preflight=preflight,journalBefore=journal_before,driverDiagnostics=(root/'service-stderr.log').read_text())
-    # Real launchd startup failure after the owner has stopped the original process.
-    changed=plistlib.loads(original);changed['UserName']='rss-no-such-user-'+uuid.uuid4().hex
-    plist.write_bytes(plistlib.dumps(changed));plist.chmod(0o600)
-    try:
+    # Exercise the real native stop/publication/restart, then compare durable facts.
+    namespace['refresh'](plist,'com.rss-mdm.agent.execution','system',endpoint,args,config,binary,config)
+    instrument_service_diagnostics(root,binary,config)
+    new_pid=namespace['verify_registered'](endpoint,args)
+    assert new_pid != pid
+    assert json.loads(config.read_bytes()) == before_document
+    assert all(hashlib.sha256(Path(p).read_bytes()).hexdigest()==digest for p,digest in identities.items())
+    after_stop=dict(originalPid=pid,newPid=new_pid,identityDigests=identities,configurationUnchanged=True)
+    # PID publication precedes the new owner's WAL startup. During sidecar
+    # replacement a read-only SQLite reader can temporarily fail to open it.
+    # ref: sqlite.org/wal.html sections 5 and 9; never bypass WAL with immutable=1.
+    deadline=time.monotonic()+15
+    while True:
         try:
-            with contextlib.redirect_stdout(io.StringIO()):
-                namespace['refresh'](plist,'com.rss-mdm.agent.execution','system',endpoint,args,config,binary,config)
-        except (RuntimeError,subprocess.CalledProcessError) as error: failure=str(error)
-        else: failure='registration publication returned; readiness must still fail for nonexistent OS user'
-        try: os.kill(pid,0)
-        except ProcessLookupError: pass
-        else: raise AssertionError('post-stop negative did not stop the original process')
-        result=subprocess.run([str(binary),'--config',str(config),'--query'],capture_output=True,text=True)
-        assert result.returncode!=0 or json.loads(result.stdout)['reply']['kind']!='tasks'
-        lookup=subprocess.run(['/bin/launchctl','print',endpoint],capture_output=True,text=True)
-        assert not re.search(r'^\s*pid = [0-9]+\s*$',lookup.stdout,re.MULTILINE), 'candidate unexpectedly running'
-        assert json.loads(config.read_bytes())==before_document
-        assert all(hashlib.sha256(Path(p).read_bytes()).hexdigest()==digest for p,digest in identities.items())
-        after_stop=dict(failure=failure,oldPidAbsent=pid,diagnostic=result.stderr,
-            registration=plistlib.loads(plist.read_bytes()),identityDigests=identities)
-    finally:
-        lookup=subprocess.run(['/bin/launchctl','print',endpoint],capture_output=True)
-        if lookup.returncode==0: subprocess.run(['/bin/launchctl','bootout',endpoint],check=True)
-        else: assert lookup.returncode==113
-        plist.write_bytes(original);plist.chmod(0o600)
-        subprocess.run(['/bin/launchctl','bootstrap','system',str(plist)],check=True)
-    journal_after=journal_proof(journal)
+            journal_after=journal_proof(journal)
+            break
+        except sqlite3.OperationalError as error:
+            if str(error) not in ('unable to open database file','database is locked') or not journal.is_file() or time.monotonic()>=deadline:
+                raise
+            time.sleep(.05)
     assert {row['request']:(row['snapshot']['attempts'],(row['snapshot'].get('attempt') or {}).get('id'))
         for row in journal_after['records']}==original_attempts, 'refresh changed durable request/attempt facts'
     return dict(preflight=preflight,afterStop=after_stop,journalBefore=journal_before,journalAfter=journal_after,
@@ -1297,17 +1364,17 @@ def main():
         installer_source = Path(__file__).with_name('execution-macos.py').read_text()
         installer.write_text(installer_source)
         installer.chmod(0o600)
-        system_installer_source = installer_source.replace("'ProcessType': 'Background'", "'ProcessType': 'Background', 'StandardErrorPath': " + repr(str(protected/'service-stderr.log')))
+        system_installer_source = installer_source
         shutil.copyfile(lab / 'tls.pem', inputs / 'tls.pem')
-        deployment = dict(version=3, ipc_version=11, origin=info['origin'], tenant=info['tenant'],
+        deployment = dict(version=4, ipc_version=11, origin=info['origin'].rstrip('/'), tenant=info['tenant'],
                           signing_keys={'test': info['key']}, ca_file=str(protected / 'ca.pem'),
-                          installation_id=str(uuid.uuid4()), device_ca_file=str(protected / 'device-ca.pem'),
+                          installation_id=str(uuid.uuid4()), installation_artifact=hashlib.sha256(args.binary.read_bytes()).hexdigest(), device_ca_file=str(protected / 'device-ca.pem'),
                           state_root=str(protected / 'state'),
                           helper_work_roots={str(os.geteuid()): str(helper_root)},
                           execution=dict(work_root=str(protected / 'work'), material_root=str(protected / 'materials'),
                                          interpreters=[], managers=[], processes=8))
         setup = lab / 'install.py'
-        setup.write_text(inspect.getsource(copy_candidate) + '''import hashlib,json,os,re,shutil,subprocess
+        setup.write_text(inspect.getsource(copy_candidate) + inspect.getsource(instrument_service_diagnostics) + '''import hashlib,json,os,re,shutil,subprocess
 from pathlib import Path
 root=Path(%r)
 root.parent.mkdir(mode=0o755,parents=True,exist_ok=True)
@@ -1327,10 +1394,13 @@ config['execution']['interpreters']=[dict(profile='posix_sh',image=artifact('/bi
 config['execution']['managers']=[dict(executor='package_installer',image=artifact('/usr/sbin/installer'))]
 (root/'ca.pem').write_bytes(%r); os.chmod(root/'ca.pem',0o644)
 (root/'device-ca.pem').write_bytes((root/'ca.pem').read_bytes()); os.chmod(root/'device-ca.pem',0o644)
-(root/'grant.json').write_text(%r); os.chmod(root/'grant.json',0o600)
+grant=json.loads(%r)
+envelope=dict(version=1,origin=config['origin'],tenant=config['tenant'],target='macos-arm64',installation_artifact=config['installation_artifact'],grant=grant)
+(root/'grant.json').write_text(json.dumps(envelope)); os.chmod(root/'grant.json',0o600)
 path=root/'execution.json';path.write_text(json.dumps(config));os.chmod(path,0o644)
-subprocess.run([str(binary),'--config',str(path),'--import-grant',str(root/'grant.json')],input='AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',text=True,check=True)
+subprocess.run([str(binary),'--config',str(path),'--initialize',str(root/'grant.json')],input='AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',text=True,check=True)
 subprocess.run(%r,check=True)
+instrument_service_diagnostics(root,binary,path)
 ''' % (str(protected), str(args.binary.resolve()), hashlib.sha256(args.binary.read_bytes()).hexdigest(), deployment, str(os.geteuid()), str(os.geteuid()), (lab / 'tls.pem').read_bytes(), json.dumps(grant), frozen_installer(system_installer_source, ['install','--scope','system','--binary',str(binary),'--config',str(config)])))
         if args.desktop:
             # Extend this same installation owner, retaining its protected binary/config checks.
@@ -1347,7 +1417,7 @@ config['registration_clients']['images']=[artifact(desktop)]
 fd=os.open(default,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o644)
 with os.fdopen(fd,'w') as stream: json.dump(config,stream); stream.flush(); os.fsync(stream.fileno())
 """ % str(default_config)
-            initializer = "subprocess.run([str(binary),'--config',str(path),'--import-grant',str(root/'grant.json')],input='AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',text=True,check=True)\n"
+            initializer = "subprocess.run([str(binary),'--config',str(path),'--initialize',str(root/'grant.json')],input='AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',text=True,check=True)\n"
             contents = contents.replace(initializer, '')
             setup.write_text(contents)
         security = refresh = diagnostics = refresh_preflight = None
@@ -1390,14 +1460,20 @@ print(json.dumps(dict(label=label,plist=str(plist))))
 """ % (str(protected),str(probe_binary)))
             security.write_text(security.read_text().replace(
                 "print(json.dumps(dict(label=label,plist=str(plist))))",
-                """result=subprocess.run(%r,capture_output=True,text=True)
-assert result.returncode!=0 and 'remove the matching helper' in result.stderr, 'loaded helper did not block refresh'
+                """helper=Path('/Library/LaunchAgents/com.rss-mdm.agent.execution.user.plist')
+owned=helper.read_bytes(); changed=plistlib.loads(owned); changed['Label']='unknown-helper'
+try:
+    helper.write_bytes(plistlib.dumps(changed))
+    result=subprocess.run(%r,capture_output=True,text=True)
+    assert result.returncode!=0, 'unknown helper registration admitted refresh'
+finally:
+    helper.write_bytes(owned)
 print(json.dumps(dict(label=label,plist=str(plist),helperGuard=result.stderr)))
 """ % frozen_installer(installer_source,['refresh','--scope','system','--binary',str(binary),
                     '--config',str(config),'--candidate-binary',str(binary),'--candidate-config',str(config)])))
             refresh=lab/'refresh-security.py'
             refresh_preflight=lab/'refresh-preflight.py'
-            refresh_source="import json,sqlite3\n"+inspect.getsource(journal_proof)+inspect.getsource(with_legacy_communication)+inspect.getsource(root_refresh_security)
+            refresh_source="import json,sqlite3\n"+inspect.getsource(journal_proof)+inspect.getsource(with_legacy_communication)+inspect.getsource(instrument_service_diagnostics)+inspect.getsource(assert_refresh_refusal)+inspect.getsource(root_refresh_security)
             for phase,path in [('preflight',refresh_preflight),('afterStop',refresh)]:
                 path.write_text(refresh_source+"\nprint(json.dumps(root_refresh_security(%r,%r,%r,%r,%r)))\n" %
                     (str(protected),str(binary),str(config),installer_source,phase))
@@ -1458,7 +1534,7 @@ except subprocess.CalledProcessError as error:
             db.close()
     print(json.dumps(diagnostic));raise
 subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.execution'],check=True)
-""" % ([str(binary),'--config',str(config)],[str(binary),'--config',str(config),'--import-grant',str(protected/'grant.json')],str(protected/'state')))
+""" % ([str(binary),'--config',str(config)],[str(binary),'--config',str(config),'--initialize',str(protected/'grant.json')],str(protected/'state')))
         restart = lab/'restart.py'
         restart.write_text("""import os,plistlib,subprocess
 from pathlib import Path
@@ -1466,8 +1542,9 @@ p=plistlib.loads(Path('/Library/LaunchDaemons/com.rss-mdm.agent.execution.plist'
 assert p['ProgramArguments']==%r, 'restart registration owner mismatch'
 process_file=Path(%r)
 if process_file.exists(): os.kill(int(process_file.read_text()),0)
+subprocess.run([%r,'--config',%r,'--validate-persistent'],check=True)
 subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.execution'],check=True)
-""" % ([str(binary),'--config',str(config)],str(protected/'restart-pid')))
+""" % ([str(binary),'--config',str(config)],str(protected/'restart-pid'),str(binary),str(config)))
         cleanup.write_text("from pathlib import Path\nif Path(%r).exists(): Path(%r).write_text('finished')\n" % (str(protected/'restart-pid'),str(protected/'restart-finish')) + cleanup.read_text())
         receipt['journal'] = str(protected / 'state/execution.sqlite')
         if args.dmg_app:
@@ -1509,6 +1586,15 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
         helper = True
         run('/usr/bin/python3', str(installer), 'install', '--scope', 'user', '--binary', str(binary), '--config', str(config))
         helper = True
+        # A native PID is distinct from the asynchronous registration owner's readiness.
+        deadline=time.monotonic()+15
+        while True:
+            status=json.loads(run(str(binary),'--config',str(config),'--service-status').stdout)
+            reply=status['reply']
+            if reply['kind']=='serviceStatus' and reply['value']['readiness']['phase']=='ready': break
+            if reply['kind']!='serviceStatus' or reply['value']['readiness']['phase']=='notReady' or time.monotonic()>=deadline:
+                raise RuntimeError('authenticated service readiness failed: '+json.dumps(reply))
+            time.sleep(.2)
         def query():
             deadline = time.monotonic() + 15
             while True:
@@ -1834,7 +1920,7 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
         if probe_log: probe_log.close()
         if helper:
             try:
-                helper_plist=Path.home()/'Library/LaunchAgents/com.rss-mdm.agent.execution.user.plist'
+                helper_plist=Path('/Library/LaunchAgents/com.rss-mdm.agent.execution.user.plist')
                 if helper_plist.exists():
                     run('/usr/bin/python3', str(installer), 'remove', '--scope', 'user', '--binary', str(binary), '--config', str(config))
                 else:

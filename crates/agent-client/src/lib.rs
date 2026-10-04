@@ -11,6 +11,7 @@ mod identity;
 mod self_service;
 mod tls;
 pub use enrollment::{EnrollmentPhase, EnrollmentStatus, GrantImport};
+pub use tls::validate_public_ca;
 mod config;
 mod content;
 mod store;
@@ -19,7 +20,7 @@ pub use config::*;
 pub use content::{ContentFile, Materials};
 /// The protocol's single producer.
 use rss_mdm_agent_wire::runtime as wire;
-pub use store::{inspect_binding, validate_existing, validate_identity};
+pub use store::{inspect_binding, validate_existing, validate_identity, validate_stored_identity};
 /// Closed errors, without secrets, response bodies or backend paths.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum Error {

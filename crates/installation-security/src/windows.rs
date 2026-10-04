@@ -182,8 +182,7 @@ pub(crate) fn open_protected(
         .collect();
     let product_root = chain
         .iter()
-        .position(|p| p.file_name().is_some_and(|n| n == "RSS MDM Agent"))
-        .ok_or(Rejected)?;
+        .position(|p| p.file_name().is_some_and(|n| n == "RSS MDM Agent"));
     let mut handles = Vec::with_capacity(chain.len());
     let mut actual = PathBuf::new();
     for (index, entry) in chain.iter().enumerate().rev() {
@@ -202,7 +201,7 @@ pub(crate) fn open_protected(
             .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS)
             .open(entry)
             .map_err(|_| Rejected)?;
-        handle_protected(&file, index <= product_root)?;
+        handle_protected(&file, product_root.is_some_and(|root| index <= root))?;
         actual = final_path(&file)?;
         if !same_path(&actual, entry) {
             return Err(Rejected);

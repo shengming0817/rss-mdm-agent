@@ -102,7 +102,7 @@ export async function startLocalApp(
   if (
     !(
       (process.platform === "darwin" && process.arch === "arm64") ||
-      (process.platform === "win32" && process.arch === "x64")
+      (process.platform === "win32" && ["x64", "arm64"].includes(process.arch))
     )
   )
     throw new Error("runtime platform is not verified");

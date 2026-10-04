@@ -261,6 +261,38 @@ class EvidenceTests(unittest.TestCase):
             self.assertEqual(len(opened),1)
             self.assertIsNotNone(opened[0].poll())
 
+    def test_probe_suspension_reaps_client_and_reopens_after_refresh_failure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);binary=root/'probe'
+            binary.write_text('#!/usr/bin/python3\nimport sys\nprint(\'{"ready":true,"baseline":{}}\',flush=True)\nsys.stdin.readline()\n')
+            binary.chmod(0o700)
+            with (root/'log').open('w') as log:
+                probe=acceptance.NativeProbe(binary,root/'config',log)
+                try:
+                    for fail in (False,True):
+                        previous=probe.process
+                        try:
+                            with probe.suspended():
+                                self.assertIsNotNone(previous.poll())
+                                self.assertIsNone(probe.exchange)
+                                if fail: raise RuntimeError('refresh rejected')
+                        except RuntimeError as error:
+                            self.assertTrue(fail);self.assertEqual(str(error),'refresh rejected')
+                        self.assertNotEqual(probe.process.pid,previous.pid)
+                        self.assertIsNone(probe.process.poll())
+                        self.assertTrue(probe.identity['ready'])
+                finally: probe.close();probe.close()
+
+    def test_refresh_fault_cannot_pass_on_unrelated_quiescence_conflict(self):
+        receipt=dict(version=1,state='failed',failure_phase='stop-current',error='Identity')
+        self.assertEqual(acceptance.assert_refresh_refusal(json.dumps(receipt),'registration'),receipt)
+        for mutation in [dict(failure_phase='refresh-quiescence',error='Conflict'),
+                         dict(failure_phase='refresh-preflight'),dict(error='Unavailable'),dict(state='running')]:
+            with self.assertRaises(AssertionError):
+                acceptance.assert_refresh_refusal(json.dumps(dict(receipt,**mutation)),'registration')
+        for missing in ('', 'native execution failed', json.dumps(dict(receipt,version=2))):
+            with self.assertRaises(AssertionError): acceptance.assert_refresh_refusal(missing,'registration')
+
     def test_authorization_password_file_is_private_and_never_an_argument(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);password=root/'.passwd';password.write_text('synthetic-admin-password\n');password.chmod(0o600)

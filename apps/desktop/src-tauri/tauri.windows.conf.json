@@ -1,12 +1,6 @@
 {
   "bundle": {
-    "active": true,
-    "targets": ["nsis"],
-    "resources": {
-      "resources/ai-host-runtime": "ai-host-runtime"
-    },
-    "windows": {
-      "nsis": { "installMode": "currentUser" }
-    }
+    "active": false,
+    "resources": { "resources/ai-host-runtime": "ai-host-runtime" }
   }
 }
