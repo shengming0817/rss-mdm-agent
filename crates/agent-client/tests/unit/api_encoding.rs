@@ -56,3 +56,81 @@ fn validates_raw_json_before_normalization() {
         assert!(agent_api::decode::<TaskPayload>(&serde_json::to_vec(&invalid).unwrap()).is_err());
     }
 }
+
+fn report_value(
+    shape: agent_api::runtime::ValueType,
+    value: agent_api::runtime::Scalar,
+) -> Result<agent_api::runtime::ReportRequest, crate::Error> {
+    use crate::protocol::ReportRequestExt;
+    use agent_api::runtime::{CollectedValue, FieldValue, ReportBody, ReportRequest};
+    let mut collection = crate::test_support::collections().remove(0);
+    collection.fields[0].value_type = shape;
+    let field = collection.fields[0].key.clone();
+    ReportRequest::new(
+        uuid::Uuid::from_u128(1),
+        1,
+        1,
+        collection,
+        ReportBody::Snapshot {
+            values: vec![FieldValue {
+                field,
+                value: CollectedValue::Value(value),
+            }],
+        },
+    )
+}
+
+#[test]
+fn report_strings_preserve_character_budget_and_allowed_text() {
+    use agent_api::runtime::{Scalar, ValueType};
+    let shape = ValueType::String {
+        max_length: 4,
+        allow_empty: false,
+    };
+    for text in ["设备一", "设备一号", "a\n\tb"] {
+        assert!(report_value(shape.clone(), Scalar::String(text.into())).is_ok());
+    }
+    for text in ["设备一号机", "", "a\0b"] {
+        assert!(matches!(
+            report_value(shape.clone(), Scalar::String(text.into())),
+            Err(crate::Error::Protocol)
+        ));
+    }
+    assert!(report_value(
+        ValueType::String {
+            max_length: 4,
+            allow_empty: true,
+        },
+        Scalar::String(String::new()),
+    )
+    .is_ok());
+}
+
+#[test]
+fn report_nested_strings_use_the_same_character_contract() {
+    use agent_api::runtime::{Scalar, ValueType};
+    let shape = ValueType::Array {
+        max_items: 1,
+        items: Box::new(ValueType::Object {
+            properties: [(
+                "name".into(),
+                ValueType::String {
+                    max_length: 4,
+                    allow_empty: false,
+                },
+            )]
+            .into(),
+        }),
+    };
+    for (text, accepted) in [
+        ("设备一号", true),
+        ("a\n\tb", true),
+        ("设备一号机", false),
+        ("a\0b", false),
+    ] {
+        let value = Scalar::Array(vec![Scalar::Object(
+            [("name".into(), Scalar::String(text.into()))].into(),
+        )]);
+        assert_eq!(report_value(shape.clone(), value).is_ok(), accepted);
+    }
+}

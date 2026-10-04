@@ -1857,6 +1857,9 @@ impl ReportRequestExt for ReportRequest {
     }
 }
 fn validate_scalar(value: &Scalar, shape: &ValueType) -> Result<(), Error> {
+    if matches!(value, Scalar::String(v) if v.contains('\0')) {
+        return Err(Error::Protocol);
+    }
     match (value, shape) {
         (Scalar::Integer(_), ValueType::Integer)
         | (Scalar::Number(_), ValueType::Number)
@@ -1868,12 +1871,7 @@ fn validate_scalar(value: &Scalar, shape: &ValueType) -> Result<(), Error> {
                 max_length,
                 allow_empty,
             },
-        ) if v.len() <= *max_length as usize
-            && (*allow_empty || !v.is_empty())
-            && !v.chars().any(char::is_control) =>
-        {
-            Ok(())
-        }
+        ) if v.chars().count() <= *max_length as usize && (*allow_empty || !v.is_empty()) => Ok(()),
         (Scalar::String(v), ValueType::Enum { values }) if values.contains(v) => Ok(()),
         (Scalar::Array(v), ValueType::Array { items, max_items })
             if v.len() <= *max_items as usize =>
