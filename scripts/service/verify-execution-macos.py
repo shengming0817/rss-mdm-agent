@@ -575,6 +575,7 @@ def with_legacy_communication(path, operation):
         # Keep unexpected writes as evidence, restore every original file even
         # after a partial move, and never let TemporaryDirectory delete originals.
         errors=[]
+        missing=installed and not (path.exists() or path.is_symlink())
         def retain(source):
             evidence=source.with_name(source.name+'.unexpected-'+uuid.uuid4().hex)
             source.rename(evidence);unexpected.append(evidence)
@@ -597,8 +598,8 @@ def with_legacy_communication(path, operation):
             raise AssertionError('restore failed; original files retained at '+str(staging)+': '+str(errors))
         if candidate.exists(): candidate.unlink()
         staging.rmdir()
-        if unexpected:
-            raise AssertionError('preflight changed candidate; originals restored and evidence retained: '+str(unexpected))
+        if missing or unexpected:
+            raise AssertionError('preflight changed candidate; originals restored; removed='+str(missing)+'; evidence retained: '+str(unexpected))
 
 
 def root_refresh_security(root, binary, config, installer_source, phase):

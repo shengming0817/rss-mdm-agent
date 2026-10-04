@@ -139,7 +139,7 @@ class BackendLifecycleTests(unittest.TestCase):
     def test_legacy_injection_restores_the_active_delete_transaction_file_set(self):
         # A separate connection owner keeps a real write transaction and journal
         # open across injection. Commit must succeed after every restore path.
-        for fault in ('reject','candidate_write','sidecar','partial_move','install'):
+        for fault in ('reject','candidate_write','candidate_delete','sidecar','partial_move','install'):
           with self.subTest(fault=fault), tempfile.TemporaryDirectory() as directory:
             path=Path(directory)/'communication.sqlite'
             setup=sqlite3.connect(path)
@@ -169,6 +169,7 @@ finally: connection.close()
                             if fault=='candidate_write':
                                 candidate.execute('UPDATE facts SET value=9');candidate.commit()
                         finally: candidate.close()
+                        if fault=='candidate_delete': path.unlink()
                         if fault=='sidecar': journal.write_bytes(b'unexpected candidate journal')
                         raise RuntimeError('schema rejected')
                     rename=Path.rename
@@ -178,7 +179,7 @@ finally: connection.close()
                         if not failed and ((fault=='partial_move' and p==journal) or (fault=='install' and p.name=='candidate.sqlite')):
                             failed=True;raise OSError('injected move failure')
                         return rename(p,target)
-                    expected=AssertionError if fault in ('candidate_write','sidecar') else OSError if fault in ('partial_move','install') else RuntimeError
+                    expected=AssertionError if fault in ('candidate_write','candidate_delete','sidecar') else OSError if fault in ('partial_move','install') else RuntimeError
                     with patch.object(Path,'rename',failing_rename), self.assertRaises(expected):
                         acceptance.with_legacy_communication(path,reject)
                     for p,(inode,body) in original.items():
