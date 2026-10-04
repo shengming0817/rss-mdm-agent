@@ -452,3 +452,76 @@ mod selection_tests {
         }
     }
 }
+
+/// Ask the protected installation owner to start this configured login's helper.
+pub fn install_user_helper() -> Result<(), Error> {
+    use std::{
+        collections::BTreeMap,
+        path::PathBuf,
+        process::{Command, Stdio},
+        time::{Duration, Instant},
+    };
+    #[derive(serde::Deserialize)]
+    struct Pin {
+        version: u32,
+        ipc_version: u8,
+        service: installation_security::Artifact,
+        helper_work_roots: BTreeMap<String, PathBuf>,
+    }
+    let path = installation_security::deployment_path().map_err(|_| Error::Configuration)?;
+    match std::fs::symlink_metadata(&path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(_) => return Err(Error::Unavailable),
+        Ok(_) => (),
+    }
+    let pin: Pin = serde_json::from_slice(
+        &installation_security::read_protected(&path).map_err(|_| Error::Denied)?,
+    )
+    .map_err(|_| Error::Configuration)?;
+    if pin.version != execution_ipc::host::DEPLOYMENT_VERSION
+        || pin.ipc_version != execution_ipc::host::IPC_VERSION
+    {
+        return Err(Error::Configuration);
+    }
+    let subject = execution_ipc::host::current_subject()?;
+    if !pin.helper_work_roots.contains_key(&subject) {
+        return Ok(());
+    }
+    pin.service
+        .verify(&pin.service.path)
+        .map_err(|_| Error::Denied)?;
+    installation_security::Target::current()
+        .map_err(|_| Error::Denied)?
+        .verify_image(&pin.service.path)
+        .map_err(|_| Error::Denied)?;
+    let mut child = Command::new(&pin.service.path)
+        .arg("--installation")
+        .arg("install")
+        .arg("--scope")
+        .arg("user")
+        .arg("--binary")
+        .arg(&pin.service.path)
+        .arg("--config")
+        .arg(&path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|_| Error::Unavailable)?;
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        if let Some(status) = child.try_wait().map_err(|_| Error::Unavailable)? {
+            return if status.success() {
+                Ok(())
+            } else {
+                Err(Error::Unavailable)
+            };
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(Error::Unavailable);
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
