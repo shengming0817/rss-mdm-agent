@@ -67,6 +67,18 @@ fn run() -> Result<(), Error> {
             &secret,
         );
     }
+    if args.len() == 2 && args[0] == "--recover-certificate" {
+        let secret = agent_service::installation::stdin_secret()?;
+        let bytes = installation_security::read_protected(std::path::Path::new(&args[1]))
+            .map_err(|_| Error::Configuration)?;
+        let grant = serde_json::from_slice(&bytes).map_err(|_| Error::Protocol)?;
+        return tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .map_err(|_| Error::Unavailable)?
+            .block_on(deployment.recover(grant, &secret));
+    }
     if args.len() == 1 && args[0] == "--renew-certificate" {
         return tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)

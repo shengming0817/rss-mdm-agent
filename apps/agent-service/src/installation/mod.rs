@@ -79,7 +79,6 @@ pub struct Candidate {
     pub tenant: uuid::Uuid,
     pub signing_keys: BTreeMap<String, String>,
     pub ca_pem: Option<String>,
-    pub device_ca_pem: String,
     pub signing_mode: SigningMode,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -115,7 +114,7 @@ impl Candidate {
             return Err(Error::Identity);
         }
         let candidate: Self = serde_json::from_slice(&bytes).map_err(|_| Error::Configuration)?;
-        if candidate.version != 1
+        if candidate.version != 2
             || candidate.service.path != deployment.service.path
             || candidate.origin != deployment.origin
             || candidate.tenant != deployment.tenant
@@ -133,7 +132,7 @@ impl Candidate {
         Ok((candidate, hash(&bytes)))
     }
     fn validate(&self) -> Result<(), Error> {
-        if self.version != 1
+        if self.version != 2
             || self.target != Target::current().map_err(|_| Error::Unsupported)?
             || !self.root.is_absolute()
             || self.tenant.is_nil()
@@ -148,10 +147,9 @@ impl Candidate {
         {
             return Err(Error::Configuration);
         }
-        agent_client::validate_public_ca(self.device_ca_pem.as_bytes())?;
-        if let Some(ca) = &self.ca_pem {
-            agent_client::validate_public_ca(ca.as_bytes())?;
-        }
+        agent_client::validate_public_ca(
+            self.ca_pem.as_ref().ok_or(Error::Configuration)?.as_bytes(),
+        )?;
         if self.signing_keys.len() > 32
             || self.signing_keys.iter().any(|(id, key)| {
                 use base64::Engine;
@@ -241,7 +239,6 @@ impl Candidate {
             tenant: self.tenant,
             signing_keys: self.signing_keys.clone(),
             ca_file: self.ca_pem.as_ref().map(|_| base.join("https-ca.pem")),
-            device_ca_file: base.join("device-ca.pem"),
             installation_id: uuid::Uuid::new_v4(),
             installation_artifact: artifact,
             state_root: base.join("state"),

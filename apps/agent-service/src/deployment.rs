@@ -27,7 +27,6 @@ pub struct Deployment {
     pub installation_id: uuid::Uuid,
     /// SHA256 of the fixed, public installation candidate manifest.
     pub installation_artifact: String,
-    pub device_ca_file: PathBuf,
     pub registration_clients: PeerPolicy,
     pub state_root: PathBuf,
     pub service: installation_security::Artifact,
@@ -61,7 +60,6 @@ impl Deployment {
             || value.ipc_version != execution_ipc::host::IPC_VERSION
             || value.installation_id.is_nil()
             || !crate::installation::digest_valid(&value.installation_artifact)
-            || !value.device_ca_file.is_absolute()
             || !value.state_root.is_absolute()
             || !value.execution.material_root.is_absolute()
             || value.execution.material_root.starts_with(&value.state_root)
@@ -193,8 +191,6 @@ impl Deployment {
             architecture,
             keys,
             transport: Transport::Https,
-            device_ca_pem: installation_security::read_protected(&self.device_ca_file)
-                .map_err(|_| Error::Configuration)?,
             ca_pem: self
                 .ca_file
                 .as_ref()
@@ -308,8 +304,22 @@ impl Deployment {
         client.validate_grant_import(&grant, &reference, &self.capabilities())?;
         client.import_bootstrap_secret(&reference, secret)?;
         client.import_grant(grant, &reference, self.capabilities())?;
-        client.drive_enrollment().await?;
+        client.drive_pki().await?;
         self.device_service(client).map(drop)
+    }
+    /// Explicit offline administrator recovery; the communication lease excludes a running daemon.
+    pub async fn recover(
+        &self,
+        grant: agent_client::GrantImport,
+        secret: &agent_client::Secret,
+    ) -> Result<(), Error> {
+        let mut client = self.communication(false)?;
+        let reference = format!("bootstrap-{}", grant.operation_id);
+        client.validate_recovery_import(&grant, &reference)?;
+        client.import_bootstrap_secret(&reference, secret)?;
+        client.import_recovery_grant(grant, &reference)?;
+        client.drive_pki().await?;
+        client.runtime_readiness()
     }
     /// Manual same-registration renewal; the exclusive owner lease requires the daemon to be stopped.
     pub async fn renew(&self) -> Result<(), Error> {
@@ -630,7 +640,6 @@ mod tests {
             ca_file: None,
             installation_artifact: "a".repeat(64),
             installation_id: uuid::Uuid::new_v4(),
-            device_ca_file: PathBuf::new(),
             registration_clients: PeerPolicy {
                 images: vec![image.clone()],
                 subjects: vec![],

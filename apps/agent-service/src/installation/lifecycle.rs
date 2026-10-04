@@ -179,6 +179,12 @@ pub(super) fn run(args: &[OsString]) -> Result<(), Error> {
                 &opts.path("--candidate-config")?,
             )?;
         }
+        "upgrade-device-pki" => {
+            if !opts.system()? {
+                return Err(Error::Identity);
+            }
+            upgrade_device_pki(&opts.config()?, &opts.path("--candidate")?)?;
+        }
         "apply" => {
             if !opts.system()? {
                 return Err(Error::Identity);
@@ -231,7 +237,6 @@ fn preserved(old: &Deployment, next: &Deployment) -> Result<(), Error> {
         || old.helper_work_roots != next.helper_work_roots
         || old.execution.work_root != next.execution.work_root
         || old.execution.material_root != next.execution.material_root
-        || old.device_ca_file != next.device_ca_file
         || old.ca_file != next.ca_file
     {
         return Err(Error::Identity);
@@ -380,12 +385,6 @@ fn apply(candidate_path: &Path, profile: Option<&PathBuf>, config: &Path) -> Res
     if let Some(old) = old {
         next.installation_id = old.installation_id;
         preserved(&old, &next)?;
-        if installation_security::read_protected(&old.device_ca_file)
-            .map_err(|_| Error::Identity)?
-            != candidate.device_ca_pem.as_bytes()
-        {
-            return Err(Error::Identity);
-        }
         if let Some(ca) = &old.ca_file {
             if installation_security::read_protected(ca).map_err(|_| Error::Identity)?
                 != candidate.ca_pem.as_ref().ok_or(Error::Identity)?.as_bytes()
@@ -404,7 +403,6 @@ fn apply(candidate_path: &Path, profile: Option<&PathBuf>, config: &Path) -> Res
         }
         // Existing trust files are never overwritten, including failed or retired installations.
         outcome::phase("publish-trust")?;
-        retain_public(&next.device_ca_file, candidate.device_ca_pem.as_bytes())?;
         if let Some(ca) = &next.ca_file {
             retain_public(
                 ca,
@@ -424,6 +422,121 @@ fn apply(candidate_path: &Path, profile: Option<&PathBuf>, config: &Path) -> Res
     outcome::phase("desktop-entry")?;
     platform::desktop_entry(&candidate)?;
     Ok(())
+}
+
+// Only this explicit owner operation reads the immediately preceding formats.
+fn prior_format(
+    mut value: serde_json::Value,
+    version: u64,
+    field: &str,
+    next: u64,
+) -> Result<serde_json::Value, Error> {
+    let object = value.as_object_mut().ok_or(Error::Configuration)?;
+    if object.get("version").and_then(|v| v.as_u64()) != Some(version)
+        || !object
+            .remove(field)
+            .is_some_and(|v| v.as_str().is_some_and(|s| !s.is_empty()))
+    {
+        return Err(Error::Configuration);
+    }
+    object.insert("version".into(), next.into());
+    Ok(value)
+}
+fn upgrade_device_pki(config: &Path, candidate_path: &Path) -> Result<(), Error> {
+    let (candidate, artifact) = Candidate::load(candidate_path)?;
+    candidate
+        .service
+        .verify(&std::env::current_exe()?)
+        .map_err(|_| Error::Identity)?;
+    let raw = installation_security::read_protected(config).map_err(|_| Error::Identity)?;
+    let value: serde_json::Value =
+        serde_json::from_slice(&raw).map_err(|_| Error::Configuration)?;
+    if value.get("version").and_then(|v| v.as_u64()) == Some(5) {
+        // Publication is atomic. A restart can only finish this same already-published candidate.
+        let current = Deployment::load(config)?;
+        if current.installation_artifact != artifact
+            || current.service.path != candidate.service.path
+        {
+            return Err(Error::Conflict);
+        }
+        platform::register(true, &current.service.path, config)?;
+        platform::desktop_entry(&candidate)?;
+        return Ok(());
+    }
+    let mut old: Deployment = serde_json::from_value(prior_format(value, 4, "device_ca_file", 5)?)
+        .map_err(|_| Error::Configuration)?;
+    let manifests = config
+        .parent()
+        .ok_or(Error::Configuration)?
+        .join("install-manifests");
+    let legacy_bytes = installation_security::read_protected(
+        &manifests.join(format!("{}.json", old.installation_artifact)),
+    )
+    .map_err(|_| Error::Identity)?;
+    if hash(&legacy_bytes) != old.installation_artifact {
+        return Err(Error::Identity);
+    }
+    let legacy: Candidate = serde_json::from_value(prior_format(
+        serde_json::from_slice(&legacy_bytes).map_err(|_| Error::Configuration)?,
+        1,
+        "device_ca_pem",
+        2,
+    )?)
+    .map_err(|_| Error::Configuration)?;
+    legacy.validate()?;
+    if legacy.service.path != old.service.path
+        || legacy.origin != old.origin
+        || legacy.tenant != old.tenant
+    {
+        return Err(Error::Identity);
+    }
+    old.service
+        .verify(&old.service.path)
+        .map_err(|_| Error::Identity)?;
+    let profile = Profile {
+        subjects: old.clients.subjects.clone(),
+        helper_work_roots: old.helper_work_roots.clone(),
+    };
+    let mut next = candidate.deployment(artifact.clone(), profile, config)?;
+    next.installation_id = old.installation_id;
+    preserved(&old, &next)?;
+    let ca = old.ca_file.as_ref().ok_or(Error::Configuration)?;
+    if installation_security::read_protected(ca).map_err(|_| Error::Identity)?
+        != candidate
+            .ca_pem
+            .as_ref()
+            .ok_or(Error::Configuration)?
+            .as_bytes()
+    {
+        return Err(Error::Identity);
+    }
+    old.preflight()?; // Same communication schema and execution authority, without requiring the retired key.
+    platform::quiescent(&old, config)?;
+    platform::stop(true, &old.service.path, config)?;
+    // The stopped owner must actually release its sole communication lease before publication.
+    let lease =
+        platform_private_storage::open_existing(&old.state_root.join("communication/client.lock"))?;
+    fs2::FileExt::try_lock_exclusive(&lease).map_err(|_| Error::Conflict)?;
+    old.preflight()?;
+    let converted = json(&legacy)?;
+    let converted_digest = hash(&converted);
+    retain_public(
+        &manifests.join(format!("{converted_digest}.json")),
+        &converted,
+    )?;
+    old.installation_artifact = converted_digest;
+    let bytes =
+        installation_security::read_protected(candidate_path).map_err(|_| Error::Identity)?;
+    if hash(&bytes) != artifact {
+        return Err(Error::Identity);
+    }
+    retain_public(&manifests.join(format!("{artifact}.json")), &bytes)?;
+    // No rollback to a format rejected by this owner. Retry the explicit command after interruption.
+    platform::remove(true, &old.service.path, config)?;
+    publish(config, &json(&next)?)?;
+    drop(lease);
+    platform::register(true, &next.service.path, config)?;
+    platform::desktop_entry(&candidate)
 }
 
 fn installation_lock(config: &Path, system: bool) -> Result<std::fs::File, Error> {
@@ -448,6 +561,21 @@ fn installation_lock(config: &Path, system: bool) -> Result<std::fs::File, Error
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn owner_upgrade_accepts_only_immediate_previous_shape_and_preserves_identity_fields() {
+        let original = serde_json::json!({"version":4,"device_ca_file":"/protected/old-ca.pem","installation_id":"retained","state_root":"/retained/state","tenant":"retained-tenant"});
+        let converted = prior_format(original.clone(), 4, "device_ca_file", 5).unwrap();
+        assert_eq!(converted["version"], 5);
+        assert_eq!(converted["installation_id"], original["installation_id"]);
+        assert_eq!(converted["state_root"], original["state_root"]);
+        assert!(prior_format(converted, 4, "device_ca_file", 5).is_err());
+        let mut older = original.clone();
+        older["version"] = 3.into();
+        assert!(prior_format(older, 4, "device_ca_file", 5).is_err());
+        let mut incomplete = original;
+        incomplete.as_object_mut().unwrap().remove("device_ca_file");
+        assert!(prior_format(incomplete, 4, "device_ca_file", 5).is_err());
+    }
     #[test]
     fn uncertain_native_activity_blocks_publication_and_rollback() {
         let mut events = vec![];
