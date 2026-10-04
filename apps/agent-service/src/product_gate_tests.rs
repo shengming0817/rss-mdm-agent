@@ -1137,7 +1137,7 @@ async fn policy_confirmation_is_single_exact_and_bound_to_employee_generation() 
         .await,
         Reply::Rejected
     ));
-    assert!(!c
+    assert!(c
         .service
         .core
         .policy_readable(
@@ -1147,6 +1147,16 @@ async fn policy_confirmation_is_single_exact_and_bound_to_employee_generation() 
         )
         .unwrap());
     assert!(c._server.data.lock().unwrap().invocations.is_empty());
+    let Reply::PolicyRequest { value: historical } = c
+        .policy_call(Request::PolicyStatus {
+            request: choice.request.clone(),
+        })
+        .await
+    else {
+        panic!("same employee may read the original journal across Desktop generations")
+    };
+    assert_eq!(historical.action.request(), &choice.request);
+    assert_eq!(historical.state, BackendRequestState::AwaitingConfirmation);
     c.employee("generation-one").await;
     c._server.data.lock().unwrap().invocation_reply_lost = true;
     let Reply::PolicyRequest { value: submitted } = c

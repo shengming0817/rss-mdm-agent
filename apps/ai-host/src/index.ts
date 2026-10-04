@@ -140,6 +140,21 @@ export async function startLocalApp(
       requireLocalExecution(current, request.namespace);
       if (!current || !available(request.namespace))
         throw new Error("unbound origin");
+      if (request.catalog) {
+        const expected = request.catalog;
+        const connection = await store.connection(
+          request.namespace,
+          expected.config.id,
+          Number(expected.config.revision),
+        );
+        if (
+          !connection.ok ||
+          connection.value.provider !== expected.provider ||
+          connection.value.status === "deleted"
+        )
+          throw new Error("unbound origin");
+        return { binding: expected, userGeneration: current.generation };
+      }
       if (!request.commandId) {
         const session = await store.session(request.namespace);
         if (!session.ok) throw new Error("unbound origin");

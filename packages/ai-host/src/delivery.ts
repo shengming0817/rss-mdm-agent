@@ -39,6 +39,10 @@ export interface DeliveryRouter {
   catalog?(
     namespace: Namespace,
     budget: Budget,
+    binding: Pick<
+      import("@rss-mdm-agent/ai-contract").ProviderConfiguration,
+      "provider" | "config"
+    >,
   ): ReturnType<ToolEndpoint["list"]>;
   prepare(
     namespace: Namespace,

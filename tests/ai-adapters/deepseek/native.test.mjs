@@ -535,6 +535,7 @@ test("real worker restoration fault survives IPC and budget classification", asy
           apiKey: "fixture",
           apiUrl: "https://api.deepseek.com",
           controlled: false,
+          tools: [],
           restore: true,
           composition: COMPOSITION_ID,
         },

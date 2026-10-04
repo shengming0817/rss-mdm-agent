@@ -420,7 +420,7 @@ for (const disposition of ["rejected", "returned"]) {
       const s = await nativeFixture(t, {
         controlled: true,
         endpoint: {
-          list: toolCatalog(["inventory.read"]),
+          list: toolCatalog(["inventory_read"]),
           propose: async (proposal) => {
             calls.push(proposal);
             return {
@@ -438,7 +438,7 @@ for (const disposition of ["rejected", "returned"]) {
               },
               functionCall(
                 "proposal-call",
-                "inventory.read",
+                "inventory_read",
                 { device: "one" },
                 "mcp__rss_host",
               ),
@@ -466,14 +466,14 @@ for (const disposition of ["rejected", "returned"]) {
         [
           "list_mcp_resource_templates",
           "list_mcp_resources",
-          "mcp__rss_host__inventory.read",
+          "mcp__rss_host__inventory_read",
           "read_mcp_resource",
         ].sort(),
       );
       assert.ok(calls.every((call) => /^[a-f0-9-]{36}$/.test(call.callId)));
       assert.deepEqual(
         calls.map(({ callId, ...proposal }) => proposal),
-        [{ name: "inventory.read", arguments: { device: "one" } }],
+        [{ name: "inventory_read", arguments: { device: "one" } }],
       );
       const tool = result.observations.find(
         (value) => value.body?.type === "tool_result",

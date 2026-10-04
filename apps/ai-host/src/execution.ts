@@ -107,6 +107,10 @@ export async function connectExecution(
   resolveBinding: (request: {
     namespace: Namespace;
     commandId?: string;
+    catalog?: Pick<
+      import("@rss-mdm-agent/ai-contract").ProviderConfiguration,
+      "provider" | "config"
+    >;
   }) => Promise<{
     binding: Pick<
       import("@rss-mdm-agent/ai-contract").Binding,
@@ -186,9 +190,13 @@ export async function connectExecution(
     },
   });
   const router: DeliveryRouter = {
-    catalog: async (namespace, b) => {
+    catalog: async (namespace, b, catalogBinding) => {
+      let stage = "binding";
       try {
-        const { binding, userGeneration } = await resolveBinding({ namespace });
+        const { binding, userGeneration } = await resolveBinding({
+          namespace,
+          catalog: catalogBinding,
+        });
         const origin: ExecutionOrigin = {
           schemaVersion: 7,
           kind: "executionOrigin",
@@ -198,6 +206,7 @@ export async function connectExecution(
           provider: binding.provider as ExecutionOrigin["provider"],
           config: binding.config,
         };
+        stage = "policy-tools";
         const value = await client.callTool(
           {
             name: "execution_policy_tools",
@@ -207,10 +216,12 @@ export async function connectExecution(
           undefined,
           { signal: b.signal, timeout: b.timeoutMs },
         );
+        stage = "projection";
         boundedJson(value, defaultLimits);
         const body = value.structuredContent as any;
         if (body?.status !== "ok" || !Array.isArray(body.result))
           return fail("unavailable");
+        stage = "catalog";
         const catalog = await client.listTools(
           {},
           { signal: b.signal, timeout: b.timeoutMs },
@@ -220,6 +231,7 @@ export async function connectExecution(
           ...body.result,
         ]);
       } catch {
+        console.error(`RSS_POLICY_DISCOVERY_UNAVAILABLE stage=${stage}`);
         return fail("unavailable");
       }
     },

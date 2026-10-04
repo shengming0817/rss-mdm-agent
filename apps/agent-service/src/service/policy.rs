@@ -171,10 +171,7 @@ impl Core {
         else {
             return Ok(true);
         };
-        let PreparedAction::Policy {
-            actor, generation, ..
-        } = &record.action
-        else {
+        let PreparedAction::Policy { actor, .. } = &record.action else {
             return Ok(true);
         };
         if trigger_subject(&record.trigger) != Some(subject)
@@ -195,7 +192,6 @@ impl Core {
                 .current(&current.subject)
                 .is_ok_and(|epoch| epoch == current.epoch)
                 && &current.actor == actor
-                && &current.generation == generation
                 && self
                     .host
                     .clock
@@ -558,7 +554,6 @@ impl<S: IdentityProvider> DeviceService<S> {
                     return Err(Error::Denied);
                 };
                 if actor != &employee.actor
-                    || generation != &employee.generation
                     || previous.trigger_os_session() != command.binding.as_ref()
                 {
                     return Err(Error::Denied);
@@ -585,6 +580,11 @@ impl<S: IdentityProvider> DeviceService<S> {
                         Ok(value) => Reply::PolicyStatus {
                             value: self.bridge.protect_status(value)?,
                         },
+                        Err(Error::NotFound) if generation != &employee.generation => {
+                            Reply::PolicyRequest {
+                                value: Box::new(previous),
+                            }
+                        }
                         Err(Error::NotFound) => Reply::PolicyRequest {
                             value: Box::new(self.send_policy(previous, &employee, commands).await?),
                         },

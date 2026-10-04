@@ -241,7 +241,7 @@ export class WorkerPort implements ProviderAgentPort {
           if (
             !["propose", "list"].includes(method) ||
             this.closing ||
-            !this.toolsAdmitted ||
+            (method === "propose" && !this.toolsAdmitted) ||
             !this.bridge
           )
             return fail("permission_denied");

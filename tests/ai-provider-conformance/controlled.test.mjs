@@ -267,6 +267,13 @@ for (const provider of engines) {
         } finally {
           unwrap(await store.close(budget()));
         }
+      } catch (error) {
+        // Only closed-stage diagnostics; never configuration or tool payloads.
+        const diagnostics =
+          stderr.match(/RSS_POLICY_DISCOVERY_UNAVAILABLE stage=[a-z-]+/g) ?? [];
+        throw new Error(`${error.message}; ${diagnostics.join(", ")}`, {
+          cause: error,
+        });
       } finally {
         peer?.close();
         const code = await stop(app);

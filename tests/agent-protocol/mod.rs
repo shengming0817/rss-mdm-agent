@@ -495,85 +495,7 @@ async fn handler(
         return runtime_error(StatusCode::UNAUTHORIZED, ErrorCode::InvalidIdentity);
     }
     if path.contains("/self-service/") {
-        if d.activation.is_none()
-            || headers
-                .get("x-rss-user-session")
-                .and_then(|v| v.to_str().ok())
-                != Some(&"c".repeat(64))
-            || headers.contains_key("cookie")
-        {
-            return runtime_error(StatusCode::UNAUTHORIZED, ErrorCode::InvalidIdentity);
-        }
-        d.employee_calls.push((uri.to_string(), value.clone()));
-        if let Some((suffix, body)) = &d.response_override {
-            if path.ends_with(suffix) {
-                return axum::Json(body.clone()).into_response();
-            }
-        }
-        if path.ends_with("/scripts") {
-            return axum::Json(d.self_service_directory.clone().unwrap_or(
-                SelfServiceDirectoryResponse {
-                    items: vec![],
-                    next_cursor: None,
-                    as_of: d.time.now().unwrap(),
-                },
-            ))
-            .into_response();
-        }
-        if path.ends_with("/invocations") {
-            let Ok(input) = serde_json::from_value::<SelfServiceInvoke>(value.clone()) else {
-                return StatusCode::BAD_REQUEST.into_response();
-            };
-            let accepted = if let Some((old, accepted)) = d.invocations.get(&input.operation_id) {
-                if old != &value {
-                    return StatusCode::CONFLICT.into_response();
-                }
-                accepted.clone()
-            } else {
-                let accepted = SelfServiceAccepted {
-                    request_id: input.operation_id,
-                    run_id: Uuid::new_v4(),
-                    policy_id: input.policy_id,
-                    policy_revision: input.policy_revision,
-                    policy_version: input.policy_version,
-                };
-                d.invocations
-                    .insert(input.operation_id, (value, accepted.clone()));
-                accepted
-            };
-            if std::mem::take(&mut d.invocation_reply_lost) {
-                return runtime_error(
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    ErrorCode::ServiceUnavailable,
-                );
-            }
-            return (StatusCode::ACCEPTED, axum::Json(accepted)).into_response();
-        }
-        if let Some(id) = path
-            .rsplit('/')
-            .next()
-            .and_then(|id| Uuid::parse_str(id).ok())
-        {
-            if let Some((_, accepted)) = d.invocations.get(&id) {
-                return axum::Json(SelfServiceStatus {
-                    request_id: id,
-                    run_id: accepted.run_id,
-                    attempt_id: None,
-                    state: ScriptRunState {
-                        delivery: ScriptDelivery::Queued,
-                        execution: ScriptExecution::NotStarted,
-                        cancellation: ScriptCancellation::None,
-                        deadline: d.time.now().unwrap() + 300,
-                        started_at: None,
-                    },
-                    available_at: d.time.now().unwrap(),
-                    deadline: d.time.now().unwrap() + 300,
-                    result: None,
-                })
-                .into_response();
-            }
-        }
-        return StatusCode::NOT_FOUND.into_response();
+        return employee_response(&mut d, &uri, &headers, value);
     }
     if let Some((suffix, body)) = &d.response_override {
         if path.ends_with(suffix) {
@@ -1032,4 +954,87 @@ pub fn policy_directory_fixture() -> SelfServiceDirectoryItem {
         "parameterSources":{"name":{"kind":"input"}, "path":{"kind":"fixed","value":"/Applications"}},
         "parameterSchema":{"type":"object","properties":{"name":{"type":"string","minLength":1,"maxLength":32},"path":{"type":"string","const":"/Applications"}},"required":["name","path"],"additionalProperties":false}
     })).unwrap()
+}
+
+fn employee_response(d: &mut Data, uri: &Uri, headers: &HeaderMap, value: Value) -> Response {
+    let path = uri.path();
+    if d.activation.is_none()
+        || headers
+            .get("x-rss-user-session")
+            .and_then(|v| v.to_str().ok())
+            != Some(&"c".repeat(64))
+        || headers.contains_key("cookie")
+    {
+        return runtime_error(StatusCode::UNAUTHORIZED, ErrorCode::InvalidIdentity);
+    }
+    d.employee_calls.push((uri.to_string(), value.clone()));
+    if let Some((suffix, body)) = &d.response_override {
+        if path.ends_with(suffix) {
+            return axum::Json(body.clone()).into_response();
+        }
+    }
+    if path.ends_with("/scripts") {
+        return axum::Json(d.self_service_directory.clone().unwrap_or(
+            SelfServiceDirectoryResponse {
+                items: vec![],
+                next_cursor: None,
+                as_of: d.time.now().unwrap(),
+            },
+        ))
+        .into_response();
+    }
+    if path.ends_with("/invocations") {
+        let Ok(input) = serde_json::from_value::<SelfServiceInvoke>(value.clone()) else {
+            return StatusCode::BAD_REQUEST.into_response();
+        };
+        let accepted = if let Some((old, accepted)) = d.invocations.get(&input.operation_id) {
+            if old != &value {
+                return StatusCode::CONFLICT.into_response();
+            }
+            accepted.clone()
+        } else {
+            let accepted = SelfServiceAccepted {
+                request_id: input.operation_id,
+                run_id: Uuid::new_v4(),
+                policy_id: input.policy_id,
+                policy_revision: input.policy_revision,
+                policy_version: input.policy_version,
+            };
+            d.invocations
+                .insert(input.operation_id, (value, accepted.clone()));
+            accepted
+        };
+        if std::mem::take(&mut d.invocation_reply_lost) {
+            return runtime_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                ErrorCode::ServiceUnavailable,
+            );
+        }
+        return (StatusCode::ACCEPTED, axum::Json(accepted)).into_response();
+    }
+    if let Some(id) = path
+        .rsplit('/')
+        .next()
+        .and_then(|id| Uuid::parse_str(id).ok())
+    {
+        if let Some((_, accepted)) = d.invocations.get(&id) {
+            return axum::Json(SelfServiceStatus {
+                request_id: id,
+                run_id: accepted.run_id,
+                attempt_id: None,
+                state: ScriptRunState {
+                    delivery: ScriptDelivery::Queued,
+                    execution: ScriptExecution::NotStarted,
+                    cancellation: ScriptCancellation::None,
+                    deadline: d.time.now().unwrap() + 300,
+                    started_at: None,
+                },
+                available_at: d.time.now().unwrap(),
+                deadline: d.time.now().unwrap() + 300,
+                result: None,
+            })
+            .into_response();
+        }
+    }
+    return runtime_error(StatusCode::NOT_FOUND, ErrorCode::TaskNotFound);
 }

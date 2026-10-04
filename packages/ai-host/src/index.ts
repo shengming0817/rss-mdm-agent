@@ -571,7 +571,7 @@ export class SessionHost implements HostPort {
     }
     const tools: ToolEndpoint = {
       list: (b) =>
-        this.options.delivery?.router.catalog?.(namespace, b) ??
+        this.options.delivery?.router.catalog?.(namespace, b, configuration) ??
         Promise.resolve(fail("unsupported_capability")),
       propose: (proposal, b) => this.propose(namespace, proposal, b),
     };
