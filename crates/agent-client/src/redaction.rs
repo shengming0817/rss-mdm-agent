@@ -1,8 +1,8 @@
-use crate::{wire, Error};
+use crate::Error;
 /// Redacts the communication owner's actual credentials while preserving task output.
 /// The secret list is private and never serialized or printed.
 pub struct CredentialRedactor {
-    pub(crate) device: Vec<wire::Secret>,
+    pub(crate) device: Vec<crate::Secret>,
     pub(crate) employee: Vec<std::sync::Weak<zeroize::Zeroizing<String>>>,
 }
 impl CredentialRedactor {

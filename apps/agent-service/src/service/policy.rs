@@ -122,8 +122,8 @@ fn parameters(
     let mut expected = 0;
     for (key, source) in &directory.parameter_sources {
         let value = match source {
-            wire::ScriptParameterSource::Fixed { value } => value.clone(),
-            wire::ScriptParameterSource::Input {} => {
+            wire::ScriptParameterSource::Fixed(value) => value.clone(),
+            wire::ScriptParameterSource::Input => {
                 expected += 1;
                 inputs.get(key).ok_or(Error::Protocol)?.clone()
             }
@@ -717,7 +717,7 @@ impl<S: IdentityProvider> DeviceService<S> {
         }
     }
     pub(super) fn bind_policy_offer(&mut self, offer: &Offer) -> Result<Selection, Error> {
-        let wire::TaskPayload::Script(spec) = offer.payload() else {
+        let wire::TaskPayload::TaskSpec(spec) = offer.payload() else {
             return Err(Error::Denied);
         };
         let wire::ScriptAuthorization::SelfService {
@@ -852,7 +852,7 @@ impl<S: IdentityProvider> DeviceService<S> {
         if now >= until {
             return Err(Error::Expired);
         }
-        let wire::TaskPayload::Software(spec) = offer.payload() else {
+        let wire::TaskPayload::SoftwareTaskSpec(spec) = offer.payload() else {
             return Err(Error::Denied);
         };
         let step = spec

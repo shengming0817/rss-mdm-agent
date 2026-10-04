@@ -55,6 +55,6 @@ pub enum PolicyStatus {
         value: Box<execution_contract::BackendRequest>,
     },
     Run {
-        value: Box<rss_mdm_agent_wire::runtime::SelfServiceStatus>,
+        value: Box<agent_api::runtime::SelfServiceStatus>,
     },
 }

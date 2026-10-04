@@ -1,0 +1,216 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rss.example/agent/enroll/v1/CertificateRequest",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "wireVersion": {
+      "const": 1
+    },
+    "operationId": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "not": {
+        "const": "00000000-0000-0000-0000-000000000000"
+      }
+    },
+    "grantId": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "not": {
+        "const": "00000000-0000-0000-0000-000000000000"
+      }
+    },
+    "secret": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{43}$"
+    },
+    "csr": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 43692
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "capabilities": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 20,
+          "uniqueItems": true,
+          "prefixItems": [
+            {
+              "const": "inventory.collect.v1"
+            }
+          ],
+          "items": {
+            "enum": [
+              "inventory.collect.v1",
+              "task.execute.v1",
+              "software.msi.system.v1",
+              "software.msi.user.v1",
+              "software.pkg.system.v1",
+              "software.bundle.windows.system.v1",
+              "software.bundle.windows.user.v1",
+              "software.bundle.macos.system.v1",
+              "software.bundle.macos.user.v1",
+              "software.winget.system.v1",
+              "software.winget.user.v1",
+              "software.brew.bottle.user.v1",
+              "software.exe.system.v1",
+              "software.exe.user.v1",
+              "software.dmg.app.system.v1",
+              "software.dmg.app.user.v1",
+              "software.dmg.pkg.system.v1",
+              "software.msix.registration.user.v1",
+              "software.msix.provisioning.system.v1",
+              "mdm.enrollment.v1"
+            ]
+          }
+        },
+        "platform": {
+          "enum": [
+            "windows",
+            "macos"
+          ]
+        },
+        "architecture": {
+          "enum": [
+            "x86_64",
+            "aarch64"
+          ]
+        },
+        "executionContext": {
+          "$ref": "#/$defs/SoftwareExecutionContext"
+        }
+      },
+      "required": [
+        "capabilities",
+        "platform",
+        "architecture",
+        "executionContext"
+      ]
+    }
+  },
+  "required": [
+    "wireVersion",
+    "operationId",
+    "grantId",
+    "secret",
+    "csr",
+    "runtime"
+  ],
+  "$defs": {
+    "SoftwareExecutionContext": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "revision",
+        "osVersion",
+        "systemBroker",
+        "interactiveUser",
+        "sourceCredentials",
+        "msixSideload",
+        "msixUnsigned"
+      ],
+      "properties": {
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9223372036854775807
+        },
+        "osVersion": {
+          "type": "array",
+          "minItems": 4,
+          "maxItems": 4,
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 65535
+          },
+          "not": {
+            "const": [
+              0,
+              0,
+              0,
+              0
+            ]
+          }
+        },
+        "systemBroker": {
+          "type": "boolean"
+        },
+        "interactiveUser": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "identity",
+                "sessionId",
+                "administrator"
+              ],
+              "properties": {
+                "identity": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 184,
+                  "pattern": "^[^\\x00-\\x1f\\x7f]+$"
+                },
+                "sessionId": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                  "not": {
+                    "const": "00000000-0000-0000-0000-000000000000"
+                  }
+                },
+                "administrator": {
+                  "type": "boolean"
+                }
+              }
+            }
+          ]
+        },
+        "sourceCredentials": {
+          "type": "array",
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "source",
+              "reference"
+            ],
+            "properties": {
+              "source": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^[^\\x00-\\x1f\\x7f]+$"
+              },
+              "reference": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^[^\\x00-\\x1f\\x7f]+$"
+              }
+            }
+          }
+        },
+        "msixSideload": {
+          "type": "boolean"
+        },
+        "msixUnsigned": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

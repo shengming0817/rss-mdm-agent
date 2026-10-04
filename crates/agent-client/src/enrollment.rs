@@ -1,10 +1,11 @@
+use crate::protocol::*;
 use crate::{
     client::json_transport,
     identity::{Active, IdentityState, Pending, Purpose},
     store::{decode, encode},
     Client, Clock, Error, IdentityProvider,
 };
-use rss_mdm_agent_wire::{enroll, runtime};
+use agent_api::{enroll, runtime};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 /// Safe local registration progress; it is never device execution authority.
@@ -87,7 +88,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
     pub fn import_bootstrap_secret(
         &self,
         reference: &str,
-        secret: &runtime::Secret,
+        secret: &crate::Secret,
     ) -> Result<(), Error> {
         self.secrets.import_secret(reference, secret)
     }

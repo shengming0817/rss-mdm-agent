@@ -1,5 +1,7 @@
 #![allow(dead_code)]
+use agent_client::protocol::*;
 pub(crate) mod pki;
+use agent_api::{enroll, runtime::*};
 use agent_client::*;
 use axum::{
     body::{Body, Bytes},
@@ -9,7 +11,6 @@ use axum::{
 };
 use base64::Engine;
 use ring::signature::{Ed25519KeyPair, KeyPair};
-use rss_mdm_agent_wire::{enroll, runtime::*};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
@@ -222,7 +223,7 @@ impl Data {
             output_bytes: 65536,
             max_rows: 1,
         };
-        self.offer = Some(self.signed(TaskPayload::Script(Box::new(spec))));
+        self.offer = Some(self.signed(TaskPayload::TaskSpec(Box::new(spec))));
     }
     pub fn software(&mut self, steps: usize, user: bool) {
         self.reset_current_task();
@@ -289,7 +290,7 @@ impl Data {
                 SoftwareStartMode::Automatic
             },
         };
-        self.offer = Some(self.signed(TaskPayload::Software(spec)));
+        self.offer = Some(self.signed(TaskPayload::SoftwareTaskSpec(spec)));
     }
     fn reset_current_task(&mut self) {
         self.started = false;
@@ -743,10 +744,10 @@ fn claim_response(d: &mut Data, value: Value) -> Response {
                 .values()
                 .any(|v| v.payload.task_id() == signed.payload.task_id())
         {
-            if let TaskPayload::Software(mut spec) = signed.payload.clone() {
+            if let TaskPayload::SoftwareTaskSpec(mut spec) = signed.payload.clone() {
                 spec.execution_context =
                     serde_json::from_value(value["executionContext"].clone()).unwrap();
-                signed = d.signed(TaskPayload::Software(spec));
+                signed = d.signed(TaskPayload::SoftwareTaskSpec(spec));
                 d.offer = Some(signed.clone());
             }
         }
@@ -809,11 +810,11 @@ fn start_event(d: &mut Data, operation: String) -> Response {
         let mut payload = d.offer.as_ref().unwrap().payload.clone();
         let expiry = d.time.now().unwrap() + d.start_validity_seconds;
         match &mut payload {
-            TaskPayload::Script(v) => {
+            TaskPayload::TaskSpec(v) => {
                 v.permit = TaskPermit::Start;
                 v.expires_at = expiry;
             }
-            TaskPayload::Software(v) => {
+            TaskPayload::SoftwareTaskSpec(v) => {
                 v.permit = TaskPermit::Start;
                 v.expires_at = expiry;
             }
@@ -827,7 +828,7 @@ fn start_event(d: &mut Data, operation: String) -> Response {
     let mut signed = d.start_permit.clone().unwrap();
     if d.forged_start {
         let mut payload = signed.payload.clone();
-        if let TaskPayload::Script(v) = &mut payload {
+        if let TaskPayload::TaskSpec(v) = &mut payload {
             v.arguments.push("changed".into());
         }
         signed = d.signed(payload);
@@ -881,7 +882,7 @@ fn content_response(d: &mut Data, headers: HeaderMap) -> Response {
         .unwrap()
 }
 
-pub fn collections() -> Vec<rss_mdm_agent_wire::runtime::CollectionDefinition> {
+pub fn collections() -> Vec<agent_api::runtime::CollectionDefinition> {
     let fields:Vec<_>=["device.model","device.os.version"].into_iter().map(|key|json!({
         "key":key,"version":1,"valueType":{"kind":"string","maxLength":256,"allowEmpty":false},
         "nullable":false,"manual":false,"sources":{"agent.builtin":0},"platforms":["windows","macos"],

@@ -1,5 +1,5 @@
 use crate::{Error, IdentityProvider};
-use rss_mdm_agent_wire::{enroll, runtime};
+use agent_api::{enroll, runtime};
 use serde::{Deserialize, Serialize};
 #[derive(Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -19,6 +19,7 @@ impl IdentityState {
             return Err(enrollment_error(code));
         }
         let active = self.active.as_ref().ok_or(Error::Identity)?;
+        agent_api::validate(&active.receipt).map_err(|_| Error::Protocol)?;
         if now < active.not_before {
             return Err(Error::Clock);
         }

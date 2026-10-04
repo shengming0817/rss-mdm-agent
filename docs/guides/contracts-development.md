@@ -17,3 +17,5 @@ node scripts/check-self-service-bindings.mjs --write
 Schema 描述结构，不能替代动态预算、可信主体验证或 provider 恢复准入。新建和恢复均须重新核验当前 provider 配置与工具能力，原生历史不继承旧进程权限。不支持的格式明确拒绝，不增加兼容 reader、双写或迁移旁路。
 
 来源和改写边界见[执行契约来源](../reference/contracts-extraction.md)与[AI Runtime 来源](../reference/ai-runtime.md)。
+
+Agent HTTP API 绑定由 [agent-api](../../crates/agent-api/) 消费固定上游 schema，来源 revision 和输入校验和在 `schema/source.json`。`pnpm generate:agent-api` 更新生成物，`pnpm check:agent-api` 校验输入及生成漂移；两者只读取本仓。`schema/projection.json` 只指定 Rust 表示、字段顺序和整数宽度，字段与校验规则由原始 schema 持有。签名字节与持久化 JSON 使用现有 API 编码，客户端验证、签名验证和执行准入由 `agent-client` / 执行器持有。Cargo 依赖闭包检查覆盖普通、开发、构建、可选和平台依赖，拒绝后端 Rust 包、越界 path 与依赖覆盖。

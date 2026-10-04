@@ -1,3 +1,4 @@
+use crate::protocol::*;
 use crate::{
     store::{decode, encode, Store},
     wire, *,
@@ -209,7 +210,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
     }
     pub(crate) fn runtime_error(&self, bytes: &[u8]) -> Result<(), Error> {
         let body: wire::ErrorBody = decode(bytes)?;
-        use rss_mdm_agent_wire::enroll::ErrorCode as E;
+        use agent_api::enroll::ErrorCode as E;
         use wire::ErrorCode as R;
         let error = match body.code {
             R::CredentialRevoked => {
@@ -273,7 +274,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             .registration()?
             .collections
             .into_iter()
-            .find(|d| d.dataset() == dataset)
+            .find(|d| d.dataset == dataset)
             .ok_or(Error::Protocol)?;
         self.now()?;
         let tx = self.store.conn.transaction()?;
@@ -353,7 +354,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             .get(&signed.key_id)
             .ok_or(Error::Untrusted)?;
         signed
-            .verify(&wire::TaskVerification {
+            .verify(&TaskVerification {
                 key_id: &signed.key_id,
                 public_key: key,
                 tenant_id: self.store.cfg.tenant,
@@ -368,7 +369,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                 now,
             })
             .map_err(|_| Error::Untrusted)?;
-        if matches!(p, wire::TaskPayload::Enrollment(_)) {
+        if matches!(p, wire::TaskPayload::EnrollmentTaskSpec(_)) {
             return Err(Error::Unsupported);
         }
         Ok(())
@@ -539,7 +540,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                 if serde_json::to_vec(result.output())
                     .map_err(|_| Error::Protocol)?
                     .len()
-                    > wire::OUTPUT_CHUNK_BYTES =>
+                    > OUTPUT_CHUNK_BYTES =>
             {
                 let (reference, chunks) = wire::ChunkedTaskResult::split(result)?;
                 for chunk in chunks {
@@ -648,8 +649,8 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         offer: &Offer,
         materials: &Materials,
     ) -> Result<Start, Error> {
-        if matches!(offer.payload(),wire::TaskPayload::Software(v) if v.start_mode==wire::SoftwareStartMode::UserInitiated)
-            || matches!(offer.payload(),wire::TaskPayload::Script(v) if matches!(v.authorization, wire::ScriptAuthorization::SelfService { .. }))
+        if matches!(offer.payload(),wire::TaskPayload::SoftwareTaskSpec(v) if v.start_mode==wire::SoftwareStartMode::UserInitiated)
+            || matches!(offer.payload(),wire::TaskPayload::TaskSpec(v) if matches!(v.authorization, wire::ScriptAuthorization::SelfService { .. }))
         {
             return Err(Error::Denied);
         }
@@ -750,13 +751,13 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
 }
 pub(crate) fn same_input(a: &wire::TaskPayload, b: &wire::TaskPayload) -> bool {
     match (a, b) {
-        (wire::TaskPayload::Script(a), wire::TaskPayload::Script(b)) => {
+        (wire::TaskPayload::TaskSpec(a), wire::TaskPayload::TaskSpec(b)) => {
             let mut b = b.clone();
             b.permit = a.permit;
             b.expires_at = a.expires_at;
             &b == a
         }
-        (wire::TaskPayload::Software(a), wire::TaskPayload::Software(b)) => {
+        (wire::TaskPayload::SoftwareTaskSpec(a), wire::TaskPayload::SoftwareTaskSpec(b)) => {
             let mut b = b.clone();
             b.permit = a.permit;
             b.expires_at = a.expires_at;

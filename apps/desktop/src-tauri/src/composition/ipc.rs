@@ -56,7 +56,7 @@ macro_rules! commands {
 }
 commands! {
     self_service_observe_software(execution_contract::SoftwareReadChoice) -> execution_contract::BackendRequest = observe_software, employee = false,
-    self_service_policy_directory(PolicyDirectoryQuery) -> rss_mdm_agent_wire::runtime::SelfServiceDirectoryResponse = policy_directory, employee = true,
+    self_service_policy_directory(PolicyDirectoryQuery) -> agent_api::runtime::SelfServiceDirectoryResponse = policy_directory, employee = true,
     self_service_policy_invoke(execution_contract::PolicyChoice) -> execution_contract::BackendRequest = invoke_policy, employee = true,
     self_service_policy_confirm(ActionRef) -> execution_contract::BackendRequest = confirm_policy, employee = true,
     self_service_policy_status(ActionRef) -> PolicyStatus = policy_status, employee = true,

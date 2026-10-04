@@ -102,7 +102,7 @@ impl<S: ExecutionServicePort> ExecutionMcp<S> {
 }
 
 /// Deterministic MCP identity bound to Policy configuration and immutable execution version.
-pub fn policy_tool_name(item: &rss_mdm_agent_wire::runtime::SelfServiceDirectoryItem) -> String {
+pub fn policy_tool_name(item: &agent_api::runtime::SelfServiceDirectoryItem) -> String {
     use sha2::{Digest, Sha256};
     let hash = format!(
         "{:x}",
@@ -112,9 +112,9 @@ pub fn policy_tool_name(item: &rss_mdm_agent_wire::runtime::SelfServiceDirectory
 }
 /// Project only Input fields from the Resource-owned schema; full resolved validation remains in the service.
 pub fn policy_tool(
-    item: &rss_mdm_agent_wire::runtime::SelfServiceDirectoryItem,
+    item: &agent_api::runtime::SelfServiceDirectoryItem,
 ) -> Result<serde_json::Value, ServiceError> {
-    use rss_mdm_agent_wire::runtime::ScriptParameterSource;
+    use agent_api::runtime::ScriptParameterSource;
     if !item.self_service.published
         || !item.self_service.allow_ai
         || !matches!(item.self_service.risk_level, 1 | 2)
@@ -126,7 +126,7 @@ pub fn policy_tool(
     let input = |key: &str| {
         matches!(
             item.parameter_sources.get(key),
-            Some(ScriptParameterSource::Input {})
+            Some(ScriptParameterSource::Input)
         )
     };
     if let Some(properties) = object

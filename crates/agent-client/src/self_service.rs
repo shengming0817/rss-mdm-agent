@@ -63,7 +63,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             wire::ScriptCaller::Ai => "ai",
         };
         let mut path = format!("self-service/scripts?source={source}");
-        if let Some(after) = query.after {
+        if let Some(after) = &query.after {
             path.push_str(&format!("&after={after}"));
         }
         let response: wire::SelfServiceDirectoryResponse =

@@ -1,7 +1,7 @@
+use agent_api::runtime as wire;
 use agent_client::{Error, Materials, Offer};
 use execution_contract::*;
 use execution_runner::Artifacts;
-use rss_mdm_agent_wire::runtime as wire;
 use script_plan::{compile_invocation, ScriptInvocationInput, ScriptProfile};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -130,7 +130,7 @@ pub(crate) fn script(
     (work_root, content_path): (&Path, &Path),
     delegate: Option<std::sync::Arc<execution_ipc::helper::Connection>>,
 ) -> Result<(FrozenExecution, Artifacts), Error> {
-    let wire::TaskPayload::Script(original) = offer.payload() else {
+    let wire::TaskPayload::TaskSpec(original) = offer.payload() else {
         return Err(Error::Unsupported);
     };
     let mut compared = payload.clone();

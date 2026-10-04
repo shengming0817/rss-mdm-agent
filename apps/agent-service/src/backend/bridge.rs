@@ -1,7 +1,8 @@
 use super::request_id;
 use crate::error::app_error as map_app_error;
+use agent_api::runtime as wire;
+use agent_client::protocol::*;
 use agent_client::{Client, Clock, Error, IdentityProvider, Materials, Offer, Start};
-use rss_mdm_agent_wire::runtime as wire;
 fn encode(value: &impl serde::Serialize) -> Result<Vec<u8>, Error> {
     serde_json_canonicalizer::to_vec(value).map_err(|_| Error::Protocol)
 }
@@ -121,7 +122,7 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
     ) -> Result<PreparedExecution, Error> {
         materials.validate_offer(offer)?;
         let (device, platform, run_as, timeout, output) = match offer.payload() {
-            wire::TaskPayload::Script(v)
+            wire::TaskPayload::TaskSpec(v)
                 if matches!(
                     plan.spec().execution,
                     execution_contract::ExecutionSpec::Process {}
@@ -135,7 +136,7 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
                     u64::from(v.output_bytes),
                 )
             }
-            wire::TaskPayload::Software(v) => {
+            wire::TaskPayload::SoftwareTaskSpec(v) => {
                 let program = plan
                     .spec()
                     .execution
@@ -555,14 +556,14 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
                 Some(wire::TaskFailure::LaunchFailed),
             )?;
             return Ok(Some(match payload {
-                wire::TaskPayload::Script(_) => wire::TaskEvent::Result(wire::TaskResult::new(
+                wire::TaskPayload::TaskSpec(_) => wire::TaskEvent::Result(wire::TaskResult::new(
                     None,
                     wire::OutputQuality::Failed,
                     serde_json::Value::Null,
                     diagnostics,
                     i64::try_from(evidence.observed_at_unix_ms / 1000).map_err(|_| Error::Clock)?,
                 )?),
-                wire::TaskPayload::Software(spec) => {
+                wire::TaskPayload::SoftwareTaskSpec(spec) => {
                     wire::TaskEvent::SoftwareResult(software_result(
                         spec,
                         None,
@@ -583,7 +584,7 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
         if process.end == ProcessEnd::Cancelled && process.quiescent {
             return Ok(Some(wire::TaskEvent::Cancelled));
         }
-        if let wire::TaskPayload::Software(spec) = payload {
+        if let wire::TaskPayload::SoftwareTaskSpec(spec) = payload {
             let Some(progress) = evidence.software_progress.as_ref() else {
                 return Ok(None);
             };
@@ -603,7 +604,7 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
         )?;
         let failure = diagnostics.failure();
         Ok(Some(match payload {
-            wire::TaskPayload::Script(_) => {
+            wire::TaskPayload::TaskSpec(_) => {
                 let output = serde_json::from_str(&stdout).unwrap_or(serde_json::Value::Null);
                 let quality = match process.quality {
                     OutputQuality::Complete
@@ -685,7 +686,7 @@ pub(crate) fn settled(status: &execution_app::ExecutionStatus) -> bool {
 }
 fn bound(mut value: String) -> String {
     value.retain(|v| v != '\0');
-    let mut length = value.len().min(wire::MAX_TASK_DIAGNOSTIC_BYTES);
+    let mut length = value.len().min(MAX_TASK_DIAGNOSTIC_BYTES);
     while !value.is_char_boundary(length) {
         length -= 1;
     }
@@ -1018,7 +1019,8 @@ mod result_tests {
         let spec = {
             let mut data = server.data.lock().unwrap();
             data.software(2, false);
-            let wire::TaskPayload::Software(spec) = data.offer.as_ref().unwrap().payload.clone()
+            let wire::TaskPayload::SoftwareTaskSpec(spec) =
+                data.offer.as_ref().unwrap().payload.clone()
             else {
                 panic!("software")
             };

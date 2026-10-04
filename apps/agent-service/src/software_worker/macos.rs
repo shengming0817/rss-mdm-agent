@@ -1,4 +1,4 @@
-use rss_mdm_agent_wire::runtime as wire;
+use agent_api::runtime as wire;
 // ref: Munki installer/dmg.py and dmgutils.py; Apple copyfile.c, copyfile.h,
 // renameatx_np(2), rename(2) and fsync(2).
 use super::*;

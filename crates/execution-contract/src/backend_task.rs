@@ -132,13 +132,13 @@ pub enum PreparedAction {
         /// Immutable employee choice.
         choice: PolicyChoice,
         /// Formal backend directory DTO, including the Resource-owned schema.
-        directory: Box<rss_mdm_agent_wire::runtime::SelfServiceDirectoryItem>,
+        directory: Box<agent_api::runtime::SelfServiceDirectoryItem>,
         /// Backend Run returned for the original request, absent until acceptance is known.
         run_id: Option<Id>,
         /// Eventual signed Offer; no task/attempt is invented before this exists.
         offer: Option<BackendTask>,
         /// Authenticated product employee, checked against the signed authorization.
-        actor: rss_mdm_agent_wire::runtime::ScriptActor,
+        actor: agent_api::runtime::ScriptActor,
         /// Native product login generation.
         generation: Id,
         /// Bounded validity of the original preparation.

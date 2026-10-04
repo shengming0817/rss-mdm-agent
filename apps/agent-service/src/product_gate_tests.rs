@@ -4,10 +4,10 @@ use crate::{
     backend::gate::{ProductGateProof, TrustedRisk},
     protocol_test_support as protocol, SoftwareManager, SoftwareManagerKind,
 };
+use agent_api::runtime as wire;
 use agent_client::{Clock, OpenMode};
 use execution_contract::*;
 use execution_ipc::host::{ClientOrigin, Reply};
-use rss_mdm_agent_wire::runtime as wire;
 use sha2::{Digest as _, Sha256};
 
 struct Case {
@@ -29,13 +29,13 @@ impl Case {
         {
             let mut data = server.data.lock().unwrap();
             data.software(1, true);
-            let wire::TaskPayload::Software(mut spec) =
+            let wire::TaskPayload::SoftwareTaskSpec(mut spec) =
                 data.offer.as_ref().unwrap().payload.clone()
             else {
                 panic!("software")
             };
             spec.expires_at = clock.now().unwrap() + seconds;
-            data.offer = Some(data.signed(wire::TaskPayload::Software(spec)));
+            data.offer = Some(data.signed(wire::TaskPayload::SoftwareTaskSpec(spec)));
             data.explicit_offers = true;
         }
         let mut client = server.client(&root, OpenMode::Create);
@@ -1322,7 +1322,7 @@ async fn policy_offer_binds_the_original_journal_and_signed_start_before_dispatc
             {
                 let mut data = c._server.data.lock().unwrap();
                 data.script();
-                let wire::TaskPayload::Script(mut spec) =
+                let wire::TaskPayload::TaskSpec(mut spec) =
                     data.offer.as_ref().unwrap().payload.clone()
                 else {
                     unreachable!()
@@ -1372,7 +1372,7 @@ async fn policy_offer_binds_the_original_journal_and_signed_start_before_dispatc
                     }
                     _ => (),
                 }
-                data.offer = Some(data.signed(wire::TaskPayload::Script(spec)));
+                data.offer = Some(data.signed(wire::TaskPayload::TaskSpec(spec)));
                 data.explicit_offers = true;
             }
             // Every alternative is independently signed and actually verified by the HTTP client.

@@ -2,7 +2,7 @@
 //! ref: rustix v1.1.2 src/fs/at.rs and src/backend/libc/fs/syscalls.rs:567-605.
 //! unlinkat has no inode precondition; a pre-unlink pathname check is insufficient.
 use super::*;
-use rss_mdm_agent_wire::runtime as wire;
+use agent_api::runtime as wire;
 
 const ROOT_SLOT: &str = "removing.app";
 const ENTRY_SLOT: &str = "deleting";

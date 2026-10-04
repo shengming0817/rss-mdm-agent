@@ -242,7 +242,7 @@ export function checkSource(file, source) {
     if (file === "apps/desktop/src/assistant/clipboard.ts")
       globals.add("navigator");
     if (desktop)
-      for (const value of ["Object", "String", "Map", "Date", "Error"])
+      for (const value of ["Object", "Array", "String", "Map", "Date", "Error"])
         globals.add(value);
     if (
       [
@@ -724,7 +724,7 @@ export function checkTree(treeRoot = root, executable) {
         'syn = { version = "=2.0.119", features = ["full", "visit"] }',
         'proc-macro2 = "=1.0.107"',
         'execution-contract = { path = "../../../crates/execution-contract" }',
-        "rss-mdm-agent-wire.workspace = true",
+        "agent-api.workspace = true",
         'tauri = { workspace = true, features = ["test"] }',
       ],
     ],

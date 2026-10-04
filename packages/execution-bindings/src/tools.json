@@ -1257,54 +1257,27 @@
         },
         "ScriptActor": {
           "additionalProperties": false,
-          "description": "Authenticated product user; contains no session credential.",
+          "description": "`ScriptActor`",
           "properties": {
-            "instanceId": {
-              "description": "Identity instance.",
-              "format": "uuid",
-              "type": "string"
-            },
-            "principalId": {
-              "description": "Authenticated principal.",
-              "format": "uuid",
-              "type": "string"
-            },
-            "tenantId": {
-              "description": "Product tenant.",
-              "format": "uuid",
-              "type": "string"
-            }
+            "instanceId": { "format": "uuid", "type": "string" },
+            "principalId": { "format": "uuid", "type": "string" },
+            "tenantId": { "format": "uuid", "type": "string" }
           },
           "required": ["tenantId", "instanceId", "principalId"],
           "type": "object"
         },
         "ScriptParameterSource": {
-          "description": "Public source of one Resource-declared parameter.",
+          "description": "`ScriptParameterSource`",
           "oneOf": [
             {
-              "additionalProperties": false,
-              "description": "Administrator literal.",
               "properties": {
                 "kind": { "const": "fixed", "type": "string" },
-                "value": {
-                  "anyOf": [
-                    { "pattern": "^[^\\u0000]*$", "type": "string" },
-                    { "type": "boolean" },
-                    {
-                      "maximum": 9007199254740991,
-                      "minimum": -9007199254740991,
-                      "type": "integer"
-                    }
-                  ],
-                  "description": "Administrator-selected scalar checked against the Resource schema."
-                }
+                "value": true
               },
               "required": ["kind", "value"],
               "type": "object"
             },
             {
-              "additionalProperties": false,
-              "description": "Required call-time input.",
               "properties": { "kind": { "const": "input", "type": "string" } },
               "required": ["kind"],
               "type": "object"
@@ -1313,62 +1286,35 @@
         },
         "ScriptResource": {
           "additionalProperties": false,
-          "description": "Exact Resource identity accompanying its signed digest.",
+          "description": "`ScriptResource`",
           "properties": {
-            "id": {
-              "description": "Logical Resource identity.",
-              "type": "string"
-            },
-            "variant": {
-              "description": "Exact selected variant.",
-              "type": "string"
-            },
-            "version": {
-              "description": "Immutable Resource version.",
-              "type": "string"
-            }
+            "id": { "type": "string" },
+            "variant": { "type": "string" },
+            "version": { "type": "string" }
           },
           "required": ["id", "version", "variant"],
           "type": "object"
         },
         "SelfServiceDirectoryItem": {
           "additionalProperties": false,
-          "description": "One currently authorized script and its Resource-owned parameter schema.",
+          "description": "`SelfServiceDirectoryItem`",
           "properties": {
-            "parameterSchema": {
-              "description": "Resource-owned JSON Schema for full resolved parameters."
-            },
+            "parameterSchema": true,
             "parameterSources": {
               "additionalProperties": {
                 "$ref": "#/$defs/ScriptParameterSource"
               },
-              "description": "Complete source map; Fixed values cannot be overridden.",
               "type": "object"
             },
-            "policyId": {
-              "description": "Logical Policy identity.",
-              "format": "uuid",
-              "type": "string"
-            },
+            "policyId": { "format": "uuid", "type": "string" },
             "policyRevision": {
-              "description": "Current configuration CAS revision.",
               "format": "uint64",
               "minimum": 0,
               "type": "integer"
             },
-            "policyVersion": {
-              "description": "Immutable execution version.",
-              "format": "uuid",
-              "type": "string"
-            },
-            "resource": {
-              "$ref": "#/$defs/ScriptResource",
-              "description": "Exact selected Resource coordinates."
-            },
-            "selfService": {
-              "$ref": "#/$defs/SelfServiceMetadata",
-              "description": "Normalized presentation and invocation settings."
-            }
+            "policyVersion": { "format": "uuid", "type": "string" },
+            "resource": { "$ref": "#/$defs/ScriptResource" },
+            "selfService": { "$ref": "#/$defs/SelfServiceMetadata" }
           },
           "required": [
             "policyId",
@@ -1383,46 +1329,22 @@
         },
         "SelfServiceMetadata": {
           "additionalProperties": false,
-          "description": "Published presentation and invocation settings; values are normalized by Policy CAS.",
+          "description": "`SelfServiceMetadata`",
           "properties": {
-            "allowAi": {
-              "description": "Effective administrator AI switch.",
-              "type": "boolean"
-            },
-            "category": {
-              "description": "Presentation category.",
-              "type": "string"
-            },
-            "description": {
-              "description": "Intended purpose.",
-              "type": "string"
-            },
-            "displayName": {
-              "description": "Directory display name.",
-              "type": "string"
-            },
-            "keywords": {
-              "description": "Search terms.",
-              "items": { "type": "string" },
-              "type": "array"
-            },
-            "prerequisites": {
-              "description": "Preconditions shown before invocation.",
-              "type": "string"
-            },
-            "published": {
-              "description": "Whether this script is published for self service.",
-              "type": "boolean"
-            },
+            "allowAi": { "type": "boolean" },
+            "category": { "type": "string" },
+            "description": { "type": "string" },
+            "displayName": { "type": "string" },
+            "keywords": { "items": { "type": "string" }, "type": "array" },
+            "prerequisites": { "type": "string" },
+            "published": { "type": "boolean" },
             "riskLevel": {
-              "description": "Effective risk level, one or two.",
-              "enum": [1, 2],
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0,
               "type": "integer"
             },
-            "sideEffects": {
-              "description": "Expected effects shown before invocation.",
-              "type": "string"
-            }
+            "sideEffects": { "type": "string" }
           },
           "required": [
             "published",

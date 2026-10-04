@@ -204,7 +204,7 @@ pub(super) fn run(args: &[OsString]) -> Result<(), Error> {
             metadata.validate(&deployment, SystemClock::new()?.now()?)?;
             let bytes =
                 zeroize::Zeroizing::new(platform::read_secret(&opts.path("--secret-file")?)?);
-            let secret = rss_mdm_agent_wire::runtime::Secret::parse(
+            let secret = agent_client::Secret::parse(
                 std::str::from_utf8(&bytes)
                     .map_err(|_| Error::Identity)?
                     .trim(),
