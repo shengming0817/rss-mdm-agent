@@ -62,6 +62,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     let execution = FixtureService::open(&database)?;
     std::fs::write(&args[1], serde_json::to_vec_pretty(&execution.selection())?)?;
+    std::fs::write(
+        database.parent().unwrap().join("policy-tool.json"),
+        serde_json::to_vec(&execution.policy_descriptor())?,
+    )?;
     let limits = McpLimits {
         frame_bytes: 262_144,
         response_bytes: 262_144,

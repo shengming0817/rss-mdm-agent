@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { openSqliteStore } from "../../packages/ai-store-sqlite/dist/index.js";
 import { preparedArtifact } from "../../scripts/preparation.mjs";
@@ -19,6 +19,7 @@ import {
   nativePeer,
   capabilities,
   assertNativeSession,
+  assertNativeToolSchema,
   executionGeneration,
 } from "./support.mjs";
 
@@ -157,6 +158,33 @@ for (const provider of engines) {
           0,
           "catalog reads never ask permission",
         );
+        const policy = JSON.parse(
+          await readFile(join(f.directory, "policy-tool.json"), "utf8"),
+        );
+        f.model.tool(policy.name, { name: "Acme" }, "policy-call");
+        f.model.text("native policy tool delivered");
+        await peer.client.submit(command(id, "policy-projection"));
+        await until(
+          () =>
+            peer.client.getSession(id)?.commands["policy-projection"]?.state ===
+            "terminal",
+          "policy tool terminal",
+        );
+        const policyCall = Object.values(peer.client.getSession(id).tools).find(
+          (tool) => tool.name === policy.name,
+        );
+        assert.ok(
+          policyCall,
+          "actual dynamic Policy MCP call crosses the SDK/Host/Rust boundary",
+        );
+        assert.deepEqual(policyCall.arguments, { name: "Acme" });
+        assert.equal(policyCall.result.disposition, "returned");
+        assert.equal(JSON.parse(policyCall.result.text).error.code, "denied");
+        assert.equal(
+          permissions.length,
+          0,
+          "provider does not add a second Policy confirmation",
+        );
         for (const [commandId, choice] of [
           ["execute-no-permission", "execute"],
           // Cancel still uses the provider permission seam; reject before accepting it.
@@ -219,6 +247,7 @@ for (const provider of engines) {
             choice === "reject_once" ? "rejected" : "returned",
           );
         }
+        assertNativeToolSchema(provider, f.model.requests, policy);
         assert.equal(permissions.length, 2);
         peer.close();
         assert.equal(await stop(app), 0, stderr);
@@ -233,6 +262,7 @@ for (const provider of engines) {
             session,
             f.model.requests,
             "host_mediated",
+            [policy],
           );
         } finally {
           unwrap(await store.close(budget()));

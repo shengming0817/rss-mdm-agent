@@ -44,6 +44,16 @@ impl FixtureService {
             caller,
         }))
     }
+    pub fn policy_descriptor(&self) -> serde_json::Value {
+        let item: rss_mdm_agent_wire::runtime::SelfServiceDirectoryItem = serde_json::from_value(serde_json::json!({
+            "policyId":"00000000-0000-4000-a000-000000000001","policyRevision":3,"policyVersion":"00000000-0000-4000-a000-000000000002",
+            "selfService":{"published":true,"allowAi":true,"riskLevel":2,"displayName":"Explicit protocol fixture","description":"Registration proof only","prerequisites":"Test assembly","sideEffects":"No execution","category":"Test","keywords":["test" ]},
+            "resource":{"id":"fixture-resource","version":"v1","variant":"default"},
+            "parameterSources":{"name":{"kind":"input"},"path":{"kind":"fixed","value":"/Applications"}},
+            "parameterSchema":{"type":"object","properties":{"name":{"type":"string","maxLength":32},"path":{"type":"string"}},"required":["name","path"],"additionalProperties":false}
+        })).unwrap();
+        execution_mcp::policy_tool(&item).unwrap()
+    }
     pub fn selection(&self) -> BackendSelection {
         BackendSelection {
             request: self.plan.spec().request.request_id.clone(),
@@ -85,6 +95,30 @@ impl ExecutionServicePort for FixtureService {
     }
     fn check_binding(&self) -> Result<(), ServiceError> {
         Ok(())
+    }
+    async fn policy_tools(
+        &self,
+        _: CancellationToken,
+    ) -> Result<Vec<serde_json::Value>, ServiceError> {
+        Ok(vec![self.policy_descriptor()])
+    }
+    async fn invoke_policy(
+        &self,
+        name: String,
+        arguments: serde_json::Map<String, serde_json::Value>,
+        _: CancellationToken,
+    ) -> Result<BackendRequest, ServiceError> {
+        if name != self.policy_descriptor()["name"].as_str().unwrap()
+            || arguments
+                != serde_json::json!({"name":"Acme"})
+                    .as_object()
+                    .unwrap()
+                    .clone()
+        {
+            return Err(ServiceError::InvalidInput);
+        }
+        // S1 proves SDK delivery only. Real backend consent/Start are verified by agent-service.
+        Err(ServiceError::Denied)
     }
     async fn tasks(&self, _: CancellationToken) -> Result<Vec<BackendTask>, ServiceError> {
         let s = self.selection();

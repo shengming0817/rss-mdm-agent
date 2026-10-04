@@ -503,6 +503,7 @@ export function assertNativeSession(
   session,
   requests,
   tools = "disabled",
+  additionalTools = [],
 ) {
   const stage = activeStage(session),
     binding = stage.binding;
@@ -527,7 +528,10 @@ export function assertNativeSession(
         : [
             "list_mcp_resource_templates",
             "list_mcp_resources",
-            ...controlledToolNames.map((name) => `mcp__rss_host__${name}`),
+            ...[
+              ...controlledToolNames,
+              ...additionalTools.map((tool) => tool.name),
+            ].map((name) => `mcp__rss_host__${name}`),
             "read_mcp_resource",
           ]
       : [
@@ -536,10 +540,35 @@ export function assertNativeSession(
             : "ask_user_question",
           ...(tools === "disabled"
             ? []
-            : controlledToolNames.map((name) =>
+            : [
+                ...controlledToolNames,
+                ...additionalTools.map((tool) => tool.name),
+              ].map((name) =>
                 binding.provider === "claude" ? `mcp__rss_host__${name}` : name,
               )),
         ]
     ).sort(),
+  );
+}
+
+export function assertNativeToolSchema(provider, requests, definition) {
+  const tools = requests.flatMap((request) => request.tools ?? []);
+  let actual;
+  if (provider === "codex")
+    actual = tools
+      .flatMap((tool) => (tool.type === "namespace" ? tool.tools : [tool]))
+      .find((tool) => tool.name === definition.name);
+  else
+    actual = tools.find(
+      (tool) =>
+        (tool.name ?? tool.function?.name) ===
+        (provider === "claude"
+          ? `mcp__rss_host__${definition.name}`
+          : definition.name),
+    );
+  assert.ok(actual, "dynamic Policy has an actual native model schema");
+  assert.deepEqual(
+    actual.input_schema ?? actual.parameters ?? actual.function?.parameters,
+    definition.inputSchema,
   );
 }
