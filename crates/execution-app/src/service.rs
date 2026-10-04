@@ -202,20 +202,7 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
                 _ => return self.cancel(caller, request),
             }
         }
-        match self.advance(caller, request, &CommandId::initial_attempt()) {
-            Err(Error::Conflict) => {
-                // An identical first submission can commit while preflight is outside the
-                // transaction. Return only that exact original intent; never mint a retry.
-                let current =
-                    self.status_for(Some(caller), request, ExecutionAccess::Submission)?;
-                if current.attempt_id.as_ref() == Some(&attempt) {
-                    Ok(current)
-                } else {
-                    Err(Error::Conflict)
-                }
-            }
-            result => result,
-        }
+        self.advance(caller, request, &CommandId::initial_attempt())
     }
     /// Confirm the exact persisted action through a trusted caller; never change its origin.
     pub fn confirm_execution(
@@ -283,31 +270,90 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
         let context = Some(caller);
         let config = self.config.active()?;
         let mut execution = self.load(context, request, ExecutionAccess::Execute)?;
-        let op = operation(execution.input(), "begin", command.as_str())?;
-        if let Some(receipt) = self.journal.execution_receipt(
-            &Scope::from_input(execution.input()),
-            &op,
-            &self.adapter(context, None),
-        )? {
-            return if receipt.outcome == Outcome::Stale {
-                Err(Error::Conflict)
+        let result =
+            if let Some(replay) = self.committed_attempt(caller, execution.input(), command)? {
+                replay
             } else {
-                self.status_for(context, request, ExecutionAccess::Execute)
+                match self.commit_attempt(caller, &mut execution, command, config) {
+                    Err(Error::Conflict) => self
+                        .committed_attempt(caller, execution.input(), command)?
+                        .ok_or(Error::Conflict)?,
+                    result => result?,
+                }
             };
+        if !matches!(
+            result.receipt().outcome,
+            Outcome::Changed | Outcome::Duplicate | Outcome::Rejected
+        ) {
+            return Err(Error::Conflict);
         }
+        if let CommitOutcome::Applied {
+            first_dispatch: Some(action),
+            ..
+        } = result
+        {
+            self.dispatch(request, action)?;
+        }
+        self.status_for(context, request, ExecutionAccess::Execute)
+    }
+    /// A receipt proves that this exact durable command was received, even if a later command
+    /// replaced the current attempt. It grants no dispatch action or fresh approval consumption.
+    fn committed_attempt(
+        &self,
+        caller: &RequestContext,
+        input: &FrozenExecution,
+        command: &CommandId,
+    ) -> Result<Option<CommitOutcome>, Error> {
+        let scope = Scope::from_input(input);
+        let op = operation(input, "begin", command.as_str())?;
+        let attempt = AttemptId::new(key(input, "attempt", command.as_str())?)
+            .map_err(|_| Error::InvalidInput)?;
+        let Some(receipt) =
+            self.journal
+                .execution_receipt(&scope, &op, &self.adapter(Some(caller), None))?
+        else {
+            return Ok(None);
+        };
+        if receipt.scope != scope
+            || receipt.operation_id != op
+            || receipt.kind != OperationKind::Execution
+            || receipt.attempt_id.as_ref() != Some(&attempt)
+            || !matches!(
+                receipt.outcome,
+                Outcome::Changed | Outcome::Duplicate | Outcome::Rejected
+            )
+        {
+            return Err(Error::Conflict);
+        }
+        Ok(Some(CommitOutcome::AlreadyCommitted(receipt)))
+    }
+    /// Advance only to the durable intent boundary. Conflict resolution belongs to advance;
+    /// dispatch stays outside this stage so an error after commit cannot be masked as a replay.
+    fn commit_attempt(
+        &mut self,
+        caller: &RequestContext,
+        execution: &mut Execution,
+        command: &CommandId,
+        config: AppConfig,
+    ) -> Result<CommitOutcome, Error> {
+        let context = Some(caller);
         capabilities(&self.host, execution.input(), config)?;
         if execution.snapshot().attempt.is_none()
             && execution.snapshot().preparation != Preparation::Prepared
         {
             self.command(
                 context,
-                &execution,
+                execution,
                 "prepare",
                 command.as_str(),
                 Command::Prepare,
                 &[],
             )?;
-            execution = self.load(context, request, ExecutionAccess::Execute)?;
+            *execution = self.load(
+                context,
+                &execution.input().spec().request.request_id,
+                ExecutionAccess::Execute,
+            )?;
         }
         if !matches!(
             execution
@@ -341,9 +387,9 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
         let bindings = self.host.approval_bindings(execution.input())?;
         let attempt = AttemptId::new(key(execution.input(), "attempt", command.as_str())?)
             .map_err(|_| Error::InvalidInput)?;
-        let result = self.command(
+        self.command(
             context,
-            &execution,
+            execution,
             "begin",
             command.as_str(),
             Command::BeginAttempt {
@@ -352,21 +398,7 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
                 mode: self.runner.mode(),
             },
             &bindings,
-        )?;
-        if result.receipt().outcome == Outcome::Rejected {
-            return self.status_for(context, request, ExecutionAccess::Execute);
-        }
-        if result.receipt().outcome == Outcome::Stale {
-            return Err(Error::Conflict);
-        }
-        if let CommitOutcome::Applied {
-            first_dispatch: Some(action),
-            ..
-        } = result
-        {
-            self.dispatch(request, action)?;
-        }
-        self.status_for(context, request, ExecutionAccess::Execute)
+        )
     }
     fn dispatch(&mut self, request: &RequestId, action: DispatchAction) -> Result<(), Error> {
         let context = None;
