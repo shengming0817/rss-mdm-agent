@@ -77,6 +77,9 @@ const env = {
     ...(organization.ca_pem ? { ca_pem: organization.ca_pem } : {}),
   }),
 };
+// The outer build runner retains the worktree/target locks for this entire package build.
+// pnpm descendants do not inherit their descriptors and must not claim a borrowed lease.
+delete env._AGENT_BUILD_LEASE;
 const run = (command, argv, cwd = root) =>
   execFileSync(command, argv, { cwd, env, stdio: "inherit", timeout: 1800000 });
 const pnpm = (argv, cwd = root) =>

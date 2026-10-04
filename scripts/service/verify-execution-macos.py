@@ -1536,6 +1536,15 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
         helper = True
         run('/usr/bin/python3', str(installer), 'install', '--scope', 'user', '--binary', str(binary), '--config', str(config))
         helper = True
+        # A native PID is distinct from the asynchronous registration owner's readiness.
+        deadline=time.monotonic()+15
+        while True:
+            status=json.loads(run(str(binary),'--config',str(config),'--service-status').stdout)
+            reply=status['reply']
+            if reply['kind']=='serviceStatus' and reply['value']['readiness']['phase']=='ready': break
+            if reply['kind']!='serviceStatus' or reply['value']['readiness']['phase']=='notReady' or time.monotonic()>=deadline:
+                raise RuntimeError('authenticated service readiness failed: '+json.dumps(reply))
+            time.sleep(.2)
         def query():
             deadline = time.monotonic() + 15
             while True:
