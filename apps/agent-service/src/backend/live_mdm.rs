@@ -672,7 +672,18 @@ async fn real_https_registration_reports_script_software_and_journal_results() {
                 .await;
             assert_eq!(run["asset"]["run"]["result"], "snapshot");
             assert_eq!(run["asset"]["run"]["fields"].as_array().unwrap().len(), 1);
-            assert_eq!(admin.group_contains(&group, &device).await, !uninstall);
+            // The command receipt commits CollectionRun before the independent Inventory
+            // projector publishes it. Preview completion alone does not acknowledge that fact.
+            tokio::time::timeout(Duration::from_secs(30), async {
+                loop {
+                    if admin.group_contains(&group, &device).await == !uninstall {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+            })
+            .await
+            .expect("accepted collection becomes visible to the real group preview");
         }
         if software {
             let rollout = admin
