@@ -91,6 +91,15 @@ fn machine_store(store: agent_client::MachineStore) -> platform_credentials::Cer
     }
 }
 impl agent_client::MachineTrust for DeviceSecrets {
+    fn certificate_present(
+        &self,
+        store: agent_client::MachineStore,
+        der: &[u8],
+    ) -> Result<bool, Error> {
+        platform_credentials::MachineCertificates
+            .contains(machine_store(store), der)
+            .map_err(|_| Error::Storage)
+    }
     fn read_certificate(
         &self,
         store: agent_client::MachineStore,

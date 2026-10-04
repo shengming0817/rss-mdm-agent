@@ -30,6 +30,10 @@ mod platform;
 
 #[cfg(not(any(target_os = "macos", windows)))]
 impl MachineCertificates {
+    pub fn contains(&self, _: CertificateStore, der: &[u8]) -> io::Result<bool> {
+        input(der)?;
+        Err(io::ErrorKind::Unsupported.into())
+    }
     pub fn read(&self, _: CertificateStore, der: &[u8]) -> io::Result<bool> {
         input(der)?;
         Err(io::ErrorKind::Unsupported.into())

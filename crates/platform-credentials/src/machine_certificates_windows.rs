@@ -73,6 +73,11 @@ fn find(store: &Store, der: &[u8]) -> io::Result<Option<Certificate>> {
 }
 
 impl MachineCertificates {
+    /// Physical exact DER in the selected LocalMachine store, independently of readiness rules.
+    pub fn contains(&self, class: CertificateStore, der: &[u8]) -> io::Result<bool> {
+        input(der)?;
+        Ok(find(&open(class, false)?, der)?.is_some())
+    }
     /// Independently read exact DER from LocalMachine Root or CA.
     pub fn read(&self, class: CertificateStore, der: &[u8]) -> io::Result<bool> {
         input(der)?;

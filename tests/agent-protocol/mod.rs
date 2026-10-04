@@ -122,6 +122,19 @@ fn certificate_key(store: agent_client::MachineStore, der: &[u8]) -> String {
     format!("machine/{store:?}/{:x}", Sha256::digest(der))
 }
 impl agent_client::MachineTrust for Secrets {
+    fn certificate_present(
+        &self,
+        store: agent_client::MachineStore,
+        der: &[u8],
+    ) -> Result<bool, Error> {
+        let values = self.0.lock().unwrap();
+        if values.contains_key("machine/read-failure") {
+            return Err(Error::Storage);
+        }
+        Ok(values
+            .get(&certificate_key(store, der))
+            .is_some_and(|value| *value == base64::engine::general_purpose::STANDARD.encode(der)))
+    }
     fn read_certificate(
         &self,
         store: agent_client::MachineStore,
@@ -152,6 +165,9 @@ impl agent_client::MachineTrust for Secrets {
             return Ok(agent_client::CertificateAdd::Present);
         }
         values.insert(key, base64::engine::general_purpose::STANDARD.encode(der));
+        if values.remove("machine/add-present-race").is_some() {
+            return Ok(agent_client::CertificateAdd::Present);
+        }
         if values.remove("machine/add-response-lost").is_some() {
             return Err(Error::Storage);
         }

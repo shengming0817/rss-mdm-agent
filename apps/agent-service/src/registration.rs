@@ -320,6 +320,13 @@ mod tests {
     use agent_client::{IdentityProvider, OpenMode};
     struct InterruptedSecret(crate::protocol_test_support::Secrets);
     impl agent_client::MachineTrust for InterruptedSecret {
+        fn certificate_present(
+            &self,
+            store: agent_client::MachineStore,
+            der: &[u8],
+        ) -> Result<bool, Error> {
+            self.0.certificate_present(store, der)
+        }
         fn read_certificate(
             &self,
             store: agent_client::MachineStore,

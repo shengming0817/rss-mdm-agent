@@ -510,3 +510,120 @@ async fn machine_root_configuration_failure_retries_only_after_durable_ownership
         .values()
         .all(|v| v["ownership"] == "Owned"));
 }
+
+#[tokio::test]
+async fn rebuilding_preserves_external_and_ambiguous_material_through_restart_and_retirement() {
+    use agent_client::{MachineStore, MachineTrust};
+    use der::{DecodePem, Encode};
+    for (fault, recorded, error) in [
+        ("machine/add-present-race", "Borrowed", Error::Untrusted),
+        ("machine/add-response-lost", "Intent", Error::Storage),
+    ] {
+        let server = Server::tls().await;
+        let root = Root::new();
+        let mut client = server.client(&root, OpenMode::Create);
+        let binding = server.register(&mut client).await;
+        let old = x509_cert::Certificate::from_pem(support::pki::ca())
+            .unwrap()
+            .to_der()
+            .unwrap();
+        // External removal invalidates the previous physical creation fact.
+        server
+            .secrets
+            .delete_certificate(MachineStore::Root, &old)
+            .unwrap();
+        server
+            .secrets
+            .0
+            .lock()
+            .unwrap()
+            .insert(fault.into(), "injected".into());
+        server.time.set(301);
+        assert_eq!(client.drive_pki().await.unwrap_err(), error);
+        assert!(state(&root, "pki")["installations"]
+            .as_object()
+            .unwrap()
+            .values()
+            .all(|v| v["ownership"] == recorded));
+        assert!(server
+            .secrets
+            .certificate_present(MachineStore::Root, &old)
+            .unwrap());
+        assert!(!server
+            .secrets
+            .read_certificate(MachineStore::Root, &old)
+            .unwrap());
+        drop(client);
+        server.time.set(303);
+        let mut client = server.client(&root, OpenMode::Existing);
+        assert_eq!(client.drive_pki().await.unwrap_err(), Error::Untrusted);
+        assert!(state(&root, "pki")["installations"]
+            .as_object()
+            .unwrap()
+            .values()
+            .all(|v| v["ownership"] == "Borrowed"));
+        // Only an administrator repairs externally owned/uncertain root settings.
+        server
+            .secrets
+            .configure_certificate(MachineStore::Root, &old)
+            .unwrap();
+        server.time.set(307);
+        client.drive_pki().await.unwrap();
+        let mut next = support::pki::rotation_issuer(false);
+        next["mode"] = "active".into();
+        {
+            let mut data = server.data.lock().unwrap();
+            data.trust["revision"] = 2.into();
+            data.trust["issuers"] = serde_json::json!([next]);
+        }
+        server.time.set(901);
+        assert_eq!(client.drive_pki().await.unwrap_err(), Error::Untrusted);
+        assert!(server
+            .secrets
+            .certificate_present(MachineStore::Root, &old)
+            .unwrap());
+        assert_eq!(client.registration().unwrap(), binding);
+    }
+}
+
+#[tokio::test]
+async fn rebuilding_created_material_gets_fresh_ownership_and_can_be_retired() {
+    use agent_client::{MachineStore, MachineTrust};
+    use der::{DecodePem, Encode};
+    let server = Server::tls().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    let old = x509_cert::Certificate::from_pem(support::pki::ca())
+        .unwrap()
+        .to_der()
+        .unwrap();
+    server
+        .secrets
+        .delete_certificate(MachineStore::Root, &old)
+        .unwrap();
+    server.time.set(301);
+    client.drive_pki().await.unwrap();
+    assert!(state(&root, "pki")["installations"]
+        .as_object()
+        .unwrap()
+        .values()
+        .all(|v| v["ownership"] == "Owned"));
+    assert!(server
+        .secrets
+        .read_certificate(MachineStore::Root, &old)
+        .unwrap());
+    let mut next = support::pki::rotation_issuer(false);
+    next["mode"] = "active".into();
+    {
+        let mut data = server.data.lock().unwrap();
+        data.trust["revision"] = 2.into();
+        data.trust["issuers"] = serde_json::json!([next]);
+    }
+    server.time.set(601);
+    assert_eq!(client.drive_pki().await.unwrap_err(), Error::Untrusted);
+    assert!(!server
+        .secrets
+        .certificate_present(MachineStore::Root, &old)
+        .unwrap());
+}

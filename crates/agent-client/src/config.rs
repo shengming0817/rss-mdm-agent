@@ -170,6 +170,8 @@ pub enum CertificateAdd {
 }
 /// Machine trust adapter. Durable ownership and installation intent belong to the client owner.
 pub trait MachineTrust {
+    /// Read exact physical material in the selected machine store, independently of trust readiness.
+    fn certificate_present(&self, store: MachineStore, der: &[u8]) -> Result<bool, Error>;
     /// Independently read exact DER and the required machine trust settings.
     fn read_certificate(&self, store: MachineStore, der: &[u8]) -> Result<bool, Error>;
     /// Add exact DER without replacing pre-existing material or settings.

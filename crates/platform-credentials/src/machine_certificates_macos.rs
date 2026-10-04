@@ -141,6 +141,12 @@ fn write_access() -> io::Result<()> {
 }
 
 impl MachineCertificates {
+    /// Physical exact DER in System Keychain; trust settings are checked separately by read.
+    pub fn contains(&self, _class: CertificateStore, der: &[u8]) -> io::Result<bool> {
+        input(der)?;
+        let _interaction = crate::Keychain::disable_interaction()?;
+        Ok(find(&system()?, der)?.is_some())
+    }
     /// Read exact System Keychain material and its machine trust class.
     pub fn read(&self, class: CertificateStore, der: &[u8]) -> io::Result<bool> {
         input(der)?;

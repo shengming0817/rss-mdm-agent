@@ -185,8 +185,17 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         let mut state = self.pki_state()?;
         let approved = state.verified(&self.store.cfg, self.now()?)?.certificates();
         for (id, (store, der)) in &approved {
-            if !state.installations.contains_key(id) {
-                let ownership = if self.secrets.read_certificate(*store, der)? {
+            let recorded = state.installations.get(id);
+            if let Some(installation) = recorded {
+                if installation.store != *store || installation.der != *der {
+                    return Err(Error::Storage);
+                }
+            }
+            let present = self.secrets.certificate_present(*store, der)?;
+            if recorded.is_none_or(|v| v.ownership == Ownership::Intent) || !present {
+                // Missing physical material starts a new intent, even if an earlier item was Owned.
+                // Presence after an unresolved intent is Borrowed; only this add's Created owns it.
+                let ownership = if present {
                     Ownership::Borrowed
                 } else {
                     Ownership::Intent
@@ -210,41 +219,6 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                         CertificateAdd::Created => Ownership::Owned,
                         CertificateAdd::Present => Ownership::Borrowed,
                     };
-                    self.store.put("pki", &state)?;
-                }
-            } else {
-                let installation = state.installations.get(id).ok_or(Error::Storage)?;
-                if installation.store != *store || installation.der != *der {
-                    return Err(Error::Storage);
-                }
-                if installation.ownership == Ownership::Intent {
-                    // A crash may have completed the native add. Never infer ownership from presence.
-                    let ownership = if self.secrets.read_certificate(*store, der)? {
-                        Ownership::Borrowed
-                    } else {
-                        match self.secrets.add_certificate(*store, der)? {
-                            CertificateAdd::Created => Ownership::Owned,
-                            CertificateAdd::Present => Ownership::Borrowed,
-                        }
-                    };
-                    state
-                        .installations
-                        .get_mut(id)
-                        .ok_or(Error::Storage)?
-                        .ownership = ownership;
-                    self.store.put("pki", &state)?;
-                } else if !self.secrets.read_certificate(*store, der)? {
-                    let outcome = self.secrets.add_certificate(*store, der)?;
-                    if outcome == CertificateAdd::Present
-                        && installation.ownership != Ownership::Owned
-                    {
-                        return Err(Error::Untrusted);
-                    }
-                    state
-                        .installations
-                        .get_mut(id)
-                        .ok_or(Error::Storage)?
-                        .ownership = Ownership::Owned;
                     self.store.put("pki", &state)?;
                 }
             }
