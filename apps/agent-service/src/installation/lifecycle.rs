@@ -612,6 +612,21 @@ pub(crate) enum UpgradeStep {
     Register,
     Desktop,
 }
+impl UpgradeStep {
+    fn phase(self) -> &'static str {
+        match self {
+            Self::Quiescent => "upgrade-quiescence",
+            Self::Stop => "upgrade-stop-current",
+            Self::Lease => "upgrade-communication-lease",
+            Self::Retain => "upgrade-retain-candidate",
+            Self::Remove => "upgrade-remove-current",
+            Self::Publish => "upgrade-publish-configuration",
+            Self::Release => "upgrade-release-lease",
+            Self::Register => "upgrade-register-candidate",
+            Self::Desktop => "upgrade-desktop-entry",
+        }
+    }
+}
 // A failed upgrade never restarts an old owner against a new format. Exact retries finish publication.
 pub(crate) fn run_upgrade(
     published: bool,
@@ -627,10 +642,13 @@ pub(crate) fn run_upgrade(
             UpgradeStep::Publish,
             UpgradeStep::Release,
         ] {
+            outcome::phase(step.phase())?;
             perform(step)?;
         }
     }
+    outcome::phase(UpgradeStep::Register.phase())?;
     perform(UpgradeStep::Register)?;
+    outcome::phase(UpgradeStep::Desktop.phase())?;
     perform(UpgradeStep::Desktop)
 }
 
@@ -656,6 +674,35 @@ fn installation_lock(config: &Path, system: bool) -> Result<std::fs::File, Error
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn upgrade_receipt_records_each_failed_step_and_published_retry() {
+        // Each installer operation owns one thread-local receipt, as the real worker does.
+        for published in [false, true] {
+            for (failed, expected) in [
+                (UpgradeStep::Register, "upgrade-register-candidate"),
+                (UpgradeStep::Desktop, "upgrade-desktop-entry"),
+            ] {
+                std::thread::spawn(move || {
+                    outcome::phase("locked-preflight").unwrap();
+                    let error = run_upgrade(published, |step| {
+                        assert_eq!(outcome::snapshot().phase, step.phase());
+                        if step == failed {
+                            Err(Error::Unavailable)
+                        } else {
+                            Ok(())
+                        }
+                    })
+                    .unwrap_err();
+                    outcome::failed(error);
+                    let report = outcome::snapshot();
+                    assert_eq!(report.phase, expected);
+                    assert_eq!(report.failure_phase.as_deref(), Some(expected));
+                })
+                .join()
+                .unwrap();
+            }
+        }
+    }
     #[test]
     fn owner_upgrade_accepts_only_immediate_previous_shape_and_preserves_identity_fields() {
         let original = serde_json::json!({"version":4,"device_ca_file":"/protected/old-ca.pem","installation_id":"retained","state_root":"/retained/state","tenant":"retained-tenant"});
