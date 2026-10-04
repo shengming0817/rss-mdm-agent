@@ -1144,3 +1144,45 @@ async fn obsolete_activation_capability_preserves_active_binding_and_candidate()
     assert_eq!(client.registration().unwrap(), binding);
     assert_eq!(server.data.lock().unwrap().activation_calls.len(), calls);
 }
+
+#[tokio::test]
+async fn imports_authorized_grant_over_real_tls_without_replacing_the_operation() {
+    use agent_client::IdentityProvider;
+    use rss_mdm_agent_wire::enroll;
+    let server = Server::tls().await;
+    let root = Root::new();
+    let operation = Uuid::new_v4();
+    let grant = enroll::GrantReceipt {
+        wire_version: 1,
+        grant_id: Uuid::new_v4(),
+        state: enroll::GrantState::Available,
+        platform: TaskPlatform::Macos,
+        expires_at: 1_700_000_300,
+    };
+    let secret = server.secrets.resolve("password").unwrap();
+    {
+        let mut data = server.data.lock().unwrap();
+        data.operation = Some(operation);
+        data.grant = Some(grant.clone());
+        data.bootstrap = Some(secret.expose().into());
+    }
+    let mut client = server.client(&root, OpenMode::Create);
+    let reference = format!("bootstrap-{operation}");
+    client.import_bootstrap_secret(&reference, &secret).unwrap();
+    client
+        .import_grant(
+            agent_client::GrantImport {
+                operation_id: operation,
+                grant,
+            },
+            &reference,
+            vec![Capability::InventoryCollectionV1, Capability::TaskExecuteV1],
+        )
+        .unwrap();
+    client.drive_enrollment().await.unwrap();
+    assert!(client.enrollment_status().unwrap().registered);
+    let data = server.data.lock().unwrap();
+    assert_eq!(data.operation, Some(operation));
+    assert_eq!(data.certificate_calls.len(), 1);
+    assert_eq!(data.activation_calls.len(), 1);
+}
