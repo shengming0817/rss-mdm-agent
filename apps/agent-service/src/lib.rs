@@ -116,6 +116,15 @@ impl agent_client::MachineTrust for DeviceSecrets {
             })
             .map_err(|_| Error::Storage)
     }
+    fn configure_certificate(
+        &self,
+        store: agent_client::MachineStore,
+        der: &[u8],
+    ) -> Result<(), Error> {
+        platform_credentials::MachineCertificates
+            .configure(machine_store(store), der)
+            .map_err(|_| Error::Storage)
+    }
     fn delete_certificate(
         &self,
         store: agent_client::MachineStore,

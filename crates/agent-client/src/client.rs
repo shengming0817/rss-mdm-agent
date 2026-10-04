@@ -72,6 +72,7 @@ pub struct Client<S, C> {
     pub(crate) store: Store,
     pub(crate) http: reqwest::Client,
     pub(crate) bootstrap: reqwest::Client,
+    pub(crate) runtime_gate: crate::RuntimeGate,
     pub(crate) secrets: S,
     pub(crate) clock: C,
     profiles: Vec<wire::ExecutorProfile>,
@@ -166,6 +167,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             store,
             http,
             bootstrap,
+            runtime_gate: crate::RuntimeGate::default(),
             secrets,
             clock,
             profiles: Vec::new(),
@@ -175,6 +177,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         if client.active().is_ok() {
             client.restore_runtime_transport()?;
         }
+        client.publish_runtime_gate();
         Ok(client)
     }
     pub(crate) fn now(&self) -> Result<i64, Error> {

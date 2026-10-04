@@ -38,6 +38,10 @@ impl MachineCertificates {
         input(der)?;
         Err(io::ErrorKind::Unsupported.into())
     }
+    pub fn configure(&self, _: CertificateStore, der: &[u8]) -> io::Result<()> {
+        input(der)?;
+        Err(io::ErrorKind::Unsupported.into())
+    }
     pub fn delete(&self, _: CertificateStore, der: &[u8]) -> io::Result<()> {
         input(der)?;
         Err(io::ErrorKind::Unsupported.into())

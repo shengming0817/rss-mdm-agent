@@ -164,18 +164,16 @@ fn run<S: agent_client::IdentityProvider, C: agent_client::Clock, O>(
                 }
                 let value = client.as_mut().ok_or(Error::Storage)?;
                 let status = value.enrollment_status()?;
-                let result = if status.phase == EnrollmentPhase::Unregistered {
-                    runtime
-                        .block_on(until_stopped(
-                            async {
-                                value.drive_pki().await?;
-                                value.request_authorization(capabilities.clone()).await
-                            },
-                            &stopping,
-                        ))
+                let prepared = if status.phase == EnrollmentPhase::Unregistered {
+                    value
+                        .prepare_authorization(capabilities.clone())
                         .map(|_| ())
                 } else {
-                    runtime.block_on(until_stopped(value.drive_pki(), &stopping))
+                    Ok(())
+                };
+                let result = match prepared {
+                    Ok(()) => runtime.block_on(until_stopped(value.drive_pki(), &stopping)),
+                    Err(error) => Err(error),
                 };
                 record_result(result, value, &shared)?;
             }
@@ -336,6 +334,13 @@ mod tests {
         ) -> Result<agent_client::CertificateAdd, Error> {
             self.0.add_certificate(store, der)
         }
+        fn configure_certificate(
+            &self,
+            store: agent_client::MachineStore,
+            der: &[u8],
+        ) -> Result<(), Error> {
+            self.0.configure_certificate(store, der)
+        }
         fn delete_certificate(
             &self,
             store: agent_client::MachineStore,
@@ -492,68 +497,93 @@ mod tests {
     }
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn registration_owner_recovers_transient_failure_without_another_request() {
-        for restart in [false, true] {
-            let server = Server::tls().await;
-            let root = Root::new();
-            server.data.lock().unwrap().registration_failure = true;
-            let client = if restart {
-                let mut value = server.client(&root, OpenMode::Create);
-                assert!(matches!(
-                    value.request_authorization(capabilities()).await,
-                    Err(Error::Unavailable)
-                ));
-                drop(value);
-                Some(server.client(&root, OpenMode::Existing))
-            } else {
-                None
-            };
-            let cfg = server.config();
-            let secrets = server.secrets.clone();
-            let time = server.time.clone();
-            let shared = snapshot();
-            let published = shared.clone();
-            let (sender, receiver) = mpsc::sync_channel(8);
-            let (completed, completion) = mpsc::channel();
-            let worker = std::thread::spawn(move || {
-                let result = run(
-                    client,
-                    capabilities(),
-                    published,
-                    receiver,
-                    Arc::new(AtomicBool::new(false)),
-                    || {
-                        Client::open(
-                            &root.path,
-                            cfg.clone(),
-                            OpenMode::Create,
-                            secrets.clone(),
-                            time.clone(),
-                        )
-                    },
-                    |client| client.registration(),
+        for fault in ["registration", "trust", "machine"] {
+            for restart in [false, true] {
+                let server = Server::tls().await;
+                let root = Root::new();
+                match fault {
+                    "registration" => server.data.lock().unwrap().registration_failure = true,
+                    "trust" => server.data.lock().unwrap().trust_failure = true,
+                    "machine" => {
+                        server
+                            .secrets
+                            .0
+                            .lock()
+                            .unwrap()
+                            .insert("machine/configure-failure".into(), "injected".into());
+                    }
+                    _ => unreachable!(),
+                }
+                let client = if restart {
+                    let mut value = server.client(&root, OpenMode::Create);
+                    value.prepare_authorization(capabilities()).unwrap();
+                    assert!(value.drive_pki().await.is_err());
+                    drop(value);
+                    Some(server.client(&root, OpenMode::Existing))
+                } else {
+                    None
+                };
+                let moving_time = server.time.clone();
+                let native = server.secrets.clone();
+                let clock_task = tokio::spawn(async move {
+                    let start = std::time::Instant::now();
+                    loop {
+                        moving_time.set(1 + start.elapsed().as_secs() as i64);
+                        if start.elapsed() >= std::time::Duration::from_secs(1) {
+                            native.0.lock().unwrap().remove("machine/configure-failure");
+                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                    }
+                });
+                let cfg = server.config();
+                let secrets = server.secrets.clone();
+                let time = server.time.clone();
+                let shared = snapshot();
+                let published = shared.clone();
+                let (sender, receiver) = mpsc::sync_channel(8);
+                let (completed, completion) = mpsc::channel();
+                let worker = std::thread::spawn(move || {
+                    let result = run(
+                        client,
+                        capabilities(),
+                        published,
+                        receiver,
+                        Arc::new(AtomicBool::new(false)),
+                        || {
+                            Client::open(
+                                &root.path,
+                                cfg.clone(),
+                                OpenMode::Create,
+                                secrets.clone(),
+                                time.clone(),
+                            )
+                        },
+                        |client| client.registration(),
+                    );
+                    let _ = completed.send(result);
+                });
+                if !restart {
+                    sender.send(Command::Request).unwrap();
+                }
+                let result = tokio::task::spawn_blocking(move || {
+                    completion.recv_timeout(std::time::Duration::from_secs(8))
+                })
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap();
+                assert!(result.is_some());
+                worker.join().unwrap();
+                clock_task.abort();
+                assert!(shared.lock().unwrap().status.registered);
+                assert_eq!(
+                    shared.lock().unwrap().status.phase,
+                    RegistrationPhase::Active
                 );
-                let _ = completed.send(result);
-            });
-            if !restart {
-                sender.send(Command::Request).unwrap();
+                let data = server.data.lock().unwrap();
+                assert_eq!(data.certificate_calls.len(), 1);
+                assert_eq!(data.activation_calls.len(), 1);
             }
-            let result = tokio::task::spawn_blocking(move || {
-                completion.recv_timeout(std::time::Duration::from_secs(8))
-            })
-            .await
-            .unwrap()
-            .unwrap()
-            .unwrap();
-            assert!(result.is_some());
-            worker.join().unwrap();
-            assert!(shared.lock().unwrap().status.registered);
-            assert_eq!(
-                shared.lock().unwrap().status.phase,
-                RegistrationPhase::Active
-            );
-            let data = server.data.lock().unwrap();
-            assert_eq!(data.certificate_calls.len(), 1);
-            assert_eq!(data.activation_calls.len(), 1);
         }
     }
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

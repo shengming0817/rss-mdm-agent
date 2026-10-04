@@ -80,7 +80,7 @@ export function freezeCandidate(
 }
 export function verifyCandidate(root, path) {
   const candidate = JSON.parse(readFileSync(path, "utf8"));
-  assert.equal(candidate.version, 2);
+  assert.equal(candidate.version, 1);
   assert.equal(candidate.platform, process.platform);
   assert.equal(candidate.architecture, process.arch);
   const source = sourceEvidence(root);

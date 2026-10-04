@@ -101,6 +101,9 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             state.pending.as_mut().ok_or(Error::Storage)?.failure = Some(code);
         } else {
             state.failure = Some(code);
+            if crate::identity::blocks_runtime(code) {
+                self.runtime_gate.close();
+            }
         }
         self.store.put("identity", &state)
     }
@@ -259,6 +262,15 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         &mut self,
         capabilities: Vec<runtime::Capability>,
     ) -> Result<EnrollmentStatus, Error> {
+        self.prepare_authorization(capabilities)?;
+        self.drive_enrollment().await?;
+        self.enrollment_status()
+    }
+    /// Retain the explicitly requested registration operation before PKI/native preparation can fail.
+    pub fn prepare_authorization(
+        &mut self,
+        capabilities: Vec<runtime::Capability>,
+    ) -> Result<EnrollmentStatus, Error> {
         let state = self.identity_state()?;
         let operation = state
             .pending
@@ -272,7 +284,6 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             capabilities,
         )?;
         self.secrets.create_secret(&reference)?;
-        self.drive_enrollment().await?;
         self.enrollment_status()
     }
     /// Read-only admission before importing any bootstrap secret or creating a key.
@@ -619,6 +630,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             },
         )?;
         self.http = http;
+        self.publish_runtime_gate();
         Ok(())
     }
 }

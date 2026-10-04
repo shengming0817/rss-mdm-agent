@@ -174,6 +174,8 @@ pub trait MachineTrust {
     fn read_certificate(&self, store: MachineStore, der: &[u8]) -> Result<bool, Error>;
     /// Add exact DER without replacing pre-existing material or settings.
     fn add_certificate(&self, store: MachineStore, der: &[u8]) -> Result<CertificateAdd, Error>;
+    /// Configure trust only after the caller persists ownership of this exact material.
+    fn configure_certificate(&self, store: MachineStore, der: &[u8]) -> Result<(), Error>;
     /// Delete this exact DER; caller must first prove its durable ownership and retirement.
     fn delete_certificate(&self, store: MachineStore, der: &[u8]) -> Result<(), Error>;
 }

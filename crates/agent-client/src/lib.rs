@@ -118,3 +118,5 @@ mod test_support;
 #[cfg(test)]
 #[path = "../tests/unit/api_encoding.rs"]
 mod api_encoding;
+
+pub use pki::RuntimeGate;

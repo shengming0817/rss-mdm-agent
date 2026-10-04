@@ -26,6 +26,7 @@ impl Options {
                 "--candidate",
                 "--profile",
                 "--envelope",
+                "--grant",
                 "--secret-file",
                 "--operation",
             ]
@@ -194,6 +195,32 @@ pub(super) fn run(args: &[OsString]) -> Result<(), Error> {
                 opts.values.get("--profile"),
                 &opts.config()?,
             )?;
+        }
+        "recover" => {
+            if !opts.system()? {
+                return Err(Error::Identity);
+            }
+            let config = opts.config()?;
+            let deployment = Deployment::load(&config)?;
+            let grant: GrantImport = serde_json::from_slice(
+                &installation_security::read_protected(&opts.path("--grant")?)
+                    .map_err(|_| Error::Configuration)?,
+            )
+            .map_err(|_| Error::Configuration)?;
+            grant.validate(deployment.network()?.platform, SystemClock::new()?.now()?)?;
+            let bytes =
+                zeroize::Zeroizing::new(platform::read_secret(&opts.path("--secret-file")?)?);
+            let secret = agent_client::Secret::parse(
+                std::str::from_utf8(&bytes)
+                    .map_err(|_| Error::Identity)?
+                    .trim(),
+            )?;
+            platform::stop(true, &deployment.service.path, &config)?;
+            let result =
+                crate::service::owner_runtime()?.block_on(deployment.recover(grant, &secret));
+            let restart = platform::register(true, &deployment.service.path, &config);
+            result?;
+            restart?;
         }
         "import" => {
             if !opts.system()? {
@@ -454,16 +481,20 @@ fn upgrade_device_pki(config: &Path, candidate_path: &Path) -> Result<(), Error>
     if value.get("version").and_then(|v| v.as_u64()) == Some(5) {
         // Publication is atomic. A restart can only finish this same already-published candidate.
         let current = Deployment::load(config)?;
-        if current.installation_artifact != artifact
-            || current.service.path != candidate.service.path
-        {
-            return Err(Error::Conflict);
-        }
-        platform::register(true, &current.service.path, config)?;
-        platform::desktop_entry(&candidate)?;
+        resume_matches(
+            &current.installation_artifact,
+            &current.service.path,
+            &artifact,
+            &candidate.service.path,
+        )?;
+        run_upgrade(true, |step| match step {
+            UpgradeStep::Register => platform::register(true, &current.service.path, config),
+            UpgradeStep::Desktop => platform::desktop_entry(&candidate),
+            _ => Err(Error::Configuration),
+        })?;
         return Ok(());
     }
-    let mut old: Deployment = serde_json::from_value(prior_format(value, 4, "device_ca_file", 5)?)
+    let old: Deployment = serde_json::from_value(prior_format(value, 4, "device_ca_file", 5)?)
         .map_err(|_| Error::Configuration)?;
     let manifests = config
         .parent()
@@ -511,32 +542,96 @@ fn upgrade_device_pki(config: &Path, candidate_path: &Path) -> Result<(), Error>
         return Err(Error::Identity);
     }
     old.preflight()?; // Same communication schema and execution authority, without requiring the retired key.
-    platform::quiescent(&old, config)?;
-    platform::stop(true, &old.service.path, config)?;
-    // The stopped owner must actually release its sole communication lease before publication.
-    let lease =
-        platform_private_storage::open_existing(&old.state_root.join("communication/client.lock"))?;
-    fs2::FileExt::try_lock_exclusive(&lease).map_err(|_| Error::Conflict)?;
-    old.preflight()?;
     let converted = json(&legacy)?;
     let converted_digest = hash(&converted);
-    retain_public(
-        &manifests.join(format!("{converted_digest}.json")),
-        &converted,
-    )?;
-    old.installation_artifact = converted_digest;
     let bytes =
         installation_security::read_protected(candidate_path).map_err(|_| Error::Identity)?;
     if hash(&bytes) != artifact {
         return Err(Error::Identity);
     }
-    retain_public(&manifests.join(format!("{artifact}.json")), &bytes)?;
-    // No rollback to a format rejected by this owner. Retry the explicit command after interruption.
-    platform::remove(true, &old.service.path, config)?;
-    publish(config, &json(&next)?)?;
-    drop(lease);
-    platform::register(true, &next.service.path, config)?;
-    platform::desktop_entry(&candidate)
+    let mut lease = None;
+    run_upgrade(false, |step| match step {
+        UpgradeStep::Quiescent => platform::quiescent(&old, config),
+        UpgradeStep::Stop => platform::stop(true, &old.service.path, config),
+        UpgradeStep::Lease => {
+            lease = take_communication_lease(
+                &old.state_root.join("communication"),
+                old.initialized()?,
+            )?;
+            old.preflight()
+        }
+        UpgradeStep::Retain => {
+            retain_public(
+                &manifests.join(format!("{converted_digest}.json")),
+                &converted,
+            )?;
+            retain_public(&manifests.join(format!("{artifact}.json")), &bytes)
+        }
+        UpgradeStep::Remove => platform::remove(true, &old.service.path, config),
+        UpgradeStep::Publish => publish(config, &json(&next)?),
+        UpgradeStep::Release => {
+            lease.take();
+            Ok(())
+        }
+        UpgradeStep::Register => platform::register(true, &next.service.path, config),
+        UpgradeStep::Desktop => platform::desktop_entry(&candidate),
+    })
+}
+fn take_communication_lease(
+    root: &Path,
+    initialized: bool,
+) -> Result<Option<std::fs::File>, Error> {
+    if !initialized {
+        return Ok(None);
+    }
+    let file = platform_private_storage::open_existing(&root.join("client.lock"))?;
+    fs2::FileExt::try_lock_exclusive(&file).map_err(|_| Error::Conflict)?;
+    Ok(Some(file))
+}
+pub(crate) fn resume_matches(
+    current: &str,
+    service: &Path,
+    candidate: &str,
+    next: &Path,
+) -> Result<(), Error> {
+    if current == candidate && service == next {
+        Ok(())
+    } else {
+        Err(Error::Conflict)
+    }
+}
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum UpgradeStep {
+    Quiescent,
+    Stop,
+    Lease,
+    Retain,
+    Remove,
+    Publish,
+    Release,
+    Register,
+    Desktop,
+}
+// A failed upgrade never restarts an old owner against a new format. Exact retries finish publication.
+pub(crate) fn run_upgrade(
+    published: bool,
+    mut perform: impl FnMut(UpgradeStep) -> Result<(), Error>,
+) -> Result<(), Error> {
+    if !published {
+        for step in [
+            UpgradeStep::Quiescent,
+            UpgradeStep::Stop,
+            UpgradeStep::Lease,
+            UpgradeStep::Retain,
+            UpgradeStep::Remove,
+            UpgradeStep::Publish,
+            UpgradeStep::Release,
+        ] {
+            perform(step)?;
+        }
+    }
+    perform(UpgradeStep::Register)?;
+    perform(UpgradeStep::Desktop)
 }
 
 fn installation_lock(config: &Path, system: bool) -> Result<std::fs::File, Error> {
@@ -575,6 +670,25 @@ mod tests {
         let mut incomplete = original;
         incomplete.as_object_mut().unwrap().remove("device_ca_file");
         assert!(prior_format(incomplete, 4, "device_ca_file", 5).is_err());
+    }
+    #[test]
+    fn upgrade_uninitialized_lease_does_not_create_state_but_partial_state_is_rejected() {
+        let root = crate::protocol_test_support::Root::new();
+        let absent = root.path.join("absent");
+        assert!(take_communication_lease(&absent, false).unwrap().is_none());
+        assert!(!absent.exists());
+        assert!(take_communication_lease(&root.path, true).is_err());
+        assert_eq!(std::fs::read_dir(&root.path).unwrap().count(), 0);
+        let file = platform_private_storage::create_new(&root.path.join("client.lock")).unwrap();
+        fs2::FileExt::try_lock_exclusive(&file).unwrap();
+        assert!(matches!(
+            take_communication_lease(&root.path, true),
+            Err(Error::Conflict)
+        ));
+        drop(file);
+        assert!(take_communication_lease(&root.path, true)
+            .unwrap()
+            .is_some());
     }
     #[test]
     fn uncertain_native_activity_blocks_publication_and_rollback() {

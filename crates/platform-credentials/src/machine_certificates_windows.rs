@@ -115,6 +115,14 @@ impl MachineCertificates {
         }
         Ok(true)
     }
+    /// Windows certificate class is assigned atomically by the physical store add.
+    pub fn configure(&self, class: CertificateStore, der: &[u8]) -> io::Result<()> {
+        if self.read(class, der)? {
+            Ok(())
+        } else {
+            Err(io::ErrorKind::InvalidData.into())
+        }
+    }
     /// Delete only the exact DER selected by durable caller ownership.
     pub fn delete(&self, class: CertificateStore, der: &[u8]) -> io::Result<()> {
         input(der)?;

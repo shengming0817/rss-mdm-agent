@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicBool, Ordering},
         Arc, Mutex,
     },
 };
@@ -173,7 +173,7 @@ impl<S: IdentityProvider> DeviceService<S> {
             materials,
             subject: execution_ipc::host::current_subject().map_err(crate::error::app_error)?,
             current: Arc::new(Mutex::new(None)),
-            identity_until: Arc::new(AtomicU64::new(client.runtime_deadline().unwrap_or(0) as u64)),
+            identity_until: client.runtime_gate(),
             revoked: Arc::new(AtomicBool::new(client.runtime_readiness().is_err())),
         };
         let app = assemble_journal(
@@ -566,12 +566,14 @@ impl<S: IdentityProvider> DeviceService<S> {
         })
     }
     fn update_identity_gate(&mut self) {
-        match self.client.runtime_deadline() {
-            Ok(until) => {
-                self.core
-                    .host
-                    .identity_until
-                    .store(until as u64, Ordering::Release);
+        match self.client.runtime_deadline().and_then(|until| {
+            if self.core.host.identity_until.expires_at() == Some(until) {
+                Ok(until)
+            } else {
+                Err(Error::Identity)
+            }
+        }) {
+            Ok(_) => {
                 self.core.host.revoked.store(false, Ordering::Release);
             }
             Err(_) => {

@@ -6,7 +6,25 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::sync::{
+    atomic::{AtomicI64, Ordering},
+    Arc,
+};
 use uuid::Uuid;
+
+/// Read-only projection published by the sole communication owner after trust/identity changes.
+#[derive(Clone, Default)]
+pub struct RuntimeGate(Arc<AtomicI64>);
+impl RuntimeGate {
+    /// Approved credential/trust deadline; absent means execution admission is closed.
+    pub fn expires_at(&self) -> Option<i64> {
+        let until = self.0.load(Ordering::Acquire);
+        (until > 0).then_some(until)
+    }
+    pub(crate) fn close(&self) {
+        self.0.store(0, Ordering::Release);
+    }
+}
 
 #[derive(Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -54,6 +72,17 @@ impl State {
 }
 
 impl<S: IdentityProvider, C: Clock> Client<S, C> {
+    /// Observe the existing owner's identity state during network waits, without reading or writing storage.
+    pub fn runtime_gate(&self) -> RuntimeGate {
+        self.runtime_gate.clone()
+    }
+
+    pub(crate) fn publish_runtime_gate(&self) {
+        self.runtime_gate
+            .0
+            .store(self.runtime_deadline().unwrap_or(0), Ordering::Release);
+    }
+
     pub(crate) fn pki_state(&self) -> Result<State, Error> {
         Ok(self.store.get("pki")?.unwrap_or_default())
     }
@@ -120,6 +149,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         let verified = match accepted {
             Ok(value) => value,
             Err(error) => {
+                self.runtime_gate.close();
                 state.blocked = true;
                 self.store.put("pki", &state)?;
                 return Err(error);
@@ -145,7 +175,10 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         state.document = Some(verified.document);
         state.blocked = false;
         // Approved revision and all historical CRL watermarks commit together before native effects.
-        self.store.put("pki", &state)
+        self.runtime_gate.close();
+        self.store.put("pki", &state)?;
+        self.publish_runtime_gate();
+        Ok(())
     }
 
     pub(crate) fn install_trust(&mut self) -> Result<(), Error> {
@@ -202,7 +235,9 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                     self.store.put("pki", &state)?;
                 } else if !self.secrets.read_certificate(*store, der)? {
                     let outcome = self.secrets.add_certificate(*store, der)?;
-                    if outcome == CertificateAdd::Present {
+                    if outcome == CertificateAdd::Present
+                        && installation.ownership != Ownership::Owned
+                    {
                         return Err(Error::Untrusted);
                     }
                     state
@@ -212,6 +247,9 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                         .ownership = Ownership::Owned;
                     self.store.put("pki", &state)?;
                 }
+            }
+            if state.installations.get(id).ok_or(Error::Storage)?.ownership == Ownership::Owned {
+                self.secrets.configure_certificate(*store, der)?;
             }
             if !self.secrets.read_certificate(*store, der)? {
                 return Err(Error::Untrusted);
@@ -316,6 +354,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
     }
 
     async fn drive_pki_once(&mut self) -> Result<(), Error> {
+        self.publish_runtime_gate();
         self.refresh_trust().await?;
         self.install_trust()?;
         if self.has_pending_enrollment()? {

@@ -131,9 +131,12 @@ impl agent_client::MachineTrust for Secrets {
         if values.contains_key("machine/read-failure") {
             return Err(Error::Storage);
         }
+        let key = certificate_key(store, der);
         Ok(values
-            .get(&certificate_key(store, der))
-            .is_some_and(|value| *value == base64::engine::general_purpose::STANDARD.encode(der)))
+            .get(&key)
+            .is_some_and(|value| *value == base64::engine::general_purpose::STANDARD.encode(der))
+            && (store != agent_client::MachineStore::Root
+                || values.contains_key(&format!("configured/{key}"))))
     }
     fn add_certificate(
         &self,
@@ -154,12 +157,31 @@ impl agent_client::MachineTrust for Secrets {
         }
         Ok(agent_client::CertificateAdd::Created)
     }
+    fn configure_certificate(
+        &self,
+        store: agent_client::MachineStore,
+        der: &[u8],
+    ) -> Result<(), Error> {
+        let mut values = self.0.lock().unwrap();
+        if values.contains_key("machine/configure-failure") {
+            return Err(Error::Storage);
+        }
+        let key = certificate_key(store, der);
+        if !values.contains_key(&key) {
+            return Err(Error::Storage);
+        }
+        values.insert(format!("configured/{key}"), "configured".into());
+        Ok(())
+    }
     fn delete_certificate(
         &self,
         store: agent_client::MachineStore,
         der: &[u8],
     ) -> Result<(), Error> {
-        self.0.lock().unwrap().remove(&certificate_key(store, der));
+        let key = certificate_key(store, der);
+        let mut values = self.0.lock().unwrap();
+        values.remove(&key);
+        values.remove(&format!("configured/{key}"));
         Ok(())
     }
 }
@@ -168,6 +190,7 @@ pub struct Data {
     pub trust_calls: usize,
     pub trust_ack_calls: Vec<Value>,
     pub trust_ack_failure: bool,
+    pub trust_failure: bool,
     pub renewal_lookup_calls: Vec<Value>,
     pub renewal_lookup_authenticated: Vec<bool>,
     pub tls_required: bool,
@@ -230,6 +253,8 @@ pub struct Data {
     pub claim_failure: bool,
     pub claim_pause: Option<Arc<tokio::sync::Notify>>,
     pub claim_waiting: bool,
+    pub status_pause: Option<Arc<tokio::sync::Notify>>,
+    pub status_waiting: bool,
     pub explicit_offers: bool,
     pub claim_ops: Vec<String>,
     pub claim_inputs: Vec<Value>,
@@ -385,6 +410,7 @@ impl Server {
             trust_calls: 0,
             trust_ack_calls: Vec::new(),
             trust_ack_failure: false,
+            trust_failure: false,
             renewal_lookup_calls: Vec::new(),
             renewal_lookup_authenticated: Vec::new(),
             tls_required: tls,
@@ -447,6 +473,8 @@ impl Server {
             claim_failure: false,
             claim_pause: None,
             claim_waiting: false,
+            status_pause: None,
+            status_waiting: false,
             explicit_offers: false,
             claim_ops: vec![],
             claim_inputs: vec![],
@@ -553,6 +581,9 @@ async fn handler(
         if uri.path().ends_with("/claim") && d.claim_pause.is_some() {
             d.claim_waiting = true;
             d.claim_pause.clone()
+        } else if uri.path().ends_with("/enroll/status") && d.status_pause.is_some() {
+            d.status_waiting = true;
+            d.status_pause.clone()
         } else {
             None
         }
@@ -629,6 +660,13 @@ fn enrollment_response(d: &mut Data, action: &str, value: Value, peer: Option<&[
     match action {
         "trust" => {
             d.trust_calls += 1;
+            if std::mem::take(&mut d.trust_failure) {
+                return (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    axum::Json(serde_json::json!({"code":"service_unavailable"})),
+                )
+                    .into_response();
+            }
             axum::Json(d.trust.clone()).into_response()
         }
         "trust/acknowledgements" => {

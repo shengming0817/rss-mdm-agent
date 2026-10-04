@@ -38,13 +38,13 @@ Windows 安装操作返回 UUID 和不含输入内容的阶段回执。等待超
 
 由管理员准备受保护的部署 JSON：macOS 默认 `/Library/Application Support/RSS MDM Agent/execution.json`，Windows 为 ProgramData 下同一产品目录的 `execution.json`。格式由 `apps/agent-service/src/deployment.rs` 持有，使用当前格式显式配置 version、ipc_version、HTTPS origin、tenant、signing_keys、installation_id、installation_artifact、ca_file（受保护的 HTTPS bootstrap CA）、registration_clients 桌面程序/用户 pin、state_root、service 产物 pin、clients OS 主体/程序 pin、execution 的 work_root/material_root/interpreters/managers/processes，以及每个已登记用户的 helper_work_roots。解释器和包管理器使用完整路径和固定摘要，不使用 PATH 查找。material_root 与 state_root 分离。
 
-桌面与后台 Agent 的组织 CA 以根 `.env` 的 `RSS_MDM_CA_FILE` 为统一部署输入。它指向部署方明确提供的单个 PEM CA 公共证书；留空使用默认信任。桌面构建嵌入公共证书，Agent 的 `execution.json.ca_file` 是由该输入生成的运行配置，不是桌面的配置来源。生成新安装配置时先准备包含程序 pins、工作目录、注册身份等完整字段的模板，然后执行：
+桌面使用根 `.env` 的可选 `RSS_MDM_CA_FILE`；后台 Agent 必须配置独立的 `RSS_AGENT_CA_FILE`，指向部署方明确提供的单个 HTTPS bootstrap CA 公共证书。桌面构建嵌入其公共证书，Agent 的 `execution.json.ca_file` 由 Agent 输入生成。生成新安装配置时先准备包含程序 pins、工作目录、注册身份等完整字段的模板，然后执行：
 
 ```sh
 node scripts/agent-organization.mjs --config /private/execution-template.json --output /private/execution.json --ca-output /private/organization-ca.pem
 ```
 
-`--ca-output` 是 CA 在设备上的最终绝对路径，生成器写入同一公共证书并记录该路径；省略私有 CA 时无需该参数。输出配置与 CA 为 0644（公开信息），安装后的父目录须允许用户 helper 遍历、文件由管理员持有且普通用户不可写；凭据和状态目录保持原有保护。输出文件必须不存在，不覆盖既有部署；保持模板的其它字段，仅替换组织地址、租户和 CA。按原安装要求将配置与证书置于管理员保护的最终路径，再进行首次注册。部署不同设备时使用目标设备对应的绝对路径。现有设备不要通过生成新身份或重新注册来更新 CA；沿用原身份，按受控刷新流程发布新配置。更新 CA 后桌面重新构建、Agent 重新加载；不修改系统信任。CA 私钥不分发，任务签名公钥与组织 HTTPS CA 分开管理。
+`--ca-output` 是 CA 在设备上的最终绝对路径，生成器写入同一公共证书并记录该路径；Agent 必须提供该参数。输出配置与 CA 为 0644（公开信息），安装后的父目录须允许用户 helper 遍历、文件由管理员持有且普通用户不可写；凭据和状态目录保持原有保护。输出文件必须不存在，不覆盖既有部署；保持模板的其它字段，仅替换组织地址、租户和 CA。按原安装要求将配置与证书置于管理员保护的最终路径，再进行首次注册。部署不同设备时使用目标设备对应的绝对路径。现有设备不要通过生成新身份或重新注册来更新 CA；沿用原身份，按受控刷新流程发布新配置。更新 CA 后桌面重新构建、Agent 重新加载；HTTPS bootstrap 配置不改系统信任；设备 CA 的机器安装由 PKI owner 驱动。CA 私钥不分发，任务签名公钥与组织 HTTPS CA 分开管理。
 
 首次注册可由固定桌面在本机服务设置中发起授权请求，再在组织网页核对请求编号及公钥指纹并批准。导入网页生成的材料时，使用上文「固定安装包与首次注册」的 Bootstrap envelope、实际 decoder schema 和私有 secret-file 导入入口；材料必须绑定当前组织、原生架构和已安装候选摘要。采用受控私有 stdin 的 `--initialize` 路径时，先停止原服务 owner，再由系统账号运行；秘密不得放入 argv、JSON、日志或 shell 历史。注册重试使用同一配置、原 grant/CSR/签发/激活操作和 OS 密钥。人工换证先停止原 owner，再运行 `--renew-certificate`；保持原 Registration、存储位置和 journal。初始化遇到已有不支持的数据库或缺失的原注册状态时拒绝，保留原文件；不能换目录、清库或重新注册来绕过未决任务。
 
@@ -179,10 +179,10 @@ resume 同样在拒绝前后核验这些前提，不把撤销、旧产物或 off
 Agent 部署生成使用 `.env` 的 RSS_AGENT_ORIGIN、必填 RSS_AGENT_CA_FILE；桌面管理 origin/CA 继续独立配置。使用 Deployment 5、Candidate 2；生成器只写新文件，不覆盖原身份材料。设备证书经原生 CNG/daemon Keychain 签名完成 mTLS；HTTPS 只信任部署时保护的 bootstrap CA，下载的设备 CA 不扩展 HTTPS 信任；任务签名验证始终保留。
 
 
-设备 PKI 由现有系统服务和通信 lease 持有。服务获取并验证完整 Agent trust 集合、签名 CRL、有效期和持久化防回退水位后，把 root/issuer 分别安装到机器 Root/CA 存储（macOS System Keychain 的 Admin root trust，issuer 不设独立 anchor）。只有独立回读成功、当前设备 mTLS 凭证有效时才 ACK；重试保留同一操作。原有或崩溃后无法证明归属的证书不删除。
+设备 PKI 由现有系统服务和通信 lease 持有。服务获取并验证完整 Agent trust 集合、签名 CRL、有效期和持久化防回退水位后，把 root/issuer 分别安装到机器 Root/CA 存储（macOS System Keychain 的 Admin root trust，issuer 不设独立 anchor）。只有独立回读成功、当前设备 mTLS 凭证有效时才 ACK；重试保留同一操作。原有或崩溃后无法证明归属的证书不删除；物理证书添加完成后先持久化 Owned，再配置其机器 trust，暂态设置失败可沿原归属重试。若崩溃发生在持久化 Owned 前且材料存在但设置缺失，保持拒绝，由管理员核对同一 DER 后修复机器设置，不把 presence 推断为 ownership。
 
 服务每五分钟刷新 trust，并提前检查 CRL 到期；设备凭证进入 `min(20% 生命周期, 30 天)` 窗口后自动续签。恢复沿用持久化操作、CSR、密钥和注册；创建 renewal grant 的响应丢失后，可通过 bootstrap HTTPS 查询原 grant。过期、吊销或无法验证的 trust 会关闭执行准入并停止已有工作，执行日志和副作用证据保留。
 
-管理员恢复需要停止系统服务，准备服务端为**同一注册**签发的受保护 `GrantImport` JSON（`operationId`、`grant`），通过 `rss-execution-service --config <部署路径> --recover-certificate <JSON路径>` 从标准输入传入 secret。此入口不替换未决操作，也不创建新注册；成功激活只恢复新任务准入。随后通过已有 installation owner 重新启动服务，并核对认证 IPC readiness。初始 Bootstrap envelope 保持版本 1。
+管理员恢复需要停止系统服务，准备服务端为**同一注册**签发的受保护 `GrantImport` JSON（`operationId`、`grant`），通过 `rss-execution-service --installation recover --scope system --config <部署路径> --grant <JSON路径> --secret-file <私有secret路径>` 交给原 installation owner。Windows 沿既有 SCM worker 转为 LocalSystem，macOS 使用系统管理员执行；secret 文件由原私有输入规则保护，不把 secret 放入 argv。此入口不替换未决操作，也不创建新注册；成功激活只恢复新任务准入。owner 尝试重新启动原服务；核对认证 IPC readiness，并按既有私有材料处理方式清理输入 secret。初始 Bootstrap envelope 保持版本 1。
 
 旧 Deployment 4 / Candidate 1 被运行时直接拒绝。使用受保护的新 Candidate 2 包中服务二进制执行 `--installation upgrade-device-pki --scope system --config <旧部署路径> --candidate <新candidate.json>`：owner 核对立即前一版格式、同一 origin/tenant、既有 HTTPS CA 和持久化通信/执行绑定，停止旧 owner 并独占 lease 后原子发布新配置和程序 pin。安装 ID、设备注册、通信数据库版本 6 和执行日志不变。旧 retained manifest 保留，转换后的 Candidate 2 单独按摘要留存；中断后重复**相同命令和候选**完成安装，不能改换候选或降级。旧部署必须已有受保护 HTTPS CA；升级不采用系统默认 HTTPS 信任。

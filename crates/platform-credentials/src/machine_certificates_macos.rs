@@ -70,6 +70,9 @@ fn unconditional_root(value: &CFArray<CFDictionary>) -> bool {
     }
     let key = CFString::new("kSecTrustSettingsResult");
     dict.find(key.as_CFTypeRef().cast()).is_some_and(|number| {
+        if unsafe { core_foundation::base::CFGetTypeID((*number).cast()) } != CFNumber::type_id() {
+            return false;
+        }
         let number = unsafe { CFNumber::wrap_under_get_rule((*number).cast()) };
         number.to_i64() == Some(i64::from(kSecTrustSettingsResultTrustRoot))
     })
@@ -154,7 +157,7 @@ impl MachineCertificates {
         }
     }
     /// Add-only; existing certificate or trust settings are never rewritten.
-    pub fn add(&self, class: CertificateStore, der: &[u8]) -> io::Result<bool> {
+    pub fn add(&self, _class: CertificateStore, der: &[u8]) -> io::Result<bool> {
         input(der)?;
         write_access()?;
         let _interaction = crate::Keychain::disable_interaction()?;
@@ -171,6 +174,24 @@ impl MachineCertificates {
             Err(e) if e.code() == -25299 => return Ok(false),
             Err(e) => return Err(io::Error::other(e)),
         }
+        Ok(true)
+    }
+    /// Caller has durable ownership. Complete missing settings without changing external trust.
+    pub fn configure(&self, class: CertificateStore, der: &[u8]) -> io::Result<()> {
+        input(der)?;
+        write_access()?;
+        let _interaction = crate::Keychain::disable_interaction()?;
+        let cert = find(&system()?, der)?.ok_or(io::ErrorKind::NotFound)?;
+        if settings(&cert, kSecTrustSettingsDomainSystem)?.is_some() {
+            return Err(io::ErrorKind::PermissionDenied.into());
+        }
+        if let Some(admin) = settings(&cert, kSecTrustSettingsDomainAdmin)? {
+            return if class == CertificateStore::Root && unconditional_root(&admin) {
+                Ok(())
+            } else {
+                Err(io::ErrorKind::PermissionDenied.into())
+            };
+        }
         if class == CertificateStore::Root {
             let entry = CFDictionary::from_CFType_pairs(&[(
                 CFString::new("kSecTrustSettingsResult"),
@@ -180,7 +201,7 @@ impl MachineCertificates {
                 .as_CFType(),
             )]);
             let array = CFArray::from_CFTypes(&[entry]);
-            // SAFETY: only a newly added certificate; a single unconditional Root setting in Admin domain.
+            // SAFETY: the caller persisted ownership; a single unconditional Root setting in Admin domain.
             status(unsafe {
                 SecTrustSettingsSetTrustSettings(
                     cert.as_concrete_TypeRef(),
@@ -189,7 +210,7 @@ impl MachineCertificates {
                 )
             })?;
         }
-        Ok(true)
+        Ok(())
     }
     /// Caller owns this exact certificate; refuse to erase subsequently changed external settings.
     pub fn delete(&self, class: CertificateStore, der: &[u8]) -> io::Result<()> {

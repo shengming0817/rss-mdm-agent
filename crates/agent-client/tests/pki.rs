@@ -233,6 +233,24 @@ async fn an_interrupted_native_add_never_becomes_durable_ownership_from_presence
     drop(client);
     server.time.set(3);
     let mut client = server.client(&root, OpenMode::Existing);
+    assert_eq!(client.drive_pki().await.unwrap_err(), Error::Untrusted);
+    // Physical presence after an interrupted add is ambiguous. Administrator completes the exact setting.
+    use agent_client::MachineTrust;
+    let der: Vec<u8> = serde_json::from_value(
+        state(&root, "pki")["installations"]
+            .as_object()
+            .unwrap()
+            .values()
+            .next()
+            .unwrap()["der"]
+            .clone(),
+    )
+    .unwrap();
+    server
+        .secrets
+        .configure_certificate(agent_client::MachineStore::Root, &der)
+        .unwrap();
+    server.time.set(7);
     client.drive_pki().await.unwrap();
     assert!(state(&root, "pki")["installations"]
         .as_object()
@@ -420,6 +438,10 @@ async fn retiring_approved_material_preserves_a_preexisting_machine_root() {
         .secrets
         .add_certificate(MachineStore::Root, &old)
         .unwrap();
+    server
+        .secrets
+        .configure_certificate(MachineStore::Root, &old)
+        .unwrap();
     let root = Root::new();
     let mut client = server.client(&root, OpenMode::Create);
     client.drive_pki().await.unwrap();
@@ -452,4 +474,38 @@ async fn retiring_approved_material_preserves_a_preexisting_machine_root() {
         .secrets
         .read_certificate(MachineStore::Root, &old)
         .unwrap());
+}
+
+#[tokio::test]
+async fn machine_root_configuration_failure_retries_only_after_durable_ownership() {
+    let server = Server::tls().await;
+    let root = Root::new();
+    server
+        .secrets
+        .0
+        .lock()
+        .unwrap()
+        .insert("machine/configure-failure".into(), "injected".into());
+    let mut client = server.client(&root, OpenMode::Create);
+    assert_eq!(client.drive_pki().await.unwrap_err(), Error::Storage);
+    assert!(state(&root, "pki")["installations"]
+        .as_object()
+        .unwrap()
+        .values()
+        .all(|v| v["ownership"] == "Owned"));
+    drop(client);
+    server
+        .secrets
+        .0
+        .lock()
+        .unwrap()
+        .remove("machine/configure-failure");
+    server.time.set(3);
+    let mut client = server.client(&root, OpenMode::Existing);
+    client.drive_pki().await.unwrap();
+    assert!(state(&root, "pki")["installations"]
+        .as_object()
+        .unwrap()
+        .values()
+        .all(|v| v["ownership"] == "Owned"));
 }
