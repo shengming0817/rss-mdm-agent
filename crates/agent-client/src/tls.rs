@@ -47,26 +47,21 @@ pub(crate) fn client(
         .read_timeout(cfg.limits.read_timeout)
         .https_only(cfg.transport == Transport::Https);
     let crypto = Arc::new(rustls::crypto::ring::default_provider());
-    let verifier = match &cfg.ca_pem {
-        Some(pem) => {
-            let text = std::str::from_utf8(pem).map_err(|_| Error::Configuration)?;
-            let certificate =
-                x509_cert::Certificate::from_pem(text).map_err(|_| Error::Configuration)?;
-            rustls_platform_verifier::Verifier::new_with_extra_roots(
-                vec![CertificateDer::from(
-                    certificate.to_der().map_err(|_| Error::Configuration)?,
-                )],
-                crypto.clone(),
-            )
-        }
-        None => rustls_platform_verifier::Verifier::new(crypto.clone()),
+    let mut roots = rustls::RootCertStore::empty();
+    if let Some(pem) = &cfg.ca_pem {
+        let text = std::str::from_utf8(pem).map_err(|_| Error::Configuration)?;
+        let certificate =
+            x509_cert::Certificate::from_pem(text).map_err(|_| Error::Configuration)?;
+        roots
+            .add(CertificateDer::from(
+                certificate.to_der().map_err(|_| Error::Configuration)?,
+            ))
+            .map_err(|_| Error::Configuration)?;
     }
-    .map_err(|_| Error::Configuration)?;
     let config = rustls::ClientConfig::builder_with_provider(crypto)
         .with_safe_default_protocol_versions()
         .map_err(|_| Error::Configuration)?
-        .dangerous()
-        .with_custom_certificate_verifier(Arc::new(verifier));
+        .with_root_certificates(roots);
     let config = match identity {
         Some((reference, chain)) => {
             let key = Arc::new(CertifiedKey::new(
@@ -88,6 +83,7 @@ pub(crate) fn validity(
     reference: &str,
     provider: &impl IdentityProvider,
     now: i64,
+    trust: &crate::trust::VerifiedTrust,
 ) -> Result<(i64, i64, String), Error> {
     use x509_cert::ext::pkix::{
         name::GeneralName, BasicConstraints, ExtendedKeyUsage, KeyUsage, KeyUsages, SubjectAltName,
@@ -133,33 +129,7 @@ pub(crate) fn validity(
     {
         return Err(Error::Untrusted);
     }
-    let issuer =
-        x509_cert::Certificate::from_pem(&cfg.device_ca_pem).map_err(|_| Error::Configuration)?;
-    if t.issuer != issuer.tbs_certificate.subject {
-        return Err(Error::Untrusted);
-    }
-    let mut roots = rustls::RootCertStore::empty();
-    roots
-        .add(CertificateDer::from(
-            issuer.to_der().map_err(|_| Error::Configuration)?,
-        ))
-        .map_err(|_| Error::Configuration)?;
-    let verifier = rustls::server::WebPkiClientVerifier::builder_with_provider(
-        Arc::new(roots),
-        Arc::new(rustls::crypto::ring::default_provider()),
-    )
-    .build()
-    .map_err(|_| Error::Configuration)?;
-    // Trust only the configured direct Agent issuer; supplied chain members cannot delegate it.
-    verifier
-        .verify_client_cert(
-            &certificates[0],
-            &[],
-            rustls::pki_types::UnixTime::since_unix_epoch(std::time::Duration::from_secs(
-                now as u64,
-            )),
-        )
-        .map_err(|_| Error::Untrusted)?;
+    trust.verify_leaf(&certificates, now)?;
     let (_, san) = t
         .get::<SubjectAltName>()
         .map_err(|_| Error::Protocol)?

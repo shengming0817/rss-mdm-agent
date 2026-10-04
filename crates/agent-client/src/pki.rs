@@ -1,0 +1,336 @@
+use crate::{
+    client::json_transport,
+    pki_wire::{Acknowledgement, Trust},
+    trust::{VerifiedTrust, Watermark},
+    CertificateAdd, Client, Clock, Error, IdentityProvider, MachineStore,
+};
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+use uuid::Uuid;
+
+#[derive(Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct State {
+    pub document: Option<Trust>,
+    watermarks: BTreeMap<String, Watermark>,
+    installations: BTreeMap<String, Installation>,
+    ack: Option<Ack>,
+    refresh_at: i64,
+    attempts: u8,
+    retry_at: i64,
+    pub blocked: bool,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Installation {
+    store: MachineStore,
+    der: Vec<u8>,
+    ownership: Ownership,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+enum Ownership {
+    Intent,
+    Owned,
+    Borrowed,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Ack {
+    request: Acknowledgement,
+    registration: Uuid,
+    completed: bool,
+}
+
+impl State {
+    pub fn verified(&self, cfg: &crate::Config, now: i64) -> Result<VerifiedTrust, Error> {
+        if self.blocked {
+            return Err(Error::Untrusted);
+        }
+        VerifiedTrust::new(self.document.clone().ok_or(Error::Identity)?, cfg, now)
+    }
+}
+
+impl<S: IdentityProvider, C: Clock> Client<S, C> {
+    pub(crate) fn pki_state(&self) -> Result<State, Error> {
+        Ok(self.store.get("pki")?.unwrap_or_default())
+    }
+
+    /// Validate the current device identity against fresh approved trust, without HTTP or key creation.
+    pub fn runtime_readiness(&self) -> Result<(), Error> {
+        self.active()
+    }
+
+    /// Earliest credential or approved trust expiry, for the existing execution owner's admission gate.
+    pub fn runtime_deadline(&self) -> Result<i64, Error> {
+        self.active()?;
+        let active = self.identity_state()?.active.ok_or(Error::Identity)?;
+        Ok(active.not_after.min(self.verified_trust()?.expires))
+    }
+
+    pub(crate) fn verified_trust(&self) -> Result<VerifiedTrust, Error> {
+        self.pki_state()?.verified(&self.store.cfg, self.now()?)
+    }
+
+    pub(crate) fn restore_runtime_transport(&mut self) -> Result<(), Error> {
+        self.active()?;
+        let active = self.identity_state()?.active.ok_or(Error::Identity)?;
+        self.http = crate::tls::client(
+            &self.store.cfg,
+            Some((&active.key_reference, &active.chain)),
+            &self.secrets,
+        )?;
+        Ok(())
+    }
+
+    pub(crate) async fn refresh_trust(&mut self) -> Result<(), Error> {
+        let now = self.now()?;
+        let mut state = self.pki_state()?;
+        if state.document.is_some() && !state.blocked && now < state.refresh_at {
+            state.verified(&self.store.cfg, now)?;
+            return Ok(());
+        }
+        let url = self
+            .store
+            .cfg
+            .origin
+            .join("api/v1/agent/enroll/trust")
+            .map_err(|_| Error::Configuration)?;
+        let (status, bytes) = json_transport(
+            self.bootstrap
+                .get(url)
+                .timeout(self.store.cfg.limits.request_timeout),
+            self.store.cfg.limits.response_bytes,
+        )
+        .await?;
+        if !status.is_success() {
+            return Err(Error::Unavailable);
+        }
+        let now = self.now()?;
+        let accepted = (|| {
+            let document: Trust = serde_json::from_slice(&bytes).map_err(|_| Error::Protocol)?;
+            let verified = VerifiedTrust::new(document, &self.store.cfg, now)?;
+            if let Some(previous) = &state.document {
+                verified.monotonic(previous, &state.watermarks)?;
+            }
+            Ok::<_, Error>(verified)
+        })();
+        let verified = match accepted {
+            Ok(value) => value,
+            Err(error) => {
+                state.blocked = true;
+                self.store.put("pki", &state)?;
+                return Err(error);
+            }
+        };
+        if state.watermarks.len()
+            + verified
+                .watermarks
+                .keys()
+                .filter(|key| !state.watermarks.contains_key(*key))
+                .count()
+            > 4096
+        {
+            return Err(Error::Capacity);
+        }
+        state.watermarks.extend(verified.watermarks.clone());
+        state.refresh_at = now.saturating_add(300).min(
+            verified
+                .expires
+                .saturating_sub(1)
+                .max(now.saturating_add(1)),
+        );
+        state.document = Some(verified.document);
+        state.blocked = false;
+        // Approved revision and all historical CRL watermarks commit together before native effects.
+        self.store.put("pki", &state)
+    }
+
+    pub(crate) fn install_trust(&mut self) -> Result<(), Error> {
+        let mut state = self.pki_state()?;
+        let approved = state.verified(&self.store.cfg, self.now()?)?.certificates();
+        for (id, (store, der)) in &approved {
+            if !state.installations.contains_key(id) {
+                let ownership = if self.secrets.read_certificate(*store, der)? {
+                    Ownership::Borrowed
+                } else {
+                    Ownership::Intent
+                };
+                state.installations.insert(
+                    id.clone(),
+                    Installation {
+                        store: *store,
+                        der: der.clone(),
+                        ownership,
+                    },
+                );
+                self.store.put("pki", &state)?;
+                if ownership == Ownership::Intent {
+                    let outcome = self.secrets.add_certificate(*store, der)?;
+                    state
+                        .installations
+                        .get_mut(id)
+                        .ok_or(Error::Storage)?
+                        .ownership = match outcome {
+                        CertificateAdd::Created => Ownership::Owned,
+                        CertificateAdd::Present => Ownership::Borrowed,
+                    };
+                    self.store.put("pki", &state)?;
+                }
+            } else {
+                let installation = state.installations.get(id).ok_or(Error::Storage)?;
+                if installation.store != *store || installation.der != *der {
+                    return Err(Error::Storage);
+                }
+                if installation.ownership == Ownership::Intent {
+                    // A crash may have completed the native add. Never infer ownership from presence.
+                    let ownership = if self.secrets.read_certificate(*store, der)? {
+                        Ownership::Borrowed
+                    } else {
+                        match self.secrets.add_certificate(*store, der)? {
+                            CertificateAdd::Created => Ownership::Owned,
+                            CertificateAdd::Present => Ownership::Borrowed,
+                        }
+                    };
+                    state
+                        .installations
+                        .get_mut(id)
+                        .ok_or(Error::Storage)?
+                        .ownership = ownership;
+                    self.store.put("pki", &state)?;
+                } else if !self.secrets.read_certificate(*store, der)? {
+                    let outcome = self.secrets.add_certificate(*store, der)?;
+                    if outcome == CertificateAdd::Present {
+                        return Err(Error::Untrusted);
+                    }
+                    state
+                        .installations
+                        .get_mut(id)
+                        .ok_or(Error::Storage)?
+                        .ownership = Ownership::Owned;
+                    self.store.put("pki", &state)?;
+                }
+            }
+            if !self.secrets.read_certificate(*store, der)? {
+                return Err(Error::Untrusted);
+            }
+        }
+        let retired = state
+            .installations
+            .keys()
+            .filter(|id| !approved.contains_key(*id))
+            .cloned()
+            .collect::<Vec<_>>();
+        for id in retired {
+            let installation = state.installations.get(&id).ok_or(Error::Storage)?;
+            if installation.ownership == Ownership::Owned {
+                self.secrets
+                    .delete_certificate(installation.store, &installation.der)?;
+            }
+            state.installations.remove(&id);
+            self.store.put("pki", &state)?;
+        }
+        Ok(())
+    }
+
+    async fn acknowledge_trust(&mut self) -> Result<(), Error> {
+        if self.identity_state()?.active.is_none() {
+            return Ok(());
+        }
+        self.restore_runtime_transport()?;
+        self.install_trust()?; // Independent readback before every ACK, including replay after response loss.
+        let registration = self.registration()?.registration_id;
+        let mut state = self.pki_state()?;
+        let document = state.document.as_ref().ok_or(Error::Identity)?;
+        let digest = document.installation_digest()?;
+        if !state.ack.as_ref().is_some_and(|a| {
+            a.registration == registration
+                && a.request.revision == document.revision
+                && a.request.digest == digest
+        }) {
+            state.ack = Some(Ack {
+                request: Acknowledgement {
+                    operation: Uuid::new_v4(),
+                    version: 1,
+                    revision: document.revision,
+                    digest,
+                },
+                registration,
+                completed: false,
+            });
+            self.store.put("pki", &state)?;
+        }
+        let ack = state.ack.as_ref().ok_or(Error::Storage)?;
+        if ack.completed {
+            return Ok(());
+        }
+        let url = self
+            .store
+            .cfg
+            .origin
+            .join("api/v1/agent/enroll/trust/acknowledgements")
+            .map_err(|_| Error::Configuration)?;
+        let body = crate::store::encode(&ack.request)?;
+        let (status, bytes) = json_transport(
+            self.http
+                .post(url)
+                .header("content-type", "application/json")
+                .body(body)
+                .timeout(self.store.cfg.limits.request_timeout),
+            self.store.cfg.limits.response_bytes,
+        )
+        .await?;
+        if !status.is_success() {
+            let error: agent_api::enroll::ErrorBody = crate::store::decode(&bytes)?;
+            self.identity_failure(error.code)?;
+            return Err(crate::identity::enrollment_error(error.code));
+        }
+        if status != reqwest::StatusCode::NO_CONTENT || !bytes.is_empty() {
+            return Err(Error::Protocol);
+        }
+        state.ack.as_mut().ok_or(Error::Storage)?.completed = true;
+        self.store.put("pki", &state)
+    }
+
+    /// Drive retained PKI work with durable bounded backoff; no retry changes signing intent.
+    pub async fn drive_pki(&mut self) -> Result<(), Error> {
+        let now = self.now()?;
+        if now < self.pki_state()?.retry_at {
+            return Ok(());
+        }
+        let result = self.drive_pki_once().await;
+        let now = self.now()?;
+        let mut state = self.pki_state()?;
+        if result.is_ok() {
+            state.attempts = 0;
+            state.retry_at = now.saturating_add(2);
+        } else {
+            state.attempts = state.attempts.saturating_add(1).min(9);
+            state.retry_at =
+                now.saturating_add((2_i64 << state.attempts.saturating_sub(1)).min(300));
+        }
+        self.store.put("pki", &state)?;
+        result
+    }
+
+    async fn drive_pki_once(&mut self) -> Result<(), Error> {
+        self.refresh_trust().await?;
+        self.install_trust()?;
+        if self.has_pending_enrollment()? {
+            self.drive_enrollment().await?;
+        } else if let Some(active) = self.identity_state()?.active {
+            self.restore_runtime_transport()?;
+            let lifetime = active
+                .not_after
+                .checked_sub(active.not_before)
+                .ok_or(Error::Storage)?;
+            let window = (lifetime / 5).min(30 * 86400);
+            if self.now()? >= active.not_after.saturating_sub(window) {
+                self.renew_certificate().await?;
+            }
+        }
+        self.acknowledge_trust().await
+    }
+}

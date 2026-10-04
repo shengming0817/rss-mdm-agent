@@ -5,7 +5,7 @@
 
 - 本仓独立workspace、工具链、lock与发布周期；同workspace成员可用内部path，禁止以相邻RSS/rss-mdm/prmonitor目录path或patch作为交付前提。
 - 客户端通过版本化 HTTP API 对接 rss-mdm；禁止依赖后端 Rust 源码包，或通过 Git/path/patch 和传递依赖引入后端实现。公开基础库依赖按各自发布边界消费。
-- 远程协议权威由 rss-mdm 持有；本仓按已有 API/schema 生成所需绑定，不手写第二套 DTO，不建立设备身份权威。生成输入和输出在本仓维护，常规构建与生成不读取后端 checkout。
+- 远程协议权威由 rss-mdm 持有；已有发布 schema 的 API 按该 schema 生成所需绑定。只有公开 HTTP API、尚无发布 schema 制品的能力可由消费者维护最小私有解析模型，按公开契约验证，不建立第二套公开协议或设备身份权威。生成输入和输出在本仓维护，常规构建与生成不读取后端 checkout。
 - 客户端测试使用本仓协议 fixture 及实际本地存储/TLS 接缝；禁止构建另一产品、导入其私有夹具或读取其 checkout。部署服务的完整联调归独立产品验收，不进入常规 CI。
 - AI/UI提取绑定来源commit、文件映射、权利/许可及改写证据，不链接整个prmonitor_lib，不带PR业务和旧不受控权限配置。
 - 公共 API 通过现有单元、集成或产品调用路径验证；不维护平行的独立 consumer、pack/install 测试与回执框架。真实应用打包仍需验证运行资源完整性。

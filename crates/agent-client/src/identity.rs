@@ -9,12 +9,7 @@ pub(crate) struct IdentityState {
     pub failure: Option<enroll::ErrorCode>,
 }
 impl IdentityState {
-    pub(crate) fn validate_runtime(
-        &self,
-        cfg: &crate::Config,
-        provider: &impl IdentityProvider,
-        now: i64,
-    ) -> Result<&runtime::BindingProfile, Error> {
+    pub(crate) fn active_identity(&self, now: i64) -> Result<&Active, Error> {
         if let Some(code) = self.failure.filter(|code| blocks_runtime(*code)) {
             return Err(enrollment_error(code));
         }
@@ -26,8 +21,24 @@ impl IdentityState {
         if now >= active.not_after {
             return Err(Error::CertificateExpired);
         }
-        let (before, after, device) =
-            crate::tls::validity(cfg, &active.chain, &active.key_reference, provider, now)?;
+        Ok(active)
+    }
+    pub(crate) fn validate_runtime(
+        &self,
+        cfg: &crate::Config,
+        provider: &impl IdentityProvider,
+        now: i64,
+        trust: &crate::trust::VerifiedTrust,
+    ) -> Result<&runtime::BindingProfile, Error> {
+        let active = self.active_identity(now)?;
+        let (before, after, device) = crate::tls::validity(
+            cfg,
+            &active.chain,
+            &active.key_reference,
+            provider,
+            now,
+            trust,
+        )?;
         if before != active.not_before
             || after != active.not_after
             || device != active.receipt.runtime.device_id
@@ -52,6 +63,7 @@ pub(crate) enum Purpose {
     Authorization,
     Import,
     Renewal,
+    Recovery,
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

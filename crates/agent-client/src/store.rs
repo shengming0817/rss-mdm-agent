@@ -187,8 +187,27 @@ pub fn validate_identity(
     provider: &impl crate::IdentityProvider,
     clock: &impl crate::Clock,
 ) -> Result<wire::BindingProfile, Error> {
-    Ok(read_identity(root, cfg)?
-        .validate_runtime(cfg, provider, clock.now()?)?
+    let identity = read_identity(root, cfg)?;
+    identity.active_identity(clock.now()?)?;
+    let reader = read_existing(root, cfg)?;
+    let now = clock.now()?;
+    let watermark: i64 = reader.query_row(
+        "SELECT watermark FROM metadata WHERE singleton=1",
+        [],
+        |r| r.get(0),
+    )?;
+    if now < 0 || now < watermark {
+        return Err(Error::Clock);
+    }
+    let bytes: Option<Vec<u8>> = reader.query_row("SELECT CASE WHEN typeof(body)='blob' AND length(body)<=?1 THEN body END FROM state WHERE key='pki'", [cfg.limits.response_bytes], |r| r.get(0)).optional()?.flatten();
+    let state: crate::pki::State = bytes
+        .as_deref()
+        .map(decode)
+        .transpose()?
+        .ok_or(Error::Identity)?;
+    let trust = state.verified(cfg, now)?;
+    Ok(identity
+        .validate_runtime(cfg, provider, clock.now()?, &trust)?
         .clone())
 }
 /// Read installation identity and all retained key references without opening a writer or
@@ -199,7 +218,11 @@ pub fn validate_stored_identity(
     provider: &impl crate::IdentityProvider,
 ) -> Result<Option<wire::BindingProfile>, Error> {
     let identity = read_identity(root, cfg)?;
-    if let Some(active) = &identity.active {
+    if let Some(active) = identity
+        .active
+        .as_ref()
+        .filter(|_| identity.pending.is_none())
+    {
         provider.key(&active.key_reference)?;
         provider.resolve(&active.secret_reference)?;
     }

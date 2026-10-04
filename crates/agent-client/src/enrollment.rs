@@ -247,7 +247,9 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         }
         self.prepare_key()?;
         let pending = self.identity_state()?.pending.ok_or(Error::Identity)?;
-        if pending.grant.is_none() && pending.purpose != Purpose::Import {
+        if pending.grant.is_none()
+            && !matches!(pending.purpose, Purpose::Import | Purpose::Recovery)
+        {
             self.secrets.create_secret(&pending.secret_reference)?;
         }
         Ok(Some(pending))
@@ -320,6 +322,46 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         p.grant = Some(material.grant);
         self.store.put("identity", &state)
     }
+    /// Admit an explicit administrator recovery grant without discarding registration or pending intent.
+    pub fn validate_recovery_import(
+        &self,
+        material: &GrantImport,
+        reference: &str,
+    ) -> Result<(), Error> {
+        material.validate(self.store.cfg.platform, self.now()?)?;
+        let state = self.identity_state()?;
+        let active = state.active.as_ref().ok_or(Error::Identity)?;
+        if let Some(p) = state.pending {
+            if p.purpose != Purpose::Recovery
+                || p.operation != material.operation_id
+                || p.secret_reference != reference
+                || p.profile.capabilities != active.receipt.runtime.capabilities
+                || p.grant.as_ref().is_some_and(|g| g != &material.grant)
+            {
+                return Err(Error::Conflict);
+            }
+        }
+        Ok(())
+    }
+    /// Recovery uses bootstrap HTTPS and requires activation to retain the exact runtime binding.
+    pub fn import_recovery_grant(
+        &mut self,
+        material: GrantImport,
+        reference: &str,
+    ) -> Result<(), Error> {
+        self.validate_recovery_import(&material, reference)?;
+        self.secrets.resolve(reference)?;
+        let capabilities = self.registration()?.capabilities;
+        self.prepare_enrollment(
+            Purpose::Recovery,
+            material.operation_id,
+            reference.into(),
+            capabilities,
+        )?;
+        let mut state = self.identity_state()?;
+        state.pending.as_mut().ok_or(Error::Storage)?.grant = Some(material.grant);
+        self.store.put("identity", &state)
+    }
     /// Begin a manually requested same-registration renewal with the current mTLS identity.
     pub async fn renew_certificate(&mut self) -> Result<EnrollmentStatus, Error> {
         let state = self.identity_state()?;
@@ -380,6 +422,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         let Some(mut p) = self.prepare_pending_enrollment()? else {
             return Ok(());
         };
+        self.refresh_trust().await?;
         let mut state = self.identity_state()?;
         let bootstrap = crate::tls::client(&self.store.cfg, None, &self.secrets)?;
         if p.grant.is_none() {
@@ -391,12 +434,26 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                 lifetime_seconds: None,
                 csr: p.csr.clone(),
             };
-            let (http, path) = if p.purpose == Purpose::Renewal {
-                (&self.http, "renewal-grants")
+            let grant: enroll::GrantReceipt = if p.purpose == Purpose::Renewal {
+                if self.restore_runtime_transport().is_ok() {
+                    self.enrollment_json(&self.http, "renewal-grants", &request)
+                        .await?
+                } else {
+                    self.enrollment_json(
+                        &bootstrap,
+                        "renewal-grants/status",
+                        &crate::pki_wire::RenewalLookup {
+                            wire_version: 1,
+                            operation_id: p.operation,
+                            secret: self.secrets.resolve(&p.secret_reference)?,
+                        },
+                    )
+                    .await?
+                }
             } else {
-                (&bootstrap, "requests")
+                self.enrollment_json(&bootstrap, "requests", &request)
+                    .await?
             };
-            let grant: enroll::GrantReceipt = self.enrollment_json(http, path, &request).await?;
             if grant.grant_id.is_nil()
                 || grant.platform != self.store.cfg.platform
                 || grant.expires_at <= self.clock.now()?
@@ -489,6 +546,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                 &p.key_reference,
                 &self.secrets,
                 self.clock.now()?,
+                &self.verified_trust()?,
             )?;
             p.candidate = Some(candidate);
             p.failure = None;
@@ -535,6 +593,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             &p.key_reference,
             &self.secrets,
             self.clock.now()?,
+            &self.verified_trust()?,
         )?;
         if device != receipt.runtime.device_id {
             return Err(Error::Identity);
