@@ -68,7 +68,11 @@ for (const mode of [
         join(root, `scripts/${name}.mjs`),
       );
     cpSync(join(source, "package.json"), join(root, "package.json"));
-    symlinkSync(join(source, "node_modules"), join(root, "node_modules"));
+    symlinkSync(
+      join(source, "node_modules"),
+      join(root, "node_modules"),
+      process.platform === "win32" ? "junction" : "dir",
+    );
     mkdirSync(join(root, "crates/sample"), { recursive: true });
     writeFileSync(join(root, "crates/sample/input.rs"), "baseline");
     const host = join(root, "apps/ai-host/dist"),
@@ -140,7 +144,10 @@ export function openSqliteStore() {
     }
     const worker = join(preparation.directory, "worker");
     mkdirSync(join(worker, "bin"), { recursive: true });
-    cpSync(process.execPath, join(worker, "bin/node"));
+    cpSync(
+      process.execPath,
+      join(worker, "bin", process.platform === "win32" ? "node.exe" : "node"),
+    );
     preparation.record("worker", worker);
     preparation.record("privateWorker", worker);
     const output = join(
