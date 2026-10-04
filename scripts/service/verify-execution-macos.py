@@ -7,14 +7,11 @@ administrator authorization is required. This is an explicit acceptance entry, n
 """
 import argparse
 import hashlib
-import http.client
-import http.server
 import json
 import os
 from pathlib import Path
 import re
 import shlex
-import ssl
 import subprocess
 import threading
 import time
@@ -56,7 +53,7 @@ def security_matrix():
     rows['cross_user']['reason'] = 'second real GUI login required; sudo -u is not evidence'
     rows['login_generation']['reason'] = 'isolated logout/login and retained old request required'
     rows['legacy_challenge'] = dict(status='notApplicable',
-        reason='IPC V9 has no challenge; NSXPC one-shot/5s lifetime and backend offer expiry replace it',
+        reason='IPC V10 has no challenge; NSXPC one-shot/5s lifetime and backend offer expiry replace it',
         source='crates/execution-ipc/src/{host.rs,macos_service.m}')
     return dict(platform='macOS', scenarios=rows, status='notExecuted')
 
@@ -577,7 +574,7 @@ def root_refresh_security(root, binary, config, installer_source, phase):
         raise
     next_config=root/'refresh-candidate.json'
     rows=[]
-    cases=['mode','symlink','acl','hash','cdhash','version','ipc_version','tenant','origin','state_root','registration','marker','journal','communication','secret']
+    cases=['mode','symlink','acl','hash','cdhash','version','ipc_version','tenant','origin','state_root','registration','marker','journal','communication','communication_format','secret']
     assert phase in ('preflight','afterStop')
     for name in cases if phase=='preflight' else []:
         changed=copy.deepcopy(document); actual=next_config
@@ -594,15 +591,20 @@ def root_refresh_security(root, binary, config, installer_source, phase):
             elif name=='tenant': changed['tenant']=str(uuid.uuid4())
             elif name=='origin': changed['origin']='https://localhost:1/'
             elif name=='state_root': changed['state_root']=str(root/'other-state')
-            elif name in ['marker','journal','communication','secret']:
+            elif name in ['marker','journal','communication','communication_format','secret']:
                 # This registration owns only the isolated experiment copy. Prevent its
                 # live communication owner from observing the deliberate missing-file fault.
                 import signal
                 os.kill(pid,signal.SIGSTOP); paused=True
                 held_source=identity_paths[0] if name=='marker' else (
                     journal if name=='journal' else (
-                        root/'state/communication/communication.sqlite' if name=='communication' else root/'state/secrets'))
+                        root/'state/communication/communication.sqlite' if name in ['communication','communication_format'] else root/'state/secrets'))
                 held=held_source.with_suffix('.held');held_source.rename(held)
+                if name=='communication_format':
+                    shutil.copyfile(held,held_source);held_source.chmod(0o600)
+                    connection=sqlite3.connect(held_source)
+                    connection.execute('PRAGMA user_version=4');connection.close()
+                    legacy_bytes=held_source.read_bytes()
             if name not in ['mode','symlink','acl']: next_config.write_text(json.dumps(changed))
             target_plist=plist
             if name=='registration':
@@ -619,6 +621,9 @@ def root_refresh_security(root, binary, config, installer_source, phase):
             else: raise AssertionError('refresh negative unexpectedly admitted: '+name)
         finally:
             if held:
+                if name=='communication_format' and held_source.exists():
+                    assert held_source.read_bytes()==legacy_bytes, 'old-format preflight rewrote the fixture'
+                    held_source.unlink()
                 if held_source.exists():
                     unexpected=held_source.with_name(held_source.name+'.unexpected-'+uuid.uuid4().hex)
                     held_source.rename(unexpected)
@@ -1208,7 +1213,7 @@ def main():
     receipt = dict(platform=os.uname().sysname, architecture=os.uname().machine,
                    osVersion=run('/usr/bin/sw_vers','-productVersion').stdout.strip(), subject=dict(uid=os.geteuid(),session=run('/bin/launchctl','managername').stdout.strip()), candidate=frozen, journal=None, scenarios={}, security=security_matrix(), sourceHead=run('/usr/bin/git', 'rev-parse', 'HEAD').stdout.strip())
     installed = helper = False
-    administrator_session = backend = exchange = backend_log = proxy = proxy_thread = protected = native_probe = probe_log = None
+    administrator_session = backend = exchange = backend_log = protected = native_probe = probe_log = None
     try:
         # Verify before copying. Installation must preserve these bytes and code identities.
         receipt['inputArtifacts'] = {field: candidate_identity(value) for field in ['binary','desktop'] if (value := getattr(args,field)) is not None}
@@ -1225,43 +1230,10 @@ def main():
         exchange = BackendExchange(backend)
         info = exchange.read(time.monotonic() + 8)
         command = exchange.command
-        from urllib.parse import urlparse
-        target = urlparse(info['origin'])
-        class Proxy(http.server.BaseHTTPRequestHandler):
-            def forward(self):
-                connection = http.client.HTTPConnection(target.hostname, target.port, timeout=10)
-                try:
-                    connection.request(self.command, self.path,
-                                       self.rfile.read(int(self.headers.get('Content-Length', '0'))),
-                                       {k: v for k, v in self.headers.items() if k.lower() not in ('host', 'connection')})
-                    reply = connection.getresponse()
-                    body = reply.read()
-                    self.send_response(reply.status)
-                    for key, value in reply.getheaders():
-                        if key.lower() not in ('connection', 'transfer-encoding', 'content-length'):
-                            self.send_header(key, value)
-                    self.send_header('Content-Length', str(len(body)))
-                    self.end_headers()
-                    self.wfile.write(body)
-                finally:
-                    connection.close()
-            do_POST = forward
-            do_GET = forward
-            def log_message(self, *_):
-                pass
-        run('/usr/bin/openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1',
-            '-subj', '/CN=localhost', '-keyout', str(lab / 'tls.key'), '-out', str(lab / 'tls.pem'),
-            '-addext', 'subjectAltName=DNS:localhost,IP:127.0.0.1',
-            '-addext', 'extendedKeyUsage=serverAuth',
-            '-addext', 'basicConstraints=critical,CA:FALSE',
-            '-addext', 'keyUsage=critical,digitalSignature,keyEncipherment')
-        os.chmod(lab / 'tls.key', 0o600)
-        proxy = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Proxy)
-        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        context.load_cert_chain(lab / 'tls.pem', lab / 'tls.key')
-        proxy.socket = context.wrap_socket(proxy.socket, server_side=True)
-        proxy_thread = threading.Thread(target=proxy.serve_forever, daemon=True)
-        proxy_thread.start()
+        if not info['origin'].startswith('https://'):
+            raise RuntimeError('controlled participant must provide direct TLS, without an HTTP proxy')
+        (lab / 'tls.pem').write_text(info['caPem'])
+        grant = command('grant')
         tag = uuid.uuid4().hex
         protected = Path('/Library/Application Support/RSS MDM Agent') / ('verification-' + tag)
         binary, config = protected / 'rss-execution-service', protected / 'execution.json'
@@ -1273,9 +1245,9 @@ def main():
         installer.chmod(0o600)
         system_installer_source = installer_source.replace("'ProcessType': 'Background'", "'ProcessType': 'Background', 'StandardErrorPath': " + repr(str(protected/'service-stderr.log')))
         shutil.copyfile(lab / 'tls.pem', inputs / 'tls.pem')
-        deployment = dict(version=2, ipc_version=9, origin=f'https://localhost:{proxy.server_port}/', tenant=info['tenant'],
+        deployment = dict(version=3, ipc_version=10, origin=info['origin'], tenant=info['tenant'],
                           signing_keys={'test': info['key']}, ca_file=str(protected / 'ca.pem'),
-                          enrollment=str(uuid.uuid4()), registration_operation=str(uuid.uuid4()),
+                          installation_id=str(uuid.uuid4()), device_ca_file=str(protected / 'device-ca.pem'),
                           state_root=str(protected / 'state'),
                           helper_work_roots={str(os.geteuid()): str(helper_root)},
                           execution=dict(work_root=str(protected / 'work'), material_root=str(protected / 'materials'),
@@ -1296,13 +1268,16 @@ def artifact(path):
 config=%r
 config['service']=artifact(binary)
 config['clients']=dict(images=[config['service']],subjects=[%r],interactive=True)
+config['registration_clients']=dict(config['clients'])
 config['execution']['interpreters']=[dict(profile='posix_sh',image=artifact('/bin/sh'))]
 config['execution']['managers']=[dict(executor='package_installer',image=artifact('/usr/sbin/installer'))]
 (root/'ca.pem').write_bytes(%r); os.chmod(root/'ca.pem',0o644)
+(root/'device-ca.pem').write_bytes((root/'ca.pem').read_bytes()); os.chmod(root/'device-ca.pem',0o644)
+(root/'grant.json').write_text(%r); os.chmod(root/'grant.json',0o600)
 path=root/'execution.json';path.write_text(json.dumps(config));os.chmod(path,0o644)
-subprocess.run([str(binary),'--config',str(path),'--initialize'],input='AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',text=True,check=True)
+subprocess.run([str(binary),'--config',str(path),'--import-grant',str(root/'grant.json')],input='AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',text=True,check=True)
 subprocess.run(%r,check=True)
-''' % (str(protected), str(args.binary.resolve()), hashlib.sha256(args.binary.read_bytes()).hexdigest(), deployment, str(os.geteuid()), (lab / 'tls.pem').read_bytes(), frozen_installer(system_installer_source, ['install','--scope','system','--binary',str(binary),'--config',str(config)])))
+''' % (str(protected), str(args.binary.resolve()), hashlib.sha256(args.binary.read_bytes()).hexdigest(), deployment, str(os.geteuid()), (lab / 'tls.pem').read_bytes(), json.dumps(grant), frozen_installer(system_installer_source, ['install','--scope','system','--binary',str(binary),'--config',str(config)])))
         if args.desktop:
             # Extend this same installation owner, retaining its protected binary/config checks.
             contents = setup.read_text()
@@ -1317,7 +1292,7 @@ config['clients']['images'].append(artifact(desktop))
 fd=os.open(default,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o644)
 with os.fdopen(fd,'w') as stream: json.dump(config,stream); stream.flush(); os.fsync(stream.fileno())
 """ % str(default_config)
-            initializer = "subprocess.run([str(binary),'--config',str(path),'--initialize'],input='AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',text=True,check=True)\n"
+            initializer = "subprocess.run([str(binary),'--config',str(path),'--import-grant',str(root/'grant.json')],input='AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',text=True,check=True)\n"
             contents = contents.replace(initializer, '')
             setup.write_text(contents)
         security = refresh = diagnostics = refresh_preflight = None
@@ -1428,7 +1403,7 @@ except subprocess.CalledProcessError as error:
             db.close()
     print(json.dumps(diagnostic));raise
 subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.execution'],check=True)
-""" % ([str(binary),'--config',str(config)],[str(binary),'--config',str(config),'--initialize'],str(protected/'state')))
+""" % ([str(binary),'--config',str(config)],[str(binary),'--config',str(config),'--import-grant',str(protected/'grant.json')],str(protected/'state')))
         restart = lab/'restart.py'
         restart.write_text("""import os,plistlib,subprocess
 from pathlib import Path
@@ -1823,9 +1798,6 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
         if administrator_session:
             try: administrator_session.close()
             except BaseException as error: cleanup_errors.append(str(error))
-        if proxy is not None:
-            if proxy_thread is not None and proxy_thread.is_alive(): proxy.shutdown()
-            proxy.server_close()
         if backend is not None:
             try:
                 (exchange or BackendExchange(backend)).close()
