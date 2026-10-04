@@ -13,6 +13,7 @@ import os
 import time
 import inspect
 import subprocess
+import sys
 from unittest.mock import patch, MagicMock
 
 spec = importlib.util.spec_from_file_location('acceptance', Path(__file__).with_name('verify-execution-macos.py'))
@@ -134,6 +135,70 @@ class BackendLifecycleTests(unittest.TestCase):
             self.assertEqual(receipt['cleanup'],'complete');self.assertFalse(receipt['installationCreated'])
             with self.assertRaises(ProcessLookupError): os.kill(int(pid.read_text()),0)
             staged=Path(receipt['inputStaging']);self.assertFalse((staged/'rss-execution-service').exists());staged.rmdir()
+
+    def test_legacy_injection_restores_the_active_delete_transaction_file_set(self):
+        # A separate connection owner keeps a real write transaction and journal
+        # open across injection. Commit must succeed after every restore path.
+        for fault in ('reject','candidate_write','sidecar','partial_move','install'):
+          with self.subTest(fault=fault), tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/'communication.sqlite'
+            setup=sqlite3.connect(path)
+            setup.executescript('PRAGMA journal_mode=DELETE; PRAGMA user_version=5; CREATE TABLE facts(value); INSERT INTO facts VALUES(0);')
+            setup.close()
+            source="""import sqlite3,sys,json
+connection=sqlite3.connect(sys.argv[1])
+connection.execute('BEGIN IMMEDIATE')
+connection.execute('UPDATE facts SET value=1')
+print('ready',flush=True)
+sys.stdin.readline()
+try:
+ connection.commit()
+ print(json.dumps({'committed':True}),flush=True)
+finally: connection.close()
+"""
+            with subprocess.Popen([sys.executable,'-u','-c',source,str(path)],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True) as owner:
+                try:
+                    self.assertEqual(owner.stdout.readline().strip(),'ready')
+                    journal=Path(str(path)+'-journal')
+                    original={p:(p.stat().st_ino,p.read_bytes()) for p in (path,journal)}
+                    def reject():
+                        self.assertFalse(journal.exists())
+                        candidate=sqlite3.connect(path)
+                        try:
+                            self.assertEqual(candidate.execute('PRAGMA user_version').fetchone()[0],4)
+                            if fault=='candidate_write':
+                                candidate.execute('UPDATE facts SET value=9');candidate.commit()
+                        finally: candidate.close()
+                        if fault=='sidecar': journal.write_bytes(b'unexpected candidate journal')
+                        raise RuntimeError('schema rejected')
+                    rename=Path.rename
+                    failed=False
+                    def failing_rename(p,target):
+                        nonlocal failed
+                        if not failed and ((fault=='partial_move' and p==journal) or (fault=='install' and p.name=='candidate.sqlite')):
+                            failed=True;raise OSError('injected move failure')
+                        return rename(p,target)
+                    expected=AssertionError if fault in ('candidate_write','sidecar') else OSError if fault in ('partial_move','install') else RuntimeError
+                    with patch.object(Path,'rename',failing_rename), self.assertRaises(expected):
+                        acceptance.with_legacy_communication(path,reject)
+                    for p,(inode,body) in original.items():
+                        self.assertEqual(p.stat().st_ino,inode)
+                        self.assertEqual(p.read_bytes(),body)
+                    evidence=list(Path(directory).glob('*.unexpected-*'))
+                    self.assertEqual(bool(evidence),fault in ('candidate_write','sidecar'))
+                    self.assertFalse(list(Path(directory).glob('legacy-injection-*')))
+                    owner.stdin.write('commit\n');owner.stdin.flush()
+                    stdout,stderr=owner.communicate(timeout=5)
+                    self.assertEqual(owner.returncode,0,stderr)
+                    self.assertEqual(json.loads(stdout),{'committed':True})
+                    reopened=sqlite3.connect(path)
+                    try:
+                        self.assertEqual(reopened.execute('SELECT value FROM facts').fetchone()[0],1)
+                        self.assertEqual(reopened.execute('PRAGMA user_version').fetchone()[0],5)
+                    finally: reopened.close()
+                    self.assertFalse(journal.exists())
+                finally:
+                    if owner.poll() is None: owner.kill();owner.communicate(timeout=5)
 
     def test_prepared_administrator_programs_remain_valid_before_authority(self):
         with tempfile.TemporaryDirectory() as directory:

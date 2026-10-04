@@ -546,6 +546,61 @@ def complete_native_security(probe, matrix, query, command, package, package_rec
     native_revocation_security(probe,matrix,query,command,package,package_receipt,protected)
 
 
+def with_legacy_communication(path, operation):
+    # The caller pauses its owned service. SQLite's original inode and journal must
+    # return together before that connection resumes. ref: sqlite src/pager.c
+    import shutil, sqlite3, tempfile, uuid
+    from pathlib import Path
+    path=Path(path)
+    staging=Path(tempfile.mkdtemp(prefix='legacy-injection-',dir=path.parent))
+    candidate=staging/'candidate.sqlite'
+    moved=[]; installed=False; unexpected=[]
+    suffixes=('', '-journal', '-wal', '-shm')
+    try:
+        # This connection has its own path and journal; never open the replacement
+        # at the original path while the paused owner's journal is present.
+        shutil.copyfile(path,candidate);candidate.chmod(0o600)
+        connection=sqlite3.connect(candidate)
+        try: connection.execute('PRAGMA user_version=4');connection.commit()
+        finally: connection.close()
+        legacy_bytes=candidate.read_bytes()
+        for suffix in suffixes:
+            source=Path(str(path)+suffix)
+            if source.exists() or source.is_symlink():
+                held=staging/('original'+suffix)
+                source.rename(held);moved.append((source,held))
+        candidate.rename(path);installed=True
+        return operation()
+    finally:
+        # Keep unexpected writes as evidence, restore every original file even
+        # after a partial move, and never let TemporaryDirectory delete originals.
+        errors=[]
+        def retain(source):
+            evidence=source.with_name(source.name+'.unexpected-'+uuid.uuid4().hex)
+            source.rename(evidence);unexpected.append(evidence)
+        if installed:
+            for suffix in suffixes:
+                source=Path(str(path)+suffix)
+                if source.exists() or source.is_symlink():
+                    try:
+                        try: unchanged=not suffix and not source.is_symlink() and source.read_bytes()==legacy_bytes
+                        except OSError: unchanged=False
+                        if unchanged: source.unlink()
+                        else: retain(source)
+                    except OSError as error: errors.append(error)
+        for source,held in moved:
+            try:
+                if source.exists() or source.is_symlink(): retain(source)
+                held.rename(source)
+            except OSError as error: errors.append(error)
+        if errors:
+            raise AssertionError('restore failed; original files retained at '+str(staging)+': '+str(errors))
+        if candidate.exists(): candidate.unlink()
+        staging.rmdir()
+        if unexpected:
+            raise AssertionError('preflight changed candidate; originals restored and evidence retained: '+str(unexpected))
+
+
 def root_refresh_security(root, binary, config, installer_source, phase):
     # This whole program is frozen before elevation; only the owned experiment is modified.
     import contextlib, copy, hashlib, io, json, os, plistlib, re, shutil, sqlite3, subprocess, time, uuid
@@ -579,7 +634,7 @@ def root_refresh_security(root, binary, config, installer_source, phase):
     for name in cases if phase=='preflight' else []:
         changed=copy.deepcopy(document); actual=next_config
         next_config.write_text(json.dumps(changed));next_config.chmod(0o644)
-        held=None; held_source=None; copied_plist=None; unexpected=None; paused=False; legacy_bytes=None
+        held=None; held_source=None; copied_plist=None; unexpected=None; paused=False
         try:
             if name=='mode': next_config.chmod(0o666)
             elif name=='symlink':
@@ -599,12 +654,8 @@ def root_refresh_security(root, binary, config, installer_source, phase):
                 held_source=identity_paths[0] if name=='marker' else (
                     journal if name=='journal' else (
                         root/'state/communication/communication.sqlite' if name in ['communication','communication_format'] else root/'state/secrets'))
-                held=held_source.with_suffix('.held');held_source.rename(held)
-                if name=='communication_format':
-                    shutil.copyfile(held,held_source);held_source.chmod(0o600)
-                    connection=sqlite3.connect(held_source)
-                    connection.execute('PRAGMA user_version=4');connection.close()
-                    legacy_bytes=held_source.read_bytes()
+                if name!='communication_format':
+                    held=held_source.with_suffix('.held');held_source.rename(held)
             if name not in ['mode','symlink','acl']: next_config.write_text(json.dumps(changed))
             target_plist=plist
             if name=='registration':
@@ -614,7 +665,8 @@ def root_refresh_security(root, binary, config, installer_source, phase):
             if name in ['mode','symlink','acl','hash','cdhash','version','ipc_version']:
                 operation=lambda: namespace['candidate'](binary,actual)
             else:
-                operation=lambda: namespace['refresh'](target_plist,'com.rss-mdm.agent.execution','system',endpoint,args,config,binary,actual)
+                refresh=lambda: namespace['refresh'](target_plist,'com.rss-mdm.agent.execution','system',endpoint,args,config,binary,actual)
+                operation=(lambda: with_legacy_communication(held_source,refresh)) if name=='communication_format' else refresh
             try: operation()
             except (RuntimeError,subprocess.CalledProcessError,FileNotFoundError) as error:
                 rows.append(dict(case=name,error=str(error),stderr=getattr(error,'stderr',None)))
@@ -622,14 +674,6 @@ def root_refresh_security(root, binary, config, installer_source, phase):
         finally:
             try:
                 if held:
-                    if name=='communication_format' and held_source.exists():
-                        try: preserved=legacy_bytes is not None and held_source.read_bytes()==legacy_bytes
-                        except OSError: preserved=False
-                        if preserved:
-                            held_source.unlink()
-                        else:
-                            unexpected=held_source.with_name(held_source.name+'.unexpected-'+uuid.uuid4().hex)
-                            held_source.rename(unexpected)
                     if held_source.exists():
                         unexpected=held_source.with_name(held_source.name+'.unexpected-'+uuid.uuid4().hex)
                         held_source.rename(unexpected)
@@ -1350,7 +1394,7 @@ print(json.dumps(dict(label=label,plist=str(plist),helperGuard=result.stderr)))
                     '--config',str(config),'--candidate-binary',str(binary),'--candidate-config',str(config)])))
             refresh=lab/'refresh-security.py'
             refresh_preflight=lab/'refresh-preflight.py'
-            refresh_source="import json,sqlite3\n"+inspect.getsource(journal_proof)+inspect.getsource(root_refresh_security)
+            refresh_source="import json,sqlite3\n"+inspect.getsource(journal_proof)+inspect.getsource(with_legacy_communication)+inspect.getsource(root_refresh_security)
             for phase,path in [('preflight',refresh_preflight),('afterStop',refresh)]:
                 path.write_text(refresh_source+"\nprint(json.dumps(root_refresh_security(%r,%r,%r,%r,%r)))\n" %
                     (str(protected),str(binary),str(config),installer_source,phase))
