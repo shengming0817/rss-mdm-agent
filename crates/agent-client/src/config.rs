@@ -91,7 +91,8 @@ impl Config {
         };
         if o.as_str().len() > 2048
             || !network
-            || self.device_ca_pem.is_empty() || self.device_ca_pem.len() > 32768
+            || self.device_ca_pem.is_empty()
+            || self.device_ca_pem.len() > 32768
             || self.tenant.is_nil()
             || o.path() != "/"
             || !o.username().is_empty()
@@ -143,7 +144,10 @@ pub trait IdentityProvider {
     /// Create once; exact retries must return the original protected secret.
     fn create_secret(&self, reference: &str) -> Result<wire::Secret, Error>;
     /// Create once during explicit enrollment preparation; never overwrite a key.
-    fn create_key(&self, reference: &str) -> Result<std::sync::Arc<dyn rustls::sign::SigningKey>, Error>;
+    fn create_key(
+        &self,
+        reference: &str,
+    ) -> Result<std::sync::Arc<dyn rustls::sign::SigningKey>, Error>;
     /// Open the exact existing key. Missing/denied must not create a replacement.
     fn key(&self, reference: &str) -> Result<std::sync::Arc<dyn rustls::sign::SigningKey>, Error>;
 }

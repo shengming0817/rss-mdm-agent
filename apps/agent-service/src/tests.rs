@@ -1,11 +1,11 @@
 //! Real HTTP/signatures/SQLite feeding the production compiler; OS execution is separately tested.
-use rss_mdm_agent_wire::runtime as wire;
 use super::*;
 use crate::backend::{host, plan, software};
 use crate::protocol_test_support as protocol;
 use agent_client::OpenMode;
 use execution_admission::AuthorityVerifier;
 use execution_contract::*;
+use rss_mdm_agent_wire::runtime as wire;
 use sha2::{Digest as _, Sha256};
 
 #[test]

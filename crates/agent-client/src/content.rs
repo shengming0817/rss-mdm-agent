@@ -1,6 +1,6 @@
 use crate::{
     store::{encode, hash, private},
-    wire, Client, Clock, Error, Offer, IdentityProvider,
+    wire, Client, Clock, Error, IdentityProvider, Offer,
 };
 use fs2::FileExt;
 use rusqlite::params;

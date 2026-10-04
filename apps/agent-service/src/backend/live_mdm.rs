@@ -1,13 +1,13 @@
 //! Real-server integration against isolated rss-mdm serve and PostgreSQL.
 //! The live_mdm target uses a controlled Test runner; it does not run against production.
-use rss_mdm_agent_wire::runtime as wire;
 use super::bridge::ExecutionBridge;
 use super::test_support::local::create_app;
 use super::test_support::*;
 use crate::protocol_test_support as support;
-use rss_mdm_agent_wire::runtime::*;
 use agent_client::*;
 use base64::Engine;
+use rss_mdm_agent_wire::runtime as wire;
+use rss_mdm_agent_wire::runtime::*;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -343,9 +343,23 @@ async fn real_https_registration_reports_script_software_and_journal_results() {
     let root = Root::new();
     let mut client = Client::open(&root.path, config, OpenMode::Create, secrets, Utc).unwrap();
     client.set_profiles(vec![ExecutorProfile::PosixSh]).unwrap();
-    let status = client.request_authorization(vec![Capability::InventoryCollectionV1, Capability::TaskExecuteV1, Capability::SoftwarePkgSystemV1]).await.unwrap();
+    let status = client
+        .request_authorization(vec![
+            Capability::InventoryCollectionV1,
+            Capability::TaskExecuteV1,
+            Capability::SoftwarePkgSystemV1,
+        ])
+        .await
+        .unwrap();
     let grant = status.grant_id.expect("machine authorization request");
-    admin.request(reqwest::Method::POST, &format!("/api/v1/agent-grants/{grant}/approve"), Some(json!({"operationId":Uuid::new_v4()})), None).await;
+    admin
+        .request(
+            reqwest::Method::POST,
+            &format!("/api/v1/agent-grants/{grant}/approve"),
+            Some(json!({"operationId":Uuid::new_v4()})),
+            None,
+        )
+        .await;
     client.drive_enrollment().await.unwrap();
     let receipt = client.registration().unwrap();
     let device = receipt.device_id.clone();

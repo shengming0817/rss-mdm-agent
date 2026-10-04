@@ -19,7 +19,11 @@ pub(crate) struct Active {
     pub not_after: i64,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) enum Purpose { Authorization, Import, Renewal }
+pub(crate) enum Purpose {
+    Authorization,
+    Import,
+    Renewal,
+}
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Pending {
@@ -36,7 +40,12 @@ pub(crate) struct Pending {
     pub expected: Option<runtime::BindingProfile>,
 }
 pub(crate) fn blocks_runtime(code: enroll::ErrorCode) -> bool {
-    matches!(code, enroll::ErrorCode::CredentialRevoked | enroll::ErrorCode::CredentialRetired | enroll::ErrorCode::CertificateExpired)
+    matches!(
+        code,
+        enroll::ErrorCode::CredentialRevoked
+            | enroll::ErrorCode::CredentialRetired
+            | enroll::ErrorCode::CertificateExpired
+    )
 }
 pub(crate) fn enrollment_error(code: enroll::ErrorCode) -> Error {
     use enroll::ErrorCode as C;
@@ -64,11 +73,14 @@ pub(crate) fn csr(provider: &impl IdentityProvider, reference: &str) -> Result<S
     let info = x509_cert::request::CertReqInfo {
         version: x509_cert::request::Version::V1,
         subject: Default::default(),
-        public_key: spki::SubjectPublicKeyInfoOwned::from_der(public.as_ref()).map_err(|_| Error::Identity)?,
+        public_key: spki::SubjectPublicKeyInfoOwned::from_der(public.as_ref())
+            .map_err(|_| Error::Identity)?,
         attributes: Default::default(),
     };
     let bytes = info.to_der().map_err(|_| Error::Protocol)?;
-    let signer = key.choose_scheme(&[rustls::SignatureScheme::RSA_PKCS1_SHA256]).ok_or(Error::Unsupported)?;
+    let signer = key
+        .choose_scheme(&[rustls::SignatureScheme::RSA_PKCS1_SHA256])
+        .ok_or(Error::Unsupported)?;
     let signature = signer.sign(&bytes).map_err(|_| Error::Identity)?;
     let request = x509_cert::request::CertReq {
         info,
@@ -78,5 +90,6 @@ pub(crate) fn csr(provider: &impl IdentityProvider, reference: &str) -> Result<S
         },
         signature: der::asn1::BitString::from_bytes(&signature).map_err(|_| Error::Protocol)?,
     };
-    Ok(base64::engine::general_purpose::STANDARD.encode(request.to_der().map_err(|_| Error::Protocol)?))
+    Ok(base64::engine::general_purpose::STANDARD
+        .encode(request.to_der().map_err(|_| Error::Protocol)?))
 }

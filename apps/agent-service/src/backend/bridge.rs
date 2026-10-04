@@ -1,7 +1,7 @@
-use rss_mdm_agent_wire::runtime as wire;
 use super::request_id;
 use crate::error::app_error as map_app_error;
-use agent_client::{Client, Clock, Error, Materials, Offer, IdentityProvider, Start};
+use agent_client::{Client, Clock, Error, IdentityProvider, Materials, Offer, Start};
+use rss_mdm_agent_wire::runtime as wire;
 fn encode(value: &impl serde::Serialize) -> Result<Vec<u8>, Error> {
     serde_json_canonicalizer::to_vec(value).map_err(|_| Error::Protocol)
 }

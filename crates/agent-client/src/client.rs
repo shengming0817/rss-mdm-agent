@@ -154,8 +154,17 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
     ) -> Result<Self, Error> {
         config.validate()?;
         let store = Store::open(root, config, mode)?;
-        let state = store.get::<crate::identity::IdentityState>("identity")?.unwrap_or_default();
-        let http = crate::tls::client(&store.cfg, state.active.as_ref().map(|v| (&v.key_reference, v.chain.as_slice())), &secrets)?;
+        let state = store
+            .get::<crate::identity::IdentityState>("identity")?
+            .unwrap_or_default();
+        let http = crate::tls::client(
+            &store.cfg,
+            state
+                .active
+                .as_ref()
+                .map(|v| (&v.key_reference, v.chain.as_slice())),
+            &secrets,
+        )?;
         Ok(Self {
             delivery_owner: Uuid::new_v4(),
             store,
@@ -170,22 +179,46 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
     }
     pub(crate) fn active(&self) -> Result<(), Error> {
         let state = self.identity_state()?;
-        if let Some(failure) = state.failure.filter(|code| crate::identity::blocks_runtime(*code)) {
+        if let Some(failure) = state
+            .failure
+            .filter(|code| crate::identity::blocks_runtime(*code))
+        {
             return Err(crate::identity::enrollment_error(failure));
         }
         let active = state.active.ok_or(Error::Identity)?;
         let now = self.clock.now()?;
-        if now < active.not_before { return Err(Error::Clock); }
-        if now >= active.not_after { return Err(Error::CertificateExpired); }
-        let (before, after, device) = crate::tls::validity(&self.store.cfg, &active.chain, &active.key_reference, &self.secrets, now)?;
-        if before != active.not_before || after != active.not_after || device != active.receipt.runtime.device_id { return Err(Error::Identity); }
+        if now < active.not_before {
+            return Err(Error::Clock);
+        }
+        if now >= active.not_after {
+            return Err(Error::CertificateExpired);
+        }
+        let (before, after, device) = crate::tls::validity(
+            &self.store.cfg,
+            &active.chain,
+            &active.key_reference,
+            &self.secrets,
+            now,
+        )?;
+        if before != active.not_before
+            || after != active.not_after
+            || device != active.receipt.runtime.device_id
+        {
+            return Err(Error::Identity);
+        }
         Ok(())
     }
     pub(crate) fn url(&self, path: &str) -> Result<url::Url, Error> {
-        self.store.cfg.origin.join(&format!("api/v1/agent/runtime/{path}")).map_err(|_| Error::Configuration)
+        self.store
+            .cfg
+            .origin
+            .join(&format!("api/v1/agent/runtime/{path}"))
+            .map_err(|_| Error::Configuration)
     }
     pub(crate) async fn checked_response(&self, response: Response) -> Result<Response, Error> {
-        if response.status().is_success() { return Ok(response); }
+        if response.status().is_success() {
+            return Ok(response);
+        }
         let max = self.store.cfg.limits.response_bytes;
         let bytes = bounded(response, max).await?;
         self.runtime_error(&bytes)?;
@@ -193,12 +226,21 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
     }
     fn runtime_error(&self, bytes: &[u8]) -> Result<(), Error> {
         let body: wire::ErrorBody = decode(bytes)?;
-        use wire::ErrorCode as R;
         use rss_mdm_agent_wire::enroll::ErrorCode as E;
+        use wire::ErrorCode as R;
         let error = match body.code {
-            R::CredentialRevoked => { self.identity_failure(E::CredentialRevoked)?; Error::CredentialRevoked }
-            R::CertificateExpired => { self.identity_failure(E::CertificateExpired)?; Error::CertificateExpired }
-            R::CredentialRetired => { self.identity_failure(E::CredentialRetired)?; Error::CredentialRetired }
+            R::CredentialRevoked => {
+                self.identity_failure(E::CredentialRevoked)?;
+                Error::CredentialRevoked
+            }
+            R::CertificateExpired => {
+                self.identity_failure(E::CertificateExpired)?;
+                Error::CertificateExpired
+            }
+            R::CredentialRetired => {
+                self.identity_failure(E::CredentialRetired)?;
+                Error::CredentialRetired
+            }
             R::InvalidIdentity => Error::Identity,
             R::PermissionDenied => Error::Denied,
             R::OperationConflict => Error::Conflict,
@@ -207,18 +249,34 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         };
         Err(error)
     }
-    async fn json<T: DeserializeOwned>(&self, method: Method, path: &str, body: Option<&[u8]>) -> Result<T, Error> {
+    async fn json<T: DeserializeOwned>(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<&[u8]>,
+    ) -> Result<T, Error> {
         self.active()?;
         self.now()?;
-        let mut request = self.http.request(method, self.url(path)?).timeout(self.store.cfg.limits.request_timeout);
-        if let Some(body) = body { request = request.header("content-type", "application/json").body(body.to_owned()); }
+        let mut request = self
+            .http
+            .request(method, self.url(path)?)
+            .timeout(self.store.cfg.limits.request_timeout);
+        if let Some(body) = body {
+            request = request
+                .header("content-type", "application/json")
+                .body(body.to_owned());
+        }
         let max = self.store.cfg.limits.response_bytes;
         let (status, bytes) = json_transport(request, max).await?;
-        if !status.is_success() { self.runtime_error(&bytes)?; }
+        if !status.is_success() {
+            self.runtime_error(&bytes)?;
+        }
         decode(&bytes)
     }
     /// The sole durable runtime binding, derived from the activation receipt.
-    pub fn registration(&self) -> Result<wire::BindingProfile, Error> { self.store.registration() }
+    pub fn registration(&self) -> Result<wire::BindingProfile, Error> {
+        self.store.registration()
+    }
     /// Allocate report identity and sequence in the same transaction as its immutable body.
     pub fn queue_report(
         &mut self,
@@ -272,9 +330,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         };
         let mut sent = 0;
         for (id, body) in reports {
-            let ack: wire::ReportAck = self
-                .json(Method::POST, "reports", Some(&body))
-                .await?;
+            let ack: wire::ReportAck = self.json(Method::POST, "reports", Some(&body)).await?;
             if ack.report_id.to_string() != id {
                 return Err(Error::Protocol);
             }
@@ -368,9 +424,8 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             state.profiles.clone(),
             state.execution_context.clone(),
         )?)?;
-        let result: wire::TaskClaimResponse = self
-            .json(Method::POST, "tasks/claim", Some(&body))
-            .await?;
+        let result: wire::TaskClaimResponse =
+            self.json(Method::POST, "tasks/claim", Some(&body)).await?;
         let cancellations = result.cancellations().to_owned();
         let offer = if let Some(signed) = result.into_task() {
             self.verify(&signed, wire::TaskPermit::Offer)?;
@@ -764,10 +819,14 @@ pub(crate) async fn json_transport(
     task.await.map_err(|_| Error::Unavailable)?
 }
 pub(crate) async fn bounded(mut response: Response, max: usize) -> Result<Vec<u8>, Error> {
-    if response.content_length().is_some_and(|n| n > max as u64) { return Err(Error::Capacity); }
+    if response.content_length().is_some_and(|n| n > max as u64) {
+        return Err(Error::Capacity);
+    }
     let mut bytes = Vec::new();
     while let Some(chunk) = response.chunk().await.map_err(|_| Error::Unavailable)? {
-        if bytes.len().checked_add(chunk.len()).is_none_or(|n| n > max) { return Err(Error::Capacity); }
+        if bytes.len().checked_add(chunk.len()).is_none_or(|n| n > max) {
+            return Err(Error::Capacity);
+        }
         bytes.extend_from_slice(&chunk);
     }
     Ok(bytes)

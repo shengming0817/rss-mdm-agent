@@ -33,6 +33,7 @@ fs2 = "=0.4.3"
 libc = "=0.2.189"
 
 [dev-dependencies]
+tokio-rustls = { version = "=0.26.6", default-features = false, features = ["ring", "tls12"] }
 axum = "=0.8.9"
 ring = "=0.17.14"
 base64 = "=0.23.1"

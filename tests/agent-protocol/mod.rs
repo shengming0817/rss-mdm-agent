@@ -1,15 +1,15 @@
 #![allow(dead_code)]
 mod pki;
-use rss_mdm_agent_wire::{enroll, runtime::*};
 use agent_client::*;
 use axum::{
     body::{Body, Bytes},
-    extract::State,
+    extract::{ConnectInfo, State},
     http::{HeaderMap, StatusCode, Uri},
     response::{IntoResponse, Response},
 };
 use base64::Engine;
 use ring::signature::{Ed25519KeyPair, KeyPair};
+use rss_mdm_agent_wire::{enroll, runtime::*};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
@@ -73,21 +73,43 @@ impl IdentityProvider for Secrets {
     }
     fn import_secret(&self, id: &str, secret: &Secret) -> Result<(), Error> {
         let mut values = self.0.lock().unwrap();
-        if values.get(id).is_some_and(|old| old != secret.expose()) { return Err(Error::Conflict); }
-        values.insert(id.into(), secret.expose().into()); Ok(())
+        if values.get(id).is_some_and(|old| old != secret.expose()) {
+            return Err(Error::Conflict);
+        }
+        values.insert(id.into(), secret.expose().into());
+        Ok(())
     }
     fn create_secret(&self, id: &str) -> Result<Secret, Error> {
-        self.0.lock().unwrap().entry(id.into()).or_insert_with(|| "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".into()); self.resolve(id)
+        self.0
+            .lock()
+            .unwrap()
+            .entry(id.into())
+            .or_insert_with(|| "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".into());
+        self.resolve(id)
     }
     fn create_key(&self, id: &str) -> Result<Arc<dyn rustls::sign::SigningKey>, Error> {
-        self.0.lock().unwrap().entry(id.into()).or_insert_with(|| "fixture-key".into()); self.key(id)
+        self.0
+            .lock()
+            .unwrap()
+            .entry(id.into())
+            .or_insert_with(|| "fixture-key".into());
+        self.key(id)
     }
     fn key(&self, id: &str) -> Result<Arc<dyn rustls::sign::SigningKey>, Error> {
-        if self.0.lock().unwrap().get(id).is_none_or(|v| v != "fixture-key") { return Err(Error::Identity); }
+        if self
+            .0
+            .lock()
+            .unwrap()
+            .get(id)
+            .is_none_or(|v| v != "fixture-key")
+        {
+            return Err(Error::Identity);
+        }
         Ok(pki::key())
     }
 }
 pub struct Data {
+    pub tls_required: bool,
     pub grant: Option<enroll::GrantReceipt>,
     pub issuance: Uuid,
     pub profile: Option<enroll::RuntimeProfile>,
@@ -104,6 +126,11 @@ pub struct Data {
     pub offer: Option<SignedTask>,
     pub time: Time,
     pub registration_failure: bool,
+    pub certificate_failure: bool,
+    pub activation_failure: bool,
+    pub issuance_unknown: bool,
+    pub certificate_calls: Vec<Value>,
+    pub activation_calls: Vec<Value>,
     pub report_failure: bool,
     pub start_failure: bool,
     pub result_failure: bool,
@@ -263,10 +290,21 @@ pub struct Server {
 }
 impl Server {
     pub async fn new() -> Self {
+        Self::listen(false).await
+    }
+    pub async fn tls() -> Self {
+        Self::listen(true).await
+    }
+    async fn listen(tls: bool) -> Self {
         let time = Time(Arc::new(AtomicI64::new(1)));
         let signer = Ed25519KeyPair::from_seed_unchecked(&[7; 32]).unwrap();
         let data = Arc::new(Mutex::new(Data {
-            grant: None, issuance: Uuid::new_v4(), profile: None, activation: None, bootstrap: None,
+            tls_required: tls,
+            grant: None,
+            issuance: Uuid::new_v4(),
+            profile: None,
+            activation: None,
+            bootstrap: None,
             tenant: Uuid::new_v4(),
             registration: Uuid::new_v4(),
             epoch: Uuid::new_v4(),
@@ -278,6 +316,11 @@ impl Server {
             offer: None,
             time: time.clone(),
             registration_failure: false,
+            certificate_failure: false,
+            activation_failure: false,
+            issuance_unknown: false,
+            certificate_calls: vec![],
+            activation_calls: vec![],
             report_failure: false,
             start_failure: false,
             result_failure: false,
@@ -312,12 +355,30 @@ impl Server {
             claims: BTreeMap::new(),
         }));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let url = url::Url::parse(&format!("http://{}/", listener.local_addr().unwrap())).unwrap();
+        let url = url::Url::parse(&format!(
+            "{}://{}/",
+            if tls { "https" } else { "http" },
+            listener.local_addr().unwrap()
+        ))
+        .unwrap();
         let router = axum::Router::new()
             .fallback(handler)
             .with_state(data.clone());
         let task = tokio::spawn(async move {
-            axum::serve(listener, router).await.unwrap();
+            if tls {
+                let listener = TlsListener {
+                    listener,
+                    acceptor: tokio_rustls::TlsAcceptor::from(Arc::new(pki::server())),
+                };
+                axum::serve(
+                    listener,
+                    router.into_make_service_with_connect_info::<TlsIdentity>(),
+                )
+                .await
+                .unwrap();
+            } else {
+                axum::serve(listener, router).await.unwrap();
+            }
         });
         Self {
             url,
@@ -337,8 +398,12 @@ impl Server {
             architecture: TaskArchitecture::Aarch64,
             keys: BTreeMap::from([("test".into(), data.signer.public_key().as_ref().to_vec())]),
             limits: Limits::test_defaults(),
-            transport: Transport::TestLoopback,
-            ca_pem: None,
+            transport: if data.tls_required {
+                Transport::Https
+            } else {
+                Transport::TestLoopback
+            },
+            ca_pem: data.tls_required.then(pki::ca),
             device_ca_pem: pki::ca(),
         }
     }
@@ -355,7 +420,14 @@ impl Server {
         client
     }
     pub async fn register(&self, client: &mut Client<Secrets, Time>) -> BindingProfile {
-        client.request_authorization(vec![Capability::InventoryCollectionV1, Capability::TaskExecuteV1, Capability::SoftwarePkgSystemV1]).await.unwrap();
+        client
+            .request_authorization(vec![
+                Capability::InventoryCollectionV1,
+                Capability::TaskExecuteV1,
+                Capability::SoftwarePkgSystemV1,
+            ])
+            .await
+            .unwrap();
         client.registration().unwrap()
     }
 }
@@ -368,6 +440,7 @@ async fn handler(
     State(data): State<Arc<Mutex<Data>>>,
     uri: Uri,
     headers: HeaderMap,
+    peer: Result<ConnectInfo<TlsIdentity>, axum::extract::rejection::ExtensionRejection>,
     bytes: Bytes,
 ) -> Response {
     let pause = {
@@ -384,49 +457,174 @@ async fn handler(
     }
     let mut d = data.lock().unwrap();
     let path = uri.path();
+    let authenticated = peer.is_ok_and(|v| v.0 .0);
+    if d.tls_required
+        && (path.ends_with("/activate")
+            || path.ends_with("/renewal-grants")
+            || path.starts_with("/api/v1/agent/runtime/"))
+        && !authenticated
+    {
+        return runtime_error(StatusCode::UNAUTHORIZED, ErrorCode::InvalidIdentity);
+    }
     let value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
-    if headers.contains_key("authorization") { return runtime_error(StatusCode::UNAUTHORIZED, ErrorCode::InvalidIdentity); }
-    if let Some(action) = path.strip_prefix("/api/v1/agent/enroll/") { return enrollment_response(&mut d, action, value); }
-    if !path.starts_with("/api/v1/agent/runtime/") { return StatusCode::NOT_FOUND.into_response(); }
-    if d.denied { return runtime_error(StatusCode::UNAUTHORIZED, ErrorCode::CredentialRevoked); }
-    if d.activation.is_none() { return runtime_error(StatusCode::UNAUTHORIZED, ErrorCode::InvalidIdentity); }
-    let response = if path.ends_with("/reports") { report_response(&mut d, value) }
-        else if path.ends_with("/claim") { claim_response(&mut d, value) }
-        else if path.ends_with("/events") { event_response(&mut d, value) }
-        else if path.ends_with("/content") { content_response(&mut d, headers) }
-        else { StatusCode::NOT_FOUND.into_response() };
-    if response.status().is_success() { response } else {
+    if headers.contains_key("authorization") {
+        return runtime_error(StatusCode::UNAUTHORIZED, ErrorCode::InvalidIdentity);
+    }
+    if let Some(action) = path.strip_prefix("/api/v1/agent/enroll/") {
+        return enrollment_response(&mut d, action, value);
+    }
+    if !path.starts_with("/api/v1/agent/runtime/") {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    if d.denied {
+        return runtime_error(StatusCode::UNAUTHORIZED, ErrorCode::CredentialRevoked);
+    }
+    if d.activation.is_none() {
+        return runtime_error(StatusCode::UNAUTHORIZED, ErrorCode::InvalidIdentity);
+    }
+    let response = if path.ends_with("/reports") {
+        report_response(&mut d, value)
+    } else if path.ends_with("/claim") {
+        claim_response(&mut d, value)
+    } else if path.ends_with("/events") {
+        event_response(&mut d, value)
+    } else if path.ends_with("/content") {
+        content_response(&mut d, headers)
+    } else {
+        StatusCode::NOT_FOUND.into_response()
+    };
+    if response.status().is_success() {
+        response
+    } else {
         let status = response.status();
-        runtime_error(status, if status == StatusCode::CONFLICT { ErrorCode::OperationConflict } else { ErrorCode::ServiceUnavailable })
+        runtime_error(
+            status,
+            if status == StatusCode::CONFLICT {
+                ErrorCode::OperationConflict
+            } else {
+                ErrorCode::ServiceUnavailable
+            },
+        )
     }
 }
-fn runtime_error(status: StatusCode, code: ErrorCode) -> Response { (status, axum::Json(ErrorBody { code })).into_response() }
+fn runtime_error(status: StatusCode, code: ErrorCode) -> Response {
+    (status, axum::Json(ErrorBody { code })).into_response()
+}
 fn enrollment_response(d: &mut Data, action: &str, value: Value) -> Response {
     match action {
         "requests" | "renewal-grants" => {
             let request: enroll::GrantRequest = serde_json::from_value(value).unwrap();
-            if d.operation.is_some_and(|old| old != request.operation_id) { return (StatusCode::CONFLICT, axum::Json(enroll::ErrorBody { code: enroll::ErrorCode::OperationConflict, issuance_id: None })).into_response(); }
-            d.operation = Some(request.operation_id); d.bootstrap = Some(request.secret.expose().into());
-            let grant = d.grant.get_or_insert_with(|| enroll::GrantReceipt { wire_version: 1, grant_id: Uuid::new_v4(), state: enroll::GrantState::Available, platform: request.platform, expires_at: d.time.now().unwrap()+300 });
-            if std::mem::take(&mut d.registration_failure) { return (StatusCode::SERVICE_UNAVAILABLE, axum::Json(enroll::ErrorBody { code: enroll::ErrorCode::ServiceUnavailable, issuance_id: None })).into_response(); }
+            if d.operation.is_some_and(|old| old != request.operation_id) {
+                return (
+                    StatusCode::CONFLICT,
+                    axum::Json(enroll::ErrorBody {
+                        code: enroll::ErrorCode::OperationConflict,
+                        issuance_id: None,
+                    }),
+                )
+                    .into_response();
+            }
+            d.operation = Some(request.operation_id);
+            d.bootstrap = Some(request.secret.expose().into());
+            let grant = d.grant.get_or_insert_with(|| enroll::GrantReceipt {
+                wire_version: 1,
+                grant_id: Uuid::new_v4(),
+                state: enroll::GrantState::Available,
+                platform: request.platform,
+                expires_at: d.time.now().unwrap() + 300,
+            });
+            if std::mem::take(&mut d.registration_failure) {
+                return (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    axum::Json(enroll::ErrorBody {
+                        code: enroll::ErrorCode::ServiceUnavailable,
+                        issuance_id: None,
+                    }),
+                )
+                    .into_response();
+            }
             axum::Json(grant.clone()).into_response()
         }
         "status" => {
             let request: enroll::StatusRequest = serde_json::from_value(value).unwrap();
-            assert_eq!(Some(request.operation_id), d.operation); assert_eq!(Some(request.secret.expose()), d.bootstrap.as_deref());
-            axum::Json(enroll::Progress { grant: d.grant.clone().unwrap(), issuance_id: d.profile.as_ref().map(|_| d.issuance), issuance_unknown: false, activation: d.activation.clone() }).into_response()
+            assert_eq!(Some(request.operation_id), d.operation);
+            assert_eq!(Some(request.secret.expose()), d.bootstrap.as_deref());
+            axum::Json(enroll::Progress {
+                grant: d.grant.clone().unwrap(),
+                issuance_id: d.profile.as_ref().map(|_| d.issuance),
+                issuance_unknown: d.issuance_unknown && d.profile.is_some(),
+                activation: d.activation.clone(),
+            })
+            .into_response()
         }
         "certificates" => {
+            d.certificate_calls.push(value.clone());
             let request: enroll::CertificateRequest = serde_json::from_value(value).unwrap();
             assert_eq!(Some(request.secret.expose()), d.bootstrap.as_deref());
-            d.profile = Some(request.runtime); d.grant.as_mut().unwrap().state = enroll::GrantState::Consumed;
-            axum::Json(enroll::Candidate { wire_version: 1, issuance_id: d.issuance, operation_id: request.operation_id, certificate_chain: pki::chain(d.tenant), activate_before: d.grant.as_ref().unwrap().expires_at }).into_response()
+            d.profile = Some(request.runtime.clone());
+            if d.issuance_unknown {
+                return (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    axum::Json(enroll::ErrorBody {
+                        code: enroll::ErrorCode::IssuanceUnknown,
+                        issuance_id: Some(d.issuance),
+                    }),
+                )
+                    .into_response();
+            }
+            d.profile = Some(request.runtime);
+            d.grant.as_mut().unwrap().state = enroll::GrantState::Consumed;
+            if std::mem::take(&mut d.certificate_failure) {
+                return (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    axum::Json(enroll::ErrorBody {
+                        code: enroll::ErrorCode::ServiceUnavailable,
+                        issuance_id: Some(d.issuance),
+                    }),
+                )
+                    .into_response();
+            }
+            axum::Json(enroll::Candidate {
+                wire_version: 1,
+                issuance_id: d.issuance,
+                operation_id: request.operation_id,
+                certificate_chain: {
+                    use der::{Decode, Encode};
+                    let csr = x509_cert::request::CertReq::from_der(
+                        &base64::engine::general_purpose::STANDARD
+                            .decode(&request.csr)
+                            .unwrap(),
+                    )
+                    .unwrap();
+                    pki::chain_for(d.tenant, csr.info.public_key.to_der().unwrap())
+                },
+                activate_before: d.grant.as_ref().unwrap().expires_at,
+            })
+            .into_response()
         }
         "activate" => {
-            let request: enroll::ActivationRequest = serde_json::from_value(value).unwrap(); assert_eq!(request.issuance_id, d.issuance);
+            d.activation_calls.push(value.clone());
+            let request: enroll::ActivationRequest = serde_json::from_value(value).unwrap();
+            assert_eq!(request.issuance_id, d.issuance);
             let profile: BindingProfile = serde_json::from_value(json!({"wireVersion":1,"operationId":d.operation,"deviceId":"device-1","registrationId":d.registration,"generation":1,"source":"agent.builtin","epoch":d.epoch,"capabilities":d.profile.as_ref().unwrap().capabilities,"collections":collections()})).unwrap();
-            let receipt = enroll::ActivationReceipt { wire_version: 1, issuance_id: d.issuance, operation_id: request.operation_id, runtime: profile };
-            d.activation = Some(receipt.clone()); axum::Json(receipt).into_response()
+            let receipt = enroll::ActivationReceipt {
+                wire_version: 1,
+                issuance_id: d.issuance,
+                operation_id: request.operation_id,
+                runtime: profile,
+            };
+            d.activation = Some(receipt.clone());
+            if std::mem::take(&mut d.activation_failure) {
+                return (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    axum::Json(enroll::ErrorBody {
+                        code: enroll::ErrorCode::ActivationUnknown,
+                        issuance_id: Some(d.issuance),
+                    }),
+                )
+                    .into_response();
+            }
+            axum::Json(receipt).into_response()
         }
         _ => StatusCode::NOT_FOUND.into_response(),
     }
@@ -644,5 +842,44 @@ pub fn execution_context() -> SoftwareExecutionContext {
         source_credentials: vec![],
         msix_sideload: false,
         msix_unsigned: false,
+    }
+}
+
+#[derive(Clone, Debug)]
+struct TlsIdentity(bool);
+struct TlsListener {
+    listener: tokio::net::TcpListener,
+    acceptor: tokio_rustls::TlsAcceptor,
+}
+impl axum::serve::Listener for TlsListener {
+    type Io = tokio_rustls::server::TlsStream<tokio::net::TcpStream>;
+    type Addr = TlsIdentity;
+    async fn accept(&mut self) -> (Self::Io, Self::Addr) {
+        loop {
+            let (stream, _) = self.listener.accept().await.unwrap();
+            if let Ok(Ok(stream)) = tokio::time::timeout(
+                std::time::Duration::from_secs(3),
+                self.acceptor.accept(stream),
+            )
+            .await
+            {
+                let authenticated = stream
+                    .get_ref()
+                    .1
+                    .peer_certificates()
+                    .is_some_and(|v| !v.is_empty());
+                return (stream, TlsIdentity(authenticated));
+            }
+        }
+    }
+    fn local_addr(&self) -> std::io::Result<Self::Addr> {
+        Ok(TlsIdentity(false))
+    }
+}
+impl axum::extract::connect_info::Connected<axum::serve::IncomingStream<'_, TlsListener>>
+    for TlsIdentity
+{
+    fn connect_info(stream: axum::serve::IncomingStream<'_, TlsListener>) -> Self {
+        stream.remote_addr().clone()
     }
 }

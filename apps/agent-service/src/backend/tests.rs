@@ -1,8 +1,8 @@
 use super::test_support::local::{create_app, reopen_app};
 use super::{bridge::ExecutionBridge, test_support::*};
 use crate::protocol_test_support::*;
-use rss_mdm_agent_wire::runtime::*;
 use agent_client::{Client, Error, OpenMode};
+use rss_mdm_agent_wire::runtime::*;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 #[tokio::test]
@@ -1227,7 +1227,10 @@ async fn revoked_and_expired_unknown_keeps_original_execution_and_association() 
             1,
         )
         .unwrap();
-    assert_eq!(case.client.flush_reports(1).await, Err(Error::Identity));
+    assert_eq!(
+        case.client.flush_reports(1).await,
+        Err(Error::CredentialRevoked)
+    );
     // drive_error stops original execution on identity revocation; a stop reply is no proof.
     case.app.stop_active(128).unwrap();
     case.app.reconcile(&request).unwrap();

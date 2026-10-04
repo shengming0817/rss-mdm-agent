@@ -1,5 +1,4 @@
 //! Real signed offers/Start and SQLite, with risk available only in this test assembly.
-use rss_mdm_agent_wire::runtime as wire;
 use super::*;
 use crate::{
     backend::gate::{ProductGateProof, TrustedRisk},
@@ -8,6 +7,7 @@ use crate::{
 use agent_client::{Clock, OpenMode};
 use execution_contract::*;
 use execution_ipc::host::{ClientOrigin, Reply};
+use rss_mdm_agent_wire::runtime as wire;
 use sha2::{Digest as _, Sha256};
 
 struct Case {

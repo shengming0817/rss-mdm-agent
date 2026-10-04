@@ -53,6 +53,7 @@ plist = "=1.10.1"
 libc = "=0.2.189"
 
 [dev-dependencies]
+tokio-rustls = { version = "=0.26.6", default-features = false, features = ["ring", "tls12"] }
 x509-cert.workspace = true
 der.workspace = true
 spki.workspace = true

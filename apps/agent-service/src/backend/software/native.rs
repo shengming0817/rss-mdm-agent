@@ -1,7 +1,7 @@
 //! Frozen physical recipes for EXE, MSIX and selected DMG payloads.
-use rss_mdm_agent_wire::runtime as wire;
 use super::*;
 use crate::software_worker::{WorkerOperation as O, WorkerRequest};
+use rss_mdm_agent_wire::runtime as wire;
 use std::{io::Read, path::Path};
 
 pub(super) fn pin(path: &Path) -> Result<SoftwareMaterial, Error> {

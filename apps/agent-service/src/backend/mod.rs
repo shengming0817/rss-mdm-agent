@@ -1,6 +1,6 @@
 //! Backend-to-local execution adapter; neither transport nor journal authority.
-use rss_mdm_agent_wire::runtime as wire;
 use agent_client::{Error, Offer};
+use rss_mdm_agent_wire::runtime as wire;
 use sha2::Digest as _;
 mod bridge;
 mod commands;

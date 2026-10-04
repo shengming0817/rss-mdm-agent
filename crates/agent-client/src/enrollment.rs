@@ -1,4 +1,9 @@
-use crate::{client::json_transport, identity::{Active, IdentityState, Pending, Purpose}, store::{decode, encode}, Client, Clock, Error, IdentityProvider};
+use crate::{
+    client::json_transport,
+    identity::{Active, IdentityState, Pending, Purpose},
+    store::{decode, encode},
+    Client, Clock, Error, IdentityProvider,
+};
 use rss_mdm_agent_wire::{enroll, runtime};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -53,7 +58,11 @@ pub struct GrantImport {
 }
 impl<S: IdentityProvider, C: Clock> Client<S, C> {
     /// Import only bootstrap secret material through the platform owner.
-    pub fn import_bootstrap_secret(&self, reference: &str, secret: &runtime::Secret) -> Result<(), Error> {
+    pub fn import_bootstrap_secret(
+        &self,
+        reference: &str,
+        secret: &runtime::Secret,
+    ) -> Result<(), Error> {
         self.secrets.import_secret(reference, secret)
     }
     pub(crate) fn identity_state(&self) -> Result<IdentityState, Error> {
@@ -67,49 +76,116 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
     /// Read safe registration progress without driving HTTP or changing operations.
     pub fn enrollment_status(&self) -> Result<EnrollmentStatus, Error> {
         let state = self.identity_state()?;
-        let failure = state.failure.or_else(|| state.active.as_ref().filter(|a| self.clock.now().is_ok_and(|now| now >= a.not_after)).map(|_| enroll::ErrorCode::CertificateExpired));
+        let failure = state.failure.or_else(|| {
+            state
+                .active
+                .as_ref()
+                .filter(|a| self.clock.now().is_ok_and(|now| now >= a.not_after))
+                .map(|_| enroll::ErrorCode::CertificateExpired)
+        });
         let phase = match failure {
             Some(enroll::ErrorCode::IssuanceUnknown) => EnrollmentPhase::IssuanceUnknown,
             Some(enroll::ErrorCode::ActivationUnknown) => EnrollmentPhase::ActivationUnknown,
             Some(_) => EnrollmentPhase::Rejected,
             None => match &state.pending {
                 Some(p) if p.candidate.is_some() => EnrollmentPhase::Activating,
-                Some(p) if p.grant.as_ref().is_some_and(|g| g.state == enroll::GrantState::Available || g.state == enroll::GrantState::Consumed) => EnrollmentPhase::Authorized,
+                Some(p)
+                    if p.grant.as_ref().is_some_and(|g| {
+                        g.state == enroll::GrantState::Available
+                            || g.state == enroll::GrantState::Consumed
+                    }) =>
+                {
+                    EnrollmentPhase::Authorized
+                }
                 Some(p) if p.grant.is_some() => EnrollmentPhase::AwaitingAuthorization,
                 Some(_) => EnrollmentPhase::Preparing,
                 None if state.active.is_some() => EnrollmentPhase::Active,
                 None => EnrollmentPhase::Unregistered,
             },
         };
-        let fingerprint = state.pending.as_ref().and_then(|p| p.csr.as_ref()).map(|csr| {
-            use base64::Engine;
-            use der::{Decode, Encode};
-            let bytes = base64::engine::general_purpose::STANDARD.decode(csr).map_err(|_| Error::Storage)?;
-            let request = x509_cert::request::CertReq::from_der(&bytes).map_err(|_| Error::Storage)?;
-            Ok::<_, Error>(crate::store::hash(&request.info.public_key.to_der().map_err(|_| Error::Storage)?))
-        }).transpose()?;
+        let fingerprint = state
+            .pending
+            .as_ref()
+            .and_then(|p| p.csr.as_ref())
+            .map(|csr| {
+                use base64::Engine;
+                use der::{Decode, Encode};
+                let bytes = base64::engine::general_purpose::STANDARD
+                    .decode(csr)
+                    .map_err(|_| Error::Storage)?;
+                let request =
+                    x509_cert::request::CertReq::from_der(&bytes).map_err(|_| Error::Storage)?;
+                Ok::<_, Error>(crate::store::hash(
+                    &request
+                        .info
+                        .public_key
+                        .to_der()
+                        .map_err(|_| Error::Storage)?,
+                ))
+            })
+            .transpose()?;
         Ok(EnrollmentStatus {
-            phase, registered: state.active.is_some(), failure,
-            grant_id: state.pending.as_ref().and_then(|p| p.grant.as_ref().map(|g| g.grant_id)),
-            expires_at: state.pending.as_ref().and_then(|p| p.grant.as_ref().map(|g| g.expires_at)),
+            phase,
+            registered: state.active.is_some(),
+            failure,
+            grant_id: state
+                .pending
+                .as_ref()
+                .and_then(|p| p.grant.as_ref().map(|g| g.grant_id)),
+            expires_at: state
+                .pending
+                .as_ref()
+                .and_then(|p| p.grant.as_ref().map(|g| g.expires_at)),
             public_key_fingerprint: fingerprint,
         })
     }
-    fn prepare_enrollment(&mut self, purpose: Purpose, operation: Uuid, secret: String, capabilities: Vec<runtime::Capability>) -> Result<(), Error> {
-        if operation.is_nil() || secret.is_empty() || secret.len() > 128 || capabilities.contains(&runtime::Capability::MdmEnrollmentV1) { return Err(Error::Configuration); }
+    fn prepare_enrollment(
+        &mut self,
+        purpose: Purpose,
+        operation: Uuid,
+        secret: String,
+        capabilities: Vec<runtime::Capability>,
+    ) -> Result<(), Error> {
+        if operation.is_nil()
+            || secret.is_empty()
+            || secret.len() > 128
+            || capabilities.contains(&runtime::Capability::MdmEnrollmentV1)
+        {
+            return Err(Error::Configuration);
+        }
         let mut state = self.identity_state()?;
         if let Some(p) = &state.pending {
-            if p.purpose != purpose || p.operation != operation || p.secret_reference != secret || p.profile.capabilities != capabilities { return Err(Error::Conflict); }
+            if p.purpose != purpose
+                || p.operation != operation
+                || p.secret_reference != secret
+                || p.profile.capabilities != capabilities
+            {
+                return Err(Error::Conflict);
+            }
             return self.prepare_key();
         }
-        if purpose == Purpose::Authorization && state.active.is_some() { return Err(Error::Conflict); }
-        let profile = enroll::RuntimeProfile { capabilities, platform: self.store.cfg.platform, architecture: self.store.cfg.architecture, execution_context: self.execution_context()? };
+        if purpose == Purpose::Authorization && state.active.is_some() {
+            return Err(Error::Conflict);
+        }
+        let profile = enroll::RuntimeProfile {
+            capabilities,
+            platform: self.store.cfg.platform,
+            architecture: self.store.cfg.architecture,
+            execution_context: self.execution_context()?,
+        };
         profile.validate()?;
         let certificate_operation = Uuid::new_v4();
         state.pending = Some(Pending {
-            purpose, operation, certificate_operation, activation_operation: Uuid::new_v4(),
-            key_reference: format!("key-{certificate_operation}"), secret_reference: secret,
-            profile, csr: None, grant: None, candidate: None,
+            purpose,
+            operation,
+            certificate_operation,
+            activation_operation: Uuid::new_v4(),
+            key_reference: format!("key-{certificate_operation}"),
+            secret_reference: secret,
+            profile,
+            csr: None,
+            grant: None,
+            candidate: None,
             expected: state.active.as_ref().map(|a| a.receipt.runtime.clone()),
         });
         state.failure = None;
@@ -130,41 +206,103 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         Ok(())
     }
     /// Start or resume a fixed machine-owned browser authorization request.
-    pub async fn request_authorization(&mut self, capabilities: Vec<runtime::Capability>) -> Result<EnrollmentStatus, Error> {
+    pub async fn request_authorization(
+        &mut self,
+        capabilities: Vec<runtime::Capability>,
+    ) -> Result<EnrollmentStatus, Error> {
         let state = self.identity_state()?;
-        let operation = state.pending.as_ref().map_or_else(Uuid::new_v4, |p| p.operation);
+        let operation = state
+            .pending
+            .as_ref()
+            .map_or_else(Uuid::new_v4, |p| p.operation);
         let reference = format!("bootstrap-{operation}");
-        self.prepare_enrollment(Purpose::Authorization, operation, reference.clone(), capabilities)?;
+        self.prepare_enrollment(
+            Purpose::Authorization,
+            operation,
+            reference.clone(),
+            capabilities,
+        )?;
         self.secrets.create_secret(&reference)?;
         self.drive_enrollment().await?;
         self.enrollment_status()
     }
     /// Import an explicit grant without replacing existing identity or unknown operations.
-    pub fn import_grant(&mut self, material: GrantImport, secret_reference: &str, capabilities: Vec<runtime::Capability>) -> Result<(), Error> {
-        if material.grant.wire_version != enroll::API_VERSION || material.grant.grant_id.is_nil() || material.grant.platform != self.store.cfg.platform || material.grant.state != enroll::GrantState::Available || material.grant.expires_at <= self.clock.now()? { return Err(Error::Protocol); }
+    pub fn import_grant(
+        &mut self,
+        material: GrantImport,
+        secret_reference: &str,
+        capabilities: Vec<runtime::Capability>,
+    ) -> Result<(), Error> {
+        if material.grant.wire_version != enroll::API_VERSION
+            || material.grant.grant_id.is_nil()
+            || material.grant.platform != self.store.cfg.platform
+            || material.grant.state != enroll::GrantState::Available
+            || material.grant.expires_at <= self.clock.now()?
+        {
+            return Err(Error::Protocol);
+        }
         self.secrets.resolve(secret_reference)?;
-        self.prepare_enrollment(Purpose::Import, material.operation_id, secret_reference.into(), capabilities)?;
+        self.prepare_enrollment(
+            Purpose::Import,
+            material.operation_id,
+            secret_reference.into(),
+            capabilities,
+        )?;
         let mut state = self.identity_state()?;
         let p = state.pending.as_mut().ok_or(Error::Identity)?;
-        if p.grant.as_ref().is_some_and(|g| *g != material.grant) { return Err(Error::Conflict); }
+        if p.grant.as_ref().is_some_and(|g| *g != material.grant) {
+            return Err(Error::Conflict);
+        }
         p.grant = Some(material.grant);
         self.store.put("identity", &state)
     }
     /// Begin a manually requested same-registration renewal with the current mTLS identity.
     pub async fn renew_certificate(&mut self) -> Result<EnrollmentStatus, Error> {
-        self.active()?;
         let state = self.identity_state()?;
-        let capabilities = state.active.as_ref().ok_or(Error::Identity)?.receipt.runtime.capabilities.clone();
-        let operation = state.pending.as_ref().map_or_else(Uuid::new_v4, |p| p.operation);
+        if state
+            .pending
+            .as_ref()
+            .is_some_and(|p| p.purpose == Purpose::Renewal)
+        {
+            self.drive_enrollment().await?;
+            return self.enrollment_status();
+        }
+        self.active()?;
+        let capabilities = state
+            .active
+            .as_ref()
+            .ok_or(Error::Identity)?
+            .receipt
+            .runtime
+            .capabilities
+            .clone();
+        let operation = state
+            .pending
+            .as_ref()
+            .map_or_else(Uuid::new_v4, |p| p.operation);
         let reference = format!("bootstrap-{operation}");
         self.prepare_enrollment(Purpose::Renewal, operation, reference.clone(), capabilities)?;
         self.secrets.create_secret(&reference)?;
         self.drive_enrollment().await?;
         self.enrollment_status()
     }
-    async fn enrollment_json<T: serde::de::DeserializeOwned>(&self, http: &reqwest::Client, path: &str, body: &impl Serialize) -> Result<T, Error> {
-        let url = self.store.cfg.origin.join(&format!("api/v1/agent/enroll/{path}")).map_err(|_| Error::Configuration)?;
-        let request = http.post(url).header("content-type", "application/json").body(encode(body)?).timeout(self.store.cfg.limits.request_timeout);
+    async fn enrollment_json<T: serde::de::DeserializeOwned>(
+        &self,
+        http: &reqwest::Client,
+        path: &str,
+        body: &impl Serialize,
+    ) -> Result<T, Error> {
+        let url = self
+            .store
+            .cfg
+            .origin
+            .join(&format!("api/v1/agent/enroll/{path}"))
+            .map_err(|_| Error::Configuration)?;
+        let request = http
+            .post(url)
+            .header("content-type", "application/json")
+            .body(encode(body)?)
+            .timeout(self.store.cfg.limits.request_timeout);
         let (status, bytes) = json_transport(request, self.store.cfg.limits.response_bytes).await?;
         if !status.is_success() {
             let error: enroll::ErrorBody = decode(&bytes)?;
@@ -176,30 +314,60 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
     /// Drive one retained registration operation. No retry creates a new operation or key.
     pub async fn drive_enrollment(&mut self) -> Result<(), Error> {
         let mut state = self.identity_state()?;
-        let Some(mut p) = state.pending.clone() else { return Ok(()); };
+        let Some(mut p) = state.pending.clone() else {
+            return Ok(());
+        };
         self.prepare_key()?;
         p.csr = self.identity_state()?.pending.ok_or(Error::Identity)?.csr;
-        if p.grant.is_none() && p.purpose != Purpose::Import { self.secrets.create_secret(&p.secret_reference)?; }
+        if p.grant.is_none() && p.purpose != Purpose::Import {
+            self.secrets.create_secret(&p.secret_reference)?;
+        }
         let bootstrap = crate::tls::client(&self.store.cfg, None, &self.secrets)?;
         if p.grant.is_none() {
             let request = enroll::GrantRequest {
-                wire_version: enroll::API_VERSION, operation_id: p.operation,
-                secret: self.secrets.resolve(&p.secret_reference)?, platform: self.store.cfg.platform,
-                lifetime_seconds: None, csr: p.csr.clone(),
+                wire_version: enroll::API_VERSION,
+                operation_id: p.operation,
+                secret: self.secrets.resolve(&p.secret_reference)?,
+                platform: self.store.cfg.platform,
+                lifetime_seconds: None,
+                csr: p.csr.clone(),
             };
-            let (http, path) = if p.purpose == Purpose::Renewal { (&self.http, "renewal-grants") } else { (&bootstrap, "requests") };
+            let (http, path) = if p.purpose == Purpose::Renewal {
+                (&self.http, "renewal-grants")
+            } else {
+                (&bootstrap, "requests")
+            };
             let grant: enroll::GrantReceipt = self.enrollment_json(http, path, &request).await?;
-            if grant.grant_id.is_nil() || grant.platform != self.store.cfg.platform || grant.expires_at <= self.clock.now()? { return Err(Error::Protocol); }
+            if grant.grant_id.is_nil()
+                || grant.platform != self.store.cfg.platform
+                || grant.expires_at <= self.clock.now()?
+            {
+                return Err(Error::Protocol);
+            }
             p.grant = Some(grant);
-            state.pending = Some(p.clone()); state.failure = None;
+            state.pending = Some(p.clone());
+            state.failure = None;
             self.store.put("identity", &state)?;
         }
         let grant = p.grant.clone().ok_or(Error::Identity)?;
-        let progress: enroll::Progress = self.enrollment_json(&bootstrap, "status", &enroll::StatusRequest {
-            wire_version: enroll::API_VERSION, grant_id: grant.grant_id,
-            operation_id: p.operation, secret: self.secrets.resolve(&p.secret_reference)?,
-        }).await?;
-        if progress.grant.grant_id != grant.grant_id || progress.grant.platform != grant.platform || progress.grant.expires_at != grant.expires_at { return Err(Error::Protocol); }
+        let progress: enroll::Progress = self
+            .enrollment_json(
+                &bootstrap,
+                "status",
+                &enroll::StatusRequest {
+                    wire_version: enroll::API_VERSION,
+                    grant_id: grant.grant_id,
+                    operation_id: p.operation,
+                    secret: self.secrets.resolve(&p.secret_reference)?,
+                },
+            )
+            .await?;
+        if progress.grant.grant_id != grant.grant_id
+            || progress.grant.platform != grant.platform
+            || progress.grant.expires_at != grant.expires_at
+        {
+            return Err(Error::Protocol);
+        }
         p.grant = Some(progress.grant.clone());
         if let Some(receipt) = progress.activation {
             if p.candidate.is_none() {
@@ -208,43 +376,130 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             }
             return self.commit_activation(p, receipt);
         }
-        if progress.issuance_unknown { self.identity_failure(enroll::ErrorCode::IssuanceUnknown)?; return Err(Error::IssuanceUnknown); }
+        if progress.issuance_unknown {
+            self.identity_failure(enroll::ErrorCode::IssuanceUnknown)?;
+            return Err(Error::IssuanceUnknown);
+        }
         match progress.grant.state {
-            enroll::GrantState::Pending => { state.pending = Some(p); state.failure = None; self.store.put("identity", &state)?; return Ok(()); }
-            enroll::GrantState::Revoked => { self.identity_failure(enroll::ErrorCode::GrantRevoked)?; return Err(Error::Denied); }
-            enroll::GrantState::Expired => { self.identity_failure(enroll::ErrorCode::GrantExpired)?; return Err(Error::Expired); }
+            enroll::GrantState::Pending => {
+                state.pending = Some(p);
+                state.failure = None;
+                self.store.put("identity", &state)?;
+                return Ok(());
+            }
+            enroll::GrantState::Revoked => {
+                self.identity_failure(enroll::ErrorCode::GrantRevoked)?;
+                return Err(Error::Denied);
+            }
+            enroll::GrantState::Expired => {
+                self.identity_failure(enroll::ErrorCode::GrantExpired)?;
+                return Err(Error::Expired);
+            }
             _ => (),
         }
-        if self.clock.now()? >= grant.expires_at { return Err(Error::Expired); }
+        if self.clock.now()? >= grant.expires_at {
+            return Err(Error::Expired);
+        }
         if p.candidate.is_none() {
-            let candidate: enroll::Candidate = self.enrollment_json(&bootstrap, "certificates", &enroll::CertificateRequest {
-                wire_version: enroll::API_VERSION, operation_id: p.certificate_operation,
-                grant_id: grant.grant_id, secret: self.secrets.resolve(&p.secret_reference)?,
-                csr: p.csr.clone().ok_or(Error::Storage)?, runtime: p.profile.clone(),
-            }).await?;
-            if candidate.operation_id != p.certificate_operation || candidate.issuance_id.is_nil() || candidate.activate_before != grant.expires_at || progress.issuance_id.is_some_and(|id| id != candidate.issuance_id) { return Err(Error::Protocol); }
-            crate::tls::validity(&self.store.cfg, &candidate.certificate_chain, &p.key_reference, &self.secrets, self.clock.now()?)?;
+            let candidate: enroll::Candidate = self
+                .enrollment_json(
+                    &bootstrap,
+                    "certificates",
+                    &enroll::CertificateRequest {
+                        wire_version: enroll::API_VERSION,
+                        operation_id: p.certificate_operation,
+                        grant_id: grant.grant_id,
+                        secret: self.secrets.resolve(&p.secret_reference)?,
+                        csr: p.csr.clone().ok_or(Error::Storage)?,
+                        runtime: p.profile.clone(),
+                    },
+                )
+                .await?;
+            if candidate.operation_id != p.certificate_operation
+                || candidate.issuance_id.is_nil()
+                || candidate.activate_before != grant.expires_at
+                || progress
+                    .issuance_id
+                    .is_some_and(|id| id != candidate.issuance_id)
+            {
+                return Err(Error::Protocol);
+            }
+            crate::tls::validity(
+                &self.store.cfg,
+                &candidate.certificate_chain,
+                &p.key_reference,
+                &self.secrets,
+                self.clock.now()?,
+            )?;
             p.candidate = Some(candidate);
-            state.pending = Some(p.clone()); state.failure = None;
+            state.pending = Some(p.clone());
+            state.failure = None;
             self.store.put("identity", &state)?;
         }
         let candidate = p.candidate.as_ref().ok_or(Error::Storage)?;
-        let http = crate::tls::client(&self.store.cfg, Some((&p.key_reference, &candidate.certificate_chain)), &self.secrets)?;
-        let receipt: enroll::ActivationReceipt = self.enrollment_json(&http, "activate", &enroll::ActivationRequest {
-            wire_version: enroll::API_VERSION, issuance_id: candidate.issuance_id, operation_id: p.activation_operation,
-        }).await?;
+        let http = crate::tls::client(
+            &self.store.cfg,
+            Some((&p.key_reference, &candidate.certificate_chain)),
+            &self.secrets,
+        )?;
+        let receipt: enroll::ActivationReceipt = self
+            .enrollment_json(
+                &http,
+                "activate",
+                &enroll::ActivationRequest {
+                    wire_version: enroll::API_VERSION,
+                    issuance_id: candidate.issuance_id,
+                    operation_id: p.activation_operation,
+                },
+            )
+            .await?;
         self.commit_activation(p, receipt)
     }
-    fn commit_activation(&mut self, p: Pending, receipt: enroll::ActivationReceipt) -> Result<(), Error> {
+    fn commit_activation(
+        &mut self,
+        p: Pending,
+        receipt: enroll::ActivationReceipt,
+    ) -> Result<(), Error> {
         let candidate = p.candidate.as_ref().ok_or(Error::Storage)?;
-        if receipt.issuance_id != candidate.issuance_id || receipt.operation_id != p.activation_operation || receipt.runtime.capabilities != p.profile.capabilities || p.expected.as_ref().is_some_and(|old| *old != receipt.runtime) { return Err(Error::Identity); }
-        let (not_before, not_after, device) = crate::tls::validity(&self.store.cfg, &candidate.certificate_chain, &p.key_reference, &self.secrets, self.clock.now()?)?;
-        if device != receipt.runtime.device_id { return Err(Error::Identity); }
-        let http = crate::tls::client(&self.store.cfg, Some((&p.key_reference, &candidate.certificate_chain)), &self.secrets)?;
-        self.store.put("identity", &IdentityState {
-            active: Some(Active { receipt, key_reference: p.key_reference, secret_reference: p.secret_reference, chain: candidate.certificate_chain.clone(), not_before, not_after }),
-            pending: None, failure: None,
-        })?;
+        if receipt.issuance_id != candidate.issuance_id
+            || receipt.operation_id != p.activation_operation
+            || receipt.runtime.capabilities != p.profile.capabilities
+            || p.expected
+                .as_ref()
+                .is_some_and(|old| *old != receipt.runtime)
+        {
+            return Err(Error::Identity);
+        }
+        let (not_before, not_after, device) = crate::tls::validity(
+            &self.store.cfg,
+            &candidate.certificate_chain,
+            &p.key_reference,
+            &self.secrets,
+            self.clock.now()?,
+        )?;
+        if device != receipt.runtime.device_id {
+            return Err(Error::Identity);
+        }
+        let http = crate::tls::client(
+            &self.store.cfg,
+            Some((&p.key_reference, &candidate.certificate_chain)),
+            &self.secrets,
+        )?;
+        self.store.put(
+            "identity",
+            &IdentityState {
+                active: Some(Active {
+                    receipt,
+                    key_reference: p.key_reference,
+                    secret_reference: p.secret_reference,
+                    chain: candidate.certificate_chain.clone(),
+                    not_before,
+                    not_after,
+                }),
+                pending: None,
+                failure: None,
+            },
+        )?;
         self.http = http;
         Ok(())
     }

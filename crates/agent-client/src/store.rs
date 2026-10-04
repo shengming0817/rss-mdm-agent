@@ -39,8 +39,12 @@ impl Store {
         let path = root.join("communication.sqlite");
         if path.exists() {
             drop(read_existing(root, &cfg)?);
-            if matches!(mode, OpenMode::Create) { return Err(Error::Storage); }
-        } else if matches!(mode, OpenMode::Existing) { return Err(Error::Storage); }
+            if matches!(mode, OpenMode::Create) {
+                return Err(Error::Storage);
+            }
+        } else if matches!(mode, OpenMode::Existing) {
+            return Err(Error::Storage);
+        }
         let lock_path = root.join("client.lock");
         let lock = match platform_private_storage::create_new(&lock_path) {
             Ok(f) => f,
@@ -129,7 +133,6 @@ impl Store {
             .and_then(|state| state.active.map(|active| active.receipt.runtime))
             .ok_or(Error::Identity)
     }
-
 }
 
 fn read_existing(root: &Path, cfg: &Config) -> Result<Connection, Error> {
@@ -173,10 +176,14 @@ pub fn inspect_binding(root: &Path, cfg: &Config) -> Result<wire::BindingProfile
     let reader = read_existing(root, cfg)?;
     let body: Vec<u8> = reader.query_row(
         "SELECT CASE WHEN length(body)<=?1 THEN body END FROM state WHERE key='identity'",
-        [cfg.limits.response_bytes], |r| r.get(0),
+        [cfg.limits.response_bytes],
+        |r| r.get(0),
     )?;
     let state: crate::identity::IdentityState = decode(&body)?;
-    state.active.map(|active| active.receipt.runtime).ok_or(Error::Identity)
+    state
+        .active
+        .map(|active| active.receipt.runtime)
+        .ok_or(Error::Identity)
 }
 
 fn sidecars(path: &Path) -> Result<(), Error> {
