@@ -672,18 +672,35 @@ async fn real_https_registration_reports_script_software_and_journal_results() {
                 .await;
             assert_eq!(run["asset"]["run"]["result"], "snapshot");
             assert_eq!(run["asset"]["run"]["fields"].as_array().unwrap().len(), 1);
-            // The command receipt commits CollectionRun before the independent Inventory
-            // projector publishes it. Preview completion alone does not acknowledge that fact.
+            // Await this collection's projected provenance before previewing. The management
+            // detail uses the same Inventory facts as Group; repeated previews create needless work.
             tokio::time::timeout(Duration::from_secs(30), async {
                 loop {
-                    if admin.group_contains(&group, &device).await == !uninstall {
+                    let detail = admin
+                        .request(
+                            reqwest::Method::GET,
+                            &format!("/api/v1/devices/{device}/inventory"),
+                            None,
+                            None,
+                        )
+                        .await;
+                    let sources =
+                        &detail["asset"]["device"]["lists"]["device.software.installed"]["sources"];
+                    if sources.as_array().is_some_and(|sources| {
+                        sources.iter().any(|source| {
+                            source["evidence"]["source"] == "agent.script"
+                                && source["evidence"]["snapshotId"]
+                                    == offer.payload().attempt_id().to_string()
+                        })
+                    }) {
                         break;
                     }
-                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    tokio::time::sleep(Duration::from_millis(500)).await;
                 }
             })
             .await
-            .expect("accepted collection becomes visible to the real group preview");
+            .expect("accepted collection reaches the real Inventory projection");
+            assert_eq!(admin.group_contains(&group, &device).await, !uninstall);
         }
         if software {
             let rollout = admin
