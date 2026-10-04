@@ -82,8 +82,13 @@ def summarize_security(matrix):
 
 class NativeProbe:
     def __init__(self, binary, config, log):
-        self.process = subprocess.Popen([str(binary), '--config', str(config)], stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE, stderr=log, text=True)
+        self.binary, self.config, self.log = binary, config, log
+        self.exchange = None
+        self._start()
+
+    def _start(self):
+        self.process = subprocess.Popen([str(self.binary), '--config', str(self.config)], stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE, stderr=self.log, text=True)
         self.exchange = BackendExchange(self.process, timeout=6)
         try:
             self.identity = self.exchange.read(time.monotonic() + 6)
@@ -131,7 +136,18 @@ class NativeProbe:
         finally: self.close_connection(connection)
 
     def close(self):
-        self.exchange.close()
+        if self.exchange is not None:
+            self.exchange.close()
+            self.exchange = None
+
+    @contextlib.contextmanager
+    def suspended(self):
+        if self.exchange is None: raise RuntimeError('native probe is already closed')
+        # A trusted non-service image must actually exit before the owner's
+        # quiescence check. Recreate it for subsequent authenticated assertions.
+        self.close()
+        try: yield
+        finally: self._start()
 
 
 def assert_native_reply(result, kind):
@@ -527,7 +543,8 @@ def complete_native_security(probe, matrix, query, command, package, package_rec
     run('/usr/bin/python3',str(installer),'remove','--scope','user','--binary',str(binary),'--config',str(config))
     native_stale_helper_security(probe,matrix,query,command,protected,prior,offset,package,package_receipt)
     security_begin(matrix,'refresh_preflight')
-    preflight=administrator.command('refresh_preflight')
+    with probe.suspended():
+        preflight=administrator.command('refresh_preflight')
     healthy=probe.request(dict(method='serviceStatus'));assert_native_reply(healthy,'serviceStatus')
     assert healthy['envelope']['reply']['value']['readiness']['phase']=='ready', 'preflight changed service readiness'
     assert healthy['peerPid']==preflight['preflight']['originalPid'], 'preflight replaced the original process'
@@ -538,7 +555,8 @@ def complete_native_security(probe, matrix, query, command, package, package_rec
     security_result(matrix,'helper_stale_endpoint',dict(pending,diagnostic=diagnostics))
     security_result(matrix,'refresh_preflight',dict(preflight['preflight'],healthy=healthy))
     security_begin(matrix,'refresh_after_stop')
-    results=administrator.command('refresh')
+    with probe.suspended():
+        results=administrator.command('refresh')
     security_result(matrix,'refresh_after_stop',results['afterStop'])
     run('/usr/bin/python3',str(installer),'install','--scope','user','--binary',str(binary),'--config',str(config))
     query()
@@ -630,6 +648,22 @@ def instrument_service_diagnostics(root, binary, config):
     raise TimeoutError('instrumented lab service did not start')
 
 
+def assert_refresh_refusal(stderr, case):
+    reports=[]
+    for line in stderr.splitlines():
+        try: value=json.loads(line)
+        except (ValueError, TypeError): continue
+        if isinstance(value,dict) and value.get('version')==1 and 'failure_phase' in value:
+            reports.append(value)
+    assert len(reports)==1, 'refresh needs one closed failure receipt'
+    report=reports[0]
+    phase='stop-current' if case=='registration' else 'refresh-preflight'
+    errors={'Identity'} if case in ('registration','tenant','origin','state_root') else {'Identity','Unavailable'}
+    assert report.get('state')=='failed' and report.get('failure_phase')==phase, 'unrelated refresh refusal phase'
+    assert report.get('error') in errors, 'unrelated refresh refusal category'
+    return report
+
+
 def root_refresh_security(root, binary, config, installer_source, phase):
     # This whole program is frozen before elevation; only the owned experiment is modified.
     import contextlib, copy, hashlib, io, json, os, plistlib, re, shutil, sqlite3, subprocess, time, uuid
@@ -708,7 +742,9 @@ def root_refresh_security(root, binary, config, installer_source, phase):
                 operation=(lambda: with_legacy_communication(held_source,refresh)) if name=='communication_format' else refresh
             try: operation()
             except (RuntimeError,subprocess.CalledProcessError,FileNotFoundError) as error:
-                rows.append(dict(case=name,error=str(error),stderr=getattr(error,'stderr',None)))
+                stderr=getattr(error,'stderr',None)
+                receipt=None if name in ['mode','symlink','acl','hash','cdhash','version','ipc_version'] else assert_refresh_refusal(stderr or '',name)
+                rows.append(dict(case=name,error=str(error),stderr=stderr,receipt=receipt))
             else: raise AssertionError('refresh negative unexpectedly admitted: '+name)
         finally:
             try:
@@ -1424,7 +1460,7 @@ print(json.dumps(dict(label=label,plist=str(plist),helperGuard=result.stderr)))
                     '--config',str(config),'--candidate-binary',str(binary),'--candidate-config',str(config)])))
             refresh=lab/'refresh-security.py'
             refresh_preflight=lab/'refresh-preflight.py'
-            refresh_source="import json,sqlite3\n"+inspect.getsource(journal_proof)+inspect.getsource(with_legacy_communication)+inspect.getsource(instrument_service_diagnostics)+inspect.getsource(root_refresh_security)
+            refresh_source="import json,sqlite3\n"+inspect.getsource(journal_proof)+inspect.getsource(with_legacy_communication)+inspect.getsource(instrument_service_diagnostics)+inspect.getsource(assert_refresh_refusal)+inspect.getsource(root_refresh_security)
             for phase,path in [('preflight',refresh_preflight),('afterStop',refresh)]:
                 path.write_text(refresh_source+"\nprint(json.dumps(root_refresh_security(%r,%r,%r,%r,%r)))\n" %
                     (str(protected),str(binary),str(config),installer_source,phase))

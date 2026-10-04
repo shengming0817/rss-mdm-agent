@@ -46,7 +46,7 @@ node scripts/agent-organization.mjs --config /private/execution-template.json --
 
 `--ca-output` 是 CA 在设备上的最终绝对路径，生成器写入同一公共证书并记录该路径；省略私有 CA 时无需该参数。输出配置与 CA 为 0644（公开信息），安装后的父目录须允许用户 helper 遍历、文件由管理员持有且普通用户不可写；凭据和状态目录保持原有保护。输出文件必须不存在，不覆盖既有部署；保持模板的其它字段，仅替换组织地址、租户和 CA。按原安装要求将配置与证书置于管理员保护的最终路径，再进行首次注册。部署不同设备时使用目标设备对应的绝对路径。现有设备不要通过生成新身份或重新注册来更新 CA；沿用原身份，按受控刷新流程发布新配置。更新 CA 后桌面重新构建、Agent 重新加载；不修改系统信任。CA 私钥不分发，任务签名公钥与组织 HTTPS CA 分开管理。
 
-首次注册可由固定桌面在本机服务设置中发起授权请求，再在组织网页核对请求编号及公钥指纹并批准。导入网页生成的材料时，由系统账号运行 `rss-execution-service --config <受保护配置> --initialize <受保护 GrantImport JSON>`，通过标准输入传入一次性授权 secret；秘密不得放入 argv、JSON、日志或 shell 历史。注册重试使用同一配置、原 grant/CSR/签发/激活操作和 OS 密钥。人工换证先停止原 owner，再运行 `--renew-certificate`；保持原 Registration、存储位置和 journal。初始化遇到已有不支持的数据库或缺失的原注册状态时拒绝，保留原文件；不能换目录、清库或重新注册来绕过未决任务。
+首次注册可由固定桌面在本机服务设置中发起授权请求，再在组织网页核对请求编号及公钥指纹并批准。导入网页生成的材料时，使用上文「固定安装包与首次注册」的 Bootstrap envelope、实际 decoder schema 和私有 secret-file 导入入口；材料必须绑定当前组织、原生架构和已安装候选摘要。采用受控私有 stdin 的 `--initialize` 路径时，先停止原服务 owner，再由系统账号运行；秘密不得放入 argv、JSON、日志或 shell 历史。注册重试使用同一配置、原 grant/CSR/签发/激活操作和 OS 密钥。人工换证先停止原 owner，再运行 `--renew-certificate`；保持原 Registration、存储位置和 journal。初始化遇到已有不支持的数据库或缺失的原注册状态时拒绝，保留原文件；不能换目录、清库或重新注册来绕过未决任务。
 
 macOS 系统注册：`python3 scripts/service/execution-macos.py install --scope system --binary <root 拥有的绝对产物路径> --config <受保护配置>`，需要管理员执行。用户在自己的 GUI 登录中运行同一安装脚本，改为 `--scope user`；程序参数固定为 `--user-helper`，只注册当前实际 OS 会话。`--config` 可省略以使用默认部署路径。状态查询用 `rss-execution-service --config <配置> --query`，客户端和服务必须互相匹配真实 OS 身份与程序 pin。
 
