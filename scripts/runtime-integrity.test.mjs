@@ -147,7 +147,20 @@ test("AI host build removes orphaned compiler output before packing", (t) => {
   writeFileSync(orphans[0], "throw new Error('orphaned output');\n");
   writeFileSync(orphans[1], "export declare const orphaned: true;\n");
 
-  run("pnpm", ["--dir", isolated, "run", "compile"], root);
+  // ref: pnpm dist/pnpm.mjs@v11.4.0 (runDepsStatusCheck)
+  // This isolated compiler fixture borrows frozen source dependencies. pnpm's
+  // default auto-install must not purge that linked installation as a new workspace.
+  run(
+    "pnpm",
+    [
+      "--dir",
+      isolated,
+      "--config.verify-deps-before-run=false",
+      "run",
+      "compile",
+    ],
+    root,
+  );
   assert.ok(
     orphans.every((path) => !existsSync(path)),
     "real Host compilation cleans isolated orphan output",
