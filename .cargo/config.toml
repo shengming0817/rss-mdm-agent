@@ -1,7 +1,3 @@
 [build]
 # Keep artifacts in this repository even when a parent directory is a workspace.
 target-dir = "target"
-
-[net]
-# Azure Git authentication follows the configured system Git credential helper.
-git-fetch-with-cli = true

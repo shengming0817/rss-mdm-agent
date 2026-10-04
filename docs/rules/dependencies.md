@@ -4,8 +4,9 @@
 纯核心与契约不依赖 UI、模型 SDK、数据库或 OS；AI 行为 ports 由 TS 契约包持有，Rust 仅消费生成 wire 与自身执行核心；adapter单向消费必要契约，组合根连接实际业务。必要基础类型和成熟库依赖允许，不为零依赖复制值类型。
 
 - 本仓独立workspace、工具链、lock与发布周期；同workspace成员可用内部path，禁止以相邻RSS/rss-mdm/prmonitor目录path或patch作为交付前提。
-- 跨仓消费固定版本/hash artifact或明确批准的完整Git revision与lock，不浮动跟踪分支，不把Git消费称为registry发布。
-- Agent wire由rss-mdm先发布，本仓再消费；本地execution-contract不建立第二套远程协议或设备身份权威。
+- 客户端通过版本化 HTTP API 对接 rss-mdm；禁止依赖后端 Rust 源码包，或通过 Git/path/patch 和传递依赖引入后端实现。公开基础库依赖按各自发布边界消费。
+- 远程协议权威由 rss-mdm 持有；本仓按已有 API/schema 生成所需绑定，不手写第二套 DTO，不建立设备身份权威。生成输入和输出在本仓维护，常规构建与生成不读取后端 checkout。
+- 客户端测试使用本仓协议 fixture 及实际本地存储/TLS 接缝；禁止构建另一产品、导入其私有夹具或读取其 checkout。部署服务的完整联调归独立产品验收，不进入常规 CI。
 - AI/UI提取绑定来源commit、文件映射、权利/许可及改写证据，不链接整个prmonitor_lib，不带PR业务和旧不受控权限配置。
 - 公共 API 通过现有单元、集成或产品调用路径验证；不维护平行的独立 consumer、pack/install 测试与回执框架。真实应用打包仍需验证运行资源完整性。
 - 如需RSS公共机制，核验实际可用API与依赖闭包；缺口回原owner修复，不在产品仓维护通用机制副本。

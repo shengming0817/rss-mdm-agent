@@ -26,26 +26,10 @@ client 的 CredentialRedactor 从受保护身份 provider 获取实际一次性�
 
 ## 验证
 
-本 crate 的 acceptance 使用实际 loopback socket、通信 SQLite 和文件系统验证协议与材料接缝；服务内部 backend 测试另以真实 HTTP、通信库及执行 journal 验证执行关联和结果交付。共享 HTTP fixture 只有一份；Test host/runner 仅由服务测试持有。服务内 `backend::live_mdm` 是隔离测试环境中的真实服务端联调入口：连接正式 `rss-mdm serve` 实现与真实 PostgreSQL，验证注册、报告、任务、下载和结果确认；通过独立发布的 installed 软件采集任务验证 Group 成员重算，软件任务结果本身不产生完整库存。名称中的 live 表示连接实际服务端实现，不表示生产环境；执行器仍是明确的 Test runner。
-
-准备隔离服务环境、正式 HTTPS 网关、内容目录及任务签名配置后，在私有配置文件中提供 management_origin、agent_origin、tenant、management_ca_file、agent_ca_file、device_ca_file、admin_login、admin_password_file、key_id 和 public_key。配置不入库；管理员须拥有授权管理权，测试经公开 API 配置业务授权、资源、Scope 和 Policy。真实联调操作只允许针对可丢弃测试环境。
+本 crate 的 acceptance 使用仓内 HTTP/TLS fixture、实际 loopback socket、通信 SQLite 和文件系统验证客户端协议、凭据、材料与失败恢复。服务内部 backend 测试使用同一 HTTP fixture，另以真实通信库和执行 journal 验证执行关联及结果交付。fixture 不证明服务端业务或生产环境验收。
 
 ```sh
 python3 scripts/build-run.py -- cargo test --locked -p agent-client --test acceptance
-AGENT_LIVE_CONFIG=/private/test-environment/agent-live.json \
-  python3 scripts/build-run.py -- cargo test --locked -p agent-service --lib backend::live_mdm -- --ignored
 ```
 
-也可由现有 runner 生成可丢弃环境并执行同一个 ignored 测试（固定后端 checkout；需 Docker、nginx、curl 和 backend 的受控工具依赖）：
-
-```sh
-python3 <fixed-backend>/hack/build_run.py -- python3 <agent-checkout>/scripts/live-agent.py --backend <fixed-backend>
-```
-
-命令从固定后端 checkout 运行。管理 HTTPS 经正式网关，Agent enroll/runtime 直接连接专用 TLS listener；使用固定 step-ca 签发候选，激活与后续通信完成真实客户端证书握手。runner 不运行后端 T2 用例或扩充平台 T3。
-
-缺少 live 配置或依赖会失败，不按跳过解释为通过。受控测试结果不证明真实 Windows/macOS 安装、生产身份、签名包或 T3 成立。
-
-## 来源
-
-直接消费 producer 的验证、编码与闭合 wire。HTTP 行为对标已读取的 reqwest 0.13.5 src/async_impl/client.rs；私有文件复用 platform-private-storage，通信事务由本 crate 的 rusqlite 存储持有；执行 journal 由服务装配 execution-sqlite，client 不依赖执行应用或执行 SQLite。
+构建、生成与测试只消费本仓输入及公开依赖，不读取或构建 rss-mdm checkout。完整产品联调由独立验收任务连接已部署服务或固定服务制品，不作为客户端常规 CI 前提。
