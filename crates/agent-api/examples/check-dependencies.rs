@@ -50,7 +50,7 @@ fn scan(directory: &Path, root: &Path) -> Result<(), Box<dyn std::error::Error>>
         if entry.file_type()?.is_dir() {
             scan(&path, root)?;
         } else if name == "Cargo.toml" {
-            let value: toml::Value = fs::read_to_string(&path)?.parse()?;
+            let value: toml::Value = toml::from_str(&fs::read_to_string(&path)?)?;
             manifest(&value).map_err(|e| format!("{}: {e}", path.display()))?;
             // All local paths, including optional, target, build and dev inputs, stay in this product.
             fn paths(
@@ -139,12 +139,10 @@ mod tests {
             "[target.'cfg(windows)'.build-dependencies.alias]\npackage='rss-mdm-inventory'\nversion='1'",
             "[patch.crates-io]\nserde={path='../other-product'}",
             "[replace]\n'package:1.0.0'={path='../other-product'}",
-        ] {assert!(manifest(&input.parse().unwrap()).is_err());}
-        assert!(manifest(
-            &"[dependencies]\nagent-api={workspace=true}"
-                .parse()
-                .unwrap()
-        )
-        .is_ok());
+        ] {assert!(manifest(&toml::from_str(input).unwrap()).is_err());}
+        assert!(
+            manifest(&toml::from_str("[dependencies]\nagent-api={workspace=true}").unwrap())
+                .is_ok()
+        );
     }
 }
