@@ -91,6 +91,10 @@ export const sourceEdges = [
   [npm("ai-client"), npm("ai-host-app")],
 ];
 export const testOwners = [
+  ["scripts/build-installers.mjs", "agent-service"],
+  ["scripts/installers", "agent-service"],
+  ["scripts/build-installers.mjs", "rss-mdm-desktop"],
+  ["scripts/installers", "rss-mdm-desktop"],
   ["tests/agent-protocol", "agent-client"],
   ["tests/agent-protocol", "agent-service"],
   ["scripts/service/execution-macos.py", "agent-service"],
@@ -102,8 +106,6 @@ export const testOwners = [
   ["scripts/service/execution-windows.ps1", "agent-service"],
   ["scripts/live-agent.py", "agent-service"],
   ["scripts/service/verify-execution-windows.ps1", "agent-service"],
-  ["scripts/service/execution-windows.test.ps1", "agent-service"],
-  ["scripts/service/execution-macos.test.py", "agent-service"],
   ["packages/execution-bindings/src/tools.json", "execution-mcp"],
   ["packages/execution-bindings/src/task-details.ts", "execution-app"],
   ["tests/assistant/execution-fixtures.json", "execution-app"],

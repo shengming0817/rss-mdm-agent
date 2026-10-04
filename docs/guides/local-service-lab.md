@@ -4,11 +4,36 @@
 
 开发机按[验证规则](../rules/verification-scope.md#开发机平台验证与实现项关闭)只运行当前宿主平台的必要验证，不执行 Windows 编译、测试、打包、安装或真机验收，也不补齐 Windows 环境。下文 Windows 部署和诊断操作仅供目标 Windows 环境按需使用；未执行时记录为未验证，不阻塞已完成实现项的关闭。
 
+## 固定安装包与首次注册
+
+`pnpm build:installer --organization /absolute/public-organization.json` 在当前原生平台构建 macOS arm64 PKG 或 Windows amd64 / arm64 的 perMachine NSIS EXE，不套用 MSI。macOS 构建命令通过 `python3 scripts/build-run.py -- pnpm build:installer ...` 复用本地 Cargo 槽位；Windows 使用 `pnpm exec node scripts/build-installers.mjs ...`。Windows 构建进程、Rust 工具链和 Node 必须为目标原生架构，不接受仿真进程或混合 PE。目标设备须预装 machine-wide WebView2；安装器缺失时明确拒绝。当前机器有匹配架构、受保护的 PowerShell 7 时才登记该解释器与相关能力。
+
+组织输入仅含 `origin`（规范 HTTPS origin）、`tenant`（非零 UUID）、`label`、`signing_keys`（key ID → base64url Ed25519 公钥）、`device_ca_pem`，以及可选 `ca_pem`。设备 CA 与 HTTPS CA、程序签名证书各自独立；输入不允许 grant、secret、账号目录或私钥。包内固定相同组织上下文的生产服务、桌面、Node、AI Host、worker 和资源。产物及其 `package-manifest.json` 位于忽略的 `.local-ci-runs/installers/`，记录源码、锁文件、平台、候选及最终包摘要。
+
+默认 macOS 为 ad-hoc 开发签名，Windows 为明确标记的开发包。正式包增加 `--release`：macOS 设置 `RSS_MACOS_APP_SIGNING_IDENTITY`、`RSS_MACOS_INSTALLER_SIGNING_IDENTITY` 和已存在的 `RSS_MACOS_NOTARY_PROFILE` Keychain 引用；Windows 设置 `RSS_WINDOWS_SIGNING_THUMBPRINT`，可选 `RSS_SIGNTOOL` 完整路径。构建不会接收证书密码；正式 macOS 包完成 notarization / stapling，正式 Windows 包与原生资源进行 Authenticode 签名。缺少正式签名配置会失败。
+
+每次构建安装到独立版本目录，升级先核对完整候选、原生架构、签名及持久状态，再停旧服务和原子发布 V4 部署配置。失败保留可核实的注册与状态；候选活动未确认停止时不切回旧配置。ad-hoc 服务更换代码身份后无法读取旧 Keychain 项，会在停机前拒绝升级，不重建凭据或放宽 ACL。V3 配置不会迁移或兼容读取。
+
+普通安装不创建 Enrollment、设备密钥或 journal；桌面通过认证 IPC 发起机器注册。管理员也可导入独立的安装材料：公开 envelope schema 由实际 Rust decoder 生成，位于 `apps/agent-service/schema/install-bootstrap-v1.schema.json`，远程 GrantReceipt 保持服务端唯一协议来源。envelope 的 `origin`、`tenant`、`target`、`installation_artifact` 必须与已安装候选完全相同；后者取 `package-manifest.json` 的 `candidateSha256`。材料还含原始 `operationId` 与服务端 GrantReceipt，secret 单独置于 root / LocalSystem 私有文件或标准输入中，不进入包、argv、日志或 URL。
+
+```sh
+# 管理员准备受保护的 envelope；secret-file 须仅 root 可读（Windows 仅 SYSTEM / Administrators）。
+<受保护的服务程序> --installation import --envelope /absolute/bootstrap.json --secret-file /absolute/private-secret
+# 服务已停止时，也可通过受控私有 stdin 初始化。
+<受保护的服务程序> --initialize /absolute/bootstrap.json < /absolute/private-secret
+```
+
+导入先验证组织、目标原生架构、候选摘要、有效期和原操作，之后停止匹配服务、提交原操作并恢复服务。网络结果不确定时保留同一操作恢复，不自动重新注册。完成后由材料 owner 删除本次私有输入；安装器不删除共享凭据。安装成功与认证 readiness 分开核实，使用获准的普通用户运行已安装桌面的 `--service-probe`。
+
+初装从实际互动登录发现主体及 helper 路径；无人登录的静默初装必须提供管理员保护的 profile（`subjects` 与 `helper_work_roots`）。Windows EXE 接受 `/S /PROFILE=绝对路径`；macOS 可先固定 profile 于 `/Library/Application Support/RSS MDM Agent/install-profile.json` 再运行 `installer -pkg ... -target /`。桌面启动请求 Rust owner 注册当前配置用户的 helper，AI Host 随该桌面运行。
+
+卸载只移除匹配注册与程序；设备身份、Keychain / DPAPI 引用、通信库、journal、材料及用户数据保留。Windows 使用系统卸载入口或 `uninstall.exe /S`；macOS 管理员使用 `<受保护的服务程序> --installation uninstall`。重装核对 retained V4 上下文并复用安装 ID，原程序已移除时由新候选只读检查 retained 密钥与日志。没有隐式清库、换库或共享凭据删除入口。
+
 ## 后台授权执行服务
 
 构建 `cargo build --release -p agent-service --bin rss-execution-service`。生产服务与 user helper 使用同一二进制；原 execution-runner 二进制装配已删除。系统服务独占凭据和执行 journal，helper 不初始化业务数据库。
 
-由管理员准备受保护的部署 JSON：macOS 默认 `/Library/Application Support/RSS MDM Agent/execution.json`，Windows 为 ProgramData 下同一产品目录的 `execution.json`。格式由 `apps/agent-service/src/deployment.rs` 持有，使用当前格式显式配置 version、ipc_version、HTTPS origin、tenant、signing_keys、installation_id、独立 device_ca_file、registration_clients 桌面程序/用户 pin、state_root、service 产物 pin、clients OS 主体/程序 pin、execution 的 work_root/material_root/interpreters/managers/processes，以及每个已登记用户的 helper_work_roots。解释器和包管理器使用完整路径和固定摘要，不使用 PATH 查找。material_root 与 state_root 分离。
+由管理员准备受保护的部署 JSON：macOS 默认 `/Library/Application Support/RSS MDM Agent/execution.json`，Windows 为 ProgramData 下同一产品目录的 `execution.json`。格式由 `apps/agent-service/src/deployment.rs` 持有，使用当前格式显式配置 version、ipc_version、HTTPS origin、tenant、signing_keys、installation_id、installation_artifact、独立 device_ca_file、registration_clients 桌面程序/用户 pin、state_root、service 产物 pin、clients OS 主体/程序 pin、execution 的 work_root/material_root/interpreters/managers/processes，以及每个已登记用户的 helper_work_roots。解释器和包管理器使用完整路径和固定摘要，不使用 PATH 查找。material_root 与 state_root 分离。
 
 桌面与后台 Agent 的组织 CA 以根 `.env` 的 `RSS_MDM_CA_FILE` 为统一部署输入。它指向部署方明确提供的单个 PEM CA 公共证书；留空使用默认信任。桌面构建嵌入公共证书，Agent 的 `execution.json.ca_file` 是由该输入生成的运行配置，不是桌面的配置来源。生成新安装配置时先准备包含程序 pins、工作目录、注册身份等完整字段的模板，然后执行：
 
@@ -18,7 +43,7 @@ node scripts/agent-organization.mjs --config /private/execution-template.json --
 
 `--ca-output` 是 CA 在设备上的最终绝对路径，生成器写入同一公共证书并记录该路径；省略私有 CA 时无需该参数。输出配置与 CA 为 0644（公开信息），安装后的父目录须允许用户 helper 遍历、文件由管理员持有且普通用户不可写；凭据和状态目录保持原有保护。输出文件必须不存在，不覆盖既有部署；保持模板的其它字段，仅替换组织地址、租户和 CA。按原安装要求将配置与证书置于管理员保护的最终路径，再进行首次注册。部署不同设备时使用目标设备对应的绝对路径。现有设备不要通过生成新身份或重新注册来更新 CA；沿用原身份，按受控刷新流程发布新配置。更新 CA 后桌面重新构建、Agent 重新加载；不修改系统信任。CA 私钥不分发，任务签名公钥与组织 HTTPS CA 分开管理。
 
-首次注册可由固定桌面在本机服务设置中发起授权请求，再在组织网页核对请求编号及公钥指纹并批准。导入网页生成的材料时，由系统账号运行 `rss-execution-service --config <受保护配置> --import-grant <受保护 GrantImport JSON>`，通过标准输入传入一次性授权 secret；秘密不得放入 argv、JSON、日志或 shell 历史。注册重试使用同一配置、原 grant/CSR/签发/激活操作和 OS 密钥。人工换证先停止原 owner，再运行 `--renew-certificate`；保持原 Registration、存储位置和 journal。初始化遇到已有不支持的数据库或缺失的原注册状态时拒绝，保留原文件；不能换目录、清库或重新注册来绕过未决任务。
+首次注册可由固定桌面在本机服务设置中发起授权请求，再在组织网页核对请求编号及公钥指纹并批准。导入网页生成的材料时，由系统账号运行 `rss-execution-service --config <受保护配置> --initialize <受保护 GrantImport JSON>`，通过标准输入传入一次性授权 secret；秘密不得放入 argv、JSON、日志或 shell 历史。注册重试使用同一配置、原 grant/CSR/签发/激活操作和 OS 密钥。人工换证先停止原 owner，再运行 `--renew-certificate`；保持原 Registration、存储位置和 journal。初始化遇到已有不支持的数据库或缺失的原注册状态时拒绝，保留原文件；不能换目录、清库或重新注册来绕过未决任务。
 
 macOS 系统注册：`python3 scripts/service/execution-macos.py install --scope system --binary <root 拥有的绝对产物路径> --config <受保护配置>`，需要管理员执行。用户在自己的 GUI 登录中运行同一安装脚本，改为 `--scope user`；程序参数固定为 `--user-helper`，只注册当前实际 OS 会话。`--config` 可省略以使用默认部署路径。状态查询用 `rss-execution-service --config <配置> --query`，客户端和服务必须互相匹配真实 OS 身份与程序 pin。
 
@@ -67,7 +92,7 @@ python3 scripts/service/execution-macos.py refresh --scope system --binary <原�
 
 Windows 使用同一 owner：`execution-windows.ps1 -Action Refresh -Scope System -Binary <原产物> -Config <原配置> -CandidateBinary <新产物> -CandidateConfig <新配置>`。用户 helper 不提供 refresh；由管理员发布配置后，在原登录中 remove/install。
 
-系统刷新前由每个实际登录用户移除其匹配的旧 helper 注册，刷新后用新候选重新 install helper；保留原 helper 工作目录，不代替用户会话操作。刷新原子发布当前注册引用的配置和同归属默认 pin，注册继续引用原配置路径，以免桌面留在旧 pins。Windows 生产刷新使用默认配置；自定义隔离部署由其安装 owner 处理。Windows 持久状态核验由一次有界 LocalSystem 诊断任务运行固定候选的只读命令，核验实际运行结果后移除本次任务；管理员账号不代替 LocalSystem 读取 DPAPI 凭据。
+系统刷新由同一 Rust owner 停止已核对归属的旧 helper；刷新后由原登录启动桌面注册新 helper；保留原 helper 工作目录，不代替用户会话操作。刷新原子发布当前注册引用的配置和同归属默认 pin，注册继续引用原配置路径，以免桌面留在旧 pins。Windows 生产刷新使用默认配置；自定义隔离部署由其安装 owner 处理。Windows 系统安装与持久状态核验由一次有界 LocalSystem SCM worker 运行固定候选，核验实际运行结果后移除本次 worker；管理员账号不代替 LocalSystem 读取 DPAPI 凭据。
 
 停机前由当前与新候选 Rust 服务分别只读核验 identity-binding、execution-initialized、受保护凭据的存储位置、通信注册及当前 journal authority/schema；不取得 writer、创建状态或执行恢复。核验失败保持原进程运行；新候选必须能读取原 OS 保护凭据。ad-hoc 映像变化若不满足旧 Keychain 项的代码身份要求，刷新明确拒绝，不重建凭据或放宽 ACL。刷新只替换匹配的注册候选，保持原身份、凭据、journal、材料和 helper 工作目录；不转换旧配置、不初始化或重新注册。停止、替换或重启失败时保留可检查的注册，不能解释为完成。脚本返回 registered 仅证明注册操作，随后需获准普通用户启动固定桌面并运行 `--service-probe`，核实认证连接与 readiness。若尚未注册，诊断可连接，但任务接口仍拒绝。
 
@@ -79,7 +104,7 @@ Windows 使用同一 owner：`execution-windows.ps1 -Action Refresh -Scope Syste
 
 旧独立状态服务已退出。实验室管理员如发现历史注册，须先核对真实程序、参数和安装归属，再使用 OS 原生管理工具停用/撤销注册；本仓不再提供旧服务安装或兼容接口。不得为迁移删除历史凭据、journal、个人数据或覆盖未知安装。
 
-macOS arm64 的实际执行与目标 Windows 环境按需运行的验证分别记录；#2559 独立安全验收的有效范围与状态以 tracker 为准。开发机不要求补齐 Windows 编译或真实安全矩阵才能关闭已完成实现项；fixture、服务未安装或单平台结果不能作为 Windows 验证通过的证据。正式 MSI/PKG、签名、公证和首次生产注册仍由其原 owner 持有。
+macOS arm64 的实际执行与目标 Windows 环境按需运行的验证分别记录；#2559 独立安全验收的有效范围与状态以 tracker 为准。开发机不要求补齐 Windows 编译或真实安全矩阵才能关闭已完成实现项；fixture、服务未安装或单平台结果不能作为 Windows 验证通过的证据。固定 NSIS EXE / PKG 的构建与部署由本指南的安装入口持有；服务端 grant 签发与浏览器下载由各自产品 owner 持有。
 
 ## 固定候选安全验收
 
@@ -92,7 +117,7 @@ macOS 服务入口增加 `--candidate <candidate.json>`，其它产物参数必�
 先证明认证查询可用，再仅改变客户端程序路径验证同用户错误映像被明确拒绝；不可用诊断不能算攻击拒绝。
 macOS 私有数据遇到扩展 ACL 会拒绝，原数据保留；不会自动改权限，部署方应核查正确主体与 ACL。
 
-Windows 11 x64 目标通过固定 pnpm 环境执行 `pnpm exec pwsh -File scripts/service/verify-execution-windows.ps1 -Phase <InstallSystem|VerifyUser|RefreshSystem|RemoveSystem> -Candidate <candidate.json> -Config <受保护配置> -Output <新回执目录>`。
+Windows 11 amd64 / arm64 目标通过固定 pnpm 环境执行 `pnpm exec pwsh -File scripts/service/verify-execution-windows.ps1 -Phase <InstallSystem|VerifyUser|RefreshSystem|RemoveSystem> -Candidate <candidate.json> -Config <受保护配置> -Output <新回执目录>`。
 先由既有部署 owner 准备真实注册与受控配置；系统阶段在管理员会话执行，VerifyUser 在原非提升登录会话执行。
 RefreshSystem 还要求 CurrentBinary/CurrentConfig，复用安装 owner 的持久身份检查。
 该入口只证明已运行的阶段；远程/同名管道、跨用户/会话、秘密作用域、旧连接撤销和真实桌面进程链仍须补齐目标环境矩阵。

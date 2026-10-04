@@ -1,4 +1,4 @@
-# Target Windows 11 x64 only. Reuse the installation owner; never run from a macOS developer host.
+# Target Windows 11 amd64/arm64. Reuse the installation owner; never run from a macOS developer host.
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][ValidateSet('InstallSystem','VerifyUser','RefreshSystem','RemoveSystem')][string]$Phase,
@@ -10,7 +10,7 @@ param(
 )
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
-if (![OperatingSystem]::IsWindows() -or [Runtime.InteropServices.RuntimeInformation]::OSArchitecture -ne 'X64') { throw 'Windows 11 x64 target required' }
+if (![OperatingSystem]::IsWindows() -or [Runtime.InteropServices.RuntimeInformation]::OSArchitecture -notin @('X64','Arm64')) { throw 'Windows 11 amd64/arm64 target required' }
 $Identity=[Security.Principal.WindowsIdentity]::GetCurrent()
 $Elevated=([Security.Principal.WindowsPrincipal]$Identity).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if (($Phase -eq 'VerifyUser') -eq $Elevated) { throw 'VerifyUser requires the actual non-elevated login; system phases require an administrator' }
@@ -29,7 +29,7 @@ foreach ($Sid in @($Identity.User.Value,'S-1-5-18','S-1-5-32-544')) {
     $Acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]::new($Sid),'FullControl','ContainerInherit,ObjectInherit','None','Allow'))
 }
 Set-Acl -LiteralPath $Output -AclObject $Acl
-$Receipt=[ordered]@{status='running';phase=$Phase;utc=[DateTime]::UtcNow.ToString('o');osVersion=[Environment]::OSVersion.Version.ToString();architecture='x64';subject=$Identity.User.Value;session=(Get-Process -Id $PID).SessionId;candidate=$Frozen;signature=(Get-AuthenticodeSignature -LiteralPath $Binary).Status.ToString();scenarios=@{};unexecuted=@('remote/same-name pipe','wrong SID/session','fake server','weak ACL/reparse','LocalSystem/user DPAPI separation','malformed/replay/expiry requests','old-connection revocation','real desktop/Codex','Host/worker Job Object recovery')}
+$Receipt=[ordered]@{status='running';phase=$Phase;utc=[DateTime]::UtcNow.ToString('o');osVersion=[Environment]::OSVersion.Version.ToString();architecture=[Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString().ToLowerInvariant();subject=$Identity.User.Value;session=(Get-Process -Id $PID).SessionId;candidate=$Frozen;signature=(Get-AuthenticodeSignature -LiteralPath $Binary).Status.ToString();scenarios=@{};unexecuted=@('remote/same-name pipe','wrong SID/session','fake server','weak ACL/reparse','LocalSystem/user DPAPI separation','malformed/replay/expiry requests','old-connection revocation','real desktop/Codex','Host/worker Job Object recovery')}
 $HelperCreated=$false
 try {
     switch ($Phase) {

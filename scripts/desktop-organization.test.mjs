@@ -95,7 +95,7 @@ test("desktop and Agent consume the same env CA without embedding paths or priva
   });
   const desktop = JSON.parse(environment[organizationBuildInput]);
   const template = {
-    version: 3,
+    version: 4,
     ipc_version: IPC_VERSION,
     signing_keys: { key: "public" },
     state_root: "/state",
@@ -133,7 +133,7 @@ test("Agent origin normalization matches desktop DNS root-dot rules", (t) => {
   const root = mkdtempSync(join(tmpdir(), "rss-origin-env-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const template = {
-    version: 3,
+    version: 4,
     ipc_version: IPC_VERSION,
     device_ca_file: join(root, "device-ca.pem"),
   };
@@ -148,7 +148,7 @@ test("Agent origin normalization matches desktop DNS root-dot rules", (t) => {
     () =>
       agentOrganizationConfiguration(
         root,
-        { version: 3, ipc_version: 6 },
+        { version: 4, ipc_version: 6 },
         join(root, "old-ca.pem"),
       ),
     /current deployment and IPC versions/,
@@ -218,7 +218,7 @@ test("real Agent generator CLI preserves user-readable public inputs under restr
   writeFileSync(
     template,
     JSON.stringify({
-      version: 3,
+      version: 4,
       ipc_version: IPC_VERSION,
       state_root: "/state",
       device_ca_file: join(root, "device-ca.pem"),

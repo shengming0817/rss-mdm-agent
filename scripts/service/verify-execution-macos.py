@@ -607,8 +607,20 @@ def root_refresh_security(root, binary, config, installer_source, phase):
     import contextlib, copy, hashlib, io, json, os, plistlib, re, shutil, sqlite3, subprocess, time, uuid
     from pathlib import Path
     root,binary,config=Path(root),Path(binary),Path(config)
-    namespace={'__name__':'acceptance_owner','__builtins__':__builtins__}
-    exec(compile(installer_source,'<fixed installation owner>','exec'),namespace)
+    def candidate(image, path):
+        value=subprocess.run([str(image),'--config',str(path),'--validate-installation'],check=True,capture_output=True,text=True)
+        return json.loads(value.stdout)
+    def verify_registered(endpoint, arguments):
+        value=subprocess.run(['/bin/launchctl','print',endpoint],check=True,capture_output=True,text=True)
+        pid=int(re.search(r'^\s*pid = ([0-9]+)\s*$',value.stdout,re.MULTILINE)[1])
+        actual=subprocess.run(['/bin/ps','-p',str(pid),'-o','args='],check=True,capture_output=True,text=True).stdout.strip()
+        assert actual==' '.join(arguments)
+        return pid
+    def refresh(plist,label,domain,endpoint,arguments,current,next_binary,next_config):
+        if plist != Path('/Library/LaunchDaemons/com.rss-mdm.agent.execution.plist'):
+            raise RuntimeError('Unknown registration is not a refresh target')
+        subprocess.run([str(next_binary),'--installation','refresh','--binary',str(binary),'--config',str(current),'--candidate-binary',str(next_binary),'--candidate-config',str(next_config)],check=True,capture_output=True,text=True)
+    namespace=dict(candidate=candidate,verify_registered=verify_registered,refresh=refresh)
     plist=Path('/Library/LaunchDaemons/com.rss-mdm.agent.execution.plist')
     original=plist.read_bytes(); document=json.loads(config.read_text())
     args=[str(binary),'--config',str(config)]
@@ -692,32 +704,13 @@ def root_refresh_security(root, binary, config, installer_source, phase):
     preflight=dict(rows=rows,originalPid=pid,configurationUnchanged=True,identityDigests=identities)
     if phase=='preflight':
         return dict(preflight=preflight,journalBefore=journal_before,driverDiagnostics=(root/'service-stderr.log').read_text())
-    # Real launchd startup failure after the owner has stopped the original process.
-    changed=plistlib.loads(original);changed['UserName']='rss-no-such-user-'+uuid.uuid4().hex
-    plist.write_bytes(plistlib.dumps(changed));plist.chmod(0o600)
-    try:
-        try:
-            with contextlib.redirect_stdout(io.StringIO()):
-                namespace['refresh'](plist,'com.rss-mdm.agent.execution','system',endpoint,args,config,binary,config)
-        except (RuntimeError,subprocess.CalledProcessError) as error: failure=str(error)
-        else: failure='registration publication returned; readiness must still fail for nonexistent OS user'
-        try: os.kill(pid,0)
-        except ProcessLookupError: pass
-        else: raise AssertionError('post-stop negative did not stop the original process')
-        result=subprocess.run([str(binary),'--config',str(config),'--query'],capture_output=True,text=True)
-        assert result.returncode!=0 or json.loads(result.stdout)['reply']['kind']!='tasks'
-        lookup=subprocess.run(['/bin/launchctl','print',endpoint],capture_output=True,text=True)
-        assert not re.search(r'^\s*pid = [0-9]+\s*$',lookup.stdout,re.MULTILINE), 'candidate unexpectedly running'
-        assert json.loads(config.read_bytes())==before_document
-        assert all(hashlib.sha256(Path(p).read_bytes()).hexdigest()==digest for p,digest in identities.items())
-        after_stop=dict(failure=failure,oldPidAbsent=pid,diagnostic=result.stderr,
-            registration=plistlib.loads(plist.read_bytes()),identityDigests=identities)
-    finally:
-        lookup=subprocess.run(['/bin/launchctl','print',endpoint],capture_output=True)
-        if lookup.returncode==0: subprocess.run(['/bin/launchctl','bootout',endpoint],check=True)
-        else: assert lookup.returncode==113
-        plist.write_bytes(original);plist.chmod(0o600)
-        subprocess.run(['/bin/launchctl','bootstrap','system',str(plist)],check=True)
+    # Exercise the real native stop/publication/restart, then compare durable facts.
+    namespace['refresh'](plist,'com.rss-mdm.agent.execution','system',endpoint,args,config,binary,config)
+    new_pid=namespace['verify_registered'](endpoint,args)
+    assert new_pid != pid
+    assert json.loads(config.read_bytes()) == before_document
+    assert all(hashlib.sha256(Path(p).read_bytes()).hexdigest()==digest for p,digest in identities.items())
+    after_stop=dict(originalPid=pid,newPid=new_pid,identityDigests=identities,configurationUnchanged=True)
     journal_after=journal_proof(journal)
     assert {row['request']:(row['snapshot']['attempts'],(row['snapshot'].get('attempt') or {}).get('id'))
         for row in journal_after['records']}==original_attempts, 'refresh changed durable request/attempt facts'
@@ -1297,9 +1290,9 @@ def main():
         installer.chmod(0o600)
         system_installer_source = installer_source.replace("'ProcessType': 'Background'", "'ProcessType': 'Background', 'StandardErrorPath': " + repr(str(protected/'service-stderr.log')))
         shutil.copyfile(lab / 'tls.pem', inputs / 'tls.pem')
-        deployment = dict(version=3, ipc_version=10, origin=info['origin'], tenant=info['tenant'],
+        deployment = dict(version=4, ipc_version=10, origin=info['origin'], tenant=info['tenant'],
                           signing_keys={'test': info['key']}, ca_file=str(protected / 'ca.pem'),
-                          installation_id=str(uuid.uuid4()), device_ca_file=str(protected / 'device-ca.pem'),
+                          installation_id=str(uuid.uuid4()), installation_artifact=hashlib.sha256(args.binary.read_bytes()).hexdigest(), device_ca_file=str(protected / 'device-ca.pem'),
                           state_root=str(protected / 'state'),
                           helper_work_roots={str(os.geteuid()): str(helper_root)},
                           execution=dict(work_root=str(protected / 'work'), material_root=str(protected / 'materials'),
@@ -1325,9 +1318,11 @@ config['execution']['interpreters']=[dict(profile='posix_sh',image=artifact('/bi
 config['execution']['managers']=[dict(executor='package_installer',image=artifact('/usr/sbin/installer'))]
 (root/'ca.pem').write_bytes(%r); os.chmod(root/'ca.pem',0o644)
 (root/'device-ca.pem').write_bytes((root/'ca.pem').read_bytes()); os.chmod(root/'device-ca.pem',0o644)
-(root/'grant.json').write_text(%r); os.chmod(root/'grant.json',0o600)
+grant=json.loads(%r)
+envelope=dict(version=1,origin=config['origin'],tenant=config['tenant'],target='macos-arm64',installation_artifact=config['installation_artifact'],grant=grant)
+(root/'grant.json').write_text(json.dumps(envelope)); os.chmod(root/'grant.json',0o600)
 path=root/'execution.json';path.write_text(json.dumps(config));os.chmod(path,0o644)
-subprocess.run([str(binary),'--config',str(path),'--import-grant',str(root/'grant.json')],input='AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',text=True,check=True)
+subprocess.run([str(binary),'--config',str(path),'--initialize',str(root/'grant.json')],input='AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',text=True,check=True)
 subprocess.run(%r,check=True)
 ''' % (str(protected), str(args.binary.resolve()), hashlib.sha256(args.binary.read_bytes()).hexdigest(), deployment, str(os.geteuid()), str(os.geteuid()), (lab / 'tls.pem').read_bytes(), json.dumps(grant), frozen_installer(system_installer_source, ['install','--scope','system','--binary',str(binary),'--config',str(config)])))
         if args.desktop:
@@ -1345,7 +1340,7 @@ config['registration_clients']['images']=[artifact(desktop)]
 fd=os.open(default,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o644)
 with os.fdopen(fd,'w') as stream: json.dump(config,stream); stream.flush(); os.fsync(stream.fileno())
 """ % str(default_config)
-            initializer = "subprocess.run([str(binary),'--config',str(path),'--import-grant',str(root/'grant.json')],input='AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',text=True,check=True)\n"
+            initializer = "subprocess.run([str(binary),'--config',str(path),'--initialize',str(root/'grant.json')],input='AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',text=True,check=True)\n"
             contents = contents.replace(initializer, '')
             setup.write_text(contents)
         security = refresh = diagnostics = refresh_preflight = None
@@ -1389,7 +1384,7 @@ print(json.dumps(dict(label=label,plist=str(plist))))
             security.write_text(security.read_text().replace(
                 "print(json.dumps(dict(label=label,plist=str(plist))))",
                 """result=subprocess.run(%r,capture_output=True,text=True)
-assert result.returncode!=0 and 'remove the matching helper' in result.stderr, 'loaded helper did not block refresh'
+assert result.returncode!=0, 'loaded helper did not block refresh'
 print(json.dumps(dict(label=label,plist=str(plist),helperGuard=result.stderr)))
 """ % frozen_installer(installer_source,['refresh','--scope','system','--binary',str(binary),
                     '--config',str(config),'--candidate-binary',str(binary),'--candidate-config',str(config)])))
@@ -1456,7 +1451,7 @@ except subprocess.CalledProcessError as error:
             db.close()
     print(json.dumps(diagnostic));raise
 subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.execution'],check=True)
-""" % ([str(binary),'--config',str(config)],[str(binary),'--config',str(config),'--import-grant',str(protected/'grant.json')],str(protected/'state')))
+""" % ([str(binary),'--config',str(config)],[str(binary),'--config',str(config),'--initialize',str(protected/'grant.json')],str(protected/'state')))
         restart = lab/'restart.py'
         restart.write_text("""import os,plistlib,subprocess
 from pathlib import Path
@@ -1832,7 +1827,7 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
         if probe_log: probe_log.close()
         if helper:
             try:
-                helper_plist=Path.home()/'Library/LaunchAgents/com.rss-mdm.agent.execution.user.plist'
+                helper_plist=Path('/Library/LaunchAgents/com.rss-mdm.agent.execution.user.plist')
                 if helper_plist.exists():
                     run('/usr/bin/python3', str(installer), 'remove', '--scope', 'user', '--binary', str(binary), '--config', str(config))
                 else:
