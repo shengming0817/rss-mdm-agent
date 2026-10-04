@@ -19,7 +19,8 @@
     "rss-ai-host": "dist/cli.js"
   },
   "scripts": {
-    "build": "node ../../scripts/check-execution-bindings.mjs && node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json"
+    "build": "node ../../scripts/prepared-entry.mjs package:ai-host-app",
+    "compile": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",

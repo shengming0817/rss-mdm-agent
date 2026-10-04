@@ -16,7 +16,8 @@
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json"
+    "build": "node ../../scripts/prepared-entry.mjs package:ai-store-sqlite",
+    "compile": "tsc -p tsconfig.json"
   },
   "peerDependencies": {
     "@rss-mdm-agent/ai-contract": "0.1.0",

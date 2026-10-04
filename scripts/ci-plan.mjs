@@ -9,6 +9,7 @@ import {
   renameSync,
 } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
+import { entry } from "./preparation-entries.mjs";
 import { stepResult } from "./ci-result.mjs";
 const npm = (name) => `@rss-mdm-agent/${name}`;
 const groups = {
@@ -43,7 +44,7 @@ const anyCode = new Set([
 ]);
 export function planSteps(steps, impact) {
   const nodes = new Set(impact.nodePackages);
-  return steps.map(([name, command, original]) => {
+  const plan = steps.map(([name, command, original, requirements = []]) => {
     let args = [...original],
       selected;
     if (impact.full || always.has(name)) selected = true;
@@ -62,11 +63,43 @@ export function planSteps(steps, impact) {
       );
     if (!impact.full && name === "workspace build inputs")
       args = [
-        ...impact.nodePackages.flatMap((p) => ["--filter", `${p}...`]),
-        "build",
+        "scripts/prepared-entry.mjs",
+        "build:workspace",
+        ...impact.nodePackages,
       ];
-    return { name, command, args, selected };
+    if (command === "pnpm" && args.length === 1) {
+      try {
+        requirements = entry(args[0]).requirements;
+      } catch {
+        /* Ordinary gate. */
+      }
+    }
+    if (name === "workspace build inputs")
+      requirements = impact.full
+        ? ["node:*"]
+        : impact.nodePackages.map((name) => `node:${name}`);
+    return { name, command, args, selected, requirements: [...requirements] };
   });
+  const fullWorker = plan.some(
+    (step) => step.selected && step.requirements.includes("worker"),
+  );
+  const installed = plan.some(
+    (step) => step.selected && step.name === "frozen dependencies",
+  );
+  for (const step of plan) {
+    if (fullWorker)
+      step.requirements = step.requirements.map((key) =>
+        key === "privateWorker" ? "worker" : key,
+      );
+    step.dependencies =
+      installed &&
+      step.selected &&
+      (step.requirements.length || step.command === "pnpm") &&
+      step.name !== "frozen dependencies"
+        ? ["frozen dependencies"]
+        : [];
+  }
+  return plan;
 }
 
 function leaseFds(env, cwd, stdio) {
@@ -196,15 +229,31 @@ export async function executeSteps(
     results.push(result);
     onResult(result);
   };
-  for (const { name, command, args, selected } of plan) {
-    if (!selected || signal?.aborted) {
+  for (const {
+    name,
+    command,
+    args,
+    selected,
+    requirements = [],
+    dependencies = [],
+  } of plan) {
+    const blocked = dependencies.find(
+      (dependency) =>
+        results.find((result) => result.name === dependency)?.outcome !==
+        "passed",
+    );
+    if (!selected || signal?.aborted || blocked) {
       console.log(`[ci] ${name}: SKIP`);
       record({
         name,
         command: [command, ...args],
         status: null,
         outcome: "skipped",
-        reason: signal?.aborted ? "cancelled" : "unaffected",
+        reason: signal?.aborted
+          ? "cancelled"
+          : blocked
+            ? `prerequisite:${blocked}`
+            : "unaffected",
       });
       continue;
     }
@@ -217,6 +266,7 @@ export async function executeSteps(
         stdio: "inherit",
         env,
         signal,
+        requirements,
       });
     } catch (error) {
       result = { status: null, error };

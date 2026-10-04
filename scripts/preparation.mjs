@@ -198,8 +198,21 @@ export function preparedContext(directory = root, env = process.env) {
   return value;
 }
 export function preparedArtifact(key, directory = root, env = process.env) {
-  const value = preparedContext(directory, env),
-    artifact = value.artifacts[key];
+  const value = preparedContext(directory, env);
+  if (key === "node:*") {
+    for (const name of packages(directory).keys()) {
+      const artifact = value.artifacts[`node:${name}`];
+      if (
+        !value.nodes.includes(name) ||
+        !artifact ||
+        !existsSync(artifact.path) ||
+        treeDigest(artifact.path) !== artifact.digest
+      )
+        throw Error(`missing or changed prepared Node package: ${name}`);
+    }
+    return directory;
+  }
+  const artifact = value.artifacts[key];
   if (
     !artifact ||
     !existsSync(artifact.path) ||
@@ -332,9 +345,13 @@ export class Preparation {
         continue;
       const start = performance.now();
       try {
-        await this.prepare(key);
+        const details = await this.prepare(key);
         this.assertInputs();
-        this.onPrepared({ key, durationMs: performance.now() - start });
+        this.onPrepared({
+          key,
+          ...details,
+          durationMs: performance.now() - start,
+        });
       } catch (error) {
         this.failures.set(key, error);
         throw error;
@@ -407,7 +424,8 @@ export class Preparation {
           for (const dependency of Object.keys(pkg[field] ?? {}))
             if (graph.has(dependency)) visit(dependency);
       };
-      visit(key.slice(5));
+      if (key === "node:*") for (const name of graph.keys()) visit(name);
+      else visit(key.slice(5));
       if (
         needed.has("@rss-mdm-agent/execution-bindings") ||
         needed.has("@rss-mdm-agent/ai-host-app") ||
@@ -426,7 +444,7 @@ export class Preparation {
         this.nodes.add(name);
         this.record(`node:${name}`, join(graph.get(name).path, "dist"));
       }
-      return;
+      return { nodes: [...needed] };
     }
     if (key === "native") {
       const stdout = await this.command(

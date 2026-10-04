@@ -13,7 +13,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { createHash, timingSafeEqual } from "node:crypto";
 import assert from "node:assert/strict";
 import { load } from "js-yaml";
-import { cargoTargetDir } from "./cargo-target.mjs";
+import { preparedArtifact } from "./preparation.mjs";
 const runtimeRoots = [
   "bin",
   "node_modules",
@@ -333,8 +333,8 @@ export function runtimeArtifact(root, target) {
 /** The canonical Node that shares a directory with both native runtime helpers. */
 export function privateRuntimeNode(root) {
   return join(
-    root,
-    ".local-ci-runs/worker-runtime/bin",
+    preparedArtifact("privateWorker", root),
+    "bin",
     process.platform === "win32" ? "node.exe" : "node",
   );
 }
@@ -360,7 +360,7 @@ export function stageWorkerRuntime(
   if (resolve(node) !== resolve(runtimeNode)) copyFileSync(node, runtimeNode);
   for (const name of ["rss-ai-worker-launcher", "rss-private-storage"]) {
     copyFileSync(
-      join(cargoTargetDir(root), "release", name + suffix),
+      preparedArtifact(name, root),
       join(directory, "bin", name + suffix),
     );
     if (process.platform !== "win32")

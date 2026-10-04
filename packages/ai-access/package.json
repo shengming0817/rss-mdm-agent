@@ -16,7 +16,8 @@
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json"
+    "build": "node ../../scripts/prepared-entry.mjs package:ai-access",
+    "compile": "tsc -p tsconfig.json"
   },
   "dependencies": {
     "@rss-mdm-agent/ai-contract": "workspace:*",

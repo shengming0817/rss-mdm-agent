@@ -9,14 +9,20 @@ export const steps = [
       "scripts/ci-plan.test.mjs",
       "scripts/build-run.test.mjs",
       "scripts/cargo-target.test.mjs",
+      "scripts/preparation.test.mjs",
     ],
   ],
   ["frozen dependencies", "pnpm", ["install", "--frozen-lockfile"]],
-  ["workspace build inputs", "pnpm", ["-r", "build"]],
+  [
+    "workspace build inputs",
+    "node",
+    ["scripts/prepared-entry.mjs", "build:workspace"],
+  ],
   [
     "native service/process generated contracts",
     "node",
     ["scripts/generate-process-contract.mjs", "--check"],
+    ["check:process"],
   ],
   [
     "product harness tests",
@@ -33,6 +39,7 @@ export const steps = [
       "scripts/connection-source-results.test.mjs",
       "scripts/ai-contract-evolution.test.mjs",
     ],
+    ["node:@rss-mdm-agent/desktop", "node:@rss-mdm-agent/ai-host-app"],
   ],
   [
     "desktop native acceptance syntax",
@@ -82,7 +89,12 @@ export const steps = [
       "every_request_requires_the_exact_run_capability",
     ],
   ],
-  ["self-service fixtures", "node", ["scripts/check-self-service.mjs"]],
+  [
+    "self-service fixtures",
+    "node",
+    ["scripts/check-self-service.mjs"],
+    ["selfServicePreview"],
+  ],
   [
     "rust clippy",
     "cargo",

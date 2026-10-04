@@ -7,8 +7,9 @@
   "scripts": {
     "dev": "node ../../scripts/desktop-dev.mjs",
     "dev:web": "pnpm --dir ../.. build:ai-access && pnpm --filter @rss-mdm-agent/ui build && vite --host 127.0.0.1",
-    "build": "node ../../scripts/check-self-service-bindings.mjs && node ../../scripts/check-execution-bindings.mjs && vue-tsc --noEmit -p tsconfig.json && vite build",
-    "desktop:build": "node ../../scripts/desktop-build.mjs"
+    "build": "node ../../scripts/prepared-entry.mjs package:desktop",
+    "desktop:build": "node ../../scripts/desktop-build.mjs",
+    "compile": "vue-tsc --noEmit -p tsconfig.json && vite build"
   },
   "dependencies": {
     "@rss-mdm-agent/ui": "workspace:*",

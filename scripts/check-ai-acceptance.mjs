@@ -1,4 +1,5 @@
 // Real provider/Host integration runs in the native worker runtime.
+import { preparedArtifact } from "./preparation.mjs";
 import { spawnSync } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -21,7 +22,7 @@ const files = ["ai-provider-conformance", "ai-recovery-integration"].flatMap(
   },
 );
 const result = spawnSync(
-  join(root, ".local-ci-runs/worker-runtime/bin/node"),
+  join(preparedArtifact("worker"), "bin/node"),
   ["--test", "--test-concurrency=1", "--test-timeout=120000", ...files],
   { cwd: root, stdio: "inherit" },
 );

@@ -32,7 +32,8 @@
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json"
+    "build": "node ../../scripts/prepared-entry.mjs package:ai-host",
+    "compile": "tsc -p tsconfig.json"
   },
   "engines": {
     "node": "24.14.1"
