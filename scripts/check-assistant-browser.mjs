@@ -1,15 +1,18 @@
+import { prepareRun } from "./preparation.mjs";
 // Renderer integration with FakeHost; native application evidence lives in check:desktop-native.
-import { activeStage } from "../packages/ai-contract/dist/index.js";
 import assert from "node:assert/strict";
 import { mkdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
-import { startFixture } from "../tests/assistant/server.mjs";
-import {
-  unwrap,
-  readSnapshot,
-  surfaceCommit,
-} from "../packages/ai-contract/dist/testing/index.js";
+await using run = await prepareRun([
+  "node:@rss-mdm-agent/desktop",
+  "node:@rss-mdm-agent/ai-access",
+]);
+const { activeStage } = await import("../packages/ai-contract/dist/index.js");
+const { startFixture } = await import("../tests/assistant/server.mjs");
+const { unwrap, readSnapshot, surfaceCommit } = await import(
+  "../packages/ai-contract/dist/testing/index.js"
+);
 const fixture = await startFixture();
 let browser, page;
 const title = "第一轮 <img src=x onerror=alert(1)>";

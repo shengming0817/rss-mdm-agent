@@ -5,7 +5,11 @@ export default defineConfig(async ({ command }) => {
   if (fixture && command !== "serve")
     throw new Error("fixture is development-only");
   const owner = fixture
-    ? await (await import("../../tests/assistant/server.mjs")).createFixture()
+    ? await (
+        await import(
+          new URL("../../tests/assistant/server.mjs", import.meta.url).href
+        )
+      ).createFixture()
     : undefined;
   if (owner) await owner.seed();
   return {

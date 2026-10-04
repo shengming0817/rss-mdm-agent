@@ -1,23 +1,10 @@
-import { execFileSync } from "node:child_process";
+import { helperOutput } from "./preparation.mjs";
 import { writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 import { format, resolveConfig } from "prettier";
 const root = fileURLToPath(new URL("../", import.meta.url));
-const raw = execFileSync(
-  "cargo",
-  [
-    "run",
-    "--quiet",
-    "--locked",
-    "-p",
-    "rss-mdm-desktop",
-    "--example",
-    "self-service-preview",
-    "--no-default-features",
-  ],
-  { cwd: root, encoding: "utf8" },
-);
+const raw = await helperOutput("selfServicePreview");
 const generated = JSON.parse(raw);
 if (process.argv.includes("--write")) {
   const file = fileURLToPath(

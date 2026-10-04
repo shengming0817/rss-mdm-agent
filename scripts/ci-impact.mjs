@@ -2,15 +2,18 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync, realpathSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
+import { resolveCommand } from "./ci-plan.mjs";
 const git = process.platform === "win32" ? "git" : "/usr/bin/git";
 const npm = (name) => `@rss-mdm-agent/${name}`;
-const run = (root, command, args) =>
-  execFileSync(command, args, {
+const run = (root, command, args) => {
+  ({ command, args } = resolveCommand(command, args));
+  return execFileSync(command, args, {
     cwd: root,
     encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024,
     stdio: ["ignore", "pipe", "pipe"],
   });
+};
 const rootDocs = new Set([
   "README.md",
   "AGENTS.md",
@@ -113,6 +116,7 @@ export const testOwners = [
   ["tests/ai-adapters/codex", npm("ai-adapter-codex")],
   ["tests/ai-adapters/deepseek", npm("ai-adapter-deepseek")],
   ["tests/ai-host", npm("ai-host-app")],
+  ["tests/ai-host", npm("ai-client")],
   ["tests/ai-provider-conformance", npm("ai-host-app")],
   ...["claude", "codex", "deepseek"].map((name) => [
     "tests/ai-provider-conformance",
@@ -120,6 +124,7 @@ export const testOwners = [
   ]),
   ["tests/ai-recovery-integration", npm("ai-host-app")],
   ["tests/assistant", npm("desktop")],
+  ["tests/assistant", npm("ai-access")],
   ["tests/self-service", npm("desktop")],
   ["tests/desktop", npm("desktop")],
   ["tests/execution-sqlite", "execution-sqlite"],

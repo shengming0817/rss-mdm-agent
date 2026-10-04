@@ -1,3 +1,4 @@
+import { withPreparation, preparedArtifact } from "./preparation.mjs";
 import { format } from "prettier";
 import ts from "typescript";
 import { createHash } from "node:crypto";
@@ -247,20 +248,12 @@ outputs.set(
   "packages/ai-contract/src/wire.ts",
   await format(typescript, { parser: "typescript" }),
 );
-const rust = spawnSync(
-  "cargo",
-  [
-    "run",
-    "--quiet",
-    "--locked",
-    "-p",
-    "ai-session-contract",
-    "--example",
-    "generate-runtime",
-    "--",
-    schemaPath,
-  ],
-  { cwd: root, encoding: "utf8", maxBuffer: 16 * 1024 * 1024 },
+const rust = await withPreparation(["runtimeSchema"], () =>
+  spawnSync(preparedArtifact("runtimeSchema"), [schemaPath], {
+    cwd: root,
+    encoding: "utf8",
+    maxBuffer: 16 * 1024 * 1024,
+  }),
 );
 if (rust.status !== 0) {
   process.stderr.write(rust.stderr ?? "");

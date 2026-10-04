@@ -3,9 +3,22 @@ import vue from "@vitejs/plugin-vue";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
-import { createAccessService } from "../../packages/ai-access/dist/index.js";
-import { channelStream } from "../../packages/ai-client/dist/index.js";
-import {
+import { prepareRun } from "../../scripts/preparation.mjs";
+await using preparation = process.argv.includes("--serve")
+  ? await prepareRun([
+      "node:@rss-mdm-agent/ai-access",
+      "node:@rss-mdm-agent/ai-ui-bridge",
+      "node:@rss-mdm-agent/execution-bindings",
+      "node:@rss-mdm-agent/ui",
+    ])
+  : null;
+const { createAccessService } = await import(
+  "../../packages/ai-access/dist/index.js"
+);
+const { channelStream } = await import(
+  "../../packages/ai-client/dist/index.js"
+);
+const {
   FakeHost,
   fixtureCaller,
   fixtures,
@@ -14,11 +27,10 @@ import {
   emptyCommit,
   fixtureLimits,
   unwrap,
-} from "../../packages/ai-contract/dist/testing/index.js";
-import {
-  activeStage,
-  deliveryFingerprint,
-} from "../../packages/ai-contract/dist/index.js";
+} = await import("../../packages/ai-contract/dist/testing/index.js");
+const { activeStage, deliveryFingerprint } = await import(
+  "../../packages/ai-contract/dist/index.js"
+);
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const options = {
   provider: "fake",
@@ -603,9 +615,8 @@ if (process.argv.includes("--serve")) {
   const fixture = await startFixture();
   await fixture.seed();
   console.log(`S1 assistant fixture: ${fixture.url}`);
-  for (const signal of ["SIGINT", "SIGTERM"])
-    process.once(signal, async () => {
-      await fixture.close();
-      process.exit(0);
-    });
+  await new Promise((resolve) => {
+    for (const signal of ["SIGINT", "SIGTERM"]) process.once(signal, resolve);
+  });
+  await fixture.close();
 }

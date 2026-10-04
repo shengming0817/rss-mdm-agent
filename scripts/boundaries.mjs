@@ -523,7 +523,7 @@ export function checkSource(file, source) {
   }
   return errors;
 }
-export function checkTree(treeRoot = root) {
+export function checkTree(treeRoot = root, executable) {
   const read = (file) => readFileSync(resolve(treeRoot, file), "utf8");
   const errors = ["packages/ui/src", "apps/desktop/src"]
     .flatMap((dir) => files(resolve(treeRoot, dir)))
@@ -793,29 +793,42 @@ export function checkTree(treeRoot = root) {
         readFileSync(file, "utf8"),
       ]),
   );
-  errors.push(...checkRustSources(rustSources));
+  errors.push(...checkRustSources(rustSources, executable));
   return errors;
 }
 
-export function checkRustSources(sources) {
+export function checkRustSources(sources, executable) {
+  if (!executable) throw Error("prepared Rust boundary executable required");
   return JSON.parse(
-    execFileSync(
-      "cargo",
-      [
-        "run",
-        "--quiet",
-        "--locked",
-        "-p",
-        "rss-mdm-desktop",
-        "--example",
-        "rust-boundaries",
-        "--no-default-features",
-      ],
-      {
-        cwd: root,
-        input: JSON.stringify(sources),
-        encoding: "utf8",
-      },
-    ),
+    execFileSync(executable, [], {
+      cwd: root,
+      input: JSON.stringify(sources),
+      encoding: "utf8",
+    }),
+  );
+}
+
+if (
+  process.argv[1] &&
+  resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+) {
+  const { withPreparation } = await import("./preparation.mjs");
+  const { runCommand } = await import("./ci-plan.mjs");
+  process.exitCode = await withPreparation(
+    ["boundaries"],
+    async (env, signal, nested) => {
+      const result = await runCommand(
+        process.execPath,
+        ["--test", "scripts/boundaries.test.mjs"],
+        {
+          cwd: root,
+          env,
+          signal,
+          stdio: "inherit",
+          ...(nested ? { detached: false } : {}),
+        },
+      );
+      return result.status ?? 1;
+    },
   );
 }

@@ -1,3 +1,4 @@
+import { prepareRun } from "./preparation.mjs";
 import {
   mkdirSync,
   mkdtempSync,
@@ -22,34 +23,51 @@ import {
 } from "./ai-host-artifacts.mjs";
 import { developmentFingerprint } from "./desktop-dev-runtime.mjs";
 const development = process.argv.includes("--development");
-const root = fileURLToPath(new URL("../", import.meta.url)),
-  start = development ? developmentFingerprint(root) : undefined;
-const { version, target, sha256, sqlite } = runtimeArtifact(
+const root = fileURLToPath(new URL("../", import.meta.url));
+const directory = join(
   root,
-  `${process.platform}-${process.arch}`,
+  development
+    ? ".local-ci-runs/ai-host-dev-runtime"
+    : ".local-ci-runs/ai-host-runtime",
 );
+// Retire the previous candidate before any preparation or packaging can fail.
+rmSync(join(directory, "manifest.json"), { force: true });
+const cache = join(root, ".cache/ai-host");
 const windows = process.platform === "win32";
 const suffix = windows ? ".exe" : "";
 const extension = windows ? "zip" : "tar.gz";
-const directory = join(
-    root,
-    development
-      ? ".local-ci-runs/ai-host-dev-runtime"
-      : ".local-ci-runs/ai-host-runtime",
-  ),
-  cache = join(root, ".cache/ai-host"),
-  archive = join(cache, `node-v${version}-${target}.${extension}`),
-  scratch = mkdtempSync(join(tmpdir(), "rss-host-node-"));
+let start, version, target, sha256, sqlite, scratch;
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
 let stage = "Node archive verification",
   behaviorPassed = false,
-  failure;
+  failure,
+  runtimeTreeSha256;
 try {
+  start = development ? developmentFingerprint(root) : undefined;
+  ({ version, target, sha256, sqlite } = runtimeArtifact(
+    root,
+    `${process.platform}-${process.arch}`,
+  ));
+  scratch = mkdtempSync(join(tmpdir(), "rss-host-node-"));
+  const archive = join(cache, `node-v${version}-${target}.${extension}`);
+  stage = "AI Host preparation";
+  await using preparation = await prepareRun([
+    "node:@rss-mdm-agent/ai-host-app",
+    "node:@rss-mdm-agent/ai-client",
+    "worker",
+    "execution",
+  ]);
+  stage = "Node archive verification";
   mkdirSync(cache, { recursive: true });
   if (!existsSync(archive) || hash(readFileSync(archive)) !== sha256) {
     const response = await fetch(
       `https://nodejs.org/download/release/v${version}/node-v${version}-${target}.${extension}`,
-      { signal: AbortSignal.timeout(60000) },
+      {
+        signal: AbortSignal.any([
+          preparation.signal,
+          AbortSignal.timeout(60000),
+        ]),
+      },
     );
     if (!response.ok) throw new Error("Node runtime download failed");
     const bytes = Buffer.from(await response.arrayBuffer());
@@ -58,7 +76,6 @@ try {
     writeFileSync(archive, bytes);
   }
   stage = "AI Host build";
-  run("pnpm", ["build:ai-host"], root);
   rmSync(directory, { recursive: true, force: true });
   mkdirSync(directory, { recursive: true });
   stage = "AI Host dependency packaging";
@@ -109,24 +126,23 @@ try {
     [join(root, "scripts/verify-ai-host-runtime.mjs"), directory],
     directory,
   );
+  await new Promise(setImmediate);
+  preparation.assertReady();
+  runtimeTreeSha256 = hashRuntimeTree(directory);
+  await new Promise(setImmediate);
+  preparation.assertReady();
+  await new Promise(setImmediate);
+  preparation.signal.throwIfAborted();
   behaviorPassed = true;
 } catch (error) {
+  behaviorPassed = false;
   failure = `${stage}: ${error}`;
   process.exitCode = 1;
 } finally {
-  rmSync(scratch, { recursive: true, force: true });
+  if (scratch) rmSync(scratch, { recursive: true, force: true });
   const end = development ? developmentFingerprint(root) : undefined,
     sourceUnchanged = !development || start === end;
-  let deliverable = behaviorPassed && sourceUnchanged,
-    runtimeTreeSha256;
-  if (deliverable) {
-    try {
-      runtimeTreeSha256 = hashRuntimeTree(directory);
-    } catch (error) {
-      failure = String(error);
-      deliverable = false;
-    }
-  }
+  const deliverable = behaviorPassed && sourceUnchanged;
   if (!deliverable) process.exitCode = 1;
   mkdirSync(directory, { recursive: true });
   writeFileSync(

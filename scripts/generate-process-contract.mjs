@@ -1,14 +1,9 @@
-import { spawnSync } from "node:child_process";
+import { helperOutput } from "./preparation.mjs";
 import { readFileSync, writeFileSync } from "node:fs";
 import { compile } from "json-schema-to-typescript";
 import { format } from "prettier";
-const result = spawnSync(
-  "cargo",
-  ["run", "--quiet", "-p", "native-process", "--example", "schema"],
-  { encoding: "utf8" },
-);
-if (result.status !== 0) throw new Error(result.stderr);
-const schema = JSON.parse(result.stdout);
+const result = JSON.parse(await helperOutput("processSchema"));
+const schema = result;
 const privateLink = JSON.parse(
   readFileSync("crates/native-process/private-link-v1.json", "utf8"),
 );
@@ -25,13 +20,7 @@ if (process.argv.includes("--check")) {
     throw new Error("process contract drift");
 } else writeFileSync(path, text);
 
-const service = spawnSync(
-  "cargo",
-  ["run", "--quiet", "-p", "execution-ipc", "--example", "service-schema"],
-  { encoding: "utf8" },
-);
-if (service.status !== 0) throw new Error(service.stderr);
-const serviceSchema = JSON.parse(service.stdout);
+const serviceSchema = JSON.parse(await helperOutput("serviceSchema"));
 const registrationSchema = serviceSchema["x-rss-registration-schema"];
 delete serviceSchema["x-rss-registration-schema"];
 const versionPath = "packages/execution-bindings/src/service-version.mjs";
@@ -58,24 +47,10 @@ if (process.argv.includes("--check")) {
     throw new Error("service contract drift");
 } else writeFileSync(servicePath, serviceText);
 
-const fixtureResult = spawnSync(
-  "cargo",
-  [
-    "run",
-    "--quiet",
-    "--locked",
-    "-p",
-    "execution-ipc",
-    "--example",
-    "service-fixtures",
-  ],
-  { encoding: "utf8" },
-);
-if (fixtureResult.status !== 0) throw new Error(fixtureResult.stderr);
-const fixtureText = await format(
-  JSON.stringify(JSON.parse(fixtureResult.stdout)),
-  { parser: "json" },
-);
+const fixtureResult = JSON.parse(await helperOutput("serviceFixtures"));
+const fixtureText = await format(JSON.stringify(fixtureResult), {
+  parser: "json",
+});
 const fixturePath = "tests/assistant/service-fixtures.json";
 if (process.argv.includes("--check")) {
   if (readFileSync(fixturePath, "utf8") !== fixtureText)

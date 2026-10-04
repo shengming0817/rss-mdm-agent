@@ -1,8 +1,6 @@
 import { fixturePersistence } from "./harness.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
 import { validScope } from "../../packages/ai-host/dist/launch-fence.js";
 import {
   scopeAbsentWithin,
@@ -14,7 +12,7 @@ import { fixtureSession } from "../../packages/ai-contract/dist/testing/index.js
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { cargoTargetDir } from "../../scripts/cargo-target.mjs";
+import { preparedArtifact } from "../../scripts/preparation.mjs";
 const unwrap = (result) => {
   assert.equal(result.ok, true, JSON.stringify(result));
   return result.value;
@@ -26,16 +24,7 @@ test("Windows persistent scope requires its OS login session", () => {
   assert.equal(validScope({ kind: "jobObject", name, session: -1 }), false);
 });
 test("a hanging scope probe cannot monopolize the Host event loop or close budget", async () => {
-  execFileSync(
-    "cargo",
-    ["build", "--locked", "-p", "native-process", "--example", "host-fixture"],
-    { stdio: "ignore" },
-  );
-  const launcher = join(
-    cargoTargetDir(fileURLToPath(new URL("../../", import.meta.url))),
-    "debug/examples",
-    "host-fixture" + (process.platform === "win32" ? ".exe" : ""),
-  );
+  const launcher = preparedArtifact("hostFixture");
   const before = performance.now();
   let tick = false;
   setTimeout(() => {

@@ -72,6 +72,8 @@ function fixture(t) {
     "rust-toolchain.toml",
     "crates/execution-app/src/lib.rs",
     "scripts/check-execution-bindings.mjs",
+    "scripts/preparation.mjs",
+    "scripts/build-worker-runtime.mjs",
     "tests/assistant/execution-fixtures.json",
     "scripts/bundle-ai-host.mjs",
     "scripts/ai-host-artifacts.mjs",
@@ -120,6 +122,8 @@ test("fingerprint includes dirty Host, adapter, contract, lock, Node and added/d
     "package.json",
     "crates/execution-app/src/lib.rs",
     "scripts/check-execution-bindings.mjs",
+    "scripts/preparation.mjs",
+    "scripts/build-worker-runtime.mjs",
     "scripts/cargo-target.mjs",
   ]) {
     const before = developmentFingerprint(root);
@@ -254,6 +258,9 @@ test("release stage rejects development, absent and unknown manifest kinds", (t)
   for (const name of [
     "stage-desktop-runtime.mjs",
     "ai-host-artifacts.mjs",
+    "preparation.mjs",
+    "ci-plan.mjs",
+    "ci-result.mjs",
     "cargo-target.mjs",
   ]) {
     write(`scripts/${name}`, readFileSync(new URL(name, import.meta.url)));
@@ -835,4 +842,90 @@ test("actor creation owner reaps before handoff on cancellation and timeout", as
       rmSync(root, { recursive: true, force: true });
     }
   }
+});
+
+test("development CLI owns preparation across rebuild, cached and override verification", (t) => {
+  const { root, write } = fixture(t);
+  for (const name of ["desktop-dev-runtime.mjs"])
+    write(`scripts/${name}`, readFileSync(new URL(name, import.meta.url)));
+  write(
+    "scripts/preparation.mjs",
+    `
+    import {writeFileSync} from 'node:fs';
+    export async function withPreparation(keys, callback) {
+      writeFileSync(process.argv[3] + '/requirements.json', JSON.stringify(keys));
+      process.env.FIXTURE_PREPARATION = 'alive';
+      try { return await callback(); }
+      finally { delete process.env.FIXTURE_PREPARATION; }
+    }
+  `,
+  );
+  write(
+    "scripts/ai-host-artifacts.mjs",
+    `
+    import assert from 'node:assert/strict';
+    import {mkdirSync,writeFileSync,readFileSync,appendFileSync} from 'node:fs';
+    import {developmentFingerprint} from './desktop-dev-runtime.mjs';
+    export function runtimeArtifact() { return {version:'pinned',target:'target',sha256:'archive',sqlite:'sqlite'}; }
+    export function verifyRuntimeIntegrity() {}
+    export function run(_command, args) {
+      assert.equal(process.env.FIXTURE_PREPARATION, 'alive');
+      const root=process.argv[3], directory=process.argv[4];
+      if(args.includes('--development')) {
+        mkdirSync(directory,{recursive:true});
+        writeFileSync(directory+'/manifest.json',JSON.stringify({
+          status:'passed',kind:'development',developmentFingerprint:developmentFingerprint(root),
+          desktopProtocol:1,contractVersion:1,node:{version:'pinned',target:'target',archiveSha256:'archive'},
+          verification:{platform:process.platform,arch:process.arch}
+        }));
+        appendFileSync(root+'/builds','build\\n');
+      } else if(args.some(value=>value.endsWith('verify-ai-host-runtime.mjs'))) {
+        appendFileSync(root+'/verifications','verify\\n');
+      }
+    }
+  `,
+  );
+  write(
+    "packages/ai-contract/schema/runtime.schema.json",
+    JSON.stringify({
+      $defs: {
+        HostHealth: { properties: { protocol: { const: 1 } } },
+        Negotiation: { properties: { contractVersion: { const: 1 } } },
+      },
+    }),
+  );
+  const directory = join(root, "runtime");
+  for (const kind of ["development", "development", "override"]) {
+    const result = spawnSync(
+      process.execPath,
+      [
+        join(root, "scripts/desktop-dev-runtime.mjs"),
+        "--prepare",
+        root,
+        directory,
+        kind,
+      ],
+      { encoding: "utf8" },
+    );
+    assert.equal(result.status, 0, result.stderr);
+    const requirements = JSON.parse(
+      readFileSync(join(root, "requirements.json"), "utf8"),
+    );
+    assert.ok(requirements.includes("execution"));
+    if (
+      !existsSync(join(root, "verifications")) ||
+      readFileSync(join(root, "verifications"), "utf8").trim().split("\n")
+        .length === 1
+    )
+      assert.ok(requirements.includes("worker"));
+    else assert.deepEqual(requirements, ["execution"]);
+  }
+  assert.equal(
+    readFileSync(join(root, "builds"), "utf8").trim().split("\n").length,
+    1,
+  );
+  assert.equal(
+    readFileSync(join(root, "verifications"), "utf8").trim().split("\n").length,
+    3,
+  );
 });

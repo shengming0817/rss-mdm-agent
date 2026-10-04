@@ -21,7 +21,7 @@ import {
   unwrap,
 } from "../../packages/ai-contract/dist/testing/index.js";
 
-import { executionServer } from "./rust-execution.mjs";
+import { preparedArtifact } from "../../scripts/preparation.mjs";
 
 const budget = (timeoutMs = 10_000) => ({
   timeoutMs,
@@ -121,7 +121,7 @@ async function crashAfterRustAcceptance(
 }
 
 test("lost submit receipt recovers the same Rust attempt and keeps process exit separate from cancellation", async (t) => {
-  const executable = executionServer();
+  const executable = preparedArtifact("execution");
   const root = await realpath(
     await mkdtemp(join(tmpdir(), "rss-execution-fault-")),
   );

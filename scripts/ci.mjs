@@ -1,10 +1,13 @@
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { selectImpact } from "./ci-impact.mjs";
+import { Preparation, root as sourceRoot } from "./preparation.mjs";
 import { steps as defaultSteps } from "./ci-steps.mjs";
 import {
+  runCommand,
+  resolveCommand,
   planSteps,
   executeSteps,
   prepareEvidence,
@@ -26,7 +29,8 @@ function toolchain(root, env, report) {
     throw Error(`Node version must be ${manifest.engines.node}`);
   const pinned = /^pnpm@(\d+\.\d+\.\d+)$/.exec(manifest.packageManager);
   if (!pinned) throw Error("packageManager must pin an exact pnpm version");
-  const result = spawnSync("pnpm", ["--version"], {
+  const invocation = resolveCommand("pnpm", ["--version"], env);
+  const result = spawnSync(invocation.command, invocation.args, {
     cwd: root,
     env,
     encoding: "utf8",
@@ -60,6 +64,7 @@ export async function runCI(
     timestamp: new Date().toISOString(),
     results: [],
   };
+  let preparation;
   const publish = () => {
     if (!preview) writeReceipt(root, "latest.json", report);
   };
@@ -94,7 +99,55 @@ export async function runCI(
     publishPlan(root, plan, preview);
     console.log(JSON.stringify(plan, null, 2));
     if (preview) return 0;
-    await executeSteps(plan.steps, root, execute, {
+    // Custom runners used by dependency-free harnesses retain their injected executor.
+    let executePrepared = execute;
+    if (realpathSync(root) === realpathSync(sourceRoot) && !execute) {
+      preparation = new Preparation(root, {
+        env,
+        signal: controller.signal,
+        onCommand: (event) => {
+          (report.preparationCommands ??= []).push(event);
+          publish();
+        },
+        onPrepared: (event) => {
+          (report.preparations ??= []).push(event);
+          publish();
+        },
+      });
+      executePrepared = async (
+        command,
+        args,
+        { requirements, preparationOnly, ...options },
+      ) => {
+        try {
+          await preparation.ensure(requirements);
+          if (preparationOnly)
+            return {
+              status: 0,
+              execution: "preparation",
+              preparedInputs: requirements,
+            };
+          const result = await runCommand(command, args, {
+            ...options,
+            env: preparation.directory ? preparation.env : env,
+          });
+          preparation.assertInputs();
+          return result;
+        } catch (error) {
+          return {
+            status: error.blocked ? null : 1,
+            error,
+            ...(preparationOnly
+              ? { execution: "preparation", preparedInputs: requirements }
+              : {}),
+            ...(error.blocked
+              ? { blocked: `preparation:${error.blocked}` }
+              : {}),
+          };
+        }
+      };
+    }
+    await executeSteps(plan.steps, root, executePrepared, {
       env,
       signal: controller.signal,
       onStart: (name) => {
@@ -129,6 +182,7 @@ export async function runCI(
         true,
       );
   } finally {
+    preparation?.close();
     process.removeListener("SIGINT", interrupt);
     process.removeListener("SIGTERM", terminate);
     if (!preview) {

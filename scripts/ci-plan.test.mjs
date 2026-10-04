@@ -20,12 +20,50 @@ import {
   executeSteps,
   prepareEvidence,
   publishPlan,
+  resolveCommand,
 } from "./ci-plan.mjs";
 const impact = (rustPackages = [], nodePackages = []) => ({
   full: false,
   rustPackages,
   nodePackages,
   packages: [...rustPackages, ...nodePackages],
+});
+
+test("pnpm CLI resolution preserves argv without a shell and rejects cmd launchers", async () => {
+  const root = mkdtempSync(join(tmpdir(), "pnpm cli "));
+  try {
+    const cli = join(root, "pnpm.mjs");
+    writeFileSync(cli, "console.log(JSON.stringify(process.argv.slice(2)))");
+    const args = ["--version", "literal $(command); & value"];
+    const invocation = resolveCommand(
+      "pnpm",
+      args,
+      { npm_execpath: cli },
+      "win32",
+    );
+    assert.equal(invocation.command, process.execPath);
+    const result = await runCommand(invocation.command, invocation.args, {
+      env: { ...process.env, _AGENT_BUILD_LEASE: undefined },
+      capture: true,
+    });
+    assert.equal(result.status, 0);
+    assert.deepEqual(JSON.parse(result.stdout), args);
+    assert.deepEqual(resolveCommand("pnpm", args, {}, "darwin"), {
+      command: "pnpm",
+      args,
+    });
+    assert.deepEqual(resolveCommand("cargo", args, {}, "win32"), {
+      command: "cargo",
+      args,
+    });
+    for (const cli of [undefined, "pnpm.cmd"])
+      assert.throws(
+        () => resolveCommand("pnpm", args, { npm_execpath: cli }, "win32"),
+        /pinned CLI/,
+      );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 const withoutBuildLease = (source = process.env) => {
   const env = { ...source };
@@ -94,10 +132,41 @@ test("full preserves every gate, collection continues after failure and spawn er
     if (count === 1) throw Error("spawn failure");
     return { status: count === 2 ? 7 : 0 };
   });
-  assert.equal(count, steps.length);
+  assert.equal(results.length, steps.length);
+  assert.equal(
+    count,
+    results.filter((result) => result.outcome !== "skipped").length,
+  );
+  assert.equal(
+    results.find((result) => result.name === "workspace build inputs").reason,
+    "prerequisite:frozen dependencies",
+  );
   assert.equal(results[0].outcome, "failed");
   assert.equal(results[1].status, 7);
   assert.equal(results.at(-1).outcome, "passed");
+});
+
+test("CI records explicit preparation and uses a full worker for shared private/Host gates", () => {
+  const full = planSteps(steps, { ...impact(), full: true });
+  const host = full.find((step) => step.name === "AI Host lifecycle");
+  const store = full.find((step) => step.name === "AI SQLite recovery");
+  assert.ok(host.requirements.includes("execution"));
+  assert.ok(host.requirements.includes("worker"));
+  assert.ok(store.requirements.includes("worker"));
+  assert.ok(!store.requirements.includes("privateWorker"));
+  const partial = planSteps(
+    steps,
+    impact([], ["@rss-mdm-agent/ai-store-sqlite"]),
+  );
+  assert.ok(
+    partial
+      .find((step) => step.name === "AI SQLite recovery")
+      .requirements.includes("privateWorker"),
+  );
+  assert.deepEqual(
+    full.find((step) => step.name === "boundaries").dependencies,
+    ["frozen dependencies"],
+  );
 });
 
 test("plan preserves formal evidence; execution retires gate receipts but retains manual acceptance", () => {
@@ -434,4 +503,27 @@ test("successful gates pass with uncommitted inputs and without a comparison ref
   } finally {
     f.close();
   }
+});
+
+test("a prepared gate records consumption rather than an unexecuted command", async () => {
+  const results = await executeSteps(
+    [
+      {
+        name: "frontend build",
+        command: "pnpm",
+        args: ["build"],
+        selected: true,
+      },
+    ],
+    "/unused",
+    () => ({
+      status: 0,
+      execution: "preparation",
+      preparedInputs: ["node:desktop"],
+    }),
+  );
+  assert.deepEqual(results[0].command, []);
+  assert.equal(results[0].execution, "preparation");
+  assert.deepEqual(results[0].preparedInputs, ["node:desktop"]);
+  assert.equal(results[0].outcome, "passed");
 });

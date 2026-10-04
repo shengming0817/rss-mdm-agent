@@ -10,6 +10,22 @@ import {
 } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { stepResult } from "./ci-result.mjs";
+// ref: Node.js doc/api/child_process.md@v24.14.1 (.cmd execution).
+// Use pnpm's explicit JS CLI on Windows, as the existing packaging entry does.
+export function resolveCommand(
+  command,
+  args,
+  env = process.env,
+  platform = process.platform,
+) {
+  if (platform !== "win32" || command !== "pnpm") return { command, args };
+  const cli = env.npm_execpath;
+  if (!cli || !/\.[cm]?js$/.test(cli))
+    throw Error(
+      "Run Windows build tools from pnpm so its pinned CLI is explicit.",
+    );
+  return { command: process.execPath, args: [cli, ...args] };
+}
 const npm = (name) => `@rss-mdm-agent/${name}`;
 const groups = {
   "native driver authentication": ["desktop"],
@@ -43,7 +59,7 @@ const anyCode = new Set([
 ]);
 export function planSteps(steps, impact) {
   const nodes = new Set(impact.nodePackages);
-  return steps.map(([name, command, original]) => {
+  const plan = steps.map(([name, command, original, requirements = []]) => {
     let args = [...original],
       selected;
     if (impact.full || always.has(name)) selected = true;
@@ -65,8 +81,41 @@ export function planSteps(steps, impact) {
         ...impact.nodePackages.flatMap((p) => ["--filter", `${p}...`]),
         "build",
       ];
-    return { name, command, args, selected };
+    if (name === "workspace build inputs")
+      requirements = impact.full
+        ? ["node:*"]
+        : impact.nodePackages.map((name) => `node:${name}`);
+    return {
+      name,
+      command,
+      args,
+      selected,
+      requirements: [...requirements],
+      preparationOnly: ["workspace build inputs", "frontend build"].includes(
+        name,
+      ),
+    };
   });
+  const fullWorker = plan.some(
+    (step) => step.selected && step.requirements.includes("worker"),
+  );
+  const installed = plan.some(
+    (step) => step.selected && step.name === "frozen dependencies",
+  );
+  for (const step of plan) {
+    if (fullWorker)
+      step.requirements = step.requirements.map((key) =>
+        key === "privateWorker" ? "worker" : key,
+      );
+    step.dependencies =
+      installed &&
+      step.selected &&
+      (step.requirements.length || step.command === "pnpm") &&
+      step.name !== "frozen dependencies"
+        ? ["frozen dependencies"]
+        : [];
+  }
+  return plan;
 }
 
 function leaseFds(env, cwd, stdio) {
@@ -110,32 +159,51 @@ function leaseFds(env, cwd, stdio) {
 }
 
 // ref: Node.js v24.14.1 lib/internal/child_process.js (numeric stdio descriptors).
-export function runCommand(command, args, { signal, ...options }) {
+export function runCommand(
+  command,
+  args,
+  { signal, capture = false, ...options },
+) {
   return new Promise((resolve) => {
     if (signal?.aborted) {
       resolve({ status: null, signal: signal.reason });
       return;
     }
     const childEnv = options.env ?? process.env;
+    const invocation = resolveCommand(command, args, childEnv);
     const fds = leaseFds(childEnv, options.cwd, options.stdio);
     const managed = fds !== null;
-    const stdio = managed
+    let stdio = managed
       ? Array.from({ length: Math.max(...fds) + 1 }, (_, index) =>
           index < 3 ? "inherit" : "ignore",
         )
       : options.stdio;
     if (managed) for (const fd of fds) stdio[fd] = fd;
-    const child = spawn(command, args, {
+    if (capture) {
+      stdio = Array.isArray(stdio) ? [...stdio] : ["ignore", "pipe", "inherit"];
+      stdio[1] = "pipe";
+    }
+    const child = spawn(invocation.command, invocation.args, {
       ...options,
       env: childEnv,
       stdio,
-      detached: process.platform !== "win32" && !managed,
+      detached: options.detached ?? (process.platform !== "win32" && !managed),
     });
     let failure, timer;
+    let stdout = "";
+    if (capture)
+      child.stdout.on("data", (bytes) => {
+        stdout += bytes;
+      });
     const stop = (kind) => {
       if (!child.pid) return;
       try {
-        if (process.platform === "win32" || managed) child.kill(kind);
+        if (
+          process.platform === "win32" ||
+          managed ||
+          options.detached === false
+        )
+          child.kill(kind);
         else process.kill(-child.pid, kind);
       } catch (error) {
         if (error.code !== "ESRCH") failure = error;
@@ -157,7 +225,12 @@ export function runCommand(command, args, { signal, ...options }) {
       if (signal?.aborted) stop("SIGKILL");
       clearTimeout(timer);
       signal?.removeEventListener("abort", cancel);
-      resolve({ status, signal: exitSignal, error: failure });
+      resolve({
+        status,
+        signal: exitSignal,
+        error: failure,
+        ...(capture ? { stdout } : {}),
+      });
     });
   });
 }
@@ -173,15 +246,32 @@ export async function executeSteps(
     results.push(result);
     onResult(result);
   };
-  for (const { name, command, args, selected } of plan) {
-    if (!selected || signal?.aborted) {
+  for (const {
+    name,
+    command,
+    args,
+    selected,
+    requirements = [],
+    dependencies = [],
+    preparationOnly = false,
+  } of plan) {
+    const blocked = dependencies.find(
+      (dependency) =>
+        results.find((result) => result.name === dependency)?.outcome !==
+        "passed",
+    );
+    if (!selected || signal?.aborted || blocked) {
       console.log(`[ci] ${name}: SKIP`);
       record({
         name,
         command: [command, ...args],
         status: null,
         outcome: "skipped",
-        reason: signal?.aborted ? "cancelled" : "unaffected",
+        reason: signal?.aborted
+          ? "cancelled"
+          : blocked
+            ? `prerequisite:${blocked}`
+            : "unaffected",
       });
       continue;
     }
@@ -194,17 +284,29 @@ export async function executeSteps(
         stdio: "inherit",
         env,
         signal,
+        requirements,
+        preparationOnly,
       });
     } catch (error) {
       result = { status: null, error };
     }
     record({
-      ...stepResult(name, [command, ...args], result),
-      outcome: signal?.aborted
-        ? "cancelled"
-        : result.status === 0
-          ? "passed"
-          : "failed",
+      ...stepResult(
+        name,
+        result.execution === "preparation" ? [] : [command, ...args],
+        result,
+      ),
+      ...(result.execution
+        ? { execution: result.execution, preparedInputs: result.preparedInputs }
+        : {}),
+      ...(result.blocked ? { reason: result.blocked } : {}),
+      outcome: result.blocked
+        ? "skipped"
+        : signal?.aborted
+          ? "cancelled"
+          : result.status === 0
+            ? "passed"
+            : "failed",
     });
   }
   return results;

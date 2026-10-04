@@ -1,5 +1,5 @@
+import { helperOutput, checkAlreadyPrepared } from "./preparation.mjs";
 // ref: schemars 1.2.2 src/generate.rs; json-schema-to-typescript 16.0.0 src/index.ts.
-import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { compile } from "json-schema-to-typescript";
@@ -9,24 +9,9 @@ const require = createRequire(import.meta.url);
 const { Ajv2020 } = require("ajv/dist/2020.js");
 const standalone = require("ajv/dist/standalone/index.js").default;
 const root = fileURLToPath(new URL("../", import.meta.url));
-const run = (example, crate = "execution-app", features = []) =>
-  JSON.parse(
-    execFileSync(
-      "cargo",
-      [
-        "run",
-        "--quiet",
-        "--locked",
-        "-p",
-        crate,
-        "--example",
-        example,
-        ...features.flatMap((feature) => ["--features", feature]),
-      ],
-      { cwd: root, encoding: "utf8" },
-    ),
-  );
-const schema = run("task-details-schema");
+if (!process.argv.includes("--write") && checkAlreadyPrepared("execution"))
+  process.exit(0);
+const schema = JSON.parse(await helperOutput("taskSchema"));
 const binding = await format(
   await compile(schema, "BackendTaskView", {
     bannerComment:
@@ -38,14 +23,12 @@ const binding = await format(
   { parser: "typescript", printWidth: 80 },
 );
 const fixtures = await format(
-  JSON.stringify(
-    run("task-details-fixtures", "execution-app", ["test-support"]),
-  ),
+  JSON.stringify(JSON.parse(await helperOutput("taskFixtures"))),
   {
     parser: "json",
   },
 );
-const tools = run("tool-schema", "execution-mcp");
+const tools = JSON.parse(await helperOutput("toolSchema"));
 const generated = "packages/execution-bindings/src";
 const files = [
   [

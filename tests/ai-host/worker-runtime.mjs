@@ -1,16 +1,14 @@
 import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { fileURLToPath } from "node:url";
-const root = new URL("../../.local-ci-runs/worker-runtime/", import.meta.url);
+import { join } from "node:path";
+import { preparedArtifact } from "../../scripts/preparation.mjs";
+const root = preparedArtifact("worker");
 export const workerRuntime = {
-  launcher: fileURLToPath(
-    new URL(
-      "bin/rss-ai-worker-launcher" +
-        (process.platform === "win32" ? ".exe" : ""),
-      root,
-    ),
+  launcher: join(
+    root,
+    "bin/rss-ai-worker-launcher" + (process.platform === "win32" ? ".exe" : ""),
   ),
   manifestDigest: createHash("sha256")
-    .update(readFileSync(new URL("worker-manifest.json", root)))
+    .update(readFileSync(join(root, "worker-manifest.json")))
     .digest("hex"),
 };
