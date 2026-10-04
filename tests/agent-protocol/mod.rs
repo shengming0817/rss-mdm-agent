@@ -108,6 +108,7 @@ impl IdentityProvider for Secrets {
 }
 pub struct Data {
     pub tls_required: bool,
+    pub response_override: Option<(String, Value)>,
     pub grant: Option<enroll::GrantReceipt>,
     pub issuance: Uuid,
     pub candidate_leaf: Option<Vec<u8>>,
@@ -300,6 +301,7 @@ impl Server {
         let signer = Ed25519KeyPair::from_seed_unchecked(&[7; 32]).unwrap();
         let data = Arc::new(Mutex::new(Data {
             tls_required: tls,
+            response_override: None,
             grant: None,
             issuance: Uuid::new_v4(),
             candidate_leaf: None,
@@ -472,6 +474,11 @@ async fn handler(
     let value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
     if headers.contains_key("authorization") {
         return runtime_error(StatusCode::UNAUTHORIZED, ErrorCode::InvalidIdentity);
+    }
+    if let Some((suffix, body)) = &d.response_override {
+        if path.ends_with(suffix) {
+            return axum::Json(body.clone()).into_response();
+        }
     }
     if let Some(action) = path.strip_prefix("/api/v1/agent/enroll/") {
         return enrollment_response(&mut d, action, value, peer_leaf.as_deref());
