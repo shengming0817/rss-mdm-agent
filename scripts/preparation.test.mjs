@@ -20,6 +20,7 @@ import {
   sourceDigest,
   assertPreparedRun,
   treeDigest,
+  withPreparation,
 } from "./preparation.mjs";
 import { executeSteps, runCommand } from "./ci-plan.mjs";
 
@@ -50,6 +51,25 @@ function fixture(t, failed = false, setup = () => {}) {
     execute: async (command, args) => {
       calls.push([command, ...args]);
       if (failed) return { status: 1 };
+      if (command === "pnpm" && args.includes("list")) {
+        const selected = args[args.indexOf("--filter") + 1].replace(
+          /\.\.\.$/,
+          "",
+        );
+        const names =
+          selected === "@rss-mdm-agent/first"
+            ? ["producer", "first"]
+            : ["producer", "second"];
+        return {
+          status: 0,
+          stdout: JSON.stringify(
+            names.map((name) => ({
+              name: `@rss-mdm-agent/${name}`,
+              path: join(root, "packages", name),
+            })),
+          ),
+        };
+      }
       if (command === "pnpm") {
         for (let index = 0; index < args.length; index++)
           if (args[index] === "--filter") {
@@ -125,7 +145,7 @@ test("shared Node dependency closure compiles each package once and rejects chan
         JSON.stringify({
           name: `@rss-mdm-agent/${name}`,
           dependencies,
-          scripts: { compile: "compiler" },
+          scripts: { build: "compiler" },
         }),
       );
     }
@@ -135,13 +155,16 @@ test("shared Node dependency closure compiles each package once and rejects chan
     "node:@rss-mdm-agent/second",
     "node:@rss-mdm-agent/first",
   ]);
-  const compiled = calls.flatMap(([, ...args]) =>
-    args.filter((_, index) => args[index - 1] === "--filter"),
-  );
+  const compiled = calls
+    .filter((call) => call.includes("build"))
+    .flatMap(([, ...args]) =>
+      args.filter((_, index) => args[index - 1] === "--filter"),
+    );
   assert.deepEqual(
     compiled.sort(),
     ["first", "producer", "second"].map((name) => `@rss-mdm-agent/${name}`),
   );
+  assert.deepEqual(Object.keys(preparation.tools).sort(), ["node", "pnpm"]);
   const path = preparedArtifact(
     "node:@rss-mdm-agent/producer",
     root,
@@ -373,10 +396,10 @@ test(
     mkdirSync(bin);
     const marker = join(root, "probe-started");
     writeFileSync(
-      join(bin, "pnpm"),
+      join(bin, "cargo"),
       `#!${process.execPath}\nimport {writeFileSync} from 'node:fs';writeFileSync(${JSON.stringify(marker)},String(process.pid));process.on('SIGTERM',()=>{});setInterval(()=>{},1000);`,
     );
-    chmodSync(join(bin, "pnpm"), 0o755);
+    chmodSync(join(bin, "cargo"), 0o755);
     const module = new URL("./preparation.mjs", import.meta.url).href;
     const env = { ...process.env, PATH: bin + ":" + process.env.PATH };
     delete env[contextKey];
@@ -422,3 +445,25 @@ test(
     );
   },
 );
+
+test("the owning runner keeps artifacts alive across awaits and disposes them after the consumer", async (t) => {
+  const { root, preparation, calls } = fixture(t);
+  const previous = process.env[contextKey];
+  let path;
+  const code = await withPreparation(
+    ["execution"],
+    async (env) => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      path = preparedArtifact("execution", root, env);
+      assert.ok(readFileSync(path).length);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      assert.equal(preparedArtifact("execution", root, env), path);
+      return 7;
+    },
+    { directory: root, env: preparation.baseEnv, execute: preparation.execute },
+  );
+  assert.equal(code, 7);
+  assert.equal(calls.length, 1);
+  assert.equal(process.env[contextKey], previous);
+  assert.throws(() => readFileSync(path), { code: "ENOENT" });
+});

@@ -120,6 +120,7 @@ test("AI host build removes orphaned compiler output before packing", (t) => {
   mkdirSync(join(isolatedRoot, "apps"), { recursive: true });
   for (const name of [
     "packages",
+    "scripts",
     "node_modules",
     "package.json",
     "pnpm-lock.yaml",
@@ -157,7 +158,7 @@ test("AI host build removes orphaned compiler output before packing", (t) => {
       isolated,
       "--config.verify-deps-before-run=false",
       "run",
-      "compile",
+      "build",
     ],
     root,
   );

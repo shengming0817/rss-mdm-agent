@@ -74,9 +74,9 @@ test("affected Cargo packages replace workspace and JS build includes producer c
     "--locked",
   ]);
   assert.deepEqual(plan.find((s) => s.name === "workspace build inputs").args, [
-    "scripts/prepared-entry.mjs",
-    "build:workspace",
-    "@rss-mdm-agent/ui",
+    "--filter",
+    "@rss-mdm-agent/ui...",
+    "build",
   ]);
   assert.equal(
     plan.find((s) => s.name === "Claude SDK adapter").selected,

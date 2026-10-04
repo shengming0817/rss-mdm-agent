@@ -73,8 +73,6 @@ function fixture(t) {
     "crates/execution-app/src/lib.rs",
     "scripts/check-execution-bindings.mjs",
     "scripts/preparation.mjs",
-    "scripts/prepared-entry.mjs",
-    "scripts/preparation-entries.mjs",
     "scripts/build-worker-runtime.mjs",
     "tests/assistant/execution-fixtures.json",
     "scripts/bundle-ai-host.mjs",
@@ -125,8 +123,6 @@ test("fingerprint includes dirty Host, adapter, contract, lock, Node and added/d
     "crates/execution-app/src/lib.rs",
     "scripts/check-execution-bindings.mjs",
     "scripts/preparation.mjs",
-    "scripts/prepared-entry.mjs",
-    "scripts/preparation-entries.mjs",
     "scripts/build-worker-runtime.mjs",
     "scripts/cargo-target.mjs",
   ]) {
@@ -265,7 +261,6 @@ test("release stage rejects development, absent and unknown manifest kinds", (t)
     "preparation.mjs",
     "ci-plan.mjs",
     "ci-result.mjs",
-    "preparation-entries.mjs",
     "cargo-target.mjs",
   ]) {
     write(`scripts/${name}`, readFileSync(new URL(name, import.meta.url)));
@@ -851,7 +846,7 @@ test("actor creation owner reaps before handoff on cancellation and timeout", as
 
 test("development CLI owns preparation across rebuild, cached and override verification", (t) => {
   const { root, write } = fixture(t);
-  for (const name of ["desktop-dev-runtime.mjs", "preparation-entries.mjs"])
+  for (const name of ["desktop-dev-runtime.mjs"])
     write(`scripts/${name}`, readFileSync(new URL(name, import.meta.url)));
   write(
     "scripts/preparation.mjs",

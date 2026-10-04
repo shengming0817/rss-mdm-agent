@@ -112,6 +112,7 @@ export const testOwners = [
   ["tests/ai-adapters/codex", npm("ai-adapter-codex")],
   ["tests/ai-adapters/deepseek", npm("ai-adapter-deepseek")],
   ["tests/ai-host", npm("ai-host-app")],
+  ["tests/ai-host", npm("ai-client")],
   ["tests/ai-provider-conformance", npm("ai-host-app")],
   ...["claude", "codex", "deepseek"].map((name) => [
     "tests/ai-provider-conformance",

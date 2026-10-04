@@ -22,8 +22,7 @@
     "vue": "^3.5.38"
   },
   "scripts": {
-    "build": "node ../../scripts/prepared-entry.mjs package:ui",
-    "compile": "vite build && vue-tsc -p tsconfig.build.json"
+    "build": "vite build && vue-tsc -p tsconfig.build.json"
   },
   "dependencies": {
     "@lucide/vue": "1.49.0",

@@ -164,7 +164,7 @@ function configuration(directory, env) {
     ...Object.fromEntries(inputs.map((key) => [key, env[key]])),
   });
 }
-function toolchain(directory, env) {
+function toolchain(directory, env, names) {
   const read = (command, args) =>
     execFileSync(command, args, {
       cwd: directory,
@@ -176,9 +176,14 @@ function toolchain(directory, env) {
     }).trim();
   return {
     node: process.versions.node,
-    pnpm: read("pnpm", ["--version"]),
-    rustc: read("rustc", ["-vV"]),
-    cargo: read("cargo", ["-V"]),
+    ...Object.fromEntries(
+      names
+        .filter((name) => name !== "node")
+        .map((name) => [
+          name,
+          read(name, name === "rustc" ? ["-vV"] : ["--version"]),
+        ]),
+    ),
   };
 }
 export function preparedContext(directory = root, env = process.env) {
@@ -203,41 +208,29 @@ export function preparedContext(directory = root, env = process.env) {
     value.source !== sourceDigest(directory)
   )
     throw Error("prepared inputs changed; start a new run");
-  if (JSON.stringify(value.tools) !== JSON.stringify(toolchain(directory, env)))
+  if (
+    JSON.stringify(value.tools) !==
+    JSON.stringify(toolchain(directory, env, Object.keys(value.tools)))
+  )
     throw Error("prepared toolchain changed; start a new run");
   return value;
 }
 export function preparedArtifact(key, directory = root, env = process.env) {
   const value = preparedContext(directory, env);
   if (key.startsWith("node:")) {
-    const graph = packages(directory),
-      visited = new Set();
-    function validate(name) {
-      if (visited.has(name)) return;
-      visited.add(name);
-      const pkg = graph.get(name),
-        artifact = value.artifacts[`node:${name}`];
+    if (!value.nodes.includes(key.slice(5)))
+      throw Error(`missing prepared Node selection: ${key}`);
+    for (const [name, artifact] of Object.entries(value.artifacts)) {
+      if (!name.startsWith("node:")) continue;
       if (
-        !pkg ||
-        !value.nodes.includes(name) ||
-        !artifact ||
         !existsSync(artifact.path) ||
         treeDigest(artifact.path) !== artifact.digest
       )
         throw Error(`missing or changed prepared Node package: ${name}`);
-      for (const field of [
-        "dependencies",
-        "devDependencies",
-        "peerDependencies",
-        "optionalDependencies",
-      ])
-        for (const dependency of Object.keys(pkg[field] ?? {}))
-          if (graph.has(dependency)) validate(dependency);
     }
-    if (key === "node:*") for (const name of graph.keys()) validate(name);
-    else validate(key.slice(5));
     return key === "node:*" ? directory : value.artifacts[key].path;
   }
+
   const artifact = value.artifacts[key];
   if (
     !artifact ||
@@ -251,25 +244,19 @@ export function preparedCheck(key, directory = root, env = process.env) {
   const value = preparedContext(directory, env);
   return value.checks.includes(key);
 }
-function packages(directory) {
-  const result = new Map();
-  function visit(path) {
-    for (const entry of readdirSync(path, { withFileTypes: true })) {
-      if (
-        !entry.isDirectory() ||
-        ["node_modules", "dist", "src-tauri"].includes(entry.name)
-      )
-        continue;
-      const child = join(path, entry.name),
-        manifest = join(child, "package.json");
-      if (existsSync(manifest)) {
-        const pkg = JSON.parse(readFileSync(manifest));
-        result.set(pkg.name, { ...pkg, path: child });
-      } else visit(child);
-    }
-  }
-  for (const name of ["apps", "packages"]) visit(join(directory, name));
-  return result;
+export function checkAlreadyPrepared(key) {
+  return Boolean(process.env[contextKey]) && preparedCheck(key);
+}
+// Generators consume the helper's output; they do not own a build scheduler.
+export async function helperOutput(key, args = []) {
+  return withPreparation([key], (env) =>
+    execFileSync(preparedArtifact(key), args, {
+      cwd: root,
+      env,
+      encoding: "utf8",
+      maxBuffer: 16 * 1024 * 1024,
+    }),
+  );
 }
 export class Preparation {
   constructor(
@@ -287,6 +274,7 @@ export class Preparation {
     this.signal = signal;
     this.execute = execute;
     this.onPrepared = onPrepared;
+    this.tools = { node: process.versions.node };
     this.artifacts = {};
     this.nodes = new Set();
     this.checks = new Set();
@@ -320,10 +308,22 @@ export class Preparation {
       throw Error("inputs changed during preparation/run");
     if (
       this.tools &&
-      JSON.stringify(toolchain(this.root, this.baseEnv)) !==
-        JSON.stringify(this.tools)
+      JSON.stringify(
+        toolchain(this.root, this.baseEnv, Object.keys(this.tools)),
+      ) !== JSON.stringify(this.tools)
     )
       throw Error("toolchain changed during preparation/run");
+  }
+  requireTools(names) {
+    const missing = names.filter((name) => !this.tools[name]);
+    if (!missing.length) return;
+    Object.assign(this.tools, toolchain(this.root, this.baseEnv, missing));
+    const manifest = JSON.parse(readFileSync(join(this.root, "package.json")));
+    if (
+      this.tools.node !== manifest.engines.node ||
+      (this.tools.pnpm && `pnpm@${this.tools.pnpm}` !== manifest.packageManager)
+    )
+      throw Error("preparation requires the pinned Node/pnpm toolchain");
   }
   async command(command, args, capture = false, env = this.env) {
     const result = await this.execute(command, args, {
@@ -346,15 +346,6 @@ export class Preparation {
       this.directory = mkdtempSync(
         join(this.root, ".local-ci-runs/preparation-"),
       );
-      this.tools = toolchain(this.root, this.baseEnv);
-      const manifest = JSON.parse(
-        readFileSync(join(this.root, "package.json")),
-      );
-      if (
-        this.tools.node !== manifest.engines.node ||
-        `pnpm@${this.tools.pnpm}` !== manifest.packageManager
-      )
-        throw Error("preparation requires the pinned Node/pnpm toolchain");
     }
     this.assertInputs();
     for (const key of keys) {
@@ -390,42 +381,46 @@ export class Preparation {
   record(key, path) {
     this.artifacts[key] = { path, digest: treeDigest(path) };
   }
-  async prepare(key) {
-    if (helpers[key]) {
-      const [pkg, example, features] = helpers[key];
-      const stdout = await this.command(
-        "cargo",
-        [
-          "build",
-          "--locked",
-          "--message-format=json-render-diagnostics",
-          "-p",
-          pkg,
-          "--example",
-          example,
-          ...features,
-        ],
-        true,
+  async buildRust(args, targets, directory = this.directory) {
+    this.requireTools(["rustc", "cargo"]);
+    const stdout = await this.command(
+      "cargo",
+      [
+        "build",
+        "--locked",
+        "--message-format=json-render-diagnostics",
+        ...args,
+      ],
+      true,
+    );
+    const messages = stdout
+      .split("\n")
+      .filter((line) => line.startsWith("{"))
+      .map((line) => JSON.parse(line));
+    for (const [key, name, kind] of targets) {
+      const artifact = messages.find(
+        (item) =>
+          item.reason === "compiler-artifact" &&
+          item.target.name === name &&
+          item.target.kind.includes(kind) &&
+          item.executable,
       );
-      const artifact = stdout
-        .split("\n")
-        .filter((line) => line.startsWith("{"))
-        .map((line) => JSON.parse(line))
-        .find(
-          (item) =>
-            item.reason === "compiler-artifact" &&
-            item.target.name === example &&
-            item.target.kind.includes("example") &&
-            item.executable,
-        );
-      if (!artifact) throw Error(`Cargo did not produce ${example}`);
+      if (!artifact) throw Error(`Cargo did not produce ${name}`);
       const path = join(
-        this.directory,
+        directory,
         key + (process.platform === "win32" ? ".exe" : ""),
       );
       copyFileSync(artifact.executable, path);
       this.record(key, path);
-      return;
+    }
+  }
+  async prepare(key) {
+    if (helpers[key]) {
+      const [pkg, example, features] = helpers[key];
+      return this.buildRust(
+        ["-p", pkg, "--example", example, ...features],
+        [[key, example, "example"]],
+      );
     }
     if (key.startsWith("check:")) {
       const name = key.slice(6),
@@ -437,84 +432,73 @@ export class Preparation {
       return;
     }
     if (key.startsWith("node:")) {
-      const graph = packages(this.root),
-        needed = new Set();
-      const visit = (name) => {
-        if (needed.has(name)) return;
-        if (this.nodes.has(name)) {
-          preparedArtifact(`node:${name}`, this.root, this.env);
-          return;
-        }
-        const pkg = graph.get(name);
-        if (!pkg) throw Error(`unknown Node package: ${name}`);
-        needed.add(name);
-        for (const field of [
-          "dependencies",
-          "devDependencies",
-          "peerDependencies",
-          "optionalDependencies",
-        ])
-          for (const dependency of Object.keys(pkg[field] ?? {}))
-            if (graph.has(dependency)) visit(dependency);
-      };
-      if (key === "node:*") for (const name of graph.keys()) visit(name);
-      else visit(key.slice(5));
+      this.requireTools(["pnpm"]);
+      const filter = key.slice(5);
+      // ref: pnpm dist/pnpm.mjs@v11.4.0 (list / runRecursive).
+      // pnpm owns dependency selection and topological execution; no parallel graph.
+      const selected = JSON.parse(
+        await this.command(
+          "pnpm",
+          [
+            "-r",
+            "--filter",
+            filter === "*" ? "*" : `${filter}...`,
+            "list",
+            "--depth",
+            "-1",
+            "--json",
+          ],
+          true,
+        ),
+      ).filter((pkg) => resolve(pkg.path) !== this.root);
+      if (!selected.length) throw Error(`unknown Node selection: ${filter}`);
+      for (const pkg of selected)
+        if (this.artifacts[`node:${pkg.name}`])
+          preparedArtifact(`node:${pkg.name}`, this.root, this.env);
+      const needed = selected.filter(
+        (pkg) => !this.artifacts[`node:${pkg.name}`],
+      );
+      const names = needed.map((pkg) => pkg.name);
       if (
-        needed.has("@rss-mdm-agent/execution-bindings") ||
-        needed.has("@rss-mdm-agent/ai-host-app") ||
-        needed.has("@rss-mdm-agent/desktop")
+        names.some((name) =>
+          [
+            "@rss-mdm-agent/execution-bindings",
+            "@rss-mdm-agent/ai-host-app",
+            "@rss-mdm-agent/desktop",
+          ].includes(name),
+        )
       )
         await this.ensure(["check:execution"]);
-      if (needed.has("@rss-mdm-agent/desktop"))
+      if (names.includes("@rss-mdm-agent/desktop"))
         await this.ensure(["check:selfService"]);
-      if (!needed.size) return;
-      await this.command("pnpm", [
-        ...[...needed].flatMap((name) => ["--filter", name]),
-        "run",
-        "compile",
-      ]);
-      for (const name of needed) {
-        this.nodes.add(name);
-        this.record(`node:${name}`, join(graph.get(name).path, "dist"));
-      }
-      return { nodes: [...needed] };
-    }
-    if (key === "native") {
-      const stdout = await this.command(
-        "cargo",
-        [
+      if (needed.length) {
+        await this.command("pnpm", [
+          "-r",
+          ...names.flatMap((name) => ["--filter", name]),
+          "run",
           "build",
-          "--release",
-          "--locked",
-          "--message-format=json-render-diagnostics",
-          "-p",
-          "native-process",
-          "-p",
-          "platform-private-storage",
-        ],
-        true,
-      );
-      const messages = stdout
-        .split("\n")
-        .filter((line) => line.startsWith("{"))
-        .map((line) => JSON.parse(line));
+        ]);
+        for (const pkg of needed) {
+          this.nodes.add(pkg.name);
+          this.record(`node:${pkg.name}`, join(pkg.path, "dist"));
+        }
+      }
+      this.nodes.add(filter);
+      return { nodes: names };
+    }
+
+    if (key === "native") {
       const directory = join(this.directory, "native");
       mkdirSync(directory);
-      for (const name of ["rss-ai-worker-launcher", "rss-private-storage"]) {
-        const artifact = messages.find(
-          (item) =>
-            item.reason === "compiler-artifact" &&
-            item.target.name === name &&
-            item.executable,
-        );
-        if (!artifact) throw Error(`Cargo did not produce ${name}`);
-        const path = join(
-          directory,
-          name + (process.platform === "win32" ? ".exe" : ""),
-        );
-        copyFileSync(artifact.executable, path);
-        this.record(name, path);
-      }
+      await this.buildRust(
+        ["--release", "-p", "native-process", "-p", "platform-private-storage"],
+        ["rss-ai-worker-launcher", "rss-private-storage"].map((name) => [
+          name,
+          name,
+          "bin",
+        ]),
+        directory,
+      );
       this.record(key, directory);
       return;
     }
@@ -551,11 +535,9 @@ export function assertPreparedRun(signal, directory = root, env = process.env) {
   if (signal?.aborted) throw Error("preparation cancelled");
   preparedContext(directory, env);
 }
-export async function withPreparation(
-  keys,
-  callback,
-  { directory = root, allowSourceChanges = false } = {},
-) {
+// ref: Node.js v24 explicit resource management / Symbol.asyncDispose.
+// The existing runner owns this scope; disposal verifies inputs and releases its artifacts.
+export async function prepareRun(keys, { directory = root, ...options } = {}) {
   const controller = new AbortController();
   const interrupt = () => controller.abort("SIGINT"),
     terminate = () => controller.abort("SIGTERM");
@@ -563,6 +545,13 @@ export async function withPreparation(
   process.on("SIGTERM", terminate);
   let preparation;
   const previous = process.env[contextKey];
+  const cleanup = () => {
+    if (previous === undefined) delete process.env[contextKey];
+    else process.env[contextKey] = previous;
+    preparation?.close();
+    process.removeListener("SIGINT", interrupt);
+    process.removeListener("SIGTERM", terminate);
+  };
   try {
     const nested = Boolean(previous);
     let env;
@@ -575,29 +564,38 @@ export async function withPreparation(
         } else preparedArtifact(key, directory);
       }
       env = { ...process.env };
-      // The CI owner holds its lease; descendants do not borrow descriptors that
-      // pnpm/Node test subprocesses do not inherit.
+      // Descendants do not borrow lease descriptors that pnpm/Node do not inherit.
       delete env._AGENT_BUILD_LEASE;
     } else {
-      preparation = new Preparation(directory, { signal: controller.signal });
+      preparation = new Preparation(directory, {
+        ...options,
+        signal: controller.signal,
+      });
       await preparation.ensure(keys);
       env = preparation.env;
       process.env[contextKey] = env[contextKey];
     }
-    const check = () => assertPreparedRun(controller.signal, directory, env);
-    const result = await callback(env, controller.signal, nested, check);
-    if (controller.signal.aborted)
-      return controller.signal.reason === "SIGINT" ? 130 : 143;
-    if (!allowSourceChanges) {
-      if (preparation) preparation.assertInputs();
-      else check();
-    }
-    return result;
-  } finally {
-    if (previous === undefined) delete process.env[contextKey];
-    else process.env[contextKey] = previous;
-    preparation?.close();
-    process.removeListener("SIGINT", interrupt);
-    process.removeListener("SIGTERM", terminate);
+    const assertReady = () =>
+      assertPreparedRun(controller.signal, directory, env);
+    return {
+      env,
+      signal: controller.signal,
+      nested,
+      assertReady,
+      async [Symbol.asyncDispose]() {
+        try {
+          assertReady();
+        } finally {
+          cleanup();
+        }
+      },
+    };
+  } catch (error) {
+    cleanup();
+    throw error;
   }
+}
+export async function withPreparation(keys, callback, options) {
+  await using run = await prepareRun(keys, options);
+  return await callback(run.env, run.signal, run.nested, run.assertReady);
 }

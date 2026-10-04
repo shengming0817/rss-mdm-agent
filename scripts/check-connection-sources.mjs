@@ -1,5 +1,6 @@
-import { privateRuntimeNode, runPrivateRuntime } from "./ai-host-artifacts.mjs";
-import { connectionPersistence } from "../apps/ai-host/dist/secrets.js";
+import { runCommand } from "./ci-plan.mjs";
+import { withPreparation } from "./preparation.mjs";
+import { privateRuntimeNode } from "./ai-host-artifacts.mjs";
 import { sourceSummary } from "./connection-source-results.mjs";
 import {
   mkdtemp,
@@ -12,164 +13,198 @@ import {
 import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createHost } from "../packages/ai-host/dist/index.js";
-import { openSqliteStore } from "../packages/ai-store-sqlite/dist/index.js";
-import { localResolver } from "../apps/ai-host/dist/resolver.js";
 /** Explicit manual acceptance: passes existing local directories to the official tools and sends one probe per available source.
  * Emits only source type and closed outcome. Never emits account identities, paths or credentials. */
-const repository = fileURLToPath(new URL("../", import.meta.url));
-const fixedNode = await realpath(privateRuntimeNode(repository)).catch(() => {
-  throw Error(
-    "prepare the fixed AI runtime with pnpm check:connection-sources",
-  );
-});
-if ((await realpath(process.execPath)) !== fixedNode) {
-  process.exit(
-    runPrivateRuntime(repository, [
-      fileURLToPath(import.meta.url),
-      ...process.argv.slice(2),
-    ]),
-  );
-}
-const preflight = process.argv.includes("--preflight");
-let sqliteReady = false;
-
-const startedAt = new Date().toISOString();
-const budget = () => ({ timeoutMs: 60000, signal: AbortSignal.timeout(60000) });
-const root = await realpath(
-  await mkdtemp(join(tmpdir(), "rss-source-acceptance-")),
-);
-let host;
-const results = [];
-try {
-  const caller = {
-    tenantId: "test-users",
-    principalId: "source-probe",
-    authorityId: "desktop-fixture",
-  };
-  const local = {
-    version: 1,
-    databasePath: join(root, "ai.sqlite"),
-    nativeDirectory: join(root, "native"),
-    workingDirectory: root,
-  };
-  const opened = openSqliteStore({ path: local.databasePath, mode: "create" });
-  if (!opened.ok) throw Error(opened.error.code);
-  const store = opened.value;
-  if (preflight) {
-    const closed = await store.close(budget());
-    if (!closed.ok) throw Error(closed.error.code);
-    sqliteReady = true;
-  } else {
-    const created = await createHost({
-      credentialPersistence: connectionPersistence(
-        store,
-        () => true,
-        async () => false,
-      ),
-      store,
-      launchFences: store,
-      delivery: null,
-      operationTimeoutMs: 60000,
-      resolve: localResolver(local, store, {
-        read: async () => {
-          throw Error("custom key not part of existing-config probe");
+process.exitCode = await withPreparation(
+  [
+    "node:@rss-mdm-agent/ai-host-app",
+    "node:@rss-mdm-agent/ai-client",
+    "worker",
+  ],
+  async (env, signal, nested) => {
+    const { connectionPersistence } = await import(
+      "../apps/ai-host/dist/secrets.js"
+    );
+    const { createHost } = await import("../packages/ai-host/dist/index.js");
+    const { openSqliteStore } = await import(
+      "../packages/ai-store-sqlite/dist/index.js"
+    );
+    const { localResolver } = await import("../apps/ai-host/dist/resolver.js");
+    const repository = fileURLToPath(new URL("../", import.meta.url));
+    const fixedNode = await realpath(privateRuntimeNode(repository)).catch(
+      () => {
+        throw Error(
+          "prepare the fixed AI runtime with pnpm check:connection-sources",
+        );
+      },
+    );
+    if ((await realpath(process.execPath)) !== fixedNode) {
+      const result = await runCommand(
+        fixedNode,
+        [fileURLToPath(import.meta.url), ...process.argv.slice(2)],
+        {
+          cwd: repository,
+          env,
+          signal,
+          stdio: "inherit",
+          ...(nested ? { detached: false } : {}),
         },
-      }),
+      );
+      return result.status ?? 1;
+    }
+    const preflight = process.argv.includes("--preflight");
+    let sqliteReady = false;
+
+    const startedAt = new Date().toISOString();
+    const budget = () => ({
+      timeoutMs: 60000,
+      signal: AbortSignal.timeout(60000),
     });
-    if (!created.ok) throw Error(created.error.code);
-    host = created.value;
-    for (const provider of ["codex", "claude"])
-      for (const type of ["existing_config"]) {
-        const id = provider + "-" + type;
-        const directory = await realpath(
-          join(homedir(), provider === "codex" ? ".codex" : ".claude"),
-        ).catch(() => undefined);
-        if (!directory) {
-          results.push({ provider, source: type, result: "source_absent" });
-          continue;
-        }
-        const saved = await host.saveConnection(
-          caller,
+    const root = await realpath(
+      await mkdtemp(join(tmpdir(), "rss-source-acceptance-")),
+    );
+    let host;
+    const results = [];
+    try {
+      const caller = {
+        tenantId: "test-users",
+        principalId: "source-probe",
+        authorityId: "desktop-fixture",
+      };
+      const local = {
+        version: 1,
+        databasePath: join(root, "ai.sqlite"),
+        nativeDirectory: join(root, "native"),
+        workingDirectory: root,
+      };
+      const opened = openSqliteStore({
+        path: local.databasePath,
+        mode: "create",
+      });
+      if (!opened.ok) throw Error(opened.error.code);
+      const store = opened.value;
+      if (preflight) {
+        const closed = await store.close(budget());
+        if (!closed.ok) throw Error(closed.error.code);
+        sqliteReady = true;
+      } else {
+        const created = await createHost({
+          credentialPersistence: connectionPersistence(
+            store,
+            () => true,
+            async () => false,
+          ),
+          store,
+          launchFences: store,
+          delivery: null,
+          operationTimeoutMs: 60000,
+          resolve: localResolver(local, store, {
+            read: async () => {
+              throw Error("custom key not part of existing-config probe");
+            },
+          }),
+        });
+        if (!created.ok) throw Error(created.error.code);
+        host = created.value;
+        for (const provider of ["codex", "claude"])
+          for (const type of ["existing_config"]) {
+            const id = provider + "-" + type;
+            const directory = await realpath(
+              join(homedir(), provider === "codex" ? ".codex" : ".claude"),
+            ).catch(() => undefined);
+            if (!directory) {
+              results.push({ provider, source: type, result: "source_absent" });
+              continue;
+            }
+            const saved = await host.saveConnection(
+              caller,
+              {
+                connectionId: id,
+                name: id,
+                provider,
+                profile: "conversation",
+                source: { type, directory: directory ?? root },
+              },
+              null,
+              budget(),
+            );
+            const tested = saved.ok
+              ? await host.testConnection(
+                  caller,
+                  id,
+                  saved.value.configRevision,
+                  budget(),
+                )
+              : saved;
+            const row = {
+              provider,
+              source: type,
+              result: !tested.ok
+                ? tested.error.code
+                : tested.value.lastTest?.outcome === "passed"
+                  ? "model_probe_completed"
+                  : (tested.value.lastTest?.failure.code ?? "unavailable"),
+            };
+            results.push(row);
+            process.stdout.write(JSON.stringify(row) + "\n");
+          }
+      }
+    } finally {
+      if (host) await host.close(budget());
+      await rm(root, { recursive: true, force: true });
+
+      const output = join(
+        repository,
+        ".local-ci-runs",
+        preflight
+          ? "connection-sources-preflight.json"
+          : "connection-sources.json",
+      );
+      await mkdir(join(repository, ".local-ci-runs"), { recursive: true });
+      await writeFile(
+        output,
+        JSON.stringify(
           {
-            connectionId: id,
-            name: id,
-            provider,
-            profile: "conversation",
-            source: { type, directory: directory ?? root },
+            command:
+              "pnpm check:connection-sources" +
+              (preflight ? " --preflight" : ""),
+            startedAt,
+            finishedAt: new Date().toISOString(),
+            runtime: {
+              node: process.versions.node,
+              platform: process.platform,
+              arch: process.arch,
+            },
+            mode: preflight
+              ? "native-private-storage/sqlite-preflight"
+              : "official-config/isolated-provider/minimal-real-model-probe",
+            ...(preflight
+              ? {
+                  status: sqliteReady ? "passed" : "failed",
+                  sqliteReady,
+                  probesRun: false,
+                }
+              : sourceSummary(results)),
+            notCovered: [
+              "custom_api_covered_separately_by_check_native_credentials",
+              "windows",
+              "enterprise_identity",
+            ],
           },
           null,
-          budget(),
-        );
-        const tested = saved.ok
-          ? await host.testConnection(
-              caller,
-              id,
-              saved.value.configRevision,
-              budget(),
-            )
-          : saved;
-        const row = {
-          provider,
-          source: type,
-          result: !tested.ok
-            ? tested.error.code
-            : tested.value.lastTest?.outcome === "passed"
-              ? "model_probe_completed"
-              : (tested.value.lastTest?.failure.code ?? "unavailable"),
-        };
-        results.push(row);
-        process.stdout.write(JSON.stringify(row) + "\n");
-      }
-  }
-} finally {
-  if (host) await host.close(budget());
-  await rm(root, { recursive: true, force: true });
+          2,
+        ),
+      );
+    }
+    const failed = preflight
+      ? !sqliteReady
+      : sourceSummary(results).status === "failed";
 
-  const output = join(
-    repository,
-    ".local-ci-runs",
-    preflight ? "connection-sources-preflight.json" : "connection-sources.json",
-  );
-  await mkdir(join(repository, ".local-ci-runs"), { recursive: true });
-  await writeFile(
-    output,
-    JSON.stringify(
-      {
-        command:
-          "pnpm check:connection-sources" + (preflight ? " --preflight" : ""),
-        startedAt,
-        finishedAt: new Date().toISOString(),
-        runtime: {
-          node: process.versions.node,
-          platform: process.platform,
-          arch: process.arch,
-        },
-        mode: preflight
-          ? "native-private-storage/sqlite-preflight"
-          : "official-config/isolated-provider/minimal-real-model-probe",
-        ...(preflight
-          ? {
-              status: sqliteReady ? "passed" : "failed",
-              sqliteReady,
-              probesRun: false,
-            }
-          : sourceSummary(results)),
-        notCovered: [
-          "custom_api_covered_separately_by_check_native_credentials",
-          "windows",
-          "enterprise_identity",
-        ],
-      },
-      null,
-      2,
-    ),
-  );
-}
-if (preflight ? !sqliteReady : sourceSummary(results).status === "failed")
-  process.exitCode = 1;
+    if (preflight)
+      process.stdout.write(
+        JSON.stringify({ sqliteReady, probesRun: false }) + "\n",
+      );
 
-if (preflight)
-  process.stdout.write(
-    JSON.stringify({ sqliteReady, probesRun: false }) + "\n",
-  );
+    return failed ? 1 : 0;
+  },
+);

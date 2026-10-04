@@ -1,5 +1,4 @@
 import { withPreparation } from "./preparation.mjs";
-import { entry } from "./preparation-entries.mjs";
 import { createHash } from "node:crypto";
 import { lstatSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
@@ -35,8 +34,6 @@ export function developmentFingerprint(root) {
     "crates",
     "scripts/check-execution-bindings.mjs",
     "scripts/preparation.mjs",
-    "scripts/prepared-entry.mjs",
-    "scripts/preparation-entries.mjs",
     "scripts/build-worker-runtime.mjs",
     "tests/assistant/execution-fixtures.json",
     "scripts/bundle-ai-host.mjs",
@@ -158,7 +155,12 @@ if (process.argv[2] === "--prepare") {
   const [root, directory, kind] = process.argv.slice(3);
   const requirements =
     kind !== "override" && developmentNeedsBuild(root, directory)
-      ? entry("bundle:ai-host").requirements
+      ? [
+          "node:@rss-mdm-agent/ai-host-app",
+          "node:@rss-mdm-agent/ai-client",
+          "worker",
+          "execution",
+        ]
       : ["execution"];
   process.exitCode = await withPreparation(
     requirements,

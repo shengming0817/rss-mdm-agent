@@ -9,7 +9,6 @@ import {
   renameSync,
 } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
-import { entry } from "./preparation-entries.mjs";
 import { stepResult } from "./ci-result.mjs";
 const npm = (name) => `@rss-mdm-agent/${name}`;
 const groups = {
@@ -63,22 +62,23 @@ export function planSteps(steps, impact) {
       );
     if (!impact.full && name === "workspace build inputs")
       args = [
-        "scripts/prepared-entry.mjs",
-        "build:workspace",
-        ...impact.nodePackages,
+        ...impact.nodePackages.flatMap((p) => ["--filter", `${p}...`]),
+        "build",
       ];
-    if (command === "pnpm" && args.length === 1) {
-      try {
-        requirements = entry(args[0]).requirements;
-      } catch {
-        /* Ordinary gate. */
-      }
-    }
     if (name === "workspace build inputs")
       requirements = impact.full
         ? ["node:*"]
         : impact.nodePackages.map((name) => `node:${name}`);
-    return { name, command, args, selected, requirements: [...requirements] };
+    return {
+      name,
+      command,
+      args,
+      selected,
+      requirements: [...requirements],
+      preparationOnly: ["workspace build inputs", "frontend build"].includes(
+        name,
+      ),
+    };
   });
   const fullWorker = plan.some(
     (step) => step.selected && step.requirements.includes("worker"),
@@ -236,6 +236,7 @@ export async function executeSteps(
     selected,
     requirements = [],
     dependencies = [],
+    preparationOnly = false,
   } of plan) {
     const blocked = dependencies.find(
       (dependency) =>
@@ -267,6 +268,7 @@ export async function executeSteps(
         env,
         signal,
         requirements,
+        preparationOnly,
       });
     } catch (error) {
       result = { status: null, error };

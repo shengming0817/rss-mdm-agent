@@ -34,9 +34,8 @@
     }
   },
   "scripts": {
-    "build": "node ../../scripts/prepared-entry.mjs package:ai-contract",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "compile": "tsc -p tsconfig.json"
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "canonicalize": "5.0.0",

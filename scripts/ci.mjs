@@ -108,9 +108,14 @@ export async function runCI(
           publish();
         },
       });
-      executePrepared = async (command, args, { requirements, ...options }) => {
+      executePrepared = async (
+        command,
+        args,
+        { requirements, preparationOnly, ...options },
+      ) => {
         try {
           await preparation.ensure(requirements);
+          if (preparationOnly) return { status: 0 };
           const result = await runCommand(command, args, {
             ...options,
             env: preparation.directory ? preparation.env : env,

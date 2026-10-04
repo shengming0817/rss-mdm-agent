@@ -19,9 +19,8 @@
     "node": ">=24"
   },
   "scripts": {
-    "build": "node ../../../scripts/prepared-entry.mjs package:ai-adapter-deepseek",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "compile": "tsc -p tsconfig.json"
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "@deepseek-ai/cordis": "4.0.2",

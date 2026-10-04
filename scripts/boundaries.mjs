@@ -805,3 +805,28 @@ export function checkRustSources(sources, executable) {
     }),
   );
 }
+
+if (
+  process.argv[1] &&
+  resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+) {
+  const { withPreparation } = await import("./preparation.mjs");
+  const { runCommand } = await import("./ci-plan.mjs");
+  process.exitCode = await withPreparation(
+    ["boundaries"],
+    async (env, signal, nested) => {
+      const result = await runCommand(
+        process.execPath,
+        ["--test", "scripts/boundaries.test.mjs"],
+        {
+          cwd: root,
+          env,
+          signal,
+          stdio: "inherit",
+          ...(nested ? { detached: false } : {}),
+        },
+      );
+      return result.status ?? 1;
+    },
+  );
+}

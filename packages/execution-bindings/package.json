@@ -19,8 +19,7 @@
     "./tools": "./dist/tools.json"
   },
   "scripts": {
-    "build": "node ../../scripts/prepared-entry.mjs package:execution-bindings",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "compile": "tsc -p tsconfig.json"
+    "build": "node ../../scripts/check-execution-bindings.mjs && tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
   }
 }
