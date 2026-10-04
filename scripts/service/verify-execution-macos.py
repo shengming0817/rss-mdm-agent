@@ -1317,7 +1317,7 @@ def main():
         installer.chmod(0o600)
         system_installer_source = installer_source
         shutil.copyfile(lab / 'tls.pem', inputs / 'tls.pem')
-        deployment = dict(version=4, ipc_version=10, origin=info['origin'], tenant=info['tenant'],
+        deployment = dict(version=4, ipc_version=10, origin=info['origin'].rstrip('/'), tenant=info['tenant'],
                           signing_keys={'test': info['key']}, ca_file=str(protected / 'ca.pem'),
                           installation_id=str(uuid.uuid4()), installation_artifact=hashlib.sha256(args.binary.read_bytes()).hexdigest(), device_ca_file=str(protected / 'device-ca.pem'),
                           state_root=str(protected / 'state'),
@@ -1493,8 +1493,9 @@ p=plistlib.loads(Path('/Library/LaunchDaemons/com.rss-mdm.agent.execution.plist'
 assert p['ProgramArguments']==%r, 'restart registration owner mismatch'
 process_file=Path(%r)
 if process_file.exists(): os.kill(int(process_file.read_text()),0)
+subprocess.run([%r,'--config',%r,'--validate-persistent'],check=True)
 subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.execution'],check=True)
-""" % ([str(binary),'--config',str(config)],str(protected/'restart-pid')))
+""" % ([str(binary),'--config',str(config)],str(protected/'restart-pid'),str(binary),str(config)))
         cleanup.write_text("from pathlib import Path\nif Path(%r).exists(): Path(%r).write_text('finished')\n" % (str(protected/'restart-pid'),str(protected/'restart-finish')) + cleanup.read_text())
         receipt['journal'] = str(protected / 'state/execution.sqlite')
         if args.dmg_app:

@@ -370,22 +370,16 @@ impl Deployment {
         let namespace = self.namespace()?;
         let secrets = DeviceSecrets::open(&self.state_root.join("secrets"), &namespace)?;
         secrets.verify_storage(&self.state_root)?;
-        let registration = agent_client::validate_stored_identity(
+        agent_client::validate_stored_identity(
             &self.state_root.join("communication"),
             &self.network()?,
             &secrets,
         )?;
         if self.state_root.join("execution-initialized").exists() {
             validate_markers(&self.state_root, &namespace)?;
-            let registration = registration.ok_or(Error::Identity)?;
-            let (binding, _) =
-                crate::backend::plan::context(self.origin.as_str(), self.tenant, &registration)?;
-            execution_sqlite::Store::validate_existing(
-                &self.state_root.join("execution.sqlite"),
-                &binding.authority,
-                crate::backend::plan::storage_limits(),
-            )
-            .map_err(|_| Error::Storage)?;
+            // preflight already checked the retained journal against the canonical network
+            // origin. Recomputing its authority from the raw deployment URL changes its
+            // identity when the otherwise equivalent origin omits the trailing slash.
             platform_private_storage::validate(&self.execution.work_root)?;
         }
         Ok(())

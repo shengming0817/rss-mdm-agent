@@ -945,6 +945,34 @@ async fn readonly_identity_preflight_shares_runtime_rules_and_preserves_state() 
         || agent_client::validate_identity(&root.path, &cfg, &server.secrets, &server.time);
     assert_eq!(validate().unwrap(), binding); // Validates while the original owner holds its lease.
     let secrets = server.secrets.0.lock().unwrap().clone();
+    let stored = || agent_client::validate_stored_identity(&root.path, &cfg, &server.secrets);
+    let database = std::fs::read(root.path.join("communication.sqlite")).unwrap();
+    assert_eq!(stored().unwrap(), Some(binding.clone()));
+    let reader = rusqlite::Connection::open_with_flags(
+        root.path.join("communication.sqlite"),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .unwrap();
+    let body: Vec<u8> = reader
+        .query_row("SELECT body FROM state WHERE key='identity'", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    drop(reader);
+    let identity: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    for field in ["key_reference", "secret_reference"] {
+        let reference = identity["active"][field].as_str().unwrap();
+        server.secrets.0.lock().unwrap().remove(reference);
+        assert!(
+            stored().is_err(),
+            "retained credential must remain readable"
+        );
+        *server.secrets.0.lock().unwrap() = secrets.clone();
+    }
+    assert_eq!(
+        std::fs::read(root.path.join("communication.sqlite")).unwrap(),
+        database
+    );
     for value in server.secrets.0.lock().unwrap().values_mut() {
         if value == "fixture-key" {
             *value = "fixture-renewal-key".into();
@@ -979,6 +1007,7 @@ async fn readonly_identity_preflight_shares_runtime_rules_and_preserves_state() 
     );
     server.time.set(4_070_908_800);
     assert_eq!(validate().unwrap_err(), Error::CertificateExpired);
+    assert_eq!(stored().unwrap(), Some(binding.clone()));
     server.time.set(1_700_000_000);
     drop(client);
     let path = root.path.join("communication.sqlite");

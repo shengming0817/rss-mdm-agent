@@ -218,7 +218,11 @@ finally: connection.close()
                         program=path.read_text();compile(program,str(path),'exec');programs.append(program)
                 def start(self): raise RuntimeError('stop before administrator authority')
                 def close(self): pass
-            with patch.object(acceptance.sys,'argv',['verify','--binary','/bin/sh','--desktop','/bin/sh','--backend',str(backend),'--output',str(output)]),patch.object(acceptance,'AdministratorSession',NoAuthority):
+            def isolated_path(value):
+                if value == '/Library/Application Support/RSS MDM Agent/execution.json':
+                    return root/'default.json'
+                return Path(value)
+            with patch.object(acceptance.sys,'argv',['verify','--binary','/bin/sh','--desktop','/bin/sh','--backend',str(backend),'--output',str(output)]),patch.object(acceptance,'AdministratorSession',NoAuthority),patch.object(acceptance,'Path',side_effect=isolated_path):
                 with self.assertRaisesRegex(RuntimeError,'stop before administrator authority'): acceptance.main()
             self.assertEqual(len(programs),4)
             receipt=json.loads((output/'receipt.json').read_text());self.assertEqual(receipt['cleanup'],'complete');self.assertFalse(receipt['installationCreated'])
