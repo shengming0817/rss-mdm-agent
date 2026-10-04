@@ -8,6 +8,8 @@ mod outcome;
 mod task_document;
 #[cfg(windows)]
 mod windows;
+#[cfg(any(windows, test))]
+mod worker_evidence;
 use crate::{deployment::Deployment, ExecutionConfig, SystemClock};
 use agent_client::{Clock, Error, GrantImport};
 use installation_security::{Artifact, Target};

@@ -1,5 +1,6 @@
 //! SCM and Task Scheduler retain native ownership; installer input never contains argv secrets.
 //! ref: windows-sys 0.61.2 Win32/System/Services; windows 0.61.3 TaskScheduler.
+use super::worker_evidence::WorkerEvidence;
 use super::*;
 use std::{
     os::windows::ffi::{OsStrExt, OsStringExt},
@@ -820,11 +821,24 @@ fn worker_owned(handle: &Sc, name: &str, path: &Path) -> Result<(), Error> {
     // Requests/results are retained under the protected UUID operation root until native exit.
     installation_security::protected(path).map_err(|_| Error::Identity)
 }
-fn worker_exited(report: &outcome::Report) -> Result<(), Error> {
-    if !report.terminal || report.process_id == 0 {
-        return Err(Error::Unavailable);
+fn read_worker_evidence(path: &Path) -> Result<Option<WorkerEvidence>, Error> {
+    let evidence = path.with_extension("worker.json");
+    if !evidence.exists() {
+        return Ok(None);
     }
-    let process = unsafe { OpenProcess(SYNCHRONIZE, 0, report.process_id) };
+    let bytes = installation_security::read_protected(&evidence).map_err(|_| Error::Identity)?;
+    if bytes.len() > 512 {
+        return Err(Error::Capacity);
+    }
+    let evidence: WorkerEvidence =
+        serde_json::from_slice(&bytes).map_err(|_| Error::Configuration)?;
+    if !evidence.valid() {
+        return Err(Error::Configuration);
+    }
+    Ok(Some(evidence))
+}
+fn worker_exited(process_id: u32) -> Result<(), Error> {
+    let process = unsafe { OpenProcess(SYNCHRONIZE, 0, process_id) };
     if process.is_null() {
         return if unsafe { GetLastError() } == ERROR_INVALID_PARAMETER {
             Ok(())
@@ -838,35 +852,56 @@ fn worker_exited(report: &outcome::Report) -> Result<(), Error> {
     }
     Ok(())
 }
+fn reclaim_worker(handle: &Sc, path: &Path) -> Result<bool, Error> {
+    if state(handle)?.dwCurrentState != SERVICE_STOPPED {
+        return Ok(false);
+    }
+    let Some(evidence) = read_worker_evidence(path)? else {
+        return Ok(false);
+    };
+    // Never read STOPPED's invalid SCM PID, and never require a business terminal
+    // receipt to prove native exit. Missing/crashed outcomes remain unknown.
+    let exited = match evidence.process_id {
+        Some(pid) => worker_exited(pid).is_ok(),
+        None => false,
+    };
+    if !evidence.reclaimable(true, exited) {
+        return Ok(false);
+    }
+    if unsafe { DeleteService(handle.0) } == 0 {
+        return Err(Error::Unavailable);
+    }
+    std::fs::remove_file(path)?;
+    // Keep both the native lifetime evidence and any business result for diagnosis.
+    Ok(true)
+}
 pub(super) fn operation_status(id: uuid::Uuid) -> Result<(), Error> {
     let path = operation_root()?.join(format!("{id}.json"));
     let name = format!("RssExecution-Install-{id}");
     let report = read_result(&path)?;
+    let evidence = read_worker_evidence(&path)?;
     let native = if let Some(handle) = service(&name)? {
         worker_owned(&handle, &name, &path)?;
-        let status = state(&handle)?;
-        if status.dwCurrentState == SERVICE_STOPPED {
-            let complete = report.as_ref().is_some_and(|r| r.terminal);
-            if !complete {
-                return Err(Error::Unavailable);
-            }
-            // Querying a finished operation also reclaims its exact native worker/request.
-            worker_exited(report.as_ref().ok_or(Error::Unavailable)?)?;
-            if unsafe { DeleteService(handle.0) } == 0 {
-                return Err(Error::Unavailable);
-            }
-            std::fs::remove_file(&path)?;
+        if reclaim_worker(&handle, &path)? {
             "stopped"
+        } else if state(&handle)?.dwCurrentState == SERVICE_STOPPED {
+            "exit-unconfirmed"
         } else {
             "active"
         }
     } else {
         "absent"
     };
+    let result_state = report
+        .as_ref()
+        .filter(|r| r.terminal)
+        .map(|r| r.state.as_str())
+        .unwrap_or("outcome-unknown");
     println!(
         "{}",
-        serde_json::to_string(&serde_json::json!({"operation":id,"worker":native,"result":report}))
-            .map_err(|_| Error::Protocol)?
+        serde_json::to_string(&serde_json::json!({"operation":id,"worker":native,
+            "resultState":result_state,"result":report,"native":evidence}))
+        .map_err(|_| Error::Protocol)?
     );
     Ok(())
 }
@@ -929,8 +964,14 @@ pub fn worker(name: String, path: PathBuf) -> Result<(), Error> {
         return Err(Error::Identity);
     }
     WORKER
-        .set((name.clone(), path))
+        .set((name.clone(), path.clone()))
         .map_err(|_| Error::Conflict)?;
+    // Publish actual process identity before entering the dispatcher or doing any
+    // installation work. A crash/final-result write failure cannot erase this proof.
+    write_new(
+        &path.with_extension("worker.json"),
+        &json(&WorkerEvidence::process(std::process::id()))?,
+    )?;
     let mut name = wide(name);
     let table = [
         SERVICE_TABLE_ENTRYW {
@@ -965,12 +1006,7 @@ pub(super) fn dispatch(args: &[OsString]) -> Result<bool, Error> {
         .iter()
         .map(|s| s.to_str().map(str::to_owned).ok_or(Error::Configuration))
         .collect::<Result<Vec<_>, _>>()?;
-    write_new(&path, &json(&input)?)?;
     let name = format!("RssExecution-Install-{id}");
-    eprintln!(
-        "{}",
-        serde_json::json!({"operation":id,"state":"submitted"})
-    );
     let manager = manager()?;
     let image = wide(format!(
         "{} --installation-worker {} {}",
@@ -978,6 +1014,11 @@ pub(super) fn dispatch(args: &[OsString]) -> Result<bool, Error> {
         name,
         quote(&path)?
     ));
+    write_new(&path, &json(&input)?)?;
+    eprintln!(
+        "{}",
+        serde_json::json!({"operation":id,"state":"submitted"})
+    );
     let raw = unsafe {
         CreateServiceW(
             manager.0,
@@ -996,23 +1037,40 @@ pub(super) fn dispatch(args: &[OsString]) -> Result<bool, Error> {
         )
     };
     if raw.is_null() {
+        std::fs::remove_file(&path)?;
         return Err(Error::Unavailable);
     }
     let handle = Sc(raw);
     let result = (|| {
         if unsafe { StartServiceW(handle.0, 0, null()) } == 0 {
+            let error = unsafe { GetLastError() };
+            if let Some(evidence) = WorkerEvidence::not_started(error) {
+                // Exclusive publication prevents overwriting actual worker PID proof.
+                write_new(&path.with_extension("worker.json"), &json(&evidence)?)?;
+            }
+            eprintln!(
+                "{}",
+                serde_json::json!({"operation":id,"state":"outcome-unknown",
+                "native_exit_code":error,"query":"--installation operation-status --operation <UUID>"})
+            );
             return Err(Error::Unavailable);
         }
         let deadline = Instant::now() + Duration::from_secs(180);
         loop {
             let status = state(&handle)?;
-            if status.dwCurrentState == SERVICE_STOPPED
-                && read_result(&path)?.is_some_and(|r| r.terminal)
-            {
-                if status.dwWin32ExitCode != 0 {
+            if status.dwCurrentState == SERVICE_STOPPED {
+                if let Some(report) = read_result(&path)? {
+                    if report.terminal {
+                        return if status.dwWin32ExitCode == 0 {
+                            Ok(true)
+                        } else {
+                            Err(Error::Unavailable)
+                        };
+                    }
+                }
+                if reclaim_worker(&handle, &path)? {
                     return Err(Error::Unavailable);
                 }
-                return Ok(true);
             }
             if Instant::now() >= deadline {
                 eprintln!(
@@ -1025,18 +1083,18 @@ pub(super) fn dispatch(args: &[OsString]) -> Result<bool, Error> {
         }
     })();
     let report = read_result(&path)?;
-    if state(&handle)?.dwCurrentState == SERVICE_STOPPED
-        && report.as_ref().is_some_and(|r| r.terminal)
-    {
-        worker_exited(report.as_ref().ok_or(Error::Unavailable)?)?;
-        eprintln!(
-            "{}",
-            serde_json::json!({"operation":id,"worker":"stopped","result":report})
-        );
-        if unsafe { DeleteService(handle.0) } == 0 {
-            return Err(Error::Unavailable);
-        }
-        std::fs::remove_file(&path)?;
+    // The loop may already have reclaimed a crashed worker. A remaining request
+    // is reclaimed after confirmed native exit even without a terminal report.
+    let reclaimed = !path.exists() || reclaim_worker(&handle, &path)?;
+    eprintln!(
+        "{}",
+        serde_json::json!({"operation":id,
+        "worker":if reclaimed { "stopped" } else { "exit-unconfirmed" },
+        "resultState":report.as_ref().filter(|r| r.terminal).map(|r| r.state.as_str()).unwrap_or("outcome-unknown"),
+        "result":report})
+    );
+    if !reclaimed {
+        return Err(Error::Unavailable);
     }
     result
 }
