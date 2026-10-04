@@ -74,7 +74,11 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
     }
     pub(crate) fn identity_failure(&self, code: enroll::ErrorCode) -> Result<(), Error> {
         let mut state = self.identity_state()?;
-        state.failure = Some(code);
+        if !crate::identity::blocks_runtime(code) && state.pending.is_some() {
+            state.pending.as_mut().ok_or(Error::Storage)?.failure = Some(code);
+        } else {
+            state.failure = Some(code);
+        }
         self.store.put("identity", &state)
     }
     /// Read safe registration progress without driving HTTP or changing operations.
@@ -87,7 +91,8 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                 .filter(|a| self.clock.now().is_ok_and(|now| now >= a.not_after))
                 .map(|_| enroll::ErrorCode::CertificateExpired)
         });
-        let phase = match failure {
+        let operation_failure = state.pending.as_ref().and_then(|p| p.failure);
+        let phase = match operation_failure.or(failure) {
             Some(enroll::ErrorCode::IssuanceUnknown) => EnrollmentPhase::IssuanceUnknown,
             Some(enroll::ErrorCode::ActivationUnknown) => EnrollmentPhase::ActivationUnknown,
             Some(code) if code != enroll::ErrorCode::ServiceUnavailable => {
@@ -133,7 +138,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         Ok(EnrollmentStatus {
             phase,
             registered: state.active.is_some(),
-            failure,
+            failure: failure.or(operation_failure),
             grant_id: state
                 .pending
                 .as_ref()
@@ -192,9 +197,9 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             csr: None,
             grant: None,
             candidate: None,
+            failure: None,
             expected: state.active.as_ref().map(|a| a.receipt.runtime.clone()),
         });
-        state.failure = None;
         self.store.put("identity", &state)?;
         self.prepare_key()
     }
@@ -351,8 +356,8 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                 return Err(Error::Protocol);
             }
             p.grant = Some(grant);
+            p.failure = None;
             state.pending = Some(p.clone());
-            state.failure = None;
             self.store.put("identity", &state)?;
         }
         let grant = p.grant.clone().ok_or(Error::Identity)?;
@@ -388,8 +393,8 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         }
         match progress.grant.state {
             enroll::GrantState::Pending => {
+                p.failure = None;
                 state.pending = Some(p);
-                state.failure = None;
                 self.store.put("identity", &state)?;
                 return Ok(());
             }
@@ -438,8 +443,8 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                 self.clock.now()?,
             )?;
             p.candidate = Some(candidate);
+            p.failure = None;
             state.pending = Some(p.clone());
-            state.failure = None;
             self.store.put("identity", &state)?;
         }
         let candidate = p.candidate.as_ref().ok_or(Error::Storage)?;

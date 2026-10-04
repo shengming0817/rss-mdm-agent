@@ -13,7 +13,7 @@ async function refresh() {
   pending.value = true;
   try {
     view.value = await native.read();
-    if (view.value.phase === "connected" && native.registration) {
+    if (view.value.phase === "connected") {
       try {
         registration.value = await native.registration();
         registrationError.value = false;
@@ -28,7 +28,7 @@ async function refresh() {
   }
 }
 async function requestRegistration() {
-  if (!native?.requestRegistration || pending.value) return;
+  if (!native || pending.value) return;
   pending.value = true;
   try {
     registration.value = await native.requestRegistration();
@@ -104,9 +104,7 @@ onMounted(refresh);
     </div>
     <p v-if="registrationError">无法读取或发起注册，请检查桌面访问许可。</p>
     <button
-      v-if="
-        registration?.phase === 'unregistered' && native?.requestRegistration
-      "
+      v-if="registration?.phase === 'unregistered' && native"
       :disabled="pending"
       @click="requestRegistration"
     >

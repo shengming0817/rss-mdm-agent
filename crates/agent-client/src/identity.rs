@@ -65,6 +65,7 @@ pub(crate) struct Pending {
     pub profile: enroll::RuntimeProfile,
     pub grant: Option<enroll::GrantReceipt>,
     pub candidate: Option<enroll::Candidate>,
+    pub failure: Option<enroll::ErrorCode>,
     pub expected: Option<runtime::BindingProfile>,
 }
 pub(crate) fn blocks_runtime(code: enroll::ErrorCode) -> bool {

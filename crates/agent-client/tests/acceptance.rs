@@ -809,6 +809,21 @@ async fn manual_renewal_keeps_binding_tasks_reports_and_original_recovery_operat
         client.renew_certificate().await.unwrap_err(),
         Error::ActivationUnknown
     );
+    server.data.lock().unwrap().denied = true;
+    assert_eq!(
+        client.flush_reports(1).await.unwrap_err(),
+        Error::CredentialRevoked
+    );
+    let status = client.enrollment_status().unwrap();
+    assert_eq!(
+        status.failure,
+        Some(rss_mdm_agent_wire::enroll::ErrorCode::CredentialRevoked)
+    );
+    assert_eq!(
+        status.phase,
+        agent_client::EnrollmentPhase::ActivationUnknown
+    );
+    server.data.lock().unwrap().denied = false;
     let secrets = server.secrets.0.lock().unwrap().clone();
     let (candidate, operation) = {
         let data = server.data.lock().unwrap();
@@ -878,7 +893,7 @@ async fn readonly_identity_preflight_shares_runtime_rules_and_preserves_state() 
     assert_eq!(
         agent_client::validate_identity(&root.path, &wrong_issuer, &server.secrets, &server.time)
             .unwrap_err(),
-        Error::Identity
+        Error::Untrusted
     );
     server.time.set(4_070_908_800);
     assert_eq!(validate().unwrap_err(), Error::CertificateExpired);

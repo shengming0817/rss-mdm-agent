@@ -28,8 +28,8 @@ export function nativeHost() {
 
 export type ServicePort = {
   read(): Promise<ServiceView>;
-  registration?(): Promise<RegistrationStatus>;
-  requestRegistration?(): Promise<RegistrationStatus>;
+  registration(): Promise<RegistrationStatus>;
+  requestRegistration(): Promise<RegistrationStatus>;
 };
 export function nativeService(): ServicePort | undefined {
   if (!isTauri()) return undefined;

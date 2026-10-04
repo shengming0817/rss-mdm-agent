@@ -39,7 +39,9 @@ export function assertFixtureAssembly(input: {
     !input.environment.host?.read ||
     !input.environment.host.restart ||
     !input.environment.host.export ||
-    !input.environment.service?.read
+    !input.environment.service?.read ||
+    !input.environment.service.registration ||
+    !input.environment.service.requestRegistration
   )
     throw new Error("incomplete fixture assembly");
 }

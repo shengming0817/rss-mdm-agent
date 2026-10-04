@@ -22,6 +22,8 @@ const assistantCommands = [
 ];
 const settingsCommands = [
   "execution_service_status",
+  "agent_registration_status",
+  "agent_request_registration",
   "ai_host_status",
   "ai_restart_host",
   "ai_export_diagnostics",

@@ -105,7 +105,7 @@ impl Keychain {
                     ),
                     attribute(
                         kSecMatchSearchList,
-                        CFArray::from_CFTypes(&[self.0.clone()]).as_CFType(),
+                        CFArray::from_CFTypes(std::slice::from_ref(&self.0)).as_CFType(),
                     ),
                     attribute(kSecReturnRef, CFBoolean::true_value().as_CFType()),
                 ])

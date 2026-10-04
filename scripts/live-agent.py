@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import shutil
 import socket
+import ssl
 import subprocess
 import sys
 import time
@@ -92,6 +93,11 @@ def main():
             public = subprocess.check_output(['openssl', 'pkey', '-in', pem, '-pubout', '-outform', 'DER'])
             if len(public) != 44 or public[:12] != bytes.fromhex('302a300506032b6570032100'):
                 raise RuntimeError('Unexpected Ed25519 public key encoding')
+            private_key = keyfile.read_bytes()
+            if len(private_key) != 48 or private_key[:16] != bytes.fromhex('302e020100300506032b657004220420'):
+                raise RuntimeError('Unexpected Ed25519 PKCS8 encoding')
+            # RFC 5958 OneAsymmetricKey includes the public key required by ring 0.17.14.
+            keyfile.write_bytes(bytes.fromhex('3051020101300506032b657004220420') + private_key[16:] + bytes.fromhex('812100') + public[12:])
             encoded = base64.urlsafe_b64encode(public[12:]).decode().rstrip('=')
             config['task_signing'] = dict(private_key_file=str(keyfile), key_id='agent-live', trusted_keys={'agent-live': encoded})
             private(config_path, config)
@@ -118,6 +124,18 @@ def main():
                     if time.monotonic()>end: raise RuntimeError('Fixed backend readiness deadline')
                     time.sleep(.1)
                 with process([nginx, '-c', receipt['gateway'], '-g', 'daemon off;'], backend, root/'agent-live-gateway.log', child_env) as gateway:
+                    ready = time.monotonic()+15
+                    context = ssl.create_default_context(cafile=root/'ca.crt')
+                    while True:
+                        if gateway.poll() is not None:
+                            raise RuntimeError('Management gateway exited during readiness')
+                        try:
+                            with urllib.request.build_opener(urllib.request.ProxyHandler({}), urllib.request.HTTPSHandler(context=context)).open(receipt['origin']+'/readyz', timeout=1) as response:
+                                if response.status==200: break
+                        except (OSError, urllib.error.URLError):
+                            pass
+                        if time.monotonic()>ready: raise RuntimeError('Management gateway readiness deadline')
+                        time.sleep(.1)
                     env = dict(os.environ)
                     for key in ['_MDM_BUILD_LEASE', 'CARGO_TARGET_DIR']:
                         env.pop(key, None)

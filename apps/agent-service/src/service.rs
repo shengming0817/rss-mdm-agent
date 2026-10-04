@@ -225,10 +225,10 @@ impl<S: IdentityProvider> DeviceService<S> {
         if self.core.stopping {
             return Ok(());
         }
-        self.core.reconcile()?;
         if self.client.has_pending_enrollment()?
             && std::time::Instant::now() >= self.next_enrollment
         {
+            self.core.reconcile()?;
             self.next_enrollment = std::time::Instant::now() + std::time::Duration::from_secs(2);
             network(self.client.drive_enrollment(), &mut self.core, commands).await?;
             if self.client.enrollment_status()?.phase == agent_client::EnrollmentPhase::Active {

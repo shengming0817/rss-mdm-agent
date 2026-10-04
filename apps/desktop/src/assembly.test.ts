@@ -21,6 +21,20 @@ it("requires every fixture port and sends AI confirmation/cancellation to the ex
       }),
     ).toThrow("incomplete");
   }
+  for (const method of ["registration", "requestRegistration"] as const) {
+    expect(() =>
+      assertFixtureAssembly({
+        ...ports,
+        environment: {
+          ...ports.environment,
+          service: {
+            ...ports.environment.service,
+            [method]: undefined,
+          } as never,
+        },
+      }),
+    ).toThrow("incomplete");
+  }
   const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) });
   vi.stubGlobal("fetch", fetch);
   try {
