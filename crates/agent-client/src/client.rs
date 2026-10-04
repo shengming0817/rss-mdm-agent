@@ -165,14 +165,16 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                 .map(|v| (&v.key_reference, v.chain.as_slice())),
             &secrets,
         )?;
-        Ok(Self {
+        let mut client = Self {
             delivery_owner: Uuid::new_v4(),
             store,
             http,
             secrets,
             clock,
             profiles: Vec::new(),
-        })
+        };
+        client.prepare_pending_enrollment()?;
+        Ok(client)
     }
     pub(crate) fn now(&self) -> Result<i64, Error> {
         self.store.time(self.clock.now()?)

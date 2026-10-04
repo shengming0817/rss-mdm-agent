@@ -216,6 +216,19 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         }
         Ok(())
     }
+    /// Finish only local preparation for the original durable operation, before any consumer
+    /// requires its credentials. A frozen CSR always reopens its key; it cannot mint a replacement.
+    pub(crate) fn prepare_pending_enrollment(&mut self) -> Result<Option<Pending>, Error> {
+        if self.identity_state()?.pending.is_none() {
+            return Ok(None);
+        }
+        self.prepare_key()?;
+        let pending = self.identity_state()?.pending.ok_or(Error::Identity)?;
+        if pending.grant.is_none() && pending.purpose != Purpose::Import {
+            self.secrets.create_secret(&pending.secret_reference)?;
+        }
+        Ok(Some(pending))
+    }
     /// Start or resume a fixed machine-owned browser authorization request.
     pub async fn request_authorization(
         &mut self,
@@ -324,15 +337,10 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
     }
     /// Drive one retained registration operation. No retry creates a new operation or key.
     pub async fn drive_enrollment(&mut self) -> Result<(), Error> {
-        let mut state = self.identity_state()?;
-        let Some(mut p) = state.pending.clone() else {
+        let Some(mut p) = self.prepare_pending_enrollment()? else {
             return Ok(());
         };
-        self.prepare_key()?;
-        p.csr = self.identity_state()?.pending.ok_or(Error::Identity)?.csr;
-        if p.grant.is_none() && p.purpose != Purpose::Import {
-            self.secrets.create_secret(&p.secret_reference)?;
-        }
+        let mut state = self.identity_state()?;
         let bootstrap = crate::tls::client(&self.store.cfg, None, &self.secrets)?;
         if p.grant.is_none() {
             let request = enroll::GrantRequest {

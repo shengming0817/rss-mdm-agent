@@ -327,8 +327,139 @@ impl Handler for RegistrationOwner {
 mod tests {
     use super::*;
     use crate::protocol_test_support::{Root, Server};
-    use agent_client::OpenMode;
+    use agent_client::{IdentityProvider, OpenMode};
     use rss_mdm_agent_wire::runtime::Capability;
+    struct InterruptedSecret(crate::protocol_test_support::Secrets);
+    impl agent_client::IdentityProvider for InterruptedSecret {
+        fn resolve(&self, reference: &str) -> Result<rss_mdm_agent_wire::runtime::Secret, Error> {
+            self.0.resolve(reference)
+        }
+        fn import_secret(
+            &self,
+            reference: &str,
+            secret: &rss_mdm_agent_wire::runtime::Secret,
+        ) -> Result<(), Error> {
+            self.0.import_secret(reference, secret)
+        }
+        fn create_secret(&self, _: &str) -> Result<rss_mdm_agent_wire::runtime::Secret, Error> {
+            Err(Error::Storage)
+        }
+        fn create_key(&self, reference: &str) -> Result<Arc<dyn rustls::sign::SigningKey>, Error> {
+            self.0.create_key(reference)
+        }
+        fn key(&self, reference: &str) -> Result<Arc<dyn rustls::sign::SigningKey>, Error> {
+            self.0.key(reference)
+        }
+    }
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn startup_prepares_interrupted_renewal_before_registered_handoff() {
+        for missing_key in [false, true] {
+            let server = Server::tls().await;
+            let root = Root::new();
+            let mut client = server.client(&root, OpenMode::Create);
+            server.register(&mut client).await;
+            let binding = client.registration().unwrap();
+            drop(client);
+            let mut interrupted = Client::open(
+                &root.path,
+                server.config(),
+                OpenMode::Existing,
+                InterruptedSecret(server.secrets.clone()),
+                server.time.clone(),
+            )
+            .unwrap();
+            // Fail at the real protected-secret boundary after pending + key + CSR are durable.
+            assert_eq!(
+                interrupted.renew_certificate().await.unwrap_err(),
+                Error::Storage
+            );
+            let identity = || {
+                rusqlite::Connection::open(root.path.join("communication.sqlite"))
+                    .unwrap()
+                    .query_row("SELECT body FROM state WHERE key='identity'", [], |row| {
+                        row.get::<_, Vec<u8>>(0)
+                    })
+                    .unwrap()
+            };
+            let before = identity();
+            let state: serde_json::Value = serde_json::from_slice(&before).unwrap();
+            let pending = &state["pending"];
+            let key = pending["key_reference"].as_str().unwrap();
+            let secret = pending["secret_reference"].as_str().unwrap();
+            assert!(pending["csr"].is_string());
+            assert!(server.secrets.key(key).is_ok());
+            assert!(server.secrets.resolve(secret).is_err());
+            drop(interrupted);
+            if missing_key {
+                server.secrets.0.lock().unwrap().remove(key);
+                let secrets = server.secrets.0.lock().unwrap().clone();
+                assert!(matches!(
+                    Client::open(
+                        &root.path,
+                        server.config(),
+                        OpenMode::Existing,
+                        server.secrets.clone(),
+                        server.time.clone()
+                    ),
+                    Err(Error::Identity)
+                ));
+                assert_eq!(identity(), before);
+                assert_eq!(*server.secrets.0.lock().unwrap(), secrets);
+            } else {
+                let client = server.client(&root, OpenMode::Existing);
+                assert_eq!(identity(), before); // No operation, reference, profile or frozen CSR changes.
+                assert!(server.secrets.resolve(secret).is_ok());
+                let secrets = server.secrets.0.lock().unwrap().clone();
+                let shared = snapshot();
+                let published = shared.clone();
+                let (_sender, receiver) = mpsc::sync_channel(8);
+                let (completed, completion) = mpsc::channel();
+                let worker = std::thread::spawn(move || {
+                    let result = run(
+                        Some(client),
+                        capabilities(),
+                        published,
+                        receiver,
+                        Arc::new(AtomicBool::new(false)),
+                        || unreachable!(),
+                        |client| {
+                            client.output_policy()?; // The execution assembly's first pending-secret consumer.
+                            Ok(client)
+                        },
+                    );
+                    completed.send(result).unwrap();
+                });
+                let mut client = tokio::task::spawn_blocking(move || {
+                    completion.recv_timeout(std::time::Duration::from_secs(8))
+                })
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap()
+                .unwrap();
+                worker.join().unwrap();
+                assert_eq!(shared.lock().unwrap().readiness, Readiness::Ready);
+                assert!(shared.lock().unwrap().status.registered);
+                assert_eq!(client.registration().unwrap(), binding);
+                assert_eq!(server.data.lock().unwrap().certificate_calls.len(), 1);
+                assert_eq!(server.data.lock().unwrap().activation_calls.len(), 1);
+                client.drive_enrollment().await.unwrap();
+                assert_eq!(client.registration().unwrap(), binding);
+                assert_eq!(*server.secrets.0.lock().unwrap(), secrets);
+                let data = server.data.lock().unwrap();
+                assert_eq!(data.certificate_calls.len(), 2);
+                assert_eq!(
+                    data.certificate_calls[1]["operationId"],
+                    pending["certificate_operation"]
+                );
+                assert_eq!(data.certificate_calls[1]["csr"], pending["csr"]);
+                assert_eq!(
+                    data.activation_calls[1]["operationId"],
+                    pending["activation_operation"]
+                );
+            }
+        }
+    }
     fn snapshot() -> Arc<Mutex<Snapshot>> {
         Arc::new(Mutex::new(Snapshot {
             status: project(EnrollmentStatus {
