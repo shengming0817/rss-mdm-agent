@@ -12,6 +12,7 @@ export const steps = [
       "scripts/preparation.test.mjs",
     ],
   ],
+  ["frozen dependencies", "pnpm", ["install", "--frozen-lockfile"]],
   [
     "Agent API generated bindings",
     "node",
@@ -24,7 +25,6 @@ export const steps = [
     ["scripts/check-agent-dependencies.mjs"],
     ["agentDependencies"],
   ],
-  ["frozen dependencies", "pnpm", ["install", "--frozen-lockfile"]],
   ["workspace build inputs", "pnpm", ["-r", "build"]],
   [
     "native service/process generated contracts",

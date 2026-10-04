@@ -126,7 +126,7 @@ pub fn policy_tool(
     let input = |key: &str| {
         matches!(
             item.parameter_sources.get(key),
-            Some(ScriptParameterSource::Input {})
+            Some(ScriptParameterSource::Input)
         )
     };
     if let Some(properties) = object

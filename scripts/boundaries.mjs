@@ -242,7 +242,7 @@ export function checkSource(file, source) {
     if (file === "apps/desktop/src/assistant/clipboard.ts")
       globals.add("navigator");
     if (desktop)
-      for (const value of ["Object", "String", "Map", "Date", "Error"])
+      for (const value of ["Object", "Array", "String", "Map", "Date", "Error"])
         globals.add(value);
     if (
       [

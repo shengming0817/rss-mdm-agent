@@ -13,15 +13,12 @@ export type BackendTaskView =
       value: ExecutionTaskDetails;
     };
 /**
- * Public source of one Resource-declared parameter.
+ * `ScriptParameterSource`
  */
 export type ScriptParameterSource =
   | {
       kind: "fixed";
-      /**
-       * Administrator-selected scalar checked against the Resource schema.
-       */
-      value: string | boolean | number;
+      value: unknown;
     }
   | {
       kind: "input";
@@ -365,17 +362,8 @@ export interface BackendStepSummary {
  * Authenticated product employee, checked against the signed authorization.
  */
 export interface ScriptActor {
-  /**
-   * Identity instance.
-   */
   instanceId: string;
-  /**
-   * Authenticated principal.
-   */
   principalId: string;
-  /**
-   * Product tenant.
-   */
   tenantId: string;
 }
 /**
@@ -409,89 +397,36 @@ export interface PolicyChoice {
  * Formal backend directory DTO, including the Resource-owned schema.
  */
 export interface SelfServiceDirectoryItem {
-  /**
-   * Resource-owned JSON Schema for full resolved parameters.
-   */
-  parameterSchema: {
-    [k: string]: unknown;
-  };
-  /**
-   * Complete source map; Fixed values cannot be overridden.
-   */
+  parameterSchema: unknown;
   parameterSources: {
     [k: string]: ScriptParameterSource;
   };
-  /**
-   * Logical Policy identity.
-   */
   policyId: string;
-  /**
-   * Current configuration CAS revision.
-   */
   policyRevision: number;
-  /**
-   * Immutable execution version.
-   */
   policyVersion: string;
   resource: ScriptResource;
   selfService: SelfServiceMetadata;
 }
 /**
- * Exact selected Resource coordinates.
+ * `ScriptResource`
  */
 export interface ScriptResource {
-  /**
-   * Logical Resource identity.
-   */
   id: string;
-  /**
-   * Exact selected variant.
-   */
   variant: string;
-  /**
-   * Immutable Resource version.
-   */
   version: string;
 }
 /**
- * Normalized presentation and invocation settings.
+ * `SelfServiceMetadata`
  */
 export interface SelfServiceMetadata {
-  /**
-   * Effective administrator AI switch.
-   */
   allowAi: boolean;
-  /**
-   * Presentation category.
-   */
   category: string;
-  /**
-   * Intended purpose.
-   */
   description: string;
-  /**
-   * Directory display name.
-   */
   displayName: string;
-  /**
-   * Search terms.
-   */
   keywords: string[];
-  /**
-   * Preconditions shown before invocation.
-   */
   prerequisites: string;
-  /**
-   * Whether this script is published for self service.
-   */
   published: boolean;
-  /**
-   * Effective risk level, one or two.
-   */
-  riskLevel: 1 | 2;
-  /**
-   * Expected effects shown before invocation.
-   */
+  riskLevel: number;
   sideEffects: string;
 }
 /**

@@ -123,7 +123,7 @@ fn parameters(
     for (key, source) in &directory.parameter_sources {
         let value = match source {
             wire::ScriptParameterSource::Fixed(value) => value.clone(),
-            wire::ScriptParameterSource::Input {} => {
+            wire::ScriptParameterSource::Input => {
                 expected += 1;
                 inputs.get(key).ok_or(Error::Protocol)?.clone()
             }

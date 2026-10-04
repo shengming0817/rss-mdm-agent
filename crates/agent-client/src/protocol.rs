@@ -450,18 +450,18 @@ impl ChunkedTaskResultExt for ChunkedTaskResult {
 /// Client operations on the generated Capability value.
 pub trait CapabilityExt: Sized {
     /// is software for the current API value.
-    fn is_software(self) -> bool;
+    fn is_software(&self) -> bool;
     /// as str for the current API value.
-    fn as_str(self) -> &'static str;
+    fn as_str(&self) -> &'static str;
 }
 impl CapabilityExt for Capability {
-    fn is_software(self) -> bool {
+    fn is_software(&self) -> bool {
         !matches!(
             self,
             Self::InventoryCollectionV1 | Self::TaskExecuteV1 | Self::MdmEnrollmentV1
         )
     }
-    fn as_str(self) -> &'static str {
+    fn as_str(&self) -> &'static str {
         match self {
             Self::InventoryCollectionV1 => "inventory.collect.v1",
             Self::TaskExecuteV1 => "task.execute.v1",
