@@ -1,10 +1,7 @@
 //! Consumer verification uses mature X.509 signature and TLS path validation.
-use crate::{
-    pki_wire::{Mode, Trust},
-    store::hash,
-    Config, Error,
-};
+use crate::{store::hash, Config, Error};
 use base64::Engine;
+use rss_mdm_agent_wire::pki::{Mode, Purpose, Trust};
 use rustls::pki_types::{CertificateDer, CertificateRevocationListDer, UnixTime};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -209,7 +206,9 @@ impl VerifiedTrust {
         if now < 0 {
             return Err(Error::Clock);
         }
-        if document.version != 1
+        document.validate()?;
+        if document.purpose != Purpose::Agent
+            || document.version != 1
             || document.revision == 0
             || document.origin != cfg.origin.as_str().trim_end_matches('/')
             || document.tenant != cfg.tenant
@@ -319,7 +318,7 @@ impl VerifiedTrust {
     ) -> Result<(), Error> {
         if self.document.revision < previous.revision
             || (self.document.revision == previous.revision
-                && self.document.installation_digest()? != previous.installation_digest()?)
+                && self.document.installation_digest() != previous.installation_digest())
         {
             return Err(Error::Conflict);
         }

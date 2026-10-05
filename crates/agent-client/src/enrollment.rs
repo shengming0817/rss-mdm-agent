@@ -1,11 +1,10 @@
-use crate::protocol::*;
 use crate::{
     client::json_transport,
     identity::{Active, IdentityState, Pending, Purpose},
     store::{decode, encode},
     Client, Clock, Error, IdentityProvider,
 };
-use agent_api::{enroll, runtime};
+use rss_mdm_agent_wire::{enroll, runtime};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 /// Safe local registration progress; it is never device execution authority.
@@ -453,7 +452,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                     self.enrollment_json(
                         &bootstrap,
                         "renewal-grants/status",
-                        &crate::pki_wire::RenewalLookup {
+                        &rss_mdm_agent_wire::enroll::RenewalStatusRequest {
                             wire_version: 1,
                             operation_id: p.operation,
                             secret: self.secrets.resolve(&p.secret_reference)?,

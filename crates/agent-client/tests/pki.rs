@@ -24,8 +24,8 @@ async fn committed_renewal_is_recovered_over_anonymous_https_after_expiry_withou
     let report = client
         .queue_report(
             "inventory",
-            agent_api::runtime::ReportBody::Failed {
-                code: agent_api::runtime::FailureCode::CollectionFailed,
+            rss_mdm_agent_wire::runtime::ReportBody::Failed {
+                code: rss_mdm_agent_wire::runtime::FailureCode::CollectionFailed,
             },
             1,
         )
@@ -120,7 +120,8 @@ async fn ack_requires_native_readback_and_replays_the_original_operation_after_r
 #[tokio::test]
 async fn invalid_complete_trust_set_blocks_runtime_without_replacing_registration() {
     for fault in [
-        "purpose",
+        "windows-purpose",
+        "apple-purpose",
         "origin",
         "tenant",
         "mode",
@@ -138,7 +139,8 @@ async fn invalid_complete_trust_set_blocks_runtime_without_replacing_registratio
             use base64::Engine;
             let mut data = server.data.lock().unwrap();
             match fault {
-                "purpose" => data.trust["purpose"] = "windows".into(),
+                "windows-purpose" => data.trust["purpose"] = "windows".into(),
+                "apple-purpose" => data.trust["purpose"] = "apple".into(),
                 "origin" => data.trust["origin"] = "https://another.example.test".into(),
                 "tenant" => data.trust["tenant"] = uuid::Uuid::new_v4().to_string().into(),
                 "mode" => data.trust["issuers"][0]["mode"] = "retired".into(),
@@ -353,12 +355,14 @@ async fn administrator_recovery_rejects_foreign_registration_and_retains_origina
             .remove(original["key_reference"].as_str().unwrap());
         server.time.set(4_070_908_801);
         let operation = uuid::Uuid::new_v4();
-        let secret =
-            agent_client::Secret::parse("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA").unwrap();
-        let grant = agent_api::enroll::GrantReceipt {
+        let secret = rss_mdm_agent_wire::runtime::Secret::parse(
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        )
+        .unwrap();
+        let grant = rss_mdm_agent_wire::enroll::GrantReceipt {
             wire_version: 1,
             grant_id: uuid::Uuid::new_v4(),
-            state: agent_api::enroll::GrantState::Available,
+            state: rss_mdm_agent_wire::enroll::GrantState::Available,
             platform: server.config().platform,
             expires_at: 4_070_909_101,
         };

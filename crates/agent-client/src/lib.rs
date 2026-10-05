@@ -2,10 +2,8 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 pub mod protocol;
-#[cfg(test)]
-use protocol::*;
-mod software_validation;
-pub use agent_api::Secret;
+
+use rss_mdm_agent_wire::runtime::Secret;
 mod delivery;
 mod redaction;
 pub use delivery::{AbandonmentAck, Association, FrozenAbandonment, FrozenResult, ResultAck};
@@ -14,7 +12,7 @@ mod client;
 mod enrollment;
 mod identity;
 mod pki;
-mod pki_wire;
+
 mod self_service;
 mod tls;
 mod trust;
@@ -23,11 +21,11 @@ pub use tls::validate_public_ca;
 mod config;
 mod content;
 mod store;
-/// Generated values for the backend-owned HTTP API.
-use agent_api::runtime as wire;
 pub use client::*;
 pub use config::*;
 pub use content::{ContentFile, Materials};
+/// Generated values for the backend-owned HTTP API.
+use rss_mdm_agent_wire::runtime as wire;
 pub use store::{inspect_binding, validate_existing, validate_identity, validate_stored_identity};
 /// Closed errors, without secrets, response bodies or backend paths.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -100,11 +98,6 @@ impl From<std::io::Error> for Error {
         Self::Storage
     }
 }
-impl From<agent_api::DecodeError> for Error {
-    fn from(_: agent_api::DecodeError) -> Self {
-        Self::Protocol
-    }
-}
 
 #[cfg(test)]
 extern crate self as agent_client;
@@ -120,3 +113,9 @@ mod test_support;
 mod api_encoding;
 
 pub use pki::RuntimeGate;
+
+impl From<rss_mdm_agent_wire::runtime::WireError> for Error {
+    fn from(_: rss_mdm_agent_wire::runtime::WireError) -> Self {
+        Self::Protocol
+    }
+}

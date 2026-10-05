@@ -15,7 +15,6 @@ x509-parser = { version = "=0.18.1", features = ["verify"] }
 der.workspace = true
 spki.workspace = true
 base64 = "=0.23.1"
-agent-api.workspace = true
 rss-mdm-agent-wire.workspace = true
 execution-contract = { path = "../execution-contract" }
 platform-private-storage = { path = "../platform-private-storage" }
