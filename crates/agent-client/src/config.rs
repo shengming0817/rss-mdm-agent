@@ -71,10 +71,8 @@ pub struct Config {
     pub limits: Limits,
     /// Network mode.
     pub transport: Transport,
-    /// Optional additional deployment CA.
+    /// Protected HTTPS bootstrap anchor; required for HTTPS and independent of device trust.
     pub ca_pem: Option<Vec<u8>>,
-    /// Explicit direct issuer of Agent device certificates, separate from HTTPS trust.
-    pub device_ca_pem: Vec<u8>,
 }
 impl Config {
     /// Validate before storage or I/O.
@@ -92,8 +90,7 @@ impl Config {
         };
         if o.as_str().len() > 2048
             || !network
-            || self.device_ca_pem.is_empty()
-            || self.device_ca_pem.len() > 32768
+            || (self.transport == Transport::Https && self.ca_pem.is_none())
             || self.tenant.is_nil()
             || o.path() != "/"
             || !o.username().is_empty()
@@ -132,12 +129,15 @@ impl Config {
         {
             return Err(Error::Configuration);
         }
+        if let Some(pem) = &self.ca_pem {
+            crate::validate_public_ca(pem)?;
+        }
         Ok(())
     }
 }
 /// Platform-owned bootstrap secrets and non-exportable device signing keys.
 /// References are frozen by the communication owner before network operations.
-pub trait IdentityProvider {
+pub trait IdentityProvider: MachineTrust {
     /// Resolve an existing protected bootstrap secret.
     fn resolve(&self, reference: &str) -> Result<crate::Secret, Error>;
     /// Import an administrator-provided secret once, without overwriting an existing value.
@@ -151,6 +151,35 @@ pub trait IdentityProvider {
     ) -> Result<std::sync::Arc<dyn rustls::sign::SigningKey>, Error>;
     /// Open the exact existing key. Missing/denied must not create a replacement.
     fn key(&self, reference: &str) -> Result<std::sync::Arc<dyn rustls::sign::SigningKey>, Error>;
+}
+/// Precise machine certificate location; intermediates must never become standalone anchors.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum MachineStore {
+    /// Windows LocalMachine Root or macOS System Keychain with Admin root trust.
+    Root,
+    /// Windows LocalMachine CA or macOS System Keychain without standalone trust.
+    Intermediate,
+}
+/// Outcome of an add-only native operation; an existing certificate remains externally owned.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CertificateAdd {
+    /// This completed operation added the exact certificate.
+    Created,
+    /// Exact material was already present; ownership cannot be inferred.
+    Present,
+}
+/// Machine trust adapter. Durable ownership and installation intent belong to the client owner.
+pub trait MachineTrust {
+    /// Read exact physical material in the selected machine store, independently of trust readiness.
+    fn certificate_present(&self, store: MachineStore, der: &[u8]) -> Result<bool, Error>;
+    /// Independently read exact DER and the required machine trust settings.
+    fn read_certificate(&self, store: MachineStore, der: &[u8]) -> Result<bool, Error>;
+    /// Add exact DER without replacing pre-existing material or settings.
+    fn add_certificate(&self, store: MachineStore, der: &[u8]) -> Result<CertificateAdd, Error>;
+    /// Configure trust only after the caller persists ownership of this exact material.
+    fn configure_certificate(&self, store: MachineStore, der: &[u8]) -> Result<(), Error>;
+    /// Delete this exact DER; caller must first prove its durable ownership and retirement.
+    fn delete_certificate(&self, store: MachineStore, der: &[u8]) -> Result<(), Error>;
 }
 /// Independently reliable UTC.
 pub trait Clock {

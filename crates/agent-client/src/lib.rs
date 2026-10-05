@@ -13,8 +13,11 @@ pub use redaction::CredentialRedactor;
 mod client;
 mod enrollment;
 mod identity;
+mod pki;
+mod pki_wire;
 mod self_service;
 mod tls;
+mod trust;
 pub use enrollment::{EnrollmentPhase, EnrollmentStatus, GrantImport};
 pub use tls::validate_public_ca;
 mod config;
@@ -115,3 +118,5 @@ mod test_support;
 #[cfg(test)]
 #[path = "../tests/unit/api_encoding.rs"]
 mod api_encoding;
+
+pub use pki::RuntimeGate;

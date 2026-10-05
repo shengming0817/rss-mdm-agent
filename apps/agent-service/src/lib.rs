@@ -82,6 +82,68 @@ impl IdentityProvider for DeviceSecrets {
         self.0.signing_key(reference, false)
     }
 }
+fn machine_store(store: agent_client::MachineStore) -> platform_credentials::CertificateStore {
+    match store {
+        agent_client::MachineStore::Root => platform_credentials::CertificateStore::Root,
+        agent_client::MachineStore::Intermediate => {
+            platform_credentials::CertificateStore::Intermediate
+        }
+    }
+}
+impl agent_client::MachineTrust for DeviceSecrets {
+    fn certificate_present(
+        &self,
+        store: agent_client::MachineStore,
+        der: &[u8],
+    ) -> Result<bool, Error> {
+        platform_credentials::MachineCertificates
+            .contains(machine_store(store), der)
+            .map_err(|_| Error::Storage)
+    }
+    fn read_certificate(
+        &self,
+        store: agent_client::MachineStore,
+        der: &[u8],
+    ) -> Result<bool, Error> {
+        platform_credentials::MachineCertificates
+            .read(machine_store(store), der)
+            .map_err(|_| Error::Storage)
+    }
+    fn add_certificate(
+        &self,
+        store: agent_client::MachineStore,
+        der: &[u8],
+    ) -> Result<agent_client::CertificateAdd, Error> {
+        platform_credentials::MachineCertificates
+            .add(machine_store(store), der)
+            .map(|created| {
+                if created {
+                    agent_client::CertificateAdd::Created
+                } else {
+                    agent_client::CertificateAdd::Present
+                }
+            })
+            .map_err(|_| Error::Storage)
+    }
+    fn configure_certificate(
+        &self,
+        store: agent_client::MachineStore,
+        der: &[u8],
+    ) -> Result<(), Error> {
+        platform_credentials::MachineCertificates
+            .configure(machine_store(store), der)
+            .map_err(|_| Error::Storage)
+    }
+    fn delete_certificate(
+        &self,
+        store: agent_client::MachineStore,
+        der: &[u8],
+    ) -> Result<(), Error> {
+        platform_credentials::MachineCertificates
+            .delete(machine_store(store), der)
+            .map_err(|_| Error::Storage)
+    }
+}
 /// Actual UTC plus an in-process monotonic watermark; durable watermarks remain in existing SQLite.
 #[derive(Clone)]
 pub struct SystemClock(Arc<Mutex<(u64, Instant)>>);

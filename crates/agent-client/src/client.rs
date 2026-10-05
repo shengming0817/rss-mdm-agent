@@ -71,6 +71,8 @@ pub struct ResumedStart {
 pub struct Client<S, C> {
     pub(crate) store: Store,
     pub(crate) http: reqwest::Client,
+    pub(crate) bootstrap: reqwest::Client,
+    pub(crate) runtime_gate: crate::RuntimeGate,
     pub(crate) secrets: S,
     pub(crate) clock: C,
     profiles: Vec<wire::ExecutorProfile>,
@@ -158,37 +160,36 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
     ) -> Result<Self, Error> {
         config.validate()?;
         let store = Store::open(root, config, mode)?;
-        let state = store
-            .get::<crate::identity::IdentityState>("identity")?
-            .unwrap_or_default();
-        let http = crate::tls::client(
-            &store.cfg,
-            state
-                .active
-                .as_ref()
-                .map(|v| (&v.key_reference, v.chain.as_slice())),
-            &secrets,
-        )?;
+        let bootstrap = crate::tls::client(&store.cfg, None, &secrets)?;
+        let http = bootstrap.clone();
         let mut client = Self {
             delivery_owner: Uuid::new_v4(),
             store,
             http,
+            bootstrap,
+            runtime_gate: crate::RuntimeGate::default(),
             secrets,
             clock,
             profiles: Vec::new(),
         };
         client.prepare_pending_enrollment()?;
+        // Opening retained state must not depend on an expired or unavailable predecessor signer.
+        if client.active().is_ok() {
+            client.restore_runtime_transport()?;
+        }
+        client.publish_runtime_gate();
         Ok(client)
     }
     pub(crate) fn now(&self) -> Result<i64, Error> {
         self.store.time(self.clock.now()?)
     }
     pub(crate) fn active(&self) -> Result<(), Error> {
-        self.identity_state()?.validate_runtime(
-            &self.store.cfg,
-            &self.secrets,
-            self.clock.now()?,
-        )?;
+        let identity = self.identity_state()?;
+        identity.check_runtime_failure()?;
+        let now = self.now()?;
+        identity.active_identity(now)?;
+        let trust = self.verified_trust()?;
+        identity.validate_runtime(&self.store.cfg, &self.secrets, now, &trust)?;
         Ok(())
     }
 
@@ -255,6 +256,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         if !status.is_success() {
             self.runtime_error(&bytes)?;
         }
+        self.active()?;
         decode(&bytes)
     }
     /// The sole durable runtime binding, derived from the activation receipt.
@@ -775,15 +777,16 @@ pub(crate) async fn json_transport(
     let task = tokio::spawn(async move {
         let mut response = request.send().await.map_err(|_| Error::Unavailable)?;
         let status = response.status();
-        if !response
-            .headers()
-            .get("content-type")
-            .and_then(|v| v.to_str().ok())
-            .is_some_and(|v| {
-                v.split(';')
-                    .next()
-                    .is_some_and(|v| v.trim() == "application/json")
-            })
+        if status != StatusCode::NO_CONTENT
+            && !response
+                .headers()
+                .get("content-type")
+                .and_then(|v| v.to_str().ok())
+                .is_some_and(|v| {
+                    v.split(';')
+                        .next()
+                        .is_some_and(|v| v.trim() == "application/json")
+                })
         {
             return Err(Error::Protocol);
         }

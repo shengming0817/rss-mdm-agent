@@ -118,6 +118,7 @@ async fn signed_start_compiles_exactly_and_never_creates_a_local_enterprise_appr
         materials: execution_runner::MaterialRegistry::new(4).unwrap(),
         subject: execution_ipc::host::current_subject().unwrap(),
         current: Arc::new(Mutex::new(None)),
+        identity_until: client.runtime_gate(),
         revoked: Default::default(),
     };
     let attempt = AttemptId::new("local-attempt").unwrap();

@@ -1366,9 +1366,9 @@ def main():
         installer.chmod(0o600)
         system_installer_source = installer_source
         shutil.copyfile(lab / 'tls.pem', inputs / 'tls.pem')
-        deployment = dict(version=4, ipc_version=11, origin=info['origin'].rstrip('/'), tenant=info['tenant'],
+        deployment = dict(version=5, ipc_version=11, origin=info['origin'].rstrip('/'), tenant=info['tenant'],
                           signing_keys={'test': info['key']}, ca_file=str(protected / 'ca.pem'),
-                          installation_id=str(uuid.uuid4()), installation_artifact=hashlib.sha256(args.binary.read_bytes()).hexdigest(), device_ca_file=str(protected / 'device-ca.pem'),
+                          installation_id=str(uuid.uuid4()), installation_artifact=hashlib.sha256(args.binary.read_bytes()).hexdigest(),
                           state_root=str(protected / 'state'),
                           helper_work_roots={str(os.geteuid()): str(helper_root)},
                           execution=dict(work_root=str(protected / 'work'), material_root=str(protected / 'materials'),
@@ -1393,7 +1393,6 @@ config['registration_clients']=dict(images=[config['service']],subjects=[%r],int
 config['execution']['interpreters']=[dict(profile='posix_sh',image=artifact('/bin/sh'))]
 config['execution']['managers']=[dict(executor='package_installer',image=artifact('/usr/sbin/installer'))]
 (root/'ca.pem').write_bytes(%r); os.chmod(root/'ca.pem',0o644)
-(root/'device-ca.pem').write_bytes((root/'ca.pem').read_bytes()); os.chmod(root/'device-ca.pem',0o644)
 grant=json.loads(%r)
 envelope=dict(version=1,origin=config['origin'],tenant=config['tenant'],target='macos-arm64',installation_artifact=config['installation_artifact'],grant=grant)
 (root/'grant.json').write_text(json.dumps(envelope)); os.chmod(root/'grant.json',0o600)

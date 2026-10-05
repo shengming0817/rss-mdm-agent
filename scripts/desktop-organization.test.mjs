@@ -6,6 +6,7 @@ import {
   rmSync,
   mkdirSync,
   copyFileSync,
+  existsSync,
   readFileSync,
   statSync,
   symlinkSync,
@@ -83,7 +84,7 @@ test("desktop and Agent consume the same env CA without embedding paths or priva
     ],
     { stdio: "ignore" },
   );
-  const base = `RSS_AGENT_ORIGIN=https://agent.fixture.test\nRSS_AGENT_DEVICE_CA_FILE=${ca}\nRSS_MDM_ORIGIN=https://fixture.test\nRSS_MDM_TENANT_ID=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\nRSS_MDM_ORGANIZATION_LABEL=Fixture\n`;
+  const base = `RSS_AGENT_ORIGIN=https://agent.fixture.test\nRSS_MDM_ORIGIN=https://fixture.test\nRSS_MDM_TENANT_ID=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\nRSS_MDM_ORGANIZATION_LABEL=Fixture\n`;
   const configure = (path) =>
     writeFileSync(
       join(root, ".env"),
@@ -95,12 +96,11 @@ test("desktop and Agent consume the same env CA without embedding paths or priva
   });
   const desktop = JSON.parse(environment[organizationBuildInput]);
   const template = {
-    version: 4,
+    version: 5,
     ipc_version: IPC_VERSION,
     signing_keys: { key: "public" },
     state_root: "/state",
     ca_file: "/old",
-    device_ca_file: join(root, "device-ca.pem"),
   };
   const installedCa = join(root, "installed-ca.pem");
   const agent = agentOrganizationConfiguration(root, template, installedCa);
@@ -124,31 +124,31 @@ test("desktop and Agent consume the same env CA without embedding paths or priva
   configure(join(root, "missing.pem"));
   assert.throws(() => desktopBuildEnvironment(root), /public certificate/);
   configure("");
-  const defaults = agentOrganizationConfiguration(root, template);
-  assert.equal(defaults.ca, undefined);
-  assert.equal(defaults.config.ca_file, null);
+  assert.throws(
+    () => agentOrganizationConfiguration(root, template),
+    /RSS_AGENT_CA_FILE/,
+  );
 });
 
 test("Agent origin normalization matches desktop DNS root-dot rules", (t) => {
   const root = mkdtempSync(join(tmpdir(), "rss-origin-env-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const template = {
-    version: 4,
+    version: 5,
     ipc_version: IPC_VERSION,
-    device_ca_file: join(root, "device-ca.pem"),
   };
 
   const configure = (origin) =>
     writeFileSync(
       join(root, ".env"),
-      `RSS_AGENT_ORIGIN=${origin}\nRSS_AGENT_DEVICE_CA_FILE=${new URL("../tests/agent-protocol/pki/root-test-ca.pem", import.meta.url).pathname}\nRSS_MDM_ORIGIN=${origin}\nRSS_MDM_TENANT_ID=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\nRSS_MDM_ORGANIZATION_LABEL=Fixture\n`,
+      `RSS_AGENT_ORIGIN=${origin}\nRSS_AGENT_CA_FILE=${new URL("../tests/agent-protocol/pki/root-test-ca.pem", import.meta.url).pathname}\nRSS_MDM_ORIGIN=${origin}\nRSS_MDM_TENANT_ID=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\nRSS_MDM_ORGANIZATION_LABEL=Fixture\n`,
     );
   configure("https://fixture.test");
   assert.throws(
     () =>
       agentOrganizationConfiguration(
         root,
-        { version: 4, ipc_version: 6 },
+        { version: 5, ipc_version: 6 },
         join(root, "old-ca.pem"),
       ),
     /current deployment and IPC versions/,
@@ -166,7 +166,11 @@ test("Agent origin normalization matches desktop DNS root-dot rules", (t) => {
   }
   configure("https://MDM.fixture.test.:443/");
   assert.equal(
-    agentOrganizationConfiguration(root, template).config.origin,
+    agentOrganizationConfiguration(
+      root,
+      template,
+      join(root, "installed-ca.pem"),
+    ).config.origin,
     "https://mdm.fixture.test",
   );
 });
@@ -210,7 +214,7 @@ test("real Agent generator CLI preserves user-readable public inputs under restr
   );
   writeFileSync(
     join(root, ".env"),
-    `RSS_AGENT_ORIGIN=https://agent.fixture.test\nRSS_AGENT_CA_FILE=${cert}\nRSS_AGENT_DEVICE_CA_FILE=${cert}\nRSS_MDM_ORIGIN=https://fixture.test\nRSS_MDM_TENANT_ID=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\nRSS_MDM_ORGANIZATION_LABEL=Fixture\nRSS_MDM_CA_FILE=${cert}\n`,
+    `RSS_AGENT_ORIGIN=https://agent.fixture.test\nRSS_AGENT_CA_FILE=${cert}\nRSS_MDM_ORIGIN=https://fixture.test\nRSS_MDM_TENANT_ID=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\nRSS_MDM_ORGANIZATION_LABEL=Fixture\nRSS_MDM_CA_FILE=${cert}\n`,
   );
   const template = join(root, "template.json"),
     output = join(root, "execution.json"),
@@ -218,10 +222,9 @@ test("real Agent generator CLI preserves user-readable public inputs under restr
   writeFileSync(
     template,
     JSON.stringify({
-      version: 4,
+      version: 5,
       ipc_version: IPC_VERSION,
       state_root: "/state",
-      device_ca_file: join(root, "device-ca.pem"),
     }),
   );
   let entry = join(root, "scripts", "agent-organization.mjs");
@@ -240,27 +243,25 @@ test("real Agent generator CLI preserves user-readable public inputs under restr
     );
     writeFileSync(
       join(root, ".env"),
-      `RSS_AGENT_ORIGIN=https://agent.fixture.test\nRSS_AGENT_DEVICE_CA_FILE=${cert}\nRSS_MDM_ORIGIN=https://fixture.test\nRSS_MDM_TENANT_ID=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\nRSS_MDM_ORGANIZATION_LABEL=Fixture\n`,
+      `RSS_AGENT_ORIGIN=https://agent.fixture.test\nRSS_MDM_ORIGIN=https://fixture.test\nRSS_MDM_TENANT_ID=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\nRSS_MDM_ORGANIZATION_LABEL=Fixture\n`,
     );
-    const nextTemplate = JSON.parse(readFileSync(template, "utf8"));
-    nextTemplate.device_ca_file = join(root, "second-device-ca.pem");
-    writeFileSync(template, JSON.stringify(nextTemplate));
-    execFileSync(
-      process.execPath,
-      [entry, "--config", template, "--output", withoutCa],
-      { stdio: "ignore" },
+    assert.throws(() =>
+      execFileSync(
+        process.execPath,
+        [entry, "--config", template, "--output", withoutCa],
+        { stdio: "ignore" },
+      ),
     );
   } finally {
     if (previousUmask !== undefined) process.umask(previousUmask);
   }
   const config = JSON.parse(readFileSync(output, "utf8"));
   assert.equal(config.ca_file, ca);
-  assert.equal(JSON.parse(readFileSync(withoutCa, "utf8")).ca_file, null);
+  assert.equal(existsSync(withoutCa), false);
   assert.equal(config.state_root, "/state");
   assert.match(readFileSync(ca, "utf8"), /BEGIN CERTIFICATE/);
   if (process.platform !== "win32") {
     assert.equal(statSync(output).mode & 0o777, 0o644);
     assert.equal(statSync(ca).mode & 0o777, 0o644);
-    assert.equal(statSync(withoutCa).mode & 0o777, 0o644);
   }
 });

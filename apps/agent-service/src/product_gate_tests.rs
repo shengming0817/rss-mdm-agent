@@ -983,6 +983,7 @@ async fn renewal_and_revoked_restart_keep_the_existing_journal_authority() {
         records
     );
     let (_sender, mut commands) = tokio::sync::mpsc::channel(1);
+    select_pki_refresh(&case._root.path);
     assert_eq!(
         service.drive(&mut commands).await.unwrap_err(),
         Error::CredentialRevoked
@@ -1811,4 +1812,163 @@ async fn unaccepted_policy_expiry_is_durable_and_status_remains_read_only() {
         assert_eq!(value.failure, Some(BackendRequestFailure::Expired));
     }
     assert!(c._server.data.lock().unwrap().invocations.is_empty());
+}
+
+fn select_pki_refresh(root: &std::path::Path) {
+    let sql = rusqlite::Connection::open(root.join("communication.sqlite")).unwrap();
+    let body: Vec<u8> = sql
+        .query_row("SELECT body FROM state WHERE key='pki'", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    let mut pki: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    pki["refresh_at"] = 0.into();
+    pki["retry_at"] = 0.into();
+    sql.execute(
+        "UPDATE state SET body=?1 WHERE key='pki'",
+        [serde_json::to_vec(&pki).unwrap()],
+    )
+    .unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn fresh_revocation_and_crl_expiry_close_admission_while_pending_status_waits() {
+    for revocation in [true, false] {
+        let mut c = Case::new(Some(RiskLevel::Two)).await;
+        c.service.core.start_task(c.selection(false)).unwrap();
+        let original = c.record();
+        assert_eq!(original.state, BackendRequestState::AwaitingConfirmation);
+        let binding = c.service.client.registration().unwrap();
+        c._server.data.lock().unwrap().registration_failure = true;
+        assert_eq!(
+            c.service.client.renew_certificate().await.unwrap_err(),
+            Error::Unavailable
+        );
+        let pause = Arc::new(tokio::sync::Notify::new());
+        let now = c.service.core.host.clock.now().unwrap();
+        {
+            let crl = protocol::pki::crl(
+                2,
+                0,
+                if revocation {
+                    4_102_444_800
+                } else {
+                    (now + 2) as u64
+                },
+                if revocation { &[1] } else { &[] },
+            );
+            let mut data = c._server.data.lock().unwrap();
+            data.trust["revision"] = 2.into();
+            data.trust["issuers"][0]["crl"] = crl.clone().into();
+            data.trust["issuers"][0]["root_crl"] = crl.into();
+            data.status_pause = Some(pause.clone());
+        }
+        // Select the refresh deterministically through the existing SQLite seam; the server still
+        // supplies actual signed CRLs and the communication owner performs all production validation.
+        select_pki_refresh(&c._root.path);
+        let data = c._server.data.clone();
+        let (_sender, mut commands) = tokio::sync::mpsc::channel(1);
+        let mut observed = false;
+        let core = &mut c.service.core;
+        let result =
+            crate::service::network_loop(c.service.client.drive_pki(), &mut commands, |_| {
+                core.enforce_identity_gate()?;
+                core.reconcile()?;
+                if data.lock().unwrap().status_waiting && !core.host.identity_ready() {
+                    observed = true;
+                    assert!(core.host.revoked.load(Ordering::Acquire));
+                    let retained = core
+                        .app
+                        .backend_request(&core.caller(), original.action.request())
+                        .unwrap()
+                        .unwrap();
+                    assert_eq!(retained.state, BackendRequestState::Failed);
+                    assert_eq!(retained.failure, Some(BackendRequestFailure::Revoked));
+                    assert_eq!(retained.action, original.action);
+                    pause.notify_one();
+                }
+                Ok(false)
+            })
+            .await;
+        assert!(
+            observed,
+            "identity gate must close before the pending status returns"
+        );
+        assert!(result.is_err());
+        c.service.drive_error(result.unwrap_err());
+        assert!(c.service.waiting.is_none());
+        assert_eq!(c.service.client.registration().unwrap(), binding);
+        assert!(matches!(
+            c.service.core.start_task(c.selection(false)),
+            Err(Error::Denied)
+        ));
+        assert!(c._server.data.lock().unwrap().start_ops.is_empty());
+        assert_eq!(c.record().action, original.action);
+    }
+}
+
+#[tokio::test]
+async fn explicit_upgrade_failures_and_exact_resume_preserve_registration_and_journal() {
+    use crate::installation::{resume_matches, run_upgrade, UpgradeStep};
+    for fault in [
+        UpgradeStep::Stop,
+        UpgradeStep::Lease,
+        UpgradeStep::Publish,
+        UpgradeStep::Register,
+    ] {
+        let mut c = Case::new(Some(RiskLevel::Two)).await;
+        c.service.core.start_task(c.selection(false)).unwrap();
+        let binding = c.service.client.registration().unwrap();
+        let record = c.record();
+        let owner = c.service.core.host.binding.clone();
+        let config = c._root.path.join("upgrade-config.json");
+        let old = serde_json::json!({"version":4,"installation_id":"retained","installation_artifact":"old"});
+        let next = serde_json::json!({"version":5,"installation_id":"retained","installation_artifact":"new"});
+        std::fs::write(&config, serde_json::to_vec(&old).unwrap()).unwrap();
+        let mut registered = false;
+        assert_eq!(
+            run_upgrade(false, |step| {
+                if step == fault {
+                    return Err(Error::Unavailable);
+                }
+                if step == UpgradeStep::Publish {
+                    let staged = config.with_extension("staged");
+                    std::fs::write(&staged, serde_json::to_vec(&next).unwrap()).unwrap();
+                    std::fs::rename(staged, &config).unwrap();
+                }
+                if step == UpgradeStep::Register {
+                    registered = true;
+                }
+                Ok(())
+            })
+            .unwrap_err(),
+            Error::Unavailable
+        );
+        assert!(!registered);
+        let retained: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&config).unwrap()).unwrap();
+        if fault == UpgradeStep::Register {
+            assert_eq!(retained, next);
+            assert_eq!(
+                resume_matches("new", Path::new("/service"), "other", Path::new("/service"))
+                    .unwrap_err(),
+                Error::Conflict
+            );
+            resume_matches("new", Path::new("/service"), "new", Path::new("/service")).unwrap();
+            run_upgrade(true, |step| {
+                assert!(matches!(step, UpgradeStep::Register | UpgradeStep::Desktop));
+                if step == UpgradeStep::Register {
+                    registered = true;
+                }
+                Ok(())
+            })
+            .unwrap();
+            assert!(registered);
+        } else {
+            assert_eq!(retained, old);
+        }
+        assert_eq!(c.service.client.registration().unwrap(), binding);
+        assert_eq!(c.record(), record);
+        assert_eq!(c.service.core.host.binding, owner);
+    }
 }

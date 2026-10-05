@@ -26,6 +26,7 @@ impl Options {
                 "--candidate",
                 "--profile",
                 "--envelope",
+                "--grant",
                 "--secret-file",
                 "--operation",
             ]
@@ -179,6 +180,12 @@ pub(super) fn run(args: &[OsString]) -> Result<(), Error> {
                 &opts.path("--candidate-config")?,
             )?;
         }
+        "upgrade-device-pki" => {
+            if !opts.system()? {
+                return Err(Error::Identity);
+            }
+            upgrade_device_pki(&opts.config()?, &opts.path("--candidate")?)?;
+        }
         "apply" => {
             if !opts.system()? {
                 return Err(Error::Identity);
@@ -188,6 +195,32 @@ pub(super) fn run(args: &[OsString]) -> Result<(), Error> {
                 opts.values.get("--profile"),
                 &opts.config()?,
             )?;
+        }
+        "recover" => {
+            if !opts.system()? {
+                return Err(Error::Identity);
+            }
+            let config = opts.config()?;
+            let deployment = Deployment::load(&config)?;
+            let grant: GrantImport = serde_json::from_slice(
+                &installation_security::read_protected(&opts.path("--grant")?)
+                    .map_err(|_| Error::Configuration)?,
+            )
+            .map_err(|_| Error::Configuration)?;
+            grant.validate(deployment.network()?.platform, SystemClock::new()?.now()?)?;
+            let bytes =
+                zeroize::Zeroizing::new(platform::read_secret(&opts.path("--secret-file")?)?);
+            let secret = agent_client::Secret::parse(
+                std::str::from_utf8(&bytes)
+                    .map_err(|_| Error::Identity)?
+                    .trim(),
+            )?;
+            platform::stop(true, &deployment.service.path, &config)?;
+            let result =
+                crate::service::owner_runtime()?.block_on(deployment.recover(grant, &secret));
+            let restart = platform::register(true, &deployment.service.path, &config);
+            result?;
+            restart?;
         }
         "import" => {
             if !opts.system()? {
@@ -231,7 +264,6 @@ fn preserved(old: &Deployment, next: &Deployment) -> Result<(), Error> {
         || old.helper_work_roots != next.helper_work_roots
         || old.execution.work_root != next.execution.work_root
         || old.execution.material_root != next.execution.material_root
-        || old.device_ca_file != next.device_ca_file
         || old.ca_file != next.ca_file
     {
         return Err(Error::Identity);
@@ -380,12 +412,6 @@ fn apply(candidate_path: &Path, profile: Option<&PathBuf>, config: &Path) -> Res
     if let Some(old) = old {
         next.installation_id = old.installation_id;
         preserved(&old, &next)?;
-        if installation_security::read_protected(&old.device_ca_file)
-            .map_err(|_| Error::Identity)?
-            != candidate.device_ca_pem.as_bytes()
-        {
-            return Err(Error::Identity);
-        }
         if let Some(ca) = &old.ca_file {
             if installation_security::read_protected(ca).map_err(|_| Error::Identity)?
                 != candidate.ca_pem.as_ref().ok_or(Error::Identity)?.as_bytes()
@@ -404,7 +430,6 @@ fn apply(candidate_path: &Path, profile: Option<&PathBuf>, config: &Path) -> Res
         }
         // Existing trust files are never overwritten, including failed or retired installations.
         outcome::phase("publish-trust")?;
-        retain_public(&next.device_ca_file, candidate.device_ca_pem.as_bytes())?;
         if let Some(ca) = &next.ca_file {
             retain_public(
                 ca,
@@ -424,6 +449,207 @@ fn apply(candidate_path: &Path, profile: Option<&PathBuf>, config: &Path) -> Res
     outcome::phase("desktop-entry")?;
     platform::desktop_entry(&candidate)?;
     Ok(())
+}
+
+// Only this explicit owner operation reads the immediately preceding formats.
+fn prior_format(
+    mut value: serde_json::Value,
+    version: u64,
+    field: &str,
+    next: u64,
+) -> Result<serde_json::Value, Error> {
+    let object = value.as_object_mut().ok_or(Error::Configuration)?;
+    if object.get("version").and_then(|v| v.as_u64()) != Some(version)
+        || object
+            .remove(field)
+            .is_none_or(|v| v.as_str().is_none_or(str::is_empty))
+    {
+        return Err(Error::Configuration);
+    }
+    object.insert("version".into(), next.into());
+    Ok(value)
+}
+fn upgrade_device_pki(config: &Path, candidate_path: &Path) -> Result<(), Error> {
+    let (candidate, artifact) = Candidate::load(candidate_path)?;
+    candidate
+        .service
+        .verify(&std::env::current_exe()?)
+        .map_err(|_| Error::Identity)?;
+    let raw = installation_security::read_protected(config).map_err(|_| Error::Identity)?;
+    let value: serde_json::Value =
+        serde_json::from_slice(&raw).map_err(|_| Error::Configuration)?;
+    if value.get("version").and_then(|v| v.as_u64()) == Some(5) {
+        // Publication is atomic. A restart can only finish this same already-published candidate.
+        let current = Deployment::load(config)?;
+        resume_matches(
+            &current.installation_artifact,
+            &current.service.path,
+            &artifact,
+            &candidate.service.path,
+        )?;
+        run_upgrade(true, |step| match step {
+            UpgradeStep::Register => platform::register(true, &current.service.path, config),
+            UpgradeStep::Desktop => platform::desktop_entry(&candidate),
+            _ => Err(Error::Configuration),
+        })?;
+        return Ok(());
+    }
+    let old: Deployment = serde_json::from_value(prior_format(value, 4, "device_ca_file", 5)?)
+        .map_err(|_| Error::Configuration)?;
+    let manifests = config
+        .parent()
+        .ok_or(Error::Configuration)?
+        .join("install-manifests");
+    let legacy_bytes = installation_security::read_protected(
+        &manifests.join(format!("{}.json", old.installation_artifact)),
+    )
+    .map_err(|_| Error::Identity)?;
+    if hash(&legacy_bytes) != old.installation_artifact {
+        return Err(Error::Identity);
+    }
+    let legacy: Candidate = serde_json::from_value(prior_format(
+        serde_json::from_slice(&legacy_bytes).map_err(|_| Error::Configuration)?,
+        1,
+        "device_ca_pem",
+        2,
+    )?)
+    .map_err(|_| Error::Configuration)?;
+    legacy.validate()?;
+    if legacy.service.path != old.service.path
+        || legacy.origin != old.origin
+        || legacy.tenant != old.tenant
+    {
+        return Err(Error::Identity);
+    }
+    old.service
+        .verify(&old.service.path)
+        .map_err(|_| Error::Identity)?;
+    let profile = Profile {
+        subjects: old.clients.subjects.clone(),
+        helper_work_roots: old.helper_work_roots.clone(),
+    };
+    let mut next = candidate.deployment(artifact.clone(), profile, config)?;
+    next.installation_id = old.installation_id;
+    preserved(&old, &next)?;
+    let ca = old.ca_file.as_ref().ok_or(Error::Configuration)?;
+    if installation_security::read_protected(ca).map_err(|_| Error::Identity)?
+        != candidate
+            .ca_pem
+            .as_ref()
+            .ok_or(Error::Configuration)?
+            .as_bytes()
+    {
+        return Err(Error::Identity);
+    }
+    old.preflight()?; // Same communication schema and execution authority, without requiring the retired key.
+    let converted = json(&legacy)?;
+    let converted_digest = hash(&converted);
+    let bytes =
+        installation_security::read_protected(candidate_path).map_err(|_| Error::Identity)?;
+    if hash(&bytes) != artifact {
+        return Err(Error::Identity);
+    }
+    let mut lease = None;
+    run_upgrade(false, |step| match step {
+        UpgradeStep::Quiescent => platform::quiescent(&old, config),
+        UpgradeStep::Stop => platform::stop(true, &old.service.path, config),
+        UpgradeStep::Lease => {
+            lease = take_communication_lease(
+                &old.state_root.join("communication"),
+                old.initialized()?,
+            )?;
+            old.preflight()
+        }
+        UpgradeStep::Retain => {
+            retain_public(
+                &manifests.join(format!("{converted_digest}.json")),
+                &converted,
+            )?;
+            retain_public(&manifests.join(format!("{artifact}.json")), &bytes)
+        }
+        UpgradeStep::Remove => platform::remove(true, &old.service.path, config),
+        UpgradeStep::Publish => publish(config, &json(&next)?),
+        UpgradeStep::Release => {
+            lease.take();
+            Ok(())
+        }
+        UpgradeStep::Register => platform::register(true, &next.service.path, config),
+        UpgradeStep::Desktop => platform::desktop_entry(&candidate),
+    })
+}
+fn take_communication_lease(
+    root: &Path,
+    initialized: bool,
+) -> Result<Option<std::fs::File>, Error> {
+    if !initialized {
+        return Ok(None);
+    }
+    let file = platform_private_storage::open_existing(&root.join("client.lock"))?;
+    fs2::FileExt::try_lock_exclusive(&file).map_err(|_| Error::Conflict)?;
+    Ok(Some(file))
+}
+pub(crate) fn resume_matches(
+    current: &str,
+    service: &Path,
+    candidate: &str,
+    next: &Path,
+) -> Result<(), Error> {
+    if current == candidate && service == next {
+        Ok(())
+    } else {
+        Err(Error::Conflict)
+    }
+}
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum UpgradeStep {
+    Quiescent,
+    Stop,
+    Lease,
+    Retain,
+    Remove,
+    Publish,
+    Release,
+    Register,
+    Desktop,
+}
+impl UpgradeStep {
+    fn phase(self) -> &'static str {
+        match self {
+            Self::Quiescent => "upgrade-quiescence",
+            Self::Stop => "upgrade-stop-current",
+            Self::Lease => "upgrade-communication-lease",
+            Self::Retain => "upgrade-retain-candidate",
+            Self::Remove => "upgrade-remove-current",
+            Self::Publish => "upgrade-publish-configuration",
+            Self::Release => "upgrade-release-lease",
+            Self::Register => "upgrade-register-candidate",
+            Self::Desktop => "upgrade-desktop-entry",
+        }
+    }
+}
+// A failed upgrade never restarts an old owner against a new format. Exact retries finish publication.
+pub(crate) fn run_upgrade(
+    published: bool,
+    mut perform: impl FnMut(UpgradeStep) -> Result<(), Error>,
+) -> Result<(), Error> {
+    if !published {
+        for step in [
+            UpgradeStep::Quiescent,
+            UpgradeStep::Stop,
+            UpgradeStep::Lease,
+            UpgradeStep::Retain,
+            UpgradeStep::Remove,
+            UpgradeStep::Publish,
+            UpgradeStep::Release,
+        ] {
+            outcome::phase(step.phase())?;
+            perform(step)?;
+        }
+    }
+    outcome::phase(UpgradeStep::Register.phase())?;
+    perform(UpgradeStep::Register)?;
+    outcome::phase(UpgradeStep::Desktop.phase())?;
+    perform(UpgradeStep::Desktop)
 }
 
 fn installation_lock(config: &Path, system: bool) -> Result<std::fs::File, Error> {
@@ -448,6 +674,69 @@ fn installation_lock(config: &Path, system: bool) -> Result<std::fs::File, Error
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn upgrade_receipt_records_each_failed_step_and_published_retry() {
+        // Each installer operation owns one thread-local receipt, as the real worker does.
+        for published in [false, true] {
+            for (failed, expected) in [
+                (UpgradeStep::Register, "upgrade-register-candidate"),
+                (UpgradeStep::Desktop, "upgrade-desktop-entry"),
+            ] {
+                std::thread::spawn(move || {
+                    outcome::phase("locked-preflight").unwrap();
+                    let error = run_upgrade(published, |step| {
+                        assert_eq!(outcome::snapshot().phase, step.phase());
+                        if step == failed {
+                            Err(Error::Unavailable)
+                        } else {
+                            Ok(())
+                        }
+                    })
+                    .unwrap_err();
+                    outcome::failed(error);
+                    let report = outcome::snapshot();
+                    assert_eq!(report.phase, expected);
+                    assert_eq!(report.failure_phase.as_deref(), Some(expected));
+                })
+                .join()
+                .unwrap();
+            }
+        }
+    }
+    #[test]
+    fn owner_upgrade_accepts_only_immediate_previous_shape_and_preserves_identity_fields() {
+        let original = serde_json::json!({"version":4,"device_ca_file":"/protected/old-ca.pem","installation_id":"retained","state_root":"/retained/state","tenant":"retained-tenant"});
+        let converted = prior_format(original.clone(), 4, "device_ca_file", 5).unwrap();
+        assert_eq!(converted["version"], 5);
+        assert_eq!(converted["installation_id"], original["installation_id"]);
+        assert_eq!(converted["state_root"], original["state_root"]);
+        assert!(prior_format(converted, 4, "device_ca_file", 5).is_err());
+        let mut older = original.clone();
+        older["version"] = 3.into();
+        assert!(prior_format(older, 4, "device_ca_file", 5).is_err());
+        let mut incomplete = original;
+        incomplete.as_object_mut().unwrap().remove("device_ca_file");
+        assert!(prior_format(incomplete, 4, "device_ca_file", 5).is_err());
+    }
+    #[test]
+    fn upgrade_uninitialized_lease_does_not_create_state_but_partial_state_is_rejected() {
+        let root = crate::protocol_test_support::Root::new();
+        let absent = root.path.join("absent");
+        assert!(take_communication_lease(&absent, false).unwrap().is_none());
+        assert!(!absent.exists());
+        assert!(take_communication_lease(&root.path, true).is_err());
+        assert_eq!(std::fs::read_dir(&root.path).unwrap().count(), 0);
+        let file = platform_private_storage::create_new(&root.path.join("client.lock")).unwrap();
+        fs2::FileExt::try_lock_exclusive(&file).unwrap();
+        assert!(matches!(
+            take_communication_lease(&root.path, true),
+            Err(Error::Conflict)
+        ));
+        drop(file);
+        assert!(take_communication_lease(&root.path, true)
+            .unwrap()
+            .is_some());
+    }
     #[test]
     fn uncertain_native_activity_blocks_publication_and_rollback() {
         let mut events = vec![];

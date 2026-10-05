@@ -11,10 +11,10 @@ ring = "=0.17.14"
 zeroize.workspace = true
 rustls.workspace = true
 x509-cert.workspace = true
+x509-parser = { version = "=0.18.1", features = ["verify"] }
 der.workspace = true
 spki.workspace = true
 base64 = "=0.23.1"
-rustls-platform-verifier = "=0.7.1"
 agent-api.workspace = true
 execution-contract = { path = "../execution-contract" }
 platform-private-storage = { path = "../platform-private-storage" }

@@ -55,12 +55,7 @@ export function agentOrganizationConfiguration(root, template, caOutput) {
       );
     }
   };
-  const ca = publicCa("RSS_AGENT_CA_FILE");
-  const deviceCa = publicCa("RSS_AGENT_DEVICE_CA_FILE", true);
-  if (!template.device_ca_file || !isAbsolute(template.device_ca_file))
-    throw new Error(
-      "Template must provide an absolute installed device_ca_file",
-    );
+  const ca = publicCa("RSS_AGENT_CA_FILE", true);
   const hostname = origin.hostname.replace(/\.+$/u, "");
   if (!hostname) throw new Error("Configure a real HTTPS RSS_AGENT_ORIGIN");
   if (!hostname.startsWith("[")) origin.hostname = hostname;
@@ -93,7 +88,6 @@ export function agentOrganizationConfiguration(root, template, caOutput) {
       ca_file: ca ? caOutput : null,
     },
     ca,
-    deviceCa,
   };
 }
 
@@ -122,25 +116,20 @@ if (
     throw new Error("--config and --output are required");
   const root = fileURLToPath(new URL("../", import.meta.url));
   const template = JSON.parse(readFileSync(options["--config"], "utf8"));
-  const { config, ca, deviceCa } = agentOrganizationConfiguration(
+  const { config, ca } = agentOrganizationConfiguration(
     root,
     template,
     options["--ca-output"],
   );
   if (
     existsSync(options["--output"]) ||
-    existsSync(config.device_ca_file) ||
     (ca && existsSync(options["--ca-output"]))
   )
     throw new Error(
       "Output files must be new; do not overwrite an existing installation",
     );
   let createdCa = false;
-  let createdDeviceCa = false;
   try {
-    writeFileSync(config.device_ca_file, deviceCa, { flag: "wx", mode: 0o644 });
-    createdDeviceCa = true;
-    chmodSync(config.device_ca_file, 0o644);
     if (ca) {
       writeFileSync(options["--ca-output"], ca, { flag: "wx", mode: 0o644 });
       createdCa = true;
@@ -152,7 +141,6 @@ if (
     });
     chmodSync(options["--output"], 0o644);
   } catch (error) {
-    if (createdDeviceCa) unlinkSync(config.device_ca_file);
     if (createdCa) unlinkSync(options["--ca-output"]);
     throw error;
   }

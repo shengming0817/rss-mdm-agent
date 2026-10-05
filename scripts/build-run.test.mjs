@@ -85,6 +85,60 @@ async function holder(f, cwd) {
 }
 
 test(
+  "runner supplies descriptors to real children without raising a hard limit",
+  onlyMac,
+  () => {
+    const f = fixture();
+    try {
+      const work = f.worktree("descriptors");
+      const run = (soft, hard, code) => {
+        const arguments_ = [
+          "python3",
+          runner,
+          "--",
+          process.execPath,
+          "-e",
+          code,
+        ];
+        return spawnSync(
+          "python3",
+          [
+            "-c",
+            `import os,resource; current=resource.getrlimit(resource.RLIMIT_NOFILE); resource.setrlimit(resource.RLIMIT_NOFILE,(${soft},${hard ?? "current[1]"})); os.execvp('python3',${JSON.stringify(arguments_)})`,
+          ],
+          {
+            cwd: work,
+            env: f.env,
+            encoding: "utf8",
+            timeout: 10000,
+          },
+        );
+      };
+      const constrained = run(256, 1024, "throw Error('must not launch')");
+      assert.equal(constrained.status, 2, constrained.stderr);
+      assert.match(
+        constrained.stderr,
+        /requires at least 2048 file descriptors; hard limit is 1024/,
+      );
+      assert.equal(
+        existsSync(f.pool),
+        false,
+        "descriptor failure precedes pool allocation",
+      );
+      const opened = run(
+        256,
+        null,
+        "const fs=require('fs'); const fds=Array.from({length:300},()=>fs.openSync('/dev/null','r')); console.log(fds.length); for(const fd of fds)fs.closeSync(fd)",
+      );
+      assert.equal(opened.status, 0, opened.stderr);
+      assert.equal(opened.stdout.trim(), "300");
+    } finally {
+      f.close();
+    }
+  },
+);
+
+test(
   "sticky worktree reuses a slot; reassignment wipes old Rust artifacts",
   onlyMac,
   () => {

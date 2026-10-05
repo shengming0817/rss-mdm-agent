@@ -173,7 +173,8 @@ impl<S: IdentityProvider> DeviceService<S> {
             materials,
             subject: execution_ipc::host::current_subject().map_err(crate::error::app_error)?,
             current: Arc::new(Mutex::new(None)),
-            revoked: Arc::new(AtomicBool::new(false)),
+            identity_until: client.runtime_gate(),
+            revoked: Arc::new(AtomicBool::new(client.runtime_readiness().is_err())),
         };
         let app = assemble_journal(
             journal,
@@ -229,26 +230,24 @@ impl<S: IdentityProvider> DeviceService<S> {
         while let Ok(command) = commands.try_recv() {
             self.core.handle(command);
         }
-        self.prune_credentials()?;
-        self.drive_policy(commands).await?;
+        self.update_identity_gate();
         if self.core.stopping {
             return Ok(());
         }
-        if self.client.has_pending_enrollment()?
-            && std::time::Instant::now() >= self.next_enrollment
-        {
+        if std::time::Instant::now() >= self.next_enrollment {
             self.core.reconcile()?;
             self.next_enrollment = std::time::Instant::now() + std::time::Duration::from_secs(2);
-            network(self.client.drive_enrollment(), &mut self.core, commands).await?;
-            if self.client.enrollment_status()?.phase == agent_client::EnrollmentPhase::Active {
-                self.core.host.revoked.store(false, Ordering::Release);
-            }
+            let result = network(self.client.drive_pki(), &mut self.core, commands).await;
+            self.update_identity_gate();
+            result?;
         }
-        if self.core.host.revoked.load(Ordering::Acquire) {
+        if !self.core.host.identity_ready() {
             self.core.revoke_preparations()?;
             self.core.reconcile()?;
             return Ok(());
         }
+        self.prune_credentials()?;
+        self.drive_policy(commands).await?;
         if let Some((offer, _)) = &self.waiting {
             let request = backend::request_id(offer)?;
             if self
@@ -566,21 +565,32 @@ impl<S: IdentityProvider> DeviceService<S> {
             completion,
         })
     }
-    fn drive_error(&mut self, error: Error) {
-        eprintln!("agent_drive: {error}");
-        if matches!(
-            error,
-            Error::CredentialRevoked | Error::CredentialRetired | Error::CertificateExpired
-        ) {
-            self.core.host.revoked.store(true, Ordering::Release);
-            if let Err(error) = self.core.revoke_preparations() {
-                eprintln!("agent_revoke_preparation: {error}");
+    fn update_identity_gate(&mut self) {
+        match self.client.runtime_deadline().and_then(|until| {
+            if self.core.host.identity_until.expires_at() == Some(until) {
+                Ok(until)
+            } else {
+                Err(Error::Identity)
             }
-            self.release_waiting();
-            if let Err(error) = self.core.app.stop_active(128) {
-                eprintln!("agent_revoke_stop: {error}");
+        }) {
+            Ok(_) => {
+                self.core.host.revoked.store(false, Ordering::Release);
+            }
+            Err(_) => {
+                self.core.host.revoked.store(true, Ordering::Release);
+                if let Err(error) = self.core.revoke_preparations() {
+                    eprintln!("agent_revoke_preparation: {error}");
+                }
+                self.release_waiting();
+                if let Err(error) = self.core.app.stop_active(128) {
+                    eprintln!("agent_revoke_stop: {error}");
+                }
             }
         }
+    }
+    fn drive_error(&mut self, error: Error) {
+        eprintln!("agent_drive: {error}");
+        self.update_identity_gate();
     }
     /// Stop accepted work. Stopping never claims process termination or effect rollback.
     pub fn stop(&mut self) -> Result<(), Error> {
@@ -618,6 +628,15 @@ pub(crate) struct Core {
     policy_commands: policy::Commands,
 }
 impl Core {
+    fn enforce_identity_gate(&mut self) -> Result<(), Error> {
+        if !self.host.identity_ready() {
+            self.host.revoked.store(true, Ordering::Release);
+            self.revoke_preparations()?;
+            self.app.stop_active(128).map_err(map_app_error)?;
+        }
+        Ok(())
+    }
+
     fn reconcile(&mut self) -> Result<(), Error> {
         // Each network tick advances one request. Historical pages must not monopolize
         // the single owner while an HTTP deadline or revocation command is pending.
@@ -718,7 +737,7 @@ impl Core {
     }
     fn start_task(&mut self, selection: Selection) -> Result<execution_ipc::host::Reply, Error> {
         use execution_ipc::host::Reply;
-        if self.host.revoked.load(Ordering::Acquire) {
+        if !self.host.identity_ready() {
             return Err(Error::Denied);
         }
         if let Some(previous) = self
@@ -825,7 +844,7 @@ impl Core {
     }
     fn confirm_task(&mut self, selection: Selection) -> Result<execution_ipc::host::Reply, Error> {
         use execution_ipc::host::Reply;
-        if self.host.revoked.load(Ordering::Acquire) {
+        if !self.host.identity_ready() {
             return Err(Error::Denied);
         }
         let previous = self
@@ -926,6 +945,9 @@ impl Core {
         })
     }
     fn handle(&mut self, command: Command) {
+        if let Err(error) = self.enforce_identity_gate() {
+            eprintln!("agent_identity_gate: {error}");
+        }
         use execution_ipc::host::{Reply, Request};
         if matches!(
             command.request.as_operation(),
@@ -955,7 +977,7 @@ impl Core {
                     | Request::PolicyStatus { .. },
                 ) => Err(Error::Denied),
                 Some(Request::ServiceStatus {}) => {
-                    let readiness = if self.host.revoked.load(Ordering::Acquire) {
+                    let readiness = if !self.host.identity_ready() {
                         execution_ipc::host::Readiness::NotReady
                     } else {
                         execution_ipc::host::Readiness::Ready
@@ -1194,6 +1216,7 @@ pub(crate) async fn network<T>(
     commands: &mut tokio::sync::mpsc::Receiver<Command>,
 ) -> Result<T, Error> {
     network_loop(future, commands, |event| {
+        core.enforce_identity_gate()?;
         match event {
             NetworkEvent::Reconcile => core.reconcile()?,
             NetworkEvent::Command(command) => core.handle(*command),

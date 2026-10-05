@@ -26,6 +26,8 @@ Windows 操作入口保留供目标环境按需使用；未运行的编译、测
 `develop`、detached HEAD、`make ci-full` 或 `CI_FULL=1` 执行全量；Cargo/npm manifest、lock、工具链、
 CI 脚本与共享配置、rename/copy、未知路径或无法归属到当前 owner 的删除、缺失基线或分析异常均保守全量。
 必须使用 package.json 指定的 Node 与 pnpm 版本。基线不可用时保守选择全量，已提交状态不作为通过条件。
+macOS 构建 runner 为本次进程及子进程提供至少 2048 个文件描述符，满足并发 HTTP/TLS、SQLite 与原生测试需求；
+不修改宿主 hard limit，hard limit 不足时在启动检查前明确失败。
 
 `scripts/ci-impact.mjs` 显式维护 Cargo/pnpm 图外的生成契约、执行绑定、桌面绑定与 runtime
 装配边，以及 `tests/` 下公共测试目录的 owner。生成文件变化与源码变化都沿这些关系传播；

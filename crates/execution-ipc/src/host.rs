@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 /// Current desktop/system IPC. No negotiation or legacy parser exists.
 pub const IPC_VERSION: u8 = 11;
 /// Current protected installation document format.
-pub const DEPLOYMENT_VERSION: u32 = 4;
+pub const DEPLOYMENT_VERSION: u32 = 5;
 
 /// Safe readiness facts; connecting never grants execution authority.
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema, PartialEq, Eq)]
