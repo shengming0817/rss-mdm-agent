@@ -13,50 +13,18 @@ export type BackendTaskView =
       value: ExecutionTaskDetails;
     };
 /**
- * `SelfServiceTask`
- */
-export type SelfServiceTask =
-  | {
-      kind: "script";
-      parameterSchema: unknown;
-      parameterSources: {
-        [k: string]: ScriptParameterSource;
-      };
-      resource: TaskResource;
-      runAs: ExecutionIdentity;
-    }
-  | {
-      kind: "software";
-      resource: TaskResource;
-      runAs: ExecutionIdentity;
-      target: SoftwareExecutionTarget;
-    };
-/**
- * `ScriptParameterSource`
+ * Public source of one Resource-declared parameter.
  */
 export type ScriptParameterSource =
   | {
       kind: "fixed";
-      value: unknown;
+      /**
+       * Administrator-selected scalar checked against the Resource schema.
+       */
+      value: string | boolean | number;
     }
   | {
       kind: "input";
-    };
-/**
- * `ExecutionIdentity`
- */
-export type ExecutionIdentity = "system" | "logged_in_user";
-/**
- * `SoftwareExecutionTarget`
- */
-export type SoftwareExecutionTarget =
-  | {
-      kind: "device";
-    }
-  | {
-      identity: string;
-      kind: "user";
-      sessionId: string;
     };
 /**
  * Opaque local reference identifier; syntax validity is not authenticity.
@@ -438,32 +406,143 @@ export interface NativeContextRef {
  * Formal backend directory DTO, including the Resource-owned schema.
  */
 export interface SelfServiceDirectoryItem {
+  /**
+   * Logical Policy identity.
+   */
   policyId: string;
+  /**
+   * Current configuration CAS revision.
+   */
   policyRevision: number;
+  /**
+   * Immutable execution version.
+   */
   policyVersion: string;
   selfService: SelfServiceMetadata;
-  task: SelfServiceTask;
+  /**
+   * Closed task kind and the exact invocation interface.
+   */
+  task:
+    | {
+        kind: "script";
+        /**
+         * Full resolved parameter constraints owned by Resource.
+         */
+        parameterSchema: {
+          [k: string]: unknown;
+        };
+        /**
+         * Complete sources for script parameters.
+         */
+        parameterSources: {
+          [k: string]: ScriptParameterSource;
+        };
+        resource: TaskResource;
+        /**
+         * Required operating-system identity.
+         */
+        runAs: "system" | "logged_in_user";
+      }
+    | {
+        kind: "software";
+        resource: TaskResource1;
+        /**
+         * Required operating-system identity of the root operation.
+         */
+        runAs: "system" | "logged_in_user";
+        /**
+         * Exact effect target, distinct from enterprise login.
+         */
+        target:
+          | {
+              kind: "device";
+            }
+          | {
+              /**
+               * Exact SID/UID.
+               */
+              identity: string;
+              kind: "user";
+              /**
+               * Exact login generation.
+               */
+              sessionId: string;
+            };
+      };
 }
 /**
- * `SelfServiceMetadata`
+ * Normalized presentation and invocation settings.
  */
 export interface SelfServiceMetadata {
+  /**
+   * Effective administrator AI switch.
+   */
   allowAi: boolean;
+  /**
+   * Presentation category.
+   */
   category: string;
+  /**
+   * Intended purpose.
+   */
   description: string;
+  /**
+   * Directory display name.
+   */
   displayName: string;
+  /**
+   * Search terms.
+   */
   keywords: string[];
+  /**
+   * Preconditions shown before invocation.
+   */
   prerequisites: string;
+  /**
+   * Whether this script is published for self service.
+   */
   published: boolean;
-  riskLevel: number;
+  /**
+   * Effective risk level, one or two.
+   */
+  riskLevel: 1 | 2;
+  /**
+   * Expected effects shown before invocation.
+   */
   sideEffects: string;
 }
 /**
- * `TaskResource`
+ * Exact Resource selection.
  */
 export interface TaskResource {
+  /**
+   * Logical Resource identity.
+   */
   id: string;
+  /**
+   * Exact selected variant.
+   */
   variant: string;
+  /**
+   * Immutable Resource version.
+   */
+  version: string;
+}
+/**
+ * Exact Resource selection.
+ */
+export interface TaskResource1 {
+  /**
+   * Logical Resource identity.
+   */
+  id: string;
+  /**
+   * Exact selected variant.
+   */
+  variant: string;
+  /**
+   * Immutable Resource version.
+   */
   version: string;
 }
 /**
@@ -522,11 +601,20 @@ export interface BackendTask1 {
   userInitiated: boolean;
 }
 /**
- * `SelfServiceUser`
+ * Authenticated product user; contains no session credential.
  */
 export interface SelfServiceUser {
+  /**
+   * Identity instance.
+   */
   instanceId: string;
+  /**
+   * Authenticated principal.
+   */
   principalId: string;
+  /**
+   * Product tenant.
+   */
   tenantId: string;
 }
 /**
