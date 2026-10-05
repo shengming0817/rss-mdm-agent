@@ -1,9 +1,7 @@
 {
   "identifier": "main",
   "description": "Local main window: controlled execution service and private AI transport.",
-  "windows": [
-    "main"
-  ],
+  "windows": ["main"],
   "permissions": [
     "allow-self-service-policy-directory",
     "allow-self-service-policy-invoke",
@@ -28,7 +26,7 @@
     "allow-execution-service-status",
     "allow-agent-registration-status",
     "allow-agent-request-registration",
-    "allow-select-guest",
+    "allow-select-device",
     "allow-account-logout",
     "allow-account-status",
     "allow-account-organizations",

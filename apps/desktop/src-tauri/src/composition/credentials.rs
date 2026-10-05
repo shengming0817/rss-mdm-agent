@@ -301,6 +301,93 @@ pub async fn enter_enterprise_password<R: tauri::Runtime>(
     receiver.await.map_err(|_| unavailable())?
 }
 
+#[cfg(windows)]
+fn key_path() -> std::io::Result<std::path::PathBuf> {
+    use windows_sys::Win32::{
+        System::Com::CoTaskMemFree,
+        UI::Shell::{FOLDERID_LocalAppData, SHGetKnownFolderPath},
+    };
+    unsafe {
+        let mut raw = std::ptr::null_mut();
+        if SHGetKnownFolderPath(&FOLDERID_LocalAppData, 0, std::ptr::null_mut(), &mut raw) < 0 {
+            return Err(std::io::Error::other("local app data"));
+        }
+        let mut length = 0;
+        while length < 32768 && *raw.add(length) != 0 {
+            length += 1;
+        }
+        let value = if length == 32768 {
+            Err(std::io::Error::other("local app data length"))
+        } else {
+            String::from_utf16(std::slice::from_raw_parts(raw, length))
+                .map_err(std::io::Error::other)
+        };
+        CoTaskMemFree(raw.cast());
+        let root = std::path::PathBuf::from(value?)
+            .join("RSS MDM Agent")
+            .join("private");
+        platform_private_storage::directory(&root)?;
+        Ok(root.join("connection-master-key.dpapi"))
+    }
+}
+
+impl MasterKey {
+    pub(super) async fn save_connection(
+        self: &std::sync::Arc<Self>,
+        process: &super::host::Process,
+        generation: &str,
+        connection: ai_session_contract::ConnectionDraft,
+        expected: Option<u64>,
+        secret: Option<zeroize::Zeroizing<String>>,
+        current: impl Fn() -> Result<ai_session_contract::UserContext>,
+    ) -> Result<serde_json::Value> {
+        current()?;
+        let encrypted = if let Some(secret) = secret {
+            let context = current()?;
+            let owner = super::credentials::credential_owner(
+                &super::credentials::credential_caller(&context),
+                &connection,
+            )?;
+            let has_secrets = process.control.credential_context(generation).await?;
+            current()?;
+            let master = self.clone();
+            let permit = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                master.permit.clone().acquire_owned(),
+            )
+            .await
+            .map_err(|_| unavailable())?
+            .map_err(|_| unavailable())?;
+            let encrypted = tokio::time::timeout(
+                std::time::Duration::from_secs(10),
+                tokio::task::spawn_blocking(move || {
+                    let _permit = permit;
+                    master.seal(&owner, &secret, !has_secrets)
+                }),
+            )
+            .await
+            .map_err(|_| unavailable())?
+            .map_err(|_| unavailable())??;
+            current()?;
+            Some(encrypted)
+        } else {
+            None
+        };
+        let result = process
+            .control
+            .save_connection(
+                generation,
+                connection,
+                expected,
+                encrypted,
+                std::time::Duration::from_secs(10),
+            )
+            .await?;
+        current()?;
+        Ok(result)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -438,92 +525,5 @@ mod tests {
         assert_eq!(first.len(), 32);
         assert_eq!(keys.get(false).unwrap(), first);
         assert_eq!(writes.load(Ordering::SeqCst), 1);
-    }
-}
-
-#[cfg(windows)]
-fn key_path() -> std::io::Result<std::path::PathBuf> {
-    use windows_sys::Win32::{
-        System::Com::CoTaskMemFree,
-        UI::Shell::{FOLDERID_LocalAppData, SHGetKnownFolderPath},
-    };
-    unsafe {
-        let mut raw = std::ptr::null_mut();
-        if SHGetKnownFolderPath(&FOLDERID_LocalAppData, 0, std::ptr::null_mut(), &mut raw) < 0 {
-            return Err(std::io::Error::other("local app data"));
-        }
-        let mut length = 0;
-        while length < 32768 && *raw.add(length) != 0 {
-            length += 1;
-        }
-        let value = if length == 32768 {
-            Err(std::io::Error::other("local app data length"))
-        } else {
-            String::from_utf16(std::slice::from_raw_parts(raw, length))
-                .map_err(std::io::Error::other)
-        };
-        CoTaskMemFree(raw.cast());
-        let root = std::path::PathBuf::from(value?)
-            .join("RSS MDM Agent")
-            .join("private");
-        platform_private_storage::directory(&root)?;
-        Ok(root.join("connection-master-key.dpapi"))
-    }
-}
-
-impl MasterKey {
-    pub(super) async fn save_connection(
-        self: &std::sync::Arc<Self>,
-        process: &super::host::Process,
-        generation: &str,
-        connection: ai_session_contract::ConnectionDraft,
-        expected: Option<u64>,
-        secret: Option<zeroize::Zeroizing<String>>,
-        current: impl Fn() -> Result<ai_session_contract::UserContext>,
-    ) -> Result<serde_json::Value> {
-        current()?;
-        let encrypted = if let Some(secret) = secret {
-            let context = current()?;
-            let owner = super::credentials::credential_owner(
-                &super::credentials::credential_caller(&context),
-                &connection,
-            )?;
-            let has_secrets = process.control.credential_context(generation).await?;
-            current()?;
-            let master = self.clone();
-            let permit = tokio::time::timeout(
-                std::time::Duration::from_secs(5),
-                master.permit.clone().acquire_owned(),
-            )
-            .await
-            .map_err(|_| unavailable())?
-            .map_err(|_| unavailable())?;
-            let encrypted = tokio::time::timeout(
-                std::time::Duration::from_secs(10),
-                tokio::task::spawn_blocking(move || {
-                    let _permit = permit;
-                    master.seal(&owner, &secret, !has_secrets)
-                }),
-            )
-            .await
-            .map_err(|_| unavailable())?
-            .map_err(|_| unavailable())??;
-            current()?;
-            Some(encrypted)
-        } else {
-            None
-        };
-        let result = process
-            .control
-            .save_connection(
-                generation,
-                connection,
-                expected,
-                encrypted,
-                std::time::Duration::from_secs(10),
-            )
-            .await?;
-        current()?;
-        Ok(result)
     }
 }

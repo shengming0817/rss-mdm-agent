@@ -1093,7 +1093,7 @@ function reduceCommit(
     deliveryIds.add(row.operationId);
     if (
       namespaceKey(row.namespace) !== namespaceKey(batch.namespace) ||
-      !ids.has(row.eventId) ||
+      !readView(copy).hasEvent(row.eventId) ||
       row.contentHash !==
         deliveryFingerprint(
           readView(copy).event(row.eventId)!,

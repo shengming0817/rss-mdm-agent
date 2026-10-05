@@ -50,7 +50,7 @@ impl ViewChannels {
         let reader = process.control.view(id.clone())?;
         if let Err(error) = process
             .control
-            .attach(&id, &context, Duration::from_secs(15))
+            .attach(&id, context, Duration::from_secs(15))
             .await
         {
             process.control.detach(&id);

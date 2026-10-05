@@ -1967,9 +1967,12 @@ async fn fresh_revocation_and_crl_expiry_close_admission_while_pending_status_wa
         let core = &mut c.service.core;
         let result =
             crate::service::network_loop(c.service.client.drive_pki(), &mut commands, |_| {
+                // Observe readiness before this tick enforces it. A CRL may expire during
+                // reconciliation; that transition belongs to the next enforcement tick.
+                let identity_ready = core.host.identity_ready();
                 core.enforce_identity_gate()?;
                 core.reconcile()?;
-                if data.lock().unwrap().status_waiting && !core.host.identity_ready() {
+                if data.lock().unwrap().status_waiting && !identity_ready {
                     observed = true;
                     assert!(core.host.revoked.load(Ordering::Acquire));
                     let retained = core

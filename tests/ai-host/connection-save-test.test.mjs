@@ -150,7 +150,7 @@ test("Host rejects a missing credential persistence dependency before opening it
   const created = await createHost({
     store: {},
     launchFences: {},
-    workerRuntime,
+    workers: processWorkerAdapter(workerRuntime),
     delivery: null,
     resolve: async () => {
       throw new Error("unused");

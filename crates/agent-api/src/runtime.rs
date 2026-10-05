@@ -3626,7 +3626,7 @@ impl ::std::convert::TryFrom<::std::string::String> for TaskFailure {
 #[serde(untagged)]
 pub enum TaskPayload {
     TaskSpec(::std::boxed::Box<TaskSpec>),
-    SoftwareTaskSpec(SoftwareTaskSpec),
+    SoftwareTaskSpec(::std::boxed::Box<SoftwareTaskSpec>),
     EnrollmentTaskSpec(EnrollmentTaskSpec),
 }
 impl ::std::convert::From<TaskSpec> for TaskPayload {
@@ -3636,7 +3636,7 @@ impl ::std::convert::From<TaskSpec> for TaskPayload {
 }
 impl ::std::convert::From<SoftwareTaskSpec> for TaskPayload {
     fn from(value: SoftwareTaskSpec) -> Self {
-        Self::SoftwareTaskSpec(value)
+        Self::SoftwareTaskSpec(::std::boxed::Box::new(value))
     }
 }
 impl ::std::convert::From<EnrollmentTaskSpec> for TaskPayload {

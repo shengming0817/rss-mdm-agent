@@ -267,7 +267,7 @@ pub(crate) fn compile(
     let mut compared = payload.clone();
     compared.permit = original.permit;
     compared.expires_at = original.expires_at;
-    if &compared != original || payload.device_id != binding.device.as_str() {
+    if &compared != original.as_ref() || payload.device_id != binding.device.as_str() {
         return Err(Error::Untrusted);
     }
     payload.validate().map_err(|_| Error::Protocol)?;

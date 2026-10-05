@@ -1,11 +1,12 @@
 import { fixturePersistence } from "../ai-host/harness.mjs";
+import { processWorkerAdapter } from "../../packages/ai-host/dist/process.js";
 import { workerRuntime } from "../ai-host/worker-runtime.mjs";
 import { ConnectionSecrets } from "../../apps/ai-host/dist/secrets.js";
 import { createHost } from "../../packages/ai-host/dist/index.js";
 import { openSqliteStore } from "../../packages/ai-store-sqlite/dist/index.js";
 import { readConfiguration } from "../../apps/ai-host/dist/configuration.js";
 import { localResolver } from "../../apps/ai-host/dist/resolver.js";
-import { unwrap } from "../ai-provider-conformance/support.mjs";
+import { fixtureCaller, unwrap } from "../ai-provider-conformance/support.mjs";
 
 /** Test composition uses the production worker factory; only the Store commit boundary is instrumented. */
 export async function openHost(path, mode, beforeCommit) {
@@ -24,7 +25,7 @@ export async function openHost(path, mode, beforeCommit) {
   const host = unwrap(
     await createHost({
       credentialPersistence: fixturePersistence(store),
-      workerRuntime,
+      workers: processWorkerAdapter(workerRuntime),
       store,
       launchFences: store,
       delivery: null,
@@ -40,11 +41,7 @@ export async function openHost(path, mode, beforeCommit) {
     host,
     store,
     local,
-    caller: {
-      tenantId: "test-users",
-      principalId: "fixture-actor",
-      authorityId: "desktop-fixture",
-    },
+    caller: fixtureCaller,
     diagnostics,
   };
 }

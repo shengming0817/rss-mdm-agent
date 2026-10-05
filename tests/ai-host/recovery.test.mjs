@@ -362,6 +362,15 @@ for (const hasSession of [true, false])
     const path = join(directory, "host.sqlite"),
       store = unwrap(await openSqliteStore({ path, mode: "create" })),
       session = fixtureSession();
+    session.selectedConnectionId = "c:1";
+    session.stages = session.stages.map((stage) => ({
+      ...stage,
+      connectionId: "c:1",
+      binding: {
+        ...stage.binding,
+        config: { ...stage.binding.config, id: "c:1" },
+      },
+    }));
     let host;
     t.after(async () => {
       await host?.close(budget());
@@ -417,11 +426,20 @@ for (const hasSession of [true, false])
       {
         provider: "fake",
         config: { id: "c", revision: "1" },
+        sessionId: session.namespace.sessionId,
 
         profile: "conversation",
       },
       budget(),
     );
+    if (hasSession) {
+      const resumed = await host.resume(
+        session.namespace,
+        session.namespace.sessionId,
+        budget(),
+      );
+      assert.equal(resumed.ok, false, "fixture resolver refuses admission");
+    }
     assert.deepEqual(unwrap(await reopened.launches()), []);
   });
 test("worker close cannot finish before an outstanding launch reservation settles", async (t) => {

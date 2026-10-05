@@ -42,7 +42,7 @@ const options = {
 const host = unwrap(
   await createHost({
     credentialPersistence: fixturePersistence(store),
-    workerRuntime,
+    workers: processWorkerAdapter(workerRuntime),
     delivery: null,
     store,
     launchFences: store,

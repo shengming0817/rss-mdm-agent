@@ -184,7 +184,11 @@ onBeforeUnmount(() => {
         <template v-else>
           <TestUsers
             :users="users"
-            :current="selectedUser?.identity ? undefined : selectedUser"
+            :current="
+              selectedUser?.identity.authorityId === 'desktop-test'
+                ? selectedUser
+                : undefined
+            "
             :native="accountEnabled"
             :loading="loading"
             :message="message"

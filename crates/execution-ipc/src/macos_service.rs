@@ -375,7 +375,7 @@ mod tests {
         let reply = handle_call(&handler, Some(&fence), &stop, &peer, &bytes).unwrap();
         assert_eq!(
             serde_json::from_slice::<serde_json::Value>(&reply).unwrap()["reply"]["kind"],
-            "employeeBound"
+            "contextRevoked"
         );
         assert!(fence.0.load(Ordering::Acquire));
         for bytes in [b"{}".to_vec(), host::encode(host::Request::Tasks { after: None }).unwrap(), serde_json::to_vec(&serde_json::json!({"version": host::IPC_VERSION - 1, "request": {"method":"employeeSession", "value":null}})).unwrap()] {

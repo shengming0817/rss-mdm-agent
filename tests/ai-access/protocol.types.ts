@@ -9,7 +9,7 @@ import {
   type SurfaceRendererHandle,
   type RendererError,
 } from "../../packages/ai-ui-bridge/dist/index.js";
-import type { Receipt } from "../../packages/ai-contract/dist/index.js";
+import type { Receipt } from "../../packages/ai-contract/dist/wire.js";
 const handle: SurfaceRendererHandle = {
   canRetry: false,
   replace() {},

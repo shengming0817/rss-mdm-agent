@@ -45,7 +45,7 @@ import {
 import type {
   ProviderAgentPort,
   ProviderDiagnostic,
-} from "../../../packages/ai-contract/dist/index.js";
+} from "../../../packages/ai-contract/dist/ports.js";
 declare const options: CodexAdapterOptions;
 const port: ProviderAgentPort = createCodexAdapter(options).agent;
 // @ts-expect-error Native history is not a public provider operation.

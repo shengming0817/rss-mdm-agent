@@ -82,6 +82,7 @@ async function setup(t, revision = "1", extras = {}) {
       mode: "create",
     }),
   );
+  await extras.beforeHost?.(store);
   const options = {
     provider: "fake",
     config: { id: "config", revision },
@@ -172,108 +173,166 @@ async function setup(t, revision = "1", extras = {}) {
       .map((line) => JSON.parse(line));
   return { host, store, session, command, record, trace, directory, options };
 }
-test("a waiting namespace probe leaves another caller's real worker message and cancellation responsive", async (t) => {
-  const actual = processWorkerAdapter(workerRuntime);
-  let release, entered;
-  const probing = new Promise((resolve) => {
-    entered = resolve;
-  });
-  const f = await setup(t, "1", {
-    hostOptions: {
-      workers: {
-        create: (...args) => actual.create(...args),
-        absent(scope, b) {
-          if (scope.kind !== "processGroup" || scope.root !== 42)
-            return actual.absent(scope, b);
-          entered();
-          return new Promise((resolve) => {
-            release = resolve;
-          });
-        },
-      },
-    },
-  });
-  const uncertain = fixtureSession();
-  uncertain.namespace = {
-    ...uncertain.namespace,
-    principalId: "fenced-caller",
-    sessionId: "fenced-session",
-  };
-  unwrap(await f.store.create(uncertain));
-  unwrap(
-    await f.store.reserveLaunch({
-      namespace: uncertain.namespace,
-      launchId: "unknown",
-      artifact: "fixture-provider",
-      runtimeDigest: "a".repeat(64),
-      phase: "reserved",
-    }),
-  );
-  unwrap(
-    await f.store.registerLaunch(uncertain.namespace, "unknown", {
-      kind: "processGroup",
-      root: 42,
-    }),
-  );
-  const pending = f.host.resume(
-    uncertain.namespace,
-    uncertain.namespace.sessionId,
-    budget(),
-  );
-  t.after(() => release?.(false));
-  await probing;
-  let timeout;
-  try {
-    await Promise.race([
-      (async () => {
+test(
+  "a waiting namespace probe leaves another caller's real worker message and cancellation responsive",
+  { timeout: 15000 },
+  async (t) => {
+    const actual = processWorkerAdapter(workerRuntime);
+    let release,
+      entered,
+      first = true,
+      waiting = true;
+    const probing = new Promise((resolve) => {
+      entered = resolve;
+    });
+    const uncertain = fixtureSession();
+    uncertain.namespace = {
+      ...uncertain.namespace,
+      principalId: "fenced-caller",
+      sessionId: "fenced-session",
+    };
+    const connectionId = uncertain.stages.at(-1).connectionId;
+    t.after(() => release?.(false));
+    const f = await setup(t, "1", {
+      async beforeHost(store) {
         unwrap(
-          await f.host.submit(caller, f.command("isolated-long"), budget()),
-        );
-        await until(
-          async () => (await f.record("isolated-long")).state === "running",
-        );
-        unwrap(await f.host.connections(caller, budget()));
-        const running = await f.record("isolated-long");
-        unwrap(
-          await f.host.cancel(
-            caller,
+          await store.saveConnection(
+            uncertain.namespace,
             {
-              ...f.command("isolated-cancel"),
-              input: {
-                type: "cancel",
-                generation: activeStage(f.session).binding.generation,
-                targetCommandId: "isolated-long",
-                nativeRunId: running.dispatch.nativeRunId,
+              schemaVersion: 8,
+              kind: "connection",
+              connectionId,
+              name: "Fenced fixture",
+              provider: "codex",
+              configRevision: 1,
+              profile: "conversation",
+              status: "ready",
+              source: {
+                type: "custom_api",
+                apiUrl: "https://example.invalid/v1",
+                model: "1",
               },
             },
-            budget(),
+            null,
           ),
         );
-        await until(
-          async () =>
-            (await f.record("isolated-cancel")).state === "acknowledged",
+        unwrap(await store.create(uncertain));
+        unwrap(
+          await store.reserveLaunch({
+            namespace: uncertain.namespace,
+            launchId: "unknown",
+            artifact: "fixture-provider",
+            runtimeDigest: "a".repeat(64),
+            phase: "reserved",
+          }),
         );
-        assert.equal((await f.record("isolated-long")).outcome, "cancelled");
-      })(),
-      new Promise((_, reject) => {
-        timeout = setTimeout(
-          () => reject(Error("unrelated caller blocked by scope probe")),
-          1500,
+        unwrap(
+          await store.registerLaunch(uncertain.namespace, "unknown", {
+            kind: "processGroup",
+            root: 42,
+          }),
         );
-      }),
-    ]);
-  } finally {
-    clearTimeout(timeout);
-    release(false);
-  }
-  assert.equal((await pending).ok, false);
-  assert.equal(
-    unwrap(await f.store.launches()).some(
-      (launch) => launch.launchId === "unknown",
-    ),
-    true,
-  );
-});
+      },
+      hostOptions: {
+        workers: {
+          create: (...args) => actual.create(...args),
+          absent(scope, b) {
+            if (scope.kind !== "processGroup" || scope.root !== 42)
+              return actual.absent(scope, b);
+            if (first) {
+              first = false;
+              return Promise.resolve(false);
+            }
+            if (!waiting) return Promise.resolve(false);
+            entered();
+            return new Promise((resolve) => {
+              const timer = setTimeout(() => release(false), b.timeoutMs);
+              release = (value) => {
+                clearTimeout(timer);
+                waiting = false;
+                resolve(value);
+              };
+            });
+          },
+        },
+      },
+    });
+    const pending = f.host.resume(
+      uncertain.namespace,
+      uncertain.namespace.sessionId,
+      budget(),
+    );
+    let timeout;
+    try {
+      await Promise.race([
+        probing,
+        pending.then((result) => {
+          throw Error(
+            "resume did not reach the probe: " + JSON.stringify(result),
+          );
+        }),
+        new Promise((_, reject) => {
+          timeout = setTimeout(
+            () => reject(Error("scope probe did not start")),
+            1500,
+          );
+        }),
+      ]);
+      clearTimeout(timeout);
+      await Promise.race([
+        (async () => {
+          unwrap(
+            await f.host.submit(caller, f.command("isolated-long"), budget()),
+          );
+          await until(
+            async () => (await f.record("isolated-long")).state === "running",
+          );
+          unwrap(await f.host.connections(caller, budget()));
+          const running = await f.record("isolated-long");
+          unwrap(
+            await f.host.cancel(
+              caller,
+              {
+                ...f.command("isolated-cancel"),
+                input: {
+                  type: "cancel",
+                  generation: activeStage(f.session).binding.generation,
+                  targetCommandId: "isolated-long",
+                  nativeRunId: running.dispatch.nativeRunId,
+                },
+              },
+              budget(),
+            ),
+          );
+          await until(
+            async () =>
+              (await f.record("isolated-cancel")).state === "acknowledged",
+          );
+          await until(
+            async () =>
+              (await f.record("isolated-long")).outcome === "cancelled",
+          );
+        })(),
+        new Promise((_, reject) => {
+          timeout = setTimeout(
+            () => reject(Error("unrelated caller blocked by scope probe")),
+            1500,
+          );
+        }),
+      ]);
+    } finally {
+      clearTimeout(timeout);
+      release?.(false);
+    }
+    assert.equal((await pending).ok, false);
+    assert.equal(
+      unwrap(await f.store.launches()).some(
+        (launch) => launch.launchId === "unknown",
+      ),
+      true,
+    );
+  },
+);
 
 test("real worker keeps a long run, durable FIFO and control acknowledgement independent", async (t) => {
   const f = await setup(t);

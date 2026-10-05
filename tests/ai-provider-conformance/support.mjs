@@ -44,6 +44,11 @@ import { reply } from "../ai-adapters/codex/helpers.mjs";
 import { completion } from "../ai-adapters/deepseek/native-support.mjs";
 
 export const engines = ["codex", "claude", "deepseek"];
+export const fixtureCaller = {
+  tenantId: "local-test",
+  principalId: "fixture-actor",
+  authorityId: "desktop-test",
+};
 export const budget = (timeoutMs = 15000) => ({
   timeoutMs,
   signal: AbortSignal.timeout(timeoutMs),
@@ -249,11 +254,7 @@ export async function configuration(
     databasePath: join(directory, "ai.sqlite"),
     nativeDirectory,
     workingDirectory: directory,
-    caller: {
-      tenantId: "test-users",
-      principalId: "fixture-actor",
-      authorityId: "desktop-fixture",
-    },
+    caller: fixtureCaller,
     session: {
       provider,
       config: { id: "local", revision: "1" },
@@ -359,9 +360,7 @@ export async function clientAt(
       },
       identity: {
         mode: "device",
-        authorityId: "desktop-test",
-        tenantId: "local-test",
-        principalId: "fixture-actor",
+        ...fixtureCaller,
       },
     },
   });

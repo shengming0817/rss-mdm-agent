@@ -1318,7 +1318,7 @@ async fn employee_self_service_uses_device_mtls_and_recovers_the_original_uuid()
     assert!(data
         .employee_calls
         .iter()
-        .any(|(uri, _)| uri.ends_with("scripts?source=ai")));
+        .any(|(uri, _)| uri.ends_with("self-service?source=ai")));
     assert!(data
         .employee_calls
         .iter()

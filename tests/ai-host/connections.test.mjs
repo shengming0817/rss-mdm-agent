@@ -305,9 +305,9 @@ test("real Host lazily opens phases, drains accepted work before switching, and 
     generation: "restored-generation",
     identity: {
       mode: "device",
-      authorityId: "desktop-test",
-      tenantId: "local-test",
-      principalId: "alice",
+      authorityId: caller.authorityId,
+      tenantId: caller.tenantId,
+      principalId: caller.principalId,
     },
   });
   host.activateCaller(caller);
@@ -923,9 +923,9 @@ test("user fence settles persistent offline queues across pages and propagates d
     generation: "restored-generation",
     identity: {
       mode: "device",
-      authorityId: "desktop-test",
-      tenantId: "local-test",
-      principalId: "alice",
+      authorityId: caller.authorityId,
+      tenantId: caller.tenantId,
+      principalId: caller.principalId,
     },
   });
   assert.ok(pages >= 3);

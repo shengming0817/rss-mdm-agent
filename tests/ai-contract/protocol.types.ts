@@ -2,17 +2,17 @@ import type {
   ProviderAgentPort,
   ProviderConfiguration,
   ProviderAdmission,
-  Subscription,
   ProviderInteraction,
   ProviderObservation,
   ProviderEventBody,
-} from "../../packages/ai-contract/dist/index.js";
+} from "../../packages/ai-contract/dist/ports.js";
+import type { Subscription } from "../../packages/ai-contract/dist/wire.js";
 import { VerifiedProviderSession } from "../../packages/ai-contract/dist/session.js";
 import { fixtureSession } from "../../packages/ai-contract/dist/testing/index.js";
 // @ts-expect-error Resume must return capabilities with binding.
 const invalidResume: NonNullable<ProviderAgentPort["resume"]> = async () => ({
   ok: true,
-  value: {} as import("../../packages/ai-contract/dist/index.js").Binding,
+  value: {} as import("../../packages/ai-contract/dist/wire.js").Binding,
 });
 const controlledConfiguration: ProviderConfiguration = {
   provider: "fake",

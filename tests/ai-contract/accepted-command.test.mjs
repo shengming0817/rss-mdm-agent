@@ -23,7 +23,7 @@ test("V8 acceptance is a self-contained stable fact shared by replay and live co
   );
   assert.equal(snapshot.events.length, 1);
   const event = snapshot.events[0];
-  assert.equal(event.schemaVersion, 7);
+  assert.equal(event.schemaVersion, 8);
   assert.deepEqual(event.body, { type: "command_accepted", command });
   assert.equal("event" in input, false);
   assert.equal(input.eventId, event.eventId);

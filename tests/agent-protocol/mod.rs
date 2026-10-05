@@ -400,7 +400,7 @@ impl Data {
                 SoftwareStartMode::Automatic
             },
         };
-        self.offer = Some(self.signed(TaskPayload::SoftwareTaskSpec(spec)));
+        self.offer = Some(self.signed(TaskPayload::from(spec)));
     }
     fn reset_current_task(&mut self) {
         self.started = false;

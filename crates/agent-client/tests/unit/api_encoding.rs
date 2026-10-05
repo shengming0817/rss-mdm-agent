@@ -1,4 +1,4 @@
-//! Fixed byte vectors from the consumed Agent V1 encoding at 149c34d5.
+//! Fixed byte vectors from the consumed Agent V1 encoding at c0581d5c.
 //! These fixtures are independent of regenerated Rust serialization and signers.
 use crate::protocol::{SoftwareTaskStepExt, TaskPayloadExt};
 use agent_api::runtime::TaskPayload;
@@ -8,11 +8,11 @@ fn preserves_task_signatures_and_step_digest() {
     for (body, expected) in [
         (
             include_bytes!("../fixtures/script-task-v1.json").as_slice(),
-            "9e1d0a9a1f59f8588b5aa18f9999bfb0ba94f4e1455d84efd39c90afa0faa12a",
+            "6080741b91b8c100415abd7828401dae5e984cef7f1025bd4f89509fd5bbe7db",
         ),
         (
             include_bytes!("../fixtures/software-task-v1.json").as_slice(),
-            "7872d388c2a2aef2de0f9a91c4087664d07989af27d6d2a31d48f072540d1b17",
+            "b4f5cb76c97d00154ca902da454558c5a921b153b616e0b3968a191d08af42d6",
         ),
         (
             include_bytes!("../fixtures/enrollment-task-v1.json").as_slice(),

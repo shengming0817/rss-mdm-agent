@@ -163,10 +163,7 @@ pub(crate) fn script(
             wire::ExecutionIdentity::LoggedInUser,
             Some(helper),
         ) if identity == &helper.context().subject
-            && *session_id == crate::service::login_id(helper.context()) =>
-        {
-            ()
-        }
+            && *session_id == crate::service::login_id(helper.context()) => {}
         _ => return Err(Error::Untrusted),
     }
     let run_as = match payload.run_as {
