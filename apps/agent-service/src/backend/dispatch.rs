@@ -50,6 +50,15 @@ pub(crate) async fn submit<S: IdentityProvider>(
     artifacts
         .inspect(&preview)
         .map_err(crate::error::app_error)?;
+    if let Some(selection) = &selection {
+        let record = service
+            .core
+            .app
+            .backend_request(&service.core.caller(), &selection.request)
+            .map_err(crate::error::app_error)?
+            .ok_or(Error::Conflict)?;
+        service.core.current_policy_access(&record)?;
+    }
     let start = if selection.is_some() {
         network(
             service.client.start_user_initiated(&offer, &materials),
@@ -104,7 +113,7 @@ pub(crate) async fn submit<S: IdentityProvider>(
         {
             return Err(Error::Denied);
         }
-        service.core.current_policy_login(&current)?;
+        service.core.current_policy_access(&current)?;
         Some(current)
     } else {
         None

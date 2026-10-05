@@ -2,7 +2,7 @@
 use execution_contract::{Digest, Id, RequestId, VersionedRef};
 use serde::{Deserialize, Serialize};
 /// Current desktop/system IPC. No negotiation or legacy parser exists.
-pub const IPC_VERSION: u8 = 12;
+pub const IPC_VERSION: u8 = 13;
 /// Current protected installation document format.
 pub const DEPLOYMENT_VERSION: u32 = 5;
 
@@ -463,20 +463,68 @@ pub enum ClientOrigin {
         context: execution_contract::NativeContextRef,
     },
 }
-/// Native-only bearer handoff, never included in renderer, AI schema or journal records.
+/// Closed native credential handoff; never included in renderer, AI schema or journal.
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub enum NativeAccess {
+    /// Device access has no enterprise credential or account coordinates.
+    Device {},
+    /// Native verified employee session; the backend owns its effective qualification.
+    User {
+        /// Only the employee secret, not the cookie or CSRF header.
+        credential: zeroize::Zeroizing<String>,
+        /// Exact credential issuer origin.
+        credential_origin: String,
+        /// Verified product identity, distinct from the authenticated OS peer.
+        user: rss_mdm_agent_wire::runtime::SelfServiceUser,
+    },
+}
+/// Current native ingress context, optionally carrying an enterprise session.
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct NativeContextSession {
-    /// Only the employee secret, not the cookie or CSRF header.
-    pub credential: Option<zeroize::Zeroizing<String>>,
-    /// Credential issuer origin, present exactly when a native user session is bound.
-    pub credential_origin: Option<String>,
-    /// Native verified product employee.
-    pub user: Option<rss_mdm_agent_wire::runtime::SelfServiceUser>,
+    /// Closed access shape; Device never carries a user secret.
+    pub access: NativeAccess,
     /// Exact native product login generation.
     pub generation: Id,
     /// Current session expiry; never extended by an invocation.
     pub expires_at_unix_ms: u64,
+}
+impl NativeContextSession {
+    /// Enterprise identity hint; effective admission remains backend-owned.
+    pub fn user(&self) -> Option<&rss_mdm_agent_wire::runtime::SelfServiceUser> {
+        match &self.access {
+            NativeAccess::Device {} => None,
+            NativeAccess::User { user, .. } => Some(user),
+        }
+    }
+    /// Protected native credential, available only in Rust.
+    pub fn credential(&self) -> Option<&zeroize::Zeroizing<String>> {
+        match &self.access {
+            NativeAccess::Device {} => None,
+            NativeAccess::User { credential, .. } => Some(credential),
+        }
+    }
+    /// Issuer of the protected native credential.
+    pub fn credential_origin(&self) -> Option<&str> {
+        match &self.access {
+            NativeAccess::Device {} => None,
+            NativeAccess::User {
+                credential_origin, ..
+            } => Some(credential_origin),
+        }
+    }
+    /// Retire bearer memory without reclassifying a User context as Device.
+    pub fn clear_credential(&mut self) {
+        if let NativeAccess::User { credential, .. } = &mut self.access {
+            zeroize::Zeroize::zeroize(credential);
+        }
+    }
 }
 /// Local IPC V8 carries backend task references, never executable plans or authority claims.
 #[derive(Clone, Deserialize, Serialize)]
@@ -886,6 +934,40 @@ pub fn run(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn native_access_is_closed_and_retirement_does_not_downgrade_user() {
+        let base =
+            serde_json::json!({"access":{"kind":"device"},"generation":"g","expiresAtUnixMs":1});
+        assert!(serde_json::from_value::<super::NativeContextSession>(base.clone()).is_ok());
+        for field in ["credential", "user", "credentialOrigin"] {
+            let mut invalid = base.clone();
+            invalid["access"][field] = serde_json::json!("unexpected");
+            assert!(serde_json::from_value::<super::NativeContextSession>(invalid).is_err());
+        }
+        let mut old = base.clone();
+        old.as_object_mut().unwrap().remove("access");
+        old["user"] = serde_json::Value::Null;
+        assert!(serde_json::from_value::<super::NativeContextSession>(old).is_err());
+        let user: rss_mdm_agent_wire::runtime::SelfServiceUser =
+            serde_json::from_value(serde_json::json!({
+                "tenantId":"00000000-0000-0000-0000-000000000001",
+                "instanceId":"00000000-0000-0000-0000-000000000002",
+                "principalId":"00000000-0000-0000-0000-000000000003"
+            }))
+            .unwrap();
+        let mut context = super::NativeContextSession {
+            access: super::NativeAccess::User {
+                credential: zeroize::Zeroizing::new("c".repeat(64)),
+                credential_origin: "https://org.invalid".into(),
+                user: user.clone(),
+            },
+            generation: execution_contract::Id::new("g").unwrap(),
+            expires_at_unix_ms: 1,
+        };
+        context.clear_credential();
+        assert_eq!(context.user(), Some(&user));
+        assert!(context.credential().unwrap().is_empty());
+    }
     use super::*;
     #[test]
     fn client_never_decodes_legacy_or_wrong_version_replies() {

@@ -266,6 +266,33 @@ impl<S: IdentityProvider> DeviceService<S> {
                 self.abandon(task, commands).await?;
             }
         }
+        // Self-service consent already lives in the original journal. A retired ingress
+        // must not discard accepted Device work. Dispatch verifies its original OS session.
+        if let Some((offer, _)) = &self.waiting {
+            if is_policy_offer(offer) {
+                let offer = self.client.retained_offer(offer.task_id())?;
+                match self.bind_policy_offer(&offer) {
+                    Ok(selection) => self.core.selected = Some(selection),
+                    Err(error) => {
+                        let task = offer.task_id();
+                        self.core.transition(
+                            &backend::request_id(&offer)?,
+                            BackendRequestState::Failed,
+                            Some(if matches!(error, Error::Identity | Error::Denied) {
+                                BackendRequestFailure::Revoked
+                            } else if matches!(error, Error::Expired) {
+                                BackendRequestFailure::Expired
+                            } else {
+                                BackendRequestFailure::PreparationFailed
+                            }),
+                        )?;
+                        self.release_waiting();
+                        self.abandon(task, commands).await?;
+                        return Err(error);
+                    }
+                }
+            }
+        }
         if self.core.selected.is_some() {
             if self.waiting.is_some() {
                 self.reclaim_between_submissions();
@@ -386,10 +413,20 @@ impl<S: IdentityProvider> DeviceService<S> {
                     .as_ref()
                     .is_none_or(|(offer, _)| offer.task_id() != task)
             {
-                // No local intent means no execution may have started. Retire the original
-                // remote attempt only after checking this same authoritative journal; a prior
-                // local user selection is never reconstructed from transport or request data.
-                self.abandon(task, commands).await?;
+                let offer = self.client.retained_offer(task)?;
+                if self.waiting.is_none()
+                    && self.device_policy_intent(&offer)?
+                    && self.core.host.clock.millis()? / 1000 < offer.payload().expires_at() as u64
+                {
+                    // Recover only the already recorded consent and verified original offer.
+                    // Binding and Start still recheck the original OS session and current device.
+                    let materials =
+                        network(self.client.prepare(&offer), &mut self.core, commands).await?;
+                    self.waiting = Some((offer, materials));
+                } else {
+                    // No original resumable local intent means no execution may have started.
+                    self.abandon(task, commands).await?;
+                }
             }
         }
         self.recovering = false;
@@ -463,13 +500,9 @@ impl<S: IdentityProvider> DeviceService<S> {
             self.core.available = Some(offered(&offer)?);
             network(self.client.received(&offer), &mut self.core, commands).await?;
             let materials = network(self.client.prepare(&offer), &mut self.core, commands).await?;
-            if matches!(offer.payload(),wire::TaskPayload::Script(p) if matches!(p.authorization,wire::TaskAuthorization::SelfService {..}))
-                || matches!(offer.payload(),wire::TaskPayload::Software(p) if matches!(p.authorization,wire::TaskAuthorization::SelfService {..}))
-            {
-                let selection = self.bind_policy_offer(&offer)?;
-                backend::submit(self, offer, materials, Some(selection), commands).await?;
-                self.core.available = None;
-                self.core.available_risk = None;
+            if is_policy_offer(&offer) {
+                self.waiting = Some((offer, materials));
+                // The next owner iteration resumes automatically from the original consent.
                 return Ok(());
             }
             if matches!(offer.payload(),wire::TaskPayload::Software(p) if p.start_mode==wire::SoftwareStartMode::UserInitiated)
@@ -482,6 +515,24 @@ impl<S: IdentityProvider> DeviceService<S> {
             self.core.available_risk = None;
         }
         Ok(())
+    }
+    fn device_policy_intent(&self, offer: &Offer) -> Result<bool, Error> {
+        let request = backend::request_id(offer)?;
+        Ok(self
+            .core
+            .app
+            .backend_request(&self.core.caller(), &request)
+            .map_err(crate::error::app_error)?
+            .is_some_and(|record| {
+                record.state == BackendRequestState::Submitting
+                    && matches!(
+                        record.action,
+                        execution_contract::PreparedAction::Policy {
+                            access: execution_contract::PolicyAccess::Device {},
+                            ..
+                        }
+                    )
+            }))
     }
     fn release_waiting(&mut self) {
         self.waiting = None;
@@ -497,11 +548,24 @@ impl<S: IdentityProvider> DeviceService<S> {
         let mut pending =
             self.bridge
                 .prepare_abandonment(&mut self.client, task, &self.core.app)?;
-        self.core.transition(
-            pending.request_id(),
-            BackendRequestState::Failed,
-            Some(BackendRequestFailure::Interrupted),
-        )?;
+        if !self
+            .core
+            .app
+            .backend_request(&self.core.caller(), pending.request_id())
+            .map_err(crate::error::app_error)?
+            .is_some_and(|record| {
+                matches!(
+                    record.state,
+                    BackendRequestState::Failed | BackendRequestState::Cancelled
+                )
+            })
+        {
+            self.core.transition(
+                pending.request_id(),
+                BackendRequestState::Failed,
+                Some(BackendRequestFailure::Interrupted),
+            )?;
+        }
         network(
             self.bridge.send_abandonment(&mut self.client, &mut pending),
             &mut self.core,
@@ -1292,7 +1356,14 @@ impl ServiceHandle {
         if self
             .sender
             .try_send(Command {
-                fence_epoch: self.fences.current(&subject).unwrap_or(u64::MAX),
+                fence_epoch: binding
+                    .as_ref()
+                    .and_then(|binding| {
+                        self.fences
+                            .current(&policy::SessionKey::new(subject.clone(), binding.clone()))
+                            .ok()
+                    })
+                    .unwrap_or(u64::MAX),
                 request,
                 subject,
                 session,
@@ -1572,3 +1643,10 @@ pub(crate) fn assemble_journal<H: execution_app::AppHost, R: execution_app::Runn
 #[cfg(all(test, target_os = "macos"))]
 #[path = "product_gate_tests.rs"]
 mod product_gate_tests;
+
+fn is_policy_offer(offer: &Offer) -> bool {
+    matches!(offer.payload(), wire::TaskPayload::Script(p)
+        if matches!(p.authorization, wire::TaskAuthorization::SelfService { .. }))
+        || matches!(offer.payload(), wire::TaskPayload::Software(p)
+            if matches!(p.authorization, wire::TaskAuthorization::SelfService { .. }))
+}

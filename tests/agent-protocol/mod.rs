@@ -210,6 +210,7 @@ pub struct Data {
     pub renewal_lookup_authenticated: Vec<bool>,
     pub tls_required: bool,
     pub employee_calls: Vec<(String, Value)>,
+    pub employee_credentials: Vec<bool>,
     pub self_service_directory: Option<SelfServiceDirectoryResponse>,
     pub invocations: BTreeMap<Uuid, (Value, SelfServiceAccepted)>,
     pub invocation_reply_lost: bool,
@@ -449,6 +450,7 @@ impl Server {
             renewal_lookup_authenticated: Vec::new(),
             tls_required: tls,
             employee_calls: vec![],
+            employee_credentials: vec![],
             self_service_directory: None,
             invocations: BTreeMap::new(),
             invocation_reply_lost: false,
@@ -1153,9 +1155,10 @@ impl axum::extract::connect_info::Connected<axum::serve::IncomingStream<'_, TlsL
 }
 
 /// Explicit protocol fixture, never production Policy authority.
-pub fn policy_directory_fixture() -> SelfServiceDirectoryItem {
+pub fn policy_directory_fixture(tenant: Uuid) -> SelfServiceDirectoryItem {
     serde_json::from_value(json!({
         "policyId": Uuid::new_v4(), "policyRevision": 2, "policyVersion": Uuid::new_v4(),
+        "subject":{"kind":"user","user":{"tenantId":tenant,"instanceId":Uuid::from_u128(2),"principalId":Uuid::from_u128(3)}},
         "selfService": {"published":true, "displayName":"Repair", "description":"Test repair", "prerequisites":"Employee session", "sideEffects":"Restarts a fixture", "category":"Support", "keywords":["repair"], "allowAi":true, "riskLevel":2},
         "task":{"kind":"script","runAs":"system","resource":{"id":Uuid::new_v4().to_string(),"version":"v1","variant":"default"},
         "parameterSources":{"name":{"kind":"input"}, "path":{"kind":"fixed","value":"/Applications"}},
@@ -1174,20 +1177,28 @@ fn self_service_response(d: &mut Data, uri: &Uri, headers: &HeaderMap, value: Va
         return runtime_error(StatusCode::UNAUTHORIZED, ErrorCode::InvalidIdentity);
     }
     d.employee_calls.push((uri.to_string(), value.clone()));
+    d.employee_credentials
+        .push(headers.contains_key("x-rss-user-session"));
     if let Some((suffix, body)) = &d.response_override {
         if path.ends_with(suffix) {
             return axum::Json(body.clone()).into_response();
         }
     }
     if path.ends_with("/self-service") {
-        return axum::Json(d.self_service_directory.clone().unwrap_or(
-            SelfServiceDirectoryResponse {
-                items: vec![],
-                next_cursor: None,
-                as_of: d.time.now().unwrap(),
-            },
-        ))
-        .into_response();
+        let mut directory =
+            d.self_service_directory
+                .clone()
+                .unwrap_or(SelfServiceDirectoryResponse {
+                    items: vec![],
+                    next_cursor: None,
+                    as_of: d.time.now().unwrap(),
+                });
+        // Explicit transport fixture projection, not enterprise qualification authority.
+        directory.items.retain(|item| {
+            matches!(item.subject, SelfServiceSubject::Device {})
+                || headers.contains_key("x-rss-user-session")
+        });
+        return axum::Json(directory).into_response();
     }
     if path.ends_with("/invocations") {
         let Ok(input) = serde_json::from_value::<SelfServiceInvoke>(value.clone()) else {

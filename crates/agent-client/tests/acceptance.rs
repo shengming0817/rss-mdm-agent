@@ -1237,7 +1237,7 @@ async fn employee_self_service_uses_device_mtls_and_recovers_the_original_uuid()
     let root = Root::new();
     let mut client = server.client(&root, OpenMode::Create);
     server.register(&mut client).await;
-    let directory = policy_directory_fixture();
+    let directory = policy_directory_fixture(server.data.lock().unwrap().tenant);
     server.data.lock().unwrap().self_service_directory = Some(SelfServiceDirectoryResponse {
         items: vec![directory.clone()],
         next_cursor: None,

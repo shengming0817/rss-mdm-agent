@@ -297,13 +297,16 @@ impl EnterpriseSession {
             })
             .ok_or_else(invalid)?;
         Ok(execution_ipc::host::NativeContextSession {
-            credential: Some(zeroize::Zeroizing::new(secret.to_owned())),
-            credential_origin: Some(self.organization.origin.clone()),
-            user: Some(rss_mdm_agent_wire::runtime::SelfServiceUser {
-                tenant_id: Uuid::parse_str(&self.organization.tenant_id).map_err(|_| invalid())?,
-                instance_id: Uuid::parse_str(&self.instance).map_err(|_| invalid())?,
-                principal_id: Uuid::parse_str(&self.principal).map_err(|_| invalid())?,
-            }),
+            access: execution_ipc::host::NativeAccess::User {
+                credential: zeroize::Zeroizing::new(secret.to_owned()),
+                credential_origin: self.organization.origin.clone(),
+                user: rss_mdm_agent_wire::runtime::SelfServiceUser {
+                    tenant_id: Uuid::parse_str(&self.organization.tenant_id)
+                        .map_err(|_| invalid())?,
+                    instance_id: Uuid::parse_str(&self.instance).map_err(|_| invalid())?,
+                    principal_id: Uuid::parse_str(&self.principal).map_err(|_| invalid())?,
+                },
+            },
             generation: execution_contract::Id::new(generation).map_err(|_| invalid())?,
             expires_at_unix_ms: self.expires,
         })

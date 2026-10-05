@@ -78,8 +78,27 @@ pub struct ExecutionRisk {
 pub struct NativeContextRef {
     /// Owner-assigned binding identity, scoped to the authenticated native peer.
     pub id: Id,
-    /// Exact caller generation; retirement invalidates all work using it.
+    /// Exact caller generation; retirement rejects new ingress and User continuations.
     pub generation: Id,
+}
+
+/// Local continuation binding selected from the backend directory subject.
+/// OS session and device authority remain in the original trigger and service owner.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub enum PolicyAccess {
+    /// Device requests do not depend on enterprise login generation.
+    Device {},
+    /// User requests require this exact live native employee session.
+    User {
+        /// Owner-issued reference; never a credential or another identity authority.
+        session_binding: NativeContextRef,
+    },
 }
 
 /// Risk authority is explicit; local software rules never impersonate a Policy.
@@ -147,10 +166,8 @@ pub enum PreparedAction {
         run_id: Option<Id>,
         /// Eventual signed Offer; no task/attempt is invented before this exists.
         offer: Option<BackendTask>,
-        /// Authenticated product employee, checked against the signed authorization.
-        user: Option<rss_mdm_agent_wire::runtime::SelfServiceUser>,
-        /// Native product login generation.
-        context: NativeContextRef,
+        /// Local continuation binding; enterprise identity is solely directory.subject.
+        access: PolicyAccess,
         /// Bounded validity of the original preparation.
         expires_at_unix_ms: u64,
     },
@@ -356,6 +373,23 @@ impl BackendRequest {
     /// Check stored product-gate shape. DTO validity alone never authenticates risk or consent.
     pub fn valid_product_gate(&self) -> bool {
         use BackendRequestState as S;
+        if let PreparedAction::Policy {
+            directory, access, ..
+        } = &self.action
+        {
+            if !matches!(
+                (&directory.subject, access),
+                (
+                    rss_mdm_agent_wire::runtime::SelfServiceSubject::Device {},
+                    PolicyAccess::Device {}
+                ) | (
+                    rss_mdm_agent_wire::runtime::SelfServiceSubject::User { .. },
+                    PolicyAccess::User { .. }
+                )
+            ) {
+                return false;
+            }
+        }
         let terminal = matches!(self.state, S::Cancelled | S::Failed);
         match &self.trigger {
             crate::BackendTrigger::Human { .. } => {

@@ -289,9 +289,7 @@ impl DesktopRuntime {
         let session = match self.identity.session()? {
             Some(account) => account.native_session(next.generation.as_str())?,
             None => execution_ipc::host::NativeContextSession {
-                credential: None,
-                credential_origin: None,
-                user: None,
+                access: execution_ipc::host::NativeAccess::Device {},
                 generation: execution_contract::Id::new(next.generation.as_str())
                     .map_err(|_| unavailable())?,
                 expires_at_unix_ms: u64::MAX,
