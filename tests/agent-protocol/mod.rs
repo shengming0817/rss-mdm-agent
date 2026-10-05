@@ -374,9 +374,23 @@ impl Data {
             })
             .collect();
         let spec = SoftwareTaskSpec {
-            authorization: TaskAuthorization::Policy {
-                policy_id: self.task,
-                policy_version: self.task,
+            authorization: if user {
+                TaskAuthorization::SelfService {
+                    request_id: self.task,
+                    subject: SelfServiceSubject::Device,
+                    source: SelfServiceCaller::Human,
+                    policy_id: self.task,
+                    policy_revision: 1,
+                    policy_version: self.task,
+                    allow_ai: false,
+                    risk_level: 2,
+                    confirmed: true,
+                }
+            } else {
+                TaskAuthorization::Policy {
+                    policy_id: self.task,
+                    policy_version: self.task,
+                }
             },
             execution_context: execution_context(),
             wire_version: 1,

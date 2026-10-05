@@ -17,6 +17,19 @@ struct Case {
     offer: Offer,
     selection: Selection,
 }
+
+// Stage the verified HTTP offer at the local gate seam. Production self-service
+// admission binds an existing Policy invocation; these tests exercise the gate
+// and waiting-owner lifecycle independently, with explicit fixture risk.
+async fn stage_gate_offer(service: &mut DeviceService<protocol::Secrets>) {
+    let offer = service.client.claim().await.unwrap().offer.unwrap();
+    service.client.received(&offer).await.unwrap();
+    let materials = service.client.prepare(&offer).await.unwrap();
+    service.core.available = Some(offered(&offer).unwrap());
+    service.core.available_risk = TrustedRisk::from_offer(&offer);
+    service.waiting = Some((offer, materials));
+}
+
 impl Case {
     async fn new(level: Option<RiskLevel>) -> Self {
         Self::with_offer_lifetime(level, 60).await
@@ -77,8 +90,7 @@ impl Case {
             execution_runner::staging::MaterialRoot::open_fixture,
         )
         .unwrap();
-        let (_sender, mut commands) = tokio::sync::mpsc::channel(1);
-        service.drive(&mut commands).await.unwrap();
+        stage_gate_offer(&mut service).await;
         let offer = service
             .client
             .retained_offer(server.data.lock().unwrap().task)
@@ -227,8 +239,7 @@ async fn terminal_waiting_releases_capacity_without_changing_the_original_reques
             data.attempt = uuid::Uuid::new_v4();
             data.software(1, true);
         }
-        c.service.next_network = std::time::Instant::now();
-        c.service.drive(&mut commands).await.unwrap();
+        stage_gate_offer(&mut c.service).await;
         let next = c.service.core.available.as_ref().unwrap().clone();
         assert_ne!(next.request, original.action.offer().unwrap().request);
         assert!(c.service.waiting.is_some());
