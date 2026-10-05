@@ -49,12 +49,27 @@ function resolved() {
           {{ record.action.directory.task.resource.version }} /
           {{ record.action.directory.task.resource.variant }}
         </dd>
-        <dt>发起账号</dt>
+        <dt>准入主体</dt>
         <dd>
-          {{ record.action.user?.tenantId ?? "设备" }} /
-          {{ record.action.user?.principalId ?? "本机设备上下文" }} · 登录
-          {{ record.action.context.generation }}
+          {{
+            record.action.access.kind === "device"
+              ? "设备准入 · 无需企业登录"
+              : "企业用户准入"
+          }}
         </dd>
+        <template
+          v-if="
+            record.action.directory.subject.kind === 'user' &&
+            record.action.access.kind === 'user'
+          "
+        >
+          <dt>发起企业身份 / 会话</dt>
+          <dd>
+            {{ record.action.directory.subject.user.tenantId }} /
+            {{ record.action.directory.subject.user.principalId }} · 登录
+            {{ record.action.access.sessionBinding.generation }}
+          </dd>
+        </template>
         <template v-if="record.trigger.kind !== 'automatic'"
           ><dt>发起设备 / OS 账号 / 登录</dt>
           <dd>

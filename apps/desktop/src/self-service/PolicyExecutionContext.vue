@@ -5,7 +5,7 @@ defineProps<{ task: SelfServiceTask }>();
 <template>
   <dl>
     <dt>运行身份</dt>
-    <dd>{{ task.runAs === "system" ? "系统账户" : "当前登录用户" }}</dd>
+    <dd>{{ task.runAs === "system" ? "系统账户" : "本机登录用户" }}</dd>
     <template v-if="task.kind === 'software'">
       <dt>执行目标</dt>
       <dd v-if="task.target.kind === 'device'">本机设备</dd>

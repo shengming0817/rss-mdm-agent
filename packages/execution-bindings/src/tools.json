@@ -999,7 +999,7 @@
           "properties": {
             "generation": {
               "$ref": "#/$defs/Id",
-              "description": "Exact caller generation; retirement invalidates all work using it."
+              "description": "Exact caller generation; retirement rejects new ingress and User continuations."
             },
             "id": {
               "$ref": "#/$defs/Id",
@@ -1094,6 +1094,31 @@
             }
           ]
         },
+        "PolicyAccess": {
+          "description": "Local continuation binding selected from the backend directory subject.\nOS session and device authority remain in the original trigger and service owner.",
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "Device requests do not depend on enterprise login generation.",
+              "properties": { "kind": { "const": "device", "type": "string" } },
+              "required": ["kind"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "User requests require this exact live native employee session.",
+              "properties": {
+                "kind": { "const": "user", "type": "string" },
+                "sessionBinding": {
+                  "$ref": "#/$defs/NativeContextRef",
+                  "description": "Owner-issued reference; never a credential or another identity authority."
+                }
+              },
+              "required": ["kind", "sessionBinding"],
+              "type": "object"
+            }
+          ]
+        },
         "PolicyChoice": {
           "additionalProperties": false,
           "description": "Employee input; caller source and confirmation are supplied only by trusted native code.",
@@ -1181,13 +1206,13 @@
               "additionalProperties": false,
               "description": "Policy invocation and its eventual exact Offer, held in the same journal record.",
               "properties": {
+                "access": {
+                  "$ref": "#/$defs/PolicyAccess",
+                  "description": "Local continuation binding; enterprise identity is solely directory.subject."
+                },
                 "choice": {
                   "$ref": "#/$defs/PolicyChoice",
                   "description": "Immutable employee choice."
-                },
-                "context": {
-                  "$ref": "#/$defs/NativeContextRef",
-                  "description": "Native product login generation."
                 },
                 "directory": {
                   "$ref": "#/$defs/SelfServiceDirectoryItem",
@@ -1210,20 +1235,13 @@
                 "runId": {
                   "anyOf": [{ "$ref": "#/$defs/Id" }, { "type": "null" }],
                   "description": "Backend Run returned for the original request, absent until acceptance is known."
-                },
-                "user": {
-                  "anyOf": [
-                    { "$ref": "#/$defs/SelfServiceUser" },
-                    { "type": "null" }
-                  ],
-                  "description": "Authenticated product employee, checked against the signed authorization."
                 }
               },
               "required": [
                 "kind",
                 "choice",
                 "directory",
-                "context",
+                "access",
                 "expiresAtUnixMs"
               ],
               "type": "object"
@@ -1350,6 +1368,10 @@
               "$ref": "#/$defs/SelfServiceMetadata",
               "description": "Normalized presentation and invocation settings."
             },
+            "subject": {
+              "$ref": "#/$defs/SelfServiceSubject",
+              "description": "Current qualified subject, rechecked when invoking and before execution."
+            },
             "task": {
               "$ref": "#/$defs/SelfServiceTask",
               "description": "Closed task kind and the exact invocation interface."
@@ -1359,6 +1381,7 @@
             "policyId",
             "policyRevision",
             "policyVersion",
+            "subject",
             "selfService",
             "task"
           ],
@@ -1419,6 +1442,31 @@
             "riskLevel"
           ],
           "type": "object"
+        },
+        "SelfServiceSubject": {
+          "description": "Subject selected by the server's explicit Policy access basis.",
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "Device credential plus effective device scope; no enterprise session.",
+              "properties": { "kind": { "const": "device", "type": "string" } },
+              "required": ["kind"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "A live enterprise session matched by product authorization.",
+              "properties": {
+                "kind": { "const": "user", "type": "string" },
+                "user": {
+                  "$ref": "#/$defs/SelfServiceUser",
+                  "description": "Authenticated enterprise coordinates, without a credential."
+                }
+              },
+              "required": ["kind", "user"],
+              "type": "object"
+            }
+          ]
         },
         "SelfServiceTask": {
           "description": "One directory interface; software does not inherit script parameter semantics.",

@@ -8,7 +8,7 @@
     "status": {
       "build": "0.1.0",
       "platform": "macos",
-      "protocol": 12,
+      "protocol": 13,
       "readiness": { "phase": "notReady" }
     }
   },
@@ -17,7 +17,7 @@
     "status": {
       "build": "0.1.0",
       "platform": "macos",
-      "protocol": 12,
+      "protocol": 13,
       "readiness": { "phase": "ready" }
     }
   },
@@ -26,7 +26,7 @@
     "status": {
       "build": "0.1.0",
       "platform": "macos",
-      "protocol": 12,
+      "protocol": 13,
       "readiness": { "phase": "registrationRequired" }
     }
   },
