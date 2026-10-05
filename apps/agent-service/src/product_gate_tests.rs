@@ -3050,7 +3050,7 @@ async fn transient_start_replays_original_attempt_without_retiring_policy_or_con
         let wire::TaskPayload::Script(spec) = start.payload() else {
             panic!("script")
         };
-        let compiled = backend::plan::script(
+        let (compiled, _artifacts) = backend::plan::script(
             &restored,
             &materials,
             spec,
