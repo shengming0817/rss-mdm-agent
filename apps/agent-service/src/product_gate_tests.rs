@@ -2572,3 +2572,288 @@ async fn fences_isolate_os_sessions_and_user_requests_never_downgrade() {
         }
     ));
 }
+
+impl Case {
+    async fn accepted_policy_offer(&mut self, device: bool) -> (BackendRequest, Offer) {
+        use execution_ipc::host::Request;
+        let mut item =
+            protocol::policy_directory_fixture(self.service.client.configuration().tenant);
+        item.self_service.risk_level = 2;
+        if device {
+            item.subject = wire::SelfServiceSubject::Device {};
+        }
+        self._server.data.lock().unwrap().self_service_directory =
+            Some(wire::SelfServiceDirectoryResponse {
+                items: vec![item.clone()],
+                next_cursor: None,
+                as_of: 1,
+            });
+        let choice = self.policy_choice(&item);
+        let reply = self
+            .policy_call(Request::InvokePolicy {
+                context: self.context(),
+                choice: choice.clone(),
+                origin: self.selection.origin.clone(),
+            })
+            .await;
+        assert!(matches!(reply, Reply::PolicyRequest { .. }));
+        let Reply::PolicyRequest { value: record } = self
+            .policy_call(Request::ConfirmPolicy {
+                context: self.context(),
+                request: choice.request.clone(),
+            })
+            .await
+        else {
+            panic!("accepted")
+        };
+        {
+            let mut data = self._server.data.lock().unwrap();
+            let accepted = data.invocations
+                [&uuid::Uuid::parse_str(choice.request.as_str()).unwrap()]
+                .1
+                .clone();
+            data.script();
+            let wire::TaskPayload::Script(mut spec) = data.offer.as_ref().unwrap().payload.clone()
+            else {
+                panic!("script")
+            };
+            spec.task_id = accepted.run_id;
+            data.task = accepted.run_id;
+            let wire::SelfServiceTask::Script {
+                resource, run_as, ..
+            } = &item.task
+            else {
+                panic!("script")
+            };
+            spec.resource = resource.clone();
+            spec.run_as = *run_as;
+            spec.parameters = std::collections::BTreeMap::from([
+                ("name".into(), serde_json::json!("Acme")),
+                ("path".into(), serde_json::json!("/Applications")),
+            ]);
+            spec.authorization = wire::TaskAuthorization::SelfService {
+                request_id: accepted.request_id,
+                subject: item.subject,
+                source: wire::SelfServiceCaller::Ai,
+                policy_id: item.policy_id,
+                policy_revision: item.policy_revision,
+                policy_version: item.policy_version,
+                allow_ai: true,
+                risk_level: 2,
+                confirmed: true,
+            };
+            data.offer = Some(data.signed(wire::TaskPayload::Script(spec)));
+            data.explicit_offers = true;
+        }
+        let offer = self.service.client.claim().await.unwrap().offer.unwrap();
+        self.service.client.received(&offer).await.unwrap();
+        (*record, offer)
+    }
+    fn reopen(self) -> Self {
+        let Self {
+            _server,
+            _root,
+            service,
+            offer,
+            selection,
+        } = self;
+        let config = service.core.config.clone();
+        let helpers = service.core.helpers.clone();
+        drop(service);
+        let clock = SystemClock::new().unwrap();
+        let client = Client::open(
+            &_root.path,
+            _server.config(),
+            OpenMode::Existing,
+            _server.secrets.clone(),
+            clock.clone(),
+        )
+        .unwrap();
+        let service = DeviceService::assemble(
+            client,
+            &_root.path.join("execution.sqlite"),
+            crate::ProductionStartup::Existing,
+            config,
+            clock,
+            helpers,
+            execution_runner::staging::MaterialRoot::open_fixture,
+        )
+        .unwrap();
+        Self {
+            _server,
+            _root,
+            service,
+            offer,
+            selection,
+        }
+    }
+}
+
+#[tokio::test]
+async fn device_recovery_reopens_both_journals_and_preserves_every_accepted_intent_at_capacity() {
+    let mut c = Case::new(None).await;
+    let (_sender, mut commands) = tokio::sync::mpsc::channel(1);
+    c.service.release_waiting();
+    c.service
+        .abandon(c.offer.task_id(), &mut commands)
+        .await
+        .unwrap();
+    let (first, first_offer) = c.accepted_policy_offer(true).await;
+    let (second, second_offer) = c.accepted_policy_offer(true).await;
+    let posts = c
+        ._server
+        .data
+        .lock()
+        .unwrap()
+        .employee_calls
+        .iter()
+        .filter(|(url, _)| url.ends_with("/invocations"))
+        .count();
+    let mut c = c.reopen();
+    assert!(c.service.core.contexts.is_empty());
+    // A failed future claim cannot interfere with recovery or allocate another offer.
+    c._server.data.lock().unwrap().claim_failure = true;
+    assert!(matches!(
+        c.service.drive(&mut commands).await,
+        Err(Error::Unavailable)
+    ));
+    let waiting = &c.service.waiting.as_ref().unwrap().0;
+    assert_eq!(waiting.task_id(), first_offer.task_id());
+    assert_eq!(waiting.attempt_id(), first_offer.attempt_id());
+    let tasks = c.service.client.pending_tasks(128).unwrap();
+    assert!(tasks.contains(&first_offer.task_id()));
+    assert!(tasks.contains(&second_offer.task_id()));
+    for original in [&first, &second] {
+        let restored = c
+            .service
+            .core
+            .app
+            .backend_request(&c.service.core.caller(), original.action.request())
+            .unwrap()
+            .unwrap();
+        assert_eq!(&restored, original);
+        assert!(restored.confirmation.is_some());
+        assert!(c.service.core.current_policy_access(&restored).is_ok());
+    }
+    assert_eq!(
+        c._server
+            .data
+            .lock()
+            .unwrap()
+            .employee_calls
+            .iter()
+            .filter(|(url, _)| url.ends_with("/invocations"))
+            .count(),
+        posts
+    );
+    assert!(c
+        .service
+        .core
+        .app
+        .service_tasks(None, 64)
+        .unwrap()
+        .items
+        .is_empty());
+    assert!(c._server.data.lock().unwrap().start_ops.is_empty());
+}
+
+#[tokio::test]
+async fn recovery_never_reconstructs_device_consent_from_a_retired_journal_intent() {
+    let mut c = Case::new(None).await;
+    let (_sender, mut commands) = tokio::sync::mpsc::channel(1);
+    c.service.release_waiting();
+    c.service
+        .abandon(c.offer.task_id(), &mut commands)
+        .await
+        .unwrap();
+    let (_, offer) = c.accepted_policy_offer(true).await;
+    let request = backend::request_id(&offer).unwrap();
+    c.service
+        .core
+        .transition(
+            &request,
+            BackendRequestState::Cancelled,
+            Some(BackendRequestFailure::Revoked),
+        )
+        .unwrap();
+    let mut c = c.reopen();
+    c._server.data.lock().unwrap().claim_failure = true;
+    assert!(matches!(
+        c.service.drive(&mut commands).await,
+        Err(Error::Unavailable)
+    ));
+    assert!(c.service.waiting.is_none());
+    assert!(c.service.client.pending_tasks(128).unwrap().is_empty());
+    assert!(c._server.data.lock().unwrap().start_ops.is_empty());
+    let cancelled = c
+        .service
+        .core
+        .app
+        .backend_request(&c.service.core.caller(), &request)
+        .unwrap()
+        .unwrap();
+    assert_eq!(cancelled.state, BackendRequestState::Cancelled);
+    assert_eq!(cancelled.failure, Some(BackendRequestFailure::Revoked));
+}
+
+#[tokio::test]
+async fn actual_post_start_dispatch_boundary_rejects_revoked_user_before_any_runner_attempt() {
+    for revoke_original in [false, true] {
+        let mut c = Case::new(None).await;
+        c.service.release_waiting();
+        let (original, offer) = c.accepted_policy_offer(false).await;
+        let selection = c.service.bind_policy_offer(&offer).unwrap();
+        let materials = c.service.client.prepare(&offer).await.unwrap();
+        let start = c
+            .service
+            .client
+            .start_user_initiated(&offer, &materials)
+            .await
+            .unwrap();
+        assert!(!c._server.data.lock().unwrap().start_ops.is_empty());
+        let scope = if revoke_original {
+            c.scope()
+        } else {
+            crate::service::policy::SessionKey::new(
+                c.selection.subject.clone(),
+                plan::id("other-os-session").unwrap(),
+            )
+        };
+        c.service.core.fences.revoke(&scope).unwrap();
+        if revoke_original {
+            // The production submit wrapper verifies the helper before this exact boundary.
+            // This staged peer fixture proves the shared Start-to-runner path, not native IPC.
+            assert!(matches!(
+                crate::backend::dispatch_started(
+                    &mut c.service,
+                    offer,
+                    materials,
+                    Some(selection),
+                    start,
+                    None
+                ),
+                Err(Error::Identity)
+            ));
+            assert!(c
+                .service
+                .core
+                .app
+                .service_tasks(None, 64)
+                .unwrap()
+                .items
+                .is_empty());
+            assert_eq!(
+                c.service
+                    .core
+                    .app
+                    .backend_request(&c.service.core.caller(), original.action.request())
+                    .unwrap()
+                    .unwrap()
+                    .trigger,
+                original.trigger
+            );
+        } else {
+            assert!(c.service.core.current_policy_access(&original).is_ok());
+        }
+    }
+}

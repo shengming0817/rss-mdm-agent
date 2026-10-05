@@ -92,6 +92,19 @@ pub(crate) async fn submit<S: IdentityProvider>(
             )
             .map_err(helper_error)?;
     }
+    dispatch_started(service, offer, materials, selection, start, delegate)
+}
+
+// Single synchronous delivery boundary after HTTP Start and native helper verification.
+// Explicit gate fixtures may exercise this boundary without claiming native OS authentication.
+pub(crate) fn dispatch_started<S: IdentityProvider>(
+    service: &mut DeviceService<S>,
+    offer: Offer,
+    materials: Materials,
+    selection: Option<Selection>,
+    start: agent_client::Start,
+    delegate: Option<Arc<execution_ipc::helper::Connection>>,
+) -> Result<ExecutionStatus, Error> {
     if service
         .core
         .host

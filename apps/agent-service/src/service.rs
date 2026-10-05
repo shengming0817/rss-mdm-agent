@@ -414,10 +414,13 @@ impl<S: IdentityProvider> DeviceService<S> {
                     .is_none_or(|(offer, _)| offer.task_id() != task)
             {
                 let offer = self.client.retained_offer(task)?;
-                if self.waiting.is_none()
-                    && self.device_policy_intent(&offer)?
+                if self.device_policy_intent(&offer)?
                     && self.core.host.clock.millis()? / 1000 < offer.payload().expires_at() as u64
                 {
+                    if self.waiting.is_some() {
+                        // Capacity delays this original intent; it never revokes consent.
+                        continue;
+                    }
                     // Recover only the already recorded consent and verified original offer.
                     // Binding and Start still recheck the original OS session and current device.
                     let materials =
@@ -518,6 +521,7 @@ impl<S: IdentityProvider> DeviceService<S> {
     }
     fn device_policy_intent(&self, offer: &Offer) -> Result<bool, Error> {
         let request = backend::request_id(offer)?;
+        let now = self.core.host.clock.millis()?;
         Ok(self
             .core
             .app
@@ -525,6 +529,7 @@ impl<S: IdentityProvider> DeviceService<S> {
             .map_err(crate::error::app_error)?
             .is_some_and(|record| {
                 record.state == BackendRequestState::Submitting
+                    && record.action.expires_at_unix_ms() > now
                     && matches!(
                         record.action,
                         execution_contract::PreparedAction::Policy {

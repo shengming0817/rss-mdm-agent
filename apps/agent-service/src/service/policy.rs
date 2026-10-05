@@ -219,7 +219,7 @@ impl Core {
         }
         Ok(bound)
     }
-    fn policy_context(&self, record: &BackendRequest) -> Result<&NativeContext, Error> {
+    fn policy_context(&self, record: &BackendRequest) -> Result<Option<&NativeContext>, Error> {
         if self.host.revoked.load(Ordering::Acquire) || self.stopping {
             return Err(Error::Denied);
         }
@@ -231,30 +231,6 @@ impl Core {
         };
         if login.device != self.host.binding.device || login.account.platform != plan::platform()? {
             return Err(Error::Identity);
-        }
-        let scope = SessionKey::new(
-            login.account.subject.as_str().to_owned(),
-            login.session.clone(),
-        );
-        let current = self
-            .contexts
-            .values()
-            .find(|bound| {
-                bound.scope == scope
-                    && self
-                        .fences
-                        .current(&scope)
-                        .is_ok_and(|epoch| epoch == bound.epoch)
-                    && matches!(&record.action, PreparedAction::Policy {
-                    access: PolicyAccess::User { session_binding }, ..
-                } if session_binding == &bound.context)
-            })
-            .ok_or(Error::Identity)?;
-        if self.fences.current(&scope)? != current.epoch {
-            return Err(Error::Identity);
-        }
-        if self.host.clock.millis()? >= current.expires_at_unix_ms {
-            return Err(Error::Expired);
         }
         let PreparedAction::Policy {
             directory, access, ..
@@ -262,42 +238,39 @@ impl Core {
         else {
             return Err(Error::Protocol);
         };
-        match (&directory.subject, access) {
-            (wire::SelfServiceSubject::Device {}, PolicyAccess::Device {}) => (),
-            (wire::SelfServiceSubject::User { user }, PolicyAccess::User { session_binding })
-                if current.user() == Some(user) && &current.context == session_binding =>
-            {
-                ()
-            }
-            _ => return Err(Error::Identity),
-        }
-        Ok(current)
-    }
-    fn policy_access(&self, record: &BackendRequest) -> Result<(), Error> {
-        if self.host.revoked.load(Ordering::Acquire) || self.stopping {
-            return Err(Error::Denied);
-        }
-        let login = match &record.trigger {
-            BackendTrigger::Human { os_session } | BackendTrigger::Ai { os_session, .. } => {
-                os_session
+        let (user, session_binding) = match (&directory.subject, access) {
+            (wire::SelfServiceSubject::Device {}, PolicyAccess::Device {}) => return Ok(None),
+            (wire::SelfServiceSubject::User { user }, PolicyAccess::User { session_binding }) => {
+                (user, session_binding)
             }
             _ => return Err(Error::Identity),
         };
-        if login.device != self.host.binding.device || login.account.platform != plan::platform()? {
+        let scope = SessionKey::new(
+            login.account.subject.as_str().to_owned(),
+            login.session.clone(),
+        );
+        let current = self
+            .contexts
+            .values()
+            .find(|bound| bound.scope == scope && &bound.context == session_binding)
+            .ok_or(Error::Identity)?;
+        if self.fences.current(&scope)? != current.epoch || current.user() != Some(user) {
             return Err(Error::Identity);
         }
-        match &record.action {
-            PreparedAction::Policy {
-                directory,
-                access: PolicyAccess::Device {},
-                ..
-            } if matches!(directory.subject, wire::SelfServiceSubject::Device {}) => Ok(()),
-            PreparedAction::Policy {
-                access: PolicyAccess::User { .. },
-                ..
-            } => self.policy_context(record).map(|_| ()),
-            _ => Err(Error::Identity),
+        if self.host.clock.millis()? >= current.expires_at_unix_ms {
+            return Err(Error::Expired);
         }
+        Ok(Some(current))
+    }
+    fn current_policy_context(
+        &self,
+        record: &BackendRequest,
+    ) -> Result<Option<&NativeContext>, Error> {
+        let context = self.policy_context(record)?;
+        if self.host.clock.millis()? >= record.action.expires_at_unix_ms() {
+            return Err(Error::Expired);
+        }
+        Ok(context)
     }
     pub(super) fn policy_readable(
         &self,
@@ -315,7 +288,7 @@ impl Core {
         if matches!(record.action, PreparedAction::Policy { .. }) {
             return Ok(trigger_subject(&record.trigger) == Some(subject)
                 && record.trigger_os_session() == binding
-                && self.policy_access(&record).is_ok());
+                && self.policy_context(&record).is_ok());
         }
         if let BackendTrigger::Ai {
             os_session,
@@ -346,19 +319,10 @@ impl Core {
         &self,
         record: &BackendRequest,
     ) -> Result<Option<(Arc<Fences>, SessionKey, u64)>, Error> {
-        if let PreparedAction::Policy { access, .. } = &record.action {
-            self.current_policy_access(record)?;
-            return match access {
-                PolicyAccess::Device {} => Ok(None),
-                PolicyAccess::User { .. } => {
-                    let bound = self.policy_context(record)?;
-                    Ok(Some((
-                        self.fences.clone(),
-                        bound.scope.clone(),
-                        bound.epoch,
-                    )))
-                }
-            };
+        if matches!(record.action, PreparedAction::Policy { .. }) {
+            return Ok(self
+                .current_policy_context(record)?
+                .map(|bound| (self.fences.clone(), bound.scope.clone(), bound.epoch)));
         }
         if let BackendTrigger::Ai {
             os_session,
@@ -396,10 +360,7 @@ impl Core {
             return Err(Error::Denied);
         }
         if matches!(record.action, PreparedAction::Policy { .. }) {
-            self.policy_access(record)?;
-            if self.host.clock.millis()? >= record.action.expires_at_unix_ms() {
-                return Err(Error::Expired);
-            }
+            self.current_policy_context(record)?;
         } else if let BackendTrigger::Ai {
             os_session,
             context,
@@ -640,7 +601,7 @@ impl<S: IdentityProvider> DeviceService<S> {
                     if original != choice || previous.trigger != bound_trigger {
                         return Err(Error::Conflict);
                     }
-                    self.core.policy_access(&previous)?;
+                    self.core.policy_context(&previous)?;
                     Reply::PolicyRequest {
                         value: Box::new(self.send_policy(previous, &bound, commands).await?),
                     }
@@ -816,7 +777,7 @@ impl<S: IdentityProvider> DeviceService<S> {
                 {
                     return Err(Error::Denied);
                 }
-                self.core.policy_access(&previous)?;
+                self.core.policy_context(&previous)?;
                 let secret = match &directory.subject {
                     wire::SelfServiceSubject::Device {} => None,
                     wire::SelfServiceSubject::User { .. } => {
@@ -1112,8 +1073,7 @@ impl<S: IdentityProvider> DeviceService<S> {
             let lease = self
                 .core
                 .policy_context(&previous)?
-                .lease
-                .clone()
+                .and_then(|bound| bound.lease.clone())
                 .ok_or(Error::Identity)?;
             self.core.credential_leases.insert(request.clone(), lease);
         }
