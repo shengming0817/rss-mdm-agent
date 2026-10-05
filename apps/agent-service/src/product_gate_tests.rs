@@ -2672,7 +2672,7 @@ impl Case {
         let service = DeviceService::assemble(
             client,
             &_root.path.join("execution.sqlite"),
-            crate::ProductionStartup::Existing,
+            crate::ProductionStartup::Open,
             config,
             clock,
             helpers,
