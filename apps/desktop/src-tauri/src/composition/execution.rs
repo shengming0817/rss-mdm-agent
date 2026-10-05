@@ -46,8 +46,10 @@ pub struct ExecutionHandle {
     context_possible: Arc<AtomicBool>,
     context_initialized: Arc<AtomicBool>,
     #[cfg(test)]
-    context_transport: Option<Arc<dyn Fn(Request) -> Result<Reply, Error> + Send + Sync>>,
+    context_transport: Option<ContextTransport>,
 }
+#[cfg(test)]
+type ContextTransport = Arc<dyn Fn(Request) -> Result<Reply, Error> + Send + Sync>;
 impl ExecutionHandle {
     pub fn new() -> Self {
         Self {
