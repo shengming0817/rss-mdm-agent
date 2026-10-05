@@ -6,6 +6,7 @@ import {
   currentUser,
   accountNotice,
   refreshAccount,
+  logoutAccount,
   accountErrorMessage,
   loadAccountSettings,
   type Organization,
@@ -49,6 +50,29 @@ beforeEach(() => {
   currentUser.value = undefined;
   accountNotice.value = "";
   vi.mocked(invoke).mockReset();
+});
+it("installs the native device workspace after logout retires the old generation", async () => {
+  currentUser.value = { ...current, generation: "old-enterprise-generation" };
+  const device = { ...current, generation: "new-device-generation" };
+  vi.mocked(invoke).mockImplementation(async (command) => {
+    expect(currentUser.value).toBeUndefined();
+    if (command === "account_logout") return;
+    if (command === "account_status")
+      return { schemaVersion: 8, kind: "accountStatus", current: device };
+    throw Error("unexpected native request");
+  });
+  await logoutAccount();
+  expect(currentUser.value).toEqual(device);
+  expect(currentUser.value?.identity.mode).toBe("device");
+});
+it("keeps the retired identity unavailable when logout cleanup is unconfirmed", async () => {
+  currentUser.value = current;
+  vi.mocked(invoke).mockRejectedValue({ code: "logout_unconfirmed" });
+  await expect(logoutAccount()).rejects.toEqual({ code: "logout_unconfirmed" });
+  expect(currentUser.value).toBeUndefined();
+  expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
+    "account_logout",
+  ]);
 });
 it("closes assistant modals when leaving the page and preserves the conversation draft", async () => {
   currentUser.value = current;

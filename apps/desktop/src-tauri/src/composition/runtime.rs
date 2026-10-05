@@ -288,6 +288,7 @@ impl DesktopRuntime {
             Some(account) => account.native_session(next.generation.as_str())?,
             None => execution_ipc::host::NativeContextSession {
                 credential: None,
+                credential_origin: None,
                 user: None,
                 generation: execution_contract::Id::new(next.generation.as_str())
                     .map_err(|_| unavailable())?,
@@ -311,6 +312,10 @@ impl DesktopRuntime {
     }
     /// Single-flight refresh performs HTTP on a cloned session, outside identity and transition locks.
     pub async fn verify_account(&self) -> ui::Result<()> {
+        if self.cleanup_pending.load(Ordering::Acquire) {
+            let _switch = self.switching.lock().await;
+            self.retry_cleanup().await?;
+        }
         let requested = std::time::Instant::now();
         let Ok(context) = self.identity.snapshot() else {
             return Ok(());

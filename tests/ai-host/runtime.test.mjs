@@ -17,6 +17,7 @@ import {
   RuntimeClient,
   localTransportPair,
 } from "../../packages/ai-client/dist/index.js";
+import { fixtureSession } from "../../packages/ai-contract/dist/testing/index.js";
 const caller = {
   tenantId: "tenant",
   principalId: "person",
@@ -171,6 +172,109 @@ async function setup(t, revision = "1", extras = {}) {
       .map((line) => JSON.parse(line));
   return { host, store, session, command, record, trace, directory, options };
 }
+test("a waiting namespace probe leaves another caller's real worker message and cancellation responsive", async (t) => {
+  const actual = processWorkerAdapter(workerRuntime);
+  let release, entered;
+  const probing = new Promise((resolve) => {
+    entered = resolve;
+  });
+  const f = await setup(t, "1", {
+    hostOptions: {
+      workers: {
+        create: (...args) => actual.create(...args),
+        absent(scope, b) {
+          if (scope.kind !== "processGroup" || scope.root !== 42)
+            return actual.absent(scope, b);
+          entered();
+          return new Promise((resolve) => {
+            release = resolve;
+          });
+        },
+      },
+    },
+  });
+  const uncertain = fixtureSession();
+  uncertain.namespace = {
+    ...uncertain.namespace,
+    principalId: "fenced-caller",
+    sessionId: "fenced-session",
+  };
+  unwrap(await f.store.create(uncertain));
+  unwrap(
+    await f.store.reserveLaunch({
+      namespace: uncertain.namespace,
+      launchId: "unknown",
+      artifact: "fixture-provider",
+      runtimeDigest: "a".repeat(64),
+      phase: "reserved",
+    }),
+  );
+  unwrap(
+    await f.store.registerLaunch(uncertain.namespace, "unknown", {
+      kind: "processGroup",
+      root: 42,
+    }),
+  );
+  const pending = f.host.resume(
+    uncertain.namespace,
+    uncertain.namespace.sessionId,
+    budget(),
+  );
+  t.after(() => release?.(false));
+  await probing;
+  let timeout;
+  try {
+    await Promise.race([
+      (async () => {
+        unwrap(
+          await f.host.submit(caller, f.command("isolated-long"), budget()),
+        );
+        await until(
+          async () => (await f.record("isolated-long")).state === "running",
+        );
+        unwrap(await f.host.connections(caller, budget()));
+        const running = await f.record("isolated-long");
+        unwrap(
+          await f.host.cancel(
+            caller,
+            {
+              ...f.command("isolated-cancel"),
+              input: {
+                type: "cancel",
+                generation: activeStage(f.session).binding.generation,
+                targetCommandId: "isolated-long",
+                nativeRunId: running.dispatch.nativeRunId,
+              },
+            },
+            budget(),
+          ),
+        );
+        await until(
+          async () =>
+            (await f.record("isolated-cancel")).state === "acknowledged",
+        );
+        assert.equal((await f.record("isolated-long")).outcome, "cancelled");
+      })(),
+      new Promise((_, reject) => {
+        timeout = setTimeout(
+          () => reject(Error("unrelated caller blocked by scope probe")),
+          1500,
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(timeout);
+    release(false);
+  }
+  assert.equal((await pending).ok, false);
+  assert.equal(
+    unwrap(await f.store.launches()).some(
+      (launch) => launch.launchId === "unknown",
+    ),
+    true,
+  );
+});
+
 test("real worker keeps a long run, durable FIFO and control acknowledgement independent", async (t) => {
   const f = await setup(t);
   unwrap(await f.host.submit(caller, f.command("long"), budget()));

@@ -129,11 +129,9 @@ export async function loginEnterprise(
   }
 }
 export async function logoutAccount(): Promise<void> {
-  try {
-    await invoke("account_logout");
-  } finally {
-    currentUser.value = undefined;
-  }
+  currentUser.value = undefined;
+  await invoke("account_logout");
+  if (!currentUser.value) await refreshAccount();
 }
 export async function refreshAccount(): Promise<void> {
   const expected = currentUser.value?.generation;

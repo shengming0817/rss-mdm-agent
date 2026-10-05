@@ -1084,6 +1084,7 @@ impl Case {
                 expected: None,
                 value: execution_ipc::host::NativeContextSession {
                     credential: Some(zeroize::Zeroizing::new("c".repeat(64))),
+                    credential_origin: Some(self.service.client.configuration().origin.to_string()),
                     user: Some(wire::SelfServiceUser {
                         tenant_id: self.service.client.configuration().tenant,
                         instance_id: uuid::Uuid::from_u128(2),
@@ -1103,6 +1104,49 @@ impl Case {
         *context = value;
     }
 }
+#[tokio::test]
+async fn native_user_handoff_rejects_another_origin_before_any_http_or_refresh() {
+    use execution_ipc::host::{NativeContextSession, Request};
+    for refresh in [false, true] {
+        let mut c = Case::new(None).await;
+        let context = c.context();
+        if !refresh {
+            c.policy_call(Request::RevokeContext {}).await;
+        }
+        let reply = c
+            .policy_call(Request::BindContext {
+                expected: refresh.then(|| context.id.clone()),
+                value: NativeContextSession {
+                    credential: Some(zeroize::Zeroizing::new("c".repeat(64))),
+                    credential_origin: Some("https://other-authority.invalid".into()),
+                    user: Some(wire::SelfServiceUser {
+                        tenant_id: c.service.client.configuration().tenant,
+                        instance_id: uuid::Uuid::from_u128(2),
+                        principal_id: uuid::Uuid::from_u128(3),
+                    }),
+                    generation: plan::id(if refresh { "initial" } else { "new-generation" })
+                        .unwrap(),
+                    expires_at_unix_ms: c.service.core.host.clock.millis().unwrap() + 60_000,
+                },
+            })
+            .await;
+        assert!(matches!(reply, Reply::Rejected));
+        assert!(c._server.data.lock().unwrap().employee_calls.is_empty());
+        if !refresh {
+            assert!(matches!(
+                c.policy_call(Request::PolicyDirectory {
+                    context,
+                    after: None,
+                    origin: c.selection.origin.clone(),
+                })
+                .await,
+                Reply::Rejected
+            ));
+            assert!(c._server.data.lock().unwrap().employee_calls.is_empty());
+        }
+    }
+}
+
 #[tokio::test]
 async fn policy_confirmation_is_single_exact_and_bound_to_employee_generation() {
     use execution_ipc::host::Request;
@@ -1510,6 +1554,7 @@ async fn revoked_generation_cannot_rebind_from_a_queued_native_handoff() {
             expected: Some(c.context().id),
             value: execution_ipc::host::NativeContextSession {
                 credential: Some(zeroize::Zeroizing::new("c".repeat(64))),
+                credential_origin: Some(c.service.client.configuration().origin.to_string()),
                 user: Some(wire::SelfServiceUser {
                     tenant_id: c.service.client.configuration().tenant,
                     instance_id: uuid::Uuid::from_u128(2),

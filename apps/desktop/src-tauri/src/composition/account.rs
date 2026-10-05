@@ -298,6 +298,7 @@ impl EnterpriseSession {
             .ok_or_else(invalid)?;
         Ok(execution_ipc::host::NativeContextSession {
             credential: Some(zeroize::Zeroizing::new(secret.to_owned())),
+            credential_origin: Some(self.organization.origin.clone()),
             user: Some(agent_api::runtime::SelfServiceUser {
                 tenant_id: Uuid::parse_str(&self.organization.tenant_id).map_err(|_| invalid())?,
                 instance_id: Uuid::parse_str(&self.instance).map_err(|_| invalid())?,

@@ -454,6 +454,11 @@ impl<S: IdentityProvider> DeviceService<S> {
         };
         if let Request::BindContext { value, expected } = request {
             if value.user.is_some() != value.credential.is_some()
+                || value.user.is_some() != value.credential_origin.is_some()
+                || value.credential_origin.as_ref().is_some_and(|origin| {
+                    url::Url::parse(origin).ok().as_ref()
+                        != Some(&self.client.configuration().origin)
+                })
                 || value.user.as_ref().is_some_and(|user| {
                     user.tenant_id != self.client.configuration().tenant
                         || user.instance_id.is_nil()
@@ -487,6 +492,7 @@ impl<S: IdentityProvider> DeviceService<S> {
                         && old.epoch == epoch
                         && old.expires_at_unix_ms > self.core.host.clock.millis()?
                         && old.generation == value.generation
+                        && old.credential_origin == value.credential_origin
                         && old.user == value.user =>
                 {
                     old.context.clone()

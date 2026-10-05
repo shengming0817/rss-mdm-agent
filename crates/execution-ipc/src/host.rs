@@ -469,6 +469,8 @@ pub enum ClientOrigin {
 pub struct NativeContextSession {
     /// Only the employee secret, not the cookie or CSRF header.
     pub credential: Option<zeroize::Zeroizing<String>>,
+    /// Credential issuer origin, present exactly when a native user session is bound.
+    pub credential_origin: Option<String>,
     /// Native verified product employee.
     pub user: Option<agent_api::runtime::SelfServiceUser>,
     /// Exact native product login generation.

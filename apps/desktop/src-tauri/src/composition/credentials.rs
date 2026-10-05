@@ -326,11 +326,10 @@ mod tests {
         serde_json::from_value(serde_json::json!({"tenantId":"t","principalId":"p","authorityId":"a","connectionId":"c","provider":"codex","endpoint":"https://example.invalid/","credentialType":"api_key"})).unwrap()
     }
     #[test]
-    fn credential_owners_follow_native_test_guest_and_enterprise_identity() {
+    fn credential_owners_follow_required_device_and_user_device_identity() {
         let draft = serde_json::from_value(serde_json::json!({"connectionId":"c","name":"Connection","provider":"codex","profile":"conversation","source":{"type":"custom_api","apiUrl":"https://example.invalid","model":"chosen"}})).unwrap();
         for identity in [
-            serde_json::Value::Null,
-            serde_json::json!({"mode":"device","tenantId":"local-guest","principalId":"guest","authorityId":"desktop-guest"}),
+            serde_json::json!({"mode":"device","tenantId":"local-device","principalId":"device","authorityId":"desktop-device"}),
             serde_json::json!({"mode":"user_device","tenantId":"tenant","principalId":"principal","authorityId":"authority","organizationId":"org","expiresAtMs":1000}),
         ] {
             let context = serde_json::from_value(serde_json::json!({"schemaVersion":8,"kind":"userContext","generation":"generation","user":{"schemaVersion":8,"kind":"testUser","userId":"profile","nameKey":"name","displayName":"Name"},"identity":identity})).unwrap();
@@ -338,22 +337,17 @@ mod tests {
                 credential_owner(&credential_caller(&context), &draft).unwrap(),
             )
             .unwrap();
-            assert_eq!(
-                owner["principalId"],
-                identity["principalId"].as_str().unwrap_or("profile")
-            );
-            assert_eq!(
-                owner["tenantId"],
-                identity["tenantId"].as_str().unwrap_or("test-users")
-            );
-            assert_eq!(
-                owner["authorityId"],
-                identity["authorityId"]
-                    .as_str()
-                    .unwrap_or("desktop-fixture")
-            );
+            assert_eq!(owner["principalId"], identity["principalId"]);
+            assert_eq!(owner["tenantId"], identity["tenantId"]);
+            assert_eq!(owner["authorityId"], identity["authorityId"]);
             assert_eq!(owner["endpoint"], "https://example.invalid/");
         }
+        let mut context = serde_json::json!({"schemaVersion":8,"kind":"userContext","generation":"generation","user":{"schemaVersion":8,"kind":"testUser","userId":"profile","nameKey":"name","displayName":"Name"},"identity":null});
+        assert!(
+            serde_json::from_value::<ai_session_contract::UserContext>(context.clone()).is_err()
+        );
+        context.as_object_mut().unwrap().remove("identity");
+        assert!(serde_json::from_value::<ai_session_contract::UserContext>(context).is_err());
     }
     #[test]
     fn seal_open_and_retention_use_the_same_typed_target_projection() {
