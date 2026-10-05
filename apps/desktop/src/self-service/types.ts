@@ -206,9 +206,7 @@ export type SelfServiceTask =
       /**
        * Full resolved parameter constraints owned by Resource.
        */
-      parameterSchema: {
-        [k: string]: unknown;
-      };
+      parameterSchema: unknown;
       /**
        * Complete sources for script parameters.
        */
@@ -1877,9 +1875,7 @@ export interface ScriptRunResult {
   /**
    * Resource-defined output, or null when retained only by reference.
    */
-  output: {
-    [k: string]: unknown;
-  };
+  output: unknown;
   /**
    * Digest and size when output is retained by reference.
    */

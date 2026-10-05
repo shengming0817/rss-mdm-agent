@@ -428,9 +428,7 @@ export interface SelfServiceDirectoryItem {
         /**
          * Full resolved parameter constraints owned by Resource.
          */
-        parameterSchema: {
-          [k: string]: unknown;
-        };
+        parameterSchema: unknown;
         /**
          * Complete sources for script parameters.
          */
