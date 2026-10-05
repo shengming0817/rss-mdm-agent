@@ -22,7 +22,6 @@ import { cargoTargetDir } from "./cargo-target.mjs";
 export const root = fileURLToPath(new URL("../", import.meta.url));
 export const contextKey = "_AGENT_PREPARED_INPUTS";
 export const helpers = {
-  agentApi: ["agent-api", "generate", []],
   agentDependencies: ["agent-client", "check-dependencies", []],
   execution: [
     "rss-mdm-desktop",

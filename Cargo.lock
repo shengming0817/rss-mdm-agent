@@ -45,27 +45,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "agent-api"
-version = "0.1.0"
-dependencies = [
- "base64 0.23.1",
- "jsonschema",
- "ordered-float",
- "quote",
- "schemars 0.8.22",
- "schemars 1.2.2",
- "serde",
- "serde_json",
- "sha2",
- "syn 2.0.119",
- "thiserror 2.0.20",
- "toml 1.1.5+spec-1.1.0",
- "typify",
- "uuid",
- "zeroize",
-]
-
-[[package]]
 name = "agent-client"
 version = "0.1.0"
 dependencies = [

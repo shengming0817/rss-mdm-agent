@@ -818,7 +818,7 @@ fn software_result(
                 evidence_sha256: digest,
                 observed_at: time,
             },
-            _ => wire::wire::SoftwareDetectionObservation::Unknown {
+            _ => wire::SoftwareDetectionObservation::Unknown {
                 diagnostic: "native observation unavailable".into(),
             },
         };

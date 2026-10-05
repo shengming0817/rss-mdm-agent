@@ -18,4 +18,6 @@ Schema 描述结构，不能替代动态预算、可信主体验证或 provider 
 
 来源和改写边界见[执行契约来源](../reference/contracts-extraction.md)与[AI Runtime 来源](../reference/ai-runtime.md)。
 
-Agent HTTP API 绑定由 [agent-api](../../crates/agent-api/) 消费固定上游 schema，来源 revision 和输入校验和在 `schema/source.json`。`pnpm generate:agent-api` 更新生成物，`pnpm check:agent-api` 校验输入及生成漂移；两者只读取本仓。`schema/projection.json` 只指定 Rust 表示、字段顺序和整数宽度，字段与校验规则由原始 schema 持有。签名字节与持久化 JSON 使用现有 API 编码，客户端验证、签名验证和执行准入由 `agent-client` / 执行器持有。Cargo 依赖闭包检查覆盖普通、开发、构建、可选和平台依赖，拒绝后端 Rust 包、越界 path 与依赖覆盖。
+Agent HTTP API 直接消费固定 Git rev 的 `rss-mdm-agent-wire`。DTO、静态约束、签名字节和摘要由协议包唯一维护；本仓不生成后端绑定，也不执行通用后端 JSON Schema 校验。升级时修改 workspace 依赖的完整 rev、更新 Cargo.lock，核验固定编码向量及受影响通信/执行接缝。来源无法取得时失败，不切换到相邻 checkout、浮动分支或备用来源。
+
+私库读取使用系统 Git credential helper 或受保护构建凭据；可通过 `CARGO_NET_GIT_FETCH_WITH_CLI=true` 使用 Git helper，不在 manifest 或日志中写凭据。`node scripts/check-agent-dependencies.mjs` 核对完整依赖闭包，常规 `make ci` 已包含该检查。Agent 继续拥有验签、身份绑定、防重放、本机权限与预算；网络解码成功不授予本机执行权限。
