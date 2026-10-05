@@ -447,6 +447,8 @@ impl<S: IdentityProvider> DeviceService<S> {
                     // Binding and Start still recheck the original OS session and current device.
                     let materials =
                         network(self.client.prepare(&offer), &mut self.core, commands).await?;
+                    self.core.available_risk = backend::gate::TrustedRisk::from_offer(&offer);
+                    self.core.available = Some(offered(&offer)?);
                     self.waiting = Some((offer, materials));
                 } else {
                     // No original resumable local intent means no execution may have started.
