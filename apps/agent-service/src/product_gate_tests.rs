@@ -2720,7 +2720,11 @@ async fn device_recovery_reopens_both_journals_and_preserves_every_accepted_inte
     let waiting = &c.service.waiting.as_ref().unwrap().0;
     assert_eq!(waiting.task_id(), first_offer.task_id());
     assert_eq!(waiting.attempt_id(), first_offer.attempt_id());
-    let tasks = c.service.client.pending_tasks(128).unwrap();
+    let tasks = c
+        .service
+        .client
+        .pending_tasks(c.service.client.configuration().limits.pending_tasks)
+        .unwrap();
     assert!(tasks.contains(&first_offer.task_id()));
     assert!(tasks.contains(&second_offer.task_id()));
     for original in [&first, &second] {
@@ -2783,7 +2787,12 @@ async fn recovery_never_reconstructs_device_consent_from_a_retired_journal_inten
         Err(Error::Unavailable)
     ));
     assert!(c.service.waiting.is_none());
-    assert!(c.service.client.pending_tasks(128).unwrap().is_empty());
+    assert!(c
+        .service
+        .client
+        .pending_tasks(c.service.client.configuration().limits.pending_tasks)
+        .unwrap()
+        .is_empty());
     assert!(c._server.data.lock().unwrap().start_ops.is_empty());
     let cancelled = c
         .service
