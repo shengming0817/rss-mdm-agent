@@ -712,6 +712,11 @@ impl<S: IdentityProvider> DeviceService<S> {
                     .backend_request(&self.core.caller(), request)
                     .map_err(map_app_error)?
                     .ok_or(Error::Denied)?;
+                if trigger_subject(&previous.trigger) != Some(command.subject.as_str())
+                    || previous.trigger_os_session() != command.binding.as_ref()
+                {
+                    return Err(Error::Denied);
+                }
                 if let Err(error) = self.core.current_policy_access(&previous) {
                     if error != Error::Expired {
                         return Err(error);
@@ -719,11 +724,6 @@ impl<S: IdentityProvider> DeviceService<S> {
                     return Ok(Reply::PolicyRequest {
                         value: Box::new(self.expire_policy(&previous)?),
                     });
-                }
-                if trigger_subject(&previous.trigger) != Some(command.subject.as_str())
-                    || previous.trigger_os_session() != command.binding.as_ref()
-                {
-                    return Err(Error::Denied);
                 }
                 if previous.state != BackendRequestState::AwaitingConfirmation {
                     return Ok(Reply::PolicyRequest {

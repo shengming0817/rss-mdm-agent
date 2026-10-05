@@ -274,6 +274,9 @@ impl<S: IdentityProvider> DeviceService<S> {
                 match self.bind_policy_offer(&offer) {
                     Ok(selection) => self.core.selected = Some(selection),
                     Err(error) => {
+                        if retryable_submission(error) {
+                            return Err(error);
+                        }
                         let task = offer.task_id();
                         self.core.transition(
                             &backend::request_id(&offer)?,
@@ -305,14 +308,7 @@ impl<S: IdentityProvider> DeviceService<S> {
                 let result = backend::submit(self, offer, materials, selection, commands).await;
                 self.core.available = None;
                 self.core.available_risk = None;
-                if let Err(error) = result {
-                    self.core.transition(
-                        &request,
-                        BackendRequestState::Failed,
-                        Some(BackendRequestFailure::PreparationFailed),
-                    )?;
-                    return Err(error);
-                }
+                self.submission_result(&request, result)?;
             }
         }
         self.core.reconcile()?;
@@ -414,9 +410,35 @@ impl<S: IdentityProvider> DeviceService<S> {
                     .is_none_or(|(offer, _)| offer.task_id() != task)
             {
                 let offer = self.client.retained_offer(task)?;
-                if self.device_policy_intent(&offer)?
-                    && self.core.host.clock.millis()? / 1000 < offer.payload().expires_at() as u64
-                {
+                if let Some(record) = self.policy_intent(&offer)? {
+                    let now = self.core.host.clock.millis()?;
+                    if now >= record.action.expires_at_unix_ms()
+                        || now / 1000 >= offer.payload().expires_at() as u64
+                    {
+                        self.core.transition(
+                            record.action.request(),
+                            BackendRequestState::Failed,
+                            Some(BackendRequestFailure::Expired),
+                        )?;
+                        self.abandon(task, commands).await?;
+                        continue;
+                    }
+                    if let Err(error) = self.core.current_policy_access(&record) {
+                        if retryable_submission(error) {
+                            return Err(error);
+                        }
+                        self.core.transition(
+                            record.action.request(),
+                            BackendRequestState::Failed,
+                            Some(if error == Error::Expired {
+                                BackendRequestFailure::Expired
+                            } else {
+                                BackendRequestFailure::Revoked
+                            }),
+                        )?;
+                        self.abandon(task, commands).await?;
+                        continue;
+                    }
                     if self.waiting.is_some() {
                         // Capacity delays this original intent; it never revokes consent.
                         continue;
@@ -519,23 +541,59 @@ impl<S: IdentityProvider> DeviceService<S> {
         }
         Ok(())
     }
-    fn device_policy_intent(&self, offer: &Offer) -> Result<bool, Error> {
+    fn submission_result(
+        &mut self,
+        request: &RequestId,
+        result: Result<execution_app::ExecutionStatus, Error>,
+    ) -> Result<execution_app::ExecutionStatus, Error> {
+        if let Err(error) = result {
+            // Delivery may already have committed. Its journal owns recovery; never
+            // convert an ambiguous response into permission to abandon that execution.
+            let delivered = self
+                .core
+                .app
+                .has_service_execution(request, &self.core.host.binding.device)
+                .map_err(crate::error::app_error)?;
+            let retryable = retryable_submission(error)
+                && self
+                    .core
+                    .app
+                    .backend_request(&self.core.caller(), request)
+                    .map_err(crate::error::app_error)?
+                    .is_some_and(|record| {
+                        record.state == BackendRequestState::Submitting
+                            && matches!(
+                                record.action,
+                                execution_contract::PreparedAction::Policy { .. }
+                            )
+                    });
+            if !delivered && !retryable {
+                self.core.transition(
+                    request,
+                    BackendRequestState::Failed,
+                    Some(match error {
+                        Error::Expired => BackendRequestFailure::Expired,
+                        Error::Identity | Error::Denied => BackendRequestFailure::Revoked,
+                        _ => BackendRequestFailure::PreparationFailed,
+                    }),
+                )?;
+            }
+            return Err(error);
+        }
+        result
+    }
+    fn policy_intent(&self, offer: &Offer) -> Result<Option<BackendRequest>, Error> {
         let request = backend::request_id(offer)?;
-        let now = self.core.host.clock.millis()?;
         Ok(self
             .core
             .app
             .backend_request(&self.core.caller(), &request)
             .map_err(crate::error::app_error)?
-            .is_some_and(|record| {
+            .filter(|record| {
                 record.state == BackendRequestState::Submitting
-                    && record.action.expires_at_unix_ms() > now
                     && matches!(
                         record.action,
-                        execution_contract::PreparedAction::Policy {
-                            access: execution_contract::PolicyAccess::Device {},
-                            ..
-                        }
+                        execution_contract::PreparedAction::Policy { .. }
                     )
             }))
     }
@@ -668,6 +726,13 @@ impl<S: IdentityProvider> DeviceService<S> {
             .stop_active(128)
             .map_err(crate::error::app_error)
     }
+}
+
+fn retryable_submission(error: Error) -> bool {
+    matches!(
+        error,
+        Error::Unavailable | Error::Capacity | Error::Storage | Error::Clock
+    )
 }
 
 pub(crate) struct Selection {

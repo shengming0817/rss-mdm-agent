@@ -2575,6 +2575,13 @@ async fn fences_isolate_os_sessions_and_user_requests_never_downgrade() {
 
 impl Case {
     async fn accepted_policy_offer(&mut self, device: bool) -> (BackendRequest, Offer) {
+        self.accepted_policy_offer_lifetime(device, None).await
+    }
+    async fn accepted_policy_offer_lifetime(
+        &mut self,
+        device: bool,
+        seconds: Option<i64>,
+    ) -> (BackendRequest, Offer) {
         use execution_ipc::host::Request;
         let mut item =
             protocol::policy_directory_fixture(self.service.client.configuration().tenant);
@@ -2618,6 +2625,9 @@ impl Case {
                 panic!("script")
             };
             spec.task_id = accepted.run_id;
+            if let Some(seconds) = seconds {
+                spec.expires_at = self.service.core.host.clock.now().unwrap() + seconds;
+            }
             data.task = accepted.run_id;
             let wire::SelfServiceTask::Script {
                 resource, run_as, ..
@@ -2648,6 +2658,43 @@ impl Case {
         let offer = self.service.client.claim().await.unwrap().offer.unwrap();
         self.service.client.received(&offer).await.unwrap();
         (*record, offer)
+    }
+    fn policy_record(&self, request: &RequestId) -> BackendRequest {
+        self.service
+            .core
+            .app
+            .backend_request(&self.service.core.caller(), request)
+            .unwrap()
+            .unwrap()
+    }
+    // Stage a historical elapsed deadline in the actual SQLite fixture. SystemClock and
+    // production immutable-action/CAS rules remain unchanged; this is not a migration.
+    fn elapsed_policy(&self, request: &RequestId) -> BackendRequest {
+        let mut record = self.policy_record(request);
+        let until = self.service.core.host.clock.millis().unwrap() - 1;
+        let PreparedAction::Policy {
+            expires_at_unix_ms, ..
+        } = &mut record.action
+        else {
+            panic!("policy")
+        };
+        *expires_at_unix_ms = until;
+        record.risk.as_mut().unwrap().expires_at_unix_ms = until;
+        if let Some(confirmation) = &mut record.confirmation {
+            confirmation.confirmed_at_unix_ms = until - 1;
+            confirmation.expires_at_unix_ms = until;
+        }
+        let sql = rusqlite::Connection::open(self._root.path.join("execution.sqlite")).unwrap();
+        assert_eq!(
+            sql.execute(
+                "UPDATE backend_requests SET body=?1 WHERE request_id=?2",
+                rusqlite::params![serde_json::to_vec(&record).unwrap(), request.as_str()],
+            )
+            .unwrap(),
+            1
+        );
+        assert_eq!(self.policy_record(request), record);
+        record
     }
     fn reopen(self) -> Self {
         let Self {
@@ -2861,5 +2908,248 @@ async fn actual_post_start_dispatch_boundary_rejects_revoked_user_before_any_run
         } else {
             assert!(c.service.core.current_policy_access(&original).is_ok());
         }
+    }
+}
+
+#[tokio::test]
+async fn expired_device_confirmation_checks_original_os_owner_before_read_or_write() {
+    use execution_ipc::host::Request;
+    let mut c = Case::new(None).await;
+    c.device("original-device").await;
+    let mut item = protocol::policy_directory_fixture(c.service.client.configuration().tenant);
+    item.subject = wire::SelfServiceSubject::Device {};
+    c._server.data.lock().unwrap().self_service_directory =
+        Some(wire::SelfServiceDirectoryResponse {
+            items: vec![item.clone()],
+            next_cursor: None,
+            as_of: 1,
+        });
+    let choice = c.policy_choice(&item);
+    assert!(matches!(
+        c.policy_call(Request::InvokePolicy {
+            context: c.context(),
+            choice: choice.clone(),
+            origin: c.selection.origin.clone(),
+        })
+        .await,
+        Reply::PolicyRequest { .. }
+    ));
+    let original = c.elapsed_policy(&choice.request);
+    assert_eq!(original.state, BackendRequestState::AwaitingConfirmation);
+    let owner = c.selection.clone();
+    for other_subject in [false, true] {
+        c.selection = owner.clone();
+        c.selection.binding = plan::id("another-os-login").unwrap();
+        if other_subject {
+            c.selection.subject = "another-os-account".into();
+        }
+        c.device(if other_subject {
+            "another-account"
+        } else {
+            "another-login"
+        })
+        .await;
+        assert!(matches!(
+            c.policy_call(Request::ConfirmPolicy {
+                context: c.context(),
+                request: choice.request.clone(),
+            })
+            .await,
+            Reply::Rejected
+        ));
+        assert_eq!(c.policy_record(&choice.request), original);
+        assert!(c._server.data.lock().unwrap().invocations.is_empty());
+    }
+    c.selection = owner;
+    let Reply::PolicyRequest { value } = c
+        .policy_call(Request::ConfirmPolicy {
+            context: c.context(),
+            request: choice.request.clone(),
+        })
+        .await
+    else {
+        panic!("owner expiration")
+    };
+    assert_eq!(value.state, BackendRequestState::Failed);
+    assert_eq!(value.failure, Some(BackendRequestFailure::Expired));
+    assert_eq!(value.revision, original.revision + 1);
+}
+
+#[tokio::test]
+async fn transient_start_replays_original_attempt_without_retiring_policy_or_consent() {
+    for device in [false, true] {
+        let mut c = Case::new(None).await;
+        let (_sender, mut commands) = tokio::sync::mpsc::channel(1);
+        c.service.release_waiting();
+        c.service
+            .abandon(c.offer.task_id(), &mut commands)
+            .await
+            .unwrap();
+        let (original, offer) = c.accepted_policy_offer(device).await;
+        c.service.bind_policy_offer(&offer).unwrap();
+        let before = c.policy_record(original.action.request());
+        let materials = c.service.client.prepare(&offer).await.unwrap();
+        c._server.data.lock().unwrap().start_failure = true;
+        let error = c
+            .service
+            .client
+            .start_user_initiated(&offer, &materials)
+            .await
+            .err()
+            .unwrap();
+        assert_eq!(error, Error::Unavailable);
+        assert_eq!(
+            c.service
+                .submission_result(original.action.request(), Err(error))
+                .unwrap_err(),
+            error
+        );
+        assert_eq!(c.policy_record(original.action.request()), before);
+        assert!(c
+            .service
+            .core
+            .app
+            .service_tasks(None, 64)
+            .unwrap()
+            .items
+            .is_empty());
+        drop(materials);
+        // Device resumes across both journals. User resumes only while its exact native
+        // context remains live in this owner; a process restart cannot reconstruct it.
+        let mut c = if device { c.reopen() } else { c };
+        c.service.next_network = std::time::Instant::now();
+        c.service.drive(&mut commands).await.unwrap();
+        let (restored, materials) = c.service.waiting.take().unwrap();
+        assert_eq!(restored.task_id(), offer.task_id());
+        assert_eq!(restored.attempt_id(), offer.attempt_id());
+        let selection = c.service.bind_policy_offer(&restored).unwrap();
+        let start = c
+            .service
+            .client
+            .start_user_initiated(&restored, &materials)
+            .await
+            .unwrap();
+        let ops = c._server.data.lock().unwrap().start_ops.clone();
+        assert_eq!(ops.len(), 2);
+        assert_eq!(ops[0], ops[1]);
+        let retained = c.policy_record(original.action.request());
+        assert_eq!(retained.confirmation, original.confirmation);
+        assert_eq!(retained.trigger, original.trigger);
+        assert_eq!(retained.action.request(), original.action.request());
+        // The production wrapper verifies the helper before this shared boundary.
+        // Staged OS ownership proves the HTTP/SQLite/runner seam, not native IPC.
+        let result = crate::backend::dispatch_started(
+            &mut c.service,
+            restored,
+            materials,
+            Some(selection),
+            start,
+            None,
+        );
+        let status = c
+            .service
+            .submission_result(original.action.request(), result)
+            .unwrap();
+        assert_eq!(status.attempts, 1);
+        assert_eq!(
+            c.service
+                .core
+                .app
+                .service_tasks(None, 64)
+                .unwrap()
+                .items
+                .len(),
+            1
+        );
+        let delivered = c.policy_record(original.action.request());
+        // A response lost after delivery belongs to the execution journal's recovery.
+        assert_eq!(
+            c.service
+                .submission_result(original.action.request(), Err(Error::Unavailable))
+                .unwrap_err(),
+            Error::Unavailable
+        );
+        assert_eq!(c.policy_record(original.action.request()), delivered);
+        assert_eq!(
+            c.service
+                .core
+                .app
+                .service_tasks(None, 64)
+                .unwrap()
+                .items
+                .len(),
+            1
+        );
+    }
+}
+
+#[tokio::test]
+async fn restarted_policy_expiry_preserves_original_run_queries_without_start() {
+    use execution_ipc::host::Request;
+    for offer_expired in [false, true] {
+        let mut c = Case::new(None).await;
+        let (_sender, mut commands) = tokio::sync::mpsc::channel(1);
+        c.service.release_waiting();
+        c.service
+            .abandon(c.offer.task_id(), &mut commands)
+            .await
+            .unwrap();
+        let (original, _) = c
+            .accepted_policy_offer_lifetime(true, offer_expired.then_some(2))
+            .await;
+        let request = original.action.request().clone();
+        let before = if offer_expired {
+            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+            original.clone()
+        } else {
+            c.elapsed_policy(&request)
+        };
+        let mut c = c.reopen();
+        c.service.drive(&mut commands).await.unwrap();
+        let expired = c.policy_record(&request);
+        assert_eq!(expired.failure, Some(BackendRequestFailure::Expired));
+        assert_eq!(expired.state, BackendRequestState::Failed);
+        assert_eq!(expired.confirmation, before.confirmation);
+        assert_eq!(expired.trigger, before.trigger);
+        assert!(c.service.waiting.is_none());
+        assert!(c
+            .service
+            .client
+            .pending_tasks(c.service.client.configuration().limits.pending_tasks)
+            .unwrap()
+            .is_empty());
+        c.device("new-device-context").await;
+        let offset = c._server.data.lock().unwrap().employee_calls.len();
+        let Reply::PolicyStatus { value } = c
+            .policy_call(Request::PolicyStatus {
+                context: c.context(),
+                request: request.clone(),
+            })
+            .await
+        else {
+            panic!("original Run query")
+        };
+        assert_eq!(value.request_id.to_string(), request.as_str());
+        let PreparedAction::Policy {
+            run_id: Some(run_id),
+            ..
+        } = &before.action
+        else {
+            panic!("Run")
+        };
+        assert_eq!(value.run_id.to_string(), run_id.as_str());
+        let data = c._server.data.lock().unwrap();
+        assert_eq!(data.employee_calls.len(), offset + 1);
+        assert!(data.employee_calls[offset].0.ends_with(request.as_str()));
+        assert!(!data.employee_credentials[offset]);
+        assert!(data.start_ops.is_empty());
+        assert!(c
+            .service
+            .core
+            .app
+            .service_tasks(None, 64)
+            .unwrap()
+            .items
+            .is_empty());
     }
 }
