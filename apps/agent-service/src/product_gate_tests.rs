@@ -2936,13 +2936,16 @@ async fn expired_device_confirmation_checks_original_os_owner_before_read_or_wri
     ));
     let original = c.elapsed_policy(&choice.request);
     assert_eq!(original.state, BackendRequestState::AwaitingConfirmation);
-    let owner = c.selection.clone();
+    let subject = c.selection.subject.clone();
+    let binding = c.selection.binding.clone();
+    let origin = c.selection.origin.clone();
     for other_subject in [false, true] {
-        c.selection = owner.clone();
         c.selection.binding = plan::id("another-os-login").unwrap();
-        if other_subject {
-            c.selection.subject = "another-os-account".into();
-        }
+        c.selection.subject = if other_subject {
+            "another-os-account".into()
+        } else {
+            subject.clone()
+        };
         c.device(if other_subject {
             "another-account"
         } else {
@@ -2960,7 +2963,9 @@ async fn expired_device_confirmation_checks_original_os_owner_before_read_or_wri
         assert_eq!(c.policy_record(&choice.request), original);
         assert!(c._server.data.lock().unwrap().invocations.is_empty());
     }
-    c.selection = owner;
+    c.selection.subject = subject;
+    c.selection.binding = binding;
+    c.selection.origin = origin;
     let Reply::PolicyRequest { value } = c
         .policy_call(Request::ConfirmPolicy {
             context: c.context(),
