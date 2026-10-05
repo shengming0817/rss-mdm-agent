@@ -45,6 +45,8 @@ pub struct ExecutionHandle {
     wire: Arc<Mutex<()>>,
     context_possible: Arc<AtomicBool>,
     context_initialized: Arc<AtomicBool>,
+    #[cfg(test)]
+    context_transport: Option<Arc<dyn Fn(Request) -> Result<Reply, Error> + Send + Sync>>,
 }
 impl ExecutionHandle {
     pub fn new() -> Self {
@@ -56,11 +58,40 @@ impl ExecutionHandle {
             wire: Arc::new(Mutex::new(())),
             context_possible: Arc::new(AtomicBool::new(false)),
             context_initialized: Arc::new(AtomicBool::new(false)),
+            #[cfg(test)]
+            context_transport: None,
         }
     }
     pub fn with_trusted_users(mut self, users: Arc<Mutex<super::users::Users>>) -> Self {
         self.users = Some(users);
         self
+    }
+    #[cfg(test)]
+    pub(super) fn with_context_transport(
+        mut self,
+        send: impl Fn(Request) -> Result<Reply, Error> + Send + Sync + 'static,
+    ) -> Self {
+        self.context_transport = Some(Arc::new(send));
+        self
+    }
+    fn exchange(
+        &self,
+        request: Request,
+        send: impl Fn(Request) -> Result<Reply, Error>,
+    ) -> Result<Reply, Error> {
+        if matches!(&request, Request::BindContext { .. }) {
+            // Once transport can begin, retain uncertainty until a separate revoke ACK.
+            self.context_possible.store(true, Ordering::Release);
+            if !self.context_initialized.load(Ordering::Acquire) {
+                match send(Request::RevokeContext {})? {
+                    Reply::ContextRevoked => {
+                        self.context_initialized.store(true, Ordering::Release)
+                    }
+                    _ => return Err(Error::OutcomeUnknown),
+                }
+            }
+        }
+        send(request)
     }
     pub fn for_caller(&self, actor: &str) -> Result<Self, Error> {
         let current = self
@@ -105,25 +136,19 @@ impl ExecutionHandle {
             // bounds both waiting and active transport; these handles own no business queue.
             let _wire = wire.lock().map_err(|_| Error::Unavailable)?;
             bound.current()?;
+            #[cfg(test)]
+            if let Some(send) = &bound.context_transport {
+                return bound.exchange(request, |request| send(request));
+            }
             let client = ServiceClient::installed().inspect_err(|error| {
                 eprintln!("RSS_EXECUTION_IPC_FAILURE stage=installation code={error:?}");
             })?;
-            if matches!(&request, Request::BindContext { .. }) {
-                // No protected installation means no handoff was attempted. Once transport
-                // can begin, retain uncertainty until a separate authenticated revoke ACK.
-                bound.context_possible.store(true, Ordering::Release);
-                if !bound.context_initialized.load(Ordering::Acquire) {
-                    match client.request(Request::RevokeContext {})? {
-                        Reply::ContextRevoked => {
-                            bound.context_initialized.store(true, Ordering::Release)
-                        }
-                        _ => return Err(Error::OutcomeUnknown),
-                    }
-                }
-            }
-            client.request(request).inspect_err(|error| {
-                eprintln!("RSS_EXECUTION_IPC_FAILURE stage=request code={error:?}");
-            })
+            // An unavailable protected installation has not attempted a handoff.
+            bound
+                .exchange(request, |request| client.request(request))
+                .inspect_err(|error| {
+                    eprintln!("RSS_EXECUTION_IPC_FAILURE stage=request code={error:?}");
+                })
         })
         .await
         .map_err(|_| Error::OutcomeUnknown)??;
@@ -138,13 +163,19 @@ impl ExecutionHandle {
         if !self.context_possible.load(Ordering::Acquire) {
             return Ok(());
         }
-        let possible = self.context_possible.clone();
+        let handle = self.clone();
         tokio::task::spawn_blocking(move || {
             // This control request never takes the business semaphore or transport lock.
-            let client = ServiceClient::installed()?;
-            match client.request(Request::RevokeContext {})? {
+            #[cfg(test)]
+            let reply = match &handle.context_transport {
+                Some(send) => send(Request::RevokeContext {})?,
+                None => ServiceClient::installed()?.request(Request::RevokeContext {})?,
+            };
+            #[cfg(not(test))]
+            let reply = ServiceClient::installed()?.request(Request::RevokeContext {})?;
+            match reply {
                 Reply::ContextRevoked => {
-                    possible.store(false, Ordering::Release);
+                    handle.context_possible.store(false, Ordering::Release);
                     Ok(())
                 }
                 _ => Err(Error::OutcomeUnknown),

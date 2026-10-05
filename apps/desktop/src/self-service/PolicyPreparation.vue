@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { BackendRequest } from "./types";
+import PolicyExecutionContext from "./PolicyExecutionContext.vue";
 const props = defineProps<{ record: BackendRequest; disabled?: boolean }>();
 const emit = defineEmits<{
   confirm: [request: string];
@@ -48,7 +49,7 @@ function resolved() {
           {{ record.action.directory.task.resource.version }} /
           {{ record.action.directory.task.resource.variant }}
         </dd>
-        <dt>企业账号</dt>
+        <dt>发起账号</dt>
         <dd>
           {{ record.action.user?.tenantId ?? "设备" }} /
           {{ record.action.user?.principalId ?? "本机设备上下文" }} · 登录
@@ -69,11 +70,14 @@ function resolved() {
           </dd></template
         >
       </dl>
+      <PolicyExecutionContext :task="record.action.directory.task" />
       <button :disabled="disabled" @click="emit('query', request())">
         查询原请求与结果
       </button>
-      <p>最终参数</p>
-      <pre>{{ JSON.stringify(resolved(), null, 2) }}</pre>
+      <template v-if="record.action.directory.task.kind === 'script'">
+        <p>最终参数</p>
+        <pre>{{ JSON.stringify(resolved(), null, 2) }}</pre>
+      </template>
       <p>风险：{{ record.risk?.level ?? "人工操作" }} · {{ record.state }}</p>
       <p v-if="record.state === 'awaitingConfirmation'">
         确认仅表示本人同意以上原请求；执行服务仍会核验当前策略与后台授权。

@@ -1,7 +1,8 @@
 import { mount, flushPromises } from "@vue/test-utils";
 import { expect, test, vi } from "vitest";
 import PolicySelfService from "./PolicySelfService.vue";
-import type { BackendRequest, SelfServicePort } from "./types";
+import PolicyPreparation from "./PolicyPreparation.vue";
+import type { BackendRequest, SelfServicePort, SelfServiceTask } from "./types";
 const record = (id: string): BackendRequest => ({
   action: {
     kind: "policy",
@@ -59,6 +60,73 @@ const record = (id: string): BackendRequest => ({
   state: "submitting",
   failure: null,
 });
+test.each([
+  {
+    runAs: "system",
+    target: { kind: "device" },
+    expected: ["系统账户", "本机设备"],
+  },
+  {
+    runAs: "logged_in_user",
+    target: {
+      kind: "user",
+      identity: "target-501",
+      sessionId: "target-login-42",
+    },
+    expected: [
+      "当前登录用户",
+      "目标用户 target-501",
+      "登录会话 target-login-42",
+    ],
+  },
+] as const)(
+  "human and original-request confirmations display execution context: $runAs",
+  async ({ runAs, target, expected }) => {
+    const original = record("original-request");
+    if (original.action.kind !== "policy") throw Error("policy fixture");
+    const item = original.action.directory;
+    item.task = {
+      kind: "software",
+      runAs,
+      target,
+      resource: item.task.resource,
+    } satisfies SelfServiceTask;
+    original.state = "awaitingConfirmation";
+    original.action.choice.parameters = {};
+    const port = {
+      policy_directory: async () => ({
+        items: [item],
+        nextCursor: null,
+        asOf: 1,
+      }),
+    } as unknown as SelfServicePort;
+    const human = mount(PolicySelfService, { props: { port, records: [] } });
+    const preparation = mount(PolicyPreparation, {
+      props: { record: original },
+    });
+    try {
+      await flushPromises();
+      await human
+        .findAll("button")
+        .find((b) => b.text() === "Policy")!
+        .trigger("click");
+      await human.get("form").trigger("submit");
+      const confirmation = human.get('[aria-label="人工执行确认"]');
+      for (const text of expected) {
+        expect(confirmation.text()).toContain(text);
+        expect(preparation.text()).toContain(text);
+      }
+      expect(confirmation.text()).toContain("发起账号");
+      expect(preparation.text()).toContain("发起账号");
+      expect(preparation.text()).toContain("principal");
+      expect(preparation.text()).not.toContain("最终参数");
+      expect(preparation.get("button").text()).toBe("查询原请求与结果");
+    } finally {
+      human.unmount();
+      preparation.unmount();
+    }
+  },
+);
 test("remounted history queries its original UUID and does not invoke again", async () => {
   const original = "00000000-0000-0000-0000-000000000001";
   const policy_status = vi.fn(async () => ({

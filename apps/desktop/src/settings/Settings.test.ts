@@ -150,6 +150,19 @@ it("keeps the connection draft editable while the AI Host is disconnected", asyn
     t.close();
   }
 });
+it("restart does not reconnect the retired assistant adapter", async () => {
+  const t = await setup();
+  const connect = vi.spyOn(t.c, "connect");
+  try {
+    await t.button("重启 AI Host").trigger("click");
+    await flushPromises();
+    await t.button("确认重启").trigger("click");
+    await flushPromises();
+    expect(connect).not.toHaveBeenCalled();
+  } finally {
+    t.close();
+  }
+});
 it("restart and connection deletion dialogs trap both tab directions, escape and restore focus", async () => {
   const t = await setup();
   try {

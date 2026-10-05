@@ -271,13 +271,15 @@ impl DesktopRuntime {
         self.retire_locked().await?;
         let account = self.account_result(authenticate().await)?;
         let next = account.context()?;
-        self.identity.set_session(Some(account.clone()))?;
+        self.identity.set_session(Some(account))?;
         let result = self.activate_context(next).await;
-        if result.is_err() {
-            let _ = account.logout().await;
-        } else {
-            self.identity.set_session(Some(account))?;
-        }
+        let result = match result {
+            Ok(context) => Ok(context),
+            Err(error) => match self.logout_remote().await {
+                Ok(()) => Err(error),
+                Err(logout) => Err(logout),
+            },
+        };
         self.account_result(result)
     }
     async fn activate_context(
@@ -295,20 +297,31 @@ impl DesktopRuntime {
                 expires_at_unix_ms: u64::MAX,
             },
         };
-        match self.execution.bind_context(session, None).await {
-            Ok(binding) => {
-                next.execution_binding =
-                    Some(binding.id.as_str().parse().map_err(|_| unavailable())?)
-            }
-            Err(error) => {
-                // Independent conversation is available without an installed execution owner.
-                // Uncertain retirement remains a barrier to activating another identity.
-                if self.cleanup_pending.load(Ordering::Acquire) {
-                    return Err(error);
+        let published = async {
+            match self.execution.bind_context(session, None).await {
+                Ok(binding) => {
+                    next.execution_binding =
+                        Some(binding.id.as_str().parse().map_err(|_| unavailable())?)
+                }
+                Err(error) => {
+                    // Independent conversation is available without an installed execution owner.
+                    // Uncertain retirement remains a barrier to activating another identity.
+                    if self.cleanup_pending.load(Ordering::Acquire) {
+                        return Err(error);
+                    }
                 }
             }
+            self.users.lock().map_err(|_| unavailable())?.activate(next)
         }
-        self.users.lock().map_err(|_| unavailable())?.activate(next)
+        .await;
+        if published.is_err() {
+            // Ownership transfers only after local publication. Retain uncertain
+            // native retirement so the background owner can retry the same cleanup.
+            self.cleanup_pending.store(true, Ordering::Release);
+            self.detach_views().await;
+            let _ = self.retry_cleanup().await;
+        }
+        published
     }
     /// Single-flight refresh performs HTTP on a cloned session, outside identity and transition locks.
     pub async fn verify_account(&self) -> ui::Result<()> {
@@ -496,6 +509,137 @@ mod tests {
         }
         fn create(&self, _: &[u8]) -> Result<(), super::super::credentials::KeyUnavailable> {
             Ok(())
+        }
+    }
+    fn fail_publication_after_binding(
+        runtime: &mut DesktopRuntime,
+        root: &Path,
+        lost_ack: Arc<AtomicBool>,
+    ) -> Arc<AtomicBool> {
+        use execution_ipc::host::{Reply, Request};
+        let bound = Arc::new(AtomicBool::new(false));
+        let native_bound = bound.clone();
+        let users_path = root.join("users.json");
+        runtime.execution = runtime
+            .execution
+            .clone()
+            .with_context_transport(move |request| match request {
+                Request::BindContext { value, .. } => {
+                    native_bound.store(true, Ordering::Release);
+                    std::fs::remove_file(&users_path).unwrap();
+                    std::fs::create_dir(&users_path).unwrap();
+                    Ok(Reply::ContextBound {
+                        value: execution_contract::NativeContextRef {
+                            id: execution_contract::Id::new("test-native-binding").unwrap(),
+                            generation: value.generation,
+                        },
+                    })
+                }
+                Request::RevokeContext {} => {
+                    if native_bound.load(Ordering::Acquire) && lost_ack.load(Ordering::Acquire) {
+                        return Err(execution_app::Error::OutcomeUnknown);
+                    }
+                    native_bound.store(false, Ordering::Release);
+                    Ok(Reply::ContextRevoked)
+                }
+                _ => panic!("unexpected context transport request"),
+            });
+        bound
+    }
+    #[tokio::test]
+    async fn failed_publication_retires_binding_or_retains_the_same_cleanup_barrier() {
+        for lost in [false, true] {
+            let root = std::env::temp_dir().join(format!("rss-publish-{}", uuid::Uuid::new_v4()));
+            let mut runtime = DesktopRuntime::start_with_key_backend(
+                &root,
+                &root.join("missing"),
+                ai_session_contract::HostStatusSource::DevelopmentOverride,
+                NoKey,
+            )
+            .await
+            .unwrap();
+            let lost_ack = Arc::new(AtomicBool::new(lost));
+            let bound = fail_publication_after_binding(&mut runtime, &root, lost_ack.clone());
+            let next = runtime.users.lock().unwrap().device().unwrap();
+            assert_eq!(
+                runtime.activate_context(next).await.unwrap_err().code,
+                "users_unavailable"
+            );
+            assert!(runtime.identity.snapshot().is_err());
+            assert_eq!(bound.load(Ordering::Acquire), lost);
+            assert_eq!(runtime.cleanup_pending.load(Ordering::Acquire), lost);
+            if lost {
+                assert!(runtime.verify_account().await.is_err());
+                assert!(runtime.cleanup_pending.load(Ordering::Acquire));
+                lost_ack.store(false, Ordering::Release);
+                runtime.verify_account().await.unwrap();
+                assert!(!bound.load(Ordering::Acquire));
+                assert!(!runtime.cleanup_pending.load(Ordering::Acquire));
+            }
+            runtime.shutdown().await;
+            std::fs::remove_dir_all(root).unwrap();
+        }
+    }
+    #[tokio::test]
+    async fn failed_login_publication_clears_account_owner_and_reports_remote_logout_failure() {
+        use super::super::account::{
+            http_tests::{access, identity, server},
+            EnterpriseSession,
+        };
+        for logout_status in [200, 503] {
+            let root =
+                std::env::temp_dir().join(format!("rss-login-publish-{}", uuid::Uuid::new_v4()));
+            let mut runtime = DesktopRuntime::start_with_key_backend(
+                &root,
+                &root.join("missing"),
+                ai_session_contract::HostStatusSource::DevelopmentOverride,
+                NoKey,
+            )
+            .await
+            .unwrap();
+            let bound = fail_publication_after_binding(
+                &mut runtime,
+                &root,
+                Arc::new(AtomicBool::new(false)),
+            );
+            let (org, server) = server(vec![
+                (200, identity()),
+                (200, identity()),
+                (200, access()),
+                (logout_status, json!({})),
+            ])
+            .await;
+            let error = runtime
+                .login_with(|| {
+                    EnterpriseSession::login_with_client(
+                        reqwest::Client::new(),
+                        org,
+                        "Alice",
+                        "password".into(),
+                    )
+                })
+                .await
+                .unwrap_err();
+            assert_eq!(
+                error.code,
+                if logout_status == 200 {
+                    "users_unavailable"
+                } else {
+                    "logout_unconfirmed"
+                }
+            );
+            assert!(runtime.identity.session().unwrap().is_none());
+            assert!(runtime.identity.snapshot().is_err());
+            assert!(!bound.load(Ordering::Acquire));
+            assert!(runtime.account_status().unwrap().failure.is_some());
+            assert!(server
+                .await
+                .unwrap()
+                .last()
+                .unwrap()
+                .contains("/session/logout"));
+            runtime.shutdown().await;
+            std::fs::remove_dir_all(root).unwrap();
         }
     }
     #[tokio::test]

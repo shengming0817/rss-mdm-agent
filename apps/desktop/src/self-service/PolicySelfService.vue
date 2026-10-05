@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import PolicyExecutionContext from "./PolicyExecutionContext.vue";
 import { computed, onMounted, ref, watch } from "vue";
 import Ajv, { type AnySchema } from "ajv";
 import type {
@@ -353,7 +354,7 @@ watch(
     </form>
     <section v-if="choice && !request" aria-label="人工执行确认">
       <h3>确认 {{ selected?.selfService.displayName }}</h3>
-      <p>账号：{{ currentUser?.user.displayName }} · 当前登录设备</p>
+      <p>发起账号：{{ currentUser?.user.displayName }} · 当前登录设备</p>
       <p>前置条件：{{ selected?.selfService.prerequisites }}</p>
       <p>副作用：{{ selected?.selfService.sideEffects }}</p>
       <p>
@@ -365,7 +366,10 @@ watch(
         {{ selected?.task.resource.version }} /
         {{ selected?.task.resource.variant }}
       </p>
-      <pre>{{ JSON.stringify(resolved, null, 2) }}</pre>
+      <PolicyExecutionContext v-if="selected" :task="selected.task" />
+      <pre v-if="selected?.task.kind === 'script'">{{
+        JSON.stringify(resolved, null, 2)
+      }}</pre>
       <button :disabled="busy" @click="invoke">确认并执行</button
       ><button :disabled="busy" @click="choice = undefined">修改参数</button>
     </section>
