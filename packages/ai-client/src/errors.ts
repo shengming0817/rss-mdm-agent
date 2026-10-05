@@ -1,5 +1,6 @@
 import { RequestError } from "@agentclientprotocol/sdk";
-import { errorCodes, type ErrorCode } from "@rss-mdm-agent/ai-contract";
+import { errorCodes } from "@rss-mdm-agent/ai-contract";
+import type { ErrorCode } from "@rss-mdm-agent/ai-contract/wire";
 
 export type ClientErrorCode =
   | ErrorCode

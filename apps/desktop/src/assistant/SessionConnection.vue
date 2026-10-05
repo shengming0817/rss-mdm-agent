@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import type { HistoryPreview } from "@rss-mdm-agent/ai-contract";
+import type { HistoryPreview } from "@rss-mdm-agent/ai-contract/wire";
 import { operationMessage, type AssistantController } from "./controller";
 const props = defineProps<{ controller: AssistantController }>();
 const c = props.controller;

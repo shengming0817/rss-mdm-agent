@@ -22,4 +22,4 @@ export type {
   SessionPage,
   Capabilities,
   Negotiation,
-} from "@rss-mdm-agent/ai-contract";
+} from "@rss-mdm-agent/ai-contract/wire";

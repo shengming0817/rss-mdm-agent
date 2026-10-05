@@ -58,12 +58,12 @@ onMounted(load);
   <section aria-label="企业账户" class="account">
     <h3>企业登录</h3>
     <p v-if="props.message" role="alert">{{ props.message }}</p>
-    <p v-if="currentUser?.identity?.mode === 'enterprise'">
+    <p v-if="currentUser?.identity?.mode === 'user_device'">
       当前组织：{{ currentUser.user.displayName }} ·
       {{ currentUser.identity.principalId }}
     </p>
-    <p v-else-if="currentUser?.identity?.mode === 'guest'">
-      当前为本地访客，非企业身份。
+    <p v-else-if="currentUser?.identity?.mode === 'device'">
+      当前使用本机设备工作区，可访问设备获授权的自助服务。
     </p>
     <p>
       使用组织的本地账号登录。切换组织需重新登录；密码在系统原生输入框填写。

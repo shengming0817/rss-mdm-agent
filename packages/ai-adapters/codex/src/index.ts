@@ -1,4 +1,4 @@
-import type { ProviderInstance } from "@rss-mdm-agent/ai-contract";
+import type { ProviderInstance } from "@rss-mdm-agent/ai-contract/ports";
 import { CodexAdapter } from "./adapter.js";
 import type { CodexAdapterOptions } from "./configuration.js";
 import { nativeRuntime } from "./runtime.js";

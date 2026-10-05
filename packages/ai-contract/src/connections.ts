@@ -4,7 +4,7 @@ import { boundedJson, decode } from "./codec.js";
 import { defaultLimits, fail, ok } from "./results.js";
 
 export const emptyPreferences = (): UserPreferences => ({
-  schemaVersion: 7,
+  schemaVersion: 8,
   kind: "userPreferences",
 });
 /** Append-only revisions keep accepted phases reproducible without retaining secrets. */
@@ -58,7 +58,7 @@ export function mergePreferences(
   try {
     decode(
       boundedJson(
-        { schemaVersion: 7, kind: "preferencesRequest", patch },
+        { schemaVersion: 8, kind: "preferencesRequest", patch },
         defaultLimits,
       ),
       defaultLimits,
@@ -85,7 +85,7 @@ export function savedDraft(
     decode(
       boundedJson(
         {
-          schemaVersion: 7,
+          schemaVersion: 8,
           kind: "saveConnectionRequest",
           connection: draft,
           expectedRevision: expected,
@@ -96,7 +96,7 @@ export function savedDraft(
     );
     return ok({
       ...draft,
-      schemaVersion: 7,
+      schemaVersion: 8,
       kind: "connection",
       configRevision: (expected ?? 0) + 1,
       status: "unverified",

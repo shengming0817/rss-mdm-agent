@@ -39,7 +39,7 @@ fn native_thread_identity_roundtrips_and_rejects_invalid_ids() {
     }
 }
 #[test]
-fn shared_v7_golden_and_safe_diagnostics() {
+fn shared_v8_golden_and_safe_diagnostics() {
     let f: Value = serde_json::from_str(FIXTURES).unwrap();
     for v in f["valid"].as_array().unwrap() {
         let record = decode(&serde_json::to_vec(v).unwrap(), &limits()).unwrap();

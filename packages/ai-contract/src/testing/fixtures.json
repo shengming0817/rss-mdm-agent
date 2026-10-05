@@ -22,7 +22,7 @@
         "sessionId": "session-1"
       },
       "commandId": "command-1",
-      "contentHash": "f01a966d727f2c9ba6583cb98b56a5e5f566ec883b4e1f184aeeda26687ad226",
+      "contentHash": "8690601c7d3cc6d812bd934e46aed6851692d01f7680ea4437a91a27ae51971e",
       "acceptedAtMs": 0,
       "retryUntilMs": 100,
       "receiptUntilMs": 200,
@@ -54,7 +54,7 @@
           "sessionId": "session-1"
         },
         "commandId": "command-1",
-        "contentHash": "2f52fb26d77c8b5dd1e45aa76295d205e034d64795b747cc1d74e7c94eb8904e",
+        "contentHash": "8690601c7d3cc6d812bd934e46aed6851692d01f7680ea4437a91a27ae51971e",
         "acceptedAtMs": 0,
         "retryUntilMs": 100,
         "receiptUntilMs": 200,
@@ -423,7 +423,7 @@
           "sessionId": "session-1"
         },
         "commandId": "command-1",
-        "contentHash": "2f52fb26d77c8b5dd1e45aa76295d205e034d64795b747cc1d74e7c94eb8904e",
+        "contentHash": "8690601c7d3cc6d812bd934e46aed6851692d01f7680ea4437a91a27ae51971e",
         "acceptedAtMs": 0,
         "retryUntilMs": 100,
         "receiptUntilMs": 200,
@@ -466,7 +466,7 @@
           "sessionId": "session-1"
         },
         "commandId": "command-1",
-        "contentHash": "2f52fb26d77c8b5dd1e45aa76295d205e034d64795b747cc1d74e7c94eb8904e",
+        "contentHash": "8690601c7d3cc6d812bd934e46aed6851692d01f7680ea4437a91a27ae51971e",
         "acceptedAtMs": 0,
         "retryUntilMs": 100,
         "receiptUntilMs": 200,
@@ -509,7 +509,7 @@
           "sessionId": "session-1"
         },
         "commandId": "command-1",
-        "contentHash": "2f52fb26d77c8b5dd1e45aa76295d205e034d64795b747cc1d74e7c94eb8904e",
+        "contentHash": "8690601c7d3cc6d812bd934e46aed6851692d01f7680ea4437a91a27ae51971e",
         "acceptedAtMs": 0,
         "retryUntilMs": 100,
         "receiptUntilMs": 200,
@@ -552,7 +552,7 @@
           "sessionId": "session-1"
         },
         "commandId": "command-1",
-        "contentHash": "2f52fb26d77c8b5dd1e45aa76295d205e034d64795b747cc1d74e7c94eb8904e",
+        "contentHash": "8690601c7d3cc6d812bd934e46aed6851692d01f7680ea4437a91a27ae51971e",
         "acceptedAtMs": 0,
         "retryUntilMs": 100,
         "receiptUntilMs": 200,
@@ -654,7 +654,7 @@
           "sessionId": "session-1"
         },
         "commandId": "command-1",
-        "contentHash": "2f52fb26d77c8b5dd1e45aa76295d205e034d64795b747cc1d74e7c94eb8904e",
+        "contentHash": "8690601c7d3cc6d812bd934e46aed6851692d01f7680ea4437a91a27ae51971e",
         "acceptedAtMs": 0,
         "retryUntilMs": 100,
         "receiptUntilMs": 200,
@@ -1508,17 +1508,17 @@
     },
     {
       "name": "accepted-with-dispatch",
-      "raw": "{\"schemaVersion\":8,\"kind\":\"commandRecord\",\"command\":{\"schemaVersion\":8,\"kind\":\"command\",\"sessionId\":\"session-1\",\"commandId\":\"command-1\",\"expiresAtMs\":1000,\"input\":{\"type\":\"prompt\",\"text\":\"fixture text\",\"policy\":\"queue_next\"}},\"receipt\":{\"schemaVersion\":8,\"kind\":\"receipt\",\"namespace\":{\"tenantId\":\"tenant-1\",\"principalId\":\"user-1\",\"authorityId\":\"authority-1\",\"sessionId\":\"session-1\"},\"commandId\":\"command-1\",\"contentHash\":\"f01a966d727f2c9ba6583cb98b56a5e5f566ec883b4e1f184aeeda26687ad226\",\"acceptedAtMs\":0,\"retryUntilMs\":100,\"receiptUntilMs\":200,\"acceptedRevision\":1,\"stageId\":\"generation-1\"},\"state\":\"accepted\",\"dispatch\":{\"attemptId\":\"attempt-command-1\",\"originGeneration\":\"generation-1\",\"observerGeneration\":\"generation-1\",\"nativeSessionId\":\"native-1\",\"certainty\":\"submitted\"}}",
+      "raw": "{\"schemaVersion\":8,\"kind\":\"commandRecord\",\"command\":{\"schemaVersion\":8,\"kind\":\"command\",\"sessionId\":\"session-1\",\"commandId\":\"command-1\",\"expiresAtMs\":1000,\"input\":{\"type\":\"prompt\",\"text\":\"fixture text\",\"policy\":\"queue_next\"}},\"receipt\":{\"schemaVersion\":8,\"kind\":\"receipt\",\"namespace\":{\"tenantId\":\"tenant-1\",\"principalId\":\"user-1\",\"authorityId\":\"authority-1\",\"sessionId\":\"session-1\"},\"commandId\":\"command-1\",\"contentHash\":\"8690601c7d3cc6d812bd934e46aed6851692d01f7680ea4437a91a27ae51971e\",\"acceptedAtMs\":0,\"retryUntilMs\":100,\"receiptUntilMs\":200,\"acceptedRevision\":1,\"stageId\":\"generation-1\"},\"state\":\"accepted\",\"dispatch\":{\"attemptId\":\"attempt-command-1\",\"originGeneration\":\"generation-1\",\"observerGeneration\":\"generation-1\",\"nativeSessionId\":\"native-1\",\"certainty\":\"submitted\"}}",
       "code": "schema"
     },
     {
       "name": "invalidated-with-outcome",
-      "raw": "{\"schemaVersion\":8,\"kind\":\"commandRecord\",\"command\":{\"schemaVersion\":8,\"kind\":\"command\",\"sessionId\":\"session-1\",\"commandId\":\"command-1\",\"expiresAtMs\":1000,\"input\":{\"type\":\"prompt\",\"text\":\"fixture text\",\"policy\":\"queue_next\"}},\"receipt\":{\"schemaVersion\":8,\"kind\":\"receipt\",\"namespace\":{\"tenantId\":\"tenant-1\",\"principalId\":\"user-1\",\"authorityId\":\"authority-1\",\"sessionId\":\"session-1\"},\"commandId\":\"command-1\",\"contentHash\":\"f01a966d727f2c9ba6583cb98b56a5e5f566ec883b4e1f184aeeda26687ad226\",\"acceptedAtMs\":0,\"retryUntilMs\":100,\"receiptUntilMs\":200,\"acceptedRevision\":1,\"stageId\":\"generation-1\"},\"state\":\"invalidated\",\"failure\":{\"code\":\"stale_binding\",\"retry\":\"never\"},\"outcome\":\"completed\"}",
+      "raw": "{\"schemaVersion\":8,\"kind\":\"commandRecord\",\"command\":{\"schemaVersion\":8,\"kind\":\"command\",\"sessionId\":\"session-1\",\"commandId\":\"command-1\",\"expiresAtMs\":1000,\"input\":{\"type\":\"prompt\",\"text\":\"fixture text\",\"policy\":\"queue_next\"}},\"receipt\":{\"schemaVersion\":8,\"kind\":\"receipt\",\"namespace\":{\"tenantId\":\"tenant-1\",\"principalId\":\"user-1\",\"authorityId\":\"authority-1\",\"sessionId\":\"session-1\"},\"commandId\":\"command-1\",\"contentHash\":\"8690601c7d3cc6d812bd934e46aed6851692d01f7680ea4437a91a27ae51971e\",\"acceptedAtMs\":0,\"retryUntilMs\":100,\"receiptUntilMs\":200,\"acceptedRevision\":1,\"stageId\":\"generation-1\"},\"state\":\"invalidated\",\"failure\":{\"code\":\"stale_binding\",\"retry\":\"never\"},\"outcome\":\"completed\"}",
       "code": "schema"
     },
     {
       "name": "terminal-without-attempt",
-      "raw": "{\"schemaVersion\":8,\"kind\":\"commandRecord\",\"command\":{\"schemaVersion\":8,\"kind\":\"command\",\"sessionId\":\"session-1\",\"commandId\":\"command-1\",\"expiresAtMs\":1000,\"input\":{\"type\":\"prompt\",\"text\":\"fixture text\",\"policy\":\"queue_next\"}},\"receipt\":{\"schemaVersion\":8,\"kind\":\"receipt\",\"namespace\":{\"tenantId\":\"tenant-1\",\"principalId\":\"user-1\",\"authorityId\":\"authority-1\",\"sessionId\":\"session-1\"},\"commandId\":\"command-1\",\"contentHash\":\"f01a966d727f2c9ba6583cb98b56a5e5f566ec883b4e1f184aeeda26687ad226\",\"acceptedAtMs\":0,\"retryUntilMs\":100,\"receiptUntilMs\":200,\"acceptedRevision\":1,\"stageId\":\"generation-1\"},\"state\":\"terminal\",\"outcome\":\"completed\"}",
+      "raw": "{\"schemaVersion\":8,\"kind\":\"commandRecord\",\"command\":{\"schemaVersion\":8,\"kind\":\"command\",\"sessionId\":\"session-1\",\"commandId\":\"command-1\",\"expiresAtMs\":1000,\"input\":{\"type\":\"prompt\",\"text\":\"fixture text\",\"policy\":\"queue_next\"}},\"receipt\":{\"schemaVersion\":8,\"kind\":\"receipt\",\"namespace\":{\"tenantId\":\"tenant-1\",\"principalId\":\"user-1\",\"authorityId\":\"authority-1\",\"sessionId\":\"session-1\"},\"commandId\":\"command-1\",\"contentHash\":\"8690601c7d3cc6d812bd934e46aed6851692d01f7680ea4437a91a27ae51971e\",\"acceptedAtMs\":0,\"retryUntilMs\":100,\"receiptUntilMs\":200,\"acceptedRevision\":1,\"stageId\":\"generation-1\"},\"state\":\"terminal\",\"outcome\":\"completed\"}",
       "code": "schema"
     },
     {
@@ -1575,6 +1575,11 @@
       "name": "guest forbids expiresAtMs",
       "raw": "{\"schemaVersion\":8,\"kind\":\"userContext\",\"user\":{\"schemaVersion\":8,\"kind\":\"testUser\",\"userId\":\"account-profile\",\"displayName\":\"Account\",\"nameKey\":\"account\"},\"generation\":\"generation-account\",\"identity\":{\"mode\":\"device\",\"authorityId\":\"desktop-guest\",\"tenantId\":\"local-guest\",\"principalId\":\"guest\",\"expiresAtMs\":1000}}",
       "code": "schema"
+    },
+    {
+      "name": "previous_version",
+      "raw": "{\"schemaVersion\":7,\"kind\":\"command\",\"sessionId\":\"session-1\",\"commandId\":\"command-1\",\"expiresAtMs\":1000,\"input\":{\"type\":\"prompt\",\"text\":\"fixture text\",\"policy\":\"queue_next\"}}",
+      "code": "version"
     }
   ],
   "commandHash": "8690601c7d3cc6d812bd934e46aed6851692d01f7680ea4437a91a27ae51971e",

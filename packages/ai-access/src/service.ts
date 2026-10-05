@@ -22,21 +22,25 @@ import {
   selectNegotiation,
   resolveSurfaceAction,
   validateSurface,
-  type AccessUpdate,
-  type Budget,
-  type Caller,
-  type Command,
-  type Event,
-  type HostPort,
   type Limits,
-  type Negotiation,
-  type Outcome,
-  type Result,
-  type Session,
-  type SessionOptions,
-  type Subscription,
-  type WireRecord,
 } from "@rss-mdm-agent/ai-contract";
+import type {
+  AccessUpdate,
+  Command,
+  Event,
+  Negotiation,
+  Outcome,
+  Session,
+  Subscription,
+  WireRecord,
+} from "@rss-mdm-agent/ai-contract/wire";
+import type {
+  Budget,
+  Caller,
+  HostPort,
+  Result,
+  SessionOptions,
+} from "@rss-mdm-agent/ai-contract/ports";
 
 export interface AccessOptions {
   host: HostPort;
@@ -395,7 +399,7 @@ export function createAccessService(options: AccessOptions) {
               continue;
             if (pump.attachmentId) {
               const update: AccessUpdate = {
-                schemaVersion: 7,
+                schemaVersion: 8,
                 kind: "accessUpdate",
                 sessionId: id,
                 attachmentId: pump.attachmentId,
@@ -424,7 +428,7 @@ export function createAccessService(options: AccessOptions) {
             if (pump.attachmentId) {
               try {
                 await peer.connection.client.notify(extension.update, {
-                  schemaVersion: 7,
+                  schemaVersion: 8,
                   kind: "accessUpdate",
                   sessionId: id,
                   attachmentId: pump.attachmentId,
@@ -465,7 +469,7 @@ export function createAccessService(options: AccessOptions) {
         return fail("unavailable");
       if (previous?.attachmentId)
         await peer.connection.client.notify(extension.update, {
-          schemaVersion: 7,
+          schemaVersion: 8,
           kind: "accessUpdate",
           sessionId: id,
           attachmentId: previous.attachmentId,
@@ -522,7 +526,7 @@ export function createAccessService(options: AccessOptions) {
         }
         if (
           !n ||
-          n.contractVersion !== 7 ||
+          n.contractVersion !== 8 ||
           n.acp !== 1 ||
           typeof n.cursorAttach !== "boolean" ||
           typeof n.durableReceipts !== "boolean"
@@ -671,7 +675,7 @@ export function createAccessService(options: AccessOptions) {
         })
         .join("\n");
       const command = parse("command").parse({
-        schemaVersion: 7,
+        schemaVersion: 8,
         kind: "command",
         sessionId: params.sessionId,
         commandId: crypto.randomUUID(),
@@ -767,7 +771,7 @@ export function createAccessService(options: AccessOptions) {
         await submit(
           peer,
           {
-            schemaVersion: 7,
+            schemaVersion: 8,
             kind: "command",
             sessionId: params.sessionId,
             commandId: crypto.randomUUID(),
@@ -992,7 +996,7 @@ export function createAccessService(options: AccessOptions) {
         return submit(
           peer,
           {
-            schemaVersion: 7,
+            schemaVersion: 8,
             kind: "command",
             sessionId: metadata.sessionId,
             commandId: metadata.commandId,

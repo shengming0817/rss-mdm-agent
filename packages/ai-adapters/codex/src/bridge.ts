@@ -9,13 +9,8 @@ import {
   ListResourceTemplatesRequestSchema,
   ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import {
-  boundedJson,
-  isId,
-  withinBudget,
-  type Budget,
-  type ToolEndpoint,
-} from "@rss-mdm-agent/ai-contract";
+import { boundedJson, isId, withinBudget } from "@rss-mdm-agent/ai-contract";
+import type { Budget, ToolEndpoint } from "@rss-mdm-agent/ai-contract/ports";
 import { bounded, limits } from "./support.js";
 
 export const HOST_SERVER = "rss_host";

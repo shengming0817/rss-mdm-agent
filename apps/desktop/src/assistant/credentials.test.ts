@@ -1,7 +1,7 @@
 import { mount, flushPromises } from "@vue/test-utils";
 import { expect, it, vi, beforeEach } from "vitest";
 import type { RuntimeClient } from "@rss-mdm-agent/ai-client";
-import type { Connection } from "@rss-mdm-agent/ai-contract";
+import type { Connection } from "@rss-mdm-agent/ai-contract/wire";
 import Connections from "../settings/ConnectionSettings.vue";
 import { createAssistant } from "./controller";
 import { saveNativeConnection } from "../test-users";
@@ -11,7 +11,7 @@ vi.mock("../test-users", () => ({
 }));
 beforeEach(() => vi.mocked(saveNativeConnection).mockReset());
 const existing: Connection = {
-  schemaVersion: 7,
+  schemaVersion: 8,
   kind: "connection",
   connectionId: "custom",
   configRevision: 1,
@@ -31,7 +31,7 @@ async function setup(rows: Connection[] = []) {
     initialize: async () => ({}),
     connections: async () => ({
       connections: rows,
-      preferences: { schemaVersion: 7, kind: "userPreferences" },
+      preferences: { schemaVersion: 8, kind: "userPreferences" },
     }),
     listSessions: async () => ({ items: [] }),
     observe: () => () => {},

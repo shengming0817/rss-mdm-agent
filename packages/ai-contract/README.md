@@ -9,3 +9,5 @@
 展示恢复不恢复原生上下文或问题回调。回答与问题状态原子提交，过期、旧 generation、已删除卡片不得继续操作；普通回答不能成为执行批准。标准 ACP prompt 保留最终响应语义，接纳回执由协商扩展表达。
 
 测试替身与公共 conformance 提供确定性行为验证；真实 SQLite、provider 和 OS 效果由各 owner 验证。API、预算、字段与版本由源码和生成物持有，不提供旧格式兼容、双写或隐式导入。来源和许可见[AI Runtime 来源](../../docs/reference/ai-runtime.md)。
+
+浏览器入口仅暴露浏览器可用的解析和投影函数。产品 DTO 从 `./wire` 导入，行为 ports 从 `./ports` 导入；两个入口只提供类型声明。服务端准入与转换从 `./session`、`./transitions` 导入，不通过根入口隐式加载 Node 模块。

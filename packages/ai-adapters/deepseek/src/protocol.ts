@@ -1,4 +1,4 @@
-import type { Budget } from "@rss-mdm-agent/ai-contract";
+import type { Budget } from "@rss-mdm-agent/ai-contract/ports";
 import type { DeepSeekDiagnostic } from "./configuration.js";
 export class NativeFault extends Error {
   constructor(readonly reason: DeepSeekDiagnostic["reason"]) {
@@ -28,7 +28,7 @@ export interface Initialization {
   apiKey: string;
   apiUrl: string;
   controlled: boolean;
-  tools: readonly import("@rss-mdm-agent/ai-contract").McpTool[];
+  tools: readonly import("@rss-mdm-agent/ai-contract/ports").McpTool[];
   restore: boolean;
   composition: string;
   previousRequestId?: string;

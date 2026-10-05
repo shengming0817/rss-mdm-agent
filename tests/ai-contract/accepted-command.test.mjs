@@ -10,7 +10,7 @@ import {
   unwrap,
 } from "../../packages/ai-contract/dist/testing/index.js";
 
-test("V7 acceptance is a self-contained stable fact shared by replay and live consumers", async () => {
+test("V8 acceptance is a self-contained stable fact shared by replay and live consumers", async () => {
   const store = new MemorySessionStore(),
     session = fixtureSession(),
     command = fixtureCommand();

@@ -1,5 +1,5 @@
 import { reactive } from "vue";
-import type { HostStatus } from "@rss-mdm-agent/ai-contract";
+import type { HostStatus } from "@rss-mdm-agent/ai-contract/wire";
 import type { nativeHost } from "./native";
 export function createHostSettings(port: ReturnType<typeof nativeHost>) {
   const state = reactive({

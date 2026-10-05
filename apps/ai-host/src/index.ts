@@ -47,7 +47,7 @@ export function callerAvailable(
     expected.authorityId === caller.authorityId
   );
 }
-/** Product login never grants the fixture execution authority. */
+/** Execution requires the native owner binding, for both device and user/device contexts. */
 export function requireLocalExecution(
   context: UserContext | undefined,
   caller: Caller,

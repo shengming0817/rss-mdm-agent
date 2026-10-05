@@ -16,9 +16,13 @@ const record = (id: string): BackendRequest => ({
       policyId: "policy",
       policyRevision: 1,
       policyVersion: "version",
-      resource: { id: "resource", version: "1", variant: "macos" },
-      parameterSchema: { type: "object" },
-      parameterSources: { name: { kind: "input" } },
+      task: {
+        kind: "script",
+        runAs: "system",
+        resource: { id: "resource", version: "1", variant: "macos" },
+        parameterSchema: { type: "object" },
+        parameterSources: { name: { kind: "input" } },
+      },
       selfService: {
         published: true,
         allowAi: true,
@@ -31,12 +35,12 @@ const record = (id: string): BackendRequest => ({
         sideEffects: "Read only",
       },
     },
-    actor: {
+    user: {
       tenantId: "tenant",
       instanceId: "instance",
       principalId: "principal",
     },
-    generation: "generation",
+    context: { id: "binding", generation: "generation" },
     expiresAtUnixMs: Date.now() + 60000,
     runId: "run",
     offer: null,
@@ -64,13 +68,16 @@ test("remounted history queries its original UUID and does not invoke again", as
       runId: "run",
       state: { execution: "succeeded", cancellation: "none" },
       result: {
-        collectedAt: 1,
-        quality: "complete",
-        schemaValid: true,
-        budgetValid: true,
-        trusted: true,
-        output: { message: "historical-result" },
-        outputReference: null,
+        kind: "script",
+        evidence: {
+          collectedAt: 1,
+          quality: "complete",
+          schemaValid: true,
+          budgetValid: true,
+          trusted: true,
+          output: { message: "historical-result" },
+          outputReference: null,
+        },
       },
     },
   }));
@@ -103,7 +110,8 @@ test("enum and length constraints prevent invalid confirmation; absent restores 
       { kind: "policy" }
     >
   ).directory;
-  item.parameterSchema = {
+  if (item.task.kind !== "script") throw Error("script");
+  item.task.parameterSchema = {
     type: "object",
     properties: {
       mode: { type: "string", enum: ["safe", "full"] },
@@ -112,7 +120,10 @@ test("enum and length constraints prevent invalid confirmation; absent restores 
     required: ["mode", "name"],
     additionalProperties: false,
   };
-  item.parameterSources = { mode: { kind: "input" }, name: { kind: "input" } };
+  item.task.parameterSources = {
+    mode: { kind: "input" },
+    name: { kind: "input" },
+  };
   const policy_invoke = vi
     .fn()
     .mockRejectedValue(new Error("rejected before creation"));

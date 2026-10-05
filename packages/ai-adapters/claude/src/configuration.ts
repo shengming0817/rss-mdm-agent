@@ -1,13 +1,13 @@
 import { readFileSync, lstatSync, mkdirSync, realpathSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import type { Options } from "@anthropic-ai/claude-agent-sdk";
+import type { Binding } from "@rss-mdm-agent/ai-contract/wire";
 import type {
-  Binding,
   Budget,
   Clock,
   ProviderConfiguration,
   ToolEndpoint,
-} from "@rss-mdm-agent/ai-contract";
+} from "@rss-mdm-agent/ai-contract/ports";
 // The installed package manifests own compatibility identity, including packed consumers.
 const manifest = (url: URL) => JSON.parse(readFileSync(url, "utf8"));
 const adapterPackage = manifest(new URL("../package.json", import.meta.url));

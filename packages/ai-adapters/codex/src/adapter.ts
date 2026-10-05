@@ -1,28 +1,28 @@
 import { promptText } from "@rss-mdm-agent/ai-contract";
 import { randomUUID } from "node:crypto";
-import {
-  boundedJson,
-  decode,
-  isId,
-  type Binding,
-  type Budget,
-  type Command,
-  type CommandRecord,
-  type DispatchAttempt,
-  type Failure,
-  type Outcome,
-  type ProviderAgentPort,
-  type ProviderInstance,
-  type ProviderForkRequest,
-  type ProviderForkResult,
-  type ProviderDiagnostic,
-  type ProviderConfiguration,
-  type ProviderObservation,
-  type ProviderSessionBinding,
-  type Reconciliation,
-  type Result,
-  type Submission,
-} from "@rss-mdm-agent/ai-contract";
+import { boundedJson, decode, isId } from "@rss-mdm-agent/ai-contract";
+import type {
+  Binding,
+  Command,
+  CommandRecord,
+  DispatchAttempt,
+  Failure,
+  Outcome,
+} from "@rss-mdm-agent/ai-contract/wire";
+import type {
+  Budget,
+  ProviderAgentPort,
+  ProviderInstance,
+  ProviderForkRequest,
+  ProviderForkResult,
+  ProviderDiagnostic,
+  ProviderConfiguration,
+  ProviderObservation,
+  ProviderSessionBinding,
+  Reconciliation,
+  Result,
+  Submission,
+} from "@rss-mdm-agent/ai-contract/ports";
 import {
   providerIdentity,
   workspaceIdentity,
@@ -884,7 +884,7 @@ export class CodexAdapter implements ProviderAgentPort {
     decode(
       boundedJson(
         {
-          schemaVersion: 7,
+          schemaVersion: 8,
           kind: "event",
           namespace: this.configuration!.namespace,
           eventId: "validation",

@@ -14,12 +14,15 @@ function request() {
 }
 function resolved() {
   const action = props.record.action;
-  if (action.kind !== "policy") return {};
+  if (action.kind !== "policy" || action.directory.task.kind !== "script")
+    return {};
   return Object.fromEntries(
-    Object.entries(action.directory.parameterSources).map(([key, source]) => [
-      key,
-      source.kind === "fixed" ? source.value : action.choice.parameters[key],
-    ]),
+    Object.entries(action.directory.task.parameterSources).map(
+      ([key, source]) => [
+        key,
+        source.kind === "fixed" ? source.value : action.choice.parameters[key],
+      ],
+    ),
   );
 }
 </script>
@@ -41,15 +44,15 @@ function resolved() {
         </dd>
         <dt>资源版本</dt>
         <dd>
-          {{ record.action.directory.resource.id }} /
-          {{ record.action.directory.resource.version }} /
-          {{ record.action.directory.resource.variant }}
+          {{ record.action.directory.task.resource.id }} /
+          {{ record.action.directory.task.resource.version }} /
+          {{ record.action.directory.task.resource.variant }}
         </dd>
         <dt>企业账号</dt>
         <dd>
-          {{ record.action.actor.tenantId }} /
-          {{ record.action.actor.principalId }} · 登录
-          {{ record.action.generation }}
+          {{ record.action.user?.tenantId ?? "设备" }} /
+          {{ record.action.user?.principalId ?? "本机设备上下文" }} · 登录
+          {{ record.action.context.generation }}
         </dd>
         <template v-if="record.trigger.kind !== 'automatic'"
           ><dt>发起设备 / OS 账号 / 登录</dt>

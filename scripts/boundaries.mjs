@@ -38,7 +38,7 @@ const userCommands = [
   "test_users",
   "select_test_user",
   "save_connection",
-  "select_guest",
+  "select_device",
   "account_logout",
   "account_status",
   "account_login",

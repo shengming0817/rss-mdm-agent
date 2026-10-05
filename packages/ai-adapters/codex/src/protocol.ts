@@ -19,7 +19,7 @@ import type { ListMcpServerStatusParams } from "./protocol/v2/ListMcpServerStatu
 import type { ListMcpServerStatusResponse } from "./protocol/v2/ListMcpServerStatusResponse.js";
 import type { ConfigReadParams } from "./protocol/v2/ConfigReadParams.js";
 import type { ConfigReadResponse } from "./protocol/v2/ConfigReadResponse.js";
-import type { Budget } from "@rss-mdm-agent/ai-contract";
+import type { Budget } from "@rss-mdm-agent/ai-contract/ports";
 import type { NativeMessage, RpcConnection } from "./runtime.js";
 import type { AgentMessageDeltaNotification } from "./protocol/v2/AgentMessageDeltaNotification.js";
 import type { TurnCompletedNotification } from "./protocol/v2/TurnCompletedNotification.js";

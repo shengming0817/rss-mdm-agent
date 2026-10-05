@@ -52,7 +52,7 @@ export async function createFixture() {
     await host.store.saveConnection(
       fixtureCaller,
       {
-        schemaVersion: 7,
+        schemaVersion: 8,
         kind: "connection",
         connectionId: "cfg",
         name: "Browser fixture",
@@ -94,7 +94,7 @@ export async function createFixture() {
   identity.user.displayName = "开发 fixture";
   identity.generation = "isolated-fixture-identity";
   let hostStatus = {
-    schemaVersion: 7,
+    schemaVersion: 8,
     kind: "hostStatus",
     generation: 1,
     phase: "ready",
@@ -427,7 +427,7 @@ export async function createFixture() {
       const namespace = { ...fixtureCaller, sessionId };
       const session = unwrap(await host.store.session(namespace));
       const event = {
-        schemaVersion: 7,
+        schemaVersion: 8,
         kind: "event",
         namespace,
         eventId: `visual-${operationId}`,
@@ -450,7 +450,7 @@ export async function createFixture() {
         },
       };
       const row = {
-        schemaVersion: 7,
+        schemaVersion: 8,
         kind: "delivery",
         namespace,
         operationId,

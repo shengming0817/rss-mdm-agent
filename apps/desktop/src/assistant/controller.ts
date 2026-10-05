@@ -1,5 +1,8 @@
 import { operationRequestId } from "@rss-mdm-agent/execution-bindings";
-import type { Connection, HistoryPreview } from "@rss-mdm-agent/ai-contract";
+import type {
+  Connection,
+  HistoryPreview,
+} from "@rss-mdm-agent/ai-contract/wire";
 import { computed, markRaw, reactive, shallowRef } from "vue";
 import {
   composePrompt,
@@ -137,9 +140,9 @@ export function createAssistant(
     opening: false,
     connections: [] as Connection[],
     preferences: {
-      schemaVersion: 7,
+      schemaVersion: 8,
       kind: "userPreferences",
-    } as import("@rss-mdm-agent/ai-contract").UserPreferences,
+    } as import("@rss-mdm-agent/ai-contract/wire").UserPreferences,
     sessions: new Map<string, SessionItem>(),
     views: new Map<string, SessionView>(),
     drafts: new Map<string, Composition>(),
@@ -779,7 +782,7 @@ export function createAssistant(
       return;
     state.pending.set(id, {
       command: {
-        schemaVersion: 7,
+        schemaVersion: 8,
         kind: "command",
         sessionId: id,
         commandId,
@@ -979,7 +982,7 @@ export function createAssistant(
     state.taskLoading = false;
     state.task = undefined;
     state.connections = [];
-    state.preferences = { schemaVersion: 7, kind: "userPreferences" };
+    state.preferences = { schemaVersion: 8, kind: "userPreferences" };
     state.sessions.clear();
     state.views.clear();
     state.drafts.clear();

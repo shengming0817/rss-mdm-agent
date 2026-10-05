@@ -63,13 +63,13 @@ export type PreparedAction =
     }
   | {
       /**
-       * Authenticated product employee, checked against the signed authorization.
-       */
-      actor: ScriptActor;
-      /**
        * Immutable employee choice.
        */
       choice: PolicyChoice;
+      /**
+       * Native product login generation.
+       */
+      context: NativeContextRef;
       /**
        * Formal backend directory DTO, including the Resource-owned schema.
        */
@@ -78,10 +78,6 @@ export type PreparedAction =
        * Bounded validity of the original preparation.
        */
       expiresAtUnixMs: number;
-      /**
-       * Native product login generation.
-       */
-      generation: Id;
       kind: "policy";
       /**
        * Eventual signed Offer; no task/attempt is invented before this exists.
@@ -91,6 +87,10 @@ export type PreparedAction =
        * Backend Run returned for the original request, absent until acceptance is known.
        */
       runId: Id | null;
+      /**
+       * Authenticated product employee, checked against the signed authorization.
+       */
+      user: SelfServiceUser | null;
     };
 /**
  * Opaque local reference identifier; syntax validity is not authenticity.
@@ -195,6 +195,28 @@ export type BackendIdentity = "system" | "user";
  */
 export type SoftwareOperation = "install" | "detect" | "uninstall";
 /**
+ * `SelfServiceTask`
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "SelfServiceTask".
+ */
+export type SelfServiceTask =
+  | {
+      kind: "script";
+      parameterSchema: unknown;
+      parameterSources: {
+        [k: string]: ScriptParameterSource;
+      };
+      resource: TaskResource;
+      runAs: ExecutionIdentity;
+    }
+  | {
+      kind: "software";
+      resource: TaskResource;
+      runAs: ExecutionIdentity;
+      target: SoftwareExecutionTarget;
+    };
+/**
  * `ScriptParameterSource`
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
@@ -207,6 +229,28 @@ export type ScriptParameterSource =
     }
   | {
       kind: "input";
+    };
+/**
+ * `ExecutionIdentity`
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "ExecutionIdentity".
+ */
+export type ExecutionIdentity = "system" | "logged_in_user";
+/**
+ * `SoftwareExecutionTarget`
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "SoftwareExecutionTarget".
+ */
+export type SoftwareExecutionTarget =
+  | {
+      kind: "device";
+    }
+  | {
+      identity: string;
+      kind: "user";
+      sessionId: string;
     };
 /**
  * Target OS semantics for validation; an enum value is not a platform support claim.
@@ -298,6 +342,10 @@ export type BackendTrigger =
        * Native AI connection configuration, not a provider identity grant.
        */
       config: VersionedRef;
+      /**
+       * Native owner binding at the original invocation, independent of provider identity.
+       */
+      context: NativeContextRef;
       /**
        * Conversation reference used for audit correlation.
        */
@@ -515,9 +563,9 @@ export type Initiator =
     };
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "LocalContractV7".
+ * via the `definition` "LocalContractV8".
  */
-export type LocalContractV7 = 7;
+export type LocalContractV8 = 8;
 /**
  * Required target user-session availability, independent of the originating login.
  *
@@ -721,6 +769,21 @@ export type PolicyStatus =
       value: SelfServiceStatus;
     };
 /**
+ * `SelfServiceResult`
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "SelfServiceResult".
+ */
+export type SelfServiceResult =
+  | {
+      evidence: ScriptRunResult;
+      kind: "script";
+    }
+  | {
+      effect: SelfServiceSoftwareEffect;
+      kind: "software";
+    };
+/**
  * `TaskFailure`
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
@@ -741,19 +804,30 @@ export type TaskFailure =
  */
 export type OutputQuality2 = "complete" | "partial" | "truncated" | "failed";
 /**
- * `ScriptCancellation`
+ * `SelfServiceSoftwareEffect`
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "ScriptCancellation".
+ * via the `definition` "SelfServiceSoftwareEffect".
  */
-export type ScriptCancellation = "none" | "requested" | "confirmed";
+export type SelfServiceSoftwareEffect =
+  | "verified"
+  | "failed"
+  | "waiting_reboot"
+  | "unknown";
 /**
- * `ScriptDelivery`
+ * `RunCancellation`
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "ScriptDelivery".
+ * via the `definition` "RunCancellation".
  */
-export type ScriptDelivery =
+export type RunCancellation = "none" | "requested" | "confirmed";
+/**
+ * `TaskDelivery`
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "TaskDelivery".
+ */
+export type TaskDelivery =
   | {
       kind: "queued";
     }
@@ -768,12 +842,12 @@ export type ScriptDelivery =
       leaseUntil: number;
     };
 /**
- * `ScriptExecution`
+ * `TaskExecution`
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "ScriptExecution".
+ * via the `definition` "TaskExecution".
  */
-export type ScriptExecution =
+export type TaskExecution =
   | "not_started"
   | "running"
   | "succeeded"
@@ -1006,17 +1080,6 @@ export interface BackendStepSummary {
   version: string;
 }
 /**
- * `ScriptActor`
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "ScriptActor".
- */
-export interface ScriptActor {
-  instanceId: string;
-  principalId: string;
-  tenantId: string;
-}
-/**
  * Employee input; caller source and confirmation are supplied only by trusted native code.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
@@ -1047,32 +1110,33 @@ export interface PolicyChoice {
   request: RequestId;
 }
 /**
+ * Nonsecret reference returned by the native execution owner after binding a context.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "NativeContextRef".
+ */
+export interface NativeContextRef {
+  /**
+   * Exact caller generation; retirement invalidates all work using it.
+   */
+  generation: Id;
+  /**
+   * Owner-assigned binding identity, scoped to the authenticated native peer.
+   */
+  id: Id;
+}
+/**
  * `SelfServiceDirectoryItem`
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
  * via the `definition` "SelfServiceDirectoryItem".
  */
 export interface SelfServiceDirectoryItem {
-  parameterSchema: unknown;
-  parameterSources: {
-    [k: string]: ScriptParameterSource;
-  };
   policyId: string;
   policyRevision: number;
   policyVersion: string;
-  resource: ScriptResource;
   selfService: SelfServiceMetadata;
-}
-/**
- * `ScriptResource`
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "ScriptResource".
- */
-export interface ScriptResource {
-  id: string;
-  variant: string;
-  version: string;
+  task: SelfServiceTask;
 }
 /**
  * `SelfServiceMetadata`
@@ -1090,6 +1154,28 @@ export interface SelfServiceMetadata {
   published: boolean;
   riskLevel: number;
   sideEffects: string;
+}
+/**
+ * `TaskResource`
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "TaskResource".
+ */
+export interface TaskResource {
+  id: string;
+  variant: string;
+  version: string;
+}
+/**
+ * `SelfServiceUser`
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "SelfServiceUser".
+ */
+export interface SelfServiceUser {
+  instanceId: string;
+  principalId: string;
+  tenantId: string;
 }
 /**
  * Sole product confirmation, persisted together with the original AI request.
@@ -1261,7 +1347,7 @@ export interface FrozenExecutionSummary {
   /**
    * Version of the frozen execution plan, independent of the AI wire version.
    */
-  schemaVersion: LocalContractV7;
+  schemaVersion: LocalContractV8;
   /**
    * Required target user session.
    */
@@ -1621,9 +1707,9 @@ export interface SelfServiceStatus {
   availableAt: number;
   deadline: number;
   requestId: string;
-  result: ScriptRunResult | null;
+  result: SelfServiceResult | null;
   runId: string;
-  state: ScriptRunState;
+  state: TaskRunState;
 }
 /**
  * `ScriptRunResult`
@@ -1667,16 +1753,16 @@ export interface ScriptOutputReference {
   sha256: string;
 }
 /**
- * `ScriptRunState`
+ * `TaskRunState`
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "ScriptRunState".
+ * via the `definition` "TaskRunState".
  */
-export interface ScriptRunState {
-  cancellation: ScriptCancellation;
+export interface TaskRunState {
+  cancellation: RunCancellation;
   deadline: number;
-  delivery: ScriptDelivery;
-  execution: ScriptExecution;
+  delivery: TaskDelivery;
+  execution: TaskExecution;
   startedAt: number | null;
 }
 /**

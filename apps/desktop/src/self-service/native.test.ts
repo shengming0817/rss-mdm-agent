@@ -6,16 +6,22 @@ import { nativePort } from "./native";
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(), isTauri: vi.fn() }));
 beforeEach(() => {
   currentUser.value = {
-    schemaVersion: 7,
+    schemaVersion: 8,
     kind: "userContext",
     user: {
-      schemaVersion: 7,
+      schemaVersion: 8,
       kind: "testUser",
       userId: "alice",
       displayName: "Alice",
       nameKey: "alice",
     },
     generation: "generation-alice",
+    identity: {
+      mode: "device",
+      authorityId: "desktop-test",
+      tenantId: "local-test",
+      principalId: "alice",
+    },
   };
   vi.mocked(invoke).mockReset();
   vi.mocked(isTauri).mockReturnValue(true);

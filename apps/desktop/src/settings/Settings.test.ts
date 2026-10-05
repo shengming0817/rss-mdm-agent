@@ -1,7 +1,7 @@
 import { mount, flushPromises } from "@vue/test-utils";
 import { it, expect, vi } from "vitest";
 import type { RuntimeClient, SessionView } from "@rss-mdm-agent/ai-client";
-import type { Connection, HostStatus } from "@rss-mdm-agent/ai-contract";
+import type { Connection, HostStatus } from "@rss-mdm-agent/ai-contract/wire";
 import { activeStage } from "@rss-mdm-agent/ai-contract";
 import { fixtureSession } from "@rss-mdm-agent/ai-contract/testing";
 import { createAssistant } from "../assistant/controller";
@@ -30,7 +30,7 @@ async function setup() {
     initialize: async () => ({}),
     connections: async () => ({
       connections: rows,
-      preferences: { schemaVersion: 7, kind: "userPreferences" },
+      preferences: { schemaVersion: 8, kind: "userPreferences" },
     }),
     listSessions: async () => ({ items: [] }),
     observe: () => () => {},
@@ -45,11 +45,13 @@ async function setup() {
       .fn()
       .mockImplementation(async ({ sessionId }) => ({ sessionId })),
     saveConnection: vi.fn(
-      async (row: import("@rss-mdm-agent/ai-contract").ConnectionDraft) => {
+      async (
+        row: import("@rss-mdm-agent/ai-contract/wire").ConnectionDraft,
+      ) => {
         rows = [
           {
             ...row,
-            schemaVersion: 7,
+            schemaVersion: 8,
             kind: "connection",
             configRevision: 1,
             status: "unverified",
@@ -65,7 +67,7 @@ async function setup() {
   );
   await c.connect();
   const status: HostStatus = {
-    schemaVersion: 7,
+    schemaVersion: 8,
     kind: "hostStatus",
     generation: 1,
     phase: "ready",

@@ -1,11 +1,7 @@
 import type { ServiceView, RegistrationStatus } from "./service-contract";
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import {
-  boundedJson,
-  decode,
-  accessLimits,
-  type HostStatus,
-} from "@rss-mdm-agent/ai-contract";
+import { boundedJson, decode, accessLimits } from "@rss-mdm-agent/ai-contract";
+import type { HostStatus } from "@rss-mdm-agent/ai-contract/wire";
 const status = (value: unknown): HostStatus => {
   const record = decode(boundedJson(value, accessLimits), accessLimits);
   if (record.kind !== "hostStatus") throw new Error("invalid_response");

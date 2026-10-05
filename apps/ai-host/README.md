@@ -1,6 +1,6 @@
 # 本地 AI Host 应用
 
-本应用装配 AI 契约、SQLite、独立 provider worker 和 ACP–A2UI 服务。原生桌面持有测试用户选择、UI generation 和一个设备执行服务；Host 持有个人连接、产品 Session、provider 阶段及持久交付。当前验证平台为 macOS arm64。
+本应用装配 AI 契约、SQLite、独立 provider worker 和 ACP–A2UI 服务。原生桌面持有产品身份、测试用户工作区和 UI generation，并消费一个设备执行服务；Host 持有个人连接、产品 Session、provider 阶段及持久交付。当前验证平台为 macOS arm64。
 
 ```sh
 pnpm build:ai-host

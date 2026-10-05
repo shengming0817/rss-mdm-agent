@@ -1,3 +1,4 @@
+import type { Subscription } from "./wire.js";
 import { interactionCatalog } from "./identity.js";
 import validAction from "./validate-action.js";
 import validNegotiation from "./validate-negotiation.js";
@@ -7,7 +8,6 @@ import type {
   Result,
   SessionStore,
   ProviderObservation,
-  Subscription,
 } from "./ports.js";
 import type { SurfaceAction, SurfaceState } from "./wire.js";
 export function parseNegotiation(
@@ -136,7 +136,7 @@ export async function resolveSurfaceAction(
     decode(
       boundedJson(
         {
-          schemaVersion: 7,
+          schemaVersion: 8,
           kind: "command",
           sessionId: metadata.sessionId,
           commandId: metadata.commandId,

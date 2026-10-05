@@ -1,4 +1,4 @@
-import { scopeAbsent } from "../packages/ai-host/dist/process.js";
+import { scopeAbsentWithin } from "../packages/ai-host/dist/process.js";
 import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { PrivateLink } from "../packages/ai-host/dist/private-link.js";
@@ -113,7 +113,7 @@ for (const signal of ["SIGTERM", "SIGINT"]) {
         .sessionId,
     );
     await client.submit({
-      schemaVersion: 7,
+      schemaVersion: 8,
       kind: "command",
       commandId: "bundled",
       sessionId: session.namespace.sessionId,
@@ -166,7 +166,13 @@ for (const signal of ["SIGTERM", "SIGINT"]) {
         .map(([root]) => ({ kind: "processGroup", root }));
     }
     assert.equal(groups.length, 1);
-    assert.equal(scopeAbsent(workerRuntime, groups[0]), false);
+    assert.equal(
+      await scopeAbsentWithin(workerRuntime, groups[0], {
+        timeoutMs: 2000,
+        signal: new AbortController().signal,
+      }),
+      false,
+    );
     // Keep the client attached: the CLI must close both private channel and live worker.
     if (process.platform === "win32") peer.control.close();
     else child.kill(signal);
@@ -181,8 +187,17 @@ for (const signal of ["SIGTERM", "SIGINT"]) {
       }),
     ]).finally(() => clearTimeout(timer));
     assert.deepEqual(status, [0, null], stderr);
-    await until(() =>
-      groups.every((scope) => scopeAbsent(workerRuntime, scope)),
+    await until(async () =>
+      (
+        await Promise.all(
+          groups.map((scope) =>
+            scopeAbsentWithin(workerRuntime, scope, {
+              timeoutMs: 2000,
+              signal: new AbortController().signal,
+            }),
+          ),
+        )
+      ).every(Boolean),
     );
     database = new DatabaseSync(configuration.databasePath, { readOnly: true });
     const record = JSON.parse(
@@ -207,8 +222,17 @@ for (const signal of ["SIGTERM", "SIGINT"]) {
       await once(child, "exit");
     }
     if (groups.length)
-      await until(() =>
-        groups.every((scope) => scopeAbsent(workerRuntime, scope)),
+      await until(async () =>
+        (
+          await Promise.all(
+            groups.map((scope) =>
+              scopeAbsentWithin(workerRuntime, scope, {
+                timeoutMs: 2000,
+                signal: new AbortController().signal,
+              }),
+            ),
+          )
+        ).every(Boolean),
       );
     if (rust && rust.exitCode === null && rust.signalCode === null) {
       const exited = once(rust, "exit");
