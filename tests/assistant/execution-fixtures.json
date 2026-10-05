@@ -21,7 +21,7 @@
         "totalOutputBytes": 4096,
         "totalTimeoutMs": 1000
       },
-      "contentDigest": "fdc6ce6930c05e8b89c21303d61f6505cef8cab440e2deac915b350bab0c1358",
+      "contentDigest": "c75e9ced5b8e71d099f6ec20da15878ac650d8cfa41e28793bb69015b26ab6de",
       "execution": { "kind": "process" },
       "initiator": {
         "kind": "policy",
@@ -44,7 +44,7 @@
         "account": { "platform": "linux", "subject": "uid:1000" },
         "kind": "user"
       },
-      "schemaVersion": 7,
+      "schemaVersion": 8,
       "sessionRequirement": { "kind": "notRequired" },
       "target": {
         "device": "device-1",
@@ -62,7 +62,7 @@
       "attemptId": null,
       "attempts": 0,
       "cancelRequested": false,
-      "contentDigest": "fdc6ce6930c05e8b89c21303d61f6505cef8cab440e2deac915b350bab0c1358",
+      "contentDigest": "c75e9ced5b8e71d099f6ec20da15878ac650d8cfa41e28793bb69015b26ab6de",
       "dispatchCause": null,
       "evidence": [],
       "mode": "test",
@@ -95,7 +95,7 @@
         "totalOutputBytes": 4096,
         "totalTimeoutMs": 1000
       },
-      "contentDigest": "fdc6ce6930c05e8b89c21303d61f6505cef8cab440e2deac915b350bab0c1358",
+      "contentDigest": "c75e9ced5b8e71d099f6ec20da15878ac650d8cfa41e28793bb69015b26ab6de",
       "execution": { "kind": "process" },
       "initiator": {
         "kind": "policy",
@@ -118,7 +118,7 @@
         "account": { "platform": "linux", "subject": "uid:1000" },
         "kind": "user"
       },
-      "schemaVersion": 7,
+      "schemaVersion": 8,
       "sessionRequirement": { "kind": "notRequired" },
       "target": {
         "device": "device-1",
@@ -136,7 +136,7 @@
       "attemptId": "app-fd5e6aca451fdab554517dcc42aea4609d7c916efc7f7f5102c14914556715fa",
       "attempts": 1,
       "cancelRequested": true,
-      "contentDigest": "fdc6ce6930c05e8b89c21303d61f6505cef8cab440e2deac915b350bab0c1358",
+      "contentDigest": "c75e9ced5b8e71d099f6ec20da15878ac650d8cfa41e28793bb69015b26ab6de",
       "dispatchCause": null,
       "evidence": [
         {
@@ -186,7 +186,7 @@
         "totalOutputBytes": 4096,
         "totalTimeoutMs": 1000
       },
-      "contentDigest": "fdc6ce6930c05e8b89c21303d61f6505cef8cab440e2deac915b350bab0c1358",
+      "contentDigest": "c75e9ced5b8e71d099f6ec20da15878ac650d8cfa41e28793bb69015b26ab6de",
       "execution": { "kind": "process" },
       "initiator": {
         "kind": "policy",
@@ -209,7 +209,7 @@
         "account": { "platform": "linux", "subject": "uid:1000" },
         "kind": "user"
       },
-      "schemaVersion": 7,
+      "schemaVersion": 8,
       "sessionRequirement": { "kind": "notRequired" },
       "target": {
         "device": "device-1",
@@ -227,7 +227,7 @@
       "attemptId": "app-fd5e6aca451fdab554517dcc42aea4609d7c916efc7f7f5102c14914556715fa",
       "attempts": 1,
       "cancelRequested": true,
-      "contentDigest": "fdc6ce6930c05e8b89c21303d61f6505cef8cab440e2deac915b350bab0c1358",
+      "contentDigest": "c75e9ced5b8e71d099f6ec20da15878ac650d8cfa41e28793bb69015b26ab6de",
       "dispatchCause": null,
       "evidence": [],
       "mode": "test",
@@ -272,6 +272,10 @@
     "state": "failed",
     "trigger": {
       "config": { "id": "fixture-config", "revision": "1" },
+      "context": {
+        "generation": "fixture-generation",
+        "id": "fixture-context"
+      },
       "conversation": "fixture-conversation",
       "kind": "ai",
       "osSession": {
@@ -320,7 +324,7 @@
         "totalOutputBytes": 4096,
         "totalTimeoutMs": 1000
       },
-      "contentDigest": "fdc6ce6930c05e8b89c21303d61f6505cef8cab440e2deac915b350bab0c1358",
+      "contentDigest": "c75e9ced5b8e71d099f6ec20da15878ac650d8cfa41e28793bb69015b26ab6de",
       "execution": { "kind": "process" },
       "initiator": {
         "kind": "policy",
@@ -343,7 +347,7 @@
         "account": { "platform": "linux", "subject": "uid:1000" },
         "kind": "user"
       },
-      "schemaVersion": 7,
+      "schemaVersion": 8,
       "sessionRequirement": { "kind": "notRequired" },
       "target": {
         "device": "device-1",
@@ -361,7 +365,7 @@
       "attemptId": "app-fd5e6aca451fdab554517dcc42aea4609d7c916efc7f7f5102c14914556715fa",
       "attempts": 1,
       "cancelRequested": false,
-      "contentDigest": "fdc6ce6930c05e8b89c21303d61f6505cef8cab440e2deac915b350bab0c1358",
+      "contentDigest": "c75e9ced5b8e71d099f6ec20da15878ac650d8cfa41e28793bb69015b26ab6de",
       "dispatchCause": "deliveryUnknown",
       "evidence": [],
       "mode": "test",
@@ -406,6 +410,10 @@
     "state": "awaitingConfirmation",
     "trigger": {
       "config": { "id": "fixture-config", "revision": "1" },
+      "context": {
+        "generation": "fixture-generation",
+        "id": "fixture-context"
+      },
       "conversation": "fixture-conversation",
       "kind": "ai",
       "osSession": {
@@ -438,7 +446,7 @@
         "totalOutputBytes": 4096,
         "totalTimeoutMs": 1000
       },
-      "contentDigest": "fdc6ce6930c05e8b89c21303d61f6505cef8cab440e2deac915b350bab0c1358",
+      "contentDigest": "c75e9ced5b8e71d099f6ec20da15878ac650d8cfa41e28793bb69015b26ab6de",
       "execution": { "kind": "process" },
       "initiator": {
         "kind": "policy",
@@ -461,7 +469,7 @@
         "account": { "platform": "linux", "subject": "uid:1000" },
         "kind": "user"
       },
-      "schemaVersion": 7,
+      "schemaVersion": 8,
       "sessionRequirement": { "kind": "notRequired" },
       "target": {
         "device": "device-1",
@@ -479,7 +487,7 @@
       "attemptId": "app-fd5e6aca451fdab554517dcc42aea4609d7c916efc7f7f5102c14914556715fa",
       "attempts": 1,
       "cancelRequested": false,
-      "contentDigest": "fdc6ce6930c05e8b89c21303d61f6505cef8cab440e2deac915b350bab0c1358",
+      "contentDigest": "c75e9ced5b8e71d099f6ec20da15878ac650d8cfa41e28793bb69015b26ab6de",
       "dispatchCause": null,
       "evidence": [],
       "mode": "test",
@@ -504,7 +512,7 @@
         "totalOutputBytes": 4096,
         "totalTimeoutMs": 1000
       },
-      "contentDigest": "daf01c627f0a25b918d19c1f7525f0db661d10f32570b333a1431d48e8415773",
+      "contentDigest": "3d783cf40966c552ea16c3f1d6139d2448f969c1996fc1fe2788125d71590b38",
       "execution": {
         "intent": "install",
         "kind": "softwareProgram",
@@ -536,7 +544,7 @@
       "policy": { "id": "policy-1", "revision": "1" },
       "requestId": "request-1",
       "runAs": { "kind": "system", "platform": "macos" },
-      "schemaVersion": 7,
+      "schemaVersion": 8,
       "sessionRequirement": { "kind": "notRequired" },
       "target": {
         "device": "device-1",
@@ -551,7 +559,7 @@
       "attemptId": "app-fd5e6aca451fdab554517dcc42aea4609d7c916efc7f7f5102c14914556715fa",
       "attempts": 1,
       "cancelRequested": false,
-      "contentDigest": "daf01c627f0a25b918d19c1f7525f0db661d10f32570b333a1431d48e8415773",
+      "contentDigest": "3d783cf40966c552ea16c3f1d6139d2448f969c1996fc1fe2788125d71590b38",
       "dispatchCause": null,
       "evidence": [],
       "mode": "test",
@@ -584,7 +592,7 @@
         "totalOutputBytes": 4096,
         "totalTimeoutMs": 1000
       },
-      "contentDigest": "fdc6ce6930c05e8b89c21303d61f6505cef8cab440e2deac915b350bab0c1358",
+      "contentDigest": "c75e9ced5b8e71d099f6ec20da15878ac650d8cfa41e28793bb69015b26ab6de",
       "execution": { "kind": "process" },
       "initiator": {
         "kind": "policy",
@@ -607,7 +615,7 @@
         "account": { "platform": "linux", "subject": "uid:1000" },
         "kind": "user"
       },
-      "schemaVersion": 7,
+      "schemaVersion": 8,
       "sessionRequirement": { "kind": "notRequired" },
       "target": {
         "device": "device-1",
@@ -625,7 +633,7 @@
       "attemptId": "app-fd5e6aca451fdab554517dcc42aea4609d7c916efc7f7f5102c14914556715fa",
       "attempts": 1,
       "cancelRequested": false,
-      "contentDigest": "fdc6ce6930c05e8b89c21303d61f6505cef8cab440e2deac915b350bab0c1358",
+      "contentDigest": "c75e9ced5b8e71d099f6ec20da15878ac650d8cfa41e28793bb69015b26ab6de",
       "dispatchCause": null,
       "evidence": [
         {

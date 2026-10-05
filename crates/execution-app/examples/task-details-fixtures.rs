@@ -97,6 +97,10 @@ fn main() {
             state,
             failure,
             trigger: BackendTrigger::Ai {
+                context: NativeContextRef {
+                    id: id("fixture-context"),
+                    generation: id("fixture-generation"),
+                },
                 os_session: OsSessionRef {
                     device: DeviceId::new("fixture-device").unwrap(),
                     account: OsAccountRef {

@@ -1,19 +1,17 @@
 import { shallowRef } from "vue";
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import {
-  boundedJson,
-  decode,
-  accessLimits,
-  type TestUserPage,
-  type Connection,
-  type ConnectionDraft,
-  type Result,
-  type UserContext,
-  type AccountSettings,
-  type AccountStatus,
-  type AccountOrganization,
-  type AccountFailure,
-} from "@rss-mdm-agent/ai-contract";
+import { boundedJson, decode, accessLimits } from "@rss-mdm-agent/ai-contract";
+import type {
+  TestUserPage,
+  Connection,
+  ConnectionDraft,
+  UserContext,
+  AccountSettings,
+  AccountStatus,
+  AccountOrganization,
+  AccountFailure,
+} from "@rss-mdm-agent/ai-contract/wire";
+import type { Result } from "@rss-mdm-agent/ai-contract/ports";
 export const currentUser = shallowRef<UserContext>();
 export const accountNotice = shallowRef("");
 import { fixtureSelected } from "./assembly";
@@ -105,7 +103,7 @@ export function selectionMessage(error: unknown): string {
 
 export async function enterGuest(): Promise<UserContext> {
   try {
-    const context = parsed(await invoke("select_guest"), "userContext");
+    const context = parsed(await invoke("select_device"), "userContext");
     currentUser.value = context;
     return context;
   } catch (error) {
@@ -131,11 +129,9 @@ export async function loginEnterprise(
   }
 }
 export async function logoutAccount(): Promise<void> {
-  try {
-    await invoke("account_logout");
-  } finally {
-    currentUser.value = undefined;
-  }
+  currentUser.value = undefined;
+  await invoke("account_logout");
+  if (!currentUser.value) await refreshAccount();
 }
 export async function refreshAccount(): Promise<void> {
   const expected = currentUser.value?.generation;
@@ -148,7 +144,7 @@ export async function refreshAccount(): Promise<void> {
     if (
       !value &&
       !status.failure &&
-      currentUser.value?.identity?.mode === "enterprise"
+      currentUser.value?.identity.mode === "user_device"
     )
       accountNotice.value =
         "企业会话已失效或无法完成在线核验。旧视图已关闭，请检查网络并重新登录。";
@@ -156,7 +152,7 @@ export async function refreshAccount(): Promise<void> {
   } catch {
     if (
       currentUser.value?.generation === expected &&
-      currentUser.value?.identity?.mode === "enterprise"
+      currentUser.value?.identity.mode === "user_device"
     ) {
       currentUser.value = undefined;
       accountNotice.value =
@@ -213,7 +209,7 @@ export function accountErrorMessage(error: unknown): string {
     try {
       const status = parsed(
         {
-          schemaVersion: 7,
+          schemaVersion: 8,
           kind: "accountStatus",
           failure: { stage, reason, observedAtMs: 0 },
         },

@@ -31,12 +31,12 @@ async function harness(t) {
   let next = 0;
   return {
     directory,
-    open(
+    async open(
       path = join(directory, `store-${next++}.sqlite`),
       mode = "create",
       options = {},
     ) {
-      const result = openSqliteStore({ path, mode, ...options });
+      const result = await openSqliteStore({ path, mode, ...options });
       if (result.ok) stores.push(result.value);
       return result;
     },
@@ -44,12 +44,12 @@ async function harness(t) {
 }
 test("real SQLite passes the shared contract including verified recovery", async (t) => {
   const h = await harness(t);
-  await runStoreConformance(() => unwrap(h.open()));
+  await runStoreConformance(async () => unwrap(await h.open()));
 });
 test("reopen preserves acceptance but requires a verified new generation before mutation", async (t) => {
   const h = await harness(t),
     path = join(h.directory, "restart.sqlite");
-  let store = unwrap(h.open(path));
+  let store = unwrap(await h.open(path));
   const initial = fixtureSession();
   activeStage(initial).capabilities.continuation = "across_processes";
   unwrap(await store.create(initial));
@@ -57,7 +57,7 @@ test("reopen preserves acceptance but requires a verified new generation before 
     receipt = unwrap(await store.accept(input));
   const before = unwrap(await readSnapshot(store, initial.namespace));
   unwrap(await store.close(budget()));
-  store = unwrap(h.open(path, "open"));
+  store = unwrap(await h.open(path, "open"));
   assert.deepEqual(unwrap(await store.accept(input)), receipt);
   assert.deepEqual(
     unwrap(await readSnapshot(store, initial.namespace)),
@@ -90,7 +90,7 @@ test("failure at the final session CAS rolls back command, receipt and event", a
   };
   let store;
   try {
-    store = unwrap(h.open());
+    store = unwrap(await h.open());
   } finally {
     DatabaseSync.prototype.prepare = original;
   }

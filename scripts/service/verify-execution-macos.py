@@ -473,7 +473,7 @@ const input=JSON.parse(process.argv[2]);
 const {WorkerPort,scopeAbsentWithin}=await import(pathToFileURL(join(input.root,'packages/ai-host/dist/process.js')));
 const {openSqliteStore}=await import(pathToFileURL(join(input.root,'packages/ai-store-sqlite/dist/index.js')));
 const {fixtureSession}=await import(pathToFileURL(join(input.root,'packages/ai-contract/dist/testing/index.js')));
-const storeResult=openSqliteStore({path:join(input.directory,'host.sqlite'),mode:'create'});
+const storeResult=await openSqliteStore({path:join(input.directory,'host.sqlite'),mode:'create'});
 assert.equal(storeResult.ok,true);const store=storeResult.value;
 const runtime={launcher:join(input.runtime,'bin/rss-ai-worker-launcher'),
     manifestDigest:createHash('sha256').update(readFileSync(join(input.runtime,'worker-manifest.json'))).digest('hex')};

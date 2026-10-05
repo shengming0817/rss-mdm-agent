@@ -22,7 +22,7 @@ import { harness, budget } from "./support.mjs";
 
 test("real SQLITE_FULL aborts acceptance without shrinking the deduplication history", async (t) => {
   const h = harness(t),
-    store = unwrap(h.open()),
+    store = unwrap(await h.open()),
     initial = fixtureSession();
   unwrap(await store.create(initial));
   const db = h.raw(store),
@@ -42,7 +42,7 @@ test("real SQLITE_FULL aborts acceptance without shrinking the deduplication his
 });
 test("foreign key failure at the final write rolls back every earlier table", async (t) => {
   const h = harness(t),
-    store = unwrap(h.open()),
+    store = unwrap(await h.open()),
     initial = fixtureSession();
   unwrap(await store.create(initial));
   const db = h.raw(store);
@@ -65,14 +65,14 @@ test("foreign key failure at the final write rolls back every earlier table", as
 test("delivery is atomically tied to the event, content and stable operation identity", async (t) => {
   const h = harness(t),
     path = join(h.directory, "delivery.sqlite"),
-    store = unwrap(h.open(path));
+    store = unwrap(await h.open(path));
   const initial = fixtureSession();
   unwrap(await store.create(initial));
   unwrap(await store.accept(acceptance(initial)));
   const head = unwrap(await store.session(initial.namespace)),
     event = unwrap(await store.events(initial.namespace, 0, 1))[0];
   const delivery = {
-    schemaVersion: 7,
+    schemaVersion: 8,
     kind: "delivery",
     namespace: initial.namespace,
     operationId: "operation-1",
@@ -111,13 +111,13 @@ test("delivery is atomically tied to the event, content and stable operation ide
   );
   assert.deepEqual(unwrap(await store.deliveries(10, 0)).items, []);
   unwrap(await store.close(budget()));
-  const reopened = unwrap(h.open(path, "open"));
+  const reopened = unwrap(await h.open(path, "open"));
   assert.deepEqual(unwrap(await reopened.deliveries(10, 0)).items, []);
 });
 test("snapshot cursor bridges surface create/update/delete and restart without gaps", async (t) => {
   const h = harness(t),
     path = join(h.directory, "surface.sqlite"),
-    store = unwrap(h.open(path));
+    store = unwrap(await h.open(path));
   const seeded = await seedSurface(store),
     before = unwrap(await readSnapshot(store, seeded.session.namespace));
   const updated = { ...seeded.surface, revision: 1 };
@@ -157,7 +157,9 @@ test("snapshot cursor bridges surface create/update/delete and restart without g
   assert.deepEqual([...before.events, ...delta], full.events);
   unwrap(await store.close(budget()));
   assert.deepEqual(
-    unwrap(await readSnapshot(unwrap(h.open(path, "open")), head.namespace)),
+    unwrap(
+      await readSnapshot(unwrap(await h.open(path, "open")), head.namespace),
+    ),
     full,
   );
 });
@@ -171,7 +173,7 @@ test("schema creation is transactional and partial/newer/foreign files are not r
     return exec.call(this, sql);
   };
   try {
-    assert.equal(h.open(path).ok, false);
+    assert.equal((await h.open(path)).ok, false);
   } finally {
     DatabaseSync.prototype.exec = exec;
   }
@@ -182,9 +184,9 @@ test("schema creation is transactional and partial/newer/foreign files are not r
     0,
   );
   raw.close();
-  assert.equal(h.open(path, "open").ok, false);
+  assert.equal((await h.open(path, "open")).ok, false);
   const newer = join(h.directory, "newer.sqlite"),
-    store = unwrap(h.open(newer));
+    store = unwrap(await h.open(newer));
   unwrap(await store.close(budget()));
   const future = new DatabaseSync(newer);
   const currentVersion = future
@@ -193,7 +195,7 @@ test("schema creation is transactional and partial/newer/foreign files are not r
   future.exec(`PRAGMA user_version=${currentVersion + 1}`);
   future.close();
   const bytes = readFileSync(newer);
-  assert.equal(h.open(newer, "open").error.code, "unsupported_version");
+  assert.equal((await h.open(newer, "open")).error.code, "unsupported_version");
   assert.deepEqual(readFileSync(newer), bytes);
   for (const version of [4, 5, 6]) {
     const legacy = new DatabaseSync(newer);
@@ -202,31 +204,34 @@ test("schema creation is transactional and partial/newer/foreign files are not r
     );
     legacy.close();
     const legacyBytes = readFileSync(newer);
-    assert.equal(h.open(newer, "open").error.code, "unsupported_version");
+    assert.equal(
+      (await h.open(newer, "open")).error.code,
+      "unsupported_version",
+    );
     assert.deepEqual(readFileSync(newer), legacyBytes);
   }
   const foreign = join(h.directory, "foreign.sqlite");
   writeFileSync(foreign, "not a database", { mode: 0o600 });
-  assert.equal(h.open(foreign, "open").ok, false);
+  assert.equal((await h.open(foreign, "open")).ok, false);
   assert.equal(readFileSync(foreign, "utf8"), "not a database");
   const missing = join(h.directory, "missing.sqlite");
-  assert.equal(h.open(missing, "open").ok, false);
+  assert.equal((await h.open(missing, "open")).ok, false);
   assert.equal(existsSync(missing), false);
 });
 test("missing tables refuse open", async (t) => {
   const h = harness(t),
     path = join(h.directory, "broken.sqlite"),
-    store = unwrap(h.open(path));
+    store = unwrap(await h.open(path));
   unwrap(await store.close(budget()));
   const raw = new DatabaseSync(path);
   raw.exec("DROP TABLE deliveries");
   raw.close();
-  assert.equal(h.open(path, "open").error.code, "storage_corrupt");
+  assert.equal((await h.open(path, "open")).error.code, "storage_corrupt");
 });
 test("capacity fails explicitly; retirement retains an irreversible namespace tombstone", async (t) => {
   const h = harness(t),
     path = join(h.directory, "retire.sqlite"),
-    store = unwrap(h.open(path));
+    store = unwrap(await h.open(path));
   const initial = fixtureSession();
   unwrap(await store.create(initial));
   unwrap(await store.accept(acceptance(initial)));
@@ -248,9 +253,11 @@ test("capacity fails explicitly; retirement retains an irreversible namespace to
   assert.equal(unwrap(await store.pruneRetired(200)), 0);
   assert.equal(unwrap(await store.pruneRetired(201)), 1);
   unwrap(await store.close(budget()));
-  const reopened = unwrap(h.open(path, "open"));
+  const reopened = unwrap(await h.open(path, "open"));
   assert.equal((await reopened.create(initial)).error.code, "content_conflict");
-  const limited = unwrap(h.open(undefined, "create", { maxSessionRecords: 2 }));
+  const limited = unwrap(
+    await h.open(undefined, "create", { maxSessionRecords: 2 }),
+  );
   unwrap(await limited.create(initial));
   assert.equal(
     (await limited.accept(acceptance(initial))).error.code,
@@ -264,7 +271,7 @@ test("capacity fails explicitly; retirement retains an irreversible namespace to
 test("WAL FULL, disabled extensions and private files are the effective runtime settings", async (t) => {
   const h = harness(t),
     path = join(h.directory, "settings.sqlite"),
-    store = unwrap(h.open(path)),
+    store = unwrap(await h.open(path)),
     db = h.raw(store);
   assert.equal(db.prepare("PRAGMA journal_mode").get().journal_mode, "wal");
   assert.equal(
@@ -284,7 +291,7 @@ test("WAL FULL, disabled extensions and private files are the effective runtime 
 test("orphaned rows fail integrity checks without rewriting the database", async (t) => {
   const h = harness(t),
     path = join(h.directory, "orphan.sqlite"),
-    store = unwrap(h.open(path));
+    store = unwrap(await h.open(path));
   const initial = fixtureSession();
   unwrap(await store.create(initial));
   unwrap(await store.accept(acceptance(initial)));
@@ -292,11 +299,11 @@ test("orphaned rows fail integrity checks without rewriting the database", async
   const raw = new DatabaseSync(path);
   raw.exec("PRAGMA foreign_keys=OFF; DELETE FROM commands");
   raw.close();
-  assert.equal(h.open(path, "open").error.code, "storage_corrupt");
+  assert.equal((await h.open(path, "open")).error.code, "storage_corrupt");
 });
 test("query byte budgets and invalid cursors fail with value-free errors", async (t) => {
   const h = harness(t),
-    store = unwrap(h.open(undefined, "create", { maxQueryBytes: 1024 }));
+    store = unwrap(await h.open(undefined, "create", { maxQueryBytes: 1024 }));
   const initial = fixtureSession();
   unwrap(await store.create(initial));
   const large = {
@@ -328,7 +335,7 @@ test("refusing a foreign SQLite file preserves its bytes and journal mode", asyn
   assert.equal(raw.prepare("PRAGMA journal_mode").get().journal_mode, "delete");
   raw.close();
   const bytes = readFileSync(path);
-  assert.equal(h.open(path, "open").error.code, "unsupported_version");
+  assert.equal((await h.open(path, "open")).error.code, "unsupported_version");
   assert.deepEqual(readFileSync(path), bytes);
   for (const suffix of ["-wal", "-shm", "-journal"])
     assert.equal(existsSync(path + suffix), false);

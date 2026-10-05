@@ -1,4 +1,4 @@
-import type { ProviderAgentPort } from "@rss-mdm-agent/ai-contract";
+import type { ProviderAgentPort } from "@rss-mdm-agent/ai-contract/ports";
 import { ClaudeAdapter } from "./adapter.js";
 import type { ClaudeAdapterOptions } from "./configuration.js";
 import type { RuntimeFactory } from "./runtime.js";

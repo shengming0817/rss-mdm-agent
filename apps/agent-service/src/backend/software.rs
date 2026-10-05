@@ -1,4 +1,4 @@
-//! Deterministic V7 compiler. The backend has already selected sources and ordered dependencies.
+//! Deterministic V8 compiler. The backend has already selected sources and ordered dependencies.
 use crate::{
     backend::plan::{self, hex, id, reference},
     ExecutionConfig, SoftwareManagerKind,
@@ -267,7 +267,7 @@ pub(crate) fn compile(
     let mut compared = payload.clone();
     compared.permit = original.permit;
     compared.expires_at = original.expires_at;
-    if &compared != original || payload.device_id != binding.device.as_str() {
+    if &compared != original.as_ref() || payload.device_id != binding.device.as_str() {
         return Err(Error::Untrusted);
     }
     payload.validate().map_err(|_| Error::Protocol)?;
@@ -629,7 +629,7 @@ pub(crate) fn compile(
         steps,
     };
     let input = ExecutionInput {
-        schema_version: V7,
+        schema_version: V8,
         request: ExecutionRequest {
             schema_version: V1,
             request_id: crate::backend::request_id(offer)?,

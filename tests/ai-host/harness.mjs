@@ -8,7 +8,7 @@ export async function openFixture(host, store, caller, options, budget) {
       await store.saveConnection(
         caller,
         {
-          schemaVersion: 7,
+          schemaVersion: 8,
           kind: "connection",
           connectionId,
           name: connectionId,
@@ -26,7 +26,14 @@ export async function openFixture(host, store, caller, options, budget) {
         null,
       ),
     );
-  const created = await host.createSession(caller, { connectionId }, budget);
+  const created = await host.createSession(
+    caller,
+    {
+      connectionId,
+      ...(options.sessionId ? { sessionId: options.sessionId } : {}),
+    },
+    budget,
+  );
   // The harness deliberately establishes the precondition without adding a user command.
   return created.ok
     ? host.result(() =>

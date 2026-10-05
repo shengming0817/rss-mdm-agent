@@ -1,7 +1,8 @@
 import { mount, flushPromises } from "@vue/test-utils";
 import { expect, test, vi } from "vitest";
 import PolicySelfService from "./PolicySelfService.vue";
-import type { BackendRequest, SelfServicePort } from "./types";
+import PolicyPreparation from "./PolicyPreparation.vue";
+import type { BackendRequest, SelfServicePort, SelfServiceTask } from "./types";
 const record = (id: string): BackendRequest => ({
   action: {
     kind: "policy",
@@ -16,9 +17,13 @@ const record = (id: string): BackendRequest => ({
       policyId: "policy",
       policyRevision: 1,
       policyVersion: "version",
-      resource: { id: "resource", version: "1", variant: "macos" },
-      parameterSchema: { type: "object" },
-      parameterSources: { name: { kind: "input" } },
+      task: {
+        kind: "script",
+        runAs: "system",
+        resource: { id: "resource", version: "1", variant: "macos" },
+        parameterSchema: { type: "object" },
+        parameterSources: { name: { kind: "input" } },
+      },
       selfService: {
         published: true,
         allowAi: true,
@@ -31,12 +36,12 @@ const record = (id: string): BackendRequest => ({
         sideEffects: "Read only",
       },
     },
-    actor: {
+    user: {
       tenantId: "tenant",
       instanceId: "instance",
       principalId: "principal",
     },
-    generation: "generation",
+    context: { id: "binding", generation: "generation" },
     expiresAtUnixMs: Date.now() + 60000,
     runId: "run",
     offer: null,
@@ -55,6 +60,73 @@ const record = (id: string): BackendRequest => ({
   state: "submitting",
   failure: null,
 });
+test.each([
+  {
+    runAs: "system",
+    target: { kind: "device" },
+    expected: ["系统账户", "本机设备"],
+  },
+  {
+    runAs: "logged_in_user",
+    target: {
+      kind: "user",
+      identity: "target-501",
+      sessionId: "target-login-42",
+    },
+    expected: [
+      "当前登录用户",
+      "目标用户 target-501",
+      "登录会话 target-login-42",
+    ],
+  },
+] as const)(
+  "human and original-request confirmations display execution context: $runAs",
+  async ({ runAs, target, expected }) => {
+    const original = record("original-request");
+    if (original.action.kind !== "policy") throw Error("policy fixture");
+    const item = original.action.directory;
+    item.task = {
+      kind: "software",
+      runAs,
+      target,
+      resource: item.task.resource,
+    } satisfies SelfServiceTask;
+    original.state = "awaitingConfirmation";
+    original.action.choice.parameters = {};
+    const port = {
+      policy_directory: async () => ({
+        items: [item],
+        nextCursor: null,
+        asOf: 1,
+      }),
+    } as unknown as SelfServicePort;
+    const human = mount(PolicySelfService, { props: { port, records: [] } });
+    const preparation = mount(PolicyPreparation, {
+      props: { record: original },
+    });
+    try {
+      await flushPromises();
+      await human
+        .findAll("button")
+        .find((b) => b.text() === "Policy")!
+        .trigger("click");
+      await human.get("form").trigger("submit");
+      const confirmation = human.get('[aria-label="人工执行确认"]');
+      for (const text of expected) {
+        expect(confirmation.text()).toContain(text);
+        expect(preparation.text()).toContain(text);
+      }
+      expect(confirmation.text()).toContain("发起账号");
+      expect(preparation.text()).toContain("发起账号");
+      expect(preparation.text()).toContain("principal");
+      expect(preparation.text()).not.toContain("最终参数");
+      expect(preparation.get("button").text()).toBe("查询原请求与结果");
+    } finally {
+      human.unmount();
+      preparation.unmount();
+    }
+  },
+);
 test("remounted history queries its original UUID and does not invoke again", async () => {
   const original = "00000000-0000-0000-0000-000000000001";
   const policy_status = vi.fn(async () => ({
@@ -64,13 +136,16 @@ test("remounted history queries its original UUID and does not invoke again", as
       runId: "run",
       state: { execution: "succeeded", cancellation: "none" },
       result: {
-        collectedAt: 1,
-        quality: "complete",
-        schemaValid: true,
-        budgetValid: true,
-        trusted: true,
-        output: { message: "historical-result" },
-        outputReference: null,
+        kind: "script",
+        evidence: {
+          collectedAt: 1,
+          quality: "complete",
+          schemaValid: true,
+          budgetValid: true,
+          trusted: true,
+          output: { message: "historical-result" },
+          outputReference: null,
+        },
       },
     },
   }));
@@ -103,7 +178,8 @@ test("enum and length constraints prevent invalid confirmation; absent restores 
       { kind: "policy" }
     >
   ).directory;
-  item.parameterSchema = {
+  if (item.task.kind !== "script") throw Error("script");
+  item.task.parameterSchema = {
     type: "object",
     properties: {
       mode: { type: "string", enum: ["safe", "full"] },
@@ -112,7 +188,10 @@ test("enum and length constraints prevent invalid confirmation; absent restores 
     required: ["mode", "name"],
     additionalProperties: false,
   };
-  item.parameterSources = { mode: { kind: "input" }, name: { kind: "input" } };
+  item.task.parameterSources = {
+    mode: { kind: "input" },
+    name: { kind: "input" },
+  };
   const policy_invoke = vi
     .fn()
     .mockRejectedValue(new Error("rejected before creation"));

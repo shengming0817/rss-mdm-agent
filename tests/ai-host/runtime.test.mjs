@@ -1,3 +1,4 @@
+import { processWorkerAdapter } from "../../packages/ai-host/dist/process.js";
 import { fixturePersistence } from "./harness.mjs";
 import { workerRuntime } from "./worker-runtime.mjs";
 import { activeStage } from "../../packages/ai-contract/dist/index.js";
@@ -9,7 +10,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRequire } from "node:module";
 import { createHost } from "../../packages/ai-host/dist/index.js";
-import { scopeAbsent } from "../../packages/ai-host/dist/process.js";
 import { openSqliteStore } from "../../packages/ai-store-sqlite/dist/index.js";
 import { runHostConformance } from "../../packages/ai-contract/dist/testing/index.js";
 import { createAccessService } from "../../packages/ai-access/dist/index.js";
@@ -17,6 +17,7 @@ import {
   RuntimeClient,
   localTransportPair,
 } from "../../packages/ai-client/dist/index.js";
+import { fixtureSession } from "../../packages/ai-contract/dist/testing/index.js";
 const caller = {
   tenantId: "tenant",
   principalId: "person",
@@ -81,6 +82,7 @@ async function setup(t, revision = "1", extras = {}) {
       mode: "create",
     }),
   );
+  await extras.beforeHost?.(store);
   const options = {
     provider: "fake",
     config: { id: "config", revision },
@@ -90,7 +92,7 @@ async function setup(t, revision = "1", extras = {}) {
   host = unwrap(
     await createHost({
       credentialPersistence: fixturePersistence(store),
-      workerRuntime,
+      workers: processWorkerAdapter(workerRuntime),
       delivery: extras.admission
         ? {
             authorize: async () => ({ ok: true, value: "allowed" }),
@@ -155,7 +157,7 @@ async function setup(t, revision = "1", extras = {}) {
     await openFixture(host, store, caller, options, budget()),
   );
   const command = (id, text = "hold") => ({
-    schemaVersion: 7,
+    schemaVersion: 8,
     kind: "command",
     sessionId: session.namespace.sessionId,
     commandId: id,
@@ -171,6 +173,167 @@ async function setup(t, revision = "1", extras = {}) {
       .map((line) => JSON.parse(line));
   return { host, store, session, command, record, trace, directory, options };
 }
+test(
+  "a waiting namespace probe leaves another caller's real worker message and cancellation responsive",
+  { timeout: 15000 },
+  async (t) => {
+    const actual = processWorkerAdapter(workerRuntime);
+    let release,
+      entered,
+      first = true,
+      waiting = true;
+    const probing = new Promise((resolve) => {
+      entered = resolve;
+    });
+    const uncertain = fixtureSession();
+    uncertain.namespace = {
+      ...uncertain.namespace,
+      principalId: "fenced-caller",
+      sessionId: "fenced-session",
+    };
+    const connectionId = uncertain.stages.at(-1).connectionId;
+    t.after(() => release?.(false));
+    const f = await setup(t, "1", {
+      async beforeHost(store) {
+        unwrap(
+          await store.saveConnection(
+            uncertain.namespace,
+            {
+              schemaVersion: 8,
+              kind: "connection",
+              connectionId,
+              name: "Fenced fixture",
+              provider: "codex",
+              configRevision: 1,
+              profile: "conversation",
+              status: "ready",
+              source: {
+                type: "custom_api",
+                apiUrl: "https://example.invalid/v1",
+                model: "1",
+              },
+            },
+            null,
+          ),
+        );
+        unwrap(await store.create(uncertain));
+        unwrap(
+          await store.reserveLaunch({
+            namespace: uncertain.namespace,
+            launchId: "unknown",
+            artifact: "fixture-provider",
+            runtimeDigest: "a".repeat(64),
+            phase: "reserved",
+          }),
+        );
+        unwrap(
+          await store.registerLaunch(uncertain.namespace, "unknown", {
+            kind: "processGroup",
+            root: 42,
+          }),
+        );
+      },
+      hostOptions: {
+        workers: {
+          create: (...args) => actual.create(...args),
+          absent(scope, b) {
+            if (scope.kind !== "processGroup" || scope.root !== 42)
+              return actual.absent(scope, b);
+            if (first) {
+              first = false;
+              return Promise.resolve(false);
+            }
+            if (!waiting) return Promise.resolve(false);
+            entered();
+            return new Promise((resolve) => {
+              const timer = setTimeout(() => release(false), b.timeoutMs);
+              release = (value) => {
+                clearTimeout(timer);
+                waiting = false;
+                resolve(value);
+              };
+            });
+          },
+        },
+      },
+    });
+    const pending = f.host.resume(
+      uncertain.namespace,
+      uncertain.namespace.sessionId,
+      budget(),
+    );
+    let timeout;
+    try {
+      await Promise.race([
+        probing,
+        pending.then((result) => {
+          throw Error(
+            "resume did not reach the probe: " + JSON.stringify(result),
+          );
+        }),
+        new Promise((_, reject) => {
+          timeout = setTimeout(
+            () => reject(Error("scope probe did not start")),
+            1500,
+          );
+        }),
+      ]);
+      clearTimeout(timeout);
+      await Promise.race([
+        (async () => {
+          unwrap(
+            await f.host.submit(caller, f.command("isolated-long"), budget()),
+          );
+          await until(
+            async () => (await f.record("isolated-long")).state === "running",
+          );
+          unwrap(await f.host.connections(caller, budget()));
+          const running = await f.record("isolated-long");
+          unwrap(
+            await f.host.cancel(
+              caller,
+              {
+                ...f.command("isolated-cancel"),
+                input: {
+                  type: "cancel",
+                  generation: activeStage(f.session).binding.generation,
+                  targetCommandId: "isolated-long",
+                  nativeRunId: running.dispatch.nativeRunId,
+                },
+              },
+              budget(),
+            ),
+          );
+          await until(
+            async () =>
+              (await f.record("isolated-cancel")).state === "acknowledged",
+          );
+          await until(
+            async () =>
+              (await f.record("isolated-long")).outcome === "cancelled",
+          );
+        })(),
+        new Promise((_, reject) => {
+          timeout = setTimeout(
+            () => reject(Error("unrelated caller blocked by scope probe")),
+            1500,
+          );
+        }),
+      ]);
+    } finally {
+      clearTimeout(timeout);
+      release?.(false);
+    }
+    assert.equal((await pending).ok, false);
+    assert.equal(
+      unwrap(await f.store.launches()).some(
+        (launch) => launch.launchId === "unknown",
+      ),
+      true,
+    );
+  },
+);
+
 test("real worker keeps a long run, durable FIFO and control acknowledgement independent", async (t) => {
   const f = await setup(t);
   unwrap(await f.host.submit(caller, f.command("long"), budget()));
@@ -348,7 +511,7 @@ test("standard ACP queued input outlives the request budget and executes in FIFO
     await f.host.cancel(
       caller,
       {
-        schemaVersion: 7,
+        schemaVersion: 8,
         kind: "command",
         sessionId: session.namespace.sessionId,
         commandId: "release-long-run",
@@ -670,7 +833,7 @@ for (const option of ["queueLimit", "workerLimit", "operationTimeoutMs"])
     for (const value of [0, -1, NaN, Infinity, 1.5]) {
       const result = await createHost({
         credentialPersistence: fixturePersistence({}),
-        workerRuntime,
+        workers: processWorkerAdapter(workerRuntime),
         delivery: null,
         store: {},
         resolve: async () => {},

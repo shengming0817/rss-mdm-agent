@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Duplex } from "node:stream";
-import { boundedJson, type Budget } from "@rss-mdm-agent/ai-contract";
+import { boundedJson } from "@rss-mdm-agent/ai-contract";
+import type { Budget } from "@rss-mdm-agent/ai-contract/ports";
 
 const peerCodes = [
   "authentication_required",

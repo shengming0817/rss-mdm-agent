@@ -4,7 +4,7 @@ import {
   validateDirectory,
   validateFile,
   validateSingleLinkFile,
-  validateOptionalFile,
+  validateSidecars,
   createPrivateFile,
 } from "@rss-mdm-agent/platform-private-storage";
 import type { Scope } from "@rss-mdm-agent/ai-host/process-contract";
@@ -12,12 +12,14 @@ import {
   activeStage,
   emptyPreferences,
   mergePreferences,
-  type PreferencesPatch,
   connectionRevision,
-  type Connection,
-  type UserPreferences,
-  type StageActivation,
 } from "@rss-mdm-agent/ai-contract";
+import type {
+  PreferencesPatch,
+  Connection,
+  UserPreferences,
+} from "@rss-mdm-agent/ai-contract/wire";
+import type { StageActivation } from "@rss-mdm-agent/ai-contract/ports";
 import {
   validLaunch,
   type WorkerLaunch,
@@ -37,31 +39,35 @@ import {
   decode,
   ContractError,
   isId,
-  type AcceptCommand,
-  type Budget,
-  type CommandRecord,
-  type Counter,
-  type Delivery,
-  type Event,
-  type Id,
-  type Namespace,
-  type Page,
-  type Receipt,
-  type Result,
-  type Session,
-  type SessionCommit,
-  type SessionRebind,
-  type RecoveryUnavailable,
-  type SessionSuspension,
-  type SessionStore,
-  type StoreCursor,
-  type SnapshotPage,
-  type SessionPage,
-  type PageQuery,
-  type Caller,
-  type SurfaceState,
-  type WireRecord,
 } from "@rss-mdm-agent/ai-contract";
+import type {
+  AcceptCommand,
+  Budget,
+  Page,
+  Result,
+  SessionCommit,
+  SessionRebind,
+  RecoveryUnavailable,
+  SessionSuspension,
+  SessionStore,
+  StoreCursor,
+  Caller,
+} from "@rss-mdm-agent/ai-contract/ports";
+import type {
+  CommandRecord,
+  Counter,
+  Delivery,
+  Event,
+  Id,
+  Namespace,
+  Receipt,
+  Session,
+  SnapshotPage,
+  SessionPage,
+  PageQuery,
+  SurfaceState,
+  WireRecord,
+} from "@rss-mdm-agent/ai-contract/wire";
 import {
   acceptCommand,
   selectConnection,
@@ -77,7 +83,13 @@ import {
   namespaceKey,
   ok,
   fail,
-  type SessionState,
+  type SessionWorkspace,
+  type SessionRows,
+  memoryRows,
+  type SessionQueries,
+  resultView,
+  readResult,
+  transactionDelta,
 } from "@rss-mdm-agent/ai-contract/transitions";
 import {
   initialize,
@@ -200,18 +212,14 @@ function bounds(options: StoreOptions): Bounds {
   if (result.maxDatabaseBytes < 65536) throw new InputError("invalid_input");
   return result;
 }
-function validateSidecars(path: string): void {
-  for (const suffix of ["-wal", "-shm", "-journal"])
-    validateOptionalFile(path + suffix);
-}
-function privatePath(options: StoreOptions): string {
+async function privatePath(options: StoreOptions): Promise<string> {
   if (!isAbsolute(options.path) || !["create", "open"].includes(options.mode))
     throw new InputError("invalid_input");
-  if (options.mode === "create") privateDirectory(dirname(options.path));
-  else validateDirectory(dirname(options.path));
-  validateSidecars(options.path);
-  if (options.mode === "create") createPrivateFile(options.path);
-  validateSingleLinkFile(options.path);
+  if (options.mode === "create") await privateDirectory(dirname(options.path));
+  else await validateDirectory(dirname(options.path));
+  await validateSidecars(options.path);
+  if (options.mode === "create") await createPrivateFile(options.path);
+  await validateSingleLinkFile(options.path);
   return options.path;
 }
 
@@ -240,9 +248,11 @@ export interface ConnectionSecretStore {
 }
 /** One Host owns the whole database for this connection's lifetime. There is no
  * lease, background worker, side-effect execution or asynchronous transaction hook. */
-export function openSqliteStore(
+export async function openSqliteStore(
   options: StoreOptions,
-): Result<SessionStore & WorkerLaunchFenceStore & ConnectionSecretStore> {
+): Promise<
+  Result<SessionStore & WorkerLaunchFenceStore & ConnectionSecretStore>
+> {
   let db: DatabaseSync | undefined;
   try {
     if (
@@ -253,7 +263,7 @@ export function openSqliteStore(
     )
       return fail("unsupported_version");
     const limits = bounds(options),
-      path = privatePath(options);
+      path = await privatePath(options);
     if (options.mode === "open") {
       const probe = new DatabaseSync(path, {
         readOnly: true,
@@ -293,8 +303,8 @@ export function openSqliteStore(
     )
       throw new SchemaError("unsupported_version");
     if (options.mode === "create") initialize(db, true);
-    validateFile(path);
-    validateSidecars(path);
+    await validateFile(path);
+    await validateSidecars(path);
     return ok(new SqliteSessionStore(db, limits));
   } catch (error) {
     try {
@@ -315,6 +325,11 @@ class SqliteSessionStore implements SessionStore, WorkerLaunchFenceStore {
   constructor(db: DatabaseSync, limits: Bounds) {
     this.#db = db;
     this.#bounds = limits;
+    // Cold startup retains complete schema and record validation before admission.
+    for (const row of db.prepare("SELECT json FROM sessions").all()) {
+      const session = this.#decode<Session>(row.json, "session");
+      this.#state(session.namespace, true);
+    }
   }
   #query<T>(action: () => Result<T>): Result<T> {
     if (this.#closing || this.#closed) return fail("unavailable");
@@ -370,7 +385,154 @@ class SqliteSessionStore implements SessionStore, WorkerLaunchFenceStore {
       throw new SchemaError();
     return session;
   }
-  #state(n: Namespace): SessionState {
+  #transactionState(n: Namespace): SessionWorkspace {
+    const params = nsValues(n),
+      session = this.#session(n);
+    const rows = <T extends WireRecord>(
+      table: Table,
+      kind: T["kind"],
+      predicate = "",
+      values: SQLInputValue[] = [],
+    ): T[] =>
+      this.#db
+        .prepare(`SELECT id,json FROM ${table} WHERE ${whereScope}${predicate}`)
+        .all(...params, ...values)
+        .map((row) => {
+          const value = this.#decode<T>(row.json, kind);
+          const id =
+            value.kind === "commandRecord"
+              ? value.command.commandId
+              : value.kind === "event"
+                ? value.eventId
+                : value.kind === "interaction"
+                  ? value.interactionId
+                  : value.kind === "surface"
+                    ? value.surfaceInstanceId
+                    : value.kind === "delivery"
+                      ? value.operationId
+                      : undefined;
+          const namespace =
+            value.kind === "commandRecord"
+              ? value.receipt.namespace
+              : "namespace" in value
+                ? value.namespace
+                : undefined;
+          if (
+            id !== row.id ||
+            !namespace ||
+            namespaceKey(namespace) !== namespaceKey(n)
+          )
+            throw new SchemaError();
+          return value;
+        });
+    const one = <T extends WireRecord>(table: Table, kind: T["kind"], id: Id) =>
+      rows<T>(table, kind, " AND id=?", [id])[0];
+    const states = <T extends WireRecord>(
+      table: Table,
+      kind: T["kind"],
+      column: string,
+      values: readonly string[],
+    ) =>
+      values.length
+        ? rows<T>(
+            table,
+            kind,
+            ` AND ${column} IN (${values.map(() => "?").join(",")})`,
+            [...values],
+          )
+        : [];
+    const exists = (sql: string, values: SQLInputValue[]) =>
+      !!this.#db
+        .prepare(`SELECT 1 FROM events WHERE ${whereScope} AND ${sql} LIMIT 1`)
+        .get(...params, ...values);
+    const queries: SessionQueries = {
+      command: (id) => one<CommandRecord>("commands", "commandRecord", id),
+      event: (id) => one<Event>("events", "event", id),
+      interaction: (id) =>
+        one<SnapshotPage["interactions"][number]>(
+          "interactions",
+          "interaction",
+          id,
+        ),
+      surface: (id) => one<SurfaceState>("surfaces", "surface", id),
+      delivery: (id) => one<Delivery>("deliveries", "delivery", id),
+      hasEvent: (id) => exists("id=?", [id]),
+      hasAttempt: (id) => exists("json_extract(json,'$.attemptId')=?", [id]),
+      commandsInStates: (values) =>
+        states<CommandRecord>("commands", "commandRecord", "state", values),
+      commandsForNativeTurn: (session, thread, run, request) =>
+        rows<CommandRecord>(
+          "commands",
+          "commandRecord",
+          ` AND json_type(json,'$.dispatch')='object' AND json_extract(json,'$.dispatch.nativeSessionId') IS ? AND json_extract(json,'$.dispatch.nativeThreadId') IS ? AND json_extract(json,'$.dispatch.nativeRunId') IS ?${run === undefined ? " AND json_extract(json,'$.dispatch.nativeRequestId') IS ?" : ""}`,
+          [
+            session ?? null,
+            thread ?? null,
+            run ?? null,
+            ...(run === undefined ? [request ?? null] : []),
+          ],
+        ),
+      interactionForCallback: (generation, callback) =>
+        rows<SnapshotPage["interactions"][number]>(
+          "interactions",
+          "interaction",
+          " AND generation=? AND callback_id=?",
+          [generation, callback],
+        )[0],
+      interactionsForCommand: (command) =>
+        rows<SnapshotPage["interactions"][number]>(
+          "interactions",
+          "interaction",
+          command === undefined ? "" : " AND command_id=?",
+          command === undefined ? [] : [command],
+        ),
+      surfacesForInteraction: (interaction) =>
+        rows<SurfaceState>(
+          "surfaces",
+          "surface",
+          interaction === undefined ? "" : " AND interaction_id=?",
+          interaction === undefined ? [] : [interaction],
+        ),
+      deliveriesInStates: (values) =>
+        states<Delivery>("deliveries", "delivery", "status", values),
+      hasNotSubmittedReconciliation: (command) =>
+        exists(
+          "command_id=? AND json_extract(json,'$.body.type')=? AND json_extract(json,'$.body.resolution')=?",
+          [command, "reconciled", "not_submitted"],
+        ),
+    };
+    const source = resultView(queries, (read) => this.#query(() => ok(read())));
+    const lazy = <T>(get: (id: Id) => T | undefined): SessionRows<Id, T> => ({
+      get,
+      has: (id) => get(id) !== undefined,
+      set: () => {
+        throw new InputError("invalid_input");
+      }, // Writes belong to the reducer's forked overlay.
+    });
+    const generations = new Set(
+      this.#db
+        .prepare(`SELECT id FROM generations WHERE ${whereScope}`)
+        .all(...params)
+        .map((row) => String(row.id)),
+    );
+    if (
+      session.currentStageId &&
+      !generations.has(activeStage(session).binding.generation)
+    )
+      throw new SchemaError();
+    return {
+      session,
+      source,
+      generations,
+      commands: lazy((id) => readResult(source.command(id))),
+      interactions: lazy((id) => readResult(source.interaction(id))),
+      surfaces: lazy((id) => readResult(source.surface(id))),
+      deliveries: lazy((id) => readResult(source.delivery(id))),
+      events: [],
+    };
+  }
+  #state(n: Namespace, full = false): SessionWorkspace {
+    if (!full) return this.#transactionState(n);
     const session = this.#session(n),
       params = nsValues(n);
     const totals = this.#db
@@ -396,10 +558,37 @@ class SqliteSessionStore implements SessionStore, WorkerLaunchFenceStore {
     const load = <T extends WireRecord>(table: Table, kind: T["kind"]) =>
       this.#db
         .prepare(
-          `SELECT json FROM ${table} WHERE ${whereScope}${table === "events" ? " ORDER BY sequence" : " ORDER BY id"}`,
+          `SELECT id,json FROM ${table} WHERE ${whereScope}${table === "events" ? " ORDER BY sequence" : " ORDER BY id"}`,
         )
         .all(...params)
-        .map((r) => this.#decode<T>(r.json, kind));
+        .map((r) => {
+          const value = this.#decode<T>(r.json, kind);
+          const id =
+            value.kind === "commandRecord"
+              ? value.command.commandId
+              : value.kind === "event"
+                ? value.eventId
+                : value.kind === "interaction"
+                  ? value.interactionId
+                  : value.kind === "surface"
+                    ? value.surfaceInstanceId
+                    : value.kind === "delivery"
+                      ? value.operationId
+                      : undefined;
+          const namespace =
+            value.kind === "commandRecord"
+              ? value.receipt.namespace
+              : "namespace" in value
+                ? value.namespace
+                : undefined;
+          if (
+            id !== r.id ||
+            !namespace ||
+            namespaceKey(namespace) !== namespaceKey(n)
+          )
+            throw new SchemaError();
+          return value;
+        });
     const commands = load<CommandRecord>("commands", "commandRecord"),
       events = load<Event>("events", "event"),
       interactions = load<SnapshotPage["interactions"][number]>(
@@ -434,66 +623,86 @@ class SqliteSessionStore implements SessionStore, WorkerLaunchFenceStore {
       deliveries: new Map(deliveries.map((d) => [d.operationId, d])),
     };
   }
-  #checkCapacity(state: SessionState): void {
-    const rows = [
-      state.session,
-      ...state.commands.values(),
-      ...state.events,
-      ...state.interactions.values(),
-      ...state.surfaces.values(),
-      ...state.deliveries.values(),
-    ];
-    if (rows.length + state.generations.size > this.#bounds.maxSessionRecords)
-      throw new InputError("limit_exceeded");
-    let bytes = [...state.generations].reduce(
-      (sum, generation) => sum + Buffer.byteLength(generation),
-      0,
-    );
-    for (const row of rows) {
-      bytes += Buffer.byteLength(boundedJson(row, defaultLimits));
-      if (bytes > this.#bounds.maxSessionBytes)
-        throw new InputError("limit_exceeded");
-    }
-  }
-  #writable(state: SessionState): void {
+  #writable(state: SessionWorkspace): void {
     if (
       this.#owned.get(namespaceKey(state.session.namespace)) !==
       activeStage(state.session).binding.generation
     )
       throw new InputError("stale_binding");
   }
-  #save(before: SessionState, after: SessionState): void {
-    this.#checkCapacity(after);
+  #save(before: SessionWorkspace, after: SessionWorkspace): void {
+    const delta = transactionDelta(before, after);
     const params = nsValues(after.session.namespace);
-    for (const g of after.generations)
-      if (!before.generations.has(g))
-        this.#db
-          .prepare(`INSERT INTO generations (${scope},id) VALUES (?,?,?,?,?)`)
-          .run(...params, g);
-    const maps = [
-      "commands",
-      "interactions",
-      "surfaces",
-      "deliveries",
-    ] as const;
-    const save = (table: Table, id: string, value: WireRecord) =>
+    const totals = this.#db
+      .prepare(
+        tables
+          .map(
+            (t) =>
+              `SELECT count(*) AS count,coalesce(sum(length(CAST(json AS BLOB))),0) AS bytes FROM ${t} WHERE ${whereScope}`,
+          )
+          .join(" UNION ALL ") +
+          ` UNION ALL SELECT count(*) AS count,coalesce(sum(length(id)),0) AS bytes FROM generations WHERE ${whereScope}`,
+      )
+      .all(...tables.flatMap(() => params), ...params);
+    let count = 1 + totals.reduce((sum, row) => sum + Number(row.count), 0),
+      bytes =
+        Buffer.byteLength(boundedJson(delta.session, defaultLimits)) +
+        totals.reduce((sum, row) => sum + Number(row.bytes), 0);
+    const serialized = new Map<WireRecord, string>();
+    for (const table of tables)
+      for (const row of delta[table]) {
+        const id =
+          row.kind === "commandRecord"
+            ? row.command.commandId
+            : row.kind === "event"
+              ? row.eventId
+              : row.kind === "interaction"
+                ? row.interactionId
+                : row.kind === "surface"
+                  ? row.surfaceInstanceId
+                  : row.operationId;
+        const old = this.#db
+          .prepare(
+            `SELECT length(CAST(json AS BLOB)) AS bytes FROM ${table} WHERE ${whereScope} AND id=?`,
+          )
+          .get(...params, id);
+        const json = boundedJson(row, defaultLimits);
+        serialized.set(row, json);
+        count += old ? 0 : 1;
+        bytes += Buffer.byteLength(json) - Number(old?.bytes ?? 0);
+      }
+    count += delta.generations.length;
+    bytes += delta.generations.reduce(
+      (sum, id) => sum + Buffer.byteLength(id),
+      0,
+    );
+    if (
+      count > this.#bounds.maxSessionRecords ||
+      bytes > this.#bounds.maxSessionBytes
+    )
+      throw new InputError("limit_exceeded");
+    for (const generation of delta.generations)
+      this.#db
+        .prepare(`INSERT INTO generations (${scope},id) VALUES (?,?,?,?,?)`)
+        .run(...params, generation);
+    const save = (table: Table, id: string, row: WireRecord) =>
       this.#db
         .prepare(
           `INSERT INTO ${table} (${scope},id,json) VALUES (?,?,?,?,?,?) ON CONFLICT (${scope},id) DO UPDATE SET json=excluded.json`,
         )
-        .run(...params, id, boundedJson(value, defaultLimits));
-    // Commands precede referenced events/callbacks; deliveries follow their event.
-    for (const [id, c] of after.commands)
-      if (JSON.stringify(before.commands.get(id)) !== JSON.stringify(c))
-        save("commands", id, c);
-    for (const event of after.events.slice(before.events.length))
+        .run(...params, id, serialized.get(row)!);
+    for (const row of delta.commands)
+      save("commands", row.command.commandId, row);
+    for (const row of delta.events)
       this.#db
         .prepare(`INSERT INTO events (${scope},id,json) VALUES (?,?,?,?,?,?)`)
-        .run(...params, event.eventId, boundedJson(event, defaultLimits));
-    for (const table of maps.slice(1))
-      for (const [id, row] of after[table])
-        if (JSON.stringify(before[table].get(id)) !== JSON.stringify(row))
-          save(table, id, row);
+        .run(...params, row.eventId, serialized.get(row)!);
+    for (const row of delta.interactions)
+      save("interactions", row.interactionId, row);
+    for (const row of delta.surfaces)
+      save("surfaces", row.surfaceInstanceId, row);
+    for (const row of delta.deliveries)
+      save("deliveries", row.operationId, row);
     // Deliberately last: a CAS/constraint failure rolls back every projection.
     const updated = this.#db
       .prepare(
@@ -706,7 +915,7 @@ class SqliteSessionStore implements SessionStore, WorkerLaunchFenceStore {
     caller: Caller,
     id: string,
     expected: number,
-    result: import("@rss-mdm-agent/ai-contract").ConnectionTest,
+    result: import("@rss-mdm-agent/ai-contract/wire").ConnectionTest,
   ): Promise<Result<Connection>> {
     return this.#transaction(() => {
       const current = this.#connection(caller, id);
@@ -766,7 +975,16 @@ class SqliteSessionStore implements SessionStore, WorkerLaunchFenceStore {
     const result = this.#transaction(() => {
       const state = createState(session);
       if (!state.ok) return state;
-      this.#checkCapacity(state.value);
+      if (
+        1 + state.value.generations.size > this.#bounds.maxSessionRecords ||
+        Buffer.byteLength(boundedJson(session, defaultLimits)) +
+          [...state.value.generations].reduce(
+            (sum, id) => sum + Buffer.byteLength(id),
+            0,
+          ) >
+          this.#bounds.maxSessionBytes
+      )
+        throw new InputError("limit_exceeded");
       const params = nsValues(session.namespace);
       if (
         this.#db
@@ -1017,14 +1235,14 @@ class SqliteSessionStore implements SessionStore, WorkerLaunchFenceStore {
         `snapshot:${key}`,
         query,
         () => {
-          const state = this.#state(n);
+          const state = this.#state(n, true);
           return {
             session: state.session,
             records: [
               ...state.events,
-              ...state.commands.values(),
-              ...state.interactions.values(),
-              ...state.surfaces.values(),
+              ...memoryRows(state.commands).values(),
+              ...memoryRows(state.interactions).values(),
+              ...memoryRows(state.surfaces).values(),
             ],
           };
         },

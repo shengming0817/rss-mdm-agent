@@ -3,6 +3,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { validScope } from "../../packages/ai-host/dist/launch-fence.js";
 import {
+  processWorkerAdapter,
   scopeAbsentWithin,
   WorkerPort,
 } from "../../packages/ai-host/dist/process.js";
@@ -44,7 +45,10 @@ test("a hanging scope probe cannot monopolize the Host event loop or close budge
 test("startup failure before ownership registration retains an uncertain launch fence", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "rss-provisional-scope-"));
   const store = unwrap(
-    openSqliteStore({ path: join(directory, "host.sqlite"), mode: "create" }),
+    await openSqliteStore({
+      path: join(directory, "host.sqlite"),
+      mode: "create",
+    }),
   );
   t.after(async () => {
     await store.close({
@@ -80,10 +84,10 @@ test("startup failure before ownership registration retains an uncertain launch 
   const host = unwrap(
     await createHost({
       credentialPersistence: fixturePersistence(store),
-      workerRuntime: {
+      workers: processWorkerAdapter({
         launcher: process.execPath,
         manifestDigest: "a".repeat(64),
-      },
+      }),
       delivery: null,
       store,
       launchFences: store,

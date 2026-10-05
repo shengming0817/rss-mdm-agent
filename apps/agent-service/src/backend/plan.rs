@@ -25,7 +25,7 @@ pub enum SoftwareManagerKind {
     Winget,
     Brew,
 }
-/// Protected native package-manager binary selected by a closed V7 executor.
+/// Protected native package-manager binary selected by a closed V8 executor.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SoftwareManager {
@@ -153,6 +153,19 @@ pub(crate) fn script(
     }
     let _ = content.reader()?;
     let platform = platform()?;
+    match (&payload.execution_target, payload.run_as, delegate.as_ref()) {
+        (wire::SoftwareExecutionTarget::Device, wire::ExecutionIdentity::System, _) => (),
+        (
+            wire::SoftwareExecutionTarget::User {
+                identity,
+                session_id,
+            },
+            wire::ExecutionIdentity::LoggedInUser,
+            Some(helper),
+        ) if identity == &helper.context().subject
+            && *session_id == crate::service::login_id(helper.context()) => {}
+        _ => return Err(Error::Untrusted),
+    }
     let run_as = match payload.run_as {
         wire::ExecutionIdentity::System => RunAs::System { platform },
         wire::ExecutionIdentity::LoggedInUser => RunAs::User {
@@ -278,7 +291,7 @@ pub(crate) fn script(
     };
     let plan = FrozenExecution::freeze(
         ExecutionInput {
-            schema_version: V7,
+            schema_version: V8,
             execution: ExecutionSpec::Process {},
             request: ExecutionRequest {
                 schema_version: V1,

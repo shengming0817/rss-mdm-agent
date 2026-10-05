@@ -14,7 +14,7 @@ import {
   type PropType,
 } from "vue";
 import type { RuntimeClient, SessionView } from "@rss-mdm-agent/ai-client";
-import type { Receipt } from "@rss-mdm-agent/ai-contract";
+import type { Receipt } from "@rss-mdm-agent/ai-contract/wire";
 import type { SurfaceRendererHandle, RendererOptions } from "./renderer.js";
 export type { RendererOptions, SurfaceRendererHandle } from "./renderer.js";
 export type RendererFactory = (

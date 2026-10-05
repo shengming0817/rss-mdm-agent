@@ -19,6 +19,7 @@ test("backend authority and actual AI origin are presented without client approv
     attempt: "attempt-7",
     trigger: {
       kind: "ai",
+      context: { id: "binding", generation: "generation" },
       osSession: {
         device: "device",
         account: { platform: "macos", subject: "501" },

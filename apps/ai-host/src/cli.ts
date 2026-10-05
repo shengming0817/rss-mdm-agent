@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 import { startLocalApp } from "./index.js";
 import { ConfigurationError } from "./configuration.js";
-import type { HostProcessDiagnostic } from "@rss-mdm-agent/ai-contract";
+import type { HostProcessDiagnostic } from "@rss-mdm-agent/ai-contract/wire";
 const diagnostic = (code: HostProcessDiagnostic["code"]) => {
   const frame: HostProcessDiagnostic = {
-    schemaVersion: 7,
+    schemaVersion: 8,
     kind: "hostProcessDiagnostic",
     code,
   };

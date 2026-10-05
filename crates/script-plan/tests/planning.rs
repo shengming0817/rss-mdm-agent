@@ -13,11 +13,11 @@ const PROFILES: [ScriptProfile; 3] = [
 
 #[test]
 fn replacement_preserves_launch_facts_and_measured_frozen_digests() {
-    // Recorded for current execution V7 and its execution-input/v7 digest domain.
+    // Recorded for current execution V8 and its execution-input/v8 digest domain.
     let digests = [
-        "1c7864897fc0ccd4ed66a66a39f6f70d8639372ed87d266759f321440839a2fa",
-        "b84ee9c0d52f5c81e6264dd63d386899c0c7196f00d743e6aab861bb1277c493",
-        "3360cb84b7f55fd60cabe42b1edb8019dd6e95ce5ab1fc8ae0b4a96c2e3fc62e",
+        "c19bba4b867187f0c9bbadad5c44c41e46ce1d2a9c5b96c3eb9230f318b56120",
+        "1af94fc4ff3c51a68ca731980fad9f6881a7fe4ee87e61ed96a377316a1278ef",
+        "d1e1e77c79f34da7fb5f16236f6817f947bd2de4765dc0543368b1a8598a020d",
     ];
     for (profile, digest) in PROFILES.into_iter().zip(digests) {
         let input = invocation(profile);

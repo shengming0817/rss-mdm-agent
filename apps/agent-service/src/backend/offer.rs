@@ -58,7 +58,7 @@ pub(crate) fn offered(offer: &Offer) -> Result<execution_contract::BackendTask, 
         },
         expires_at: offer.payload().expires_at(),
         user_initiated: matches!(offer.payload(),wire::TaskPayload::SoftwareTaskSpec(p) if p.start_mode==wire::SoftwareStartMode::UserInitiated)
-            || matches!(offer.payload(),wire::TaskPayload::TaskSpec(p) if matches!(p.authorization,wire::ScriptAuthorization::SelfService { .. })),
+            || matches!(offer.payload(),wire::TaskPayload::TaskSpec(p) if matches!(p.authorization,wire::TaskAuthorization::SelfService { .. })),
     })
 }
 

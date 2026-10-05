@@ -180,6 +180,7 @@ impl Deployment {
                 revision: 1,
                 os_version: crate::os_version::current()?,
                 system_broker: true,
+                user_helper: true,
                 interactive_user: None,
                 source_credentials: vec![],
                 msix_sideload: crate::software_worker::sideload_allowed()?,

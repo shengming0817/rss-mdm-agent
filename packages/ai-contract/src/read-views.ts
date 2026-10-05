@@ -153,7 +153,7 @@ export function readSnapshotPage(
   for (;;) {
     const records = value.records.slice(offset, offset + count);
     const page: SnapshotPage = {
-      schemaVersion: 7,
+      schemaVersion: 8,
       kind: "snapshotPage",
       snapshotId: id,
       pageIndex: index,
@@ -210,7 +210,7 @@ export function readSessionPage(
   let count = Math.min(query.limit, value.length - offset);
   for (;;) {
     const page: SessionPage = {
-      schemaVersion: 7,
+      schemaVersion: 8,
       kind: "sessionPage",
       items: value.slice(offset, offset + count),
       ...(offset + count < value.length

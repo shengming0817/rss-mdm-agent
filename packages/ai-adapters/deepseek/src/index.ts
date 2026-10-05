@@ -1,4 +1,4 @@
-import type { ProviderAgentPort } from "@rss-mdm-agent/ai-contract";
+import type { ProviderAgentPort } from "@rss-mdm-agent/ai-contract/ports";
 import { DeepSeekAdapter } from "./adapter.js";
 import type { DeepSeekAdapterOptions } from "./configuration.js";
 export type {

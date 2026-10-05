@@ -292,6 +292,7 @@ impl Data {
         self.attempt = Uuid::new_v4();
         self.reset_current_task();
         let spec = TaskSpec {
+            execution_target: SoftwareExecutionTarget::Device,
             wire_version: 1,
             tenant_id: self.tenant,
             device_id: "device-1".into(),
@@ -304,12 +305,12 @@ impl Data {
             permit: TaskPermit::Offer,
             expires_at: self.time.now().unwrap() + 60,
             resource_digest: [3; 32],
-            resource: ScriptResource {
+            resource: TaskResource {
                 id: "fixture-resource".into(),
                 version: "v1".into(),
                 variant: "default".into(),
             },
-            authorization: ScriptAuthorization::Policy {
+            authorization: TaskAuthorization::Policy {
                 policy_id: self.task,
                 policy_version: self.task,
             },
@@ -374,6 +375,10 @@ impl Data {
             })
             .collect();
         let spec = SoftwareTaskSpec {
+            authorization: TaskAuthorization::Policy {
+                policy_id: self.task,
+                policy_version: self.task,
+            },
             execution_context: execution_context(),
             wire_version: 1,
             tenant_id: self.tenant,
@@ -395,7 +400,7 @@ impl Data {
                 SoftwareStartMode::Automatic
             },
         };
-        self.offer = Some(self.signed(TaskPayload::SoftwareTaskSpec(spec)));
+        self.offer = Some(self.signed(TaskPayload::from(spec)));
     }
     fn reset_current_task(&mut self) {
         self.started = false;
@@ -613,8 +618,8 @@ async fn handler(
     if headers.contains_key("authorization") {
         return runtime_error(StatusCode::UNAUTHORIZED, ErrorCode::InvalidIdentity);
     }
-    if path.contains("/self-service/") {
-        return employee_response(&mut d, &uri, &headers, value);
+    if path.contains("/self-service") {
+        return self_service_response(&mut d, &uri, &headers, value);
     }
     if let Some((suffix, body)) = &d.response_override {
         if path.ends_with(suffix) {
@@ -1084,6 +1089,7 @@ pub fn execution_context() -> SoftwareExecutionContext {
         revision: 1,
         os_version: [14, 0, 0, 0],
         system_broker: true,
+        user_helper: true,
         interactive_user: None,
         source_credentials: vec![],
         msix_sideload: false,
@@ -1138,19 +1144,18 @@ pub fn policy_directory_fixture() -> SelfServiceDirectoryItem {
     serde_json::from_value(json!({
         "policyId": Uuid::new_v4(), "policyRevision": 2, "policyVersion": Uuid::new_v4(),
         "selfService": {"published":true, "displayName":"Repair", "description":"Test repair", "prerequisites":"Employee session", "sideEffects":"Restarts a fixture", "category":"Support", "keywords":["repair"], "allowAi":true, "riskLevel":2},
-        "resource":{"id":Uuid::new_v4().to_string(),"version":"v1","variant":"default"},
+        "task":{"kind":"script","runAs":"system","resource":{"id":Uuid::new_v4().to_string(),"version":"v1","variant":"default"},
         "parameterSources":{"name":{"kind":"input"}, "path":{"kind":"fixed","value":"/Applications"}},
-        "parameterSchema":{"type":"object","properties":{"name":{"type":"string","minLength":1,"maxLength":32},"path":{"type":"string","const":"/Applications"}},"required":["name","path"],"additionalProperties":false}
+        "parameterSchema":{"type":"object","properties":{"name":{"type":"string","minLength":1,"maxLength":32},"path":{"type":"string","const":"/Applications"}},"required":["name","path"],"additionalProperties":false}}
     })).unwrap()
 }
 
-fn employee_response(d: &mut Data, uri: &Uri, headers: &HeaderMap, value: Value) -> Response {
+fn self_service_response(d: &mut Data, uri: &Uri, headers: &HeaderMap, value: Value) -> Response {
     let path = uri.path();
     if d.activation.is_none()
         || headers
             .get("x-rss-user-session")
-            .and_then(|v| v.to_str().ok())
-            != Some(&"c".repeat(64))
+            .is_some_and(|value| value.to_str().ok() != Some(&"c".repeat(64)))
         || headers.contains_key("cookie")
     {
         return runtime_error(StatusCode::UNAUTHORIZED, ErrorCode::InvalidIdentity);
@@ -1161,7 +1166,7 @@ fn employee_response(d: &mut Data, uri: &Uri, headers: &HeaderMap, value: Value)
             return axum::Json(body.clone()).into_response();
         }
     }
-    if path.ends_with("/scripts") {
+    if path.ends_with("/self-service") {
         return axum::Json(d.self_service_directory.clone().unwrap_or(
             SelfServiceDirectoryResponse {
                 items: vec![],
@@ -1216,10 +1221,10 @@ fn employee_response(d: &mut Data, uri: &Uri, headers: &HeaderMap, value: Value)
                 request_id: id,
                 run_id: accepted.run_id,
                 attempt_id: None,
-                state: ScriptRunState {
-                    delivery: ScriptDelivery::Queued,
-                    execution: ScriptExecution::NotStarted,
-                    cancellation: ScriptCancellation::None,
+                state: TaskRunState {
+                    delivery: TaskDelivery::Queued,
+                    execution: TaskExecution::NotStarted,
+                    cancellation: RunCancellation::None,
                     deadline: d.time.now().unwrap() + 300,
                     started_at: None,
                 },

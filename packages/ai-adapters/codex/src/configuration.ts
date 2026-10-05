@@ -1,12 +1,12 @@
 import { mkdir, realpath, lstat } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
+import type { Binding } from "@rss-mdm-agent/ai-contract/wire";
 import type {
-  Binding,
   Budget,
   Clock,
   ToolEndpoint,
   ProviderConfiguration,
-} from "@rss-mdm-agent/ai-contract";
+} from "@rss-mdm-agent/ai-contract/ports";
 import { CODEX_VERSION, type LaunchSpec } from "./runtime.js";
 import { HOST_SERVER, type ToolBridge } from "./bridge.js";
 

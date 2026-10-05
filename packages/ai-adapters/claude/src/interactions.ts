@@ -5,12 +5,11 @@ import type {
   CanUseTool,
   PermissionResult,
 } from "@anthropic-ai/claude-agent-sdk";
+import type { Binding, Command } from "@rss-mdm-agent/ai-contract/wire";
 import type {
-  Binding,
-  Command,
   ProviderObservation,
   Result,
-} from "@rss-mdm-agent/ai-contract";
+} from "@rss-mdm-agent/ai-contract/ports";
 import { copy, deferred, fail, limits, ok, same } from "./support.js";
 const questionSchema = z.object({
   questions: z

@@ -1,11 +1,8 @@
 import type { ServiceView, RegistrationStatus } from "./service-contract";
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import {
-  boundedJson,
-  decode,
-  accessLimits,
-  type HostStatus,
-} from "@rss-mdm-agent/ai-contract";
+import { boundedJson, decode, accessLimits } from "@rss-mdm-agent/ai-contract";
+import type { HostStatus } from "@rss-mdm-agent/ai-contract/wire";
+import { currentUser, refreshAccount } from "../test-users";
 const status = (value: unknown): HostStatus => {
   const record = decode(boundedJson(value, accessLimits), accessLimits);
   if (record.kind !== "hostStatus") throw new Error("invalid_response");
@@ -18,7 +15,12 @@ export function nativeHost() {
       return status(await invoke("ai_host_status"));
     },
     async restart(generation: number) {
-      return status(await invoke("ai_restart_host", { generation }));
+      const identity = currentUser.value?.generation;
+      try {
+        return status(await invoke("ai_restart_host", { generation }));
+      } finally {
+        if (currentUser.value?.generation === identity) await refreshAccount();
+      }
     },
     async export() {
       return invoke<boolean>("ai_export_diagnostics");

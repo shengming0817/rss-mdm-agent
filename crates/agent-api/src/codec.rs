@@ -63,13 +63,13 @@ const SCHEMAS: &[(&str, &str, &str)] = &[
     ),
     (
         "runtime",
-        "ScriptAuthorization",
-        include_str!("../schema/runtime/script-authorization-v1.schema.json"),
+        "TaskAuthorization",
+        include_str!("../schema/runtime/task-authorization-v1.schema.json"),
     ),
     (
         "runtime",
-        "ScriptResource",
-        include_str!("../schema/runtime/script-resource-v1.schema.json"),
+        "TaskResource",
+        include_str!("../schema/runtime/task-resource-v1.schema.json"),
     ),
     (
         "runtime",
@@ -164,7 +164,7 @@ fn schema(name: &str, family: &str) -> Result<Value, DecodeError> {
     let parent = match name {
         "TaskSpec" | "SoftwareTaskSpec" | "EnrollmentTaskSpec" => Some("TaskPayload"),
         "ReportBody" => Some("ReportRequest"),
-        "OutputChunk" | "ChunkedTaskResult" | "TaskResult" | "TaskEvent" => {
+        "OutputChunk" | "ChunkedTaskResult" | "TaskResult" | "SoftwareTaskResult" | "TaskEvent" => {
             Some("TaskEventRequest")
         }
         _ => None,
@@ -176,18 +176,17 @@ fn schema(name: &str, family: &str) -> Result<Value, DecodeError> {
             .ok_or(DecodeError)?;
         let owner: Value = serde_json::from_str(text).map_err(|_| DecodeError)?;
         let mut selected = match name {
-            "TaskSpec" => owner["oneOf"][0].clone(),
-            "SoftwareTaskSpec" => owner["oneOf"][1].clone(),
-            "EnrollmentTaskSpec" => owner["oneOf"][2].clone(),
-            "ReportBody" => owner["properties"]["body"].clone(),
-            "TaskEvent" => owner["properties"]["event"].clone(),
+            "TaskSpec" | "SoftwareTaskSpec" | "EnrollmentTaskSpec" | "ReportBody" | "TaskEvent" => {
+                owner["$defs"][name].clone()
+            }
             _ => {
                 let kind = match name {
                     "TaskResult" => "result",
+                    "SoftwareTaskResult" => "software_result",
                     "OutputChunk" => "output_chunk",
                     _ => "chunked_result",
                 };
-                let mut value = owner["properties"]["event"]["oneOf"]
+                let mut value = owner["$defs"]["TaskEvent"]["oneOf"]
                     .as_array()
                     .ok_or(DecodeError)?
                     .iter()
@@ -205,6 +204,9 @@ fn schema(name: &str, family: &str) -> Result<Value, DecodeError> {
                 value
             }
         };
+        if !selected.is_object() {
+            return Err(DecodeError);
+        }
         selected["$defs"] = owner["$defs"].clone();
         selected["$schema"] = owner["$schema"].clone();
         return Ok(selected);

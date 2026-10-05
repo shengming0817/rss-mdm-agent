@@ -38,7 +38,7 @@ const userCommands = [
   "test_users",
   "select_test_user",
   "save_connection",
-  "select_guest",
+  "select_device",
   "account_logout",
   "account_status",
   "account_login",
@@ -108,6 +108,8 @@ export function checkSource(file, source) {
         "@rss-mdm-agent/ui",
         "@rss-mdm-agent/ui/style.css",
         "@rss-mdm-agent/ai-contract",
+        "@rss-mdm-agent/ai-contract/wire",
+        "@rss-mdm-agent/ai-contract/ports",
       ]
     : ["vue"];
   allowed.push(...(uiImports[file] ?? []));
@@ -493,7 +495,7 @@ export function checkSource(file, source) {
           "inputs.value",
           "_ctx.inputs",
           "choice.value?.parameters",
-          "(selected.value?.parameterSchema as any)?.properties",
+          "(parameterSchema.value as any)?.properties",
         ],
       };
       const dataIndex =

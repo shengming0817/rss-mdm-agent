@@ -703,7 +703,7 @@ fn prior_schema_is_rejected_without_modifying_the_database() {
         .unwrap();
     drop(store);
     let conn = db.sql();
-    conn.pragma_update(None, "user_version", 8).unwrap();
+    conn.pragma_update(None, "user_version", 10).unwrap();
     conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
         .unwrap();
     drop(conn);
@@ -711,8 +711,8 @@ fn prior_schema_is_rejected_without_modifying_the_database() {
     assert!(matches!(
         Store::open(&db.path, &plan().spec().request.authority, limits()),
         Ok(OpenOutcome::UnsupportedSchema {
-            found: 8,
-            supported: 10
+            found: 10,
+            supported: 11
         })
     ));
     assert!(Store::initialize_test(
@@ -741,7 +741,7 @@ fn newer_schema_is_diagnostics_only_and_corrupt_database_is_never_reinitialized(
         Store::open(&db.path, &plan().spec().request.authority, limits()).unwrap(),
         OpenOutcome::UnsupportedSchema {
             found: 99,
-            supported: 10
+            supported: 11
         }
     ));
     assert_eq!(std::fs::read(&db.path).unwrap(), before);
@@ -3412,7 +3412,7 @@ fn moved_application_identity_reopens_v7_and_replays_without_dispatch_authority(
     let db = Database::new();
     let host = TestHost::new(0);
     let scope = host.scope();
-    // Fixed identities from the pre-refactor V7 canonical encoding, independent of Rust owner.
+    // Fixed identities from the pre-refactor V8 canonical encoding, independent of Rust owner.
     assert_eq!(
         scope.interaction_subject().as_str(),
         "99067cdd0ad2a17d2e877ff170f147a0f77746d87f7fa66b19d756497763000b"

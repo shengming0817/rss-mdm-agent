@@ -1,20 +1,19 @@
 import { activeStage } from "@rss-mdm-agent/ai-contract";
 import { ClientError } from "./errors.js";
-import {
-  validateSurface,
-  accessLimits,
-  type CommandRecord,
-  type Command,
-  type Capabilities,
-  type Failure,
-  type Event,
-  type Interaction,
-  type Outcome,
-  type Session,
-  type SnapshotPage,
-  type Subscription,
-  type SurfaceState,
-} from "@rss-mdm-agent/ai-contract";
+import { validateSurface, accessLimits } from "@rss-mdm-agent/ai-contract";
+import type {
+  CommandRecord,
+  Command,
+  Capabilities,
+  Failure,
+  Event,
+  Interaction,
+  Outcome,
+  Session,
+  SnapshotPage,
+  Subscription,
+  SurfaceState,
+} from "@rss-mdm-agent/ai-contract/wire";
 
 export type InteractionView = Pick<
   Interaction,

@@ -23,7 +23,7 @@ import {
   logoutAccount,
   refreshAccount,
 } from "./test-users";
-import type { TestUser, UserContext } from "@rss-mdm-agent/ai-contract";
+import type { TestUser, UserContext } from "@rss-mdm-agent/ai-contract/wire";
 import TestUsers from "./settings/TestUsers.vue";
 import Account from "./settings/Account.vue";
 import { nativeHost } from "./settings/native";
@@ -133,7 +133,7 @@ onMounted(() => {
     if (
       !props.environment &&
       !loading.value &&
-      selectedUser.value?.identity?.mode === "enterprise"
+      selectedUser.value?.identity.mode === "user_device"
     )
       void refreshAccount();
   }, 2000);
@@ -170,9 +170,9 @@ onBeforeUnmount(() => {
       <template #account-summary>
         <strong>{{ selectedUser?.user.displayName ?? "账户与连接" }}</strong>
         <small>{{
-          selectedUser?.identity?.mode === "enterprise"
+          selectedUser?.identity.mode === "user_device"
             ? "企业工作区"
-            : selectedUser?.identity?.mode === "guest"
+            : selectedUser?.identity.mode === "device"
               ? "不登录使用"
               : selectedUser
                 ? "测试用户 · 非企业认证"
@@ -184,7 +184,11 @@ onBeforeUnmount(() => {
         <template v-else>
           <TestUsers
             :users="users"
-            :current="selectedUser?.identity ? undefined : selectedUser"
+            :current="
+              selectedUser?.identity.authorityId === 'desktop-test'
+                ? selectedUser
+                : undefined
+            "
             :native="accountEnabled"
             :loading="loading"
             :message="message"

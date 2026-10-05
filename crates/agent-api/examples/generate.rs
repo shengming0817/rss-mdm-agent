@@ -92,12 +92,12 @@ fn normalize(
                 if field == "payload" && chosen == "SignedTask" {
                     return (field.clone(), json!({"$ref":"#/definitions/TaskPayload"}));
                 }
-                if field == "event" && chosen == "TaskEventRequest" {
+                if field == "event" && chosen == "TaskEventRequest" && shape.get("$ref").is_none() {
                     let projected = normalize(shape, "TaskEvent", hints, definitions, true);
                     definitions.insert("TaskEvent".into(), projected);
                     return (field.clone(), json!({"$ref":"#/definitions/TaskEvent"}));
                 }
-                if field == "body" && chosen == "ReportRequest" {
+                if field == "body" && chosen == "ReportRequest" && shape.get("$ref").is_none() {
                     let body = shape.clone();
                     let projected = normalize(&body, "ReportBody", hints, definitions, true);
                     definitions.insert("ReportBody".into(), projected);
@@ -446,9 +446,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         reorder(fields, &hints["enumFieldOrder"][&owner][&label]);
                     }
                 }
-                if owner == "TaskPayload" && label == "TaskSpec" {
+                if owner == "TaskPayload"
+                    && matches!(label.as_str(), "TaskSpec" | "SoftwareTaskSpec")
+                {
+                    let ty: syn::Type = syn::parse_str(&label)?;
                     variant.fields =
-                        syn::Fields::Unnamed(syn::parse_quote!((::std::boxed::Box<TaskSpec>)));
+                        syn::Fields::Unnamed(syn::parse_quote!((::std::boxed::Box<#ty>)));
                 }
                 if let Some(name) = hints["variantNames"][&owner][&label].as_str() {
                     renamed.insert(variant.ident.to_string(), name.to_owned());
@@ -514,6 +517,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .contains("From < TaskSpec > for TaskPayload")
             {
                 *i = syn::parse_quote!(impl ::std::convert::From<TaskSpec> for TaskPayload {fn from(value:TaskSpec)->Self {Self::TaskSpec(::std::boxed::Box::new(value))}});
+            }
+            if quote!(#i)
+                .to_string()
+                .contains("From < SoftwareTaskSpec > for TaskPayload")
+            {
+                *i = syn::parse_quote!(impl ::std::convert::From<SoftwareTaskSpec> for TaskPayload {fn from(value:SoftwareTaskSpec)->Self {Self::SoftwareTaskSpec(::std::boxed::Box::new(value))}});
             }
         }
     }

@@ -4,13 +4,13 @@ import { readFileSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 import { workspaceIdentity } from "@rss-mdm-agent/ai-contract/session";
 import { isId } from "@rss-mdm-agent/ai-contract";
+import type { Binding } from "@rss-mdm-agent/ai-contract/wire";
 import type {
-  Binding,
   Budget,
   Clock,
   ToolEndpoint,
   ProviderConfiguration,
-} from "@rss-mdm-agent/ai-contract";
+} from "@rss-mdm-agent/ai-contract/ports";
 import { same } from "./support.js";
 
 export type DeepSeekConfiguration = ProviderConfiguration & {

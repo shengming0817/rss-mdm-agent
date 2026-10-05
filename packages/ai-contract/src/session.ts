@@ -262,7 +262,7 @@ export class VerifiedProviderSession {
           decode(
             boundedJson(
               {
-                schemaVersion: 7,
+                schemaVersion: 8,
                 kind: "event",
                 namespace: head.namespace,
                 eventId: "verify-observation",
@@ -706,7 +706,7 @@ export class VerifiedProviderSession {
         boundedJson(
           startStage(
             {
-              schemaVersion: 7,
+              schemaVersion: 8,
               kind: "session",
               namespace,
               revision: 0,

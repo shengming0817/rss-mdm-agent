@@ -5,7 +5,7 @@ import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { HostOptions } from "@rss-mdm-agent/ai-host";
 import { HostFailure } from "@rss-mdm-agent/ai-host";
-import type { SessionStore } from "@rss-mdm-agent/ai-contract";
+import type { SessionStore } from "@rss-mdm-agent/ai-contract/ports";
 import type { LocalConfiguration } from "./configuration.js";
 import { ConfigurationError } from "./configuration.js";
 /** Exact historical connection revision is frozen before starting a worker. */
@@ -96,7 +96,7 @@ export function localResolver(
               admission: {
                 verifier: {
                   verify: async (
-                    session: import("@rss-mdm-agent/ai-contract").ProviderSessionBinding,
+                    session: import("@rss-mdm-agent/ai-contract/ports").ProviderSessionBinding,
                   ) =>
                     process.platform === "darwin" &&
                     process.arch === "arm64" &&

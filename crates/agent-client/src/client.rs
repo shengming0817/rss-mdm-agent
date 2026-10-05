@@ -652,7 +652,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         materials: &Materials,
     ) -> Result<Start, Error> {
         if matches!(offer.payload(),wire::TaskPayload::SoftwareTaskSpec(v) if v.start_mode==wire::SoftwareStartMode::UserInitiated)
-            || matches!(offer.payload(),wire::TaskPayload::TaskSpec(v) if matches!(v.authorization, wire::ScriptAuthorization::SelfService { .. }))
+            || matches!(offer.payload(),wire::TaskPayload::TaskSpec(v) if matches!(v.authorization, wire::TaskAuthorization::SelfService { .. }))
         {
             return Err(Error::Denied);
         }

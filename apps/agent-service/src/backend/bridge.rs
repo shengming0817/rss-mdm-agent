@@ -50,11 +50,11 @@ pub struct ExecutionBridge<P> {
     policy: P,
 }
 impl ExecutionBridge<agent_client::CredentialRedactor> {
-    pub(crate) fn protect_employee(
+    pub(crate) fn protect_user_session(
         &mut self,
         value: &std::sync::Arc<zeroize::Zeroizing<String>>,
     ) -> Result<(), Error> {
-        self.policy.protect_employee(value)
+        self.policy.protect_user_session(value)
     }
 }
 impl<P: OutputPolicy> ExecutionBridge<P> {
@@ -91,7 +91,7 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
             }
             Ok(())
         }
-        if let Some(result) = &mut status.result {
+        if let Some(wire::SelfServiceResult::Script { evidence: result }) = &mut status.result {
             let original = result.output.clone();
             protect(&self.policy, &mut result.output)?;
             if result.output != original {

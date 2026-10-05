@@ -8,13 +8,12 @@ import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
 import type { Readable, Writable } from "node:stream";
 import { createHash, randomUUID } from "node:crypto";
-import {
-  boundedJson,
-  isId,
-  type Budget,
-  type ExecutionOrigin,
-  type Namespace,
-} from "@rss-mdm-agent/ai-contract";
+import { boundedJson, isId } from "@rss-mdm-agent/ai-contract";
+import type { Budget } from "@rss-mdm-agent/ai-contract/ports";
+import type {
+  ExecutionOrigin,
+  Namespace,
+} from "@rss-mdm-agent/ai-contract/wire";
 import {
   defaultLimits,
   fail,
@@ -108,15 +107,16 @@ export async function connectExecution(
     namespace: Namespace;
     commandId?: string;
     catalog?: Pick<
-      import("@rss-mdm-agent/ai-contract").ProviderConfiguration,
+      import("@rss-mdm-agent/ai-contract/ports").ProviderConfiguration,
       "provider" | "config"
     >;
   }) => Promise<{
     binding: Pick<
-      import("@rss-mdm-agent/ai-contract").Binding,
+      import("@rss-mdm-agent/ai-contract/wire").Binding,
       "provider" | "config"
     >;
     userGeneration: string;
+    contextBinding: string;
   }>,
 ) {
   const client = new Client({ name: "rss-ai-host", version: "0.1.0" });
@@ -140,7 +140,8 @@ export async function connectExecution(
     args: Record<string, unknown>,
     b: Budget,
   ): Promise<any> => {
-    const { binding, userGeneration } = await resolveBinding(request);
+    const { binding, userGeneration, contextBinding } =
+      await resolveBinding(request);
     if (
       !(["codex", "claude", "deepseek"] as const).includes(
         binding.provider as ExecutionOrigin["provider"],
@@ -148,10 +149,11 @@ export async function connectExecution(
     )
       throw new Error("execution origin unavailable");
     const origin: ExecutionOrigin = {
-      schemaVersion: 7,
+      schemaVersion: 8,
       kind: "executionOrigin",
       namespace: request.namespace,
       userGeneration,
+      contextBinding,
       operationId: request.body.operationId,
       provider: binding.provider as ExecutionOrigin["provider"],
       config: binding.config,
@@ -193,15 +195,17 @@ export async function connectExecution(
     catalog: async (namespace, b, catalogBinding) => {
       let stage = "binding";
       try {
-        const { binding, userGeneration } = await resolveBinding({
-          namespace,
-          catalog: catalogBinding,
-        });
+        const { binding, userGeneration, contextBinding } =
+          await resolveBinding({
+            namespace,
+            catalog: catalogBinding,
+          });
         const origin: ExecutionOrigin = {
-          schemaVersion: 7,
+          schemaVersion: 8,
           kind: "executionOrigin",
           namespace,
           userGeneration,
+          contextBinding,
           operationId: "directory",
           provider: binding.provider as ExecutionOrigin["provider"],
           config: binding.config,

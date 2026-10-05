@@ -15,9 +15,11 @@ import {
 import {
   interactionCatalog,
   validateSurface,
-  type ActionRequest,
-  type SurfaceState,
 } from "@rss-mdm-agent/ai-contract";
+import type {
+  ActionRequest,
+  SurfaceState,
+} from "@rss-mdm-agent/ai-contract/wire";
 
 const catalog = new Catalog(
   interactionCatalog.catalogId,
@@ -124,10 +126,10 @@ export class SurfaceRenderer implements SurfaceRendererHandle {
         }
         const now = this.now();
         this.pending = {
-          schemaVersion: 7,
+          schemaVersion: 8,
           kind: "actionRequest",
           metadata: {
-            schemaVersion: 7,
+            schemaVersion: 8,
             kind: "surfaceAction",
             sessionId: state.namespace.sessionId,
             commandId: crypto.randomUUID(),

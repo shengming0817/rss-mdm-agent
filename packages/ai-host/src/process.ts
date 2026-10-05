@@ -1,16 +1,19 @@
 import { isAbsolute } from "node:path";
-import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { PrivateLink } from "./private-link.js";
 import type { Ready, Scope } from "./process-contract.js";
+import type { WorkerAdapter } from "./worker-adapter.js";
 import { validScope } from "./launch-fence.js";
 import type {
   Binding,
-  Budget,
   Command,
   CommandRecord,
   DispatchAttempt,
   Namespace,
+} from "@rss-mdm-agent/ai-contract/wire";
+import type {
+  Budget,
   ProviderAgentPort,
   ProviderConfiguration,
   ProviderObservation,
@@ -19,7 +22,7 @@ import type {
   Result,
   Submission,
   ToolEndpoint,
-} from "@rss-mdm-agent/ai-contract";
+} from "@rss-mdm-agent/ai-contract/ports";
 import { fail, ok } from "@rss-mdm-agent/ai-contract/transitions";
 import { Channel, PeerFailure } from "./channel.js";
 import { Output } from "./queue.js";
@@ -29,15 +32,6 @@ import type { WorkerLaunchFenceStore } from "./launch-fence.js";
 export interface WorkerRuntime {
   readonly launcher: string;
   readonly manifestDigest: string;
-}
-export function scopeAbsent(runtime: WorkerRuntime, scope: Scope): boolean {
-  if (!validScope(scope) || !isAbsolute(runtime.launcher)) return false;
-  const result = spawnSync(
-    runtime.launcher,
-    ["absent", JSON.stringify(scope)],
-    { timeout: 2000, stdio: "ignore", windowsHide: true },
-  );
-  return result.status === 0;
 }
 /** Deadline-bound probe. No synchronous spawn can freeze the Host control loop. */
 export async function scopeAbsentWithin(
@@ -61,6 +55,7 @@ export async function scopeAbsentWithin(
     const cancel = () => {
       expired = true;
       child.kill("SIGKILL");
+      finish(false);
     };
     const timer = setTimeout(cancel, Math.min(2000, budget.timeoutMs));
     const finish = (absent: boolean) => {
@@ -484,4 +479,13 @@ export class WorkerPort implements ProviderAgentPort {
       deadline.dispose();
     }
   }
+}
+
+/** Composition creates the concrete OS process adapter; Host consumes only its narrow port. */
+export function processWorkerAdapter(runtime: WorkerRuntime): WorkerAdapter {
+  return {
+    create: (store, namespace, artifact, bridge, activation) =>
+      new WorkerPort(runtime, store, namespace, artifact, bridge, activation),
+    absent: (scope, budget) => scopeAbsentWithin(runtime, scope, budget),
+  };
 }

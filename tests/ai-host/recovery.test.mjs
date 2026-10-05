@@ -1,3 +1,4 @@
+import { processWorkerAdapter } from "../../packages/ai-host/dist/process.js";
 import { fixturePersistence } from "./harness.mjs";
 import { workerRuntime } from "./worker-runtime.mjs";
 import { openFixture, fixtureArtifact } from "./harness.mjs";
@@ -12,7 +13,7 @@ import { join } from "node:path";
 import { createHost } from "../../packages/ai-host/dist/index.js";
 import {
   WorkerPort,
-  scopeAbsent,
+  scopeAbsentWithin,
 } from "../../packages/ai-host/dist/process.js";
 import { openSqliteStore } from "../../packages/ai-store-sqlite/dist/index.js";
 import {
@@ -73,18 +74,26 @@ async function crash(t, mode) {
   const scope = ready.scope ?? ready.launches[0].scope;
   const pid = scope.root;
   await until(() => processGone(pid));
-  await until(() => scopeAbsent(workerRuntime, scope));
+  await until(() =>
+    scopeAbsentWithin(workerRuntime, scope, {
+      timeoutMs: 2000,
+      signal: new AbortController().signal,
+    }),
+  );
   return { directory, ready, pid };
 }
 test("Host SIGKILL closes worker group; restart reconciles the original attempt without resending", async (t) => {
   const { directory, ready } = await crash(t, "unknown");
   const store = unwrap(
-    openSqliteStore({ path: join(directory, "host.sqlite"), mode: "open" }),
+    await openSqliteStore({
+      path: join(directory, "host.sqlite"),
+      mode: "open",
+    }),
   );
   const host = unwrap(
     await createHost({
       credentialPersistence: fixturePersistence(store),
-      workerRuntime,
+      workers: processWorkerAdapter(workerRuntime),
       delivery: null,
       store,
       launchFences: store,
@@ -140,12 +149,15 @@ test("crash after durable registration cannot import the SDK before activation",
     (error) => error.code === "ENOENT",
   );
   const store = unwrap(
-    openSqliteStore({ path: join(directory, "host.sqlite"), mode: "open" }),
+    await openSqliteStore({
+      path: join(directory, "host.sqlite"),
+      mode: "open",
+    }),
   );
   const host = unwrap(
     await createHost({
       credentialPersistence: fixturePersistence(store),
-      workerRuntime,
+      workers: processWorkerAdapter(workerRuntime),
       delivery: null,
       store,
       launchFences: store,
@@ -161,7 +173,10 @@ test("registration precedes provider import, and rejected registration leaves no
   const directory = await mkdtemp(join(tmpdir(), "rss-host-fence-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const store = unwrap(
-    openSqliteStore({ path: join(directory, "host.sqlite"), mode: "create" }),
+    await openSqliteStore({
+      path: join(directory, "host.sqlite"),
+      mode: "create",
+    }),
   );
   t.after(() => store.close(budget()));
   const namespace = fixtureSession().namespace;
@@ -193,7 +208,12 @@ test("registration precedes provider import, and rejected registration leaves no
   );
   assert.equal(started.ok, false);
   assert.ok(rejectedScope);
-  await until(() => scopeAbsent(workerRuntime, rejectedScope));
+  await until(() =>
+    scopeAbsentWithin(workerRuntime, rejectedScope, {
+      timeoutMs: 2000,
+      signal: new AbortController().signal,
+    }),
+  );
   await until(
     async () => unwrap(await worker.close(budget(1000))).processStopped,
   );
@@ -207,7 +227,10 @@ test("blocked SDK activation is killed with real process-exit evidence", async (
   const directory = await mkdtemp(join(tmpdir(), "rss-host-block-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const store = unwrap(
-    openSqliteStore({ path: join(directory, "host.sqlite"), mode: "create" }),
+    await openSqliteStore({
+      path: join(directory, "host.sqlite"),
+      mode: "create",
+    }),
   );
   t.after(() => store.close(budget()));
   const namespace = fixtureSession().namespace,
@@ -275,7 +298,7 @@ test("unresolved registered process group freezes recovery without signaling or 
     await rm(directory, { recursive: true, force: true });
   });
   const path = join(directory, "host.sqlite"),
-    store = unwrap(openSqliteStore({ path, mode: "create" })),
+    store = unwrap(await openSqliteStore({ path, mode: "create" })),
     session = fixtureSession();
   unwrap(await store.create(session));
   unwrap(await store.accept(acceptance(session)));
@@ -295,12 +318,12 @@ test("unresolved registered process group freezes recovery without signaling or 
     }),
   );
   unwrap(await store.close(budget()));
-  const reopened = unwrap(openSqliteStore({ path, mode: "open" }));
+  const reopened = unwrap(await openSqliteStore({ path, mode: "open" }));
   let resolves = 0;
   host = unwrap(
     await createHost({
       credentialPersistence: fixturePersistence(reopened),
-      workerRuntime,
+      workers: processWorkerAdapter(workerRuntime),
       delivery: null,
       store: reopened,
       launchFences: reopened,
@@ -337,8 +360,17 @@ for (const hasSession of [true, false])
       stdio: "ignore",
     });
     const path = join(directory, "host.sqlite"),
-      store = unwrap(openSqliteStore({ path, mode: "create" })),
+      store = unwrap(await openSqliteStore({ path, mode: "create" })),
       session = fixtureSession();
+    session.selectedConnectionId = "c:1";
+    session.stages = session.stages.map((stage) => ({
+      ...stage,
+      connectionId: "c:1",
+      binding: {
+        ...stage.binding,
+        config: { ...stage.binding.config, id: "c:1" },
+      },
+    }));
     let host;
     t.after(async () => {
       await host?.close(budget());
@@ -365,11 +397,11 @@ for (const hasSession of [true, false])
       }),
     );
     unwrap(await store.close(budget()));
-    const reopened = unwrap(openSqliteStore({ path, mode: "open" }));
+    const reopened = unwrap(await openSqliteStore({ path, mode: "open" }));
     host = unwrap(
       await createHost({
         credentialPersistence: fixturePersistence(reopened),
-        workerRuntime,
+        workers: processWorkerAdapter(workerRuntime),
         delivery: null,
         store: reopened,
         launchFences: reopened,
@@ -394,17 +426,29 @@ for (const hasSession of [true, false])
       {
         provider: "fake",
         config: { id: "c", revision: "1" },
+        sessionId: session.namespace.sessionId,
 
         profile: "conversation",
       },
       budget(),
     );
+    if (hasSession) {
+      const resumed = await host.resume(
+        session.namespace,
+        session.namespace.sessionId,
+        budget(),
+      );
+      assert.equal(resumed.ok, false, "fixture resolver refuses admission");
+    }
     assert.deepEqual(unwrap(await reopened.launches()), []);
   });
 test("worker close cannot finish before an outstanding launch reservation settles", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "rss-worker-start-close-"));
   const store = unwrap(
-    openSqliteStore({ path: join(directory, "host.sqlite"), mode: "create" }),
+    await openSqliteStore({
+      path: join(directory, "host.sqlite"),
+      mode: "create",
+    }),
   );
   t.after(async () => {
     await store.close(budget());
@@ -456,7 +500,10 @@ test("worker close cannot finish before an outstanding launch reservation settle
 test("recovery unavailability atomically preserves queues and invalidates stale callbacks and controls", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "rss-host-unavailable-")),
     store = unwrap(
-      openSqliteStore({ path: join(directory, "host.sqlite"), mode: "create" }),
+      await openSqliteStore({
+        path: join(directory, "host.sqlite"),
+        mode: "create",
+      }),
     );
   t.after(async () => {
     unwrap(await store.close(budget()));

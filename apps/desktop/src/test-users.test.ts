@@ -6,6 +6,7 @@ import {
   currentUser,
   accountNotice,
   refreshAccount,
+  logoutAccount,
   accountErrorMessage,
   loadAccountSettings,
   type Organization,
@@ -22,27 +23,56 @@ const settingsPage = (
   organizations: Organization[] = [],
   selected?: string,
 ) => ({
-  schemaVersion: 7,
+  schemaVersion: 8,
   kind: "accountSettings",
   organizations,
   ...(selected ? { selected } : {}),
 });
 const current = {
-  schemaVersion: 7 as const,
+  schemaVersion: 8 as const,
   kind: "userContext" as const,
   user: {
-    schemaVersion: 7 as const,
+    schemaVersion: 8 as const,
     kind: "testUser" as const,
     userId: "a",
     displayName: "Alice",
     nameKey: "alice",
   },
   generation: "generation-a",
+  identity: {
+    mode: "device" as const,
+    authorityId: "desktop-test",
+    tenantId: "local-test",
+    principalId: "a",
+  },
 };
 beforeEach(() => {
   currentUser.value = undefined;
   accountNotice.value = "";
   vi.mocked(invoke).mockReset();
+});
+it("installs the native device workspace after logout retires the old generation", async () => {
+  currentUser.value = { ...current, generation: "old-enterprise-generation" };
+  const device = { ...current, generation: "new-device-generation" };
+  vi.mocked(invoke).mockImplementation(async (command) => {
+    expect(currentUser.value).toBeUndefined();
+    if (command === "account_logout") return;
+    if (command === "account_status")
+      return { schemaVersion: 8, kind: "accountStatus", current: device };
+    throw Error("unexpected native request");
+  });
+  await logoutAccount();
+  expect(currentUser.value).toEqual(device);
+  expect(currentUser.value?.identity.mode).toBe("device");
+});
+it("keeps the retired identity unavailable when logout cleanup is unconfirmed", async () => {
+  currentUser.value = current;
+  vi.mocked(invoke).mockRejectedValue({ code: "logout_unconfirmed" });
+  await expect(logoutAccount()).rejects.toEqual({ code: "logout_unconfirmed" });
+  expect(currentUser.value).toBeUndefined();
+  expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
+    "account_logout",
+  ]);
 });
 it("closes assistant modals when leaving the page and preserves the conversation draft", async () => {
   currentUser.value = current;
@@ -74,7 +104,7 @@ it("closes assistant modals when leaving the page and preserves the conversation
 it("keeps settings selected when navigation needs an unselected user", async () => {
   vi.mocked(invoke).mockImplementation(async (command) => {
     if (command === "test_users")
-      return { schemaVersion: 7, kind: "testUserPage", users: [] };
+      return { schemaVersion: 8, kind: "testUserPage", users: [] };
     throw { code: "ai_unavailable" };
   });
   const wrapper = mount(App);
@@ -101,7 +131,7 @@ it.each([
     vi.mocked(invoke).mockImplementation(async (command) => {
       if (command === "test_users")
         return {
-          schemaVersion: 7,
+          schemaVersion: 8,
           kind: "testUserPage",
           users: [current.user],
           current,
@@ -140,7 +170,7 @@ it("keeps the current workspace mounted and inert while a switch is pending", as
   vi.mocked(invoke).mockImplementation(async (command) => {
     if (command === "test_users")
       return {
-        schemaVersion: 7,
+        schemaVersion: 8,
         kind: "testUserPage",
         users: [current.user],
         current,
@@ -174,7 +204,7 @@ it("keeps the current workspace mounted and inert while a switch is pending", as
 it("keeps enterprise, test and guest entries visible before selecting a user", async () => {
   vi.mocked(invoke).mockImplementation(async (command) => {
     if (command === "test_users")
-      return { schemaVersion: 7, kind: "testUserPage", users: [] };
+      return { schemaVersion: 8, kind: "testUserPage", users: [] };
     if (command === "account_organizations") return settingsPage();
     throw { code: "ai_unavailable" };
   });
@@ -189,7 +219,7 @@ it("keeps enterprise, test and guest entries visible before selecting a user", a
     expect(guest).toBeDefined();
     await guest!.trigger("click");
     await flushPromises();
-    expect(invoke).toHaveBeenCalledWith("select_guest");
+    expect(invoke).toHaveBeenCalledWith("select_device");
   } finally {
     wrapper.unmount();
   }
@@ -260,7 +290,7 @@ it("queries the production execution service without a fixture fallback and repo
   const enterprise = {
     ...current,
     identity: {
-      mode: "enterprise" as const,
+      mode: "user_device" as const,
       authorityId: "mdm-instance",
       tenantId: "tenant",
       principalId: "subject",
@@ -272,7 +302,7 @@ it("queries the production execution service without a fixture fallback and repo
   vi.mocked(invoke).mockImplementation(async (command) => {
     if (command === "test_users")
       return {
-        schemaVersion: 7,
+        schemaVersion: 8,
         kind: "testUserPage",
         users: [],
         current: enterprise,
@@ -280,7 +310,7 @@ it("queries the production execution service without a fixture fallback and repo
     if (command === "account_organizations") return settingsPage();
     if (command === "account_status")
       return {
-        schemaVersion: 7,
+        schemaVersion: 8,
         kind: "accountStatus",
         ...(revoked ? {} : { current: enterprise }),
       };
@@ -332,7 +362,7 @@ it("focuses the default AI page after the selected workspace is replaced", async
   vi.mocked(invoke).mockImplementation(async (command) => {
     if (command === "test_users")
       return {
-        schemaVersion: 7,
+        schemaVersion: 8,
         kind: "testUserPage",
         users: active ? [active.user] : [],
         current: active,

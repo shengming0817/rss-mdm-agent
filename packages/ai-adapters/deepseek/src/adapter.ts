@@ -13,11 +13,13 @@ import {
 } from "@rss-mdm-agent/ai-contract/session";
 import type {
   Binding,
-  Budget,
   Command,
   CommandRecord,
   DispatchAttempt,
   Outcome,
+} from "@rss-mdm-agent/ai-contract/wire";
+import type {
+  Budget,
   ProviderAgentPort,
   ProviderConfiguration,
   ProviderObservation,
@@ -25,7 +27,7 @@ import type {
   Reconciliation,
   Result,
   Submission,
-} from "@rss-mdm-agent/ai-contract";
+} from "@rss-mdm-agent/ai-contract/ports";
 import {
   ADAPTER_VERSION,
   HARNESS_VERSION,
@@ -441,7 +443,7 @@ export class DeepSeekAdapter implements ProviderAgentPort {
       decode(
         boundedJson(
           {
-            schemaVersion: 7,
+            schemaVersion: 8,
             kind: "event",
             namespace: this.configuration!.namespace,
             eventId: "validate",

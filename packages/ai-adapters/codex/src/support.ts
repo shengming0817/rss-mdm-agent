@@ -1,9 +1,6 @@
-import {
-  boundedJson,
-  type Budget,
-  type Failure,
-  type Result,
-} from "@rss-mdm-agent/ai-contract";
+import { boundedJson } from "@rss-mdm-agent/ai-contract";
+import type { Budget, Result } from "@rss-mdm-agent/ai-contract/ports";
+import type { Failure } from "@rss-mdm-agent/ai-contract/wire";
 export const limits = {
   maxBytes: 1024 * 1024,
   maxTextBytes: 512 * 1024,

@@ -2,7 +2,7 @@ import { fork, type ChildProcess } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Budget } from "@rss-mdm-agent/ai-contract";
+import type { Budget } from "@rss-mdm-agent/ai-contract/ports";
 import type { DeepSeekDiagnostic } from "./configuration.js";
 import {
   NativeFault,

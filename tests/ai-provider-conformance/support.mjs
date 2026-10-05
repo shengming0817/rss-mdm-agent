@@ -44,6 +44,11 @@ import { reply } from "../ai-adapters/codex/helpers.mjs";
 import { completion } from "../ai-adapters/deepseek/native-support.mjs";
 
 export const engines = ["codex", "claude", "deepseek"];
+export const fixtureCaller = {
+  tenantId: "local-test",
+  principalId: "fixture-actor",
+  authorityId: "desktop-test",
+};
 export const budget = (timeoutMs = 15000) => ({
   timeoutMs,
   signal: AbortSignal.timeout(timeoutMs),
@@ -63,7 +68,7 @@ export async function until(check, label = "condition", timeoutMs = 15000) {
 }
 export function command(sessionId, commandId, text = "hello") {
   return {
-    schemaVersion: 7,
+    schemaVersion: 8,
     kind: "command",
     sessionId,
     commandId,
@@ -249,11 +254,7 @@ export async function configuration(
     databasePath: join(directory, "ai.sqlite"),
     nativeDirectory,
     workingDirectory: directory,
-    caller: {
-      tenantId: "test-users",
-      principalId: "fixture-actor",
-      authorityId: "desktop-fixture",
-    },
+    caller: fixtureCaller,
     session: {
       provider,
       config: { id: "local", revision: "1" },
@@ -261,7 +262,7 @@ export async function configuration(
       profile,
     },
     connection: {
-      schemaVersion: 7,
+      schemaVersion: 8,
       kind: "connection",
       connectionId: "local",
       name: "Native fixture",
@@ -279,7 +280,7 @@ export async function configuration(
     },
   };
   const store = unwrap(
-    openSqliteStore({ path: config.databasePath, mode: "create" }),
+    await openSqliteStore({ path: config.databasePath, mode: "create" }),
   );
   unwrap(
     await store.saveConnection(
@@ -346,15 +347,20 @@ export async function clientAt(
   await parent.control.call("attach", {
     channel,
     context: {
-      schemaVersion: 7,
+      schemaVersion: 8,
       kind: "userContext",
+      executionBinding: "fixture-binding",
       generation,
       user: {
-        schemaVersion: 7,
+        schemaVersion: 8,
         kind: "testUser",
         userId: "fixture-actor",
         displayName: "Fixture",
         nameKey: "fixture",
+      },
+      identity: {
+        mode: "device",
+        ...fixtureCaller,
       },
     },
   });

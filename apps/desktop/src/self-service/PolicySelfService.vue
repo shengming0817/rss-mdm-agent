@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import PolicyExecutionContext from "./PolicyExecutionContext.vue";
 import { computed, onMounted, ref, watch } from "vue";
 import Ajv, { type AnySchema } from "ajv";
 import type {
@@ -31,8 +32,22 @@ function isSchema(value: unknown): value is AnySchema {
     (typeof value === "object" && value !== null && !Array.isArray(value))
   );
 }
+const scriptTask = computed(() =>
+  selected.value?.task.kind === "script" ? selected.value.task : undefined,
+);
+const parameterSources = computed(
+  () => scriptTask.value?.parameterSources ?? {},
+);
+const parameterSchema = computed(
+  () =>
+    scriptTask.value?.parameterSchema ?? {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
+);
 const validator = computed(() => {
-  const schema = selected.value?.parameterSchema;
+  const schema = parameterSchema.value;
   return isSchema(schema) ? ajv.compile(schema) : undefined;
 });
 let epoch = 0;
@@ -66,22 +81,19 @@ function newRequest() {
   void refresh();
 }
 const fields = computed(() =>
-  Object.entries(selected.value?.parameterSources ?? {})
+  Object.entries(parameterSources.value)
     .filter(([, source]) => source.kind === "input")
     .map(([name]) => ({
       name,
-      schema:
-        (selected.value?.parameterSchema as any)?.properties?.[name] ?? {},
+      schema: (parameterSchema.value as any)?.properties?.[name] ?? {},
     })),
 );
 const resolved = computed(() =>
   Object.fromEntries(
-    Object.entries(selected.value?.parameterSources ?? {}).map(
-      ([name, source]) => [
-        name,
-        source.kind === "fixed" ? source.value : choice.value?.parameters[name],
-      ],
-    ),
+    Object.entries(parameterSources.value).map(([name, source]) => [
+      name,
+      source.kind === "fixed" ? source.value : choice.value?.parameters[name],
+    ]),
   ),
 );
 async function refresh() {
@@ -157,7 +169,7 @@ function preview() {
       }
     }
     const resolvedParameters = Object.fromEntries(
-      Object.entries(selected.value.parameterSources).map(([name, source]) => [
+      Object.entries(parameterSources.value).map(([name, source]) => [
         name,
         source.kind === "fixed" ? source.value : parameters.get(name),
       ]),
@@ -342,7 +354,7 @@ watch(
     </form>
     <section v-if="choice && !request" aria-label="人工执行确认">
       <h3>确认 {{ selected?.selfService.displayName }}</h3>
-      <p>账号：{{ currentUser?.user.displayName }} · 当前登录设备</p>
+      <p>发起账号：{{ currentUser?.user.displayName }} · 当前登录设备</p>
       <p>前置条件：{{ selected?.selfService.prerequisites }}</p>
       <p>副作用：{{ selected?.selfService.sideEffects }}</p>
       <p>
@@ -350,10 +362,14 @@ watch(
         执行版本 {{ choice.policyVersion }}
       </p>
       <p>
-        资源 {{ selected?.resource.id }} / {{ selected?.resource.version }} /
-        {{ selected?.resource.variant }}
+        资源 {{ selected?.task.resource.id }} /
+        {{ selected?.task.resource.version }} /
+        {{ selected?.task.resource.variant }}
       </p>
-      <pre>{{ JSON.stringify(resolved, null, 2) }}</pre>
+      <PolicyExecutionContext v-if="selected" :task="selected.task" />
+      <pre v-if="selected?.task.kind === 'script'">{{
+        JSON.stringify(resolved, null, 2)
+      }}</pre>
       <button :disabled="busy" @click="invoke">确认并执行</button
       ><button :disabled="busy" @click="choice = undefined">修改参数</button>
     </section>
@@ -376,25 +392,34 @@ watch(
         @query="query"
       /><template v-else-if="status?.kind === 'run'"
         ><p>状态：{{ status.value.state }}</p>
-        <template v-if="status.value.result"
+        <template v-if="status.value.result?.kind === 'script'"
           ><p>
             采集：{{
-              new Date(status.value.result.collectedAt * 1000).toLocaleString()
+              new Date(
+                status.value.result.evidence.collectedAt * 1000,
+              ).toLocaleString()
             }}
-            · {{ status.value.result.quality }}
+            · {{ status.value.result.evidence.quality }}
           </p>
           <p>
-            Schema：{{ status.value.result.schemaValid }} · 预算：{{
-              status.value.result.budgetValid
+            Schema：{{ status.value.result.evidence.schemaValid }} · 预算：{{
+              status.value.result.evidence.budgetValid
             }}
-            · 可信：{{ status.value.result.trusted }}
+            · 可信：{{ status.value.result.evidence.trusted }}
           </p>
-          <pre>{{ JSON.stringify(status.value.result.output, null, 2) }}</pre>
-          <p v-if="status.value.result.outputReference">
-            结果仅有引用：{{ status.value.result.outputReference.sha256 }} /
-            {{ status.value.result.outputReference.bytes }} 字节
+          <pre>{{
+            JSON.stringify(status.value.result.evidence.output, null, 2)
+          }}</pre>
+          <p v-if="status.value.result.evidence.outputReference">
+            结果仅有引用：{{
+              status.value.result.evidence.outputReference.sha256
+            }}
+            / {{ status.value.result.evidence.outputReference.bytes }} 字节
           </p></template
-        ></template
+        >
+        <template v-else-if="status.value.result?.kind === 'software'">
+          <p>软件效果：{{ status.value.result.effect }}</p>
+        </template></template
       >
     </section>
     <PolicyPreparation

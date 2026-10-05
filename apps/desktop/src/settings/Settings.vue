@@ -12,7 +12,7 @@ const props = defineProps<{
   active?: boolean;
   assistant?: AssistantController;
 }>();
-const emit = defineEmits<{ assistant: []; reconnected: [] }>();
+const emit = defineEmits<{ assistant: [] }>();
 const confirming = ref(false),
   dialog = ref<HTMLElement>(),
   trigger = ref<HTMLElement>();
@@ -44,10 +44,7 @@ async function close() {
 }
 async function restart() {
   await close();
-  if (await props.host.restart()) {
-    await props.assistant?.connect();
-    emit("reconnected");
-  }
+  await props.host.restart();
   await nextTick();
   trigger.value?.focus();
 }

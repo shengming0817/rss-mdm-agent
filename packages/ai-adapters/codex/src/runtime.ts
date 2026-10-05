@@ -3,11 +3,8 @@ import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { readFileSync } from "node:fs";
 import { StringDecoder } from "node:string_decoder";
-import {
-  boundedJson,
-  type Budget,
-  type Result,
-} from "@rss-mdm-agent/ai-contract";
+import { boundedJson } from "@rss-mdm-agent/ai-contract";
+import type { Budget, Result } from "@rss-mdm-agent/ai-contract/ports";
 import {
   bounded,
   live,

@@ -411,7 +411,7 @@ const verifyUnknownFence = async () => {
     const input=JSON.parse(process.argv[1]);
     const {openSqliteStore}=await import(pathToFileURL(join(input.root,'packages/ai-store-sqlite/dist/index.js')));
     const {createHost}=await import(pathToFileURL(join(input.root,'packages/ai-host/dist/index.js')));
-    const {scopeAbsentWithin}=await import(pathToFileURL(join(input.root,'packages/ai-host/dist/process.js')));
+    const {scopeAbsentWithin,processWorkerAdapter}=await import(pathToFileURL(join(input.root,'packages/ai-host/dist/process.js')));
     const {fixtureSession,acceptance}=await import(pathToFileURL(join(input.root,'packages/ai-contract/dist/testing/index.js')));
     const {fixturePersistence}=await import(pathToFileURL(join(input.root,'tests/ai-host/harness.mjs')));
     const budget=()=>({timeoutMs:5000,signal:new AbortController().signal});
@@ -424,7 +424,7 @@ const verifyUnknownFence = async () => {
     assert.equal(field(child,'lstart'),birth);
     assert.equal(Number(field(child,'pgid')),scope.root);
     try {
-      store=unwrap(openSqliteStore({path:input.path,mode:'create'}));
+      store=unwrap(await openSqliteStore({path:input.path,mode:'create'}));
       const session=fixtureSession();unwrap(await store.create(session));unwrap(await store.accept(acceptance(session)));
       const launchId=randomUUID();
       unwrap(await store.reserveLaunch({runtimeDigest:input.runtime.manifestDigest,namespace:session.namespace,
@@ -434,9 +434,9 @@ const verifyUnknownFence = async () => {
       const deadline=Date.now()+2000;
       while(field(scope.root,'comm')){assert.ok(Date.now()<deadline);await delay(10);}
       assert.equal(await scopeAbsentWithin(input.runtime,scope,budget()),false);process.kill(child,0);
-      await store.close(budget());store=unwrap(openSqliteStore({path:input.path,mode:'open'}));
+      await store.close(budget());store=unwrap(await openSqliteStore({path:input.path,mode:'open'}));
       let resolves=0;
-      host=unwrap(await createHost({credentialPersistence:fixturePersistence(store),workerRuntime:input.runtime,
+      host=unwrap(await createHost({credentialPersistence:fixturePersistence(store),workers:processWorkerAdapter(input.runtime),
         delivery:null,store,launchFences:store,resolve:async()=>{resolves++;throw Error('unknown scope must block restore')}}));
       const retained=unwrap(await store.launches()).find(row=>row.launchId===launchId);
       assert.ok(retained);assert.deepEqual(retained.scope,scope);assert.equal(resolves,0);

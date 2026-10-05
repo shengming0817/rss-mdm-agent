@@ -48,9 +48,9 @@ impl FixtureService {
         let item: agent_api::runtime::SelfServiceDirectoryItem = serde_json::from_value(serde_json::json!({
             "policyId":"00000000-0000-4000-a000-000000000001","policyRevision":3,"policyVersion":"00000000-0000-4000-a000-000000000002",
             "selfService":{"published":true,"allowAi":true,"riskLevel":2,"displayName":"Explicit protocol fixture","description":"Registration proof only","prerequisites":"Test assembly","sideEffects":"No execution","category":"Test","keywords":["test" ]},
-            "resource":{"id":"fixture-resource","version":"v1","variant":"default"},
+            "task":{"kind":"script","runAs":"system","resource":{"id":"fixture-resource","version":"v1","variant":"default"},
             "parameterSources":{"name":{"kind":"input"},"path":{"kind":"fixed","value":"/Applications"}},
-            "parameterSchema":{"type":"object","properties":{"name":{"type":"string","maxLength":32},"path":{"type":"string"}},"required":["name","path"],"additionalProperties":false}
+            "parameterSchema":{"type":"object","properties":{"name":{"type":"string","maxLength":32},"path":{"type":"string"}},"required":["name","path"],"additionalProperties":false}}
         })).unwrap();
         execution_mcp::policy_tool(&item).unwrap()
     }

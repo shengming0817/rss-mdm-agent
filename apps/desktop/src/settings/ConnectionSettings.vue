@@ -4,7 +4,7 @@ import type {
   Connection,
   ConnectionSource,
   ConnectionDraft,
-} from "@rss-mdm-agent/ai-contract";
+} from "@rss-mdm-agent/ai-contract/wire";
 import {
   operationMessage,
   type AssistantController,

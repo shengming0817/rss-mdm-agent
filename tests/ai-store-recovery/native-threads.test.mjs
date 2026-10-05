@@ -23,7 +23,7 @@ test("SQLite rebind retains native thread and all steer attempts; terminal closu
   activeStage(initial).binding.nativeThreadId = "owned-thread";
   activeStage(initial).capabilities.steer = "supported";
   activeStage(initial).capabilities.continuation = "across_processes";
-  let store = unwrap(h.open(path)),
+  let store = unwrap(await h.open(path)),
     head = initial;
   unwrap(await store.create(initial));
   for (const [id, request] of [
@@ -50,7 +50,7 @@ test("SQLite rebind retains native thread and all steer attempts; terminal closu
     await store.snapshotPage(initial.namespace, { limit: 64 }),
   );
   unwrap(await store.close(budget()));
-  store = unwrap(h.open(path, "open"));
+  store = unwrap(await h.open(path, "open"));
   assert.deepEqual(
     unwrap(await store.snapshotPage(initial.namespace, { limit: 64 })).commands,
     before.commands,

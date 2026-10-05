@@ -22,7 +22,7 @@ import { harness, budget } from "./support.mjs";
 test("SQLite access pages freeze a cursor across writes, isolate callers, and expire on reopen", async (t) => {
   const h = harness(t),
     path = join(h.directory, "access.sqlite");
-  let store = unwrap(h.open(path));
+  let store = unwrap(await h.open(path));
   const seeded = await seedSurface(store);
   const first = unwrap(
     await store.snapshotPage(seeded.session.namespace, { limit: 1 }),
@@ -84,7 +84,7 @@ test("SQLite access pages freeze a cursor across writes, isolate callers, and ex
     [head.namespace],
   );
   unwrap(await store.close(budget()));
-  store = unwrap(h.open(path, "open"));
+  store = unwrap(await h.open(path, "open"));
   assert.equal(
     (
       await store.snapshotPage(head.namespace, {
@@ -104,12 +104,12 @@ test("SQLite access pages freeze a cursor across writes, isolate callers, and ex
 test("SQLite verified restart preserves renderable surface history while revoking its old callback", async (t) => {
   const h = harness(t),
     path = join(h.directory, "rebound-access.sqlite");
-  let store = unwrap(h.open(path));
+  let store = unwrap(await h.open(path));
   const initial = fixtureSession();
   activeStage(initial).capabilities.continuation = "across_processes";
   const seeded = await seedSurface(store, initial);
   unwrap(await store.close(budget()));
-  store = unwrap(h.open(path, "open"));
+  store = unwrap(await h.open(path, "open"));
   const restored = await restoredSession(seeded.session, "access-restored");
   const session = unwrap(
     await store.rebind({
@@ -143,7 +143,7 @@ test("SQLite verified restart preserves renderable surface history while revokin
 test("session summaries derive bounded first-prompt titles and freeze recent order across writes and reopen", async (t) => {
   const h = harness(t),
     path = join(h.directory, "summaries.sqlite");
-  let store = unwrap(h.open(path));
+  let store = unwrap(await h.open(path));
   const a = fixtureSession(),
     b = fixtureSession();
   a.namespace.sessionId = "a";
@@ -183,7 +183,7 @@ test("session summaries derive bounded first-prompt titles and freeze recent ord
   assert.equal(expected.items[0].namespace.sessionId, "a");
   assert.equal(expected.items[0].lastActivityAtMs, 30);
   unwrap(await store.close(budget()));
-  store = unwrap(h.open(path, "open"));
+  store = unwrap(await h.open(path, "open"));
   assert.deepEqual(
     unwrap(await store.listSessions(a.namespace, { limit: 64 })),
     expected,

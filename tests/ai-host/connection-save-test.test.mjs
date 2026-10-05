@@ -1,3 +1,4 @@
+import { processWorkerAdapter } from "../../packages/ai-host/dist/process.js";
 import { fixturePersistence } from "./harness.mjs";
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -29,7 +30,7 @@ const draft = {
 test("save persists without resolving a provider; failed testing cannot block subsequent edits", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "rss-save-test-"));
   const store = unwrap(
-    openSqliteStore({ path: join(root, "ai.sqlite"), mode: "create" }),
+    await openSqliteStore({ path: join(root, "ai.sqlite"), mode: "create" }),
   );
   let resolutions = 0;
   const host = unwrap(
@@ -37,7 +38,7 @@ test("save persists without resolving a provider; failed testing cannot block su
       credentialPersistence: fixturePersistence(store),
       store,
       launchFences: store,
-      workerRuntime,
+      workers: processWorkerAdapter(workerRuntime),
       delivery: null,
       resolve: async () => {
         resolutions++;
@@ -83,7 +84,7 @@ test("save persists without resolving a provider; failed testing cannot block su
 test("testing never locks editing and a delayed result cannot overwrite an edit or resurrect deletion", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "rss-test-race-"));
   const store = unwrap(
-    openSqliteStore({ path: join(root, "ai.sqlite"), mode: "create" }),
+    await openSqliteStore({ path: join(root, "ai.sqlite"), mode: "create" }),
   );
   let started, release;
   const host = unwrap(
@@ -91,7 +92,7 @@ test("testing never locks editing and a delayed result cannot overwrite an edit 
       credentialPersistence: fixturePersistence(store),
       store,
       launchFences: store,
-      workerRuntime,
+      workers: processWorkerAdapter(workerRuntime),
       delivery: null,
       resolve: async () => {
         started();
@@ -149,7 +150,7 @@ test("Host rejects a missing credential persistence dependency before opening it
   const created = await createHost({
     store: {},
     launchFences: {},
-    workerRuntime,
+    workers: processWorkerAdapter(workerRuntime),
     delivery: null,
     resolve: async () => {
       throw new Error("unused");

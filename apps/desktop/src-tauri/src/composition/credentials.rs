@@ -77,25 +77,20 @@ pub fn credential_caller(
 ) -> ai_session_contract::CredentialCaller {
     use ai_session_contract::{AccountIdentity, CredentialCaller};
     match &context.identity {
-        Some(AccountIdentity::Guest {
+        AccountIdentity::Device {
             tenant_id,
             principal_id,
             authority_id,
-        })
-        | Some(AccountIdentity::Enterprise {
+        }
+        | AccountIdentity::UserDevice {
             tenant_id,
             principal_id,
             authority_id,
             ..
-        }) => CredentialCaller {
+        } => CredentialCaller {
             tenant_id: tenant_id.clone(),
             principal_id: principal_id.clone(),
             authority_id: authority_id.clone(),
-        },
-        None => CredentialCaller {
-            tenant_id: "test-users".parse().expect("valid native tenant"),
-            principal_id: context.user.user_id.clone(),
-            authority_id: "desktop-fixture".parse().expect("valid native authority"),
         },
     }
 }
@@ -306,6 +301,93 @@ pub async fn enter_enterprise_password<R: tauri::Runtime>(
     receiver.await.map_err(|_| unavailable())?
 }
 
+#[cfg(windows)]
+fn key_path() -> std::io::Result<std::path::PathBuf> {
+    use windows_sys::Win32::{
+        System::Com::CoTaskMemFree,
+        UI::Shell::{FOLDERID_LocalAppData, SHGetKnownFolderPath},
+    };
+    unsafe {
+        let mut raw = std::ptr::null_mut();
+        if SHGetKnownFolderPath(&FOLDERID_LocalAppData, 0, std::ptr::null_mut(), &mut raw) < 0 {
+            return Err(std::io::Error::other("local app data"));
+        }
+        let mut length = 0;
+        while length < 32768 && *raw.add(length) != 0 {
+            length += 1;
+        }
+        let value = if length == 32768 {
+            Err(std::io::Error::other("local app data length"))
+        } else {
+            String::from_utf16(std::slice::from_raw_parts(raw, length))
+                .map_err(std::io::Error::other)
+        };
+        CoTaskMemFree(raw.cast());
+        let root = std::path::PathBuf::from(value?)
+            .join("RSS MDM Agent")
+            .join("private");
+        platform_private_storage::directory(&root)?;
+        Ok(root.join("connection-master-key.dpapi"))
+    }
+}
+
+impl MasterKey {
+    pub(super) async fn save_connection(
+        self: &std::sync::Arc<Self>,
+        process: &super::host::Process,
+        generation: &str,
+        connection: ai_session_contract::ConnectionDraft,
+        expected: Option<u64>,
+        secret: Option<zeroize::Zeroizing<String>>,
+        current: impl Fn() -> Result<ai_session_contract::UserContext>,
+    ) -> Result<serde_json::Value> {
+        current()?;
+        let encrypted = if let Some(secret) = secret {
+            let context = current()?;
+            let owner = super::credentials::credential_owner(
+                &super::credentials::credential_caller(&context),
+                &connection,
+            )?;
+            let has_secrets = process.control.credential_context(generation).await?;
+            current()?;
+            let master = self.clone();
+            let permit = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                master.permit.clone().acquire_owned(),
+            )
+            .await
+            .map_err(|_| unavailable())?
+            .map_err(|_| unavailable())?;
+            let encrypted = tokio::time::timeout(
+                std::time::Duration::from_secs(10),
+                tokio::task::spawn_blocking(move || {
+                    let _permit = permit;
+                    master.seal(&owner, &secret, !has_secrets)
+                }),
+            )
+            .await
+            .map_err(|_| unavailable())?
+            .map_err(|_| unavailable())??;
+            current()?;
+            Some(encrypted)
+        } else {
+            None
+        };
+        let result = process
+            .control
+            .save_connection(
+                generation,
+                connection,
+                expected,
+                encrypted,
+                std::time::Duration::from_secs(10),
+            )
+            .await?;
+        current()?;
+        Ok(result)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -331,34 +413,28 @@ mod tests {
         serde_json::from_value(serde_json::json!({"tenantId":"t","principalId":"p","authorityId":"a","connectionId":"c","provider":"codex","endpoint":"https://example.invalid/","credentialType":"api_key"})).unwrap()
     }
     #[test]
-    fn credential_owners_follow_native_test_guest_and_enterprise_identity() {
+    fn credential_owners_follow_required_device_and_user_device_identity() {
         let draft = serde_json::from_value(serde_json::json!({"connectionId":"c","name":"Connection","provider":"codex","profile":"conversation","source":{"type":"custom_api","apiUrl":"https://example.invalid","model":"chosen"}})).unwrap();
         for identity in [
-            serde_json::Value::Null,
-            serde_json::json!({"mode":"guest","tenantId":"local-guest","principalId":"guest","authorityId":"desktop-guest"}),
-            serde_json::json!({"mode":"enterprise","tenantId":"tenant","principalId":"principal","authorityId":"authority","organizationId":"org","expiresAtMs":1000}),
+            serde_json::json!({"mode":"device","tenantId":"local-device","principalId":"device","authorityId":"desktop-device"}),
+            serde_json::json!({"mode":"user_device","tenantId":"tenant","principalId":"principal","authorityId":"authority","organizationId":"org","expiresAtMs":1000}),
         ] {
-            let context = serde_json::from_value(serde_json::json!({"schemaVersion":7,"kind":"userContext","generation":"generation","user":{"schemaVersion":7,"kind":"testUser","userId":"profile","nameKey":"name","displayName":"Name"},"identity":identity})).unwrap();
+            let context = serde_json::from_value(serde_json::json!({"schemaVersion":8,"kind":"userContext","generation":"generation","user":{"schemaVersion":8,"kind":"testUser","userId":"profile","nameKey":"name","displayName":"Name"},"identity":identity})).unwrap();
             let owner = serde_json::to_value(
                 credential_owner(&credential_caller(&context), &draft).unwrap(),
             )
             .unwrap();
-            assert_eq!(
-                owner["principalId"],
-                identity["principalId"].as_str().unwrap_or("profile")
-            );
-            assert_eq!(
-                owner["tenantId"],
-                identity["tenantId"].as_str().unwrap_or("test-users")
-            );
-            assert_eq!(
-                owner["authorityId"],
-                identity["authorityId"]
-                    .as_str()
-                    .unwrap_or("desktop-fixture")
-            );
+            assert_eq!(owner["principalId"], identity["principalId"]);
+            assert_eq!(owner["tenantId"], identity["tenantId"]);
+            assert_eq!(owner["authorityId"], identity["authorityId"]);
             assert_eq!(owner["endpoint"], "https://example.invalid/");
         }
+        let mut context = serde_json::json!({"schemaVersion":8,"kind":"userContext","generation":"generation","user":{"schemaVersion":8,"kind":"testUser","userId":"profile","nameKey":"name","displayName":"Name"},"identity":null});
+        assert!(
+            serde_json::from_value::<ai_session_contract::UserContext>(context.clone()).is_err()
+        );
+        context.as_object_mut().unwrap().remove("identity");
+        assert!(serde_json::from_value::<ai_session_contract::UserContext>(context).is_err());
     }
     #[test]
     fn seal_open_and_retention_use_the_same_typed_target_projection() {
@@ -449,35 +525,5 @@ mod tests {
         assert_eq!(first.len(), 32);
         assert_eq!(keys.get(false).unwrap(), first);
         assert_eq!(writes.load(Ordering::SeqCst), 1);
-    }
-}
-
-#[cfg(windows)]
-fn key_path() -> std::io::Result<std::path::PathBuf> {
-    use windows_sys::Win32::{
-        System::Com::CoTaskMemFree,
-        UI::Shell::{FOLDERID_LocalAppData, SHGetKnownFolderPath},
-    };
-    unsafe {
-        let mut raw = std::ptr::null_mut();
-        if SHGetKnownFolderPath(&FOLDERID_LocalAppData, 0, std::ptr::null_mut(), &mut raw) < 0 {
-            return Err(std::io::Error::other("local app data"));
-        }
-        let mut length = 0;
-        while length < 32768 && *raw.add(length) != 0 {
-            length += 1;
-        }
-        let value = if length == 32768 {
-            Err(std::io::Error::other("local app data length"))
-        } else {
-            String::from_utf16(std::slice::from_raw_parts(raw, length))
-                .map_err(std::io::Error::other)
-        };
-        CoTaskMemFree(raw.cast());
-        let root = std::path::PathBuf::from(value?)
-            .join("RSS MDM Agent")
-            .join("private");
-        platform_private_storage::directory(&root)?;
-        Ok(root.join("connection-master-key.dpapi"))
     }
 }

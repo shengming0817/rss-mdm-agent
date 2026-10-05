@@ -899,6 +899,10 @@
                   "$ref": "#/$defs/VersionedRef",
                   "description": "Native AI connection configuration, not a provider identity grant."
                 },
+                "context": {
+                  "$ref": "#/$defs/NativeContextRef",
+                  "description": "Native owner binding at the original invocation, independent of provider identity."
+                },
                 "conversation": {
                   "$ref": "#/$defs/Id",
                   "description": "Conversation reference used for audit correlation."
@@ -915,6 +919,7 @@
               },
               "required": [
                 "kind",
+                "context",
                 "osSession",
                 "config",
                 "conversation",
@@ -944,6 +949,11 @@
           "required": ["code"],
           "type": "object"
         },
+        "ExecutionIdentity": {
+          "description": "`ExecutionIdentity`",
+          "enum": ["system", "logged_in_user"],
+          "type": "string"
+        },
         "ExecutionRisk": {
           "additionalProperties": false,
           "description": "Backend-authenticated classification of the exact offer, never an IPC claim.",
@@ -972,6 +982,22 @@
           "minLength": 1,
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
           "type": "string"
+        },
+        "NativeContextRef": {
+          "additionalProperties": false,
+          "description": "Nonsecret reference returned by the native execution owner after binding a context.",
+          "properties": {
+            "generation": {
+              "$ref": "#/$defs/Id",
+              "description": "Exact caller generation; retirement invalidates all work using it."
+            },
+            "id": {
+              "$ref": "#/$defs/Id",
+              "description": "Owner-assigned binding identity, scoped to the authenticated native peer."
+            }
+          },
+          "required": ["id", "generation"],
+          "type": "object"
         },
         "OsAccountRef": {
           "additionalProperties": false,
@@ -1145,13 +1171,13 @@
               "additionalProperties": false,
               "description": "Policy invocation and its eventual exact Offer, held in the same journal record.",
               "properties": {
-                "actor": {
-                  "$ref": "#/$defs/ScriptActor",
-                  "description": "Authenticated product employee, checked against the signed authorization."
-                },
                 "choice": {
                   "$ref": "#/$defs/PolicyChoice",
                   "description": "Immutable employee choice."
+                },
+                "context": {
+                  "$ref": "#/$defs/NativeContextRef",
+                  "description": "Native product login generation."
                 },
                 "directory": {
                   "$ref": "#/$defs/SelfServiceDirectoryItem",
@@ -1162,10 +1188,6 @@
                   "format": "uint64",
                   "minimum": 0,
                   "type": "integer"
-                },
-                "generation": {
-                  "$ref": "#/$defs/Id",
-                  "description": "Native product login generation."
                 },
                 "kind": { "const": "policy", "type": "string" },
                 "offer": {
@@ -1178,14 +1200,20 @@
                 "runId": {
                   "anyOf": [{ "$ref": "#/$defs/Id" }, { "type": "null" }],
                   "description": "Backend Run returned for the original request, absent until acceptance is known."
+                },
+                "user": {
+                  "anyOf": [
+                    { "$ref": "#/$defs/SelfServiceUser" },
+                    { "type": "null" }
+                  ],
+                  "description": "Authenticated product employee, checked against the signed authorization."
                 }
               },
               "required": [
                 "kind",
                 "choice",
                 "directory",
-                "actor",
-                "generation",
+                "context",
                 "expiresAtUnixMs"
               ],
               "type": "object"
@@ -1255,17 +1283,6 @@
             }
           ]
         },
-        "ScriptActor": {
-          "additionalProperties": false,
-          "description": "`ScriptActor`",
-          "properties": {
-            "instanceId": { "format": "uuid", "type": "string" },
-            "principalId": { "format": "uuid", "type": "string" },
-            "tenantId": { "format": "uuid", "type": "string" }
-          },
-          "required": ["tenantId", "instanceId", "principalId"],
-          "type": "object"
-        },
         "ScriptParameterSource": {
           "description": "`ScriptParameterSource`",
           "oneOf": [
@@ -1284,28 +1301,10 @@
             }
           ]
         },
-        "ScriptResource": {
-          "additionalProperties": false,
-          "description": "`ScriptResource`",
-          "properties": {
-            "id": { "type": "string" },
-            "variant": { "type": "string" },
-            "version": { "type": "string" }
-          },
-          "required": ["id", "version", "variant"],
-          "type": "object"
-        },
         "SelfServiceDirectoryItem": {
           "additionalProperties": false,
           "description": "`SelfServiceDirectoryItem`",
           "properties": {
-            "parameterSchema": true,
-            "parameterSources": {
-              "additionalProperties": {
-                "$ref": "#/$defs/ScriptParameterSource"
-              },
-              "type": "object"
-            },
             "policyId": { "format": "uuid", "type": "string" },
             "policyRevision": {
               "format": "uint64",
@@ -1313,17 +1312,15 @@
               "type": "integer"
             },
             "policyVersion": { "format": "uuid", "type": "string" },
-            "resource": { "$ref": "#/$defs/ScriptResource" },
-            "selfService": { "$ref": "#/$defs/SelfServiceMetadata" }
+            "selfService": { "$ref": "#/$defs/SelfServiceMetadata" },
+            "task": { "$ref": "#/$defs/SelfServiceTask" }
           },
           "required": [
             "policyId",
             "policyRevision",
             "policyVersion",
             "selfService",
-            "resource",
-            "parameterSources",
-            "parameterSchema"
+            "task"
           ],
           "type": "object"
         },
@@ -1357,6 +1354,56 @@
             "allowAi",
             "riskLevel"
           ],
+          "type": "object"
+        },
+        "SelfServiceTask": {
+          "description": "`SelfServiceTask`",
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": { "const": "script", "type": "string" },
+                "parameterSchema": true,
+                "parameterSources": {
+                  "additionalProperties": {
+                    "$ref": "#/$defs/ScriptParameterSource"
+                  },
+                  "type": "object"
+                },
+                "resource": { "$ref": "#/$defs/TaskResource" },
+                "runAs": { "$ref": "#/$defs/ExecutionIdentity" }
+              },
+              "required": [
+                "kind",
+                "resource",
+                "runAs",
+                "parameterSources",
+                "parameterSchema"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": { "const": "software", "type": "string" },
+                "resource": { "$ref": "#/$defs/TaskResource" },
+                "runAs": { "$ref": "#/$defs/ExecutionIdentity" },
+                "target": { "$ref": "#/$defs/SoftwareExecutionTarget" }
+              },
+              "required": ["kind", "resource", "runAs", "target"],
+              "type": "object"
+            }
+          ]
+        },
+        "SelfServiceUser": {
+          "additionalProperties": false,
+          "description": "`SelfServiceUser`",
+          "properties": {
+            "instanceId": { "format": "uuid", "type": "string" },
+            "principalId": { "format": "uuid", "type": "string" },
+            "tenantId": { "format": "uuid", "type": "string" }
+          },
+          "required": ["tenantId", "instanceId", "principalId"],
           "type": "object"
         },
         "ServiceError": {
@@ -1441,6 +1488,27 @@
               "const": "budgetExceeded",
               "description": "The independent observation exhausted its time, cancellation or byte bound.",
               "type": "string"
+            }
+          ]
+        },
+        "SoftwareExecutionTarget": {
+          "description": "`SoftwareExecutionTarget`",
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": { "kind": { "const": "device", "type": "string" } },
+              "required": ["kind"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "identity": { "type": "string" },
+                "kind": { "const": "user", "type": "string" },
+                "sessionId": { "format": "uuid", "type": "string" }
+              },
+              "required": ["kind", "identity", "sessionId"],
+              "type": "object"
             }
           ]
         },
@@ -1571,6 +1639,17 @@
               "type": "object"
             }
           ]
+        },
+        "TaskResource": {
+          "additionalProperties": false,
+          "description": "`TaskResource`",
+          "properties": {
+            "id": { "type": "string" },
+            "variant": { "type": "string" },
+            "version": { "type": "string" }
+          },
+          "required": ["id", "version", "variant"],
+          "type": "object"
         },
         "VersionedRef": {
           "additionalProperties": false,

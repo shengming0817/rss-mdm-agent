@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { fork } from "node:child_process";
 import { once } from "node:events";
-import { scopeAbsent } from "../../packages/ai-host/dist/process.js";
+import { scopeAbsentWithin } from "../../packages/ai-host/dist/process.js";
 import { openHost } from "./host.mjs";
 import {
   engines,
@@ -31,7 +31,11 @@ for (const provider of engines) {
         }
         for (const launch of ready?.launches ?? [])
           await until(
-            () => scopeAbsent(workerRuntime, launch.scope),
+            () =>
+              scopeAbsentWithin(workerRuntime, launch.scope, {
+                timeoutMs: 2000,
+                signal: new AbortController().signal,
+              }),
             "old worker group exit",
           );
       });
@@ -71,7 +75,11 @@ for (const provider of engines) {
       await exited;
       for (const launch of ready.launches)
         await until(
-          () => scopeAbsent(workerRuntime, launch.scope),
+          () =>
+            scopeAbsentWithin(workerRuntime, launch.scope, {
+              timeoutMs: 2000,
+              signal: new AbortController().signal,
+            }),
           "old worker group exit",
         );
       const recovered = await openHost(f.path, "open");

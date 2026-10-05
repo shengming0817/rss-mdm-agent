@@ -1,17 +1,19 @@
-import type { PreferencesPatch } from "@rss-mdm-agent/ai-contract";
+import type { PreferencesPatch } from "@rss-mdm-agent/ai-contract/wire";
 import { isDeepStrictEqual } from "node:util";
 import {
   productSession,
   replaceStage,
   historyPreview,
-  type HistoryPreview,
-  type ConnectionPage,
-  type UserPreferences,
   connectionRevision,
   savedDraft,
-  type ConnectionDraft,
-  type ConnectionTest,
 } from "@rss-mdm-agent/ai-contract";
+import type {
+  HistoryPreview,
+  ConnectionPage,
+  UserPreferences,
+  ConnectionDraft,
+  ConnectionTest,
+} from "@rss-mdm-agent/ai-contract/wire";
 import { activeStage } from "@rss-mdm-agent/ai-contract";
 import { randomUUID } from "node:crypto";
 import {
@@ -19,33 +21,37 @@ import {
   isId,
   decode,
   interactionCatalog,
-  type Budget,
-  type Binding,
-  type ToolEndpoint,
-  type Caller,
-  type Command,
-  type CommandRecord,
-  type Event,
-  type HostPort,
-  type Interaction,
-  type Namespace,
-  type Negotiation,
-  type PageQuery,
-  type ProviderAdmission,
-  type ProviderConfiguration,
-  type Receipt,
-  type Result,
-  type Session,
-  type SessionCommit,
-  type ConnectionOptions,
-  type SessionOptions,
-  type Connection,
-  type SessionStore,
-  type SnapshotPage,
-  type Subscription,
-  type SurfaceState,
-  type VerifiedProviderFact,
 } from "@rss-mdm-agent/ai-contract";
+import type {
+  Budget,
+  ToolEndpoint,
+  Caller,
+  HostPort,
+  ProviderAdmission,
+  ProviderConfiguration,
+  Result,
+  SessionCommit,
+  ConnectionOptions,
+  SessionOptions,
+  SessionStore,
+} from "@rss-mdm-agent/ai-contract/ports";
+import type {
+  Binding,
+  Command,
+  CommandRecord,
+  Event,
+  Interaction,
+  Namespace,
+  Negotiation,
+  PageQuery,
+  Receipt,
+  Session,
+  Connection,
+  SnapshotPage,
+  Subscription,
+  SurfaceState,
+} from "@rss-mdm-agent/ai-contract/wire";
+import type { VerifiedProviderFact } from "@rss-mdm-agent/ai-contract/session";
 import {
   VerifiedProviderSession,
   providerFactFor,
@@ -69,7 +75,7 @@ export type {
   DeliveryRequest,
   DeliveryReceipt,
 } from "./delivery.js";
-import { WorkerPort, scopeAbsent, type WorkerRuntime } from "./process.js";
+import type { WorkerAdapter, WorkerHandle } from "./worker-adapter.js";
 import { Output } from "./queue.js";
 import { Deadline } from "./deadline.js";
 import type { WorkerLaunchFenceStore } from "./launch-fence.js";
@@ -82,7 +88,7 @@ export interface HostDiagnostic {
     | "recovery"
     | "credential"
     | "close";
-  readonly code: import("@rss-mdm-agent/ai-contract").Failure["code"];
+  readonly code: import("@rss-mdm-agent/ai-contract/wire").Failure["code"];
 }
 /** Private native save intent, distinct from the public HostPort metadata operation. */
 export type CredentialUpdate =
@@ -97,7 +103,7 @@ export type CredentialPersistence = (
 ) => Promise<Result<Connection>>;
 
 export interface HostOptions {
-  readonly workerRuntime: WorkerRuntime;
+  readonly workers: WorkerAdapter;
   /** Required private persistence owner; secrets never enter public wire records. */
   readonly credentialPersistence: CredentialPersistence;
   readonly callerAvailable?: (caller: Caller) => boolean;
@@ -135,7 +141,7 @@ type ProbeOutcome =
 interface Runtime {
   verification?: true;
   dispose?: () => Promise<void>;
-  worker: WorkerPort;
+  worker: WorkerHandle;
   verified?: VerifiedProviderSession;
   observing: Set<string>;
   inFlight: Set<string>;
@@ -148,7 +154,7 @@ const budget = (timeoutMs = 30000): Budget => ({
   signal: new AbortController().signal,
 });
 const baseRecord = (record: CommandRecord) => ({
-  schemaVersion: 7 as const,
+  schemaVersion: 8 as const,
   kind: "commandRecord" as const,
   command: record.command,
   receipt: record.receipt,
@@ -164,7 +170,9 @@ const requireValue = <T>(result: Result<T>): T => {
 };
 /** Closed expected host failure for trusted composition adapters. */
 export class HostFailure extends Error {
-  constructor(readonly failure: import("@rss-mdm-agent/ai-contract").Failure) {
+  constructor(
+    readonly failure: import("@rss-mdm-agent/ai-contract/wire").Failure,
+  ) {
     super(failure.code);
   }
 }
@@ -367,7 +375,7 @@ export class SessionHost implements HostPort {
   }
   negotiate(offered: Negotiation): Result<Negotiation> {
     if (this.closed) return fail("unavailable");
-    if (offered.contractVersion !== 7 || offered.acp !== 1)
+    if (offered.contractVersion !== 8 || offered.acp !== 1)
       return fail("unsupported_version");
     if (
       offered.a2ui &&
@@ -381,23 +389,48 @@ export class SessionHost implements HostPort {
   /** Scan launch fences before any provider restore. Saved process IDs never authorize signaling. */
   private async start(): Promise<Result<void>> {
     return this.result(async () => {
-      for (const launch of requireValue(
-        await this.options.launchFences.launches(),
-      )) {
-        if (
-          launch.phase === "registered" &&
-          scopeAbsent(this.options.workerRuntime, launch.scope)
-        )
-          requireValue(
-            await this.options.launchFences.releaseLaunch(
-              launch.namespace,
-              launch.launchId,
-            ),
-          );
-        else {
-          this.blocked.add(namespaceKey(launch.namespace));
-          await this.unavailable(launch.namespace);
-        }
+      const fences = requireValue(await this.options.launchFences.launches());
+      const deadline = new Deadline(budget(this.timeout));
+      const probes = new Map<string, Promise<boolean>>();
+      let cursor = 0;
+      try {
+        await Promise.all(
+          Array.from({ length: Math.min(4, fences.length) }, async () => {
+            while (cursor < fences.length) {
+              const launch = fences[cursor++];
+              let absent = false;
+              if (launch.phase === "registered") {
+                const key = JSON.stringify(launch.scope);
+                let probe = probes.get(key);
+                if (!probe) {
+                  probe = deadline
+                    .wait(() =>
+                      this.options.workers.absent(
+                        launch.scope,
+                        deadline.budget(),
+                      ),
+                    )
+                    .catch(() => false);
+                  probes.set(key, probe);
+                }
+                absent = await probe;
+              }
+              if (absent)
+                requireValue(
+                  await this.options.launchFences.releaseLaunch(
+                    launch.namespace,
+                    launch.launchId,
+                  ),
+                );
+              else {
+                this.blocked.add(namespaceKey(launch.namespace));
+                await this.unavailable(launch.namespace);
+              }
+            }
+          }),
+        );
+      } finally {
+        deadline.dispose();
       }
       const namespaces = new Map<string, Namespace>();
       let after: string | undefined;
@@ -482,25 +515,6 @@ export class SessionHost implements HostPort {
   ): Promise<Result<Session>> {
     const previous = restore ? session : undefined;
     if (this.closing || b.signal.aborted) return fail("unavailable");
-    // Retry orphan collection on admission, without a heartbeat or signaling old PIDs.
-    for (const launch of requireValue(
-      await this.options.launchFences.launches(),
-    )) {
-      const blockedKey = namespaceKey(launch.namespace);
-      if (
-        this.blocked.has(blockedKey) &&
-        launch.phase === "registered" &&
-        scopeAbsent(this.options.workerRuntime, launch.scope)
-      ) {
-        requireValue(
-          await this.options.launchFences.releaseLaunch(
-            launch.namespace,
-            launch.launchId,
-          ),
-        );
-        this.blocked.delete(blockedKey);
-      }
-    }
     const key = namespaceKey(namespace);
     const incomplete = this.runtimes.get(key);
     if (incomplete && incomplete.abort.signal.aborted && !incomplete.verified) {
@@ -521,7 +535,7 @@ export class SessionHost implements HostPort {
       if (fence?.phase === "reserved")
         return fail("reconciliation_required", "reconcile_first");
       if (fence?.phase === "registered") {
-        if (!scopeAbsent(this.options.workerRuntime, fence.scope))
+        if (!(await this.options.workers.absent(fence.scope, b)))
           return fail("reconciliation_required", "reconcile_first");
         requireValue(
           await this.options.launchFences.releaseLaunch(
@@ -578,8 +592,7 @@ export class SessionHost implements HostPort {
     const admission = resolved.admission
       ? { verifier: resolved.admission.verifier, tools }
       : undefined;
-    const worker = new WorkerPort(
-      this.options.workerRuntime,
+    const worker = this.options.workers.create(
       this.options.launchFences,
       namespace,
       resolved.artifact,
@@ -679,7 +692,7 @@ export class SessionHost implements HostPort {
       if (b.signal.aborted || this.closing || !this.callerAvailable(caller))
         return fail("unavailable");
       return ok({
-        schemaVersion: 7,
+        schemaVersion: 8,
         kind: "connectionPage",
         connections: [...requireValue(await this.store.connections(caller))],
         preferences: requireValue(await this.store.preferences(caller)),
@@ -817,8 +830,7 @@ export class SessionHost implements HostPort {
           });
         },
       };
-      const worker = new WorkerPort(
-        this.options.workerRuntime,
+      const worker = this.options.workers.create(
         this.options.launchFences,
         probe,
         resolved.artifact,
@@ -856,7 +868,7 @@ export class SessionHost implements HostPort {
           ),
         );
         const command: Command = {
-          schemaVersion: 7,
+          schemaVersion: 8,
           kind: "command",
           sessionId: probe.sessionId,
           commandId: randomUUID(),
@@ -894,7 +906,7 @@ export class SessionHost implements HostPort {
         if (sent.certainty !== "submitted") return fail("unavailable");
         let completed = false,
           responseObserved = false;
-        let failure: import("@rss-mdm-agent/ai-contract").Failure = {
+        let failure: import("@rss-mdm-agent/ai-contract/wire").Failure = {
           code: "unavailable",
           retry: "never",
         };
@@ -1488,7 +1500,7 @@ export class SessionHost implements HostPort {
     )
       attemptId = undefined;
     return {
-      schemaVersion: 7,
+      schemaVersion: 8,
       kind: "event",
       namespace: session.namespace,
       eventId: randomUUID(),
@@ -1859,7 +1871,7 @@ export class SessionHost implements HostPort {
         append(observed.body);
       } else if (observed.type === "interaction") {
         const row: Interaction = {
-          schemaVersion: 7,
+          schemaVersion: 8,
           kind: "interaction",
           namespace,
           commandId: record.command.commandId,
@@ -2147,7 +2159,9 @@ export class SessionHost implements HostPort {
   listSessions(caller: Caller, query: PageQuery, b: Budget) {
     return this.closed || b.signal.aborted || !this.callerAvailable(caller)
       ? Promise.resolve(
-          fail<import("@rss-mdm-agent/ai-contract").SessionPage>("unavailable"),
+          fail<import("@rss-mdm-agent/ai-contract/wire").SessionPage>(
+            "unavailable",
+          ),
         )
       : this.store.listSessions(caller, query);
   }
@@ -2267,7 +2281,7 @@ export class SessionHost implements HostPort {
                 await this.accept(
                   caller,
                   {
-                    schemaVersion: 7,
+                    schemaVersion: 8,
                     kind: "command",
                     sessionId: namespace.sessionId,
                     commandId: randomUUID(),
@@ -2375,7 +2389,7 @@ export class SessionHost implements HostPort {
               this.accept(
                 namespace,
                 {
-                  schemaVersion: 7,
+                  schemaVersion: 8,
                   kind: "command",
                   sessionId,
                   commandId: randomUUID(),

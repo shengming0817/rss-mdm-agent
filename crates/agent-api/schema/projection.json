@@ -23,15 +23,14 @@
     "intake|receivedAt|reportId|wireVersion": "ReportAck",
     "ack|observation|projection": "ReportStatus",
     "code": "ErrorBody",
-    "instanceId|principalId|tenantId": "ScriptActor",
-    "id|variant|version": "ScriptResource",
+    "instanceId|principalId|tenantId": "SelfServiceUser",
+    "id|variant|version": "TaskResource",
     "confirmed|operationId|parameters|policyId|policyRevision|policyVersion|source": "SelfServiceInvoke",
     "after|source": "SelfServiceDirectory",
     "allowAi|category|description|displayName|keywords|prerequisites|published|riskLevel|sideEffects": "SelfServiceMetadata",
     "asOf|items|nextCursor": "SelfServiceDirectoryResponse",
-    "parameterSchema|parameterSources|policyId|policyRevision|policyVersion|resource|selfService": "SelfServiceDirectoryItem",
     "policyId|policyRevision|policyVersion|requestId|runId": "SelfServiceAccepted",
-    "cancellation|deadline|delivery|execution|startedAt": "ScriptRunState",
+    "cancellation|deadline|delivery|execution|startedAt": "TaskRunState",
     "attemptId|availableAt|deadline|requestId|result|runId|state": "SelfServiceStatus",
     "budgetValid|collectedAt|diagnostics|exitCode|output|outputReference|quality|receivedAt|schemaValid|trusted": "ScriptRunResult",
     "attemptId|taskId": "TaskCancellation",
@@ -47,9 +46,7 @@
     "architecture|entries|platform|schema": "SoftwareTaskBundle",
     "behavior|downgrade|package|reboot|signatures|version": "SoftwareTaskAction",
     "action|artifacts|export|target": "SoftwareTaskStep",
-    "architecture|attemptId|definitionDigest|deviceId|executionContext|expiresAt|generation|intent|permit|platform|registrationId|startMode|steps|taskId|tenantId|wireVersion": "SoftwareTaskSpec",
     "keyId|payload|signature": "SignedTask",
-    "interactiveUser|msixSideload|msixUnsigned|osVersion|revision|sourceCredentials|systemBroker": "SoftwareExecutionContext",
     "administrator|identity|sessionId": "SoftwareInteractiveUser",
     "reference|source": "SoftwareReadCredential",
     "resource|sha256|version": "SoftwareExportDependency",
@@ -71,7 +68,10 @@
     "allowUnsigned|container|dependencies|deployment|identity|invocation|minimumOs|requireSideload|uninstall|upgrade": "SoftwareTaskMsix",
     "artifact|mechanism|publisher": "SoftwareTaskSignature",
     "itemKey|key|manual|nullable|platforms|searchable|sensitivity|sources|unit|valueType|version": "FieldDefinition",
-    "dataset|fields|source|version": "CollectionDefinition"
+    "dataset|fields|source|version": "CollectionDefinition",
+    "policyId|policyRevision|policyVersion|selfService|task": "SelfServiceDirectoryItem",
+    "architecture|attemptId|authorization|definitionDigest|deviceId|executionContext|expiresAt|generation|intent|permit|platform|registrationId|startMode|steps|taskId|tenantId|wireVersion": "SoftwareTaskSpec",
+    "interactiveUser|msixSideload|msixUnsigned|osVersion|revision|sourceCredentials|systemBroker|userHelper": "SoftwareExecutionContext"
   },
   "enumNames": {
     "available|consumed|expired|pending|revoked": {
@@ -196,14 +196,14 @@
       }
     },
     "ai|human": {
-      "name": "ScriptCaller",
+      "name": "SelfServiceCaller",
       "variants": {
         "human": "Human",
         "ai": "Ai"
       }
     },
     "failed|not_started|running|succeeded|unknown|waiting_reboot": {
-      "name": "ScriptExecution",
+      "name": "TaskExecution",
       "variants": {
         "not_started": "NotStarted",
         "running": "Running",
@@ -214,7 +214,7 @@
       }
     },
     "confirmed|none|requested": {
-      "name": "ScriptCancellation",
+      "name": "RunCancellation",
       "variants": {
         "none": "None",
         "requested": "Requested",
@@ -400,7 +400,7 @@
     "SelfServiceDirectoryResponse.asOf": "i64",
     "SelfServiceDirectoryItem.policyRevision": "u64",
     "SelfServiceAccepted.policyRevision": "u64",
-    "ScriptRunState.deadline": "i64",
+    "TaskRunState.deadline": "i64",
     "SelfServiceStatus.availableAt": "i64",
     "SelfServiceStatus.deadline": "i64",
     "ScriptRunResult.collectedAt": "i64",
@@ -434,10 +434,10 @@
     "SoftwareTaskInvocation.outputBytes": "u32",
     "SoftwareTaskMsixMember.length": "u64",
     "FieldDefinition.version": "u64",
-    "ScriptAuthorization.self_service.policyRevision": "u64",
-    "ScriptAuthorization.self_service.riskLevel": "u8",
-    "ScriptDelivery.claimed.leaseUntil": "i64",
-    "ScriptDelivery.received.leaseUntil": "i64",
+    "TaskAuthorization.self_service.policyRevision": "u64",
+    "TaskAuthorization.self_service.riskLevel": "u8",
+    "TaskDelivery.claimed.leaseUntil": "i64",
+    "TaskDelivery.received.leaseUntil": "i64",
     "SoftwareDetectionObservation.present.observedAt": "i64",
     "SoftwareDetectionObservation.absent.observedAt": "i64",
     "SoftwareProcessObservation.exited.code": "i32",
@@ -448,7 +448,7 @@
     "ChunkedTaskResult.exitCode": "i32",
     "OutputManifest.sha256": "u8",
     "GrantRequest.lifetimeSeconds": "u32",
-    "ScriptRunState.startedAt": "i64",
+    "TaskRunState.startedAt": "i64",
     "ScriptRunResult.exitCode": "i32",
     "TaskContent.sha256": "u8",
     "TaskSpec.resourceDigest": "u8",
@@ -616,12 +616,12 @@
       "observation",
       "projection"
     ],
-    "ScriptActor": [
+    "SelfServiceUser": [
       "tenantId",
       "instanceId",
       "principalId"
     ],
-    "ScriptResource": [
+    "TaskResource": [
       "id",
       "version",
       "variant"
@@ -660,9 +660,7 @@
       "policyRevision",
       "policyVersion",
       "selfService",
-      "resource",
-      "parameterSources",
-      "parameterSchema"
+      "task"
     ],
     "SelfServiceAccepted": [
       "requestId",
@@ -671,7 +669,7 @@
       "policyRevision",
       "policyVersion"
     ],
-    "ScriptRunState": [
+    "TaskRunState": [
       "delivery",
       "execution",
       "cancellation",
@@ -770,6 +768,7 @@
       "profile",
       "sqlParameters",
       "runAs",
+      "executionTarget",
       "arguments",
       "environment",
       "timeoutSeconds",
@@ -818,6 +817,7 @@
       "permit",
       "expiresAt",
       "executionContext",
+      "authorization",
       "steps",
       "definitionDigest",
       "intent",
@@ -834,6 +834,7 @@
       "msixUnsigned",
       "osVersion",
       "systemBroker",
+      "userHelper",
       "interactiveUser",
       "sourceCredentials"
     ],
@@ -1027,7 +1028,7 @@
         "code"
       ]
     },
-    "ScriptAuthorization": {
+    "TaskAuthorization": {
       "policy": [
         "policyId",
         "policyVersion"
@@ -1037,7 +1038,7 @@
       ],
       "self_service": [
         "requestId",
-        "actor",
+        "subject",
         "source",
         "policyId",
         "policyRevision",
@@ -1052,7 +1053,7 @@
         "value"
       ]
     },
-    "ScriptDelivery": {
+    "TaskDelivery": {
       "claimed": [
         "attempt",
         "leaseUntil"
@@ -1211,6 +1212,19 @@
       "object": [
         "properties"
       ]
+    },
+    "SelfServiceTask": {
+      "script": [
+        "resource",
+        "runAs",
+        "parameterSources",
+        "parameterSchema"
+      ],
+      "software": [
+        "resource",
+        "runAs",
+        "target"
+      ]
     }
   },
   "variantNames": {
@@ -1297,11 +1311,11 @@
       "Applied": "Applied",
       "NotApplicable": "NotApplicable"
     },
-    "ScriptCaller": {
+    "SelfServiceCaller": {
       "human": "Human",
       "ai": "Ai"
     },
-    "ScriptAuthorization": {
+    "TaskAuthorization": {
       "policy": "Policy",
       "remote_operation": "RemoteOperation",
       "self_service": "SelfService"
@@ -1310,12 +1324,12 @@
       "fixed": "Fixed",
       "input": "Input"
     },
-    "ScriptDelivery": {
+    "TaskDelivery": {
       "queued": "Queued",
       "claimed": "Claimed",
       "received": "Received"
     },
-    "ScriptExecution": {
+    "TaskExecution": {
       "not_started": "NotStarted",
       "running": "Running",
       "succeeded": "Succeeded",
@@ -1323,7 +1337,7 @@
       "waiting_reboot": "WaitingReboot",
       "unknown": "Unknown"
     },
-    "ScriptCancellation": {
+    "RunCancellation": {
       "none": "None",
       "requested": "Requested",
       "confirmed": "Confirmed"
@@ -1515,6 +1529,18 @@
       "null": "Null",
       "deleted": "Deleted",
       "unsupported": "Unsupported"
+    },
+    "SelfServiceSubject": {
+      "device": "Device",
+      "user": "User"
+    },
+    "SelfServiceTask": {
+      "script": "Script",
+      "software": "Software"
+    },
+    "SelfServiceResult": {
+      "script": "Script",
+      "software": "Software"
     }
   },
   "sets": {

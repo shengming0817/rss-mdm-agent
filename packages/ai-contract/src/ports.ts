@@ -415,7 +415,6 @@ export interface StageActivation {
   readonly opened: import("./session.js").VerifiedProviderSession;
 }
 
-export type { Subscription, Negotiation } from "./wire.js";
 /** Bound to the original attempt and the current observer; unknown is not permission to send. */
 export type Reconciliation = {
   readonly commandId: Id;

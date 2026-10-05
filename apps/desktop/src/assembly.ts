@@ -11,7 +11,7 @@ export async function verifyAssembly() {
   }
 }
 
-import type { UserContext } from "@rss-mdm-agent/ai-contract";
+import type { UserContext } from "@rss-mdm-agent/ai-contract/wire";
 import type { ServicePort, nativeHost } from "./settings/native";
 import type { AssistantServices } from "./assistant/controller";
 import type { SelfServicePort } from "./self-service/types";

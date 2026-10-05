@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref } from "vue";
-import type { TestUser, UserContext } from "@rss-mdm-agent/ai-contract";
+import type { TestUser, UserContext } from "@rss-mdm-agent/ai-contract/wire";
 defineProps<{
   users: TestUser[];
   current?: UserContext;

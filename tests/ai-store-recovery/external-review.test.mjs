@@ -41,7 +41,7 @@ test("runtime declaration and CI preflight reject an unverified Node version bef
 test("cancelled close stops admission but retains ownership until fresh cleanup", async (t) => {
   const h = harness(t),
     path = join(h.directory, "closing.sqlite"),
-    store = unwrap(h.open(path));
+    store = unwrap(await h.open(path));
   unwrap(await store.create(fixtureSession()));
   const control = new AbortController();
   control.abort();
@@ -53,18 +53,18 @@ test("cancelled close stops admission but retains ownership until fresh cleanup"
     ok: false,
     error: { code: "unavailable", retry: "never" },
   });
-  assert.deepEqual(h.open(path, "open", { busyTimeoutMs: 50 }), {
+  assert.deepEqual(await h.open(path, "open", { busyTimeoutMs: 50 }), {
     ok: false,
     error: { code: "unavailable", retry: "same_command" },
   });
   unwrap(await store.close(budget()));
   unwrap(await store.close(budget()));
-  unwrap(h.open(path, "open"));
+  unwrap(await h.open(path, "open"));
 });
 test("failed close preserves cleanup retry and invalid budgets never release ownership", async (t) => {
   const h = harness(t),
     path = join(h.directory, "close-retry.sqlite"),
-    store = unwrap(h.open(path));
+    store = unwrap(await h.open(path));
   unwrap(await store.create(fixtureSession()));
   assert.equal(
     (await store.close({ ...budget(), timeoutMs: 0 })).error.code,
@@ -80,31 +80,31 @@ test("failed close preserves cleanup retry and invalid budgets never release own
     error: { code: "unavailable", retry: "same_command" },
   });
   assert.equal((await store.session(fixtureSession().namespace)).ok, false);
-  assert.equal(h.open(path, "open", { busyTimeoutMs: 50 }).ok, false);
+  assert.equal((await h.open(path, "open", { busyTimeoutMs: 50 })).ok, false);
   db.close = close;
   unwrap(await store.close(budget()));
-  unwrap(h.open(path, "open"));
+  unwrap(await h.open(path, "open"));
 });
-test("corruption and permanent path failures have stable non-retryable errors", (t) => {
+test("corruption and permanent path failures have stable non-retryable errors", async (t) => {
   const h = harness(t),
     path = join(h.directory, "private-garbage.sqlite");
   writeFileSync(path, "secret invalid database", { mode: 0o600 });
-  assert.deepEqual(h.open(path, "open"), {
+  assert.deepEqual(await h.open(path, "open"), {
     ok: false,
     error: { code: "storage_corrupt", retry: "never" },
   });
-  assert.deepEqual(h.open(join(h.directory, "missing.sqlite"), "open"), {
+  assert.deepEqual(await h.open(join(h.directory, "missing.sqlite"), "open"), {
     ok: false,
     error: { code: "invalid_input", retry: "never" },
   });
-  assert.deepEqual(h.open(path, "create"), {
+  assert.deepEqual(await h.open(path, "create"), {
     ok: false,
     error: { code: "invalid_input", retry: "never" },
   });
 });
 test("extended SQLite errors preserve primary reasons and never expose native values", async (t) => {
   const h = harness(t),
-    store = unwrap(h.open()),
+    store = unwrap(await h.open()),
     db = h.raw(store),
     prepare = db.prepare.bind(db);
   const cases = [
@@ -136,7 +136,7 @@ test("extended SQLite errors preserve primary reasons and never expose native va
 test("owned schema and persisted wire corruption are never reported as caller input", async (t) => {
   const h = harness(t),
     path = join(h.directory, "owned-corrupt.sqlite"),
-    store = unwrap(h.open(path));
+    store = unwrap(await h.open(path));
   const initial = fixtureSession();
   unwrap(await store.create(initial));
   const db = h.raw(store);
@@ -150,7 +150,7 @@ test("owned schema and persisted wire corruption are never reported as caller in
   db.prepare("UPDATE schema_meta SET checksum='altered'").run();
   unwrap(await store.close(budget()));
   const bytes = readFileSync(path);
-  assert.deepEqual(h.open(path, "open"), {
+  assert.deepEqual(await h.open(path, "open"), {
     ok: false,
     error: { code: "storage_corrupt", retry: "never" },
   });

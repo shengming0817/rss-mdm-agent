@@ -5,7 +5,7 @@ import {
   endpoint,
   type LocalConfiguration,
 } from "./configuration.js";
-import type { Connection, Namespace } from "@rss-mdm-agent/ai-contract";
+import type { Connection, Namespace } from "@rss-mdm-agent/ai-contract/wire";
 import type { ResolvedCodexConfiguration } from "@rss-mdm-agent/ai-adapter-codex";
 import type { ResolvedClaudeConfiguration } from "@rss-mdm-agent/ai-adapter-claude";
 /** Private activation data travels only over the already-owned worker descriptor. */

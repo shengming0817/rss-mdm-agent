@@ -3,7 +3,7 @@ import {
   type ClaudeAdapterOptions,
   type ResolvedClaudeConfiguration,
 } from "../../../packages/ai-adapters/claude/dist/index.js";
-import type { ProviderAgentPort } from "../../../packages/ai-contract/dist/index.js";
+import type { ProviderAgentPort } from "../../../packages/ai-contract/dist/ports.js";
 declare const options: ClaudeAdapterOptions;
 const adapter: ProviderAgentPort = createClaudeAdapter(options);
 // @ts-expect-error A Claude resolver cannot claim another provider.

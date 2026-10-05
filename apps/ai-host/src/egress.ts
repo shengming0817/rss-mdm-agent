@@ -111,7 +111,7 @@ export interface EgressProxy {
   beginAttempt(id: string): void;
   takeFailure(
     id: string,
-  ): import("@rss-mdm-agent/ai-contract").Failure["code"] | undefined;
+  ): import("@rss-mdm-agent/ai-contract/wire").Failure["code"] | undefined;
   endAttempt(id: string): void;
   close(): Promise<void>;
 }
@@ -137,7 +137,7 @@ export async function startEgressProxy(
     pending: boolean;
     ambiguous: boolean;
     consumed: boolean;
-    failure?: import("@rss-mdm-agent/ai-contract").Failure["code"];
+    failure?: import("@rss-mdm-agent/ai-contract/wire").Failure["code"];
   };
   const attempts = new Map<string, Attempt>();
   const server = createServer(async (incoming, outgoing) => {
@@ -150,7 +150,7 @@ export async function startEgressProxy(
       owner.pending = true;
     }
     const outcome = (
-      failure?: import("@rss-mdm-agent/ai-contract").Failure["code"],
+      failure?: import("@rss-mdm-agent/ai-contract/wire").Failure["code"],
     ) => {
       if (owner) {
         owner.pending = false;

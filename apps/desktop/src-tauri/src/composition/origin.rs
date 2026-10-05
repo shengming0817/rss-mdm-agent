@@ -27,7 +27,8 @@ pub fn bind(
         return Err(ServiceError::Denied);
     };
     let expected = super::credentials::credential_caller(context);
-    if origin.user_generation != context.generation
+    if context.execution_binding.as_ref() != Some(&origin.context_binding)
+        || origin.user_generation != context.generation
         || origin.namespace.tenant_id != expected.tenant_id
         || origin.namespace.principal_id != expected.principal_id
         || origin.namespace.authority_id != expected.authority_id
@@ -35,6 +36,10 @@ pub fn bind(
         return Err(ServiceError::Denied);
     }
     Ok(ClientOrigin::Ai {
+        context: execution_contract::NativeContextRef {
+            id: Id::new(origin.context_binding.as_str()).map_err(|_| ServiceError::Denied)?,
+            generation: Id::new(context.generation.as_str()).map_err(|_| ServiceError::Denied)?,
+        },
         config: VersionedRef {
             id: Id::new(origin.config.id.as_str()).map_err(|_| ServiceError::Denied)?,
             revision: Id::new(origin.config.revision.as_str()).map_err(|_| ServiceError::Denied)?,

@@ -31,6 +31,12 @@
     "./read-views": {
       "types": "./dist/read-views.d.ts",
       "import": "./dist/read-views.js"
+    },
+    "./wire": {
+      "types": "./dist/wire.d.ts"
+    },
+    "./ports": {
+      "types": "./dist/ports.d.ts"
     }
   },
   "scripts": {

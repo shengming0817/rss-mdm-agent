@@ -101,7 +101,7 @@ fn main() {
             "execution_task_details",
             "save_connection",
             "test_users",
-            "select_guest",
+            "select_device",
             "account_logout",
             "account_status",
             "account_organizations",

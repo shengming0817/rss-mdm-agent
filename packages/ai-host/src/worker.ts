@@ -1,9 +1,9 @@
+import type { Binding } from "@rss-mdm-agent/ai-contract/wire";
 import type {
-  Binding,
   ProviderAgentPort,
   ProviderConfiguration,
   ToolEndpoint,
-} from "@rss-mdm-agent/ai-contract";
+} from "@rss-mdm-agent/ai-contract/ports";
 /** Implemented by the trusted provider composition module loaded only after activation. */
 export type WorkerFactory = (input: {
   configuration: ProviderConfiguration;

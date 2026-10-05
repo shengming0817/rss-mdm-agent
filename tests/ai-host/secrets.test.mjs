@@ -13,7 +13,7 @@ import { unwrap } from "../../packages/ai-contract/dist/testing/index.js";
 const caller = { tenantId: "t", principalId: "alice", authorityId: "a" };
 const budget = { timeoutMs: 1000, signal: new AbortController().signal };
 const row = (revision = 1) => ({
-  schemaVersion: 7,
+  schemaVersion: 8,
   kind: "connection",
   connectionId: "one",
   configRevision: revision,
@@ -31,7 +31,7 @@ const row = (revision = 1) => ({
 test("native ciphertext persists atomically, is retained without decryption and is cleared from every deleted revision", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "rss-ciphertext-")),
     path = join(root, "ai.sqlite");
-  let store = unwrap(openSqliteStore({ path, mode: "create" }));
+  let store = unwrap(await openSqliteStore({ path, mode: "create" }));
   t.after(async () => {
     await store.close(budget);
     await rm(root, { recursive: true, force: true });
@@ -134,7 +134,7 @@ test("native ciphertext persists atomically, is retained without decryption and 
     false,
   );
   unwrap(await store.close(budget));
-  store = unwrap(openSqliteStore({ path, mode: "open" }));
+  store = unwrap(await openSqliteStore({ path, mode: "open" }));
   assert.deepEqual(unwrap(await store.connection(caller, "one")), second);
   assert.deepEqual(
     unwrap(await store.encryptedSecret(caller, "one", 2)),

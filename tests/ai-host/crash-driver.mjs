@@ -1,3 +1,4 @@
+import { processWorkerAdapter } from "../../packages/ai-host/dist/process.js";
 import { fixturePersistence } from "./harness.mjs";
 import { workerRuntime } from "./worker-runtime.mjs";
 import { activeStage } from "../../packages/ai-contract/dist/index.js";
@@ -11,7 +12,10 @@ const unwrap = (result) => {
   return result.value;
 };
 const store = unwrap(
-  openSqliteStore({ path: join(directory, "host.sqlite"), mode: "create" }),
+  await openSqliteStore({
+    path: join(directory, "host.sqlite"),
+    mode: "create",
+  }),
 );
 if (mode === "registered") {
   const register = store.registerLaunch.bind(store);
@@ -38,7 +42,7 @@ const options = {
 const host = unwrap(
   await createHost({
     credentialPersistence: fixturePersistence(store),
-    workerRuntime,
+    workers: processWorkerAdapter(workerRuntime),
     delivery: null,
     store,
     launchFences: store,
@@ -61,7 +65,7 @@ unwrap(
   await host.submit(
     caller,
     {
-      schemaVersion: 7,
+      schemaVersion: 8,
       kind: "command",
       sessionId: session.namespace.sessionId,
       commandId: "uncertain",

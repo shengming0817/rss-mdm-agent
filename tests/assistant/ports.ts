@@ -8,7 +8,7 @@ import type { SelfServicePort } from "../../apps/desktop/src/self-service/types"
 import type {
   HostStatus,
   UserContext,
-} from "../../packages/ai-contract/dist/index.js";
+} from "../../packages/ai-contract/dist/wire.js";
 import type { FixtureEnvironment } from "../../apps/desktop/src/assembly";
 export function createFixturePorts() {
   const services: AssistantServices = {

@@ -26,7 +26,7 @@ async function setup(t) {
     await rm(root, { recursive: true, force: true });
   });
   const path = join(root, "ai.sqlite");
-  store = unwrap(openSqliteStore({ path, mode: "create" }));
+  store = unwrap(await openSqliteStore({ path, mode: "create" }));
   let session = fixtureSession();
   unwrap(await store.create(session));
   unwrap(await store.accept(acceptance(session)));
@@ -104,7 +104,7 @@ async function setup(t) {
     },
     restart: async () => {
       unwrap(await store.close(budget()));
-      store = unwrap(openSqliteStore({ path, mode: "open" }));
+      store = unwrap(await openSqliteStore({ path, mode: "open" }));
     },
   };
 }

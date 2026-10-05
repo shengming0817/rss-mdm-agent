@@ -18,21 +18,25 @@ import {
   fingerprint,
   isId,
   withinBudget,
-  type DispatchAttempt,
-  type Reconciliation,
-  type Binding,
-  type Budget,
-  type Command,
-  type CommandRecord,
-  type Outcome,
-  type Failure,
-  type ProviderAgentPort,
-  type ProviderConfiguration,
-  type ProviderObservation,
-  type ProviderSessionBinding,
-  type Result,
-  type Submission,
 } from "@rss-mdm-agent/ai-contract";
+import type {
+  DispatchAttempt,
+  Binding,
+  Command,
+  CommandRecord,
+  Outcome,
+  Failure,
+} from "@rss-mdm-agent/ai-contract/wire";
+import type {
+  Reconciliation,
+  Budget,
+  ProviderAgentPort,
+  ProviderConfiguration,
+  ProviderObservation,
+  ProviderSessionBinding,
+  Result,
+  Submission,
+} from "@rss-mdm-agent/ai-contract/ports";
 import {
   ADAPTER_VERSION,
   CLI_VERSION,
@@ -492,7 +496,7 @@ export class ClaudeAdapter implements ProviderAgentPort {
       decode(
         boundedJson(
           {
-            schemaVersion: 7,
+            schemaVersion: 8,
             kind: "event",
             namespace: this.session?.configuration.namespace,
             eventId: "control-attempt",
@@ -562,7 +566,7 @@ export class ClaudeAdapter implements ProviderAgentPort {
     try {
       c = this.checked(command);
       const attemptEvent = {
-        schemaVersion: 7,
+        schemaVersion: 8,
         kind: "event",
         namespace: this.session?.configuration.namespace,
         eventId: "validate-attempt",

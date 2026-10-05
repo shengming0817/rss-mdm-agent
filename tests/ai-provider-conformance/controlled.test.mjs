@@ -44,7 +44,7 @@ for (const provider of engines) {
       const f = await fixture(t, provider);
       f.config.session.profile = "controlled_tools";
       const catalogStore = unwrap(
-        openSqliteStore({ path: f.config.databasePath, mode: "open" }),
+        await openSqliteStore({ path: f.config.databasePath, mode: "open" }),
       );
       unwrap(
         await catalogStore.saveConnection(
@@ -252,7 +252,7 @@ for (const provider of engines) {
         peer.close();
         assert.equal(await stop(app), 0, stderr);
         const store = unwrap(
-          openSqliteStore({ path: f.config.databasePath, mode: "open" }),
+          await openSqliteStore({ path: f.config.databasePath, mode: "open" }),
         );
         try {
           const session = unwrap(await store.session(view.namespace));

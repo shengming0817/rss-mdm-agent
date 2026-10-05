@@ -127,6 +127,7 @@ impl ValidateApi for TaskSpec {
 }
 impl ValidateApi for SoftwareTaskSpec {
     fn validate(&self) -> Result<(), Error> {
+        self.authorization.validate(self.tenant_id)?;
         agent_api::validate(self).map_err(|_| Error::Protocol)?;
         let valid_id = |s: &str, max: usize| {
             !s.is_empty()
@@ -1428,12 +1429,12 @@ impl EnrollmentTaskSpecExt for EnrollmentTaskSpec {
     }
 }
 
-/// Client checks for generated ScriptAuthorization values.
-pub trait ScriptAuthorizationExt: Sized {
+/// Client checks for generated TaskAuthorization values.
+pub trait TaskAuthorizationExt: Sized {
     /// validate.
     fn validate(&self, tenant: Uuid) -> Result<(), Error>;
 }
-impl ScriptAuthorizationExt for ScriptAuthorization {
+impl TaskAuthorizationExt for TaskAuthorization {
     fn validate(&self, tenant: Uuid) -> Result<(), Error> {
         let valid = match self {
             Self::Policy {
@@ -1443,7 +1444,7 @@ impl ScriptAuthorizationExt for ScriptAuthorization {
             Self::RemoteOperation { operation_id } => !operation_id.is_nil(),
             Self::SelfService {
                 request_id,
-                actor,
+                subject,
                 source,
                 policy_id,
                 policy_revision,
@@ -1453,14 +1454,19 @@ impl ScriptAuthorizationExt for ScriptAuthorization {
                 confirmed,
             } => {
                 !request_id.is_nil()
-                    && actor.tenant_id == tenant
-                    && !actor.instance_id.is_nil()
-                    && !actor.principal_id.is_nil()
+                    && match subject {
+                        SelfServiceSubject::Device => true,
+                        SelfServiceSubject::User(user) => {
+                            user.tenant_id == tenant
+                                && !user.instance_id.is_nil()
+                                && !user.principal_id.is_nil()
+                        }
+                    }
                     && !policy_id.is_nil()
                     && *policy_revision > 0
                     && !policy_version.is_nil()
                     && matches!(risk_level, 1 | 2)
-                    && (*source != ScriptCaller::Ai
+                    && (*source != SelfServiceCaller::Ai
                         || (*allow_ai && (*risk_level == 1 || *confirmed)))
             }
         };
@@ -1631,12 +1637,12 @@ impl SoftwareTaskExportExt for SoftwareTaskExport {
     }
 }
 
-/// Client checks for generated EnrollmentTaskSpecEntry values.
-pub trait EnrollmentTaskSpecEntryExt: Sized {
+/// Client checks for generated EnrollmentEntry values.
+pub trait EnrollmentEntryExt: Sized {
     /// validate.
     fn validate(&self, platform: TaskPlatform) -> Result<(), Error>;
 }
-impl EnrollmentTaskSpecEntryExt for EnrollmentTaskSpecEntry {
+impl EnrollmentEntryExt for EnrollmentEntry {
     fn validate(&self, platform: TaskPlatform) -> Result<(), Error> {
         let value = match (self, platform) {
             (Self::Windows { server }, TaskPlatform::Windows) => server,

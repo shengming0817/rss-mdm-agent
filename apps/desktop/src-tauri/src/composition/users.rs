@@ -61,7 +61,7 @@ impl Users {
                 _ => return Err(storage()),
             }
         } else {
-            from_value(json!({"schemaVersion":7,"kind":"testUserPage","users":[]}))?
+            from_value(json!({"schemaVersion":8,"kind":"testUserPage","users":[]}))?
         };
         let mut this = Self {
             path,
@@ -96,7 +96,7 @@ impl Users {
     }
     fn context(user: TestUser) -> Result<UserContext> {
         from_value(
-            json!({"schemaVersion":7,"kind":"userContext","user":user,"generation":Uuid::new_v4().to_string()}),
+            json!({"schemaVersion":8,"kind":"userContext","user":user,"generation":Uuid::new_v4().to_string(),"identity":{"mode":"device","authorityId":"desktop-test","tenantId":"local-test","principalId":user.user_id}}),
         )
     }
     pub fn page(&self) -> TestUserPage {
@@ -111,21 +111,17 @@ impl Users {
     }
     pub fn require(&self, generation: &str) -> Result<UserContext> {
         let context = self.current()?;
-        if context
-            .identity
-            .as_ref()
-            .and_then(|i| match i {
-                ai_session_contract::AccountIdentity::Enterprise { expires_at_ms, .. } => {
-                    Some(*expires_at_ms)
-                }
-                ai_session_contract::AccountIdentity::Guest { .. } => None,
+        if match &context.identity {
+            ai_session_contract::AccountIdentity::UserDevice { expires_at_ms, .. } => {
+                Some(*expires_at_ms)
+            }
+            ai_session_contract::AccountIdentity::Device { .. } => None,
+        }
+        .is_some_and(|end| {
+            u64::try_from(end).map_or(true, |end| {
+                super::execution::now().map_or(true, |now| now >= end)
             })
-            .is_some_and(|end| {
-                u64::try_from(end).map_or(true, |end| {
-                    super::execution::now().map_or(true, |now| now >= end)
-                })
-            })
-        {
+        }) {
             return Err(error("session_expired", "企业会话已过期，请重新登录"));
         }
         if context.generation.as_str() != generation {
@@ -143,7 +139,7 @@ impl Users {
                     return Err(error("limit", "测试用户数量已达上限"));
                 }
                 let user: TestUser = from_value(
-                    json!({"schemaVersion":7,"kind":"testUser","userId":Uuid::new_v4().to_string(),"displayName":display,"nameKey":key}),
+                    json!({"schemaVersion":8,"kind":"testUser","userId":Uuid::new_v4().to_string(),"displayName":display,"nameKey":key}),
                 )?;
                 page.users.push(user.clone());
                 user
@@ -175,8 +171,8 @@ impl Users {
         self.active = Some(context.clone());
         Ok(context)
     }
-    pub fn guest(&self) -> Result<UserContext> {
-        let path = self.path.with_file_name("guest-id");
+    pub fn device(&self) -> Result<UserContext> {
+        let path = self.path.with_file_name("device-profile-id");
         let id = if path.exists() {
             let data = platform_private_storage::read(&path, 64).map_err(|_| storage())?;
             Uuid::parse_str(std::str::from_utf8(&data).map_err(|_| storage())?)
@@ -189,13 +185,20 @@ impl Users {
             file.sync_all().map_err(|_| storage())?;
             id
         };
-        from_value(json!({"schemaVersion":7,"kind":"userContext",
-            "user":{"schemaVersion":7,"kind":"testUser","userId":id.to_string(),"displayName":"访客","nameKey":"guest"},
+        from_value(json!({"schemaVersion":8,"kind":"userContext",
+            "user":{"schemaVersion":8,"kind":"testUser","userId":id.to_string(),"displayName":"本机设备","nameKey":"device"},
             "generation":Uuid::new_v4().to_string(),
-            "identity":{"mode":"guest","authorityId":"desktop-guest","tenantId":"local-guest","principalId":id.to_string()}}))
+            "identity":{"mode":"device","authorityId":"desktop-device","tenantId":"local-device","principalId":id.to_string()}}))
     }
-    pub fn select_guest(&mut self) -> Result<UserContext> {
-        let context = self.guest()?;
+    pub fn replace_current(&mut self, context: UserContext) -> Result<()> {
+        if self.current()?.generation != context.generation {
+            return Err(error("user_changed", "身份已切换"));
+        }
+        self.active = Some(context);
+        Ok(())
+    }
+    pub fn select_device(&mut self) -> Result<UserContext> {
+        let context = self.device()?;
         self.activate(context)
     }
     fn persist(&self, page: &TestUserPage) -> Result<()> {
@@ -227,12 +230,12 @@ mod tests {
         platform_private_storage::directory(&root).unwrap();
         let mut users = Users::open(&root).unwrap();
         let test = users.select("访客").unwrap();
-        let guest = users.select_guest().unwrap();
+        let guest = users.select_device().unwrap();
         assert_ne!(test.user.user_id, guest.user.user_id);
         assert!(users.require(test.generation.as_str()).is_err());
         users.clear().unwrap();
         assert!(users.require(guest.generation.as_str()).is_err());
-        let next = users.select_guest().unwrap();
+        let next = users.select_device().unwrap();
         assert_eq!(guest.user.user_id, next.user.user_id);
         assert_ne!(guest.generation, next.generation);
         assert_eq!(users.page().users.len(), 1);

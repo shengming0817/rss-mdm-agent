@@ -1,7 +1,7 @@
 //! Policy self-service is a projection of backend authority, driven by the sole device owner.
 use super::*;
 use execution_contract::{ExecutionRisk, Id, PreparedAction, RiskLevel, RiskSource};
-use execution_ipc::host::{ClientOrigin, EmployeeSession, Reply, Request};
+use execution_ipc::host::{ClientOrigin, NativeContextSession, Reply, Request};
 use std::collections::{BTreeMap, VecDeque};
 use uuid::Uuid;
 
@@ -50,25 +50,26 @@ impl execution_ipc::host::SessionFence for NativeFence {
                 .revoke(&subject)
                 .map_err(|_| execution_app::Error::Unavailable)
         }) {
-            Ok(()) => Reply::EmployeeBound,
+            Ok(()) => Reply::ContextRevoked,
             Err(_) => Reply::Rejected,
         }
     }
 }
 #[derive(Clone)]
-pub(super) struct Employee {
-    session: EmployeeSession,
+pub(super) struct NativeContext {
+    session: NativeContextSession,
     subject: String,
     epoch: u64,
-    lease: Arc<zeroize::Zeroizing<String>>,
+    lease: Option<Arc<zeroize::Zeroizing<String>>>,
+    context: execution_contract::NativeContextRef,
 }
-impl std::ops::Deref for Employee {
-    type Target = EmployeeSession;
+impl std::ops::Deref for NativeContext {
+    type Target = NativeContextSession;
     fn deref(&self) -> &Self::Target {
         &self.session
     }
 }
-pub(super) type Employees = BTreeMap<String, Employee>;
+pub(super) type Contexts = BTreeMap<String, NativeContext>;
 pub(super) type Commands = VecDeque<Command>;
 fn peer_key(command: &Command) -> Result<String, Error> {
     Ok(format!(
@@ -78,13 +79,18 @@ fn peer_key(command: &Command) -> Result<String, Error> {
         command.binding.as_ref().ok_or(Error::Denied)?.as_str()
     ))
 }
-fn source(origin: &ClientOrigin) -> wire::ScriptCaller {
+fn source(origin: &ClientOrigin) -> wire::SelfServiceCaller {
     match origin {
-        ClientOrigin::Desktop {} => wire::ScriptCaller::Human,
-        ClientOrigin::Ai { .. } => wire::ScriptCaller::Ai,
+        ClientOrigin::Desktop {} => wire::SelfServiceCaller::Human,
+        ClientOrigin::Ai { .. } => wire::SelfServiceCaller::Ai,
     }
 }
 fn trigger(core: &Core, command: &Command, origin: &ClientOrigin) -> Result<BackendTrigger, Error> {
+    core.require_origin_context(
+        &command.subject,
+        command.binding.as_ref().ok_or(Error::Denied)?,
+        origin,
+    )?;
     let os_session = execution_contract::OsSessionRef {
         device: core.host.binding.device.clone(),
         account: execution_contract::OsAccountRef {
@@ -99,11 +105,13 @@ fn trigger(core: &Core, command: &Command, origin: &ClientOrigin) -> Result<Back
             config,
             conversation,
             tool_call,
+            context,
         } => BackendTrigger::Ai {
             os_session,
             config: config.clone(),
             conversation: conversation.clone(),
             tool_call: tool_call.clone(),
+            context: context.clone(),
         },
     })
 }
@@ -118,9 +126,21 @@ fn parameters(
     directory: &wire::SelfServiceDirectoryItem,
     inputs: &BTreeMap<String, serde_json::Value>,
 ) -> Result<BTreeMap<String, serde_json::Value>, Error> {
+    let wire::SelfServiceTask::Script {
+        parameter_sources,
+        parameter_schema,
+        ..
+    } = &directory.task
+    else {
+        return if inputs.is_empty() {
+            Ok(BTreeMap::new())
+        } else {
+            Err(Error::Protocol)
+        };
+    };
     let mut resolved = BTreeMap::new();
     let mut expected = 0;
-    for (key, source) in &directory.parameter_sources {
+    for (key, source) in parameter_sources {
         let value = match source {
             wire::ScriptParameterSource::Fixed(value) => value.clone(),
             wire::ScriptParameterSource::Input => {
@@ -134,29 +154,54 @@ fn parameters(
         return Err(Error::Protocol);
     }
     let value = serde_json::to_value(&resolved).map_err(|_| Error::Protocol)?;
-    let validator =
-        jsonschema::validator_for(&directory.parameter_schema).map_err(|_| Error::Protocol)?;
+    let validator = jsonschema::validator_for(parameter_schema).map_err(|_| Error::Protocol)?;
     if !validator.is_valid(&value) {
         return Err(Error::Protocol);
     }
     Ok(resolved)
 }
 impl Core {
-    pub(super) fn employee(&self, command: &Command) -> Result<&Employee, Error> {
+    pub(super) fn require_origin_context(
+        &self,
+        subject: &str,
+        session: &Id,
+        origin: &ClientOrigin,
+    ) -> Result<(), Error> {
+        if let ClientOrigin::Ai { context, .. } = origin {
+            let bound = self
+                .contexts
+                .iter()
+                .find(|(key, value)| {
+                    key.starts_with(&format!("{subject}:"))
+                        && key.ends_with(&format!(":{}", session.as_str()))
+                        && &value.context == context
+                })
+                .map(|(_, value)| value)
+                .ok_or(Error::Identity)?;
+            if self.fences.current(subject)? != bound.epoch {
+                return Err(Error::Identity);
+            }
+            if self.host.clock.millis()? >= bound.expires_at_unix_ms {
+                return Err(Error::Expired);
+            }
+        }
+        Ok(())
+    }
+    pub(super) fn context(&self, command: &Command) -> Result<&NativeContext, Error> {
         if self.host.revoked.load(Ordering::Acquire) || self.stopping {
             return Err(Error::Denied);
         }
-        let employee = self
-            .employees
+        let bound = self
+            .contexts
             .get(&peer_key(command)?)
             .ok_or(Error::Identity)?;
-        if self.fences.current(&employee.subject)? != employee.epoch {
+        if self.fences.current(&bound.subject)? != bound.epoch {
             return Err(Error::Identity);
         }
-        if self.host.clock.millis()? >= employee.expires_at_unix_ms {
+        if self.host.clock.millis()? >= bound.expires_at_unix_ms {
             return Err(Error::Expired);
         }
-        Ok(employee)
+        Ok(bound)
     }
     pub(super) fn policy_readable(
         &self,
@@ -171,7 +216,36 @@ impl Core {
         else {
             return Ok(true);
         };
-        let PreparedAction::Policy { actor, .. } = &record.action else {
+        if let BackendTrigger::Ai {
+            os_session,
+            context,
+            config,
+            conversation,
+            tool_call,
+        } = &record.trigger
+        {
+            if os_session.account.subject.as_str() != subject
+                || Some(&os_session.session) != binding
+            {
+                return Ok(false);
+            }
+            if self
+                .require_origin_context(
+                    subject,
+                    &os_session.session,
+                    &ClientOrigin::Ai {
+                        context: context.clone(),
+                        config: config.clone(),
+                        conversation: conversation.clone(),
+                        tool_call: tool_call.clone(),
+                    },
+                )
+                .is_err()
+            {
+                return Ok(false);
+            }
+        }
+        let PreparedAction::Policy { user, context, .. } = &record.action else {
             return Ok(true);
         };
         if trigger_subject(&record.trigger) != Some(subject)
@@ -180,7 +254,7 @@ impl Core {
             return Ok(false);
         }
         let current = self
-            .employees
+            .contexts
             .iter()
             .find(|(key, _)| {
                 key.starts_with(&format!("{subject}:"))
@@ -191,7 +265,8 @@ impl Core {
             self.fences
                 .current(&current.subject)
                 .is_ok_and(|epoch| epoch == current.epoch)
-                && &current.actor == actor
+                && &current.user == user
+                && &current.context == context
                 && self
                     .host
                     .clock
@@ -203,25 +278,54 @@ impl Core {
         &self,
         record: &BackendRequest,
     ) -> Result<Option<(Arc<Fences>, String, u64)>, Error> {
-        if let PreparedAction::Policy {
-            actor, generation, ..
-        } = &record.action
+        if let BackendTrigger::Ai {
+            os_session,
+            context,
+            config,
+            conversation,
+            tool_call,
+        } = &record.trigger
         {
+            self.require_origin_context(
+                os_session.account.subject.as_str(),
+                &os_session.session,
+                &ClientOrigin::Ai {
+                    context: context.clone(),
+                    config: config.clone(),
+                    conversation: conversation.clone(),
+                    tool_call: tool_call.clone(),
+                },
+            )?;
+        }
+        if let PreparedAction::Policy { user, context, .. } = &record.action {
             self.current_policy_login(record)?;
             let subject = trigger_subject(&record.trigger).ok_or(Error::Identity)?;
-            let employee = self
-                .employees
+            let bound = self
+                .contexts
                 .values()
-                .find(|employee| {
-                    employee.subject == subject
-                        && &employee.actor == actor
-                        && &employee.generation == generation
+                .find(|bound| {
+                    bound.subject == subject && &bound.user == user && &bound.context == context
+                })
+                .ok_or(Error::Identity)?;
+            Ok(Some((self.fences.clone(), subject.to_owned(), bound.epoch)))
+        } else if let BackendTrigger::Ai {
+            os_session,
+            context,
+            ..
+        } = &record.trigger
+        {
+            let bound = self
+                .contexts
+                .values()
+                .find(|bound| {
+                    bound.subject == os_session.account.subject.as_str()
+                        && &bound.context == context
                 })
                 .ok_or(Error::Identity)?;
             Ok(Some((
                 self.fences.clone(),
-                subject.to_owned(),
-                employee.epoch,
+                bound.subject.clone(),
+                bound.epoch,
             )))
         } else {
             Ok(None)
@@ -231,10 +335,26 @@ impl Core {
         if self.host.revoked.load(Ordering::Acquire) || self.stopping {
             return Err(Error::Denied);
         }
-        if let PreparedAction::Policy {
-            actor, generation, ..
-        } = &record.action
+        if let BackendTrigger::Ai {
+            os_session,
+            context,
+            config,
+            conversation,
+            tool_call,
+        } = &record.trigger
         {
+            self.require_origin_context(
+                os_session.account.subject.as_str(),
+                &os_session.session,
+                &ClientOrigin::Ai {
+                    context: context.clone(),
+                    config: config.clone(),
+                    conversation: conversation.clone(),
+                    tool_call: tool_call.clone(),
+                },
+            )?;
+        }
+        if let PreparedAction::Policy { user, context, .. } = &record.action {
             let login = match &record.trigger {
                 BackendTrigger::Human { os_session } | BackendTrigger::Ai { os_session, .. } => {
                     os_session
@@ -242,7 +362,7 @@ impl Core {
                 _ => return Err(Error::Denied),
             };
             let current = self
-                .employees
+                .contexts
                 .iter()
                 .find(|(key, _)| {
                     key.starts_with(&format!("{}:", login.account.subject.as_str()))
@@ -251,8 +371,8 @@ impl Core {
                 .map(|(_, v)| v)
                 .ok_or(Error::Identity)?;
             if self.fences.current(&current.subject)? != current.epoch
-                || &current.actor != actor
-                || &current.generation != generation
+                || &current.user != user
+                || &current.context != context
             {
                 return Err(Error::Identity);
             }
@@ -265,12 +385,15 @@ impl Core {
         Ok(())
     }
     pub(super) fn enqueue_policy(&mut self, command: Command) {
-        if let Some(Request::EmployeeSession { value: None }) = command.request.as_operation() {
+        if let Some(Request::RevokeContext {}) = command.request.as_operation() {
             let _ = self.fences.revoke(&command.subject);
             if let Ok(key) = peer_key(&command) {
-                self.employees.remove(&key);
+                if let Some(context) = self.contexts.get_mut(&key) {
+                    context.lease = None;
+                    context.session.credential = None;
+                }
             }
-            let _ = command.reply.send(Reply::EmployeeBound);
+            let _ = command.reply.send(Reply::ContextRevoked);
             return;
         }
         if self.policy_commands.len() >= 32 {
@@ -302,7 +425,7 @@ impl<S: IdentityProvider> DeviceService<S> {
     }
     async fn policy_directory(
         &mut self,
-        employee: &EmployeeSession,
+        bound: &NativeContext,
         origin: &ClientOrigin,
         after: Option<Id>,
         commands: &mut tokio::sync::mpsc::Receiver<Command>,
@@ -312,8 +435,10 @@ impl<S: IdentityProvider> DeviceService<S> {
             after: after.map(|id| uuid(id.as_str())).transpose()?,
         };
         network(
-            self.client
-                .self_service_directory(&employee.credential, &query),
+            self.client.self_service_directory(
+                bound.credential.as_ref().map(|secret| secret.as_str()),
+                &query,
+            ),
             &mut self.core,
             commands,
         )
@@ -327,10 +452,24 @@ impl<S: IdentityProvider> DeviceService<S> {
         let Some(request) = command.request.as_operation() else {
             return Err(Error::Protocol);
         };
-        if let Request::EmployeeSession { value: Some(value) } = request {
-            if value.actor.tenant_id != self.client.configuration().tenant
-                || value.actor.instance_id.is_nil()
-                || value.actor.principal_id.is_nil()
+        if let Request::BindContext { value, expected } = request {
+            if value.user.is_some() != value.credential.is_some()
+                || value.user.is_some() != value.credential_origin.is_some()
+                || value.credential_origin.as_ref().is_some_and(|origin| {
+                    url::Url::parse(origin).ok().as_ref()
+                        != Some(&self.client.configuration().origin)
+                })
+                || value.user.as_ref().is_some_and(|user| {
+                    user.tenant_id != self.client.configuration().tenant
+                        || user.instance_id.is_nil()
+                        || user.principal_id.is_nil()
+                })
+                || value.credential.as_ref().is_some_and(|secret| {
+                    secret.len() != 64
+                        || !secret
+                            .bytes()
+                            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+                })
                 || value.expires_at_unix_ms <= self.core.host.clock.millis()?
             {
                 return Err(Error::Identity);
@@ -338,48 +477,80 @@ impl<S: IdentityProvider> DeviceService<S> {
             if self.core.host.revoked.load(Ordering::Acquire) || self.core.stopping {
                 return Err(Error::Denied);
             }
-            if self.core.employees.len() >= 32
-                && !self.core.employees.contains_key(&peer_key(command)?)
-            {
+            let key = peer_key(command)?;
+            if self.core.contexts.len() >= 32 && !self.core.contexts.contains_key(&key) {
                 return Err(Error::Capacity);
             }
-            if self.core.fences.current(&command.subject)? != command.fence_epoch {
+            let epoch = self.core.fences.current(&command.subject)?;
+            if epoch != command.fence_epoch {
                 return Err(Error::Identity);
             }
-            self.prune_credentials()?;
-            let key = peer_key(command)?;
-            let lease = self
-                .core
-                .employees
-                .get(&key)
-                .filter(|old| {
-                    old.generation == value.generation && old.credential == value.credential
-                })
-                .map(|old| old.lease.clone())
-                .unwrap_or_else(|| Arc::new(value.credential.clone()));
-            self.bridge.protect_employee(&lease)?;
-            self.core.employees.insert(
+            let old = self.core.contexts.get(&key);
+            let context = match (expected, old) {
+                (Some(id), Some(old))
+                    if &old.context.id == id
+                        && old.epoch == epoch
+                        && old.expires_at_unix_ms > self.core.host.clock.millis()?
+                        && old.generation == value.generation
+                        && old.credential_origin == value.credential_origin
+                        && old.user == value.user =>
+                {
+                    old.context.clone()
+                }
+                (None, Some(old)) if old.epoch != epoch && old.generation != value.generation => {
+                    execution_contract::NativeContextRef {
+                        id: plan::id(Uuid::new_v4().to_string())?,
+                        generation: value.generation.clone(),
+                    }
+                }
+                (None, None) => execution_contract::NativeContextRef {
+                    id: plan::id(Uuid::new_v4().to_string())?,
+                    generation: value.generation.clone(),
+                },
+                _ => return Err(Error::Identity),
+            };
+            let lease = value
+                .credential
+                .as_ref()
+                .map(|secret| Arc::new(secret.clone()));
+            if let Some(secret) = &lease {
+                self.bridge.protect_user_session(secret)?;
+            }
+            // The control lane may retire the peer while credential preparation is in progress.
+            let _fence = self.core.fences.admit(&command.subject, epoch)?;
+            self.core.contexts.insert(
                 key,
-                Employee {
+                NativeContext {
                     session: value.clone(),
                     subject: command.subject.clone(),
-                    epoch: command.fence_epoch,
+                    epoch,
                     lease,
+                    context: context.clone(),
                 },
             );
-            return Ok(Reply::EmployeeBound);
+            return Ok(Reply::ContextBound { value: context });
         }
         if let Request::ObserveSoftware { choice, origin } = request {
             return self.observe_software(command, choice, origin);
         }
-        let employee = self.core.employee(command)?.clone();
+        let bound = self.core.context(command)?.clone();
+        let expected = match request {
+            Request::PolicyDirectory { context, .. }
+            | Request::InvokePolicy { context, .. }
+            | Request::ConfirmPolicy { context, .. }
+            | Request::PolicyStatus { context, .. } => context,
+            _ => return Err(Error::Protocol),
+        };
+        if expected != &bound.context {
+            return Err(Error::Identity);
+        }
         let result = match request {
-            Request::PolicyDirectory { after, origin } => Reply::PolicyDirectory {
+            Request::PolicyDirectory { after, origin, .. } => Reply::PolicyDirectory {
                 value: self
-                    .policy_directory(&employee, origin, after.clone(), commands)
+                    .policy_directory(&bound, origin, after.clone(), commands)
                     .await?,
             },
-            Request::InvokePolicy { choice, origin } => {
+            Request::InvokePolicy { choice, origin, .. } => {
                 uuid(choice.request.as_str())?;
                 let caller = self.core.caller();
                 let bound_trigger = trigger(&self.core, command, origin)?;
@@ -391,29 +562,29 @@ impl<S: IdentityProvider> DeviceService<S> {
                 {
                     let PreparedAction::Policy {
                         choice: original,
-                        actor,
-                        generation,
+                        user,
+                        context,
                         ..
                     } = &previous.action
                     else {
                         return Err(Error::Conflict);
                     };
                     if original != choice
-                        || actor != &employee.actor
-                        || generation != &employee.generation
+                        || user != &bound.user
+                        || context != &bound.context
                         || previous.trigger != bound_trigger
                     {
                         return Err(Error::Conflict);
                     }
                     Reply::PolicyRequest {
-                        value: Box::new(self.send_policy(previous, &employee, commands).await?),
+                        value: Box::new(self.send_policy(previous, &bound, commands).await?),
                     }
                 } else {
                     let mut after = None;
                     let mut found = None;
                     for _ in 0..16 {
                         let page = self
-                            .policy_directory(&employee, origin, after.take(), commands)
+                            .policy_directory(&bound, origin, after.take(), commands)
                             .await?;
                         found = page
                             .items
@@ -431,17 +602,24 @@ impl<S: IdentityProvider> DeviceService<S> {
                     if directory.policy_revision != choice.policy_revision
                         || directory.policy_version.to_string() != choice.policy_version.as_str()
                         || !directory.self_service.published
-                        || (source(origin) == wire::ScriptCaller::Ai
+                        || (source(origin) == wire::SelfServiceCaller::Ai
                             && !directory.self_service.allow_ai)
                     {
                         return Err(Error::Denied);
                     }
                     parameters(&directory, &choice.parameters)?;
                     let now = self.core.host.clock.millis()?;
-                    let until = now.saturating_add(60_000).min(employee.expires_at_unix_ms);
-                    let risk = if source(origin) == wire::ScriptCaller::Ai {
+                    let until = now.saturating_add(60_000).min(bound.expires_at_unix_ms);
+                    let risk = if source(origin) == wire::SelfServiceCaller::Ai {
                         Some(ExecutionRisk {
-                            level: match directory.self_service.risk_level {
+                            level: match if matches!(
+                                directory.task,
+                                wire::SelfServiceTask::Software { .. }
+                            ) {
+                                2
+                            } else {
+                                directory.self_service.risk_level
+                            } {
                                 1 => RiskLevel::One,
                                 2 => RiskLevel::Two,
                                 _ => return Err(Error::Denied),
@@ -463,8 +641,8 @@ impl<S: IdentityProvider> DeviceService<S> {
                             directory: Box::new(directory),
                             run_id: None,
                             offer: None,
-                            actor: employee.actor.clone(),
-                            generation: employee.generation.clone(),
+                            user: bound.user.clone(),
+                            context: bound.context.clone(),
                             expires_at_unix_ms: until,
                         },
                         trigger: bound_trigger,
@@ -478,9 +656,8 @@ impl<S: IdentityProvider> DeviceService<S> {
                         },
                         failure: None,
                     };
-                    let current = self.core.employee(command)?;
-                    if current.actor != employee.actor || current.generation != employee.generation
-                    {
+                    let current = self.core.context(command)?;
+                    if current.user != bound.user || current.context != bound.context {
                         return Err(Error::Identity);
                     }
                     self.core
@@ -488,11 +665,11 @@ impl<S: IdentityProvider> DeviceService<S> {
                         .record_backend_request(&caller, None, &record)
                         .map_err(map_app_error)?;
                     Reply::PolicyRequest {
-                        value: Box::new(self.send_policy(record, &employee, commands).await?),
+                        value: Box::new(self.send_policy(record, &bound, commands).await?),
                     }
                 }
             }
-            Request::ConfirmPolicy { request } => {
+            Request::ConfirmPolicy { request, .. } => {
                 let previous = self
                     .core
                     .app
@@ -514,7 +691,7 @@ impl<S: IdentityProvider> DeviceService<S> {
                 }
                 if previous.state != BackendRequestState::AwaitingConfirmation {
                     return Ok(Reply::PolicyRequest {
-                        value: Box::new(self.send_policy(previous, &employee, commands).await?),
+                        value: Box::new(self.send_policy(previous, &bound, commands).await?),
                     });
                 }
                 let BackendTrigger::Ai { os_session, .. } = &previous.trigger else {
@@ -544,10 +721,10 @@ impl<S: IdentityProvider> DeviceService<S> {
                     .record_backend_request(&self.core.caller(), Some(&previous), &next)
                     .map_err(map_app_error)?;
                 Reply::PolicyRequest {
-                    value: Box::new(self.send_policy(next, &employee, commands).await?),
+                    value: Box::new(self.send_policy(next, &bound, commands).await?),
                 }
             }
-            Request::PolicyStatus { request } => {
+            Request::PolicyStatus { request, .. } => {
                 let Some(previous) = self
                     .core
                     .app
@@ -556,13 +733,11 @@ impl<S: IdentityProvider> DeviceService<S> {
                 else {
                     return Ok(Reply::PolicyAbsent);
                 };
-                let PreparedAction::Policy {
-                    actor, generation, ..
-                } = &previous.action
-                else {
+                let PreparedAction::Policy { user, context, .. } = &previous.action else {
                     return Err(Error::Denied);
                 };
-                if actor != &employee.actor
+                if user != &bound.user
+                    || context != &bound.context
                     || previous.trigger_os_session() != command.binding.as_ref()
                 {
                     return Err(Error::Denied);
@@ -572,11 +747,7 @@ impl<S: IdentityProvider> DeviceService<S> {
                     BackendRequestState::AwaitingConfirmation | BackendRequestState::Ready
                 ) {
                     Reply::PolicyRequest {
-                        value: Box::new(if generation == &employee.generation {
-                            self.send_policy(previous, &employee, commands).await?
-                        } else {
-                            previous
-                        }),
+                        value: Box::new(self.send_policy(previous, &bound, commands).await?),
                     }
                 } else if previous.state == BackendRequestState::Cancelled
                     || (previous.state == BackendRequestState::Failed
@@ -587,8 +758,10 @@ impl<S: IdentityProvider> DeviceService<S> {
                     }
                 } else {
                     match network(
-                        self.client
-                            .self_service_status(&employee.credential, uuid(request.as_str())?),
+                        self.client.self_service_status(
+                            bound.credential.as_ref().map(|secret| secret.as_str()),
+                            uuid(request.as_str())?,
+                        ),
                         &mut self.core,
                         commands,
                     )
@@ -597,13 +770,8 @@ impl<S: IdentityProvider> DeviceService<S> {
                         Ok(value) => Reply::PolicyStatus {
                             value: self.bridge.protect_status(value)?,
                         },
-                        Err(Error::NotFound) if generation != &employee.generation => {
-                            Reply::PolicyRequest {
-                                value: Box::new(previous),
-                            }
-                        }
                         Err(Error::NotFound) => Reply::PolicyRequest {
-                            value: Box::new(self.send_policy(previous, &employee, commands).await?),
+                            value: Box::new(self.send_policy(previous, &bound, commands).await?),
                         },
                         Err(error) => return Err(error),
                     }
@@ -611,8 +779,8 @@ impl<S: IdentityProvider> DeviceService<S> {
             }
             _ => return Err(Error::Protocol),
         };
-        let current = self.core.employee(command)?;
-        if current.actor != employee.actor || current.generation != employee.generation {
+        let current = self.core.context(command)?;
+        if current.user != bound.user || current.context != bound.context {
             return Err(Error::Identity);
         }
         Ok(result)
@@ -629,7 +797,7 @@ impl<S: IdentityProvider> DeviceService<S> {
     async fn send_policy(
         &mut self,
         record: BackendRequest,
-        employee: &EmployeeSession,
+        bound: &NativeContext,
         commands: &mut tokio::sync::mpsc::Receiver<Command>,
     ) -> Result<BackendRequest, Error> {
         if !matches!(
@@ -659,8 +827,8 @@ impl<S: IdentityProvider> DeviceService<S> {
             policy_revision: choice.policy_revision,
             policy_version: uuid(choice.policy_version.as_str())?,
             source: match record.trigger {
-                BackendTrigger::Ai { .. } => wire::ScriptCaller::Ai,
-                _ => wire::ScriptCaller::Human,
+                BackendTrigger::Ai { .. } => wire::SelfServiceCaller::Ai,
+                _ => wire::SelfServiceCaller::Human,
             },
             confirmed: record.confirmation.is_some(),
             parameters: choice.parameters.clone(),
@@ -677,8 +845,10 @@ impl<S: IdentityProvider> DeviceService<S> {
             record
         };
         let response = network(
-            self.client
-                .invoke_self_service(&employee.credential, &input),
+            self.client.invoke_self_service(
+                bound.credential.as_ref().map(|secret| secret.as_str()),
+                &input,
+            ),
             &mut self.core,
             commands,
         )
@@ -717,12 +887,14 @@ impl<S: IdentityProvider> DeviceService<S> {
         }
     }
     pub(super) fn bind_policy_offer(&mut self, offer: &Offer) -> Result<Selection, Error> {
-        let wire::TaskPayload::TaskSpec(spec) = offer.payload() else {
-            return Err(Error::Denied);
+        let authorization = match offer.payload() {
+            wire::TaskPayload::TaskSpec(spec) => &spec.authorization,
+            wire::TaskPayload::SoftwareTaskSpec(spec) => &spec.authorization,
+            _ => return Err(Error::Denied),
         };
-        let wire::ScriptAuthorization::SelfService {
+        let wire::TaskAuthorization::SelfService {
             request_id,
-            actor,
+            subject,
             source,
             policy_id,
             policy_revision,
@@ -730,7 +902,7 @@ impl<S: IdentityProvider> DeviceService<S> {
             allow_ai,
             risk_level,
             confirmed,
-        } = &spec.authorization
+        } = authorization
         else {
             return Err(Error::Denied);
         };
@@ -745,7 +917,8 @@ impl<S: IdentityProvider> DeviceService<S> {
         let PreparedAction::Policy {
             choice,
             directory,
-            actor: expected,
+            user: expected,
+            context,
             run_id,
             ..
         } = &previous.action
@@ -753,12 +926,15 @@ impl<S: IdentityProvider> DeviceService<S> {
             return Err(Error::Denied);
         };
         let expected_source = match previous.trigger {
-            BackendTrigger::Ai { .. } => wire::ScriptCaller::Ai,
-            _ => wire::ScriptCaller::Human,
+            BackendTrigger::Ai { .. } => wire::SelfServiceCaller::Ai,
+            _ => wire::SelfServiceCaller::Human,
         };
         if previous.state != BackendRequestState::Submitting
             || request_id.to_string() != choice.request.as_str()
-            || actor != expected
+            || match subject {
+                wire::SelfServiceSubject::Device => false,
+                wire::SelfServiceSubject::User(user) => Some(user) != expected.as_ref(),
+            }
             || *source != expected_source
             || policy_id.to_string() != choice.policy_id.as_str()
             || *policy_revision != choice.policy_revision
@@ -766,20 +942,76 @@ impl<S: IdentityProvider> DeviceService<S> {
             || *allow_ai != directory.self_service.allow_ai
             || *risk_level != directory.self_service.risk_level
             || *confirmed != previous.confirmation.is_some()
-            || spec.resource.id != directory.resource.id
-            || spec.resource.version != directory.resource.version
-            || spec.resource.variant != directory.resource.variant
-            || spec.parameters != parameters(directory, &choice.parameters)?
-            || run_id
-                .as_ref()
-                .is_some_and(|id| id.as_str() != spec.task_id.to_string())
         {
             return Err(Error::Untrusted);
         }
-        let lease = self.core.employees.values().find(|employee| {
-            employee.actor == *expected && matches!(&previous.action, PreparedAction::Policy { generation, .. } if generation == &employee.generation)
-        }).ok_or(Error::Identity)?.lease.clone();
-        self.core.credential_leases.insert(request.clone(), lease);
+        let task_id = match (&directory.task, offer.payload()) {
+            (
+                wire::SelfServiceTask::Script {
+                    resource, run_as, ..
+                },
+                wire::TaskPayload::TaskSpec(spec),
+            ) => {
+                if &spec.resource != resource
+                    || &spec.run_as != run_as
+                    || spec.parameters != parameters(directory, &choice.parameters)?
+                {
+                    return Err(Error::Untrusted);
+                }
+                spec.task_id
+            }
+            (
+                wire::SelfServiceTask::Software {
+                    resource,
+                    run_as,
+                    target,
+                },
+                wire::TaskPayload::SoftwareTaskSpec(spec),
+            ) => {
+                let step = spec.steps.last().ok_or(Error::Untrusted)?;
+                if step.action.version != resource.version
+                    || &step.target != target
+                    || backend::commands::software_commands(&step.action)?
+                        .install
+                        .run_as
+                        != *run_as
+                    || spec.intent != wire::SoftwareTaskIntent::Install
+                {
+                    return Err(Error::Untrusted);
+                }
+                // Full signed policy revision binds the closed software definition; direct
+                // exports carry package coordinates rather than a script resource variant.
+                match &step.export {
+                    wire::SoftwareTaskExport::Winget { binding, .. }
+                    | wire::SoftwareTaskExport::Brew { binding, .. }
+                        if binding.resource != resource.id
+                            || binding.resource_version != resource.version =>
+                    {
+                        return Err(Error::Untrusted)
+                    }
+                    _ => (),
+                }
+                spec.task_id
+            }
+            _ => return Err(Error::Untrusted),
+        };
+        if run_id
+            .as_ref()
+            .is_some_and(|id| id.as_str() != task_id.to_string())
+        {
+            return Err(Error::Untrusted);
+        }
+        let current = self
+            .core
+            .contexts
+            .values()
+            .find(|bound| &bound.user == expected && &bound.context == context)
+            .ok_or(Error::Identity)?;
+        if let Some(lease) = &current.lease {
+            self.core
+                .credential_leases
+                .insert(request.clone(), lease.clone());
+        }
         let mut next = previous.clone();
         next.revision += 1;
         if let PreparedAction::Policy {
@@ -793,7 +1025,7 @@ impl<S: IdentityProvider> DeviceService<S> {
                 return Err(Error::Conflict);
             }
             *bound = Some(current);
-            *run_id = Some(plan::id(spec.task_id.to_string())?);
+            *run_id = Some(plan::id(task_id.to_string())?);
         }
         self.core
             .app
@@ -949,12 +1181,16 @@ impl<S: IdentityProvider> DeviceService<S> {
     pub(super) fn prune_credentials(&mut self) -> Result<(), Error> {
         let now = self.core.host.clock.millis()?;
         let fences = &self.core.fences;
-        self.core.employees.retain(|_, employee| {
-            now < employee.expires_at_unix_ms
-                && fences
-                    .current(&employee.subject)
-                    .is_ok_and(|epoch| epoch == employee.epoch)
-        });
+        for bound in self.core.contexts.values_mut() {
+            if now >= bound.expires_at_unix_ms
+                || !fences
+                    .current(&bound.subject)
+                    .is_ok_and(|epoch| epoch == bound.epoch)
+            {
+                bound.lease = None;
+                bound.session.credential = None;
+            }
+        }
         // Communication retains every unsettled task, including ambiguous native outcomes.
         // Drop a retired lease only after that owner has drained its result and task state.
         let pending = self

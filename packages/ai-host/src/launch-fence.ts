@@ -1,11 +1,7 @@
 import type { Scope } from "./process-contract.js";
-import {
-  ContractError,
-  isId,
-  type Id,
-  type Namespace,
-  type Result,
-} from "@rss-mdm-agent/ai-contract";
+import { ContractError, isId } from "@rss-mdm-agent/ai-contract";
+import type { Id, Namespace } from "@rss-mdm-agent/ai-contract/wire";
+import type { Result } from "@rss-mdm-agent/ai-contract/ports";
 import { namespaceKey } from "@rss-mdm-agent/ai-contract/transitions";
 
 /** Host process-lifecycle persistence; independent of portable session storage. */

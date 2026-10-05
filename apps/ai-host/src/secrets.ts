@@ -1,9 +1,8 @@
+import type { Caller, SessionStore } from "@rss-mdm-agent/ai-contract/ports";
 import type {
-  Caller,
   Connection,
   ConnectionDraft,
-  SessionStore,
-} from "@rss-mdm-agent/ai-contract";
+} from "@rss-mdm-agent/ai-contract/wire";
 import type { CredentialPersistence } from "@rss-mdm-agent/ai-host";
 import { fail } from "@rss-mdm-agent/ai-contract/transitions";
 import type { ConnectionSecretStore } from "@rss-mdm-agent/ai-store-sqlite";

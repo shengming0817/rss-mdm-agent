@@ -114,7 +114,7 @@ try {
           nativeDirectory: join(root, "native"),
           workingDirectory: root,
         };
-        const opened = openSqliteStore({
+        const opened = await openSqliteStore({
           path: local.databasePath,
           mode: "create",
         });

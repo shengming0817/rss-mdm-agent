@@ -1,6 +1,4 @@
-/** V7 product reliability contracts. Data never grants execution authority. */
-export type * from "./wire.js";
-export type * from "./ports.js";
+/** V8 product reliability contracts. Data never grants execution authority. */
 export {
   decode,
   isId,
@@ -17,12 +15,6 @@ export {
   parseNegotiation,
   selectNegotiation,
 } from "./protocol.js";
-
-export type {
-  AdmissionResult,
-  ForkAdmissionResult,
-  VerifiedProviderFact,
-} from "./session.js";
 
 export {
   interactionCatalog,

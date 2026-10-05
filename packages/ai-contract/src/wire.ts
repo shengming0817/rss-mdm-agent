@@ -131,7 +131,7 @@ export type CommandRecord =
       /**
        * Exact product wire version; Earlier versions are rejected without migration or fallback.
        */
-      schemaVersion: 7;
+      schemaVersion: 8;
       /**
        * Closed product record discriminator.
        */
@@ -154,7 +154,7 @@ export type CommandRecord =
       /**
        * Exact product wire version; Earlier versions are rejected without migration or fallback.
        */
-      schemaVersion: 7;
+      schemaVersion: 8;
       /**
        * Closed product record discriminator.
        */
@@ -178,7 +178,7 @@ export type CommandRecord =
       /**
        * Exact product wire version; Earlier versions are rejected without migration or fallback.
        */
-      schemaVersion: 7;
+      schemaVersion: 8;
       /**
        * Closed product record discriminator.
        */
@@ -202,7 +202,7 @@ export type CommandRecord =
       /**
        * Exact product wire version; Earlier versions are rejected without migration or fallback.
        */
-      schemaVersion: 7;
+      schemaVersion: 8;
       /**
        * Closed product record discriminator.
        */
@@ -227,7 +227,7 @@ export type CommandRecord =
       /**
        * Exact product wire version; Earlier versions are rejected without migration or fallback.
        */
-      schemaVersion: 7;
+      schemaVersion: 8;
       /**
        * Closed product record discriminator.
        */
@@ -251,7 +251,7 @@ export type CommandRecord =
       /**
        * Exact product wire version; Earlier versions are rejected without migration or fallback.
        */
-      schemaVersion: 7;
+      schemaVersion: 8;
       /**
        * Closed product record discriminator.
        */
@@ -275,7 +275,7 @@ export type CommandRecord =
       /**
        * Exact product wire version; Earlier versions are rejected without migration or fallback.
        */
-      schemaVersion: 7;
+      schemaVersion: 8;
       /**
        * Closed product record discriminator.
        */
@@ -299,7 +299,7 @@ export type CommandRecord =
       /**
        * Exact product wire version; Earlier versions are rejected without migration or fallback.
        */
-      schemaVersion: 7;
+      schemaVersion: 8;
       /**
        * Closed product record discriminator.
        */
@@ -324,7 +324,7 @@ export type CommandRecord =
       /**
        * Exact product wire version; Earlier versions are rejected without migration or fallback.
        */
-      schemaVersion: 7;
+      schemaVersion: 8;
       /**
        * Closed product record discriminator.
        */
@@ -429,7 +429,7 @@ export type Event =
       /**
        * Exact product wire version; Earlier versions are rejected without migration or fallback.
        */
-      schemaVersion: 7;
+      schemaVersion: 8;
       /**
        * Closed product record discriminator.
        */
@@ -466,7 +466,7 @@ export type Event =
       /**
        * Exact product wire version; Earlier versions are rejected without migration or fallback.
        */
-      schemaVersion: 7;
+      schemaVersion: 8;
       /**
        * Closed product record discriminator.
        */
@@ -498,7 +498,7 @@ export type Event =
       /**
        * Exact product wire version; Earlier versions are rejected without migration or fallback.
        */
-      schemaVersion: 7;
+      schemaVersion: 8;
       /**
        * Closed product record discriminator.
        */
@@ -533,7 +533,7 @@ export type Event =
       /**
        * Exact product wire version; Earlier versions are rejected without migration or fallback.
        */
-      schemaVersion: 7;
+      schemaVersion: 8;
       /**
        * Closed product record discriminator.
        */
@@ -566,7 +566,7 @@ export type Event =
       /**
        * Exact product wire version; Earlier versions are rejected without migration or fallback.
        */
-      schemaVersion: 7;
+      schemaVersion: 8;
       /**
        * Closed product record discriminator.
        */
@@ -601,7 +601,7 @@ export type Event =
       /**
        * Exact product wire version; Earlier versions are rejected without migration or fallback.
        */
-      schemaVersion: 7;
+      schemaVersion: 8;
       /**
        * Closed product record discriminator.
        */
@@ -642,7 +642,7 @@ export type Event =
       /**
        * Exact product wire version; Earlier versions are rejected without migration or fallback.
        */
-      schemaVersion: 7;
+      schemaVersion: 8;
       /**
        * Closed product record discriminator.
        */
@@ -683,7 +683,7 @@ export type Event =
       /**
        * Exact product wire version; Earlier versions are rejected without migration or fallback.
        */
-      schemaVersion: 7;
+      schemaVersion: 8;
       /**
        * Closed product record discriminator.
        */
@@ -726,7 +726,7 @@ export type Event =
       /**
        * Exact product wire version; Earlier versions are rejected without migration or fallback.
        */
-      schemaVersion: 7;
+      schemaVersion: 8;
       /**
        * Closed product record discriminator.
        */
@@ -765,7 +765,7 @@ export type Event =
       /**
        * Exact product wire version; Earlier versions are rejected without migration or fallback.
        */
-      schemaVersion: 7;
+      schemaVersion: 8;
       /**
        * Closed product record discriminator.
        */
@@ -802,7 +802,7 @@ export type Event =
       /**
        * Exact product wire version; Earlier versions are rejected without migration or fallback.
        */
-      schemaVersion: 7;
+      schemaVersion: 8;
       /**
        * Closed product record discriminator.
        */
@@ -834,7 +834,7 @@ export type Event =
       /**
        * Exact product wire version; Earlier versions are rejected without migration or fallback.
        */
-      schemaVersion: 7;
+      schemaVersion: 8;
       /**
        * Closed product record discriminator.
        */
@@ -866,7 +866,7 @@ export type Event =
       /**
        * Exact product wire version; Earlier versions are rejected without migration or fallback.
        */
-      schemaVersion: 7;
+      schemaVersion: 8;
       /**
        * Closed product record discriminator.
        */
@@ -899,7 +899,7 @@ export type Event =
       /**
        * Exact product wire version; Earlier versions are rejected without migration or fallback.
        */
-      schemaVersion: 7;
+      schemaVersion: 8;
       /**
        * Closed product record discriminator.
        */
@@ -942,7 +942,7 @@ export type Event =
       /**
        * Exact product wire version; Earlier versions are rejected without migration or fallback.
        */
-      schemaVersion: 7;
+      schemaVersion: 8;
       /**
        * Closed product record discriminator.
        */
@@ -975,7 +975,7 @@ export type Event =
       /**
        * Exact product wire version; Earlier versions are rejected without migration or fallback.
        */
-      schemaVersion: 7;
+      schemaVersion: 8;
       /**
        * Closed product record discriminator.
        */
@@ -1006,7 +1006,7 @@ export type Event =
       /**
        * Exact product wire version; Earlier versions are rejected without migration or fallback.
        */
-      schemaVersion: 7;
+      schemaVersion: 8;
       /**
        * Closed product record discriminator.
        */
@@ -1035,7 +1035,7 @@ export type Event =
       /**
        * Exact product wire version; Earlier versions are rejected without migration or fallback.
        */
-      schemaVersion: 7;
+      schemaVersion: 8;
       /**
        * Closed product record discriminator.
        */
@@ -1068,7 +1068,7 @@ export type Event =
       /**
        * Exact product wire version; Earlier versions are rejected without migration or fallback.
        */
-      schemaVersion: 7;
+      schemaVersion: 8;
       /**
        * Closed product record discriminator.
        */
@@ -1100,7 +1100,7 @@ export type Event =
       /**
        * Exact product wire version; Earlier versions are rejected without migration or fallback.
        */
-      schemaVersion: 7;
+      schemaVersion: 8;
       /**
        * Closed product record discriminator.
        */
@@ -1129,7 +1129,7 @@ export type Event =
       /**
        * Exact product wire version; Earlier versions are rejected without migration or fallback.
        */
-      schemaVersion: 7;
+      schemaVersion: 8;
       /**
        * Closed product record discriminator.
        */
@@ -1171,7 +1171,7 @@ export type Event =
       /**
        * Exact product wire version; Earlier versions are rejected without migration or fallback.
        */
-      schemaVersion: 7;
+      schemaVersion: 8;
       /**
        * Closed product record discriminator.
        */
@@ -1207,7 +1207,7 @@ export type Event =
       /**
        * Exact product wire version; Earlier versions are rejected without migration or fallback.
        */
-      schemaVersion: 7;
+      schemaVersion: 8;
       /**
        * Closed product record discriminator.
        */
@@ -1327,7 +1327,7 @@ export type ConnectionTest =
  */
 export type AccountIdentity =
   | {
-      mode: "guest";
+      mode: "device";
       authorityId: Id;
       tenantId: Id;
       principalId: Id;
@@ -1335,7 +1335,7 @@ export type AccountIdentity =
       expiresAtMs?: never;
     }
   | {
-      mode: "enterprise";
+      mode: "user_device";
       authorityId: Id;
       tenantId: Id;
       principalId: Id;
@@ -1363,7 +1363,8 @@ export type NativeCall =
   | NativeCallHealth
   | NativeCallOpenCredential
   | NativeCallMatchCredential
-  | NativeCallCredentialContext;
+  | NativeCallCredentialContext
+  | NativeCallRefresh;
 /**
  * @minItems 29
  * @maxItems 16412
@@ -1421,7 +1422,7 @@ export interface Command {
   /**
    * Exact product wire version; Earlier versions are rejected without migration or fallback.
    */
-  schemaVersion: 7;
+  schemaVersion: 8;
   /**
    * Closed product record discriminator.
    */
@@ -1439,7 +1440,7 @@ export interface Command {
  * Explicit plain-text transcript preview bound to a target connection revision and frozen history watermark.
  */
 export interface HistoryPreview {
-  schemaVersion: 7;
+  schemaVersion: 8;
   kind: "historyPreview";
   sessionId: Id;
   connectionId: Id;
@@ -1472,7 +1473,7 @@ export interface Receipt {
   /**
    * Exact product wire version; Earlier versions are rejected without migration or fallback.
    */
-  schemaVersion: 7;
+  schemaVersion: 8;
   /**
    * Closed product record discriminator.
    */
@@ -1556,7 +1557,7 @@ export interface SurfaceState {
   /**
    * Exact product wire version; Earlier versions are rejected without migration or fallback.
    */
-  schemaVersion: 7;
+  schemaVersion: 8;
   /**
    * Closed product record discriminator.
    */
@@ -1607,7 +1608,7 @@ export interface Session {
   /**
    * Exact product wire version; Earlier versions are rejected without migration or fallback.
    */
-  schemaVersion: 7;
+  schemaVersion: 8;
   /**
    * Closed product record discriminator.
    */
@@ -1717,7 +1718,7 @@ export interface Interaction {
   /**
    * Exact product wire version; Earlier versions are rejected without migration or fallback.
    */
-  schemaVersion: 7;
+  schemaVersion: 8;
   /**
    * Closed product record discriminator.
    */
@@ -1758,7 +1759,7 @@ export interface Delivery {
   /**
    * Exact product wire version; Earlier versions are rejected without migration or fallback.
    */
-  schemaVersion: 7;
+  schemaVersion: 8;
   /**
    * Closed product record discriminator.
    */
@@ -1799,7 +1800,7 @@ export interface SurfaceAction {
   /**
    * Exact product wire version; Earlier versions are rejected without migration or fallback.
    */
-  schemaVersion: 7;
+  schemaVersion: 8;
   /**
    * Closed product record discriminator.
    */
@@ -1823,7 +1824,7 @@ export interface SnapshotPage {
   /**
    * Exact product contract version; no legacy readers.
    */
-  schemaVersion: 7;
+  schemaVersion: 8;
   /**
    * Closed record discriminator.
    */
@@ -1859,7 +1860,7 @@ export interface SessionPage {
   /**
    * Exact product contract version; no legacy readers.
    */
-  schemaVersion: 7;
+  schemaVersion: 8;
   /**
    * Closed record discriminator.
    */
@@ -1881,7 +1882,7 @@ export interface SnapshotRequest {
   /**
    * Exact product contract version; no legacy readers.
    */
-  schemaVersion: 7;
+  schemaVersion: 8;
   /**
    * Closed record discriminator.
    */
@@ -1903,7 +1904,7 @@ export interface ListRequest {
   /**
    * Exact product contract version; no legacy readers.
    */
-  schemaVersion: 7;
+  schemaVersion: 8;
   /**
    * Closed record discriminator.
    */
@@ -1915,7 +1916,7 @@ export interface AttachRequest {
   /**
    * Exact product contract version; no legacy readers.
    */
-  schemaVersion: 7;
+  schemaVersion: 8;
   /**
    * Closed record discriminator.
    */
@@ -1931,7 +1932,7 @@ export interface DetachRequest {
   /**
    * Exact product contract version; no legacy readers.
    */
-  schemaVersion: 7;
+  schemaVersion: 8;
   /**
    * Closed record discriminator.
    */
@@ -1945,7 +1946,7 @@ export interface ResumeRequest {
   /**
    * Exact product contract version; no legacy readers.
    */
-  schemaVersion: 7;
+  schemaVersion: 8;
   /**
    * Closed record discriminator.
    */
@@ -1957,7 +1958,7 @@ export interface ActionRequest {
   /**
    * Exact product contract version; no legacy readers.
    */
-  schemaVersion: 7;
+  schemaVersion: 8;
   /**
    * Closed record discriminator.
    */
@@ -1977,7 +1978,7 @@ export interface AccessUpdate {
   /**
    * Exact product contract version; no legacy readers.
    */
-  schemaVersion: 7;
+  schemaVersion: 8;
   /**
    * Closed record discriminator.
    */
@@ -1993,7 +1994,7 @@ export interface AttachReceipt {
   /**
    * Exact product contract version; no legacy readers.
    */
-  schemaVersion: 7;
+  schemaVersion: 8;
   /**
    * Closed record discriminator.
    */
@@ -2009,7 +2010,7 @@ export interface AttachReceipt {
  * A user-owned saved connection. Host owns revisions, availability and last test; never contains credentials.
  */
 export interface Connection {
-  schemaVersion: 7;
+  schemaVersion: 8;
   kind: "connection";
   connectionId: Id;
   name: string;
@@ -2024,33 +2025,35 @@ export interface Connection {
  * Independent optional selections owned by the current test user.
  */
 export interface UserPreferences {
-  schemaVersion: 7;
+  schemaVersion: 8;
   kind: "userPreferences";
   defaultConnectionId?: Id;
   selectedSessionId?: Id;
 }
 /**
- * TestUser product wire record; validated against the V7 schema.
+ * TestUser product wire record; validated against the V8 schema.
  */
 export interface TestUser {
-  schemaVersion: 7;
+  schemaVersion: 8;
   kind: "testUser";
   userId: Id;
   displayName: string;
   nameKey: string;
 }
 /**
- * Native-owned local profile and generation. An absent identity is a legacy test profile; enterprise authority is established only by native AuthN and AuthZ verification.
+ * Native-owned profile and generation with an explicit device or user-and-device context. No secret or renderer identity grants execution authority.
  */
 export interface UserContext {
-  schemaVersion: 7;
+  schemaVersion: 8;
   kind: "userContext";
   user: TestUser;
   generation: Id;
-  identity?: AccountIdentity;
+  identity: AccountIdentity;
+  /** Authenticated native service context reference, scoped to the current generation and IPC peer; absence forbids resource execution. */
+  executionBinding?: Id;
 }
 export interface ConnectionPage {
-  schemaVersion: 7;
+  schemaVersion: 8;
   kind: "connectionPage";
   /**
    * @maxItems 128
@@ -2059,11 +2062,11 @@ export interface ConnectionPage {
   preferences: UserPreferences;
 }
 export interface ConnectionsRequest {
-  schemaVersion: 7;
+  schemaVersion: 8;
   kind: "connectionsRequest";
 }
 export interface SaveConnectionRequest {
-  schemaVersion: 7;
+  schemaVersion: 8;
   kind: "saveConnectionRequest";
   connection: ConnectionDraft;
   expectedRevision: Counter | null;
@@ -2076,7 +2079,7 @@ export interface ConnectionDraft {
   source: ConnectionSource;
 }
 export interface PreferencesRequest {
-  schemaVersion: 7;
+  schemaVersion: 8;
   kind: "preferencesRequest";
   patch: PreferencesPatch;
 }
@@ -2088,21 +2091,21 @@ export interface PreferencesPatch {
   selectedSessionId?: PreferenceChange;
 }
 export interface SelectConnectionRequest {
-  schemaVersion: 7;
+  schemaVersion: 8;
   kind: "selectConnectionRequest";
   sessionId: Id;
   connectionId: Id;
   freshContext: boolean;
 }
 export interface HistoryRequest {
-  schemaVersion: 7;
+  schemaVersion: 8;
   kind: "historyRequest";
   sessionId: Id;
   connectionId: Id;
   recent?: number;
 }
 export interface TestUserPage {
-  schemaVersion: 7;
+  schemaVersion: 8;
   kind: "testUserPage";
   /**
    * @maxItems 128
@@ -2111,7 +2114,7 @@ export interface TestUserPage {
   current?: UserContext;
 }
 export interface NativeCallAttach {
-  schemaVersion: 7;
+  schemaVersion: 8;
   kind: "nativeCall";
   id: Counter;
   method: "attach";
@@ -2122,7 +2125,7 @@ export interface NativeAttachData {
   context: UserContext;
 }
 export interface NativeCallSuspend {
-  schemaVersion: 7;
+  schemaVersion: 8;
   kind: "nativeCall";
   id: Counter;
   method: "suspend";
@@ -2132,7 +2135,7 @@ export interface NativeSuspendData {
   context: UserContext;
 }
 export interface NativeCallDetach {
-  schemaVersion: 7;
+  schemaVersion: 8;
   kind: "nativeCall";
   id: Counter;
   method: "detach";
@@ -2142,7 +2145,7 @@ export interface NativeDetachData {
   channel: Id;
 }
 export interface NativeCallSaveConnection {
-  schemaVersion: 7;
+  schemaVersion: 8;
   kind: "nativeCall";
   id: Counter;
   method: "saveConnection";
@@ -2155,14 +2158,14 @@ export interface NativeSaveConnectionData {
   encrypted: EncryptedCredential | null;
 }
 export interface NativeCallHealth {
-  schemaVersion: 7;
+  schemaVersion: 8;
   kind: "nativeCall";
   id: Counter;
   method: "health";
   data: {};
 }
 export interface NativeCallOpenCredential {
-  schemaVersion: 7;
+  schemaVersion: 8;
   kind: "nativeCall";
   id: Counter;
   method: "openCredential";
@@ -2182,7 +2185,7 @@ export interface CredentialCaller {
   authorityId: Id;
 }
 export interface NativeCallMatchCredential {
-  schemaVersion: 7;
+  schemaVersion: 8;
   kind: "nativeCall";
   id: Counter;
   method: "matchCredential";
@@ -2194,7 +2197,7 @@ export interface NativeMatchCredentialData {
   connection: ConnectionDraft;
 }
 export interface NativeCallCredentialContext {
-  schemaVersion: 7;
+  schemaVersion: 8;
   kind: "nativeCall";
   id: Counter;
   method: "credentialContext";
@@ -2203,21 +2206,31 @@ export interface NativeCallCredentialContext {
 export interface NativeCredentialContextData {
   generation: Id;
 }
+export interface NativeCallRefresh {
+  schemaVersion: 8;
+  kind: "nativeCall";
+  id: Counter;
+  method: "refresh";
+  data: NativeRefreshData;
+}
+export interface NativeRefreshData {
+  context: UserContext;
+}
 export interface NativeReplySuccess {
-  schemaVersion: 7;
+  schemaVersion: 8;
   kind: "nativeReply";
   id: Counter;
   ok: true;
   value: unknown;
 }
 export interface NativeReplyFailure {
-  schemaVersion: 7;
+  schemaVersion: 8;
   kind: "nativeReply";
   id: Counter;
   ok: false;
 }
 export interface NativeEvent {
-  schemaVersion: 7;
+  schemaVersion: 8;
   kind: "nativeEvent";
   channel: Id;
   message: unknown;
@@ -2226,7 +2239,7 @@ export interface NativeEvent {
  * Non-secret AI operation provenance carried only on the desktop-owned execution pipe.
  */
 export interface ExecutionOrigin {
-  schemaVersion: 7;
+  schemaVersion: 8;
   kind: "executionOrigin";
   namespace: Namespace;
   /** Native-selected user generation; checked against the current trusted registry before every tool call. */
@@ -2234,9 +2247,11 @@ export interface ExecutionOrigin {
   operationId: Id;
   provider: "codex" | "claude" | "deepseek";
   config: ConfigRef;
+  /** Current service-attested native context. Never taken from model arguments. */
+  contextBinding: Id;
 }
 export interface HostStatus {
-  schemaVersion: 7;
+  schemaVersion: 8;
   kind: "hostStatus";
   generation: Counter;
   phase: "stopped" | "starting" | "ready" | "stopping" | "failed";
@@ -2278,7 +2293,7 @@ export interface HostDiagnostic {
   atMs: Counter;
 }
 export interface HostHealth {
-  schemaVersion: 7;
+  schemaVersion: 8;
   kind: "hostHealth";
   ready: true;
   protocol: 4;
@@ -2287,7 +2302,7 @@ export interface HostHealth {
  * Closed diagnostic frame on the inherited Host diagnostic pipe. Raw stderr and unknown frames never become product diagnostics.
  */
 export interface HostProcessDiagnostic {
-  schemaVersion: 7;
+  schemaVersion: 8;
   kind: "hostProcessDiagnostic";
   code:
     | "configuration_invalid"
@@ -2298,19 +2313,19 @@ export interface HostProcessDiagnostic {
     | "cleanup_incomplete";
 }
 export interface TestConnectionRequest {
-  schemaVersion: 7;
+  schemaVersion: 8;
   kind: "testConnectionRequest";
   connectionId: Id;
   expectedRevision: Counter;
 }
 export interface DeleteConnectionRequest {
-  schemaVersion: 7;
+  schemaVersion: 8;
   kind: "deleteConnectionRequest";
   connectionId: Id;
   expectedRevision: Counter;
 }
 export interface AccountSettings {
-  schemaVersion: 7;
+  schemaVersion: 8;
   kind: "accountSettings";
   /**
    * @maxItems 32
@@ -2328,7 +2343,7 @@ export interface AccountOrganization {
   tenantId: string;
 }
 export interface AccountStatus {
-  schemaVersion: 7;
+  schemaVersion: 8;
   kind: "accountStatus";
   current?: UserContext;
   failure?: AccountFailure;
@@ -2346,7 +2361,7 @@ export interface Negotiation {
   /**
    * Exact product contract version.
    */
-  contractVersion: 7;
+  contractVersion: 8;
   /**
    * Exact ACP protocol version.
    */

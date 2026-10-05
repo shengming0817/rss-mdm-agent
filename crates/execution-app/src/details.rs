@@ -1,6 +1,6 @@
 use execution_contract::{
     Digest, ExactArtifactRef, ExecutionBudget, FrozenExecution, InterpreterRef, NetworkAccess,
-    Operation, RequestId, RunAs, SessionRequirement, Target, ValidityWindow, VersionedRef, V7,
+    Operation, RequestId, RunAs, SessionRequirement, Target, ValidityWindow, VersionedRef, V8,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -43,7 +43,7 @@ pub struct FrozenExecutionSummary {
     /// Human or AI origin, without granting execution permission.
     pub initiator: execution_contract::Initiator,
     /// Version of the frozen execution plan, independent of the AI wire version.
-    pub schema_version: V7,
+    pub schema_version: V8,
     /// Closed execution kind without private software paths or source inputs.
     pub execution: ExecutionSummary,
     /// Exact frozen plan identity.

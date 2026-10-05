@@ -1,4 +1,4 @@
-import type { Budget } from "@rss-mdm-agent/ai-contract";
+import type { Budget } from "@rss-mdm-agent/ai-contract/ports";
 
 /** One absolute deadline across all awaits; aborting a wait is not proof of completion. */
 export class Deadline {

@@ -167,7 +167,7 @@ export async function nativeFixture(
 export function prompt(binding, commandId) {
   return {
     command: {
-      schemaVersion: 7,
+      schemaVersion: 8,
       kind: "command",
       sessionId: "session-1",
       commandId,

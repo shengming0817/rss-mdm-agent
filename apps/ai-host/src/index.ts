@@ -5,30 +5,28 @@ import { Readable, Writable } from "node:stream";
 import { lstat } from "node:fs/promises";
 import { dirname, resolve, join } from "node:path";
 import { PrivateLink } from "@rss-mdm-agent/ai-host/private-link";
+import { processWorkerAdapter } from "@rss-mdm-agent/ai-host/process";
 import { createHost } from "@rss-mdm-agent/ai-host";
 import { openSqliteStore } from "@rss-mdm-agent/ai-store-sqlite";
 import { createAccessService, type Stream } from "@rss-mdm-agent/ai-access";
 import { connectExecution } from "./execution.js";
 import { readConfiguration, ConfigurationError } from "./configuration.js";
-import {
-  boundedJson,
-  decode,
-  type Caller,
-  type Budget,
-  type Result,
-  type UserContext,
-  type Connection,
-  type HostHealth,
-} from "@rss-mdm-agent/ai-contract";
+import { boundedJson, decode } from "@rss-mdm-agent/ai-contract";
+import type { Caller, Budget, Result } from "@rss-mdm-agent/ai-contract/ports";
+import type {
+  UserContext,
+  Connection,
+  HostHealth,
+} from "@rss-mdm-agent/ai-contract/wire";
 import { defaultLimits, fail } from "@rss-mdm-agent/ai-contract/transitions";
 import { localResolver } from "./resolver.js";
 import { connectionPersistence, ConnectionSecrets } from "./secrets.js";
 import { NativeControl } from "./native.js";
 export type { LocalConfiguration } from "./configuration.js";
 export const callerFor = (context: UserContext): Caller => ({
-  tenantId: context.identity?.tenantId ?? "test-users",
-  principalId: context.identity?.principalId ?? context.user.userId,
-  authorityId: context.identity?.authorityId ?? "desktop-fixture",
+  tenantId: context.identity.tenantId,
+  principalId: context.identity.principalId,
+  authorityId: context.identity.authorityId,
 });
 /** Exact native caller binding, including an enterprise deadline of zero. */
 export function callerAvailable(
@@ -38,7 +36,7 @@ export function callerAvailable(
 ): boolean {
   if (
     !context ||
-    (context.identity?.mode === "enterprise" &&
+    (context.identity.mode === "user_device" &&
       now >= context.identity.expiresAtMs)
   )
     return false;
@@ -49,13 +47,12 @@ export function callerAvailable(
     expected.authorityId === caller.authorityId
   );
 }
-/** Product login never grants the fixture execution authority. */
+/** Execution requires the native owner binding, for both device and user/device contexts. */
 export function requireLocalExecution(
   context: UserContext | undefined,
   caller: Caller,
 ): void {
-  if (!context || context.identity?.mode === "enterprise")
-    throw new Error("unbound origin");
+  if (!context || !context.executionBinding) throw new Error("unbound origin");
   const expected = callerFor(context);
   if (
     expected.tenantId !== caller.tenantId ||
@@ -115,7 +112,7 @@ export async function startLocalApp(
       throw error;
     },
   );
-  const opened = openSqliteStore({
+  const opened = await openSqliteStore({
     path: local.databasePath,
     mode: exists ? "open" : "create",
   });
@@ -153,7 +150,11 @@ export async function startLocalApp(
           connection.value.status === "deleted"
         )
           throw new Error("unbound origin");
-        return { binding: expected, userGeneration: current.generation };
+        return {
+          binding: expected,
+          userGeneration: current.generation,
+          contextBinding: current.executionBinding!,
+        };
       }
       if (!request.commandId) {
         const session = await store.session(request.namespace);
@@ -162,7 +163,11 @@ export async function startLocalApp(
           (stage) => stage.stageId === session.value.currentStageId,
         );
         if (phase)
-          return { binding: phase.binding, userGeneration: current.generation };
+          return {
+            binding: phase.binding,
+            userGeneration: current.generation,
+            contextBinding: current.executionBinding!,
+          };
         if (!session.value.selectedConnectionId)
           throw new Error("unbound origin");
         const connection = await store.connection(
@@ -179,6 +184,7 @@ export async function startLocalApp(
             },
           },
           userGeneration: current.generation,
+          contextBinding: current.executionBinding!,
         };
       }
       const command = await store.command(request.namespace, request.commandId),
@@ -188,7 +194,11 @@ export async function startLocalApp(
         (stage) => stage.stageId === command.value.receipt.stageId,
       );
       if (!phase) throw new Error("unbound origin");
-      return { binding: phase.binding, userGeneration: current.generation };
+      return {
+        binding: phase.binding,
+        userGeneration: current.generation,
+        contextBinding: current.executionBinding!,
+      };
     },
   ).catch(async (error) => {
     await store.close({
@@ -205,13 +215,13 @@ export async function startLocalApp(
         caller,
         connection,
         encrypted:
-          encrypted as import("@rss-mdm-agent/ai-contract").EncryptedCredential,
+          encrypted as import("@rss-mdm-agent/ai-contract/wire").EncryptedCredential,
       }),
   );
   const runtimeRoot = dirname(dirname(process.execPath));
   let permissionAccess: ReturnType<typeof createAccessService> | undefined;
   const created = await createHost({
-    workerRuntime: {
+    workers: processWorkerAdapter({
       launcher: join(
         runtimeRoot,
         "bin",
@@ -220,12 +230,13 @@ export async function startLocalApp(
       manifestDigest: createHash("sha256")
         .update(readFileSync(join(runtimeRoot, "worker-manifest.json")))
         .digest("hex"),
-    },
+    }),
     delivery: execution
       ? {
           router: execution.router,
           authorize: async (request, budget) => {
             if (
+              request.proposal.name !== "execution_cancel" ||
               !permissionAccess ||
               !available(request.namespace) ||
               budget.signal.aborted
@@ -240,15 +251,12 @@ export async function startLocalApp(
                 sessionId: request.namespace.sessionId,
                 toolCall: {
                   toolCallId: request.operationId,
-                  title:
-                    request.proposal.name === "execution_cancel"
-                      ? "允许 AI 请求取消设备操作"
-                      : "允许 AI 请求执行设备操作",
+                  title: "确认发送取消请求",
                   rawInput: request.proposal.arguments,
                 },
                 options: [
-                  { optionId: "allow", kind: "allow_once", name: "允许一次" },
-                  { optionId: "reject", kind: "reject_once", name: "拒绝一次" },
+                  { optionId: "allow", kind: "allow_once", name: "发送请求" },
+                  { optionId: "reject", kind: "reject_once", name: "返回" },
                 ],
               },
               budget.signal,
@@ -330,11 +338,26 @@ export async function startLocalApp(
     async ({ method, data }) => {
       if (method === "health")
         return {
-          schemaVersion: 7,
+          schemaVersion: 8,
           kind: "hostHealth",
           ready: true,
           protocol: 4,
         } satisfies HostHealth;
+      if (method === "refresh")
+        return switchUser(async () => {
+          const next = context(data.context);
+          if (!activeUser) return true;
+          if (
+            activeUser.generation !== next.generation ||
+            activeUser.executionBinding !== next.executionBinding ||
+            JSON.stringify(callerFor(activeUser)) !==
+              JSON.stringify(callerFor(next)) ||
+            activeUser.identity.mode !== next.identity.mode
+          )
+            throw new Error("retired context");
+          activeUser = next;
+          return true;
+        });
       if (method === "attach")
         return switchUser(async () => {
           const next = context(data.context),
@@ -358,6 +381,13 @@ export async function startLocalApp(
             activeUser = next;
             host.activateCaller(callerFor(next));
           }
+          if (
+            JSON.stringify(callerFor(activeUser!)) !==
+              JSON.stringify(callerFor(next)) ||
+            activeUser!.executionBinding !== next.executionBinding
+          )
+            throw new Error("context changed");
+          activeUser = next;
           const readable = new ReadableStream(
             {
               start(input) {

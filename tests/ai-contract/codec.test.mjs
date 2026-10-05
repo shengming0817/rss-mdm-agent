@@ -12,18 +12,18 @@ const limits = {
   maxNodes: 4096,
 };
 const command = {
-  schemaVersion: 7,
+  schemaVersion: 8,
   kind: "command",
   sessionId: "s1",
   commandId: "c1",
   expiresAtMs: 1000,
   input: { type: "prompt", text: "hello", policy: "queue_next" },
 };
-test("V7 command round trips without a Rust, UI or provider runtime", () => {
+test("V8 command round trips without a Rust, UI or provider runtime", () => {
   assert.deepEqual(decode(JSON.stringify(command), limits), command);
 });
 test("old formats, duplicate keys and excess authority fields fail closed", () => {
-  const previousVersion = 6;
+  const previousVersion = 7;
   for (const raw of [
     JSON.stringify({ ...command, schemaVersion: previousVersion }),
     JSON.stringify({ ...command, schemaVersion: 1 }),
@@ -35,19 +35,25 @@ test("old formats, duplicate keys and excess authority fields fail closed", () =
 });
 test("private control and execution provenance use the same closed generated schema", () => {
   const context = {
-    schemaVersion: 7,
+    schemaVersion: 8,
     kind: "userContext",
     user: {
-      schemaVersion: 7,
+      schemaVersion: 8,
       kind: "testUser",
       userId: "alice",
       displayName: "Alice",
       nameKey: "alice",
     },
     generation: "generation-1",
+    identity: {
+      mode: "device",
+      authorityId: "desktop-test",
+      tenantId: "local-test",
+      principalId: "alice",
+    },
   };
   const suspend = {
-    schemaVersion: 7,
+    schemaVersion: 8,
     kind: "nativeCall",
     id: 1,
     method: "suspend",
@@ -55,7 +61,7 @@ test("private control and execution provenance use the same closed generated sch
   };
   assert.deepEqual(decode(JSON.stringify(suspend), limits), suspend);
   const origin = {
-    schemaVersion: 7,
+    schemaVersion: 8,
     kind: "executionOrigin",
     userGeneration: "generation-a",
     namespace: {
@@ -67,6 +73,7 @@ test("private control and execution provenance use the same closed generated sch
     operationId: "operation-1",
     provider: "codex",
     config: { id: "connection-1", revision: "1" },
+    contextBinding: "fixture-binding",
   };
   assert.deepEqual(decode(JSON.stringify(origin), limits), origin);
   for (const invalid of [
@@ -113,7 +120,7 @@ test("shared golden covers every record and identical rejection diagnostics", ()
 
 test("connection saves reject client-owned state and accept only editable drafts", () => {
   const request = {
-    schemaVersion: 7,
+    schemaVersion: 8,
     kind: "saveConnectionRequest",
     expectedRevision: null,
     connection: {
