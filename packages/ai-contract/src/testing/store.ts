@@ -52,7 +52,8 @@ import {
   ok,
   fail,
   isSettled,
-  type SessionState,
+  type SessionWorkspace,
+  memoryRows,
 } from "../transitions.js";
 export const fixtureLimits = defaultLimits;
 export { ok, fail, namespaceKey } from "../transitions.js";
@@ -68,7 +69,7 @@ export class MemorySessionStore implements SessionStore {
       throw new TypeError("snapshot ttl");
     this.views = new ReadViews(options.clock ?? { now: () => Date.now() }, ttl);
   }
-  private states = new Map<string, SessionState>();
+  private states = new Map<string, SessionWorkspace>();
   private retiredIds = new Set<string>();
   failNextCommit = false;
   failNextQuery = false;
@@ -81,7 +82,7 @@ export class MemorySessionStore implements SessionStore {
   }
   private apply(
     namespace: Namespace,
-    transition: (s: SessionState) => Result<SessionState>,
+    transition: (s: SessionWorkspace) => Result<SessionWorkspace>,
   ): Result<void> {
     if (this.closed) return fail("unavailable");
     try {
@@ -337,9 +338,9 @@ export class MemorySessionStore implements SessionStore {
           session: state.session,
           records: [
             ...state.events,
-            ...state.commands.values(),
-            ...state.interactions.values(),
-            ...state.surfaces.values(),
+            ...memoryRows(state.commands).values(),
+            ...memoryRows(state.interactions).values(),
+            ...memoryRows(state.surfaces).values(),
           ],
         }),
         fixtureLimits,
@@ -364,7 +365,9 @@ export class MemorySessionStore implements SessionStore {
         query,
         () =>
           [...this.states.values()]
-            .map((s) => sessionListItem(s.session, [...s.commands.values()]))
+            .map((s) =>
+              sessionListItem(s.session, [...memoryRows(s.commands).values()]),
+            )
             .filter(
               (s) =>
                 s.status !== "retired" &&
@@ -409,7 +412,7 @@ export class MemorySessionStore implements SessionStore {
     }
     return this.page(
       [...this.states.values()]
-        .flatMap((s) => [...s.commands.values()])
+        .flatMap((s) => [...memoryRows(s.commands).values()])
         .filter((c) => !isSettled(c)),
       (c) => namespaceKey(c.receipt.namespace) + "/" + c.command.commandId,
       limit,
@@ -429,7 +432,7 @@ export class MemorySessionStore implements SessionStore {
     if (!Number.isSafeInteger(nowMs) || nowMs < 0) return fail("invalid_input");
     return this.page(
       [...this.states.values()]
-        .flatMap((s) => [...s.deliveries.values()])
+        .flatMap((s) => [...memoryRows(s.deliveries).values()])
         .filter((d) => d.status !== "delivered" && d.nextAttemptAtMs <= nowMs),
       (d) => namespaceKey(d.namespace) + "/" + d.operationId,
       limit,

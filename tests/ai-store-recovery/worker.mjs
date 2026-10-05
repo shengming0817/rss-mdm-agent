@@ -22,7 +22,7 @@ if (config.scenario === "migration-before-commit") {
   };
 }
 const start = performance.now();
-const result = openSqliteStore({
+const result = await openSqliteStore({
   path: config.path,
   mode: config.mode,
   busyTimeoutMs: 50,

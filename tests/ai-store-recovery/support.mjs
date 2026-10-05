@@ -19,7 +19,7 @@ export function harness(t) {
   return {
     directory,
     raw: (store) => connections.get(store),
-    open(
+    async open(
       path = join(directory, `store-${next++}.sqlite`),
       mode = "create",
       options = {},
@@ -31,7 +31,7 @@ export function harness(t) {
         return prepare.apply(this, args);
       };
       try {
-        const result = openSqliteStore({ path, mode, ...options });
+        const result = await openSqliteStore({ path, mode, ...options });
         if (result.ok) {
           stores.push(result.value);
           connections.set(result.value, connection);

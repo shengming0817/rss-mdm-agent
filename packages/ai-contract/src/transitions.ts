@@ -1,3 +1,18 @@
+import {
+  forkState,
+  readView,
+  memoryState,
+  TransactionReadFailure,
+  type SessionReadView,
+} from "./session-mutation.js";
+export {
+  transactionDelta,
+  resultView,
+  readResult,
+  type SessionDelta,
+  type SessionReadView,
+  type SessionQueries,
+} from "./session-mutation.js";
 import { replaceStage, providerStage, startStage } from "./contexts.js";
 import { activeStage } from "./contexts.js";
 import { validateSurface } from "./a2ui.js";
@@ -48,14 +63,23 @@ export const namespaceKey = (n: Namespace): string => {
 const valid = (v: unknown, limits: Limits) =>
   decode(boundedJson(v, limits), limits);
 const same = (a: unknown, b: unknown) => canonicalize(a) === canonicalize(b);
-export interface SessionState {
+/** Reducer transaction workspace: immutable head, scoped reads and pending writes. */
+export interface SessionWorkspace {
+  /** Transaction-local SQL read projection; absent for the in-memory adapter. */
+  source?: SessionReadView;
   session: Session;
   generations: Set<Id>;
-  commands: Map<Id, CommandRecord>;
+  commands: import("./session-mutation.js").SessionRows<Id, CommandRecord>;
   events: Event[];
-  interactions: Map<Id, SnapshotPage["interactions"][number]>;
-  deliveries: Map<Id, Delivery>;
-  surfaces: Map<Id, SnapshotPage["surfaces"][number]>;
+  interactions: import("./session-mutation.js").SessionRows<
+    Id,
+    SnapshotPage["interactions"][number]
+  >;
+  deliveries: import("./session-mutation.js").SessionRows<Id, Delivery>;
+  surfaces: import("./session-mutation.js").SessionRows<
+    Id,
+    SnapshotPage["surfaces"][number]
+  >;
 }
 
 export function eventId(seed: string, label: string): Id {
@@ -68,7 +92,7 @@ export const isSettled = (c: CommandRecord): boolean =>
 export function createState(
   session: Session,
   limits: Limits = defaultLimits,
-): Result<SessionState> {
+): Result<SessionWorkspace> {
   try {
     valid(session, limits);
     namespaceKey(session.namespace);
@@ -94,11 +118,11 @@ export function createState(
   });
 }
 function reduceAcceptance(
-  state: SessionState,
+  state: SessionWorkspace,
   input: AcceptCommand,
   limits: Limits = defaultLimits,
   suspending = false,
-): Result<{ state: SessionState; receipt: import("./wire.js").Receipt }> {
+): Result<{ state: SessionWorkspace; receipt: import("./wire.js").Receipt }> {
   try {
     valid(input.command, limits);
     if (!isId(input.eventId)) return fail("invalid_input");
@@ -153,7 +177,7 @@ function reduceAcceptance(
   );
   if (!check.ok) return check;
   const receipt: import("./wire.js").Receipt = {
-    schemaVersion: 7,
+    schemaVersion: 8,
     kind: "receipt",
     namespace: clone(input.namespace),
     commandId: input.command.commandId,
@@ -168,7 +192,7 @@ function reduceAcceptance(
     acceptedRevision: state.session.revision + 1,
   };
   const record: CommandRecord = {
-    schemaVersion: 7,
+    schemaVersion: 8,
     kind: "commandRecord",
     command: clone(input.command),
     receipt,
@@ -178,8 +202,8 @@ function reduceAcceptance(
   if (input.command.input.type === "respond") {
     const request = input.command.input;
     const interaction = state.interactions.get(request.interactionId);
-    const linked = [...state.surfaces.values()].filter(
-      (row) => row.interactionId === request.interactionId,
+    const linked = readView(state).surfacesForInteraction(
+      request.interactionId,
     );
     if (linked.length || request.surface) {
       const surface =
@@ -226,7 +250,7 @@ function reduceAcceptance(
       commands: [record],
       events: [
         {
-          schemaVersion: 7,
+          schemaVersion: 8,
           kind: "event",
           namespace: clone(input.namespace),
           eventId: input.eventId,
@@ -236,7 +260,7 @@ function reduceAcceptance(
           body: { type: "command_accepted", command: clone(input.command) },
         },
         ...interactions.map((row, i) => ({
-          schemaVersion: 7 as const,
+          schemaVersion: 8 as const,
           kind: "event" as const,
           namespace: input.namespace,
           eventId: eventId(input.eventId, `answer-${i}`),
@@ -265,7 +289,7 @@ function reduceAcceptance(
     : result;
 }
 export function checkState(
-  state: SessionState,
+  state: SessionWorkspace,
   revision: Counter,
   generation: Id,
 ): Result<void> {
@@ -280,7 +304,7 @@ export function checkState(
 /** Durable Host delivery is independent of a runnable provider incarnation.
  * This exception can change only existing deliveries and append their receipt references. */
 export function isDeliveryCommit(
-  state: SessionState,
+  state: SessionWorkspace,
   batch: SessionCommit,
 ): boolean {
   return (
@@ -302,19 +326,19 @@ export function isDeliveryCommit(
   );
 }
 export function commitSession(
-  state: SessionState,
+  state: SessionWorkspace,
   batch: SessionCommit,
   limits: Limits = defaultLimits,
-): Result<SessionState> {
+): Result<SessionWorkspace> {
   return guarded(() => reduceCommit(state, batch, limits, false));
 }
 function reduceCommit(
-  state: SessionState,
+  state: SessionWorkspace,
   batch: SessionCommit,
   limits: Limits,
   accepting: boolean,
   suspending = false,
-): Result<SessionState> {
+): Result<SessionWorkspace> {
   const deliveryOnly = isDeliveryCommit(state, batch);
   const check = checkState(
     deliveryOnly || suspending
@@ -370,11 +394,9 @@ function reduceCommit(
     )
   )
     return fail("stale_binding");
-  const copy = clone(state);
+  const copy = forkState(state);
   const commandIds = new Set<Id>();
-  const attemptIds = new Set(
-    state.events.flatMap((e) => (e.attemptId ? [e.attemptId] : [])),
-  );
+  const attemptIds = new Set<Id>();
   const providerFacts = new Map<Id, Reconciliation>();
   for (const proof of batch.providerFacts ?? []) {
     const record = state.commands.get(proof?.commandId);
@@ -526,7 +548,8 @@ function reduceCommit(
         c.dispatch.originGeneration !== batch.expectedGeneration ||
         c.dispatch.nativeSessionId !==
           activeStage(state.session).binding.nativeSessionId ||
-        attemptIds.has(c.dispatch.attemptId)
+        attemptIds.has(c.dispatch.attemptId) ||
+        readView(state).hasAttempt(c.dispatch.attemptId)
       )
         return fail("invalid_input");
       if (
@@ -538,13 +561,20 @@ function reduceCommit(
       if (
         c.command.input.type === "prompt" &&
         c.command.input.policy === "queue_next" &&
-        [...state.commands.values()].some(
-          (record) =>
-            record.command.commandId !== id &&
-            record.command.input.type === "prompt" &&
-            record.dispatch &&
-            !isSettled(record),
-        )
+        readView(state)
+          .commandsInStates([
+            "accepted",
+            "dispatching",
+            "running",
+            "reconciliation_required",
+          ])
+          .some(
+            (record) =>
+              record.command.commandId !== id &&
+              record.command.input.type === "prompt" &&
+              record.dispatch &&
+              !isSettled(record),
+          )
       )
         return fail("content_conflict");
       if (
@@ -556,14 +586,21 @@ function reduceCommit(
           activeStage(state.session).capabilities.steer !== "supported" ||
           target !== activeStage(state.session).binding.nativeRunId ||
           c.dispatch.nativeRunId !== target ||
-          ![...state.commands.values()].some(
-            (record) =>
-              record.command.input.type === "prompt" &&
-              record.command.input.policy === "queue_next" &&
-              !isSettled(record) &&
-              record.dispatch?.certainty === "submitted" &&
-              record.dispatch.nativeRunId === target,
-          )
+          !readView(state)
+            .commandsInStates([
+              "accepted",
+              "dispatching",
+              "running",
+              "reconciliation_required",
+            ])
+            .some(
+              (record) =>
+                record.command.input.type === "prompt" &&
+                record.command.input.policy === "queue_next" &&
+                !isSettled(record) &&
+                record.dispatch?.certainty === "submitted" &&
+                record.dispatch.nativeRunId === target,
+            )
         )
           return fail("stale_binding");
       }
@@ -609,7 +646,13 @@ function reduceCommit(
               (c.failure.code === "stale_binding" &&
                 controlIsStale(
                   state.session,
-                  [...state.commands.values()],
+                  [
+                    ...readView(state).commandsInStates(["running"]),
+                    ...(c.command.input.type === "cancel" &&
+                    state.commands.get(c.command.input.targetCommandId)
+                      ? [state.commands.get(c.command.input.targetCommandId)!]
+                      : []),
+                  ],
                   c.command,
                 )))
           )) ||
@@ -717,13 +760,20 @@ function reduceCommit(
     return fail("invalid_input");
   // Acceptance may queue many prompts, but an unresolved dispatch owns the turn.
   if (
-    [...copy.commands.values()].filter(
-      (record) =>
-        record.command.input.type === "prompt" &&
-        record.command.input.policy === "queue_next" &&
-        record.dispatch !== undefined &&
-        !isSettled(record),
-    ).length > 1
+    readView(copy)
+      .commandsInStates([
+        "accepted",
+        "dispatching",
+        "running",
+        "reconciliation_required",
+      ])
+      .filter(
+        (record) =>
+          record.command.input.type === "prompt" &&
+          record.command.input.policy === "queue_next" &&
+          record.dispatch !== undefined &&
+          !isSettled(record),
+      ).length > 1
   )
     return fail("content_conflict");
   const oldBinding = activeStage(state.session).binding,
@@ -739,7 +789,20 @@ function reduceCommit(
     oldBinding.nativeRunId !== nextBinding.nativeRunId ||
     oldBinding.nativeRequestId !== nextBinding.nativeRequestId
   ) {
-    const records = [...copy.commands.values()];
+    const records = [
+      ...readView(copy).commandsForNativeTurn(
+        oldBinding.nativeSessionId,
+        oldBinding.nativeThreadId,
+        oldBinding.nativeRunId,
+        oldBinding.nativeRequestId,
+      ),
+      ...readView(copy).commandsForNativeTurn(
+        nextBinding.nativeSessionId,
+        nextBinding.nativeThreadId,
+        nextBinding.nativeRunId,
+        nextBinding.nativeRequestId,
+      ),
+    ];
     if (
       nextBinding.nativeRunId !== undefined ||
       nextBinding.nativeRequestId !== undefined
@@ -774,13 +837,14 @@ function reduceCommit(
         return fail("stale_binding");
     }
   }
-  const ids = new Set(copy.events.map((e) => e.eventId));
+  const ids = new Set<Id>();
   for (const [i, event] of batch.events.entries()) {
     if (
       namespaceKey(event.namespace) !== namespaceKey(batch.namespace) ||
       event.generation !== batch.expectedGeneration ||
       event.sequence !== state.session.lastSequence + i + 1 ||
       ids.has(event.eventId) ||
+      readView(state).hasEvent(event.eventId) ||
       event.commandId === undefined ||
       !copy.commands.has(event.commandId)
     )
@@ -810,8 +874,7 @@ function reduceCommit(
     if (event.body.type === "delivery_recorded") {
       const body = event.body;
       const old = state.deliveries.get(body.operationId);
-      const request =
-        old && state.events.find((e) => e.eventId === old.eventId);
+      const request = old && readView(state).event(old.eventId);
       const row = batch.deliveries.find(
         (d) => d.operationId === body.operationId,
       );
@@ -955,12 +1018,14 @@ function reduceCommit(
         return fail("invalid_input");
     }
     if (
-      [...copy.interactions.values()].some(
-        (other) =>
-          other.interactionId !== row.interactionId &&
-          other.generation === row.generation &&
-          other.nativeCallbackId === row.nativeCallbackId,
-      )
+      readView(copy).interactionForCallback(
+        row.generation,
+        row.nativeCallbackId,
+      )?.interactionId !== undefined &&
+      readView(copy).interactionForCallback(
+        row.generation,
+        row.nativeCallbackId,
+      )?.interactionId !== row.interactionId
     )
       return fail("content_conflict");
     if (
@@ -1031,14 +1096,14 @@ function reduceCommit(
       !ids.has(row.eventId) ||
       row.contentHash !==
         deliveryFingerprint(
-          copy.events.find((e) => e.eventId === row.eventId)!,
+          readView(copy).event(row.eventId)!,
           row.target,
           limits,
         )
     )
       return fail("invalid_input");
     const old = copy.deliveries.get(row.operationId);
-    const request = copy.events.find((e) => e.eventId === row.eventId)!;
+    const request = readView(copy).event(row.eventId)!;
     if (
       request.body.type === "delivery_requested" &&
       (request.body.operationId !== row.operationId ||
@@ -1137,14 +1202,18 @@ function reduceCommit(
     if (!isSettled(record)) continue;
     const commandId = record.command.commandId;
     if (
-      [...copy.interactions.values()].some(
-        (i) => i.commandId === commandId && i.status === "pending",
-      ) ||
-      [...copy.surfaces.values()].some(
-        (surface) =>
-          surface.status === "active" &&
-          copy.interactions.get(surface.interactionId)?.commandId === commandId,
-      )
+      readView(copy)
+        .interactionsForCommand(commandId)
+        .some((i) => i.commandId === commandId && i.status === "pending") ||
+      readView(copy)
+        .interactionsForCommand(commandId)
+        .flatMap((i) => readView(copy).surfacesForInteraction(i.interactionId))
+        .some(
+          (surface) =>
+            surface.status === "active" &&
+            copy.interactions.get(surface.interactionId)?.commandId ===
+              commandId,
+        )
     )
       return fail("invalid_input");
   }
@@ -1155,8 +1224,8 @@ function reduceCommit(
     const response = copy.commands.get(interaction.responseCommandId!)!.command
       .input;
     if (response.type !== "respond") return fail("invalid_input");
-    const linked = [...copy.surfaces.values()].filter(
-      (row) => row.interactionId === interaction.interactionId,
+    const linked = readView(copy).surfacesForInteraction(
+      interaction.interactionId,
     );
     if (linked.length || response.surface) {
       const surface =
@@ -1171,23 +1240,23 @@ function reduceCommit(
     }
   }
   copy.session = clone(batch.session);
-  return ok(copy);
+  return ok(memoryState(copy));
 }
 
 /** Both unavailable recovery and verified rebind atomically invalidate live callbacks. */
 function reduceRebind(
-  state: SessionState,
+  state: SessionWorkspace,
   input: SessionRebind,
   limits: Limits = defaultLimits,
-): Result<SessionState> {
+): Result<SessionWorkspace> {
   return reduceHandoff(state, input, limits, input.restored);
 }
 function reduceHandoff(
-  state: SessionState,
+  state: SessionWorkspace,
   input: RecoveryUnavailable,
   limits: Limits,
   restored?: VerifiedProviderSession,
-): Result<SessionState> {
+): Result<SessionWorkspace> {
   if (!isId(input.eventId)) return fail("invalid_input");
   if (state.session.status === "retired") return fail("session_gone");
   const checked = checkState(
@@ -1214,14 +1283,14 @@ function reduceHandoff(
         "across_processes")
   )
     return fail("stale_binding");
-  const copy = clone(state),
+  const copy = forkState(state),
     events: Event[] = [];
   const append = (
     fields: { commandId?: Id; attemptId?: Id; body: Event["body"] },
     label: string,
   ) => {
     const event = {
-      schemaVersion: 7,
+      schemaVersion: 8,
       kind: "event",
       namespace: input.namespace,
       eventId: eventId(input.eventId, label),
@@ -1230,7 +1299,7 @@ function reduceHandoff(
       ...fields,
     } as Event;
     valid(event, limits);
-    if (state.events.some((e) => e.eventId === event.eventId))
+    if (readView(state).hasEvent(event.eventId))
       throw new ContractError("context");
     events.push(event);
   };
@@ -1245,7 +1314,13 @@ function reduceHandoff(
     },
     "rebind",
   );
-  for (const [id, c] of copy.commands) {
+  for (const c of readView(copy).commandsInStates([
+    "accepted",
+    "dispatching",
+    "running",
+    "reconciliation_required",
+  ])) {
+    const id = c.command.commandId;
     if (isSettled(c)) continue;
     if (c.dispatch) {
       const dispatch = {
@@ -1253,7 +1328,7 @@ function reduceHandoff(
         observerGeneration: binding.generation,
       };
       copy.commands.set(id, {
-        schemaVersion: 7,
+        schemaVersion: 8,
         kind: "commandRecord",
         command: c.command,
         receipt: c.receipt,
@@ -1277,7 +1352,7 @@ function reduceHandoff(
         retry: "never" as const,
       };
       copy.commands.set(id, {
-        schemaVersion: 7,
+        schemaVersion: 8,
         kind: "commandRecord",
         command: c.command,
         receipt: c.receipt,
@@ -1290,7 +1365,8 @@ function reduceHandoff(
       );
     }
   }
-  for (const [id, row] of copy.interactions) {
+  for (const row of readView(copy).interactionsForCommand()) {
+    const id = row.interactionId;
     if (row.status !== "pending") continue;
     copy.interactions.set(id, { ...row, status: "unavailable" });
     append(
@@ -1302,7 +1378,8 @@ function reduceHandoff(
       `interaction-${id}`,
     );
   }
-  for (const [id, row] of copy.surfaces) {
+  for (const row of readView(copy).surfacesForInteraction()) {
+    const id = row.surfaceInstanceId;
     if (row.status !== "active") continue;
     const next = {
       ...row,
@@ -1338,24 +1415,39 @@ function reduceHandoff(
   );
   valid(copy.session, limits);
   copy.generations.add(binding.generation);
-  return ok(copy);
+  return ok(memoryState(copy));
 }
 
 function reduceRetirement(
-  state: SessionState,
+  state: SessionWorkspace,
   revision: Counter,
   generation: Id,
   limits: Limits = defaultLimits,
-): Result<SessionState> {
+): Result<SessionWorkspace> {
   const checked = checkState(state, revision, generation);
   if (!checked.ok) return checked;
   if (
-    [...state.commands.values()].some((c) => !isSettled(c)) ||
-    [...state.interactions.values()].some((i) => i.status === "pending") ||
-    [...state.deliveries.values()].some((d) => d.status !== "delivered")
+    readView(state)
+      .commandsInStates([
+        "accepted",
+        "dispatching",
+        "running",
+        "reconciliation_required",
+      ])
+      .some((c) => !isSettled(c)) ||
+    readView(state)
+      .interactionsForCommand()
+      .some((i) => i.status === "pending") ||
+    readView(state)
+      .deliveriesInStates([
+        "pending",
+        "receipt_recorded",
+        "reconciliation_required",
+      ])
+      .some((d) => d.status !== "delivered")
   )
     return fail("reconciliation_required", "reconcile_first");
-  const copy = clone(state);
+  const copy = forkState(state);
   copy.session = {
     ...copy.session,
     status: "retired",
@@ -1363,7 +1455,7 @@ function reduceRetirement(
     lastSequence: copy.session.lastSequence + 1,
   };
   const event: Event = {
-    schemaVersion: 7,
+    schemaVersion: 8,
     kind: "event",
     namespace: copy.session.namespace,
     eventId: eventId(
@@ -1377,17 +1469,32 @@ function reduceRetirement(
   valid(copy.session, limits);
   valid(event, limits);
   copy.events.push(event);
-  return ok(copy);
+  return ok(memoryState(copy));
 }
-export function canPrune(state: SessionState, nowMs: Counter): boolean {
+export function canPrune(state: SessionWorkspace, nowMs: Counter): boolean {
   return (
     Number.isSafeInteger(nowMs) &&
     nowMs >= 0 &&
     state.session.status === "retired" &&
-    [...state.commands.values()].every(
-      (c) => c.receipt.receiptUntilMs < nowMs,
-    ) &&
-    [...state.deliveries.values()].every((d) => d.status === "delivered")
+    readView(state)
+      .commandsInStates([
+        "accepted",
+        "dispatching",
+        "running",
+        "reconciliation_required",
+        "terminal",
+        "invalidated",
+        "cancelled",
+        "acknowledged",
+      ])
+      .every((c) => c.receipt.receiptUntilMs < nowMs) &&
+    readView(state)
+      .deliveriesInStates([
+        "pending",
+        "receipt_recorded",
+        "reconciliation_required",
+      ])
+      .every((d) => d.status === "delivered")
   );
 }
 
@@ -1395,6 +1502,8 @@ function guarded<T>(action: () => Result<T>): Result<T> {
   try {
     return action();
   } catch (error) {
+    if (error instanceof TransactionReadFailure)
+      return { ok: false, error: error.failure };
     return fail(
       error instanceof ContractError && error.code === "limit"
         ? "limit_exceeded"
@@ -1403,53 +1512,48 @@ function guarded<T>(action: () => Result<T>): Result<T> {
   }
 }
 export function acceptCommand(
-  state: SessionState,
+  state: SessionWorkspace,
   input: AcceptCommand,
   limits: Limits = defaultLimits,
-): Result<{ state: SessionState; receipt: import("./wire.js").Receipt }> {
+): Result<{ state: SessionWorkspace; receipt: import("./wire.js").Receipt }> {
   return guarded(() => reduceAcceptance(state, input, limits));
 }
 export function rebindSession(
-  state: SessionState,
+  state: SessionWorkspace,
   input: SessionRebind,
   limits: Limits = defaultLimits,
-): Result<SessionState> {
+): Result<SessionWorkspace> {
   return guarded(() => reduceRebind(state, input, limits));
 }
 export function retireSession(
-  state: SessionState,
+  state: SessionWorkspace,
   revision: Counter,
   generation: Id,
   limits: Limits = defaultLimits,
-): Result<SessionState> {
+): Result<SessionWorkspace> {
   return guarded(() => reduceRetirement(state, revision, generation, limits));
 }
-function dispatchDeadline(state: SessionState, c: CommandRecord): number {
-  return state.events.some(
-    (e) =>
-      e.commandId === c.command.commandId &&
-      e.body.type === "reconciled" &&
-      e.body.resolution === "not_submitted",
-  )
+function dispatchDeadline(state: SessionWorkspace, c: CommandRecord): number {
+  return readView(state).hasNotSubmittedReconciliation(c.command.commandId)
     ? Math.min(c.command.expiresAtMs, c.receipt.retryUntilMs)
     : c.command.expiresAtMs;
 }
 
 export function recoverUnavailable(
-  state: SessionState,
+  state: SessionWorkspace,
   input: RecoveryUnavailable,
   limits: Limits = defaultLimits,
-): Result<SessionState> {
+): Result<SessionWorkspace> {
   return guarded(() => reduceHandoff(state, input, limits));
 }
 
 /** A caller fence cancels unsent work even without a provider; dispatched work remains uncertain.
  * The Store persists this entire reducer once. The private suspension path admits only local cancels. */
 export function suspendSession(
-  state: SessionState,
+  state: SessionWorkspace,
   input: SessionSuspension,
   limits: Limits = defaultLimits,
-): Result<SessionState> {
+): Result<SessionWorkspace> {
   return guarded(() => {
     if (namespaceKey(state.session.namespace) !== namespaceKey(input.namespace))
       return fail("permission_denied");
@@ -1461,7 +1565,7 @@ export function suspendSession(
     if (generation !== input.expectedGeneration || !isId(input.eventId))
       return fail("stale_binding");
     let next = state;
-    for (const target of state.commands.values()) {
+    for (const target of readView(state).commandsInStates(["accepted"])) {
       if (
         target.state !== "accepted" ||
         target.dispatch ||
@@ -1483,7 +1587,7 @@ export function suspendSession(
           retention: input.retention,
           eventId: eventId(commandId, "accepted"),
           command: {
-            schemaVersion: 7,
+            schemaVersion: 8,
             kind: "command",
             sessionId: input.namespace.sessionId,
             commandId,
@@ -1526,7 +1630,7 @@ export function suspendSession(
           },
           commands: [
             {
-              schemaVersion: 7,
+              schemaVersion: 8,
               kind: "commandRecord",
               command: cancel.command,
               receipt: cancel.receipt,
@@ -1534,7 +1638,7 @@ export function suspendSession(
               acknowledgement,
             },
             {
-              schemaVersion: 7,
+              schemaVersion: 8,
               kind: "commandRecord",
               command: target.command,
               receipt: target.receipt,
@@ -1545,7 +1649,7 @@ export function suspendSession(
           events: bodies.map(
             ([id, body], index) =>
               ({
-                schemaVersion: 7,
+                schemaVersion: 8,
                 kind: "event",
                 namespace: input.namespace,
                 generation,
@@ -1605,11 +1709,11 @@ export function controlIsStale(
 
 /** Selection changes the next prompt's intent, never an already accepted receipt. */
 export function selectConnection(
-  state: SessionState,
+  state: SessionWorkspace,
   connectionId: Id,
   revision: Counter,
   freshContext = false,
-): Result<SessionState> {
+): Result<SessionWorkspace> {
   return guarded(() => {
     if (!isId(connectionId)) return fail("invalid_input");
     if (state.session.status === "retired") return fail("session_gone");
@@ -1617,12 +1721,19 @@ export function selectConnection(
       return fail("revision_conflict", "same_command");
     if (
       freshContext &&
-      [...state.commands.values()].some((row) => !isSettled(row))
+      readView(state)
+        .commandsInStates([
+          "accepted",
+          "dispatching",
+          "running",
+          "reconciliation_required",
+        ])
+        .some((row) => !isSettled(row))
     )
       return fail("connection_switch_pending");
     if (!freshContext && state.session.selectedConnectionId === connectionId)
       return ok(state);
-    const copy = clone(state);
+    const copy = forkState(state);
     copy.session = {
       ...copy.session,
       selectedConnectionId: connectionId,
@@ -1632,14 +1743,14 @@ export function selectConnection(
       copy.session.freshContext = true;
       copy.session.status = "active";
     }
-    return ok(copy);
+    return ok(memoryState(copy));
   });
 }
 
 export function activateStage(
-  state: SessionState,
+  state: SessionWorkspace,
   input: StageActivation,
-): Result<SessionState> {
+): Result<SessionWorkspace> {
   return guarded(() => {
     if (namespaceKey(state.session.namespace) !== namespaceKey(input.namespace))
       return fail("permission_denied");
@@ -1651,7 +1762,16 @@ export function activateStage(
       !input.opened.opens(input.namespace)
     )
       return fail("permission_denied");
-    if ([...state.commands.values()].some((command) => !isSettled(command)))
+    if (
+      readView(state)
+        .commandsInStates([
+          "accepted",
+          "dispatching",
+          "running",
+          "reconciliation_required",
+        ])
+        .some((command) => !isSettled(command))
+    )
       return fail("connection_switch_pending");
     const binding = input.opened.binding;
     if (
@@ -1659,7 +1779,7 @@ export function activateStage(
       state.generations.has(binding.generation)
     )
       return fail("stale_binding");
-    const copy = clone(state);
+    const copy = forkState(state);
     copy.session = startStage(
       {
         ...copy.session,
@@ -1670,12 +1790,19 @@ export function activateStage(
     );
     valid(copy.session, defaultLimits);
     copy.generations.add(binding.generation);
-    for (const [id, interaction] of copy.interactions)
+    for (const interaction of readView(copy).interactionsForCommand()) {
+      const id = interaction.interactionId;
       if (interaction.status === "pending")
         copy.interactions.set(id, { ...interaction, status: "unavailable" });
-    for (const [id, surface] of copy.surfaces)
+    }
+    for (const surface of readView(copy).surfacesForInteraction()) {
+      const id = surface.surfaceInstanceId;
       if (surface.status === "active")
         copy.surfaces.set(id, { ...surface, status: "invalidated" });
-    return ok(copy);
+    }
+    return ok(memoryState(copy));
   });
 }
+
+export { memoryRows } from "./session-mutation.js";
+export type { SessionRows } from "./session-mutation.js";

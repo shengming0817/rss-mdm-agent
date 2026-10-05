@@ -77,7 +77,7 @@ test("an idle Host excludes a second process; SIGKILL releases ownership without
   } finally {
     await owner.kill();
   }
-  const next = unwrap(h.open(path, "open")),
+  const next = unwrap(await h.open(path, "open")),
     initial = fixtureSession();
   const head = unwrap(await next.session(initial.namespace));
   assert.equal(
@@ -118,7 +118,7 @@ for (const scenario of [
     } finally {
       assert.equal((await process.kill()).signal, "SIGKILL");
     }
-    const store = unwrap(h.open(path, "open")),
+    const store = unwrap(await h.open(path, "open")),
       initial = fixtureSession();
     const snapshot = unwrap(await readSnapshot(store, initial.namespace));
     const persisted = scenario !== "accept-before-commit";
@@ -210,7 +210,7 @@ for (const scenario of [
         observerGeneration: "crash-successor",
       });
       unwrap(await store.close(budget()));
-      const reopened = unwrap(h.open(path, "open"));
+      const reopened = unwrap(await h.open(path, "open"));
       const restoredAgain = await restoredSession(head, "crash-third");
       const third = unwrap(
         await reopened.rebind({
@@ -229,7 +229,7 @@ for (const scenario of [
         observerGeneration: "crash-third",
       });
       const accepted = {
-        schemaVersion: 7,
+        schemaVersion: 8,
         kind: "commandRecord",
         command: record.command,
         receipt: record.receipt,
@@ -312,5 +312,5 @@ test("SIGKILL during initial migration leaves no partially installed schema", as
   } finally {
     raw.close();
   }
-  assert.equal(h.open(path, "open").error.code, "unsupported_version");
+  assert.equal((await h.open(path, "open")).error.code, "unsupported_version");
 });

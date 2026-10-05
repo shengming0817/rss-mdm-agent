@@ -8,7 +8,7 @@ test("a database hard-link alias is rejected without changing the original", asy
   const root = mkdtempSync(join(tmpdir(), "ai-store-alias-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const path = join(root, "ai.sqlite");
-  const created = openSqliteStore({ path, mode: "create" });
+  const created = await openSqliteStore({ path, mode: "create" });
   assert.equal(created.ok, true);
   await created.value.close({
     timeoutMs: 1000,
@@ -17,6 +17,9 @@ test("a database hard-link alias is rejected without changing the original", asy
   const before = readFileSync(path),
     alias = join(root, "alias.sqlite");
   linkSync(path, alias);
-  assert.equal(openSqliteStore({ path: alias, mode: "open" }).ok, false);
+  assert.equal(
+    (await openSqliteStore({ path: alias, mode: "open" })).ok,
+    false,
+  );
   assert.deepEqual(readFileSync(path), before);
 });

@@ -9,7 +9,7 @@ import { unwrap } from "../../packages/ai-contract/dist/testing/index.js";
 const a = { tenantId: "test", principalId: "alice", authorityId: "desktop" };
 const b = { ...a, principalId: "bob" };
 const connection = (id) => ({
-  schemaVersion: 7,
+  schemaVersion: 8,
   kind: "connection",
   connectionId: id,
   name: id,
@@ -27,7 +27,7 @@ const connection = (id) => ({
 test("empty sessions and per-user connection revisions persist without provider credentials", async (t) => {
   const root = mkdtempSync(join(tmpdir(), "rss-connections-")),
     path = join(root, "state.sqlite");
-  let store = unwrap(openSqliteStore({ path, mode: "create" }));
+  let store = unwrap(await openSqliteStore({ path, mode: "create" }));
   const budget = { timeoutMs: 1000, signal: new AbortController().signal };
   t.after(async () => {
     await store.close(budget);
@@ -60,7 +60,7 @@ test("empty sessions and per-user connection revisions persist without provider 
     false,
   );
   unwrap(await store.close(budget));
-  store = unwrap(openSqliteStore({ path, mode: "open" }));
+  store = unwrap(await openSqliteStore({ path, mode: "open" }));
   assert.equal(
     unwrap(await store.session(session.namespace)).selectedConnectionId,
     "second",
