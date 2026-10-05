@@ -440,8 +440,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                 operation_id: p.operation,
                 secret: self.secrets.resolve(&p.secret_reference)?,
                 platform: self.store.cfg.platform,
-                lifetime_seconds: None,
-                csr: p.csr.clone(),
+                csr: p.csr.clone().ok_or(Error::Storage)?,
             };
             let grant: enroll::GrantReceipt = if p.purpose == Purpose::Renewal {
                 if self.restore_runtime_transport().is_ok() {

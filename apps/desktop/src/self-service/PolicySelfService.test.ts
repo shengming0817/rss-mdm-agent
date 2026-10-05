@@ -323,7 +323,7 @@ test("Device history restores original AI consent independently of enterprise id
     ...original.trigger,
     kind: "ai",
     context: { id: "retired", generation: "old" },
-    config: { id: "ai", version: "1" },
+    config: { id: "ai", revision: "1" },
     conversation: "original-ai",
     toolCall: "original-tool",
   } as BackendRequest["trigger"];

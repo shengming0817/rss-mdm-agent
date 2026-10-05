@@ -378,7 +378,7 @@ impl Data {
             authorization: if user {
                 TaskAuthorization::SelfService {
                     request_id: self.task,
-                    subject: SelfServiceSubject::Device,
+                    subject: SelfServiceSubject::Device {},
                     source: SelfServiceCaller::Human,
                     policy_id: self.task,
                     policy_revision: 1,
