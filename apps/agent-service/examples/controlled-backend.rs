@@ -1,12 +1,11 @@
 //! Controlled signed protocol participant for the installed-service macOS acceptance harness.
 //! Only test targets include this fixture; it is never a production transport mode.
-use agent_client::protocol::*;
 #[path = "../../../tests/agent-protocol/mod.rs"]
 mod protocol;
-use agent_api::runtime as wire;
 use agent_client::Clock;
 use base64::Engine;
 use ring::signature::KeyPair;
+use rss_mdm_agent_wire::runtime as wire;
 use std::io::{BufRead, Write};
 
 #[tokio::main]
@@ -47,9 +46,9 @@ async fn main() {
                     "grant" => {
                         assert!(data.grant.is_none(), "the fixture never replaces an existing grant");
                         let operation = uuid::Uuid::new_v4();
-                        let grant = agent_api::enroll::GrantReceipt {
+                        let grant = rss_mdm_agent_wire::enroll::GrantReceipt {
                             wire_version:1, grant_id:uuid::Uuid::new_v4(),
-                            state:agent_api::enroll::GrantState::Available,
+                            state:rss_mdm_agent_wire::enroll::GrantState::Available,
                             platform:wire::TaskPlatform::Macos,
                             expires_at:data.time.now().unwrap() + 3600,
                         };
@@ -69,18 +68,18 @@ async fn main() {
                         data.bytes = command["body"].as_str().unwrap().as_bytes().to_vec();
                         data.script();
                         {
-                            let wire::TaskPayload::TaskSpec(mut payload) = data.offer.as_ref().unwrap().payload.clone() else { unreachable!() };
+                            let wire::TaskPayload::Script(mut payload) = data.offer.as_ref().unwrap().payload.clone() else { unreachable!() };
                             payload.expires_at += 3600;
                             if let Some(timeout) = command["timeout"].as_u64() { payload.timeout_seconds = timeout.clamp(1, 300) as u32; }
                             if command["user"].as_bool() == Some(true) { payload.run_as = wire::ExecutionIdentity::LoggedInUser; }
-                            data.offer = Some(data.signed(wire::TaskPayload::TaskSpec(payload)));
+                            data.offer = Some(data.signed(wire::TaskPayload::Script(payload)));
                         }
                     }
                     "package" => {
                         data.task = uuid::Uuid::new_v4(); data.attempt = uuid::Uuid::new_v4();
                         data.bytes = std::fs::read(command["path"].as_str().unwrap()).unwrap();
                         data.software(1, command["user"].as_bool() == Some(true));
-                        let wire::TaskPayload::SoftwareTaskSpec(mut payload) = data.offer.as_ref().unwrap().payload.clone() else { unreachable!() };
+                        let wire::TaskPayload::Software(mut payload) = data.offer.as_ref().unwrap().payload.clone() else { unreachable!() };
                         payload.expires_at +=
                             command["validitySeconds"].as_i64().unwrap_or(3660).clamp(2, 3660) - 60;
                         if let wire::SoftwareTaskBehavior::Pkg(native) = &mut payload.steps[0].action.behavior {
@@ -88,13 +87,13 @@ async fn main() {
                         }
                         use sha2::{Digest, Sha256};
                         payload.definition_digest = Sha256::digest(serde_json::to_vec(&payload.steps).unwrap()).into();
-                        data.offer = Some(data.signed(wire::TaskPayload::SoftwareTaskSpec(payload)));
+                        data.offer = Some(data.signed(wire::TaskPayload::Software(payload)));
                     }
                     "dmg" => {
                         data.task = uuid::Uuid::new_v4(); data.attempt = uuid::Uuid::new_v4();
                         data.bytes = std::fs::read(command["path"].as_str().unwrap()).unwrap();
                         data.software(1,false);
-                        let wire::TaskPayload::SoftwareTaskSpec(mut payload) = data.offer.as_ref().unwrap().payload.clone() else { unreachable!() };
+                        let wire::TaskPayload::Software(mut payload) = data.offer.as_ref().unwrap().payload.clone() else { unreachable!() };
                         payload.expires_at += 3600;
                         payload.intent = if command["uninstall"].as_bool() == Some(true) { wire::SoftwareTaskIntent::Uninstall } else { wire::SoftwareTaskIntent::Install };
                         let action = &mut payload.steps[0].action;
@@ -116,7 +115,7 @@ async fn main() {
                         });
                         use sha2::{Digest,Sha256};
                         payload.definition_digest = Sha256::digest(serde_json::to_vec(&payload.steps).unwrap()).into();
-                        data.offer = Some(data.signed(wire::TaskPayload::SoftwareTaskSpec(payload)));
+                        data.offer = Some(data.signed(wire::TaskPayload::Software(payload)));
                     }
                     "cancel" => { let cancellation = wire::TaskCancellation::new(data.task, data.attempt).unwrap(); data.cancellations.push(cancellation); },
                     "result_failure" => data.result_failure = true,

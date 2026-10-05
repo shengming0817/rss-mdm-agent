@@ -292,7 +292,7 @@ fn retire_payload(candidate: &Candidate) -> Result<PathBuf, Error> {
 pub fn initialize(
     deployment: &Deployment,
     envelope: &Path,
-    secret: &agent_client::Secret,
+    secret: &rss_mdm_agent_wire::runtime::Secret,
 ) -> Result<(), Error> {
     let value: Bootstrap = serde_json::from_slice(
         &installation_security::read_protected(envelope).map_err(|_| Error::Configuration)?,
@@ -305,10 +305,10 @@ pub fn initialize(
         .map_err(|_| Error::Unavailable)?
         .block_on(deployment.initialize(value.grant, secret))
 }
-pub fn stdin_secret() -> Result<agent_client::Secret, Error> {
+pub fn stdin_secret() -> Result<rss_mdm_agent_wire::runtime::Secret, Error> {
     let mut bytes = zeroize::Zeroizing::new(Vec::new());
     std::io::stdin().take(65).read_to_end(&mut bytes)?;
-    agent_client::Secret::parse(
+    rss_mdm_agent_wire::runtime::Secret::parse(
         std::str::from_utf8(&bytes)
             .map_err(|_| Error::Identity)?
             .trim(),
@@ -493,11 +493,12 @@ fn verify_runtime_files(root: &Path, target: Target) -> Result<(), Error> {
     Ok(())
 }
 
-/// Local envelope schema generated from the actual decoder; remote receipts retain their producer reference.
+/// Local envelope schema derived from the decoder and the protocol owner's receipt definition.
 pub fn bootstrap_schema() -> Result<serde_json::Value, Error> {
     let mut value =
         serde_json::to_value(schemars::schema_for!(Bootstrap)).map_err(|_| Error::Configuration)?;
     value["$id"] = "urn:rss-mdm-agent:installation-bootstrap:1".into();
-    value["x-rss-enroll-schema-fingerprint"] = agent_api::enroll::SCHEMA_FINGERPRINT.into();
+    value["x-rss-enroll-schema-fingerprint"] =
+        rss_mdm_agent_wire::enroll::SCHEMA_FINGERPRINT.into();
     Ok(value)
 }

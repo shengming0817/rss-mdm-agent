@@ -1,7 +1,7 @@
 //! Fixed byte vectors from the consumed Agent V1 encoding at c0581d5c.
 //! These fixtures are independent of regenerated Rust serialization and signers.
-use crate::protocol::{SoftwareTaskStepExt, TaskPayloadExt};
-use agent_api::runtime::TaskPayload;
+
+use rss_mdm_agent_wire::runtime::TaskPayload;
 use sha2::{Digest, Sha256};
 #[test]
 fn preserves_task_signatures_and_step_digest() {
@@ -19,7 +19,7 @@ fn preserves_task_signatures_and_step_digest() {
             "44df350a55b6aecb293a326c1086687aa1102acf73ebdde86aec53f4c77f6f8d",
         ),
     ] {
-        let task: TaskPayload = agent_api::decode(body).unwrap();
+        let task: TaskPayload = serde_json::from_slice(body).unwrap();
         assert_eq!(serde_json::to_vec(&task).unwrap(), body);
         assert_eq!(
             format!(
@@ -28,7 +28,7 @@ fn preserves_task_signatures_and_step_digest() {
             ),
             expected
         );
-        if let TaskPayload::SoftwareTaskSpec(spec) = task {
+        if let TaskPayload::Software(spec) = task {
             assert_eq!(
                 spec.steps[0].digest().unwrap(),
                 [
@@ -53,36 +53,42 @@ fn validates_raw_json_before_normalization() {
     let mut omitted = value;
     omitted.as_object_mut().unwrap().remove("content");
     for invalid in [unknown, nil, version, omitted] {
-        assert!(agent_api::decode::<TaskPayload>(&serde_json::to_vec(&invalid).unwrap()).is_err());
+        assert!(
+            serde_json::from_slice::<TaskPayload>(&serde_json::to_vec(&invalid).unwrap()).is_err()
+        );
     }
 }
 
 fn report_value(
-    shape: agent_api::runtime::ValueType,
-    value: agent_api::runtime::Scalar,
-) -> Result<agent_api::runtime::ReportRequest, crate::Error> {
-    use crate::protocol::ReportRequestExt;
-    use agent_api::runtime::{CollectedValue, FieldValue, ReportBody, ReportRequest};
-    let mut collection = crate::test_support::collections().remove(0);
-    collection.fields[0].value_type = shape;
-    let field = collection.fields[0].key.clone();
-    ReportRequest::new(
+    shape: rss_mdm_agent_wire::runtime::ValueType,
+    value: rss_mdm_agent_wire::runtime::Scalar,
+) -> Result<rss_mdm_agent_wire::runtime::ReportRequest, crate::Error> {
+    use rss_mdm_agent_wire::runtime::{CollectedValue, FieldValue, ReportBody, ReportRequest};
+    let original = crate::test_support::collections().remove(0);
+    let mut fields = original.fields().to_vec();
+    fields[0].value_type = shape;
+    let field = fields[0].key;
+    let collection = rss_mdm_agent_wire::runtime::CollectionDefinition::new(
+        original.dataset(),
+        original.version(),
+        original.source(),
+        fields,
+    )?;
+    Ok(ReportRequest::new(
         uuid::Uuid::from_u128(1),
         1,
         1,
         collection,
-        ReportBody::Snapshot {
-            values: vec![FieldValue {
-                field,
-                value: CollectedValue::Value(value),
-            }],
-        },
-    )
+        ReportBody::Snapshot(vec![FieldValue {
+            field,
+            value: CollectedValue::Value(value),
+        }]),
+    )?)
 }
 
 #[test]
 fn report_strings_preserve_character_budget_and_allowed_text() {
-    use agent_api::runtime::{Scalar, ValueType};
+    use rss_mdm_agent_wire::runtime::{Scalar, ValueType};
     let shape = ValueType::String {
         max_length: 4,
         allow_empty: false,
@@ -108,7 +114,7 @@ fn report_strings_preserve_character_budget_and_allowed_text() {
 
 #[test]
 fn report_nested_strings_use_the_same_character_contract() {
-    use agent_api::runtime::{Scalar, ValueType};
+    use rss_mdm_agent_wire::runtime::{Scalar, ValueType};
     let shape = ValueType::Array {
         max_items: 1,
         items: Box::new(ValueType::Object {
@@ -133,4 +139,38 @@ fn report_nested_strings_use_the_same_character_contract() {
         )]);
         assert_eq!(report_value(shape.clone(), value).is_ok(), accepted);
     }
+}
+
+#[test]
+fn reports_sort_fields_and_preserve_explicit_nullable_metadata() {
+    use rss_mdm_agent_wire::runtime::{
+        CollectedValue, FieldValue, ReportBody, ReportRequest, Scalar,
+    };
+    let collection = crate::test_support::collections().remove(0);
+    let values = collection
+        .fields()
+        .iter()
+        .rev()
+        .map(|field| FieldValue {
+            field: field.key,
+            value: CollectedValue::Value(Scalar::String("fixture".into())),
+        })
+        .collect();
+    let report = ReportRequest::new(
+        uuid::Uuid::from_u128(1),
+        1,
+        1,
+        collection,
+        ReportBody::Snapshot(values),
+    )
+    .unwrap();
+    assert_eq!(serde_json::to_vec(report.body()).unwrap(), br#"{"kind":"snapshot","values":[{"field":"device.model","value":{"kind":"value","value":{"kind":"string","value":"fixture"}}},{"field":"device.os.version","value":{"kind":"value","value":{"kind":"string","value":"fixture"}}}]}"#);
+    let bytes = report.canonical().unwrap();
+    let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    for field in value["collection"]["fields"].as_array().unwrap() {
+        assert_eq!(field.get("unit"), Some(&serde_json::Value::Null));
+        assert_eq!(field.get("itemKey"), Some(&serde_json::Value::Null));
+    }
+    let decoded: ReportRequest = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(decoded.canonical().unwrap(), bytes);
 }

@@ -3,8 +3,6 @@ use crate::{
     backend::{self, host::EnterpriseHost, offered, plan, ExecutionBridge},
     DeviceSecrets, Interpreter, SystemClock,
 };
-use agent_api::runtime as wire;
-use agent_client::protocol::*;
 use agent_client::{Client, CredentialRedactor, Error, IdentityProvider, Materials, Offer};
 use execution_app::{AppConfig, ExecutionApp, RequestContext};
 use execution_contract::{
@@ -12,6 +10,7 @@ use execution_contract::{
     RequestId,
 };
 use execution_runner::{MaterialRegistry, NativeRunner};
+use rss_mdm_agent_wire::runtime as wire;
 mod policy;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -464,8 +463,8 @@ impl<S: IdentityProvider> DeviceService<S> {
             self.core.available = Some(offered(&offer)?);
             network(self.client.received(&offer), &mut self.core, commands).await?;
             let materials = network(self.client.prepare(&offer), &mut self.core, commands).await?;
-            if matches!(offer.payload(),wire::TaskPayload::TaskSpec(p) if matches!(p.authorization,wire::TaskAuthorization::SelfService {..}))
-                || matches!(offer.payload(),wire::TaskPayload::SoftwareTaskSpec(p) if matches!(p.authorization,wire::TaskAuthorization::SelfService {..}))
+            if matches!(offer.payload(),wire::TaskPayload::Script(p) if matches!(p.authorization,wire::TaskAuthorization::SelfService {..}))
+                || matches!(offer.payload(),wire::TaskPayload::Software(p) if matches!(p.authorization,wire::TaskAuthorization::SelfService {..}))
             {
                 let selection = self.bind_policy_offer(&offer)?;
                 backend::submit(self, offer, materials, Some(selection), commands).await?;
@@ -473,7 +472,7 @@ impl<S: IdentityProvider> DeviceService<S> {
                 self.core.available_risk = None;
                 return Ok(());
             }
-            if matches!(offer.payload(),wire::TaskPayload::SoftwareTaskSpec(p) if p.start_mode==wire::SoftwareStartMode::UserInitiated)
+            if matches!(offer.payload(),wire::TaskPayload::Software(p) if p.start_mode==wire::SoftwareStartMode::UserInitiated)
             {
                 self.waiting = Some((offer, materials));
                 return Ok(());

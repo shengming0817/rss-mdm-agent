@@ -195,7 +195,7 @@ export type BackendIdentity = "system" | "user";
  */
 export type SoftwareOperation = "install" | "detect" | "uninstall";
 /**
- * `SelfServiceTask`
+ * One directory interface; software does not inherit script parameter semantics.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
  * via the `definition` "SelfServiceTask".
@@ -203,21 +203,42 @@ export type SoftwareOperation = "install" | "detect" | "uninstall";
 export type SelfServiceTask =
   | {
       kind: "script";
+      /**
+       * Full resolved parameter constraints owned by Resource.
+       */
       parameterSchema: unknown;
+      /**
+       * Complete sources for script parameters.
+       */
       parameterSources: {
         [k: string]: ScriptParameterSource;
       };
+      /**
+       * Exact Resource selection.
+       */
       resource: TaskResource;
+      /**
+       * Required operating-system identity.
+       */
       runAs: ExecutionIdentity;
     }
   | {
       kind: "software";
+      /**
+       * Exact Resource selection.
+       */
       resource: TaskResource;
+      /**
+       * Required operating-system identity of the root operation.
+       */
       runAs: ExecutionIdentity;
+      /**
+       * Exact effect target, distinct from enterprise login.
+       */
       target: SoftwareExecutionTarget;
     };
 /**
- * `ScriptParameterSource`
+ * Public source of one Resource-declared parameter.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
  * via the `definition` "ScriptParameterSource".
@@ -225,20 +246,23 @@ export type SelfServiceTask =
 export type ScriptParameterSource =
   | {
       kind: "fixed";
-      value: unknown;
+      /**
+       * Administrator-selected scalar checked against the Resource schema.
+       */
+      value: string | boolean | number;
     }
   | {
       kind: "input";
     };
 /**
- * `ExecutionIdentity`
+ * Required operating-system execution identity.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
  * via the `definition` "ExecutionIdentity".
  */
 export type ExecutionIdentity = "system" | "logged_in_user";
 /**
- * `SoftwareExecutionTarget`
+ * Concrete effect target bound before an Offer is signed.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
  * via the `definition` "SoftwareExecutionTarget".
@@ -248,8 +272,14 @@ export type SoftwareExecutionTarget =
       kind: "device";
     }
   | {
+      /**
+       * Exact SID/UID.
+       */
       identity: string;
       kind: "user";
+      /**
+       * Exact login generation.
+       */
       sessionId: string;
     };
 /**
@@ -769,22 +799,28 @@ export type PolicyStatus =
       value: SelfServiceStatus;
     };
 /**
- * `SelfServiceResult`
+ * Authorized evidence; execution state is available independently from sensitive output.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
  * via the `definition` "SelfServiceResult".
  */
 export type SelfServiceResult =
   | {
+      /**
+       * Original bounded script evidence.
+       */
       evidence: ScriptRunResult;
       kind: "script";
     }
   | {
+      /**
+       * Current independent detection outcome.
+       */
       effect: SelfServiceSoftwareEffect;
       kind: "software";
     };
 /**
- * `TaskFailure`
+ * Closed executor failure classification.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
  * via the `definition` "TaskFailure".
@@ -797,14 +833,14 @@ export type TaskFailure =
   | "output_limit"
   | "capture_failed";
 /**
- * `OutputQuality`
+ * Output completeness controls whether collection facts may be accepted.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
  * via the `definition` "OutputQuality2".
  */
 export type OutputQuality2 = "complete" | "partial" | "truncated" | "failed";
 /**
- * `SelfServiceSoftwareEffect`
+ * Closed software effect projection.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
  * via the `definition` "SelfServiceSoftwareEffect".
@@ -815,14 +851,14 @@ export type SelfServiceSoftwareEffect =
   | "waiting_reboot"
   | "unknown";
 /**
- * `RunCancellation`
+ * Public cancellation observation.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
  * via the `definition` "RunCancellation".
  */
 export type RunCancellation = "none" | "requested" | "confirmed";
 /**
- * `TaskDelivery`
+ * Public delivery observation, independent of the server reducer implementation.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
  * via the `definition` "TaskDelivery".
@@ -832,17 +868,29 @@ export type TaskDelivery =
       kind: "queued";
     }
   | {
+      /**
+       * Attempt identity.
+       */
       attempt: string;
       kind: "claimed";
+      /**
+       * Lease expiry in Unix seconds.
+       */
       leaseUntil: number;
     }
   | {
+      /**
+       * Attempt identity.
+       */
       attempt: string;
       kind: "received";
+      /**
+       * Lease expiry in Unix seconds.
+       */
       leaseUntil: number;
     };
 /**
- * `TaskExecution`
+ * Public execution observation. Unknown never authorizes a blind retry.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
  * via the `definition` "TaskExecution".
@@ -1126,55 +1174,115 @@ export interface NativeContextRef {
   id: Id;
 }
 /**
- * `SelfServiceDirectoryItem`
+ * One currently authorized script and its Resource-owned parameter schema.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
  * via the `definition` "SelfServiceDirectoryItem".
  */
 export interface SelfServiceDirectoryItem {
+  /**
+   * Logical Policy identity.
+   */
   policyId: string;
+  /**
+   * Current configuration CAS revision.
+   */
   policyRevision: number;
+  /**
+   * Immutable execution version.
+   */
   policyVersion: string;
+  /**
+   * Normalized presentation and invocation settings.
+   */
   selfService: SelfServiceMetadata;
+  /**
+   * Closed task kind and the exact invocation interface.
+   */
   task: SelfServiceTask;
 }
 /**
- * `SelfServiceMetadata`
+ * Published presentation and invocation settings; values are normalized by Policy CAS.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
  * via the `definition` "SelfServiceMetadata".
  */
 export interface SelfServiceMetadata {
+  /**
+   * Effective administrator AI switch.
+   */
   allowAi: boolean;
+  /**
+   * Presentation category.
+   */
   category: string;
+  /**
+   * Intended purpose.
+   */
   description: string;
+  /**
+   * Directory display name.
+   */
   displayName: string;
+  /**
+   * Search terms.
+   */
   keywords: string[];
+  /**
+   * Preconditions shown before invocation.
+   */
   prerequisites: string;
+  /**
+   * Whether this script is published for self service.
+   */
   published: boolean;
-  riskLevel: number;
+  /**
+   * Effective risk level, one or two.
+   */
+  riskLevel: 1 | 2;
+  /**
+   * Expected effects shown before invocation.
+   */
   sideEffects: string;
 }
 /**
- * `TaskResource`
+ * Exact Resource identity accompanying its signed digest.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
  * via the `definition` "TaskResource".
  */
 export interface TaskResource {
+  /**
+   * Logical Resource identity.
+   */
   id: string;
+  /**
+   * Exact selected variant.
+   */
   variant: string;
+  /**
+   * Immutable Resource version.
+   */
   version: string;
 }
 /**
- * `SelfServiceUser`
+ * Authenticated product user; contains no session credential.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
  * via the `definition` "SelfServiceUser".
  */
 export interface SelfServiceUser {
+  /**
+   * Identity instance.
+   */
   instanceId: string;
+  /**
+   * Authenticated principal.
+   */
   principalId: string;
+  /**
+   * Product tenant.
+   */
   tenantId: string;
 }
 /**
@@ -1670,14 +1778,23 @@ export interface PolicyDirectoryQuery {
   after: Id | null;
 }
 /**
- * `SelfServiceDirectoryResponse`
+ * Directory response consumed by the Agent service and employee UI.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
  * via the `definition` "SelfServiceDirectoryResponse".
  */
 export interface SelfServiceDirectoryResponse {
+  /**
+   * Server observation time in Unix seconds.
+   */
   asOf: number;
+  /**
+   * Authorized directory entries.
+   */
   items: SelfServiceDirectoryItem[];
+  /**
+   * Last examined Policy when another page may exist.
+   */
   nextCursor: string | null;
 }
 /**
@@ -1697,40 +1814,91 @@ export interface Command5 {
   output: PolicyStatus;
 }
 /**
- * `SelfServiceStatus`
+ * Status of an invocation by this device and authenticated employee.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
  * via the `definition` "SelfServiceStatus".
  */
 export interface SelfServiceStatus {
+  /**
+   * Current attempt identity, if claimed.
+   */
   attemptId: string | null;
+  /**
+   * Earliest server admission time in Unix seconds.
+   */
   availableAt: number;
+  /**
+   * Final Run deadline in Unix seconds.
+   */
   deadline: number;
+  /**
+   * Durable idempotency identity of the invocation.
+   */
   requestId: string;
+  /**
+   * Authorized result with native collection time and server receipt time.
+   */
   result: SelfServiceResult | null;
+  /**
+   * Durable Run identity.
+   */
   runId: string;
+  /**
+   * Current durable Run observation.
+   */
   state: TaskRunState;
 }
 /**
- * `ScriptRunResult`
+ * Server-persisted script evidence; only Resource output has a dynamic shape.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
  * via the `definition` "ScriptRunResult".
  */
 export interface ScriptRunResult {
+  /**
+   * Whether the output satisfies Resource budgets.
+   */
   budgetValid: boolean;
+  /**
+   * Agent's original collection timestamp in Unix seconds.
+   */
   collectedAt: number;
+  /**
+   * Original bounded process diagnostics.
+   */
   diagnostics: TaskDiagnostics;
+  /**
+   * Original process exit code, absent when unavailable.
+   */
   exitCode: number | null;
+  /**
+   * Resource-defined output, or null when retained only by reference.
+   */
   output: unknown;
+  /**
+   * Digest and size when output is retained by reference.
+   */
   outputReference: ScriptOutputReference | null;
+  /**
+   * Original completeness classification.
+   */
   quality: OutputQuality2;
+  /**
+   * Server receipt timestamp in Unix seconds.
+   */
   receivedAt: number;
+  /**
+   * Whether the output matches the Resource schema.
+   */
   schemaValid: boolean;
+  /**
+   * Whether this evidence may contribute current inventory facts.
+   */
   trusted: boolean;
 }
 /**
- * `TaskDiagnostics`
+ * Private bounded process diagnostics.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
  * via the `definition` "TaskDiagnostics".
@@ -1743,26 +1911,47 @@ export interface TaskDiagnostics {
   stdout: string;
 }
 /**
- * `ScriptOutputReference`
+ * Reference for output too large or outside its declared Resource budget.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
  * via the `definition` "ScriptOutputReference".
  */
 export interface ScriptOutputReference {
+  /**
+   * Exact encoded JSON byte count.
+   */
   bytes: number;
+  /**
+   * SHA-256 of those exact bytes.
+   */
   sha256: string;
 }
 /**
- * `TaskRunState`
+ * Current durable Run observation, without server-side reducer methods.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
  * via the `definition` "TaskRunState".
  */
 export interface TaskRunState {
+  /**
+   * Current cancellation observation.
+   */
   cancellation: RunCancellation;
+  /**
+   * Final Run deadline in Unix seconds.
+   */
   deadline: number;
+  /**
+   * Current delivery observation.
+   */
   delivery: TaskDelivery;
+  /**
+   * Current execution observation.
+   */
   execution: TaskExecution;
+  /**
+   * Server time at which execution was admitted.
+   */
   startedAt: number | null;
 }
 /**

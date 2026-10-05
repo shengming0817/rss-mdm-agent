@@ -1,4 +1,3 @@
-use crate::protocol::*;
 use crate::{wire, Error};
 use std::{collections::BTreeMap, time::Duration};
 use url::Url;

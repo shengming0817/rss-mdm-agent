@@ -394,7 +394,7 @@ pub(super) fn execution_resources(
     {
         installation_security::protected(&powershell).map_err(|_| Error::Identity)?;
         interpreters.push(crate::Interpreter {
-            profile: agent_api::runtime::ExecutorProfile::PowerShell7,
+            profile: rss_mdm_agent_wire::runtime::ExecutorProfile::PowerShell7,
             image: Artifact {
                 sha256: hash(&std::fs::read(&powershell)?),
                 path: powershell,

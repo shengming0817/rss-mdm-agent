@@ -8,7 +8,7 @@ publish = false
 description = "Local execution descriptions, bounded validation and canonical plan digests"
 
 [dependencies]
-agent-api.workspace = true
+rss-mdm-agent-wire.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 schemars.workspace = true

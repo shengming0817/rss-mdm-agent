@@ -472,7 +472,7 @@ pub struct NativeContextSession {
     /// Credential issuer origin, present exactly when a native user session is bound.
     pub credential_origin: Option<String>,
     /// Native verified product employee.
-    pub user: Option<agent_api::runtime::SelfServiceUser>,
+    pub user: Option<rss_mdm_agent_wire::runtime::SelfServiceUser>,
     /// Exact native product login generation.
     pub generation: Id,
     /// Current session expiry; never extended by an invocation.
@@ -606,7 +606,7 @@ pub enum Reply {
     /// Formal authorized Policy directory, not an execution permit.
     PolicyDirectory {
         /// Current server projection.
-        value: agent_api::runtime::SelfServiceDirectoryResponse,
+        value: rss_mdm_agent_wire::runtime::SelfServiceDirectoryResponse,
     },
     /// Original request state, including preparation before any backend Run exists.
     PolicyRequest {
@@ -618,7 +618,7 @@ pub enum Reply {
     /// Structured server-authorized status/result.
     PolicyStatus {
         /// Original invocation's durable server observation.
-        value: agent_api::runtime::SelfServiceStatus,
+        value: rss_mdm_agent_wire::runtime::SelfServiceStatus,
     },
     /// Safe readiness projection from the authenticated system owner.
     ServiceStatus {

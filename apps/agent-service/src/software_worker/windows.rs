@@ -1,5 +1,5 @@
-use agent_api::runtime as wire;
 use agent_client::protocol::*;
+use rss_mdm_agent_wire::runtime as wire;
 // ref: microsoft/windows-rs 0.61.3 Windows/Management/Deployment/mod.rs;
 // Rust std os/windows/fs.rs (share_mode); tempfile 3.27.0 src/dir/mod.rs (explicit close).
 use super::*;

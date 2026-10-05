@@ -726,7 +726,7 @@ export function checkTree(treeRoot = root, executable) {
         'syn = { version = "=2.0.119", features = ["full", "visit"] }',
         'proc-macro2 = "=1.0.107"',
         'execution-contract = { path = "../../../crates/execution-contract" }',
-        "agent-api.workspace = true",
+        "rss-mdm-agent-wire.workspace = true",
         'tauri = { workspace = true, features = ["test"] }',
       ],
     ],

@@ -3,11 +3,10 @@ use crate::{
     backend::plan::{self, hex, id, reference},
     ExecutionConfig, SoftwareManagerKind,
 };
-use agent_api::runtime as wire;
-use agent_client::protocol::*;
 use agent_client::{Error, Materials, Offer};
 use execution_contract::*;
 use execution_runner::{Artifacts, SoftwareStepArtifacts};
+use rss_mdm_agent_wire::runtime as wire;
 use script_plan::{compile_invocation, ScriptInvocationInput};
 use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 
@@ -261,7 +260,7 @@ pub(crate) fn compile(
     ),
     helper: Option<Arc<execution_ipc::helper::Connection>>,
 ) -> Result<(FrozenExecution, Artifacts), Error> {
-    let wire::TaskPayload::SoftwareTaskSpec(original) = offer.payload() else {
+    let wire::TaskPayload::Software(original) = offer.payload() else {
         return Err(Error::Untrusted);
     };
     let mut compared = payload.clone();

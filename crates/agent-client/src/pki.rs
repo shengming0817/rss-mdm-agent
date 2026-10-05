@@ -1,9 +1,9 @@
 use crate::{
     client::json_transport,
-    pki_wire::{Acknowledgement, Trust},
     trust::{VerifiedTrust, Watermark},
     CertificateAdd, Client, Clock, Error, IdentityProvider, MachineStore,
 };
+use rss_mdm_agent_wire::pki::{Acknowledgement, Trust};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::sync::{
@@ -256,7 +256,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         let registration = self.registration()?.registration_id;
         let mut state = self.pki_state()?;
         let document = state.document.as_ref().ok_or(Error::Identity)?;
-        let digest = document.installation_digest()?;
+        let digest = document.installation_digest();
         if !state.ack.as_ref().is_some_and(|a| {
             a.registration == registration
                 && a.request.revision == document.revision
@@ -295,7 +295,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         )
         .await?;
         if !status.is_success() {
-            let error: agent_api::enroll::ErrorBody = crate::store::decode(&bytes)?;
+            let error: rss_mdm_agent_wire::enroll::ErrorBody = crate::store::decode(&bytes)?;
             self.identity_failure(error.code)?;
             return Err(crate::identity::enrollment_error(error.code));
         }

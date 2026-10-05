@@ -45,31 +45,9 @@ dependencies = [
 ]
 
 [[package]]
-name = "agent-api"
-version = "0.1.0"
-dependencies = [
- "base64 0.23.1",
- "jsonschema",
- "ordered-float",
- "quote",
- "schemars 0.8.22",
- "schemars 1.2.2",
- "serde",
- "serde_json",
- "sha2",
- "syn 2.0.119",
- "thiserror 2.0.20",
- "toml 1.1.5+spec-1.1.0",
- "typify",
- "uuid",
- "zeroize",
-]
-
-[[package]]
 name = "agent-client"
 version = "0.1.0"
 dependencies = [
- "agent-api",
  "axum",
  "base64 0.23.1",
  "der",
@@ -80,6 +58,7 @@ dependencies = [
  "platform-private-storage",
  "reqwest",
  "ring",
+ "rss-mdm-agent-wire",
  "rusqlite",
  "rustls",
  "schemars 1.2.2",
@@ -91,6 +70,7 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
  "tokio-rustls",
+ "toml 1.1.5+spec-1.1.0",
  "url",
  "uuid",
  "x509-cert",
@@ -102,7 +82,6 @@ dependencies = [
 name = "agent-service"
 version = "0.1.0"
 dependencies = [
- "agent-api",
  "agent-client",
  "axum",
  "base64 0.23.1",
@@ -128,6 +107,7 @@ dependencies = [
  "quick-xml",
  "reqwest",
  "ring",
+ "rss-mdm-agent-wire",
  "rusqlite",
  "rustls",
  "schemars 1.2.2",
@@ -1264,8 +1244,8 @@ dependencies = [
 name = "execution-contract"
 version = "0.1.0"
 dependencies = [
- "agent-api",
  "jsonschema",
+ "rss-mdm-agent-wire",
  "schemars 1.2.2",
  "serde",
  "serde_json",
@@ -1289,12 +1269,12 @@ dependencies = [
 name = "execution-ipc"
 version = "0.1.0"
 dependencies = [
- "agent-api",
  "cc",
  "execution-app",
  "execution-contract",
  "installation-security",
  "libc",
+ "rss-mdm-agent-wire",
  "schemars 1.2.2",
  "serde",
  "serde_json",
@@ -1319,12 +1299,12 @@ dependencies = [
 name = "execution-mcp"
 version = "0.1.0"
 dependencies = [
- "agent-api",
  "execution-contract",
  "execution-lifecycle",
  "futures-util",
  "jsonschema",
  "rmcp",
+ "rss-mdm-agent-wire",
  "schemars 1.2.2",
  "serde",
  "serde_json",
@@ -3952,11 +3932,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "rss-mdm-agent-wire"
+version = "1.0.0"
+source = "git+https://dev.azure.com/shengming0923/rss/_git/rss-mdm?rev=0c76735a8df8758e826d7269723cb8bace96ba89#0c76735a8df8758e826d7269723cb8bace96ba89"
+dependencies = [
+ "base64 0.22.1",
+ "ordered-float",
+ "schemars 1.2.2",
+ "serde",
+ "serde_json",
+ "sha2",
+ "url",
+ "uuid",
+ "zeroize",
+]
+
+[[package]]
 name = "rss-mdm-desktop"
 version = "0.1.0"
 dependencies = [
  "aes-gcm",
- "agent-api",
  "ai-session-contract",
  "constant_time_eq",
  "execution-admission",
@@ -3980,6 +3975,7 @@ dependencies = [
  "platform-private-storage",
  "proc-macro2",
  "reqwest",
+ "rss-mdm-agent-wire",
  "rusqlite",
  "schemars 1.2.2",
  "serde",

@@ -4,10 +4,10 @@ use crate::{
     service::{helper_error, network, Command, Core, Selection},
     DeviceService,
 };
-use agent_api::runtime as wire;
 use agent_client::{Error, IdentityProvider, Materials, Offer};
 use execution_app::ExecutionStatus;
 use execution_contract::BackendRequestState;
+use rss_mdm_agent_wire::runtime as wire;
 use std::sync::Arc;
 pub(crate) async fn submit<S: IdentityProvider>(
     service: &mut DeviceService<S>,
@@ -27,9 +27,9 @@ pub(crate) async fn submit<S: IdentityProvider>(
     }
     service.core.available = None;
     let needs_user = match offer.payload() {
-        wire::TaskPayload::EnrollmentTaskSpec(_) => return Err(Error::Unsupported),
-        wire::TaskPayload::TaskSpec(p) => p.run_as == wire::ExecutionIdentity::LoggedInUser,
-        wire::TaskPayload::SoftwareTaskSpec(p) => p
+        wire::TaskPayload::Enrollment(_) => return Err(Error::Unsupported),
+        wire::TaskPayload::Script(p) => p.run_as == wire::ExecutionIdentity::LoggedInUser,
+        wire::TaskPayload::Software(p) => p
             .steps
             .iter()
             .any(|step| matches!(step.target, wire::SoftwareExecutionTarget::User { .. })),
@@ -237,8 +237,8 @@ fn compile(
     Error,
 > {
     match payload {
-        wire::TaskPayload::EnrollmentTaskSpec(_) => Err(Error::Unsupported),
-        wire::TaskPayload::SoftwareTaskSpec(payload) => crate::backend::software::compile(
+        wire::TaskPayload::Enrollment(_) => Err(Error::Unsupported),
+        wire::TaskPayload::Software(payload) => crate::backend::software::compile(
             offer,
             materials,
             payload,
@@ -247,7 +247,7 @@ fn compile(
             (&core.config, &mut core.material_root),
             delegate,
         ),
-        wire::TaskPayload::TaskSpec(payload) => {
+        wire::TaskPayload::Script(payload) => {
             let work_root = delegate
                 .as_ref()
                 .map_or(&core.config.work_root, |h| &h.context().work_root);

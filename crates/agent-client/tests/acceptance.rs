@@ -1,11 +1,10 @@
-use agent_api::runtime::*;
-use agent_client::protocol::*;
 use agent_client::{Client, Config, Error, Limits, OpenMode, Transport};
+use rss_mdm_agent_wire::runtime::*;
 use url::Url;
 use uuid::Uuid;
 #[path = "../../../tests/agent-protocol/mod.rs"]
 mod support;
-use agent_api::runtime::{TaskArchitecture, TaskPlatform};
+use rss_mdm_agent_wire::runtime::{TaskArchitecture, TaskPlatform};
 use support::*;
 #[tokio::test]
 async fn refresh_inspection_reads_live_binding_without_locking_or_creating_state() {
@@ -320,7 +319,7 @@ async fn signature_namespace_and_expiry_are_checked_before_content() {
     {
         let mut data = server.data.lock().unwrap();
         let mut payload = data.offer.as_ref().unwrap().payload.clone();
-        if let TaskPayload::TaskSpec(v) = &mut payload {
+        if let TaskPayload::Script(v) = &mut payload {
             v.tenant_id = Uuid::new_v4();
         }
         data.offer = Some(data.signed(payload));
@@ -392,7 +391,7 @@ async fn all_software_steps_are_consumed_and_user_start_is_explicit() {
         .start_user_initiated(&offer, &materials)
         .await
         .unwrap();
-    assert!(matches!(start.payload(),TaskPayload::SoftwareTaskSpec(v) if v.steps.len()==3));
+    assert!(matches!(start.payload(),TaskPayload::Software(v) if v.steps.len()==3));
 }
 
 #[test]
@@ -528,7 +527,7 @@ async fn prior_communication_schema_preserves_registration_pending_delivery_and_
 #[test]
 fn configuration_rejects_untrusted_network_and_unbounded_budgets() {
     let mut cfg = Config {
-        execution_context: agent_api::runtime::SoftwareExecutionContext {
+        execution_context: rss_mdm_agent_wire::runtime::SoftwareExecutionContext {
             revision: 1,
             os_version: [14, 0, 0, 0],
             system_broker: true,
@@ -608,10 +607,7 @@ async fn controlled_factory_software_start_never_reuses_a_prior_script_permit() 
     client.received(&second).await.unwrap();
     let materials = client.prepare(&second).await.unwrap();
     let started = client.request_start(&second, &materials).await.unwrap();
-    assert!(matches!(
-        started.payload(),
-        TaskPayload::SoftwareTaskSpec(_)
-    ));
+    assert!(matches!(started.payload(), TaskPayload::Software(_)));
     assert_eq!(started.payload().attempt_id(), second.attempt_id());
 }
 
@@ -654,7 +650,7 @@ async fn controlled_backend_issues_only_explicit_offers_bound_to_the_actual_clai
     client.set_execution_context(context).unwrap();
     server.data.lock().unwrap().software(1, true);
     let offered = client.claim().await.unwrap().offer.unwrap();
-    let TaskPayload::SoftwareTaskSpec(spec) = offered.payload() else {
+    let TaskPayload::Software(spec) = offered.payload() else {
         panic!("software")
     };
     assert_eq!(spec.execution_context, client.execution_context().unwrap());
@@ -683,10 +679,7 @@ async fn controlled_backend_keeps_an_issued_software_offer_frozen_across_context
         .start_user_initiated(&original, &materials)
         .await
         .unwrap();
-    assert!(matches!(
-        started.payload(),
-        TaskPayload::SoftwareTaskSpec(_)
-    ));
+    assert!(matches!(started.payload(), TaskPayload::Software(_)));
     assert_eq!(started.payload().attempt_id(), original.attempt_id());
 }
 
@@ -855,7 +848,7 @@ async fn manual_renewal_keeps_binding_tasks_reports_and_original_recovery_operat
     let status = client.enrollment_status().unwrap();
     assert_eq!(
         status.failure,
-        Some(agent_api::enroll::ErrorCode::CredentialRevoked)
+        Some(rss_mdm_agent_wire::enroll::ErrorCode::CredentialRevoked)
     );
     assert_eq!(
         status.phase,
@@ -907,7 +900,7 @@ async fn manual_renewal_keeps_binding_tasks_reports_and_original_recovery_operat
         .unwrap();
     let rejected = old_client
         .post(server.url.join("api/v1/agent/enroll/activate").unwrap())
-        .json(&agent_api::enroll::ActivationRequest {
+        .json(&rss_mdm_agent_wire::enroll::ActivationRequest {
             wire_version: 1,
             issuance_id: candidate,
             operation_id: operation,
@@ -918,11 +911,11 @@ async fn manual_renewal_keeps_binding_tasks_reports_and_original_recovery_operat
     assert_eq!(rejected.status(), reqwest::StatusCode::UNAUTHORIZED);
     assert_eq!(
         rejected
-            .json::<agent_api::enroll::ErrorBody>()
+            .json::<rss_mdm_agent_wire::enroll::ErrorBody>()
             .await
             .unwrap()
             .code,
-        agent_api::enroll::ErrorCode::InvalidIdentity
+        rss_mdm_agent_wire::enroll::ErrorCode::InvalidIdentity
     );
     assert_eq!(server.data.lock().unwrap().activation_calls.len(), 2);
     assert_eq!(server.data.lock().unwrap().binding.as_ref(), Some(&binding));
@@ -941,7 +934,7 @@ async fn manual_renewal_keeps_binding_tasks_reports_and_original_recovery_operat
 }
 #[tokio::test]
 async fn readonly_identity_preflight_shares_runtime_rules_and_preserves_state() {
-    use agent_api::enroll::ErrorCode;
+    use rss_mdm_agent_wire::enroll::ErrorCode;
     let server = Server::tls().await;
     let root = Root::new();
     let mut client = server.client(&root, OpenMode::Create);
@@ -1117,7 +1110,7 @@ async fn obsolete_ack_preserves_the_original_report_for_retry() {
 
 #[tokio::test]
 async fn obsolete_activation_capability_preserves_active_binding_and_candidate() {
-    use agent_api::enroll;
+    use rss_mdm_agent_wire::enroll;
     let server = Server::tls().await;
     let root = Root::new();
     let mut client = server.client(&root, OpenMode::Create);
@@ -1166,8 +1159,8 @@ async fn obsolete_activation_capability_preserves_active_binding_and_candidate()
 
 #[tokio::test]
 async fn imports_authorized_grant_over_real_tls_without_replacing_the_operation() {
-    use agent_api::enroll;
     use agent_client::IdentityProvider;
+    use rss_mdm_agent_wire::enroll;
     let server = Server::tls().await;
     let root = Root::new();
     let operation = Uuid::new_v4();

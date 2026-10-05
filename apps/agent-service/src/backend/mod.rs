@@ -1,6 +1,6 @@
 //! Backend-to-local execution adapter; neither transport nor journal authority.
-use agent_api::runtime as wire;
 use agent_client::{Error, Offer};
+use rss_mdm_agent_wire::runtime as wire;
 use sha2::Digest as _;
 mod bridge;
 pub(crate) mod commands;
@@ -19,8 +19,8 @@ pub(crate) fn request_id(offer: &Offer) -> Result<execution_contract::RequestId,
         serde_json_canonicalizer::to_vec(value).map_err(|_| Error::Protocol)
     }
     let authorization = match offer.payload() {
-        wire::TaskPayload::TaskSpec(v) => Some(&v.authorization),
-        wire::TaskPayload::SoftwareTaskSpec(v) => Some(&v.authorization),
+        wire::TaskPayload::Script(v) => Some(&v.authorization),
+        wire::TaskPayload::Software(v) => Some(&v.authorization),
         _ => None,
     };
     if let Some(wire::TaskAuthorization::SelfService { request_id, .. }) = authorization {
@@ -28,14 +28,14 @@ pub(crate) fn request_id(offer: &Offer) -> Result<execution_contract::RequestId,
             .map_err(|_| Error::Protocol);
     }
     let bytes = match offer.payload() {
-        wire::TaskPayload::TaskSpec(v) => encode(&(
+        wire::TaskPayload::Script(v) => encode(&(
             v.tenant_id,
             &v.device_id,
             v.registration_id,
             v.generation,
             v.task_id,
         ))?,
-        wire::TaskPayload::SoftwareTaskSpec(v) => encode(&(
+        wire::TaskPayload::Software(v) => encode(&(
             v.tenant_id,
             &v.device_id,
             v.registration_id,

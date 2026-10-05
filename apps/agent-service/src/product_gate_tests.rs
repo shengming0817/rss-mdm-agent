@@ -4,10 +4,10 @@ use crate::{
     backend::gate::{ProductGateProof, TrustedRisk},
     protocol_test_support as protocol, SoftwareManager, SoftwareManagerKind,
 };
-use agent_api::runtime as wire;
 use agent_client::{Clock, OpenMode};
 use execution_contract::*;
 use execution_ipc::host::{ClientOrigin, Reply};
+use rss_mdm_agent_wire::runtime as wire;
 use sha2::{Digest as _, Sha256};
 
 struct Case {
@@ -17,6 +17,19 @@ struct Case {
     offer: Offer,
     selection: Selection,
 }
+
+// Stage the verified HTTP offer at the local gate seam. Production self-service
+// admission binds an existing Policy invocation; these tests exercise the gate
+// and waiting-owner lifecycle independently, with explicit fixture risk.
+async fn stage_gate_offer(service: &mut DeviceService<protocol::Secrets>) {
+    let offer = service.client.claim().await.unwrap().offer.unwrap();
+    service.client.received(&offer).await.unwrap();
+    let materials = service.client.prepare(&offer).await.unwrap();
+    service.core.available = Some(offered(&offer).unwrap());
+    service.core.available_risk = TrustedRisk::from_offer(&offer);
+    service.waiting = Some((offer, materials));
+}
+
 impl Case {
     async fn new(level: Option<RiskLevel>) -> Self {
         Self::with_offer_lifetime(level, 60).await
@@ -29,13 +42,13 @@ impl Case {
         {
             let mut data = server.data.lock().unwrap();
             data.software(1, true);
-            let wire::TaskPayload::SoftwareTaskSpec(mut spec) =
+            let wire::TaskPayload::Software(mut spec) =
                 data.offer.as_ref().unwrap().payload.clone()
             else {
                 panic!("software")
             };
             spec.expires_at = clock.now().unwrap() + seconds;
-            data.offer = Some(data.signed(wire::TaskPayload::SoftwareTaskSpec(spec)));
+            data.offer = Some(data.signed(wire::TaskPayload::Software(spec)));
             data.explicit_offers = true;
         }
         let mut client = server.client(&root, OpenMode::Create);
@@ -77,8 +90,7 @@ impl Case {
             execution_runner::staging::MaterialRoot::open_fixture,
         )
         .unwrap();
-        let (_sender, mut commands) = tokio::sync::mpsc::channel(1);
-        service.drive(&mut commands).await.unwrap();
+        stage_gate_offer(&mut service).await;
         let offer = service
             .client
             .retained_offer(server.data.lock().unwrap().task)
@@ -227,8 +239,7 @@ async fn terminal_waiting_releases_capacity_without_changing_the_original_reques
             data.attempt = uuid::Uuid::new_v4();
             data.software(1, true);
         }
-        c.service.next_network = std::time::Instant::now();
-        c.service.drive(&mut commands).await.unwrap();
+        stage_gate_offer(&mut c.service).await;
         let next = c.service.core.available.as_ref().unwrap().clone();
         assert_ne!(next.request, original.action.offer().unwrap().request);
         assert!(c.service.waiting.is_some());
@@ -1404,7 +1415,7 @@ async fn policy_offer_binds_the_original_journal_and_signed_start_before_dispatc
             {
                 let mut data = c._server.data.lock().unwrap();
                 data.script();
-                let wire::TaskPayload::TaskSpec(mut spec) =
+                let wire::TaskPayload::Script(mut spec) =
                     data.offer.as_ref().unwrap().payload.clone()
                 else {
                     unreachable!()
@@ -1421,11 +1432,13 @@ async fn policy_offer_binds_the_original_journal_and_signed_start_before_dispatc
                 ]);
                 spec.authorization = wire::TaskAuthorization::SelfService {
                     request_id: accepted.request_id,
-                    subject: wire::SelfServiceSubject::User(wire::SelfServiceUser {
-                        tenant_id: data.tenant,
-                        instance_id: uuid::Uuid::from_u128(2),
-                        principal_id: uuid::Uuid::from_u128(3),
-                    }),
+                    subject: wire::SelfServiceSubject::User {
+                        user: wire::SelfServiceUser {
+                            tenant_id: data.tenant,
+                            instance_id: uuid::Uuid::from_u128(2),
+                            principal_id: uuid::Uuid::from_u128(3),
+                        },
+                    },
                     source: wire::SelfServiceCaller::Ai,
                     policy_id: directory.policy_id,
                     policy_revision: directory.policy_revision,
@@ -1442,7 +1455,7 @@ async fn policy_offer_binds_the_original_journal_and_signed_start_before_dispatc
                     2 => spec.resource.version = "v2".into(),
                     3 => {
                         if let wire::TaskAuthorization::SelfService {
-                            subject: wire::SelfServiceSubject::User(actor),
+                            subject: wire::SelfServiceSubject::User { user: actor },
                             ..
                         } = &mut spec.authorization
                         {
@@ -1459,7 +1472,7 @@ async fn policy_offer_binds_the_original_journal_and_signed_start_before_dispatc
                     }
                     _ => (),
                 }
-                data.offer = Some(data.signed(wire::TaskPayload::TaskSpec(spec)));
+                data.offer = Some(data.signed(wire::TaskPayload::Script(spec)));
                 data.explicit_offers = true;
             }
             // Every alternative is independently signed and actually verified by the HTTP client.
@@ -2079,7 +2092,7 @@ async fn software_self_service_binds_signed_policy_and_native_context() {
     c.employee("software-user").await;
     let mut directory = protocol::policy_directory_fixture();
     directory.self_service.risk_level = 2;
-    let wire::TaskPayload::SoftwareTaskSpec(spec) = c.offer.payload() else {
+    let wire::TaskPayload::Software(spec) = c.offer.payload() else {
         panic!("software")
     };
     let step = spec.steps.last().unwrap();
@@ -2142,8 +2155,7 @@ async fn software_self_service_binds_signed_policy_and_native_context() {
         .clone();
     {
         let mut data = c._server.data.lock().unwrap();
-        let wire::TaskPayload::SoftwareTaskSpec(mut spec) =
-            data.offer.as_ref().unwrap().payload.clone()
+        let wire::TaskPayload::Software(mut spec) = data.offer.as_ref().unwrap().payload.clone()
         else {
             panic!("software")
         };
@@ -2151,11 +2163,13 @@ async fn software_self_service_binds_signed_policy_and_native_context() {
         data.task = accepted.run_id;
         spec.authorization = wire::TaskAuthorization::SelfService {
             request_id: accepted.request_id,
-            subject: wire::SelfServiceSubject::User(wire::SelfServiceUser {
-                tenant_id: data.tenant,
-                instance_id: uuid::Uuid::from_u128(2),
-                principal_id: uuid::Uuid::from_u128(3),
-            }),
+            subject: wire::SelfServiceSubject::User {
+                user: wire::SelfServiceUser {
+                    tenant_id: data.tenant,
+                    instance_id: uuid::Uuid::from_u128(2),
+                    principal_id: uuid::Uuid::from_u128(3),
+                },
+            },
             source: wire::SelfServiceCaller::Ai,
             policy_id: directory.policy_id,
             policy_revision: directory.policy_revision,
@@ -2164,7 +2178,7 @@ async fn software_self_service_binds_signed_policy_and_native_context() {
             risk_level: 2,
             confirmed: true,
         };
-        data.offer = Some(data.signed(wire::TaskPayload::SoftwareTaskSpec(spec)));
+        data.offer = Some(data.signed(wire::TaskPayload::Software(spec)));
         data.explicit_offers = true;
     }
     let offer = c.service.client.claim().await.unwrap().offer.unwrap();

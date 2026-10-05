@@ -1,6 +1,6 @@
 //! Bounded inspection of selected MSIX bytes; Windows still owns native signature trust.
 use super::*;
-use agent_api::runtime as wire;
+use rss_mdm_agent_wire::runtime as wire;
 use std::io::{Read, Seek};
 use wire::{SoftwareTaskMsixArchitecture as Architecture, SoftwareTaskMsixIdentity as Identity};
 

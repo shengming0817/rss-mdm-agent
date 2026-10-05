@@ -1,9 +1,8 @@
 use super::test_support::local::{create_app, reopen_app};
 use super::{bridge::ExecutionBridge, test_support::*};
 use crate::protocol_test_support::*;
-use agent_api::runtime::*;
-use agent_client::protocol::*;
 use agent_client::{Client, Error, OpenMode};
+use rss_mdm_agent_wire::runtime::*;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 #[tokio::test]
@@ -525,7 +524,7 @@ fn assert_bridge_result(server: &Server, offer: &agent_client::Offer, software: 
         assert_eq!(result["event"]["steps"][0]["after"]["version"], "1.0");
         assert_eq!(result["event"]["steps"][0]["before"]["state"], "present");
         assert_eq!(result["event"]["steps"][0]["process"]["kind"], "not_run");
-        let TaskPayload::SoftwareTaskSpec(spec) = offer.payload() else {
+        let TaskPayload::Software(spec) = offer.payload() else {
             panic!()
         };
         assert_eq!(

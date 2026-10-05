@@ -1,5 +1,4 @@
 //! Durable communication associations and frozen transport; no execution application access.
-use crate::protocol::*;
 use crate::{
     store::{decode, encode, hash},
     wire, Client, Clock, Error, IdentityProvider, Start,

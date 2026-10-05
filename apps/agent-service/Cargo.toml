@@ -12,7 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 jsonschema.workspace = true
-agent-api.workspace = true
+rss-mdm-agent-wire.workspace = true
 rustls.workspace = true
 script-plan = { path = "../../crates/script-plan" }
 platform-private-storage = { path = "../../crates/platform-private-storage" }

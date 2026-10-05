@@ -14,7 +14,7 @@
 
 每次构建安装到独立版本目录，升级先核对完整候选、原生架构、签名及持久状态，再停旧服务和原子发布 V4 部署配置。失败保留可核实的注册与状态；候选活动未确认停止时不切回旧配置。ad-hoc 服务更换代码身份后无法读取旧 Keychain 项，会在停机前拒绝升级，不重建凭据或放宽 ACL。V3 配置不会迁移或兼容读取。
 
-普通安装不创建 Enrollment、设备密钥或 journal；桌面通过认证 IPC 发起机器注册。管理员也可导入独立的安装材料：公开 envelope schema 由实际 Rust decoder 生成，位于 `apps/agent-service/schema/install-bootstrap-v1.schema.json`，远程 GrantReceipt 保持服务端唯一协议来源。envelope 的 `origin`、`tenant`、`target`、`installation_artifact` 必须与已安装候选完全相同；后者取 `package-manifest.json` 的 `candidateSha256`。材料还含原始 `operationId` 与服务端 GrantReceipt，secret 单独置于 root / LocalSystem 私有文件或标准输入中，不进入包、argv、日志或 URL。
+普通安装不创建 Enrollment、设备密钥或 journal；桌面通过认证 IPC 发起机器注册。管理员也可导入独立的安装材料：公开 envelope schema 由实际 Rust decoder 生成，位于 `apps/agent-service/schema/install-bootstrap-v1.schema.json`，GrantReceipt 定义直接从固定协议包派生，公开 schema 可独立解析；服务端保持唯一协议来源。envelope 的 `origin`、`tenant`、`target`、`installation_artifact` 必须与已安装候选完全相同；后者取 `package-manifest.json` 的 `candidateSha256`。材料还含原始 `operationId` 与服务端 GrantReceipt，secret 单独置于 root / LocalSystem 私有文件或标准输入中，不进入包、argv、日志或 URL。
 
 ```sh
 # 管理员准备受保护的 envelope；secret-file 及其直接父目录都须由系统账号私有持有。

@@ -50,7 +50,6 @@ const groups = {
 };
 const always = new Set(["CI runner tests", "docs and diff"]);
 const anyCode = new Set([
-  "Agent API generated bindings",
   "Agent dependency boundary",
   "product harness tests",
   "frozen dependencies",

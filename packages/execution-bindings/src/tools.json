@@ -950,9 +950,19 @@
           "type": "object"
         },
         "ExecutionIdentity": {
-          "description": "`ExecutionIdentity`",
-          "enum": ["system", "logged_in_user"],
-          "type": "string"
+          "description": "Required operating-system execution identity.",
+          "oneOf": [
+            {
+              "const": "system",
+              "description": "Service identity.",
+              "type": "string"
+            },
+            {
+              "const": "logged_in_user",
+              "description": "Current logged-in user, without fallback.",
+              "type": "string"
+            }
+          ]
         },
         "ExecutionRisk": {
           "additionalProperties": false,
@@ -1284,17 +1294,32 @@
           ]
         },
         "ScriptParameterSource": {
-          "description": "`ScriptParameterSource`",
+          "description": "Public source of one Resource-declared parameter.",
           "oneOf": [
             {
+              "additionalProperties": false,
+              "description": "Administrator literal.",
               "properties": {
                 "kind": { "const": "fixed", "type": "string" },
-                "value": true
+                "value": {
+                  "anyOf": [
+                    { "pattern": "^[^\\u0000]*$", "type": "string" },
+                    { "type": "boolean" },
+                    {
+                      "maximum": 9007199254740991,
+                      "minimum": -9007199254740991,
+                      "type": "integer"
+                    }
+                  ],
+                  "description": "Administrator-selected scalar checked against the Resource schema."
+                }
               },
               "required": ["kind", "value"],
               "type": "object"
             },
             {
+              "additionalProperties": false,
+              "description": "Required call-time input.",
               "properties": { "kind": { "const": "input", "type": "string" } },
               "required": ["kind"],
               "type": "object"
@@ -1303,17 +1328,32 @@
         },
         "SelfServiceDirectoryItem": {
           "additionalProperties": false,
-          "description": "`SelfServiceDirectoryItem`",
+          "description": "One currently authorized script and its Resource-owned parameter schema.",
           "properties": {
-            "policyId": { "format": "uuid", "type": "string" },
+            "policyId": {
+              "description": "Logical Policy identity.",
+              "format": "uuid",
+              "type": "string"
+            },
             "policyRevision": {
+              "description": "Current configuration CAS revision.",
               "format": "uint64",
               "minimum": 0,
               "type": "integer"
             },
-            "policyVersion": { "format": "uuid", "type": "string" },
-            "selfService": { "$ref": "#/$defs/SelfServiceMetadata" },
-            "task": { "$ref": "#/$defs/SelfServiceTask" }
+            "policyVersion": {
+              "description": "Immutable execution version.",
+              "format": "uuid",
+              "type": "string"
+            },
+            "selfService": {
+              "$ref": "#/$defs/SelfServiceMetadata",
+              "description": "Normalized presentation and invocation settings."
+            },
+            "task": {
+              "$ref": "#/$defs/SelfServiceTask",
+              "description": "Closed task kind and the exact invocation interface."
+            }
           },
           "required": [
             "policyId",
@@ -1326,22 +1366,46 @@
         },
         "SelfServiceMetadata": {
           "additionalProperties": false,
-          "description": "`SelfServiceMetadata`",
+          "description": "Published presentation and invocation settings; values are normalized by Policy CAS.",
           "properties": {
-            "allowAi": { "type": "boolean" },
-            "category": { "type": "string" },
-            "description": { "type": "string" },
-            "displayName": { "type": "string" },
-            "keywords": { "items": { "type": "string" }, "type": "array" },
-            "prerequisites": { "type": "string" },
-            "published": { "type": "boolean" },
+            "allowAi": {
+              "description": "Effective administrator AI switch.",
+              "type": "boolean"
+            },
+            "category": {
+              "description": "Presentation category.",
+              "type": "string"
+            },
+            "description": {
+              "description": "Intended purpose.",
+              "type": "string"
+            },
+            "displayName": {
+              "description": "Directory display name.",
+              "type": "string"
+            },
+            "keywords": {
+              "description": "Search terms.",
+              "items": { "type": "string" },
+              "type": "array"
+            },
+            "prerequisites": {
+              "description": "Preconditions shown before invocation.",
+              "type": "string"
+            },
+            "published": {
+              "description": "Whether this script is published for self service.",
+              "type": "boolean"
+            },
             "riskLevel": {
-              "format": "uint8",
-              "maximum": 255,
-              "minimum": 0,
+              "description": "Effective risk level, one or two.",
+              "enum": [1, 2],
               "type": "integer"
             },
-            "sideEffects": { "type": "string" }
+            "sideEffects": {
+              "description": "Expected effects shown before invocation.",
+              "type": "string"
+            }
           },
           "required": [
             "published",
@@ -1357,21 +1421,31 @@
           "type": "object"
         },
         "SelfServiceTask": {
-          "description": "`SelfServiceTask`",
+          "description": "One directory interface; software does not inherit script parameter semantics.",
           "oneOf": [
             {
               "additionalProperties": false,
+              "description": "Resource-owned script execution interface.",
               "properties": {
                 "kind": { "const": "script", "type": "string" },
-                "parameterSchema": true,
+                "parameterSchema": {
+                  "description": "Full resolved parameter constraints owned by Resource."
+                },
                 "parameterSources": {
                   "additionalProperties": {
                     "$ref": "#/$defs/ScriptParameterSource"
                   },
+                  "description": "Complete sources for script parameters.",
                   "type": "object"
                 },
-                "resource": { "$ref": "#/$defs/TaskResource" },
-                "runAs": { "$ref": "#/$defs/ExecutionIdentity" }
+                "resource": {
+                  "$ref": "#/$defs/TaskResource",
+                  "description": "Exact Resource selection."
+                },
+                "runAs": {
+                  "$ref": "#/$defs/ExecutionIdentity",
+                  "description": "Required operating-system identity."
+                }
               },
               "required": [
                 "kind",
@@ -1384,11 +1458,21 @@
             },
             {
               "additionalProperties": false,
+              "description": "Explicit request for approved AvailableInstall software.",
               "properties": {
                 "kind": { "const": "software", "type": "string" },
-                "resource": { "$ref": "#/$defs/TaskResource" },
-                "runAs": { "$ref": "#/$defs/ExecutionIdentity" },
-                "target": { "$ref": "#/$defs/SoftwareExecutionTarget" }
+                "resource": {
+                  "$ref": "#/$defs/TaskResource",
+                  "description": "Exact Resource selection."
+                },
+                "runAs": {
+                  "$ref": "#/$defs/ExecutionIdentity",
+                  "description": "Required operating-system identity of the root operation."
+                },
+                "target": {
+                  "$ref": "#/$defs/SoftwareExecutionTarget",
+                  "description": "Exact effect target, distinct from enterprise login."
+                }
               },
               "required": ["kind", "resource", "runAs", "target"],
               "type": "object"
@@ -1397,11 +1481,23 @@
         },
         "SelfServiceUser": {
           "additionalProperties": false,
-          "description": "`SelfServiceUser`",
+          "description": "Authenticated product user; contains no session credential.",
           "properties": {
-            "instanceId": { "format": "uuid", "type": "string" },
-            "principalId": { "format": "uuid", "type": "string" },
-            "tenantId": { "format": "uuid", "type": "string" }
+            "instanceId": {
+              "description": "Identity instance.",
+              "format": "uuid",
+              "type": "string"
+            },
+            "principalId": {
+              "description": "Authenticated principal.",
+              "format": "uuid",
+              "type": "string"
+            },
+            "tenantId": {
+              "description": "Product tenant.",
+              "format": "uuid",
+              "type": "string"
+            }
           },
           "required": ["tenantId", "instanceId", "principalId"],
           "type": "object"
@@ -1492,20 +1588,34 @@
           ]
         },
         "SoftwareExecutionTarget": {
-          "description": "`SoftwareExecutionTarget`",
+          "description": "Concrete effect target bound before an Offer is signed.",
           "oneOf": [
             {
               "additionalProperties": false,
+              "description": "Device installation or provisioning; user registration is a different target.",
               "properties": { "kind": { "const": "device", "type": "string" } },
               "required": ["kind"],
               "type": "object"
             },
             {
               "additionalProperties": false,
+              "description": "One exact live interactive OS account and login generation.",
               "properties": {
-                "identity": { "type": "string" },
+                "identity": {
+                  "description": "Exact SID/UID.",
+                  "maxLength": 184,
+                  "minLength": 1,
+                  "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+                  "type": "string"
+                },
                 "kind": { "const": "user", "type": "string" },
-                "sessionId": { "format": "uuid", "type": "string" }
+                "sessionId": {
+                  "description": "Exact login generation.",
+                  "format": "uuid",
+                  "not": { "const": "00000000-0000-0000-0000-000000000000" },
+                  "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                  "type": "string"
+                }
               },
               "required": ["kind", "identity", "sessionId"],
               "type": "object"
@@ -1642,11 +1752,20 @@
         },
         "TaskResource": {
           "additionalProperties": false,
-          "description": "`TaskResource`",
+          "description": "Exact Resource identity accompanying its signed digest.",
           "properties": {
-            "id": { "type": "string" },
-            "variant": { "type": "string" },
-            "version": { "type": "string" }
+            "id": {
+              "description": "Logical Resource identity.",
+              "type": "string"
+            },
+            "variant": {
+              "description": "Exact selected variant.",
+              "type": "string"
+            },
+            "version": {
+              "description": "Immutable Resource version.",
+              "type": "string"
+            }
           },
           "required": ["id", "version", "variant"],
           "type": "object"

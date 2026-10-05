@@ -1,11 +1,10 @@
-use crate::protocol::*;
 use crate::{
     client::json_transport,
     identity::{Active, IdentityState, Pending, Purpose},
     store::{decode, encode},
     Client, Clock, Error, IdentityProvider,
 };
-use agent_api::{enroll, runtime};
+use rss_mdm_agent_wire::{enroll, runtime};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 /// Safe local registration progress; it is never device execution authority.
@@ -61,7 +60,6 @@ pub struct GrantImport {
     )]
     pub operation_id: Uuid,
     /// Server-issued grant.
-    #[schemars(schema_with = "grant_receipt_schema")]
     pub grant: enroll::GrantReceipt,
 }
 impl GrantImport {
@@ -453,7 +451,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                     self.enrollment_json(
                         &bootstrap,
                         "renewal-grants/status",
-                        &crate::pki_wire::RenewalLookup {
+                        &rss_mdm_agent_wire::enroll::RenewalStatusRequest {
                             wire_version: 1,
                             operation_id: p.operation,
                             secret: self.secrets.resolve(&p.secret_reference)?,
@@ -633,10 +631,4 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         self.publish_runtime_gate();
         Ok(())
     }
-}
-
-fn grant_receipt_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
-    serde_json::json!({"$ref":"https://rss.example/agent/enroll/v1/GrantReceipt"})
-        .try_into()
-        .expect("static producer reference")
 }
