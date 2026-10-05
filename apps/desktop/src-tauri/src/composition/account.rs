@@ -217,7 +217,8 @@ impl Organizations {
     }
 }
 // Never Serialize or Debug. Only the employee secret may cross authenticated native IPC; cookie/CSRF stay here.
-pub struct Session {
+#[derive(Clone)]
+pub struct EnterpriseSession {
     client: Client,
     organization: Organization,
     cookie: String,
@@ -281,11 +282,11 @@ fn enterprise_client(ca: Option<Vec<u8>>) -> Result<Client> {
         .map_err(|_| failure(Stage::Login, Reason::Unavailable))
 }
 
-impl Session {
-    pub(super) fn employee(
+impl EnterpriseSession {
+    pub(super) fn native_session(
         &self,
         generation: &str,
-    ) -> Result<execution_ipc::host::EmployeeSession> {
+    ) -> Result<execution_ipc::host::NativeContextSession> {
         let secret = self
             .cookie
             .strip_prefix("__Host-identity-session=")
@@ -295,13 +296,13 @@ impl Session {
                         .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
             })
             .ok_or_else(invalid)?;
-        Ok(execution_ipc::host::EmployeeSession {
-            credential: zeroize::Zeroizing::new(secret.to_owned()),
-            actor: agent_api::runtime::ScriptActor {
+        Ok(execution_ipc::host::NativeContextSession {
+            credential: Some(zeroize::Zeroizing::new(secret.to_owned())),
+            user: Some(agent_api::runtime::SelfServiceUser {
                 tenant_id: Uuid::parse_str(&self.organization.tenant_id).map_err(|_| invalid())?,
                 instance_id: Uuid::parse_str(&self.instance).map_err(|_| invalid())?,
                 principal_id: Uuid::parse_str(&self.principal).map_err(|_| invalid())?,
-            },
+            }),
             generation: execution_contract::Id::new(generation).map_err(|_| invalid())?,
             expires_at_unix_ms: self.expires,
         })
@@ -450,12 +451,9 @@ impl Session {
         {
             return Err(failure(Stage::Authorization, Reason::Denied));
         }
-        let grants = access["grants"]
+        let _grants = access["grants"]
             .as_array()
             .ok_or_else(|| failure(Stage::Authorization, Reason::Contract))?;
-        if grants.is_empty() {
-            return Err(failure(Stage::Authorization, Reason::Denied));
-        }
         self.instance = instance;
         Ok(())
     }
@@ -491,9 +489,9 @@ impl Session {
                 authority, self.organization.tenant_id, self.principal
             ))
         );
-        serde_json::from_value(json!({"schemaVersion":7,"kind":"userContext","generation":Uuid::new_v4().to_string(),
-            "user":{"schemaVersion":7,"kind":"testUser","userId":actor,"displayName":self.organization.label,"nameKey":"enterprise"},
-            "identity":{"mode":"enterprise","authorityId":authority,"tenantId":self.organization.tenant_id,"principalId":self.principal,"organizationId":self.organization.id,"expiresAtMs":self.expires}})).map_err(|_| failure(Stage::Session, Reason::Contract))
+        serde_json::from_value(json!({"schemaVersion":8,"kind":"userContext","generation":Uuid::new_v4().to_string(),
+            "user":{"schemaVersion":8,"kind":"testUser","userId":actor,"displayName":self.organization.label,"nameKey":"enterprise"},
+            "identity":{"mode":"user_device","authorityId":authority,"tenantId":self.organization.tenant_id,"principalId":self.principal,"organizationId":self.organization.id,"expiresAtMs":self.expires}})).map_err(|_| failure(Stage::Session, Reason::Contract))
     }
 }
 #[cfg(test)]
@@ -823,7 +821,7 @@ mod tests {
     }
     #[test]
     fn enterprise_actor_is_not_a_display_name_and_cannot_claim_test_data() {
-        let mut s = Session {
+        let mut s = EnterpriseSession {
             client: Client::new(),
             organization: Organization {
                 id: "org".into(),
@@ -938,7 +936,7 @@ pub(super) mod http_tests {
             (200, json!({})),
         ])
         .await;
-        let session = Session::login_with_client(
+        let session = EnterpriseSession::login_with_client(
             Client::new(),
             organization,
             "Alice",
@@ -970,8 +968,8 @@ pub(super) mod http_tests {
         assert!(requests[3].contains("csrf-canary"));
     }
     #[tokio::test]
-    async fn authentication_alone_cannot_activate_wrong_tenant_principal_or_empty_grants() {
-        for field in ["tenantId", "principalId", "grants"] {
+    async fn authentication_rejects_wrong_tenant_or_principal() {
+        for field in ["tenantId", "principalId"] {
             let mut invalid = access();
             invalid[field] = if field == "grants" {
                 json!([])
@@ -985,7 +983,7 @@ pub(super) mod http_tests {
                 (200, json!({})),
             ])
             .await;
-            assert!(Session::login_with_client(
+            assert!(EnterpriseSession::login_with_client(
                 Client::new(),
                 organization,
                 "Alice",
@@ -997,6 +995,30 @@ pub(super) mod http_tests {
         }
     }
     #[tokio::test]
+    async fn authenticated_identity_with_empty_product_grants_can_converse() {
+        let mut authenticated = access();
+        authenticated["grants"] = json!([]);
+        let (organization, task) = server(vec![
+            (200, identity()),
+            (200, identity()),
+            (200, authenticated),
+        ])
+        .await;
+        let session = EnterpriseSession::login_with_client(
+            Client::new(),
+            organization,
+            "Alice",
+            "password-canary".into(),
+        )
+        .await
+        .unwrap();
+        assert!(matches!(
+            session.context().unwrap().identity,
+            ai_session_contract::AccountIdentity::UserDevice { .. }
+        ));
+        assert_eq!(task.await.unwrap().len(), 3);
+    }
+    #[tokio::test]
     async fn revocation_is_observed_by_the_next_passive_check() {
         let (organization, task) = server(vec![
             (200, identity()),
@@ -1005,7 +1027,7 @@ pub(super) mod http_tests {
             (401, json!({"code":"invalid_credential"})),
         ])
         .await;
-        let mut session = Session::login_with_client(
+        let mut session = EnterpriseSession::login_with_client(
             Client::new(),
             organization,
             "Alice",

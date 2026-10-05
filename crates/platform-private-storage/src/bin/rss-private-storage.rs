@@ -28,6 +28,18 @@ fn run(args: &[std::ffi::OsString]) -> io::Result<()> {
                 .and_then(|file| file.sync_all())
                 .and_then(|_| platform_private_storage::sync_parent(Path::new(path)))
         }
+        [verb, path] if verb == "validate-sidecars" => {
+            for suffix in ["-wal", "-shm", "-journal"] {
+                let mut sidecar = path.clone();
+                sidecar.push(suffix);
+                match platform_private_storage::open_existing(Path::new(&sidecar)) {
+                    Ok(_) => (),
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => (),
+                    Err(error) => return Err(error),
+                }
+            }
+            Ok(())
+        }
         [verb, path] if verb == "validate-if-present" => {
             match platform_private_storage::open_existing(Path::new(path)) {
                 Ok(_) => Ok(()),

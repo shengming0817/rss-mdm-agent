@@ -1,11 +1,11 @@
 import type { Duplex } from "node:stream";
 import { StringDecoder } from "node:string_decoder";
-import {
-  decode,
-  type NativeCall,
-  type NativeControlFrame,
-  type NativeEvent,
-} from "@rss-mdm-agent/ai-contract";
+import { decode } from "@rss-mdm-agent/ai-contract";
+import type {
+  NativeCall,
+  NativeControlFrame,
+  NativeEvent,
+} from "@rss-mdm-agent/ai-contract/wire";
 import { defaultLimits } from "@rss-mdm-agent/ai-contract/transitions";
 type Method = NativeCall["method"];
 type Call<M extends Method> = Extract<NativeCall, { method: M }>;
@@ -85,7 +85,7 @@ export class NativeControl {
         .then(
           (value) =>
             this.send({
-              schemaVersion: 7,
+              schemaVersion: 8,
               kind: "nativeReply",
               id: frame.id,
               ok: true,
@@ -93,7 +93,7 @@ export class NativeControl {
             }),
           () =>
             this.send({
-              schemaVersion: 7,
+              schemaVersion: 8,
               kind: "nativeReply",
               id: frame.id,
               ok: false,
@@ -116,7 +116,7 @@ export class NativeControl {
     this.socket.write(line);
   }
   emit(channel: string, message: unknown) {
-    this.send({ schemaVersion: 7, kind: "nativeEvent", channel, message });
+    this.send({ schemaVersion: 8, kind: "nativeEvent", channel, message });
   }
   call<M extends Method>(method: M, data: Call<M>["data"]): Promise<unknown> {
     if (this.ended || this.pending.size >= 16)
@@ -130,7 +130,7 @@ export class NativeControl {
       this.pending.set(id, { resolve, reject, timer });
       try {
         this.send({
-          schemaVersion: 7,
+          schemaVersion: 8,
           kind: "nativeCall",
           id,
           method,

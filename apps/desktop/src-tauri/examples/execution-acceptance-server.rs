@@ -26,20 +26,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if !users_path.try_exists()? {
         platform_private_storage::create_new(&users_path)?.write_all(
             serde_json::to_vec(&json!({
-            "schemaVersion": 7,
+            "schemaVersion": 8,
             "kind": "testUserPage",
             "users": [{
-                "schemaVersion": 7,
+                "schemaVersion": 8,
                 "kind": "testUser",
                 "userId": "fixture-actor",
                 "displayName": "Fixture",
                 "nameKey": "fixture"
             }],
             "current": {
-                "schemaVersion": 7,
+                "schemaVersion": 8,
                 "kind": "userContext",
+                "identity":{"mode":"device","authorityId":"desktop-test","tenantId":"local-test","principalId":"fixture-actor"},
                 "user": {
-                    "schemaVersion": 7,
+                    "schemaVersion": 8,
                     "kind": "testUser",
                     "userId": "fixture-actor",
                     "displayName": "Fixture",
@@ -51,7 +52,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .as_slice(),
         )?;
     }
-    let users = rss_mdm_desktop::composition::users::Users::open(&user_root)?;
+    let mut users = rss_mdm_desktop::composition::users::Users::open(&user_root)?;
+    let mut context = users.current()?;
+    context.execution_binding = Some("fixture-binding".try_into()?);
+    users.replace_current(context)?;
     let generation = users.current()?.generation.to_string();
     std::fs::write(
         database

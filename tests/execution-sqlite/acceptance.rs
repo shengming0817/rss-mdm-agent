@@ -3412,7 +3412,7 @@ fn moved_application_identity_reopens_v7_and_replays_without_dispatch_authority(
     let db = Database::new();
     let host = TestHost::new(0);
     let scope = host.scope();
-    // Fixed identities from the pre-refactor V7 canonical encoding, independent of Rust owner.
+    // Fixed identities from the pre-refactor V8 canonical encoding, independent of Rust owner.
     assert_eq!(
         scope.interaction_subject().as_str(),
         "99067cdd0ad2a17d2e877ff170f147a0f77746d87f7fa66b19d756497763000b"

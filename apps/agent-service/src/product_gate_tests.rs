@@ -106,18 +106,24 @@ impl Case {
             session: 42,
             binding: plan::id("user/42/test-login").unwrap(),
             origin: ClientOrigin::Ai {
+                context: execution_contract::NativeContextRef {
+                    id: plan::id("pending").unwrap(),
+                    generation: plan::id("initial").unwrap(),
+                },
                 config: plan::reference("ai", "1").unwrap(),
                 conversation: plan::id("conversation").unwrap(),
                 tool_call: plan::id("tool-call").unwrap(),
             },
         };
-        Self {
+        let mut case = Self {
             _server: server,
             _root: root,
             service,
             offer,
             selection,
-        }
+        };
+        case.employee("initial").await;
+        case
     }
     fn selection(&self, human: bool) -> Selection {
         let mut selection = Selection::from_record(&BackendRequest {
@@ -1064,23 +1070,37 @@ impl Case {
         self.service.drive_policy(&mut commands).await.unwrap();
         receive.await.unwrap()
     }
+    fn context(&self) -> execution_contract::NativeContextRef {
+        let ClientOrigin::Ai { context, .. } = &self.selection.origin else {
+            panic!("AI binding")
+        };
+        context.clone()
+    }
     async fn employee(&mut self, generation: &str) {
-        assert!(matches!(
-            self.policy_call(execution_ipc::host::Request::EmployeeSession {
-                value: Some(execution_ipc::host::EmployeeSession {
-                    credential: zeroize::Zeroizing::new("c".repeat(64)),
-                    actor: wire::ScriptActor {
+        self.policy_call(execution_ipc::host::Request::RevokeContext {})
+            .await;
+        let Reply::ContextBound { value } = self
+            .policy_call(execution_ipc::host::Request::BindContext {
+                expected: None,
+                value: execution_ipc::host::NativeContextSession {
+                    credential: Some(zeroize::Zeroizing::new("c".repeat(64))),
+                    user: Some(wire::SelfServiceUser {
                         tenant_id: self.service.client.configuration().tenant,
                         instance_id: uuid::Uuid::from_u128(2),
-                        principal_id: uuid::Uuid::from_u128(3)
-                    },
+                        principal_id: uuid::Uuid::from_u128(3),
+                    }),
                     generation: plan::id(generation).unwrap(),
                     expires_at_unix_ms: self.service.core.host.clock.millis().unwrap() + 120_000,
-                })
+                },
             })
-            .await,
-            Reply::EmployeeBound
-        ));
+            .await
+        else {
+            panic!("context binding")
+        };
+        let ClientOrigin::Ai { context, .. } = &mut self.selection.origin else {
+            panic!("AI binding")
+        };
+        *context = value;
     }
 }
 #[tokio::test]
@@ -1095,7 +1115,7 @@ async fn policy_confirmation_is_single_exact_and_bound_to_employee_generation() 
             as_of: c._server.time.now().unwrap(),
         });
     c.employee("generation-one").await;
-    let choice = PolicyChoice {
+    let mut choice = PolicyChoice {
         request: RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap(),
         policy_id: plan::id(directory.policy_id.to_string()).unwrap(),
         policy_revision: directory.policy_revision,
@@ -1103,6 +1123,7 @@ async fn policy_confirmation_is_single_exact_and_bound_to_employee_generation() 
         parameters: std::collections::BTreeMap::from([("name".into(), serde_json::json!("Acme"))]),
     };
     let invoke = Request::InvokePolicy {
+        context: c.context(),
         choice: choice.clone(),
         origin: c.selection.origin.clone(),
     };
@@ -1124,6 +1145,7 @@ async fn policy_confirmation_is_single_exact_and_bound_to_employee_generation() 
         .insert("path".into(), serde_json::json!("/Library"));
     assert!(matches!(
         c.policy_call(Request::InvokePolicy {
+            context: c.context(),
             choice: changed,
             origin: c.selection.origin.clone()
         })
@@ -1133,12 +1155,13 @@ async fn policy_confirmation_is_single_exact_and_bound_to_employee_generation() 
     c.employee("generation-two").await;
     assert!(matches!(
         c.policy_call(Request::ConfirmPolicy {
+            context: c.context(),
             request: choice.request.clone()
         })
         .await,
         Reply::Rejected
     ));
-    assert!(c
+    assert!(!c
         .service
         .core
         .policy_readable(
@@ -1148,20 +1171,29 @@ async fn policy_confirmation_is_single_exact_and_bound_to_employee_generation() 
         )
         .unwrap());
     assert!(c._server.data.lock().unwrap().invocations.is_empty());
-    let Reply::PolicyRequest { value: historical } = c
-        .policy_call(Request::PolicyStatus {
-            request: choice.request.clone(),
+    assert!(matches!(
+        c.policy_call(Request::PolicyStatus {
+            context: c.context(),
+            request: choice.request.clone()
         })
-        .await
-    else {
-        panic!("same employee may read the original journal across Desktop generations")
-    };
-    assert_eq!(historical.action.request(), &choice.request);
-    assert_eq!(historical.state, BackendRequestState::AwaitingConfirmation);
-    c.employee("generation-one").await;
+        .await,
+        Reply::Rejected
+    ));
+    // A new native context may prepare a new request, but cannot revive the old preparation.
+    choice.request = RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap();
+    assert!(matches!(
+        c.policy_call(Request::InvokePolicy {
+            context: c.context(),
+            choice: choice.clone(),
+            origin: c.selection.origin.clone()
+        })
+        .await,
+        Reply::PolicyRequest { .. }
+    ));
     c._server.data.lock().unwrap().invocation_reply_lost = true;
     let Reply::PolicyRequest { value: submitted } = c
         .policy_call(Request::ConfirmPolicy {
+            context: c.context(),
             request: choice.request.clone(),
         })
         .await
@@ -1179,6 +1211,7 @@ async fn policy_confirmation_is_single_exact_and_bound_to_employee_generation() 
     }
     let Reply::PolicyStatus { value: status } = c
         .policy_call(Request::PolicyStatus {
+            context: c.context(),
             request: choice.request.clone(),
         })
         .await
@@ -1187,10 +1220,10 @@ async fn policy_confirmation_is_single_exact_and_bound_to_employee_generation() 
     };
     assert_eq!(status.request_id.to_string(), choice.request.as_str());
     assert_eq!(c._server.data.lock().unwrap().invocations.len(), 1);
-    c.policy_call(Request::EmployeeSession { value: None })
-        .await;
+    c.policy_call(Request::RevokeContext {}).await;
     assert!(matches!(
         c.policy_call(Request::PolicyStatus {
+            context: c.context(),
             request: choice.request
         })
         .await,
@@ -1229,6 +1262,7 @@ async fn policy_low_risk_and_human_only_settings_have_separate_native_sources() 
         };
         let Reply::PolicyRequest { value } = c
             .policy_call(Request::InvokePolicy {
+                context: c.context(),
                 choice: choice.clone(),
                 origin,
             })
@@ -1250,6 +1284,7 @@ async fn policy_low_risk_and_human_only_settings_have_separate_native_sources() 
         stale.policy_revision += 1;
         assert!(matches!(
             c.policy_call(Request::InvokePolicy {
+                context: c.context(),
                 choice: stale,
                 origin: c.selection.origin.clone()
             })
@@ -1287,6 +1322,7 @@ async fn policy_offer_binds_the_original_journal_and_signed_start_before_dispatc
             };
             assert!(matches!(
                 c.policy_call(Request::InvokePolicy {
+                    context: c.context(),
                     choice: choice.clone(),
                     origin: c.selection.origin.clone()
                 })
@@ -1296,6 +1332,7 @@ async fn policy_offer_binds_the_original_journal_and_signed_start_before_dispatc
             if level == 2 {
                 assert!(matches!(
                     c.policy_call(Request::ConfirmPolicy {
+                        context: c.context(),
                         request: choice.request.clone()
                     })
                     .await,
@@ -1330,19 +1367,22 @@ async fn policy_offer_binds_the_original_journal_and_signed_start_before_dispatc
                 };
                 spec.task_id = accepted.run_id;
                 data.task = accepted.run_id;
-                spec.resource = directory.resource.clone();
+                spec.resource = match &directory.task {
+                    wire::SelfServiceTask::Script { resource, .. } => resource.clone(),
+                    _ => unreachable!(),
+                };
                 spec.parameters = std::collections::BTreeMap::from([
                     ("name".into(), serde_json::json!("Acme")),
                     ("path".into(), serde_json::json!("/Applications")),
                 ]);
-                spec.authorization = wire::ScriptAuthorization::SelfService {
+                spec.authorization = wire::TaskAuthorization::SelfService {
                     request_id: accepted.request_id,
-                    actor: wire::ScriptActor {
+                    subject: wire::SelfServiceSubject::User(wire::SelfServiceUser {
                         tenant_id: data.tenant,
                         instance_id: uuid::Uuid::from_u128(2),
                         principal_id: uuid::Uuid::from_u128(3),
-                    },
-                    source: wire::ScriptCaller::Ai,
+                    }),
+                    source: wire::SelfServiceCaller::Ai,
                     policy_id: directory.policy_id,
                     policy_revision: directory.policy_revision,
                     policy_version: directory.policy_version,
@@ -1357,14 +1397,16 @@ async fn policy_offer_binds_the_original_journal_and_signed_start_before_dispatc
                     }
                     2 => spec.resource.version = "v2".into(),
                     3 => {
-                        if let wire::ScriptAuthorization::SelfService { actor, .. } =
-                            &mut spec.authorization
+                        if let wire::TaskAuthorization::SelfService {
+                            subject: wire::SelfServiceSubject::User(actor),
+                            ..
+                        } = &mut spec.authorization
                         {
                             actor.principal_id = uuid::Uuid::new_v4();
                         }
                     }
                     4 => {
-                        if let wire::ScriptAuthorization::SelfService {
+                        if let wire::TaskAuthorization::SelfService {
                             policy_revision, ..
                         } = &mut spec.authorization
                         {
@@ -1464,17 +1506,18 @@ async fn revoked_generation_cannot_rebind_from_a_queued_native_handoff() {
         subject: c.selection.subject.clone(),
         session: c.selection.session,
         binding: Some(c.selection.binding.clone()),
-        request: LocalRequest::operation(execution_ipc::host::Request::EmployeeSession {
-            value: Some(execution_ipc::host::EmployeeSession {
-                credential: zeroize::Zeroizing::new("c".repeat(64)),
-                actor: wire::ScriptActor {
+        request: LocalRequest::operation(execution_ipc::host::Request::BindContext {
+            expected: Some(c.context().id),
+            value: execution_ipc::host::NativeContextSession {
+                credential: Some(zeroize::Zeroizing::new("c".repeat(64))),
+                user: Some(wire::SelfServiceUser {
                     tenant_id: c.service.client.configuration().tenant,
                     instance_id: uuid::Uuid::from_u128(2),
                     principal_id: uuid::Uuid::from_u128(3),
-                },
+                }),
                 generation: plan::id("generation-one").unwrap(),
                 expires_at_unix_ms: c.service.core.host.clock.millis().unwrap() + 60000,
-            }),
+            },
         }),
         reply,
     });
@@ -1679,6 +1722,7 @@ async fn durable_ready_policy_resumes_original_uuid_from_each_native_entrypoint(
             )]),
         };
         let invoke = Request::InvokePolicy {
+            context: c.context(),
             choice: choice.clone(),
             origin: c.selection.origin.clone(),
         };
@@ -1688,6 +1732,7 @@ async fn durable_ready_policy_resumes_original_uuid_from_each_native_entrypoint(
         let value = if entry == 2 {
             let Reply::PolicyRequest { value } = c
                 .policy_call(Request::ConfirmPolicy {
+                    context: c.context(),
                     request: choice.request.clone(),
                 })
                 .await
@@ -1713,6 +1758,7 @@ async fn durable_ready_policy_resumes_original_uuid_from_each_native_entrypoint(
             .unwrap();
         let request = match entry {
             0 => Request::InvokePolicy {
+                context: c.context(),
                 choice: match &restored.action {
                     PreparedAction::Policy { choice, .. } => choice.clone(),
                     _ => unreachable!(),
@@ -1720,9 +1766,11 @@ async fn durable_ready_policy_resumes_original_uuid_from_each_native_entrypoint(
                 origin: c.selection.origin.clone(),
             },
             1 => Request::PolicyStatus {
+                context: c.context(),
                 request: original.clone(),
             },
             _ => Request::ConfirmPolicy {
+                context: c.context(),
                 request: original.clone(),
             },
         };
@@ -1764,6 +1812,7 @@ async fn unaccepted_policy_expiry_is_durable_and_status_remains_read_only() {
     };
     let Reply::PolicyRequest { value } = c
         .policy_call(Request::InvokePolicy {
+            context: c.context(),
             choice,
             origin: c.selection.origin.clone(),
         })
@@ -1802,6 +1851,7 @@ async fn unaccepted_policy_expiry_is_durable_and_status_remains_read_only() {
     for _ in 0..2 {
         let Reply::PolicyRequest { value } = c
             .policy_call(Request::PolicyStatus {
+                context: c.context(),
                 request: original.clone(),
             })
             .await
@@ -1971,4 +2021,123 @@ async fn explicit_upgrade_failures_and_exact_resume_preserve_registration_and_jo
         assert_eq!(c.record(), record);
         assert_eq!(c.service.core.host.binding, owner);
     }
+}
+
+#[tokio::test]
+async fn software_self_service_binds_signed_policy_and_native_context() {
+    use execution_ipc::host::Request;
+    let mut c = Case::new(None).await;
+    c.service.release_waiting();
+    c.employee("software-user").await;
+    let mut directory = protocol::policy_directory_fixture();
+    directory.self_service.risk_level = 2;
+    let wire::TaskPayload::SoftwareTaskSpec(spec) = c.offer.payload() else {
+        panic!("software")
+    };
+    let step = spec.steps.last().unwrap();
+    directory.task = wire::SelfServiceTask::Software {
+        resource: wire::TaskResource {
+            id: "software-resource".into(),
+            version: step.action.version.clone(),
+            variant: "default".into(),
+        },
+        run_as: backend::commands::software_commands(&step.action)
+            .unwrap()
+            .install
+            .run_as,
+        target: step.target.clone(),
+    };
+    c._server.data.lock().unwrap().self_service_directory =
+        Some(wire::SelfServiceDirectoryResponse {
+            items: vec![directory.clone()],
+            next_cursor: None,
+            as_of: c._server.time.now().unwrap(),
+        });
+    let choice = PolicyChoice {
+        request: RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap(),
+        policy_id: plan::id(directory.policy_id.to_string()).unwrap(),
+        policy_revision: directory.policy_revision,
+        policy_version: plan::id(directory.policy_version.to_string()).unwrap(),
+        parameters: Default::default(),
+    };
+    let Reply::PolicyRequest { value: pending } = c
+        .policy_call(Request::InvokePolicy {
+            context: c.context(),
+            choice: choice.clone(),
+            origin: c.selection.origin.clone(),
+        })
+        .await
+    else {
+        panic!("software preparation")
+    };
+    assert_eq!(pending.state, BackendRequestState::AwaitingConfirmation);
+    let Reply::PolicyRequest { value: submitted } = c
+        .policy_call(Request::ConfirmPolicy {
+            context: c.context(),
+            request: choice.request.clone(),
+        })
+        .await
+    else {
+        panic!("software confirmation")
+    };
+    assert_eq!(submitted.state, BackendRequestState::Submitting);
+    let accepted = c
+        ._server
+        .data
+        .lock()
+        .unwrap()
+        .invocations
+        .values()
+        .next()
+        .unwrap()
+        .1
+        .clone();
+    {
+        let mut data = c._server.data.lock().unwrap();
+        let wire::TaskPayload::SoftwareTaskSpec(mut spec) =
+            data.offer.as_ref().unwrap().payload.clone()
+        else {
+            panic!("software")
+        };
+        spec.task_id = accepted.run_id;
+        data.task = accepted.run_id;
+        spec.authorization = wire::TaskAuthorization::SelfService {
+            request_id: accepted.request_id,
+            subject: wire::SelfServiceSubject::User(wire::SelfServiceUser {
+                tenant_id: data.tenant,
+                instance_id: uuid::Uuid::from_u128(2),
+                principal_id: uuid::Uuid::from_u128(3),
+            }),
+            source: wire::SelfServiceCaller::Ai,
+            policy_id: directory.policy_id,
+            policy_revision: directory.policy_revision,
+            policy_version: directory.policy_version,
+            allow_ai: true,
+            risk_level: 2,
+            confirmed: true,
+        };
+        data.offer = Some(data.signed(wire::TaskPayload::SoftwareTaskSpec(spec)));
+        data.explicit_offers = true;
+    }
+    let offer = c.service.client.claim().await.unwrap().offer.unwrap();
+    c.service.bind_policy_offer(&offer).unwrap();
+    let bound = c
+        .service
+        .core
+        .app
+        .backend_request(&c.service.core.caller(), &choice.request)
+        .unwrap()
+        .unwrap();
+    assert_eq!(bound.risk.unwrap().level, RiskLevel::Two);
+    c.employee("other-context").await;
+    assert!(c.service.bind_policy_offer(&offer).is_err());
+    assert!(!c
+        .service
+        .core
+        .policy_readable(
+            &choice.request,
+            &c.selection.subject,
+            Some(&c.selection.binding)
+        )
+        .unwrap());
 }

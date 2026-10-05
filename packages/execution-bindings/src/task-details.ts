@@ -13,6 +13,25 @@ export type BackendTaskView =
       value: ExecutionTaskDetails;
     };
 /**
+ * `SelfServiceTask`
+ */
+export type SelfServiceTask =
+  | {
+      kind: "script";
+      parameterSchema: unknown;
+      parameterSources: {
+        [k: string]: ScriptParameterSource;
+      };
+      resource: TaskResource;
+      runAs: ExecutionIdentity;
+    }
+  | {
+      kind: "software";
+      resource: TaskResource;
+      runAs: ExecutionIdentity;
+      target: SoftwareExecutionTarget;
+    };
+/**
  * `ScriptParameterSource`
  */
 export type ScriptParameterSource =
@@ -22,6 +41,22 @@ export type ScriptParameterSource =
     }
   | {
       kind: "input";
+    };
+/**
+ * `ExecutionIdentity`
+ */
+export type ExecutionIdentity = "system" | "logged_in_user";
+/**
+ * `SoftwareExecutionTarget`
+ */
+export type SoftwareExecutionTarget =
+  | {
+      kind: "device";
+    }
+  | {
+      identity: string;
+      kind: "user";
+      sessionId: string;
     };
 /**
  * Opaque local reference identifier; syntax validity is not authenticity.
@@ -131,17 +166,13 @@ export interface BackendRequest {
         offer: BackendTask;
       }
     | {
-        actor: ScriptActor;
         choice: PolicyChoice;
+        context: NativeContextRef;
         directory: SelfServiceDirectoryItem;
         /**
          * Bounded validity of the original preparation.
          */
         expiresAtUnixMs: number;
-        /**
-         * Native product login generation.
-         */
-        generation: string;
         kind: "policy";
         /**
          * Eventual signed Offer; no task/attempt is invented before this exists.
@@ -151,6 +182,10 @@ export interface BackendRequest {
          * Backend Run returned for the original request, absent until acceptance is known.
          */
         runId: Id | null;
+        /**
+         * Authenticated product employee, checked against the signed authorization.
+         */
+        user: SelfServiceUser | null;
       };
   /**
    * Explicit risk-two response; readiness alone never proves confirmation.
@@ -191,6 +226,7 @@ export interface BackendRequest {
       }
     | {
         config: VersionedRef1;
+        context: NativeContextRef1;
         /**
          * Opaque local reference identifier; syntax validity is not authenticity.
          */
@@ -359,14 +395,6 @@ export interface BackendStepSummary {
   version: string;
 }
 /**
- * Authenticated product employee, checked against the signed authorization.
- */
-export interface ScriptActor {
-  instanceId: string;
-  principalId: string;
-  tenantId: string;
-}
-/**
  * Immutable employee choice.
  */
 export interface PolicyChoice {
@@ -394,26 +422,27 @@ export interface PolicyChoice {
   request: string;
 }
 /**
+ * Native product login generation.
+ */
+export interface NativeContextRef {
+  /**
+   * Exact caller generation; retirement invalidates all work using it.
+   */
+  generation: string;
+  /**
+   * Owner-assigned binding identity, scoped to the authenticated native peer.
+   */
+  id: string;
+}
+/**
  * Formal backend directory DTO, including the Resource-owned schema.
  */
 export interface SelfServiceDirectoryItem {
-  parameterSchema: unknown;
-  parameterSources: {
-    [k: string]: ScriptParameterSource;
-  };
   policyId: string;
   policyRevision: number;
   policyVersion: string;
-  resource: ScriptResource;
   selfService: SelfServiceMetadata;
-}
-/**
- * `ScriptResource`
- */
-export interface ScriptResource {
-  id: string;
-  variant: string;
-  version: string;
+  task: SelfServiceTask;
 }
 /**
  * `SelfServiceMetadata`
@@ -428,6 +457,14 @@ export interface SelfServiceMetadata {
   published: boolean;
   riskLevel: number;
   sideEffects: string;
+}
+/**
+ * `TaskResource`
+ */
+export interface TaskResource {
+  id: string;
+  variant: string;
+  version: string;
 }
 /**
  * Exact displayed backend offer, without executable input or authorization claims.
@@ -483,6 +520,14 @@ export interface BackendTask1 {
    * Requires an explicit local user action before requesting Start.
    */
   userInitiated: boolean;
+}
+/**
+ * `SelfServiceUser`
+ */
+export interface SelfServiceUser {
+  instanceId: string;
+  principalId: string;
+  tenantId: string;
 }
 /**
  * Sole product confirmation, persisted together with the original AI request.
@@ -592,6 +637,19 @@ export interface VersionedRef1 {
    * Opaque local reference identifier; syntax validity is not authenticity.
    */
   revision: string;
+}
+/**
+ * Native owner binding at the original invocation, independent of provider identity.
+ */
+export interface NativeContextRef1 {
+  /**
+   * Exact caller generation; retirement invalidates all work using it.
+   */
+  generation: string;
+  /**
+   * Owner-assigned binding identity, scoped to the authenticated native peer.
+   */
+  id: string;
 }
 /**
  * Actual native account and login session, supplied by ingress.
@@ -736,6 +794,7 @@ export interface FrozenExecutionSummary {
             }
           | {
               config: VersionedRef1;
+              context: NativeContextRef1;
               /**
                * Opaque local reference identifier; syntax validity is not authenticity.
                */
@@ -798,7 +857,7 @@ export interface FrozenExecutionSummary {
   /**
    * Version of the frozen execution plan, independent of the AI wire version.
    */
-  schemaVersion: 7;
+  schemaVersion: 8;
   /**
    * Required target user session.
    */

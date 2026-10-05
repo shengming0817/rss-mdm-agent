@@ -1454,7 +1454,14 @@ impl TaskAuthorizationExt for TaskAuthorization {
                 confirmed,
             } => {
                 !request_id.is_nil()
-                    && match subject { SelfServiceSubject::Device => true, SelfServiceSubject::User(user) => user.tenant_id == tenant && !user.instance_id.is_nil() && !user.principal_id.is_nil() }
+                    && match subject {
+                        SelfServiceSubject::Device => true,
+                        SelfServiceSubject::User(user) => {
+                            user.tenant_id == tenant
+                                && !user.instance_id.is_nil()
+                                && !user.principal_id.is_nil()
+                        }
+                    }
                     && !policy_id.is_nil()
                     && *policy_revision > 0
                     && !policy_version.is_nil()

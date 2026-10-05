@@ -13,7 +13,7 @@ const PROFILES: [ScriptProfile; 3] = [
 
 #[test]
 fn replacement_preserves_launch_facts_and_measured_frozen_digests() {
-    // Recorded for current execution V7 and its execution-input/v7 digest domain.
+    // Recorded for current execution V8 and its execution-input/v7 digest domain.
     let digests = [
         "1c7864897fc0ccd4ed66a66a39f6f70d8639372ed87d266759f321440839a2fa",
         "b84ee9c0d52f5c81e6264dd63d386899c0c7196f00d743e6aab861bb1277c493",

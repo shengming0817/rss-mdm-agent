@@ -24,7 +24,8 @@ pub(crate) fn request_id(offer: &Offer) -> Result<execution_contract::RequestId,
         _ => None,
     };
     if let Some(wire::TaskAuthorization::SelfService { request_id, .. }) = authorization {
-        return execution_contract::RequestId::new(request_id.to_string()).map_err(|_| Error::Protocol);
+        return execution_contract::RequestId::new(request_id.to_string())
+            .map_err(|_| Error::Protocol);
     }
     let bytes = match offer.payload() {
         wire::TaskPayload::TaskSpec(v) => encode(&(

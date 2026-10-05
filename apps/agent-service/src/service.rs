@@ -464,7 +464,8 @@ impl<S: IdentityProvider> DeviceService<S> {
             self.core.available = Some(offered(&offer)?);
             network(self.client.received(&offer), &mut self.core, commands).await?;
             let materials = network(self.client.prepare(&offer), &mut self.core, commands).await?;
-            if matches!(offer.payload(),wire::TaskPayload::TaskSpec(p) if matches!(p.authorization,wire::TaskAuthorization::SelfService {..})) || matches!(offer.payload(),wire::TaskPayload::SoftwareTaskSpec(p) if matches!(p.authorization,wire::TaskAuthorization::SelfService {..}))
+            if matches!(offer.payload(),wire::TaskPayload::TaskSpec(p) if matches!(p.authorization,wire::TaskAuthorization::SelfService {..}))
+                || matches!(offer.payload(),wire::TaskPayload::SoftwareTaskSpec(p) if matches!(p.authorization,wire::TaskAuthorization::SelfService {..}))
             {
                 let selection = self.bind_policy_offer(&offer)?;
                 backend::submit(self, offer, materials, Some(selection), commands).await?;
@@ -953,7 +954,8 @@ impl Core {
         if matches!(
             command.request.as_operation(),
             Some(
-                execution_ipc::host::Request::BindContext { .. } | Request::RevokeContext {}
+                execution_ipc::host::Request::BindContext { .. }
+                    | Request::RevokeContext {}
                     | execution_ipc::host::Request::ObserveSoftware { .. }
                     | execution_ipc::host::Request::PolicyDirectory { .. }
                     | execution_ipc::host::Request::InvokePolicy { .. }
@@ -970,7 +972,8 @@ impl Core {
         let reply = (|| -> Result<Reply, Error> {
             match command.request.into_operation() {
                 Some(
-                    Request::BindContext { .. } | Request::RevokeContext {}
+                    Request::BindContext { .. }
+                    | Request::RevokeContext {}
                     | Request::ObserveSoftware { .. }
                     | Request::PolicyDirectory { .. }
                     | Request::InvokePolicy { .. }
@@ -1445,7 +1448,7 @@ impl Selection {
                 config: config.clone(),
                 conversation: conversation.clone(),
                 tool_call: tool_call.clone(),
-            context: context.clone(),
+                context: context.clone(),
             },
         })
     }
@@ -1466,7 +1469,7 @@ impl Selection {
                     config: config.clone(),
                     conversation: conversation.clone(),
                     tool_call: tool_call.clone(),
-            context: context.clone(),
+                    context: context.clone(),
                 },
             ),
             _ => return Err(Error::Denied),

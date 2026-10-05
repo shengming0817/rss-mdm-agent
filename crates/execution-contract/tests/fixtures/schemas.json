@@ -126,6 +126,10 @@
                 "$ref": "#/$defs/VersionedRef",
                 "description": "Native AI connection configuration, not a provider identity grant."
               },
+              "context": {
+                "$ref": "#/$defs/NativeContextRef",
+                "description": "Native owner binding at the original invocation, independent of provider identity."
+              },
               "conversation": {
                 "$ref": "#/$defs/Id",
                 "description": "Conversation reference used for audit correlation."
@@ -145,6 +149,7 @@
             },
             "required": [
               "kind",
+              "context",
               "osSession",
               "config",
               "conversation",
@@ -433,6 +438,25 @@
       "LocalContractV1": {
         "const": 1,
         "type": "integer"
+      },
+      "NativeContextRef": {
+        "additionalProperties": false,
+        "description": "Nonsecret reference returned by the native execution owner after binding a context.",
+        "properties": {
+          "generation": {
+            "$ref": "#/$defs/Id",
+            "description": "Exact caller generation; retirement invalidates all work using it."
+          },
+          "id": {
+            "$ref": "#/$defs/Id",
+            "description": "Owner-assigned binding identity, scoped to the authenticated native peer."
+          }
+        },
+        "required": [
+          "id",
+          "generation"
+        ],
+        "type": "object"
       },
       "Operation": {
         "additionalProperties": false,
@@ -855,6 +879,10 @@
                 "$ref": "#/$defs/VersionedRef",
                 "description": "Native AI connection configuration, not a provider identity grant."
               },
+              "context": {
+                "$ref": "#/$defs/NativeContextRef",
+                "description": "Native owner binding at the original invocation, independent of provider identity."
+              },
               "conversation": {
                 "$ref": "#/$defs/Id",
                 "description": "Conversation reference used for audit correlation."
@@ -874,6 +902,7 @@
             },
             "required": [
               "kind",
+              "context",
               "osSession",
               "config",
               "conversation",
@@ -1495,8 +1524,8 @@
         "const": 1,
         "type": "integer"
       },
-      "LocalContractV7": {
-        "const": 7,
+      "LocalContractV8": {
+        "const": 8,
         "type": "integer"
       },
       "MsixContainer": {
@@ -1643,6 +1672,25 @@
           "identity",
           "length",
           "sha256"
+        ],
+        "type": "object"
+      },
+      "NativeContextRef": {
+        "additionalProperties": false,
+        "description": "Nonsecret reference returned by the native execution owner after binding a context.",
+        "properties": {
+          "generation": {
+            "$ref": "#/$defs/Id",
+            "description": "Exact caller generation; retirement invalidates all work using it."
+          },
+          "id": {
+            "$ref": "#/$defs/Id",
+            "description": "Owner-assigned binding identity, scoped to the authenticated native peer."
+          }
+        },
+        "required": [
+          "id",
+          "generation"
         ],
         "type": "object"
       },
@@ -2882,8 +2930,8 @@
         "description": "Requested target execution identity, separate from actor and originating login."
       },
       "schemaVersion": {
-        "$ref": "#/$defs/LocalContractV7",
-        "description": "Required current V7 discriminator; absent or unsupported versions are rejected."
+        "$ref": "#/$defs/LocalContractV8",
+        "description": "Required current V8 discriminator; absent or unsupported versions are rejected."
       },
       "sessionRequirement": {
         "$ref": "#/$defs/SessionRequirement",

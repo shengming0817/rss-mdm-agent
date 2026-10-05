@@ -53,17 +53,31 @@ impl TrustedRisk {
                 };
                 (
                     level,
-                    if let wire::TaskAuthorization::SelfService { policy_id, policy_revision, allow_ai: true, source: wire::SelfServiceCaller::Ai, .. } = &spec.authorization {
-                        RiskSource::Policy { policy: VersionedRef { id: Id::new(policy_id.to_string()).ok()?, revision: Id::new(policy_revision.to_string()).ok()? } }
-                    } else { RiskSource::Software {
-                        definition: Digest::new(
-                            spec.definition_digest
-                                .iter()
-                                .map(|b| format!("{b:02x}"))
-                                .collect::<String>(),
-                        )
-                        .ok()?,
-                    } },
+                    if let wire::TaskAuthorization::SelfService {
+                        policy_id,
+                        policy_revision,
+                        allow_ai: true,
+                        source: wire::SelfServiceCaller::Ai,
+                        ..
+                    } = &spec.authorization
+                    {
+                        RiskSource::Policy {
+                            policy: VersionedRef {
+                                id: Id::new(policy_id.to_string()).ok()?,
+                                revision: Id::new(policy_revision.to_string()).ok()?,
+                            },
+                        }
+                    } else {
+                        RiskSource::Software {
+                            definition: Digest::new(
+                                spec.definition_digest
+                                    .iter()
+                                    .map(|b| format!("{b:02x}"))
+                                    .collect::<String>(),
+                            )
+                            .ok()?,
+                        }
+                    },
                 )
             }
             _ => return None,

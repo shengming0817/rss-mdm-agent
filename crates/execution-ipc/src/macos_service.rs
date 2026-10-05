@@ -359,7 +359,7 @@ mod tests {
         impl host::SessionFence for Fence {
             fn revoke(&self, _: &Peer) -> host::Reply {
                 self.0.store(true, Ordering::Release);
-                host::Reply::EmployeeBound
+                host::Reply::ContextRevoked
             }
         }
         let handler: Mutex<Box<dyn Handler>> = Mutex::new(Box::new(Panicking));
@@ -371,7 +371,7 @@ mod tests {
             uid: Some(1),
             session: 1,
         };
-        let bytes = host::encode(host::Request::EmployeeSession { value: None }).unwrap();
+        let bytes = host::encode(host::Request::RevokeContext {}).unwrap();
         let reply = handle_call(&handler, Some(&fence), &stop, &peer, &bytes).unwrap();
         assert_eq!(
             serde_json::from_slice::<serde_json::Value>(&reply).unwrap()["reply"]["kind"],

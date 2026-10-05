@@ -532,6 +532,7 @@ fn configuration_rejects_untrusted_network_and_unbounded_budgets() {
             revision: 1,
             os_version: [14, 0, 0, 0],
             system_broker: true,
+            user_helper: true,
             interactive_user: None,
             source_credentials: vec![],
             msix_sideload: false,
@@ -1206,6 +1207,38 @@ async fn imports_authorized_grant_over_real_tls_without_replacing_the_operation(
 }
 
 #[tokio::test]
+async fn device_self_service_uses_the_registered_channel_without_a_user_header() {
+    let server = Server::tls().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    let page = client
+        .self_service_directory(
+            None,
+            &SelfServiceDirectory {
+                source: SelfServiceCaller::Ai,
+                after: None,
+            },
+        )
+        .await
+        .unwrap();
+    assert!(page.items.is_empty());
+    assert_eq!(server.data.lock().unwrap().employee_calls.len(), 1);
+    // A rejected user request never produces a second, device-only request.
+    assert!(client
+        .self_service_directory(
+            Some(&"d".repeat(64)),
+            &SelfServiceDirectory {
+                source: SelfServiceCaller::Ai,
+                after: None,
+            }
+        )
+        .await
+        .is_err());
+    assert_eq!(server.data.lock().unwrap().employee_calls.len(), 1);
+}
+
+#[tokio::test]
 async fn employee_self_service_uses_device_mtls_and_recovers_the_original_uuid() {
     let server = Server::tls().await;
     let root = Root::new();
@@ -1219,22 +1252,22 @@ async fn employee_self_service_uses_device_mtls_and_recovers_the_original_uuid()
     });
     let secret = "c".repeat(64);
     let query = SelfServiceDirectory {
-        source: ScriptCaller::Ai,
+        source: SelfServiceCaller::Ai,
         after: None,
     };
     assert!(matches!(
         client
-            .self_service_directory("not-an-identity-cookie", &query)
+            .self_service_directory(Some("not-an-identity-cookie"), &query)
             .await,
         Err(Error::Identity)
     ));
     assert!(client
-        .self_service_directory(&"d".repeat(64), &query)
+        .self_service_directory(Some(&"d".repeat(64)), &query)
         .await
         .is_err());
     assert_eq!(
         client
-            .self_service_directory(&secret, &query)
+            .self_service_directory(Some(&secret), &query)
             .await
             .unwrap()
             .items[0]
@@ -1246,26 +1279,31 @@ async fn employee_self_service_uses_device_mtls_and_recovers_the_original_uuid()
         policy_id: directory.policy_id,
         policy_revision: directory.policy_revision,
         policy_version: directory.policy_version,
-        source: ScriptCaller::Ai,
+        source: SelfServiceCaller::Ai,
         confirmed: true,
         parameters: std::collections::BTreeMap::from([("name".into(), serde_json::json!("Acme"))]),
     };
     server.data.lock().unwrap().invocation_reply_lost = true;
     assert!(matches!(
-        client.invoke_self_service(&secret, &input).await,
+        client.invoke_self_service(Some(&secret), &input).await,
         Err(Error::Unavailable)
     ));
     drop(client);
     let client = server.client(&root, OpenMode::Existing);
     let status = client
-        .self_service_status(&secret, input.operation_id)
+        .self_service_status(Some(&secret), input.operation_id)
         .await
         .unwrap();
-    let retry = client.invoke_self_service(&secret, &input).await.unwrap();
+    let retry = client
+        .invoke_self_service(Some(&secret), &input)
+        .await
+        .unwrap();
     assert_eq!(status.run_id, retry.run_id);
     assert_eq!(server.data.lock().unwrap().invocations.len(), 1);
     assert!(matches!(
-        client.self_service_status(&secret, Uuid::new_v4()).await,
+        client
+            .self_service_status(Some(&secret), Uuid::new_v4())
+            .await,
         Err(Error::NotFound)
     ));
     server.data.lock().unwrap().response_override = Some((
@@ -1273,7 +1311,7 @@ async fn employee_self_service_uses_device_mtls_and_recovers_the_original_uuid()
         serde_json::json!({"requestId":Uuid::new_v4(),"runId":retry.run_id,"policyId":input.policy_id,"policyRevision":input.policy_revision,"policyVersion":input.policy_version}),
     ));
     assert!(matches!(
-        client.invoke_self_service(&secret, &input).await,
+        client.invoke_self_service(Some(&secret), &input).await,
         Err(Error::Untrusted)
     ));
     let data = server.data.lock().unwrap();

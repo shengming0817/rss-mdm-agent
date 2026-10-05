@@ -17,7 +17,7 @@ fn decode_connection(
     input: serde_json::Value,
     expected: Option<u64>,
 ) -> Result<ai_session_contract::ConnectionDraft> {
-    let bytes = serde_json::to_vec(&serde_json::json!({"schemaVersion":7,"kind":"saveConnectionRequest","connection":input,"expectedRevision":expected})).map_err(|_| error("input", "无效连接"))?;
+    let bytes = serde_json::to_vec(&serde_json::json!({"schemaVersion":8,"kind":"saveConnectionRequest","connection":input,"expectedRevision":expected})).map_err(|_| error("input", "无效连接"))?;
     let record = ai_session_contract::decode(
         &bytes,
         &ai_session_contract::Limits {
@@ -123,10 +123,10 @@ pub async fn select_test_user(
 }
 
 #[tauri::command]
-pub async fn select_guest(
+pub async fn select_device(
     state: State<'_, DesktopRuntime>,
 ) -> Result<ai_session_contract::UserContext> {
-    state.select_guest().await
+    state.select_device().await
 }
 #[tauri::command]
 pub async fn account_logout(state: State<'_, DesktopRuntime>) -> Result<()> {
@@ -280,7 +280,7 @@ pub fn register<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder
     builder.invoke_handler(tauri::generate_handler![
         appearance_snapshot,
         development_assembly,
-        select_guest,
+        select_device,
         account_logout,
         account_status,
         account_organizations,
@@ -401,7 +401,7 @@ mod tests {
         .unwrap();
         assert!(service.get("phase").is_some());
         for command in [
-            "select_guest",
+            "select_device",
             "account_logout",
             "account_status",
             "account_login",

@@ -77,25 +77,20 @@ pub fn credential_caller(
 ) -> ai_session_contract::CredentialCaller {
     use ai_session_contract::{AccountIdentity, CredentialCaller};
     match &context.identity {
-        Some(AccountIdentity::Guest {
+        AccountIdentity::Device {
             tenant_id,
             principal_id,
             authority_id,
-        })
-        | Some(AccountIdentity::Enterprise {
+        }
+        | AccountIdentity::UserDevice {
             tenant_id,
             principal_id,
             authority_id,
             ..
-        }) => CredentialCaller {
+        } => CredentialCaller {
             tenant_id: tenant_id.clone(),
             principal_id: principal_id.clone(),
             authority_id: authority_id.clone(),
-        },
-        None => CredentialCaller {
-            tenant_id: "test-users".parse().expect("valid native tenant"),
-            principal_id: context.user.user_id.clone(),
-            authority_id: "desktop-fixture".parse().expect("valid native authority"),
         },
     }
 }
@@ -335,10 +330,10 @@ mod tests {
         let draft = serde_json::from_value(serde_json::json!({"connectionId":"c","name":"Connection","provider":"codex","profile":"conversation","source":{"type":"custom_api","apiUrl":"https://example.invalid","model":"chosen"}})).unwrap();
         for identity in [
             serde_json::Value::Null,
-            serde_json::json!({"mode":"guest","tenantId":"local-guest","principalId":"guest","authorityId":"desktop-guest"}),
-            serde_json::json!({"mode":"enterprise","tenantId":"tenant","principalId":"principal","authorityId":"authority","organizationId":"org","expiresAtMs":1000}),
+            serde_json::json!({"mode":"device","tenantId":"local-guest","principalId":"guest","authorityId":"desktop-guest"}),
+            serde_json::json!({"mode":"user_device","tenantId":"tenant","principalId":"principal","authorityId":"authority","organizationId":"org","expiresAtMs":1000}),
         ] {
-            let context = serde_json::from_value(serde_json::json!({"schemaVersion":7,"kind":"userContext","generation":"generation","user":{"schemaVersion":7,"kind":"testUser","userId":"profile","nameKey":"name","displayName":"Name"},"identity":identity})).unwrap();
+            let context = serde_json::from_value(serde_json::json!({"schemaVersion":8,"kind":"userContext","generation":"generation","user":{"schemaVersion":8,"kind":"testUser","userId":"profile","nameKey":"name","displayName":"Name"},"identity":identity})).unwrap();
             let owner = serde_json::to_value(
                 credential_owner(&credential_caller(&context), &draft).unwrap(),
             )
@@ -479,5 +474,62 @@ fn key_path() -> std::io::Result<std::path::PathBuf> {
             .join("private");
         platform_private_storage::directory(&root)?;
         Ok(root.join("connection-master-key.dpapi"))
+    }
+}
+
+impl MasterKey {
+    pub(super) async fn save_connection(
+        self: &std::sync::Arc<Self>,
+        process: &super::host::Process,
+        generation: &str,
+        connection: ai_session_contract::ConnectionDraft,
+        expected: Option<u64>,
+        secret: Option<zeroize::Zeroizing<String>>,
+        current: impl Fn() -> Result<ai_session_contract::UserContext>,
+    ) -> Result<serde_json::Value> {
+        current()?;
+        let encrypted = if let Some(secret) = secret {
+            let context = current()?;
+            let owner = super::credentials::credential_owner(
+                &super::credentials::credential_caller(&context),
+                &connection,
+            )?;
+            let has_secrets = process.control.credential_context(generation).await?;
+            current()?;
+            let master = self.clone();
+            let permit = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                master.permit.clone().acquire_owned(),
+            )
+            .await
+            .map_err(|_| unavailable())?
+            .map_err(|_| unavailable())?;
+            let encrypted = tokio::time::timeout(
+                std::time::Duration::from_secs(10),
+                tokio::task::spawn_blocking(move || {
+                    let _permit = permit;
+                    master.seal(&owner, &secret, !has_secrets)
+                }),
+            )
+            .await
+            .map_err(|_| unavailable())?
+            .map_err(|_| unavailable())??;
+            current()?;
+            Some(encrypted)
+        } else {
+            None
+        };
+        let result = process
+            .control
+            .save_connection(
+                generation,
+                connection,
+                expected,
+                encrypted,
+                std::time::Duration::from_secs(10),
+            )
+            .await?;
+        current()?;
+        Ok(result)
     }
 }

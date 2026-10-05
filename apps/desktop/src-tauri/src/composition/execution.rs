@@ -43,8 +43,8 @@ pub struct ExecutionHandle {
     origin: ClientOrigin,
     permits: Arc<tokio::sync::Semaphore>,
     wire: Arc<Mutex<()>>,
-    employee_possible: Arc<AtomicBool>,
-    employee_initialized: Arc<AtomicBool>,
+    context_possible: Arc<AtomicBool>,
+    context_initialized: Arc<AtomicBool>,
 }
 impl ExecutionHandle {
     pub fn new() -> Self {
@@ -54,8 +54,8 @@ impl ExecutionHandle {
             origin: ClientOrigin::Desktop {},
             permits: Arc::new(tokio::sync::Semaphore::new(16)),
             wire: Arc::new(Mutex::new(())),
-            employee_possible: Arc::new(AtomicBool::new(false)),
-            employee_initialized: Arc::new(AtomicBool::new(false)),
+            context_possible: Arc::new(AtomicBool::new(false)),
+            context_initialized: Arc::new(AtomicBool::new(false)),
         }
     }
     pub fn with_trusted_users(mut self, users: Arc<Mutex<super::users::Users>>) -> Self {
@@ -108,14 +108,14 @@ impl ExecutionHandle {
             let client = ServiceClient::installed().inspect_err(|error| {
                 eprintln!("RSS_EXECUTION_IPC_FAILURE stage=installation code={error:?}");
             })?;
-            if matches!(&request, Request::EmployeeSession { value: Some(_) }) {
+            if matches!(&request, Request::BindContext { .. }) {
                 // No protected installation means no handoff was attempted. Once transport
                 // can begin, retain uncertainty until a separate authenticated revoke ACK.
-                bound.employee_possible.store(true, Ordering::Release);
-                if !bound.employee_initialized.load(Ordering::Acquire) {
-                    match client.request(Request::EmployeeSession { value: None })? {
-                        Reply::EmployeeBound => {
-                            bound.employee_initialized.store(true, Ordering::Release)
+                bound.context_possible.store(true, Ordering::Release);
+                if !bound.context_initialized.load(Ordering::Acquire) {
+                    match client.request(Request::RevokeContext {})? {
+                        Reply::ContextRevoked => {
+                            bound.context_initialized.store(true, Ordering::Release)
                         }
                         _ => return Err(Error::OutcomeUnknown),
                     }
@@ -134,16 +134,16 @@ impl ExecutionHandle {
             reply => Ok(reply),
         }
     }
-    pub async fn revoke_employee(&self) -> ui::Result<()> {
-        if !self.employee_possible.load(Ordering::Acquire) {
+    pub async fn revoke_context(&self) -> ui::Result<()> {
+        if !self.context_possible.load(Ordering::Acquire) {
             return Ok(());
         }
-        let possible = self.employee_possible.clone();
+        let possible = self.context_possible.clone();
         tokio::task::spawn_blocking(move || {
             // This control request never takes the business semaphore or transport lock.
             let client = ServiceClient::installed()?;
-            match client.request(Request::EmployeeSession { value: None })? {
-                Reply::EmployeeBound => {
+            match client.request(Request::RevokeContext {})? {
+                Reply::ContextRevoked => {
                     possible.store(false, Ordering::Release);
                     Ok(())
                 }
@@ -154,21 +154,43 @@ impl ExecutionHandle {
         .map_err(|_| bad(Error::OutcomeUnknown))?
         .map_err(bad)
     }
-    pub async fn employee(
+    pub async fn bind_context(
         &self,
-        value: Option<execution_ipc::host::EmployeeSession>,
-    ) -> ui::Result<()> {
-        if value.is_none() {
-            return self.revoke_employee().await;
-        }
+        value: execution_ipc::host::NativeContextSession,
+        expected: Option<execution_contract::Id>,
+    ) -> ui::Result<execution_contract::NativeContextRef> {
         match self
-            .request(Request::EmployeeSession { value })
+            .request(Request::BindContext { value, expected })
             .await
             .map_err(bad)?
         {
-            Reply::EmployeeBound => Ok(()),
-            _ => Err(bad(Error::Denied)),
+            Reply::ContextBound { value } => Ok(value),
+            _ => Err(bad(Error::OutcomeUnknown)),
         }
+    }
+    fn context_ref(&self) -> ui::Result<execution_contract::NativeContextRef> {
+        let snapshot = self
+            .users
+            .as_ref()
+            .ok_or_else(|| bad(Error::Unbound))?
+            .lock()
+            .map_err(|_| bad(Error::Unavailable))?
+            .current()?;
+        if self.generation.as_deref() != Some(snapshot.generation.as_str()) {
+            return Err(bad(Error::Unbound));
+        }
+        Ok(execution_contract::NativeContextRef {
+            id: execution_contract::Id::new(
+                snapshot
+                    .execution_binding
+                    .as_ref()
+                    .ok_or_else(|| bad(Error::Unbound))?
+                    .as_str(),
+            )
+            .map_err(|_| bad(Error::Unbound))?,
+            generation: execution_contract::Id::new(snapshot.generation.as_str())
+                .map_err(|_| bad(Error::Unbound))?,
+        })
     }
     pub async fn policy_directory(
         &self,
@@ -176,6 +198,7 @@ impl ExecutionHandle {
     ) -> ui::Result<agent_api::runtime::SelfServiceDirectoryResponse> {
         match self
             .request(Request::PolicyDirectory {
+                context: self.context_ref()?,
                 after: input.after,
                 origin: self.origin.clone(),
             })
@@ -189,6 +212,7 @@ impl ExecutionHandle {
     pub async fn invoke_policy(&self, choice: PolicyChoice) -> ui::Result<BackendRequest> {
         match self
             .request(Request::InvokePolicy {
+                context: self.context_ref()?,
                 choice,
                 origin: self.origin.clone(),
             })
@@ -202,6 +226,7 @@ impl ExecutionHandle {
     pub async fn confirm_policy(&self, input: ui::ActionRef) -> ui::Result<BackendRequest> {
         match self
             .request(Request::ConfirmPolicy {
+                context: self.context_ref()?,
                 request: input.request_id,
             })
             .await
@@ -214,6 +239,7 @@ impl ExecutionHandle {
     pub async fn policy_status(&self, input: ui::ActionRef) -> ui::Result<ui::PolicyStatus> {
         match self
             .request(Request::PolicyStatus {
+                context: self.context_ref()?,
                 request: input.request_id,
             })
             .await

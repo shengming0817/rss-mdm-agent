@@ -1,4 +1,4 @@
-use crate::{ActorId, DeviceId, Digest, EnvironmentKey, Id, NetworkDestination, RequestId, V1, V7};
+use crate::{ActorId, DeviceId, Digest, EnvironmentKey, Id, NetworkDestination, RequestId, V1, V8};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, fmt};
@@ -342,8 +342,8 @@ pub enum SessionRequirement {
 #[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ExecutionInput {
-    /// Required current V7 discriminator; absent or unsupported versions are rejected.
-    pub schema_version: V7,
+    /// Required current V8 discriminator; absent or unsupported versions are rejected.
+    pub schema_version: V8,
     /// Closed execution semantics, included in the sole canonical digest.
     pub execution: crate::ExecutionSpec,
     /// Original operation intent, retained once as part of the canonical execution input.

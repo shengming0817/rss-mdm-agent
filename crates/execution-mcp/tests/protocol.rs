@@ -706,9 +706,9 @@ fn policy_mcp_descriptor_preserves_resource_input_constraints_and_versions() {
     let mut item: SelfServiceDirectoryItem = serde_json::from_value(json!({
         "policyId":"00000000-0000-4000-a000-000000000001","policyRevision":3,"policyVersion":"00000000-0000-4000-a000-000000000002",
         "selfService":{"published":true,"allowAi":true,"riskLevel":2,"displayName":"Repair","description":"Repair app","prerequisites":"Employee","sideEffects":"Restart","category":"Support","keywords":[]},
-        "resource":{"id":"r","version":"v1","variant":"default"},
+        "task":{"kind":"script","runAs":"system","resource":{"id":"r","version":"v1","variant":"default"},
         "parameterSources":{"name":{"kind":"input"},"path":{"kind":"fixed","value":"/Applications"}},
-        "parameterSchema":{"type":"object","properties":{"name":{"type":"string","maxLength":32},"path":{"type":"string"}},"required":["name","path"],"additionalProperties":false}
+        "parameterSchema":{"type":"object","properties":{"name":{"type":"string","maxLength":32},"path":{"type":"string"}},"required":["name","path"],"additionalProperties":false}}
     })).unwrap();
     let descriptor = policy_tool(&item).unwrap();
     let validator = jsonschema::validator_for(&descriptor["inputSchema"]).unwrap();
@@ -717,8 +717,17 @@ fn policy_mcp_descriptor_preserves_resource_input_constraints_and_versions() {
     assert!(!validator.is_valid(&json!({"name":"x".repeat(33)})));
     assert!(!validator.is_valid(&json!({})));
     assert_eq!(descriptor["annotations"]["readOnlyHint"], false);
-    let saved = item.parameter_schema.clone();
-    item.parameter_schema["properties"]["name"] =
+    fn parameter_schema(item: &mut SelfServiceDirectoryItem) -> &mut serde_json::Value {
+        let agent_api::runtime::SelfServiceTask::Script {
+            parameter_schema, ..
+        } = &mut item.task
+        else {
+            panic!("script")
+        };
+        parameter_schema
+    }
+    let saved = parameter_schema(&mut item).clone();
+    parameter_schema(&mut item)["properties"]["name"] =
         json!({"type":"array","items":{"type":"integer","minimum":i64::MIN,"maximum":i64::MAX}});
     let descriptor = policy_tool(&item).unwrap();
     assert_eq!(
@@ -730,7 +739,7 @@ fn policy_mcp_descriptor_preserves_resource_input_constraints_and_versions() {
         -9_007_199_254_740_991_i64
     );
     assert_eq!(
-        item.parameter_schema["properties"]["name"]["items"]["maximum"],
+        parameter_schema(&mut item)["properties"]["name"]["items"]["maximum"],
         i64::MAX
     );
     for unsupported in [
@@ -738,13 +747,13 @@ fn policy_mcp_descriptor_preserves_resource_input_constraints_and_versions() {
         json!({"type":"integer","const":i64::MAX}),
         json!({"type":"integer","enum":[1,i64::MAX]}),
     ] {
-        item.parameter_schema["properties"]["name"] = unsupported;
+        parameter_schema(&mut item)["properties"]["name"] = unsupported;
         assert!(matches!(
             policy_tool(&item),
             Err(ServiceError::InvalidInput)
         ));
     }
-    item.parameter_schema = saved;
+    *parameter_schema(&mut item) = saved;
     let original = policy_tool_name(&item);
     item.policy_revision += 1;
     assert_ne!(policy_tool_name(&item), original);

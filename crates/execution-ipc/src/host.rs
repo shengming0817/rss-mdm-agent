@@ -476,7 +476,7 @@ pub struct NativeContextSession {
     /// Current session expiry; never extended by an invocation.
     pub expires_at_unix_ms: u64,
 }
-/// Local IPC V7 carries backend task references, never executable plans or authority claims.
+/// Local IPC V8 carries backend task references, never executable plans or authority claims.
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(
     tag = "method",
@@ -759,7 +759,7 @@ impl ServiceClient {
         }
         Ok(Self { server })
     }
-    /// Send a bounded V7 request over a mutually authenticated native connection.
+    /// Send a bounded V8 request over a mutually authenticated native connection.
     /// Transport failure does not mean a submitted selection or cancellation failed.
     pub fn request(&self, request: Request) -> Result<Reply, execution_app::Error> {
         let bytes = encode(request)?;
@@ -785,8 +785,7 @@ pub trait SessionFence: Send + Sync {
 pub(crate) fn is_employee_revocation(bytes: &[u8]) -> bool {
     bytes.len() <= 65536
         && serde_json::from_slice::<Envelope>(bytes).is_ok_and(|e| {
-            e.version == IPC_VERSION
-                && matches!(e.request, Request::RevokeContext {})
+            e.version == IPC_VERSION && matches!(e.request, Request::RevokeContext {})
         })
 }
 /// Decode a current revocation and dispatch only its authenticated ephemeral fence.
@@ -825,7 +824,7 @@ pub trait Handler: Send {
     /// Process one bounded request serially; a lost reply does not prove no mutation.
     fn handle(&mut self, peer: &Peer, request: Request) -> Reply;
     /// Native framing seam for the separately authenticated helper protocol. The system
-    /// service uses this default, which accepts only task-reference IPC V7.
+    /// service uses this default, which accepts only task-reference IPC V8.
     fn handle_wire(&mut self, peer: &Peer, bytes: &[u8]) -> Vec<u8> {
         let reply = if bytes.len() > 65536 {
             Reply::Rejected

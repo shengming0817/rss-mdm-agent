@@ -17,23 +17,21 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
     ) -> Result<T, Error> {
         self.active()?;
         self.now()?;
-        if secret.is_some_and(|secret| secret.len() != 64
-            || !secret
-                .bytes()
-                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)))
-        {
+        if secret.is_some_and(|secret| {
+            secret.len() != 64
+                || !secret
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        }) {
             return Err(Error::Identity);
         }
-        let mut request = self
-            .http
-            .request(method, self.url(path)?)
-                        .timeout(
-                self.store
-                    .cfg
-                    .limits
-                    .request_timeout
-                    .min(std::time::Duration::from_secs(2)),
-            );
+        let mut request = self.http.request(method, self.url(path)?).timeout(
+            self.store
+                .cfg
+                .limits
+                .request_timeout
+                .min(std::time::Duration::from_secs(2)),
+        );
         if let Some(secret) = secret {
             request = request.header("x-rss-user-session", secret);
         }
@@ -68,8 +66,9 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         if let Some(after) = &query.after {
             path.push_str(&format!("&after={after}"));
         }
-        let response: wire::SelfServiceDirectoryResponse =
-            self.self_service_json(secret, Method::GET, &path, None).await?;
+        let response: wire::SelfServiceDirectoryResponse = self
+            .self_service_json(secret, Method::GET, &path, None)
+            .await?;
         if response.items.len() > 64 || response.as_of < 0 {
             return Err(Error::Protocol);
         }

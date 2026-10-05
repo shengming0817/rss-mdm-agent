@@ -508,13 +508,13 @@ mod tests {
             ("cleanup_incomplete", Fault::Cleanup),
         ] {
             let frame =
-                json!({"schemaVersion":7,"kind":"hostProcessDiagnostic","code":code}).to_string();
+                json!({"schemaVersion":8,"kind":"hostProcessDiagnostic","code":code}).to_string();
             assert_eq!(startup_fault(&frame), Some(fault));
         }
         for raw in [
             "AI Host could not start: storage_corrupt".to_owned(),
-            json!({"schemaVersion":7,"kind":"hostProcessDiagnostic","code":"CANARY"}).to_string(),
-            json!({"schemaVersion":7,"kind":"hostProcessDiagnostic","code":"storage_corrupt","detail":"CANARY"}).to_string(),
+            json!({"schemaVersion":8,"kind":"hostProcessDiagnostic","code":"CANARY"}).to_string(),
+            json!({"schemaVersion":8,"kind":"hostProcessDiagnostic","code":"storage_corrupt","detail":"CANARY"}).to_string(),
             "x".repeat(1024),
         ] { assert_eq!(startup_fault(&raw), None); }
     }

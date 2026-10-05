@@ -182,7 +182,7 @@ fn preference_patch_retains_set_clear_and_omission_through_rust_roundtrip() {
         serde_json::json!({"selectedSessionId":{"clear":true}}),
     ] {
         let value =
-            serde_json::json!({"schemaVersion":7,"kind":"preferencesRequest","patch":patch});
+            serde_json::json!({"schemaVersion":8,"kind":"preferencesRequest","patch":patch});
         let record = decode(&serde_json::to_vec(&value).unwrap(), &limits()).unwrap();
         assert_eq!(
             serde_json::from_slice::<Value>(&encode(&record, &limits()).unwrap()).unwrap(),
@@ -194,7 +194,7 @@ fn preference_patch_retains_set_clear_and_omission_through_rust_roundtrip() {
         serde_json::json!({"selectedSessionId":{"set":"session","clear":true}}),
     ] {
         let value =
-            serde_json::json!({"schemaVersion":7,"kind":"preferencesRequest","patch":patch});
+            serde_json::json!({"schemaVersion":8,"kind":"preferencesRequest","patch":patch});
         assert!(decode(&serde_json::to_vec(&value).unwrap(), &limits()).is_err());
     }
 }
@@ -202,8 +202,8 @@ fn preference_patch_retains_set_clear_and_omission_through_rust_roundtrip() {
 #[test]
 fn native_control_and_execution_origin_are_generated_closed_rust_types() {
     for value in [
-        serde_json::json!({"schemaVersion":7,"kind":"nativeCall","id":1,"method":"openCredential","data":{"caller":{"tenantId":"t","principalId":"alice","authorityId":"desktop"},"connection":{"connectionId":"local","name":"Fixture","provider":"codex","profile":"conversation","source":{"type":"custom_api","apiUrl":"https://example.invalid/","model":"fixture"}},"encrypted":vec![7;32]}}),
-        serde_json::json!({"schemaVersion":7,"kind":"executionOrigin","namespace":{"tenantId":"test-users","principalId":"alice","authorityId":"desktop-fixture","sessionId":"session-1"},"userGeneration":"generation-a","operationId":"operation-1","provider":"codex","config":{"id":"connection-1","revision":"1"}}),
+        serde_json::json!({"schemaVersion":8,"kind":"nativeCall","id":1,"method":"openCredential","data":{"caller":{"tenantId":"t","principalId":"alice","authorityId":"desktop"},"connection":{"connectionId":"local","name":"Fixture","provider":"codex","profile":"conversation","source":{"type":"custom_api","apiUrl":"https://example.invalid/","model":"fixture"}},"encrypted":vec![7;32]}}),
+        serde_json::json!({"schemaVersion":8,"kind":"executionOrigin","namespace":{"tenantId":"test-users","principalId":"alice","authorityId":"desktop-fixture","sessionId":"session-1"},"userGeneration":"generation-a","operationId":"operation-1","provider":"codex","config":{"id":"connection-1","revision":"1"}}),
     ] {
         let record = decode(&serde_json::to_vec(&value).unwrap(), &limits()).unwrap();
         assert_eq!(
@@ -211,7 +211,7 @@ fn native_control_and_execution_origin_are_generated_closed_rust_types() {
             value
         );
     }
-    let invalid = serde_json::json!({"schemaVersion":7,"kind":"nativeCall","id":1,"method":"masterKey","data":{"create":false,"secret":"forged"}});
+    let invalid = serde_json::json!({"schemaVersion":8,"kind":"nativeCall","id":1,"method":"masterKey","data":{"create":false,"secret":"forged"}});
     assert!(decode(&serde_json::to_vec(&invalid).unwrap(), &limits()).is_err());
 }
 

@@ -66,7 +66,7 @@ pub fn context(profile: ScriptProfile) -> ExecutionInput {
         subject: id("uid:1000"),
     };
     ExecutionInput {
-        schema_version: V7,
+        schema_version: V8,
         execution: ExecutionSpec::Process {},
         request: ExecutionRequest {
             schema_version: V1,

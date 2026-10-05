@@ -122,8 +122,15 @@ pub fn policy_tool(
         return Err(ServiceError::Denied);
     }
     let (mut schema, parameter_sources) = match &item.task {
-        agent_api::runtime::SelfServiceTask::Script { parameter_schema, parameter_sources, .. } => (parameter_schema.clone(), parameter_sources.clone()),
-        agent_api::runtime::SelfServiceTask::Software { .. } => (serde_json::json!({"type":"object","properties":{},"required":[],"additionalProperties":false}), std::collections::BTreeMap::new()),
+        agent_api::runtime::SelfServiceTask::Script {
+            parameter_schema,
+            parameter_sources,
+            ..
+        } => (parameter_schema.clone(), parameter_sources.clone()),
+        agent_api::runtime::SelfServiceTask::Software { .. } => (
+            serde_json::json!({"type":"object","properties":{},"required":[],"additionalProperties":false}),
+            std::collections::BTreeMap::new(),
+        ),
     };
     let object = schema.as_object_mut().ok_or(ServiceError::InvalidInput)?;
     let input = |key: &str| {
@@ -147,7 +154,7 @@ pub fn policy_tool(
     object.insert("additionalProperties".into(), false.into());
     project_parameter_schema(&mut schema)?;
     Ok(
-        serde_json::json!({"name": policy_tool_name(item), "description": format!("{}\n{}\nCategory: {}\nKeywords: {}\nPrerequisites: {}\nSide effects: {}", item.self_service.display_name, item.self_service.description, item.self_service.category, item.self_service.keywords.join(", "), item.self_service.prerequisites, item.self_service.side_effects), "inputSchema": schema, "annotations": {"readOnlyHint": item.self_service.risk_level == 1, "openWorldHint": false, "idempotentHint": false}}),
+        serde_json::json!({"name": policy_tool_name(item), "description": format!("{}\n{}\nCategory: {}\nKeywords: {}\nPrerequisites: {}\nSide effects: {}", item.self_service.display_name, item.self_service.description, item.self_service.category, item.self_service.keywords.join(", "), item.self_service.prerequisites, item.self_service.side_effects), "inputSchema": schema, "annotations": {"readOnlyHint": item.self_service.risk_level == 1 && matches!(item.task, agent_api::runtime::SelfServiceTask::Script {..}), "openWorldHint": false, "idempotentHint": false}}),
     )
 }
 

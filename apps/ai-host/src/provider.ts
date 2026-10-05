@@ -60,9 +60,9 @@ export const createProvider: WorkerFactory = async ({
       }
     : connection;
   const own = (
-    port: import("@rss-mdm-agent/ai-contract").ProviderAgentPort,
+    port: import("@rss-mdm-agent/ai-contract/ports").ProviderAgentPort,
     proxy?: EgressProxy,
-  ): import("@rss-mdm-agent/ai-contract").ProviderAgentPort => ({
+  ): import("@rss-mdm-agent/ai-contract/ports").ProviderAgentPort => ({
     async createSession(...args) {
       const result = await port.createSession(...args);
       if (result.ok)
