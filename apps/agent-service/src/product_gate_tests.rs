@@ -35,13 +35,16 @@ impl Case {
         Self::with_offer_lifetime(level, 60).await
     }
     async fn with_offer_lifetime(level: Option<RiskLevel>, seconds: i64) -> Self {
+        Self::with_offer_mode(level, seconds, true).await
+    }
+    async fn with_offer_mode(level: Option<RiskLevel>, seconds: i64, user: bool) -> Self {
         let server = protocol::Server::new().await;
         let root = protocol::Root::new();
         let clock = SystemClock::new().unwrap();
         server.time.set(clock.now().unwrap());
         {
             let mut data = server.data.lock().unwrap();
-            data.software(1, true);
+            data.software(1, user);
             let wire::TaskPayload::Software(mut spec) =
                 data.offer.as_ref().unwrap().payload.clone()
             else {
@@ -488,7 +491,7 @@ async fn signed_start_needs_the_current_confirmed_request_and_frozen_action() {
 #[tokio::test]
 async fn material_gc_scans_every_journal_page_and_waits_for_delivery_confirmation() {
     // The real signed offer must remain valid throughout the large historical-journal scan.
-    let mut c = Case::with_offer_lifetime(None, 600).await;
+    let mut c = Case::with_offer_mode(None, 600, false).await;
     // This case proves GC across 32,768 historical materials, not short Start expiry.
     // Owner reconciliation may scan that history while the HTTP response is pending.
     c._server.data.lock().unwrap().start_validity_seconds = 600;
@@ -668,10 +671,7 @@ async fn material_gc_scans_every_journal_page_and_waits_for_delivery_confirmatio
         async {
             tokio::time::sleep(std::time::Duration::from_millis(120)).await;
             assert!(source.exists());
-            c.service
-                .client
-                .start_user_initiated(&c.offer, &materials)
-                .await
+            c.service.client.request_start(&c.offer, &materials).await
         },
         &mut c.service.core,
         &mut commands,
@@ -2713,10 +2713,8 @@ async fn device_recovery_reopens_both_journals_and_preserves_every_accepted_inte
     assert!(c.service.core.contexts.is_empty());
     // A failed future claim cannot interfere with recovery or allocate another offer.
     c._server.data.lock().unwrap().claim_failure = true;
-    assert!(matches!(
-        c.service.drive(&mut commands).await,
-        Err(Error::Unavailable)
-    ));
+    let result = c.service.drive(&mut commands).await;
+    assert!(matches!(result, Err(Error::Unavailable)), "{result:?}");
     let waiting = &c.service.waiting.as_ref().unwrap().0;
     assert_eq!(waiting.task_id(), first_offer.task_id());
     assert_eq!(waiting.attempt_id(), first_offer.attempt_id());
@@ -2781,11 +2779,10 @@ async fn recovery_never_reconstructs_device_consent_from_a_retired_journal_inten
         )
         .unwrap();
     let mut c = c.reopen();
-    c._server.data.lock().unwrap().claim_failure = true;
-    assert!(matches!(
-        c.service.drive(&mut commands).await,
-        Err(Error::Unavailable)
-    ));
+    let prior_claims = c._server.data.lock().unwrap().claim_ops.len();
+    // Acknowledged cancellation retires the original offer; the next claim has no work.
+    c.service.drive(&mut commands).await.unwrap();
+    assert!(c._server.data.lock().unwrap().claim_ops.len() > prior_claims);
     assert!(c.service.waiting.is_none());
     assert!(c
         .service
