@@ -60,7 +60,6 @@ pub struct GrantImport {
     )]
     pub operation_id: Uuid,
     /// Server-issued grant.
-    #[schemars(schema_with = "grant_receipt_schema")]
     pub grant: enroll::GrantReceipt,
 }
 impl GrantImport {
@@ -632,10 +631,4 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         self.publish_runtime_gate();
         Ok(())
     }
-}
-
-fn grant_receipt_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
-    serde_json::json!({"$ref":"https://rss.example/agent/enroll/v1/GrantReceipt"})
-        .try_into()
-        .expect("static producer reference")
 }

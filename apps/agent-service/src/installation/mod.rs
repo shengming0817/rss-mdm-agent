@@ -493,7 +493,7 @@ fn verify_runtime_files(root: &Path, target: Target) -> Result<(), Error> {
     Ok(())
 }
 
-/// Local envelope schema generated from the actual decoder; remote receipts retain their producer reference.
+/// Local envelope schema derived from the decoder and the protocol owner's receipt definition.
 pub fn bootstrap_schema() -> Result<serde_json::Value, Error> {
     let mut value =
         serde_json::to_value(schemars::schema_for!(Bootstrap)).map_err(|_| Error::Configuration)?;

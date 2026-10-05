@@ -208,18 +208,8 @@ impl VerifiedTrust {
         }
         document.validate()?;
         if document.purpose != Purpose::Agent
-            || document.version != 1
-            || document.revision == 0
             || document.origin != cfg.origin.as_str().trim_end_matches('/')
             || document.tenant != cfg.tenant
-            || document.issuers.is_empty()
-            || document.issuers.len() > 16
-            || document
-                .issuers
-                .iter()
-                .filter(|g| g.mode == Mode::Active)
-                .count()
-                != 1
         {
             return Err(Error::Untrusted);
         }

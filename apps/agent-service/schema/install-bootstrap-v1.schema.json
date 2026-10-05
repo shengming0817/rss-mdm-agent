@@ -5,7 +5,7 @@
       "description": "Administrator-protected bootstrap metadata; the secret is resolved separately by reference.",
       "properties": {
         "grant": {
-          "$ref": "https://rss.example/agent/enroll/v1/GrantReceipt",
+          "$ref": "#/$defs/GrantReceipt",
           "description": "Server-issued grant."
         },
         "operationId": {
@@ -20,6 +20,77 @@
       ],
       "type": "object"
     },
+    "GrantReceipt": {
+      "additionalProperties": false,
+      "description": "Public progress; never includes the bootstrap secret.",
+      "properties": {
+        "expiresAt": {
+          "description": "Original authorization deadline, Unix seconds.",
+          "format": "int64",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "grantId": {
+          "description": "Server-held request/grant identity.",
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "type": "string"
+        },
+        "platform": {
+          "$ref": "#/$defs/TaskPlatform",
+          "description": "Authorized platform."
+        },
+        "state": {
+          "$ref": "#/$defs/GrantState",
+          "description": "Current authorization state."
+        },
+        "wireVersion": {
+          "const": 1,
+          "description": "Enrollment API version."
+        }
+      },
+      "required": [
+        "wireVersion",
+        "grantId",
+        "state",
+        "expiresAt",
+        "platform"
+      ],
+      "type": "object"
+    },
+    "GrantState": {
+      "description": "Persisted authorization lifecycle.",
+      "oneOf": [
+        {
+          "const": "pending",
+          "description": "Waiting for an authenticated user to approve the exact client request.",
+          "type": "string"
+        },
+        {
+          "const": "available",
+          "description": "Authorized and not yet consumed.",
+          "type": "string"
+        },
+        {
+          "const": "consumed",
+          "description": "Bound to one certificate operation and public key.",
+          "type": "string"
+        },
+        {
+          "const": "revoked",
+          "description": "Explicitly cancelled or revoked.",
+          "type": "string"
+        },
+        {
+          "const": "expired",
+          "description": "Original authorization deadline has elapsed.",
+          "type": "string"
+        }
+      ]
+    },
     "Target": {
       "enum": [
         "windows-amd64",
@@ -27,6 +98,21 @@
         "macos-arm64"
       ],
       "type": "string"
+    },
+    "TaskPlatform": {
+      "description": "Exact operating system of the selected immutable artifact.",
+      "oneOf": [
+        {
+          "const": "windows",
+          "description": "Windows.",
+          "type": "string"
+        },
+        {
+          "const": "macos",
+          "description": "macOS.",
+          "type": "string"
+        }
+      ]
     }
   },
   "$id": "urn:rss-mdm-agent:installation-bootstrap:1",
