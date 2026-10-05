@@ -3041,49 +3041,91 @@ async fn transient_start_replays_original_attempt_without_retiring_policy_or_con
         assert_eq!(retained.confirmation, original.confirmation);
         assert_eq!(retained.trigger, original.trigger);
         assert_eq!(retained.action.request(), original.action.request());
-        // The production wrapper verifies the helper before this shared boundary.
-        // Staged OS ownership proves the HTTP/SQLite/runner seam, not native IPC.
-        let result = crate::backend::dispatch_started(
-            &mut c.service,
-            restored,
-            materials,
-            Some(selection),
-            start,
+        assert_eq!(
+            selection
+                .trigger(&c.service.core.host.binding.device)
+                .unwrap(),
+            original.trigger
+        );
+        let wire::TaskPayload::Script(spec) = start.payload() else {
+            panic!("script")
+        };
+        let compiled = backend::plan::script(
+            &restored,
+            &materials,
+            spec,
+            (&c.service.core.host.binding, &c.service.core.host.actor),
+            &c.service.core.config.interpreters,
+            (
+                &c.service.core.config.work_root,
+                materials.files()[0].path(),
+            ),
             None,
+        )
+        .unwrap();
+        let mut input = compiled.spec().clone();
+        let Initiator::Backend { trigger, .. } = &mut input.request.initiator else {
+            panic!("backend")
+        };
+        *trigger = original.trigger.clone();
+        let input = FrozenExecution::freeze(input, &plan::storage_limits().input).unwrap();
+        // The actual product gate needs restored signed risk as well as original consent.
+        // This fixture has no authenticated system/helper runner and grants no native launch.
+        ProductGateProof::verify_start(
+            &restored,
+            &start,
+            &input,
+            Some(&retained),
+            c.service.core.available_risk.as_ref(),
+            c.service.core.host.clock.millis().unwrap(),
+        )
+        .unwrap();
+        let caller = c.service.core.caller();
+        assert!(matches!(
+            c.service.core.app.request_execution(&caller, &input),
+            Err(execution_app::Error::Unbound)
+        ));
+        assert_eq!(
+            c.service
+                .core
+                .app
+                .service_tasks(None, 64)
+                .unwrap()
+                .items
+                .len(),
+            1
+        );
+        let committed = c.policy_record(original.action.request());
+        // Once local intent exists, its journal owns recovery even if a caller observes
+        // a retryable transport error or a subsequent native rejection.
+        for error in [Error::Unavailable, Error::Denied] {
+            assert_eq!(
+                c.service
+                    .submission_result(original.action.request(), Err(error))
+                    .unwrap_err(),
+                error
+            );
+            assert_eq!(c.policy_record(original.action.request()), committed);
+        }
+        assert_eq!(
+            c.service
+                .core
+                .app
+                .service_tasks(None, 64)
+                .unwrap()
+                .items
+                .len(),
+            1
         );
         let status = c
             .service
-            .submission_result(original.action.request(), result)
+            .core
+            .app
+            .status(&caller, original.action.request())
             .unwrap();
-        assert_eq!(status.attempts, 1);
         assert_eq!(
-            c.service
-                .core
-                .app
-                .service_tasks(None, 64)
-                .unwrap()
-                .items
-                .len(),
-            1
-        );
-        let delivered = c.policy_record(original.action.request());
-        // A response lost after delivery belongs to the execution journal's recovery.
-        assert_eq!(
-            c.service
-                .submission_result(original.action.request(), Err(Error::Unavailable))
-                .unwrap_err(),
-            Error::Unavailable
-        );
-        assert_eq!(c.policy_record(original.action.request()), delivered);
-        assert_eq!(
-            c.service
-                .core
-                .app
-                .service_tasks(None, 64)
-                .unwrap()
-                .items
-                .len(),
-            1
+            status.attempts, 0,
+            "no native runner was authorized by this fixture"
         );
     }
 }
