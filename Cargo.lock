@@ -80,6 +80,7 @@ dependencies = [
  "platform-private-storage",
  "reqwest",
  "ring",
+ "rss-mdm-agent-wire",
  "rusqlite",
  "rustls",
  "schemars 1.2.2",
@@ -91,6 +92,7 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
  "tokio-rustls",
+ "toml 1.1.5+spec-1.1.0",
  "url",
  "uuid",
  "x509-cert",
@@ -3949,6 +3951,22 @@ dependencies = [
  "tokio-util",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "rss-mdm-agent-wire"
+version = "1.0.0"
+source = "git+https://dev.azure.com/shengming0923/rss/_git/rss-mdm?rev=0c76735a8df8758e826d7269723cb8bace96ba89#0c76735a8df8758e826d7269723cb8bace96ba89"
+dependencies = [
+ "base64 0.22.1",
+ "ordered-float",
+ "schemars 1.2.2",
+ "serde",
+ "serde_json",
+ "sha2",
+ "url",
+ "uuid",
+ "zeroize",
 ]
 
 [[package]]

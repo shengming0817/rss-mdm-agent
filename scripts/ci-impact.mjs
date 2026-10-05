@@ -92,7 +92,7 @@ export const sourceEdges = [
 ];
 export const testOwners = [
   ["scripts/generate-agent-api.mjs", "agent-api"],
-  ["scripts/check-agent-dependencies.mjs", "agent-api"],
+  ["scripts/check-agent-dependencies.mjs", "agent-client"],
   ["scripts/build-installers.mjs", "agent-service"],
   ["scripts/installers", "agent-service"],
   ["scripts/build-installers.mjs", "rss-mdm-desktop"],
