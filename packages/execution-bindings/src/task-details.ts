@@ -134,8 +134,18 @@ export interface BackendRequest {
         offer: BackendTask;
       }
     | {
+        /**
+         * Local continuation binding; enterprise identity is solely directory.subject.
+         */
+        access:
+          | {
+              kind: "device";
+            }
+          | {
+              kind: "user";
+              sessionBinding: NativeContextRef;
+            };
         choice: PolicyChoice;
-        context: NativeContextRef;
         directory: SelfServiceDirectoryItem;
         /**
          * Bounded validity of the original preparation.
@@ -150,10 +160,6 @@ export interface BackendRequest {
          * Backend Run returned for the original request, absent until acceptance is known.
          */
         runId: Id | null;
-        /**
-         * Authenticated product employee, checked against the signed authorization.
-         */
-        user: SelfServiceUser | null;
       };
   /**
    * Explicit risk-two response; readiness alone never proves confirmation.
@@ -363,6 +369,19 @@ export interface BackendStepSummary {
   version: string;
 }
 /**
+ * Owner-issued reference; never a credential or another identity authority.
+ */
+export interface NativeContextRef {
+  /**
+   * Exact caller generation; retirement rejects new ingress and User continuations.
+   */
+  generation: string;
+  /**
+   * Owner-assigned binding identity, scoped to the authenticated native peer.
+   */
+  id: string;
+}
+/**
  * Immutable employee choice.
  */
 export interface PolicyChoice {
@@ -390,19 +409,6 @@ export interface PolicyChoice {
   request: string;
 }
 /**
- * Native product login generation.
- */
-export interface NativeContextRef {
-  /**
-   * Exact caller generation; retirement invalidates all work using it.
-   */
-  generation: string;
-  /**
-   * Owner-assigned binding identity, scoped to the authenticated native peer.
-   */
-  id: string;
-}
-/**
  * Formal backend directory DTO, including the Resource-owned schema.
  */
 export interface SelfServiceDirectoryItem {
@@ -419,6 +425,17 @@ export interface SelfServiceDirectoryItem {
    */
   policyVersion: string;
   selfService: SelfServiceMetadata;
+  /**
+   * Current qualified subject, rechecked when invoking and before execution.
+   */
+  subject:
+    | {
+        kind: "device";
+      }
+    | {
+        kind: "user";
+        user: SelfServiceUser;
+      };
   /**
    * Closed task kind and the exact invocation interface.
    */
@@ -510,6 +527,23 @@ export interface SelfServiceMetadata {
   sideEffects: string;
 }
 /**
+ * Authenticated enterprise coordinates, without a credential.
+ */
+export interface SelfServiceUser {
+  /**
+   * Identity instance.
+   */
+  instanceId: string;
+  /**
+   * Authenticated principal.
+   */
+  principalId: string;
+  /**
+   * Product tenant.
+   */
+  tenantId: string;
+}
+/**
  * Exact Resource selection.
  */
 export interface TaskResource {
@@ -597,23 +631,6 @@ export interface BackendTask1 {
    * Requires an explicit local user action before requesting Start.
    */
   userInitiated: boolean;
-}
-/**
- * Authenticated product user; contains no session credential.
- */
-export interface SelfServiceUser {
-  /**
-   * Identity instance.
-   */
-  instanceId: string;
-  /**
-   * Authenticated principal.
-   */
-  principalId: string;
-  /**
-   * Product tenant.
-   */
-  tenantId: string;
 }
 /**
  * Sole product confirmation, persisted together with the original AI request.
@@ -729,7 +746,7 @@ export interface VersionedRef1 {
  */
 export interface NativeContextRef1 {
   /**
-   * Exact caller generation; retirement invalidates all work using it.
+   * Exact caller generation; retirement rejects new ingress and User continuations.
    */
   generation: string;
   /**

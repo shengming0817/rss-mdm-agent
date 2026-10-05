@@ -2,6 +2,7 @@ import { mount, flushPromises } from "@vue/test-utils";
 import { expect, test, vi } from "vitest";
 import PolicySelfService from "./PolicySelfService.vue";
 import PolicyPreparation from "./PolicyPreparation.vue";
+import { currentUser } from "../test-users";
 import type { BackendRequest, SelfServicePort, SelfServiceTask } from "./types";
 const record = (id: string): BackendRequest => ({
   action: {
@@ -14,6 +15,14 @@ const record = (id: string): BackendRequest => ({
       parameters: { name: "Acme" },
     },
     directory: {
+      subject: {
+        kind: "user",
+        user: {
+          tenantId: "tenant",
+          instanceId: "instance",
+          principalId: "principal",
+        },
+      },
       policyId: "policy",
       policyRevision: 1,
       policyVersion: "version",
@@ -36,12 +45,10 @@ const record = (id: string): BackendRequest => ({
         sideEffects: "Read only",
       },
     },
-    user: {
-      tenantId: "tenant",
-      instanceId: "instance",
-      principalId: "principal",
+    access: {
+      kind: "user",
+      sessionBinding: { id: "binding", generation: "generation" },
     },
-    context: { id: "binding", generation: "generation" },
     expiresAtUnixMs: Date.now() + 60000,
     runId: "run",
     offer: null,
@@ -74,7 +81,7 @@ test.each([
       sessionId: "target-login-42",
     },
     expected: [
-      "当前登录用户",
+      "本机登录用户",
       "目标用户 target-501",
       "登录会话 target-login-42",
     ],
@@ -116,8 +123,8 @@ test.each([
         expect(confirmation.text()).toContain(text);
         expect(preparation.text()).toContain(text);
       }
-      expect(confirmation.text()).toContain("发起账号");
-      expect(preparation.text()).toContain("发起账号");
+      expect(confirmation.text()).toContain("准入主体");
+      expect(preparation.text()).toContain("准入主体");
       expect(preparation.text()).toContain("principal");
       expect(preparation.text()).not.toContain("最终参数");
       expect(preparation.get("button").text()).toBe("查询原请求与结果");
@@ -244,4 +251,116 @@ test("enum and length constraints prevent invalid confirmation; absent restores 
   expect(wrapper.find("form").exists()).toBe(true);
   expect(wrapper.find("input").element.value).toBe("Acme");
   expect(policy_invoke).toHaveBeenCalledTimes(1);
+});
+
+test("retiring enterprise ingress clears parameters/errors and ignores its late directory", async () => {
+  const item = (
+    record("old").action as Extract<
+      BackendRequest["action"],
+      { kind: "policy" }
+    >
+  ).directory;
+  if (item.task.kind !== "script") throw Error("script");
+  item.task.parameterSchema = {
+    type: "object",
+    properties: { name: { type: "string", minLength: 2 } },
+    required: ["name"],
+  };
+  let resolveOld!: (value: unknown) => void;
+  const directory = vi
+    .fn()
+    .mockResolvedValueOnce({ items: [item], nextCursor: null, asOf: 1 })
+    .mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveOld = resolve;
+        }),
+    )
+    .mockResolvedValue({ items: [], nextCursor: null, asOf: 2 });
+  const wrapper = mount(PolicySelfService, {
+    props: {
+      port: { policy_directory: directory } as unknown as SelfServicePort,
+      records: [],
+    },
+  });
+  try {
+    await flushPromises();
+    await wrapper
+      .findAll("button")
+      .find((b) => b.text() === "Policy")!
+      .trigger("click");
+    await wrapper.get("input").setValue("x");
+    await wrapper.get("form").trigger("submit");
+    expect(wrapper.find('[role="alert"]').exists()).toBe(true);
+    await wrapper
+      .findAll("button")
+      .find((b) => b.text() === "刷新任务")!
+      .trigger("click");
+    currentUser.value = {
+      ...currentUser.value,
+      generation: "retired-generation",
+    } as NonNullable<typeof currentUser.value>;
+    await flushPromises();
+    resolveOld({ items: [item], nextCursor: null, asOf: 1 });
+    await flushPromises();
+    expect(wrapper.find("form").exists()).toBe(false);
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false);
+    expect(wrapper.text()).not.toContain("请修正");
+    expect(wrapper.text()).not.toContain("Read selected state");
+  } finally {
+    wrapper.unmount();
+    currentUser.value = undefined;
+  }
+});
+
+test("Device history restores original AI consent independently of enterprise identity", async () => {
+  const original = record("device-original");
+  if (original.action.kind !== "policy") throw Error("policy");
+  original.action.access = { kind: "device" };
+  original.action.directory.subject = { kind: "device" };
+  original.state = "awaitingConfirmation";
+  original.trigger = {
+    ...original.trigger,
+    kind: "ai",
+    context: { id: "retired", generation: "old" },
+    config: { id: "ai", revision: "1" },
+    conversation: "original-ai",
+    toolCall: "original-tool",
+  } as BackendRequest["trigger"];
+  const policy_confirm = vi.fn(async () => ({
+    ...original,
+    state: "submitting",
+  }));
+  const policy_invoke = vi.fn();
+  const wrapper = mount(PolicySelfService, {
+    props: {
+      port: {
+        policy_directory: async () => ({
+          items: [],
+          nextCursor: null,
+          asOf: 1,
+        }),
+        policy_confirm,
+        policy_invoke,
+      } as unknown as SelfServicePort,
+      records: [original],
+    },
+  });
+  try {
+    await flushPromises();
+    expect(wrapper.text()).toContain("设备准入 · 无需企业登录");
+    expect(wrapper.text()).toContain("original-ai / original-tool");
+    expect(wrapper.text()).not.toContain("principal");
+    await wrapper
+      .findAll("button")
+      .find((b) => b.text() === "确认上述操作")!
+      .trigger("click");
+    await flushPromises();
+    expect(policy_confirm).toHaveBeenCalledExactlyOnceWith({
+      requestId: "device-original",
+    });
+    expect(policy_invoke).not.toHaveBeenCalled();
+  } finally {
+    wrapper.unmount();
+  }
 });

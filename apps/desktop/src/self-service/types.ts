@@ -63,13 +63,13 @@ export type PreparedAction =
     }
   | {
       /**
+       * Local continuation binding; enterprise identity is solely directory.subject.
+       */
+      access: PolicyAccess;
+      /**
        * Immutable employee choice.
        */
       choice: PolicyChoice;
-      /**
-       * Native product login generation.
-       */
-      context: NativeContextRef;
       /**
        * Formal backend directory DTO, including the Resource-owned schema.
        */
@@ -87,10 +87,6 @@ export type PreparedAction =
        * Backend Run returned for the original request, absent until acceptance is known.
        */
       runId: Id | null;
-      /**
-       * Authenticated product employee, checked against the signed authorization.
-       */
-      user: SelfServiceUser | null;
     };
 /**
  * Opaque local reference identifier; syntax validity is not authenticity.
@@ -194,6 +190,41 @@ export type BackendIdentity = "system" | "user";
  * via the `definition` "SoftwareOperation".
  */
 export type SoftwareOperation = "install" | "detect" | "uninstall";
+/**
+ * Local continuation binding selected from the backend directory subject.
+ * OS session and device authority remain in the original trigger and service owner.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "PolicyAccess".
+ */
+export type PolicyAccess =
+  | {
+      kind: "device";
+    }
+  | {
+      kind: "user";
+      /**
+       * Owner-issued reference; never a credential or another identity authority.
+       */
+      sessionBinding: NativeContextRef;
+    };
+/**
+ * Subject selected by the server's explicit Policy access basis.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "SelfServiceSubject".
+ */
+export type SelfServiceSubject =
+  | {
+      kind: "device";
+    }
+  | {
+      kind: "user";
+      /**
+       * Authenticated enterprise coordinates, without a credential.
+       */
+      user: SelfServiceUser;
+    };
 /**
  * One directory interface; software does not inherit script parameter semantics.
  *
@@ -1128,6 +1159,22 @@ export interface BackendStepSummary {
   version: string;
 }
 /**
+ * Nonsecret reference returned by the native execution owner after binding a context.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "NativeContextRef".
+ */
+export interface NativeContextRef {
+  /**
+   * Exact caller generation; retirement rejects new ingress and User continuations.
+   */
+  generation: Id;
+  /**
+   * Owner-assigned binding identity, scoped to the authenticated native peer.
+   */
+  id: Id;
+}
+/**
  * Employee input; caller source and confirmation are supplied only by trusted native code.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
@@ -1158,22 +1205,6 @@ export interface PolicyChoice {
   request: RequestId;
 }
 /**
- * Nonsecret reference returned by the native execution owner after binding a context.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "NativeContextRef".
- */
-export interface NativeContextRef {
-  /**
-   * Exact caller generation; retirement invalidates all work using it.
-   */
-  generation: Id;
-  /**
-   * Owner-assigned binding identity, scoped to the authenticated native peer.
-   */
-  id: Id;
-}
-/**
  * One currently authorized script and its Resource-owned parameter schema.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
@@ -1196,6 +1227,10 @@ export interface SelfServiceDirectoryItem {
    * Normalized presentation and invocation settings.
    */
   selfService: SelfServiceMetadata;
+  /**
+   * Current qualified subject, rechecked when invoking and before execution.
+   */
+  subject: SelfServiceSubject;
   /**
    * Closed task kind and the exact invocation interface.
    */
@@ -1246,26 +1281,6 @@ export interface SelfServiceMetadata {
   sideEffects: string;
 }
 /**
- * Exact Resource identity accompanying its signed digest.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "TaskResource".
- */
-export interface TaskResource {
-  /**
-   * Logical Resource identity.
-   */
-  id: string;
-  /**
-   * Exact selected variant.
-   */
-  variant: string;
-  /**
-   * Immutable Resource version.
-   */
-  version: string;
-}
-/**
  * Authenticated product user; contains no session credential.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
@@ -1284,6 +1299,26 @@ export interface SelfServiceUser {
    * Product tenant.
    */
   tenantId: string;
+}
+/**
+ * Exact Resource identity accompanying its signed digest.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "TaskResource".
+ */
+export interface TaskResource {
+  /**
+   * Logical Resource identity.
+   */
+  id: string;
+  /**
+   * Exact selected variant.
+   */
+  variant: string;
+  /**
+   * Immutable Resource version.
+   */
+  version: string;
 }
 /**
  * Sole product confirmation, persisted together with the original AI request.

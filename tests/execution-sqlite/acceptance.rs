@@ -703,7 +703,7 @@ fn prior_schema_is_rejected_without_modifying_the_database() {
         .unwrap();
     drop(store);
     let conn = db.sql();
-    conn.pragma_update(None, "user_version", 10).unwrap();
+    conn.pragma_update(None, "user_version", 11).unwrap();
     conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
         .unwrap();
     drop(conn);
@@ -711,8 +711,8 @@ fn prior_schema_is_rejected_without_modifying_the_database() {
     assert!(matches!(
         Store::open(&db.path, &plan().spec().request.authority, limits()),
         Ok(OpenOutcome::UnsupportedSchema {
-            found: 10,
-            supported: 11
+            found: 11,
+            supported: 12
         })
     ));
     assert!(Store::initialize_test(
@@ -741,7 +741,7 @@ fn newer_schema_is_diagnostics_only_and_corrupt_database_is_never_reinitialized(
         Store::open(&db.path, &plan().spec().request.authority, limits()).unwrap(),
         OpenOutcome::UnsupportedSchema {
             found: 99,
-            supported: 11
+            supported: 12
         }
     ));
     assert_eq!(std::fs::read(&db.path).unwrap(), before);

@@ -445,7 +445,7 @@
         "properties": {
           "generation": {
             "$ref": "#/$defs/Id",
-            "description": "Exact caller generation; retirement invalidates all work using it."
+            "description": "Exact caller generation; retirement rejects new ingress and User continuations."
           },
           "id": {
             "$ref": "#/$defs/Id",
@@ -1681,7 +1681,7 @@
         "properties": {
           "generation": {
             "$ref": "#/$defs/Id",
-            "description": "Exact caller generation; retirement invalidates all work using it."
+            "description": "Exact caller generation; retirement rejects new ingress and User continuations."
           },
           "id": {
             "$ref": "#/$defs/Id",

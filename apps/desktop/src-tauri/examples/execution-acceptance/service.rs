@@ -47,6 +47,7 @@ impl FixtureService {
     pub fn policy_descriptor(&self) -> serde_json::Value {
         let item: rss_mdm_agent_wire::runtime::SelfServiceDirectoryItem = serde_json::from_value(serde_json::json!({
             "policyId":"00000000-0000-4000-a000-000000000001","policyRevision":3,"policyVersion":"00000000-0000-4000-a000-000000000002",
+            "subject":{"kind":"device"},
             "selfService":{"published":true,"allowAi":true,"riskLevel":2,"displayName":"Explicit protocol fixture","description":"Registration proof only","prerequisites":"Test assembly","sideEffects":"No execution","category":"Test","keywords":["test" ]},
             "task":{"kind":"script","runAs":"system","resource":{"id":"fixture-resource","version":"v1","variant":"default"},
             "parameterSources":{"name":{"kind":"input"},"path":{"kind":"fixed","value":"/Applications"}},

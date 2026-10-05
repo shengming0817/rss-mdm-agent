@@ -50,6 +50,15 @@ pub(crate) async fn submit<S: IdentityProvider>(
     artifacts
         .inspect(&preview)
         .map_err(crate::error::app_error)?;
+    if let Some(selection) = &selection {
+        let record = service
+            .core
+            .app
+            .backend_request(&service.core.caller(), &selection.request)
+            .map_err(crate::error::app_error)?
+            .ok_or(Error::Conflict)?;
+        service.core.current_policy_access(&record)?;
+    }
     let start = if selection.is_some() {
         network(
             service.client.start_user_initiated(&offer, &materials),
@@ -83,6 +92,19 @@ pub(crate) async fn submit<S: IdentityProvider>(
             )
             .map_err(helper_error)?;
     }
+    dispatch_started(service, offer, materials, selection, start, delegate)
+}
+
+// Single synchronous delivery boundary after HTTP Start and native helper verification.
+// Explicit gate fixtures may exercise this boundary without claiming native OS authentication.
+pub(crate) fn dispatch_started<S: IdentityProvider>(
+    service: &mut DeviceService<S>,
+    offer: Offer,
+    materials: Materials,
+    selection: Option<Selection>,
+    start: agent_client::Start,
+    delegate: Option<Arc<execution_ipc::helper::Connection>>,
+) -> Result<ExecutionStatus, Error> {
     if service
         .core
         .host
@@ -104,7 +126,7 @@ pub(crate) async fn submit<S: IdentityProvider>(
         {
             return Err(Error::Denied);
         }
-        service.core.current_policy_login(&current)?;
+        service.core.current_policy_access(&current)?;
         Some(current)
     } else {
         None

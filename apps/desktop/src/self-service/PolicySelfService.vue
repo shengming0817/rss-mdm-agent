@@ -126,7 +126,7 @@ async function refresh() {
     }
   } catch {
     if (current !== epoch) return;
-    error.value = "请登录企业账户并连接执行服务后读取可用脚本。";
+    error.value = "请连接执行服务后读取可用任务；设备准入任务无需企业登录。";
   } finally {
     if (current === epoch) busy.value = false;
   }
@@ -274,6 +274,9 @@ watch(
   () => {
     epoch += 1;
     busy.value = false;
+    inputs.value = {};
+    fieldErrors.value = new Map();
+    error.value = "";
     directory.value = [];
     selected.value = undefined;
     choice.value = undefined;
@@ -284,10 +287,10 @@ watch(
 );
 </script>
 <template>
-  <section class="policy-self-service" aria-label="企业脚本与工具">
+  <section class="policy-self-service" aria-label="企业自助任务">
     <div class="section-heading">
-      <h3>企业脚本与工具</h3>
-      <button :disabled="busy" @click="refresh">刷新脚本</button>
+      <h3>企业自助任务</h3>
+      <button :disabled="busy" @click="refresh">刷新任务</button>
     </div>
     <p v-if="error" role="status">{{ error }}</p>
     <div class="catalog-grid">
@@ -303,6 +306,13 @@ watch(
         <p>
           {{ item.selfService.category }} · 风险
           {{ item.selfService.riskLevel }}
+        </p>
+        <p>
+          {{
+            item.subject.kind === "device"
+              ? "设备准入 · 无需企业登录"
+              : "企业用户准入 · 需要有效企业会话"
+          }}
         </p>
         <p>{{ item.selfService.allowAi ? "允许 AI 请求" : "仅供人工操作" }}</p>
       </article>
@@ -354,7 +364,17 @@ watch(
     </form>
     <section v-if="choice && !request" aria-label="人工执行确认">
       <h3>确认 {{ selected?.selfService.displayName }}</h3>
-      <p>发起账号：{{ currentUser?.user.displayName }} · 当前登录设备</p>
+      <p>
+        准入主体：{{
+          selected?.subject.kind === "device"
+            ? "设备准入 · 无需企业登录"
+            : "企业用户准入"
+        }}
+      </p>
+      <p v-if="selected?.subject.kind === 'user'">
+        企业身份：{{ selected.subject.user.tenantId }} /
+        {{ selected.subject.user.principalId }}
+      </p>
       <p>前置条件：{{ selected?.selfService.prerequisites }}</p>
       <p>副作用：{{ selected?.selfService.sideEffects }}</p>
       <p>

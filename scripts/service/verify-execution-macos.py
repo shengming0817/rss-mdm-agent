@@ -1264,6 +1264,13 @@ def validate_desktop_finish(finish, evidence):
     assert evidence and finish.get('request') == evidence['request'], 'completion evidence missing or mismatched'
 
 
+def service_versions():
+    root = Path(__file__).resolve().parents[2]
+    # Generated from the Rust IPC owner, shared with installation consumers.
+    script = "import {IPC_VERSION, DEPLOYMENT_VERSION} from './packages/execution-bindings/src/service-version.mjs'; console.log(JSON.stringify({version:DEPLOYMENT_VERSION,ipc_version:IPC_VERSION}));"
+    return json.loads(run('node', '--input-type=module', '-e', script, cwd=root).stdout)
+
+
 def verify_candidate(path):
     root = Path(__file__).resolve().parents[2]
     return json.loads(run('node', str(root/'scripts/native-candidate.mjs'), 'verify', str(path.resolve()), cwd=root).stdout)
@@ -1366,7 +1373,7 @@ def main():
         installer.chmod(0o600)
         system_installer_source = installer_source
         shutil.copyfile(lab / 'tls.pem', inputs / 'tls.pem')
-        deployment = dict(version=5, ipc_version=11, origin=info['origin'].rstrip('/'), tenant=info['tenant'],
+        deployment = dict(**service_versions(), origin=info['origin'].rstrip('/'), tenant=info['tenant'],
                           signing_keys={'test': info['key']}, ca_file=str(protected / 'ca.pem'),
                           installation_id=str(uuid.uuid4()), installation_artifact=hashlib.sha256(args.binary.read_bytes()).hexdigest(),
                           state_root=str(protected / 'state'),
