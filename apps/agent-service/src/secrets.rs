@@ -37,8 +37,8 @@ mod tests {
     }
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn native_key_completes_real_mtls_and_reopens_original_binding() {
-        use agent_api::runtime::{Capability, FailureCode, ReportBody};
         use agent_client::{Client, OpenMode};
+        use rss_mdm_agent_wire::runtime::{Capability, FailureCode, ReportBody};
         let server = crate::protocol_test_support::Server::tls().await;
         let communication = crate::protocol_test_support::Root::new();
         let root = crate::protocol_test_support::Root::new();

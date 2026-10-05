@@ -299,7 +299,7 @@ impl EnterpriseSession {
         Ok(execution_ipc::host::NativeContextSession {
             credential: Some(zeroize::Zeroizing::new(secret.to_owned())),
             credential_origin: Some(self.organization.origin.clone()),
-            user: Some(agent_api::runtime::SelfServiceUser {
+            user: Some(rss_mdm_agent_wire::runtime::SelfServiceUser {
                 tenant_id: Uuid::parse_str(&self.organization.tenant_id).map_err(|_| invalid())?,
                 instance_id: Uuid::parse_str(&self.instance).map_err(|_| invalid())?,
                 principal_id: Uuid::parse_str(&self.principal).map_err(|_| invalid())?,

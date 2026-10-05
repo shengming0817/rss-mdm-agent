@@ -102,7 +102,7 @@ impl<S: ExecutionServicePort> ExecutionMcp<S> {
 }
 
 /// Deterministic MCP identity bound to Policy configuration and immutable execution version.
-pub fn policy_tool_name(item: &agent_api::runtime::SelfServiceDirectoryItem) -> String {
+pub fn policy_tool_name(item: &rss_mdm_agent_wire::runtime::SelfServiceDirectoryItem) -> String {
     use sha2::{Digest, Sha256};
     let hash = format!(
         "{:x}",
@@ -112,9 +112,9 @@ pub fn policy_tool_name(item: &agent_api::runtime::SelfServiceDirectoryItem) -> 
 }
 /// Project only Input fields from the Resource-owned schema; full resolved validation remains in the service.
 pub fn policy_tool(
-    item: &agent_api::runtime::SelfServiceDirectoryItem,
+    item: &rss_mdm_agent_wire::runtime::SelfServiceDirectoryItem,
 ) -> Result<serde_json::Value, ServiceError> {
-    use agent_api::runtime::ScriptParameterSource;
+    use rss_mdm_agent_wire::runtime::ScriptParameterSource;
     if !item.self_service.published
         || !item.self_service.allow_ai
         || !matches!(item.self_service.risk_level, 1 | 2)
@@ -122,12 +122,12 @@ pub fn policy_tool(
         return Err(ServiceError::Denied);
     }
     let (mut schema, parameter_sources) = match &item.task {
-        agent_api::runtime::SelfServiceTask::Script {
+        rss_mdm_agent_wire::runtime::SelfServiceTask::Script {
             parameter_schema,
             parameter_sources,
             ..
         } => (parameter_schema.clone(), parameter_sources.clone()),
-        agent_api::runtime::SelfServiceTask::Software { .. } => (
+        rss_mdm_agent_wire::runtime::SelfServiceTask::Software { .. } => (
             serde_json::json!({"type":"object","properties":{},"required":[],"additionalProperties":false}),
             std::collections::BTreeMap::new(),
         ),
@@ -136,7 +136,7 @@ pub fn policy_tool(
     let input = |key: &str| {
         matches!(
             parameter_sources.get(key),
-            Some(ScriptParameterSource::Input)
+            Some(ScriptParameterSource::Input {})
         )
     };
     if let Some(properties) = object
@@ -154,7 +154,7 @@ pub fn policy_tool(
     object.insert("additionalProperties".into(), false.into());
     project_parameter_schema(&mut schema)?;
     Ok(
-        serde_json::json!({"name": policy_tool_name(item), "description": format!("{}\n{}\nCategory: {}\nKeywords: {}\nPrerequisites: {}\nSide effects: {}", item.self_service.display_name, item.self_service.description, item.self_service.category, item.self_service.keywords.join(", "), item.self_service.prerequisites, item.self_service.side_effects), "inputSchema": schema, "annotations": {"readOnlyHint": item.self_service.risk_level == 1 && matches!(item.task, agent_api::runtime::SelfServiceTask::Script {..}), "openWorldHint": false, "idempotentHint": false}}),
+        serde_json::json!({"name": policy_tool_name(item), "description": format!("{}\n{}\nCategory: {}\nKeywords: {}\nPrerequisites: {}\nSide effects: {}", item.self_service.display_name, item.self_service.description, item.self_service.category, item.self_service.keywords.join(", "), item.self_service.prerequisites, item.self_service.side_effects), "inputSchema": schema, "annotations": {"readOnlyHint": item.self_service.risk_level == 1 && matches!(item.task, rss_mdm_agent_wire::runtime::SelfServiceTask::Script {..}), "openWorldHint": false, "idempotentHint": false}}),
     )
 }
 

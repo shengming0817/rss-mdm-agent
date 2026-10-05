@@ -23,9 +23,11 @@ pub(crate) fn project(value: EnrollmentStatus) -> RegistrationStatus {
         EnrollmentPhase::Rejected => RegistrationPhase::Rejected,
     };
     let credential = match value.failure {
-        Some(agent_api::enroll::ErrorCode::CertificateExpired) => CredentialStatus::Expired,
-        Some(agent_api::enroll::ErrorCode::CredentialRevoked) => CredentialStatus::Revoked,
-        Some(agent_api::enroll::ErrorCode::CredentialRetired) => CredentialStatus::Retired,
+        Some(rss_mdm_agent_wire::enroll::ErrorCode::CertificateExpired) => {
+            CredentialStatus::Expired
+        }
+        Some(rss_mdm_agent_wire::enroll::ErrorCode::CredentialRevoked) => CredentialStatus::Revoked,
+        Some(rss_mdm_agent_wire::enroll::ErrorCode::CredentialRetired) => CredentialStatus::Retired,
         _ if value.registered => CredentialStatus::Active,
         _ => CredentialStatus::Absent,
     };
@@ -132,7 +134,7 @@ fn drive(
 }
 fn run<S: agent_client::IdentityProvider, C: agent_client::Clock, O>(
     mut client: Option<Client<S, C>>,
-    capabilities: Vec<agent_api::runtime::Capability>,
+    capabilities: Vec<rss_mdm_agent_wire::runtime::Capability>,
     shared: Arc<Mutex<Snapshot>>,
     requests: mpsc::Receiver<Command>,
     stopping: Arc<AtomicBool>,
@@ -316,8 +318,8 @@ impl Handler for RegistrationOwner {
 mod tests {
     use super::*;
     use crate::protocol_test_support::{Root, Server};
-    use agent_api::runtime::Capability;
     use agent_client::{IdentityProvider, OpenMode};
+    use rss_mdm_agent_wire::runtime::Capability;
     struct InterruptedSecret(crate::protocol_test_support::Secrets);
     impl agent_client::MachineTrust for InterruptedSecret {
         fn certificate_present(
@@ -357,17 +359,17 @@ mod tests {
         }
     }
     impl agent_client::IdentityProvider for InterruptedSecret {
-        fn resolve(&self, reference: &str) -> Result<agent_client::Secret, Error> {
+        fn resolve(&self, reference: &str) -> Result<rss_mdm_agent_wire::runtime::Secret, Error> {
             self.0.resolve(reference)
         }
         fn import_secret(
             &self,
             reference: &str,
-            secret: &agent_client::Secret,
+            secret: &rss_mdm_agent_wire::runtime::Secret,
         ) -> Result<(), Error> {
             self.0.import_secret(reference, secret)
         }
-        fn create_secret(&self, _: &str) -> Result<agent_client::Secret, Error> {
+        fn create_secret(&self, _: &str) -> Result<rss_mdm_agent_wire::runtime::Secret, Error> {
             Err(Error::Storage)
         }
         fn create_key(&self, reference: &str) -> Result<Arc<dyn rustls::sign::SigningKey>, Error> {

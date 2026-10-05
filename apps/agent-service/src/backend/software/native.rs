@@ -1,7 +1,7 @@
 //! Frozen physical recipes for EXE, MSIX and selected DMG payloads.
 use super::*;
 use crate::software_worker::{WorkerOperation as O, WorkerRequest};
-use agent_api::runtime as wire;
+use rss_mdm_agent_wire::runtime as wire;
 use std::{io::Read, path::Path};
 
 pub(super) fn pin(path: &Path) -> Result<SoftwareMaterial, Error> {
@@ -341,7 +341,7 @@ pub(super) fn compile(
                 wire::SoftwareTaskMsixDeployment::DeviceProvisioning => {
                     MsixDeployment::DeviceProvisioning {}
                 }
-                wire::SoftwareTaskMsixDeployment::TargetUserRegistration(_) => {
+                wire::SoftwareTaskMsixDeployment::TargetUserRegistration { .. } => {
                     MsixDeployment::TargetUserRegistration {}
                 }
             },
@@ -656,7 +656,7 @@ mod gc_tests {
             {
                 let mut data = server.data.lock().unwrap();
                 data.software(1, false);
-                let wire::TaskPayload::SoftwareTaskSpec(mut payload) =
+                let wire::TaskPayload::Software(mut payload) =
                     data.offer.as_ref().unwrap().payload.clone()
                 else {
                     panic!("software")
@@ -689,11 +689,11 @@ mod gc_tests {
                 use sha2::{Digest as _, Sha256};
                 payload.definition_digest =
                     Sha256::digest(serde_json::to_vec(&payload.steps).unwrap()).into();
-                data.offer = Some(data.signed(wire::TaskPayload::SoftwareTaskSpec(payload)));
+                data.offer = Some(data.signed(wire::TaskPayload::Software(payload)));
             }
             let offer = client.claim().await.unwrap().offer.unwrap();
             let materials = client.prepare(&offer).await.unwrap();
-            let wire::TaskPayload::SoftwareTaskSpec(payload) = offer.payload() else {
+            let wire::TaskPayload::Software(payload) = offer.payload() else {
                 panic!("software")
             };
             let (step, _) = compile(

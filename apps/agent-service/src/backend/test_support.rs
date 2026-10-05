@@ -205,7 +205,7 @@ pub fn adapted_plan(
     };
     if let (
         ExecutionSpec::SoftwareProgram { program },
-        agent_api::runtime::TaskPayload::SoftwareTaskSpec(remote),
+        rss_mdm_agent_wire::runtime::TaskPayload::Software(remote),
     ) = (&mut spec.execution, offer.payload())
     {
         program.definition_digest = execution_contract::Digest::new(
@@ -219,7 +219,7 @@ pub fn adapted_plan(
     }
     if let (
         ExecutionSpec::SoftwareProgram { program },
-        agent_api::runtime::TaskPayload::SoftwareTaskSpec(remote),
+        rss_mdm_agent_wire::runtime::TaskPayload::Software(remote),
     ) = (&mut spec.execution, offer.payload())
     {
         let template = program.steps[0].clone();

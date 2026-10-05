@@ -702,7 +702,7 @@ async fn sdk_tracing_never_receives_raw_tool_arguments_metadata_or_cancel_reason
 
 #[test]
 fn policy_mcp_descriptor_preserves_resource_input_constraints_and_versions() {
-    use agent_api::runtime::SelfServiceDirectoryItem;
+    use rss_mdm_agent_wire::runtime::SelfServiceDirectoryItem;
     let mut item: SelfServiceDirectoryItem = serde_json::from_value(json!({
         "policyId":"00000000-0000-4000-a000-000000000001","policyRevision":3,"policyVersion":"00000000-0000-4000-a000-000000000002",
         "selfService":{"published":true,"allowAi":true,"riskLevel":2,"displayName":"Repair","description":"Repair app","prerequisites":"Employee","sideEffects":"Restart","category":"Support","keywords":[]},
@@ -718,7 +718,7 @@ fn policy_mcp_descriptor_preserves_resource_input_constraints_and_versions() {
     assert!(!validator.is_valid(&json!({})));
     assert_eq!(descriptor["annotations"]["readOnlyHint"], false);
     fn parameter_schema(item: &mut SelfServiceDirectoryItem) -> &mut serde_json::Value {
-        let agent_api::runtime::SelfServiceTask::Script {
+        let rss_mdm_agent_wire::runtime::SelfServiceTask::Script {
             parameter_schema, ..
         } = &mut item.task
         else {

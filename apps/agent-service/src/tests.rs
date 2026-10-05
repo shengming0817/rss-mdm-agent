@@ -2,10 +2,10 @@
 use super::*;
 use crate::backend::{host, plan, software};
 use crate::protocol_test_support as protocol;
-use agent_api::runtime as wire;
 use agent_client::OpenMode;
 use execution_admission::AuthorityVerifier;
 use execution_contract::*;
+use rss_mdm_agent_wire::runtime as wire;
 use sha2::{Digest as _, Sha256};
 
 #[test]
@@ -71,7 +71,7 @@ async fn signed_start_compiles_exactly_and_never_creates_a_local_enterprise_appr
     {
         let mut data = server.data.lock().unwrap();
         data.script();
-        let wire::TaskPayload::TaskSpec(mut spec) = data.offer.as_ref().unwrap().payload.clone()
+        let wire::TaskPayload::Script(mut spec) = data.offer.as_ref().unwrap().payload.clone()
         else {
             panic!("script")
         };
@@ -82,7 +82,7 @@ async fn signed_start_compiles_exactly_and_never_creates_a_local_enterprise_appr
             " a b; $(x) ".into(),
         ];
         spec.environment = [("RSS_PARAM_VALUE".into(), " literal ; $(x) ".into())].into();
-        data.offer = Some(data.signed(wire::TaskPayload::TaskSpec(spec)));
+        data.offer = Some(data.signed(wire::TaskPayload::Script(spec)));
     }
     let offer = client.claim().await.unwrap().offer.unwrap();
     let materials = client.prepare(&offer).await.unwrap();
@@ -107,7 +107,7 @@ async fn signed_start_compiles_exactly_and_never_creates_a_local_enterprise_appr
             None,
         )
     };
-    let wire::TaskPayload::TaskSpec(offered) = offer.payload() else {
+    let wire::TaskPayload::Script(offered) = offer.payload() else {
         panic!("script")
     };
     let (preview, _) = compile(offered).unwrap();
@@ -128,7 +128,7 @@ async fn signed_start_compiles_exactly_and_never_creates_a_local_enterprise_appr
     );
     client.received(&offer).await.unwrap();
     let start = client.request_start(&offer, &materials).await.unwrap();
-    let wire::TaskPayload::TaskSpec(payload) = start.payload() else {
+    let wire::TaskPayload::Script(payload) = start.payload() else {
         panic!("script")
     };
     let (frozen, _) = compile(payload).unwrap();
@@ -232,14 +232,13 @@ async fn osquery_compiler_revalidates_the_signed_query_and_uses_only_literal_arg
             let mut data = server.data.lock().unwrap();
             data.bytes = query.as_bytes().to_vec();
             data.script();
-            let wire::TaskPayload::TaskSpec(mut spec) =
-                data.offer.as_ref().unwrap().payload.clone()
+            let wire::TaskPayload::Script(mut spec) = data.offer.as_ref().unwrap().payload.clone()
             else {
                 panic!("script")
             };
             spec.profile = wire::ExecutorProfile::Osquery;
             spec.sql_parameters = Some(Default::default());
-            data.offer = Some(data.signed(wire::TaskPayload::TaskSpec(spec)));
+            data.offer = Some(data.signed(wire::TaskPayload::Script(spec)));
         }
         let root = protocol::Root::new();
         let mut client = server.client(&root, OpenMode::Create);
@@ -248,7 +247,7 @@ async fn osquery_compiler_revalidates_the_signed_query_and_uses_only_literal_arg
         let materials = client.prepare(&offer).await.unwrap();
         let (binding, actor) =
             plan::context(server.url.as_str(), server.config().tenant, &receipt).unwrap();
-        let wire::TaskPayload::TaskSpec(spec) = offer.payload() else {
+        let wire::TaskPayload::Script(spec) = offer.payload() else {
             panic!("script")
         };
         // This test verifies the production compiler, not osquery execution.
@@ -293,7 +292,7 @@ async fn current_software_steps_compile_from_exact_prefixed_artifacts() {
             let mut data = server.data.lock().unwrap();
             data.software(2, false);
             if !supported_codes {
-                let wire::TaskPayload::SoftwareTaskSpec(mut spec) =
+                let wire::TaskPayload::Software(mut spec) =
                     data.offer.as_ref().unwrap().payload.clone()
                 else {
                     panic!("software")
@@ -307,7 +306,7 @@ async fn current_software_steps_compile_from_exact_prefixed_artifacts() {
                 }
                 spec.definition_digest =
                     Sha256::digest(serde_json::to_vec(&spec.steps).unwrap()).into();
-                data.offer = Some(data.signed(wire::TaskPayload::SoftwareTaskSpec(spec)));
+                data.offer = Some(data.signed(wire::TaskPayload::Software(spec)));
             }
         }
         let root = protocol::Root::new();
@@ -337,7 +336,7 @@ async fn current_software_steps_compile_from_exact_prefixed_artifacts() {
             }],
             processes: 1,
         };
-        let wire::TaskPayload::SoftwareTaskSpec(spec) = offer.payload() else {
+        let wire::TaskPayload::Software(spec) = offer.payload() else {
             panic!("software")
         };
         // Pins and compiles actual material; it does not pretend /bin/sh is a real installer.

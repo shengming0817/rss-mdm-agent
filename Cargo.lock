@@ -69,7 +69,6 @@ dependencies = [
 name = "agent-client"
 version = "0.1.0"
 dependencies = [
- "agent-api",
  "axum",
  "base64 0.23.1",
  "der",
@@ -104,7 +103,6 @@ dependencies = [
 name = "agent-service"
 version = "0.1.0"
 dependencies = [
- "agent-api",
  "agent-client",
  "axum",
  "base64 0.23.1",
@@ -130,6 +128,7 @@ dependencies = [
  "quick-xml",
  "reqwest",
  "ring",
+ "rss-mdm-agent-wire",
  "rusqlite",
  "rustls",
  "schemars 1.2.2",
@@ -1266,8 +1265,8 @@ dependencies = [
 name = "execution-contract"
 version = "0.1.0"
 dependencies = [
- "agent-api",
  "jsonschema",
+ "rss-mdm-agent-wire",
  "schemars 1.2.2",
  "serde",
  "serde_json",
@@ -1291,12 +1290,12 @@ dependencies = [
 name = "execution-ipc"
 version = "0.1.0"
 dependencies = [
- "agent-api",
  "cc",
  "execution-app",
  "execution-contract",
  "installation-security",
  "libc",
+ "rss-mdm-agent-wire",
  "schemars 1.2.2",
  "serde",
  "serde_json",
@@ -1321,12 +1320,12 @@ dependencies = [
 name = "execution-mcp"
 version = "0.1.0"
 dependencies = [
- "agent-api",
  "execution-contract",
  "execution-lifecycle",
  "futures-util",
  "jsonschema",
  "rmcp",
+ "rss-mdm-agent-wire",
  "schemars 1.2.2",
  "serde",
  "serde_json",
@@ -3974,7 +3973,6 @@ name = "rss-mdm-desktop"
 version = "0.1.0"
 dependencies = [
  "aes-gcm",
- "agent-api",
  "ai-session-contract",
  "constant_time_eq",
  "execution-admission",
@@ -3998,6 +3996,7 @@ dependencies = [
  "platform-private-storage",
  "proc-macro2",
  "reqwest",
+ "rss-mdm-agent-wire",
  "rusqlite",
  "schemars 1.2.2",
  "serde",

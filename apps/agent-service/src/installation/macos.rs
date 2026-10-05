@@ -364,7 +364,7 @@ pub(super) fn execution_resources(
         })
     }
     interpreters.push(crate::Interpreter {
-        profile: agent_api::runtime::ExecutorProfile::PosixSh,
+        profile: rss_mdm_agent_wire::runtime::ExecutorProfile::PosixSh,
         image: artifact("/bin/sh")?,
     });
     managers.push(crate::SoftwareManager {

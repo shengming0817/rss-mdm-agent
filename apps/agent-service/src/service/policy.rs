@@ -142,8 +142,8 @@ fn parameters(
     let mut expected = 0;
     for (key, source) in parameter_sources {
         let value = match source {
-            wire::ScriptParameterSource::Fixed(value) => value.clone(),
-            wire::ScriptParameterSource::Input => {
+            wire::ScriptParameterSource::Fixed { value } => value.clone(),
+            wire::ScriptParameterSource::Input {} => {
                 expected += 1;
                 inputs.get(key).ok_or(Error::Protocol)?.clone()
             }
@@ -888,8 +888,8 @@ impl<S: IdentityProvider> DeviceService<S> {
     }
     pub(super) fn bind_policy_offer(&mut self, offer: &Offer) -> Result<Selection, Error> {
         let authorization = match offer.payload() {
-            wire::TaskPayload::TaskSpec(spec) => &spec.authorization,
-            wire::TaskPayload::SoftwareTaskSpec(spec) => &spec.authorization,
+            wire::TaskPayload::Script(spec) => &spec.authorization,
+            wire::TaskPayload::Software(spec) => &spec.authorization,
             _ => return Err(Error::Denied),
         };
         let wire::TaskAuthorization::SelfService {
@@ -933,7 +933,7 @@ impl<S: IdentityProvider> DeviceService<S> {
             || request_id.to_string() != choice.request.as_str()
             || match subject {
                 wire::SelfServiceSubject::Device => false,
-                wire::SelfServiceSubject::User(user) => Some(user) != expected.as_ref(),
+                wire::SelfServiceSubject::User { user } => Some(user) != expected.as_ref(),
             }
             || *source != expected_source
             || policy_id.to_string() != choice.policy_id.as_str()
@@ -950,7 +950,7 @@ impl<S: IdentityProvider> DeviceService<S> {
                 wire::SelfServiceTask::Script {
                     resource, run_as, ..
                 },
-                wire::TaskPayload::TaskSpec(spec),
+                wire::TaskPayload::Script(spec),
             ) => {
                 if &spec.resource != resource
                     || &spec.run_as != run_as
@@ -966,7 +966,7 @@ impl<S: IdentityProvider> DeviceService<S> {
                     run_as,
                     target,
                 },
-                wire::TaskPayload::SoftwareTaskSpec(spec),
+                wire::TaskPayload::Software(spec),
             ) => {
                 let step = spec.steps.last().ok_or(Error::Untrusted)?;
                 if step.action.version != resource.version
@@ -1084,7 +1084,7 @@ impl<S: IdentityProvider> DeviceService<S> {
         if now >= until {
             return Err(Error::Expired);
         }
-        let wire::TaskPayload::SoftwareTaskSpec(spec) = offer.payload() else {
+        let wire::TaskPayload::Software(spec) = offer.payload() else {
             return Err(Error::Denied);
         };
         let step = spec

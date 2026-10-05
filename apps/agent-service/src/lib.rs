@@ -46,7 +46,7 @@ impl DeviceSecrets {
     pub fn import_bootstrap(
         &self,
         reference: &str,
-        value: &agent_client::Secret,
+        value: &rss_mdm_agent_wire::runtime::Secret,
     ) -> Result<(), Error> {
         let bytes = zeroize::Zeroizing::new(
             base64::engine::general_purpose::URL_SAFE_NO_PAD
@@ -58,19 +58,23 @@ impl DeviceSecrets {
     }
 }
 impl IdentityProvider for DeviceSecrets {
-    fn import_secret(&self, reference: &str, secret: &agent_client::Secret) -> Result<(), Error> {
+    fn import_secret(
+        &self,
+        reference: &str,
+        secret: &rss_mdm_agent_wire::runtime::Secret,
+    ) -> Result<(), Error> {
         self.import_bootstrap(reference, secret)
     }
-    fn resolve(&self, reference: &str) -> Result<agent_client::Secret, Error> {
+    fn resolve(&self, reference: &str) -> Result<rss_mdm_agent_wire::runtime::Secret, Error> {
         let bytes = self.0.read(reference)?;
-        agent_client::Secret::parse(
+        rss_mdm_agent_wire::runtime::Secret::parse(
             &base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&*bytes),
         )
         .map_err(|_| Error::Identity)
     }
-    fn create_secret(&self, reference: &str) -> Result<agent_client::Secret, Error> {
+    fn create_secret(&self, reference: &str) -> Result<rss_mdm_agent_wire::runtime::Secret, Error> {
         let bytes = self.0.credential(reference)?;
-        agent_client::Secret::parse(
+        rss_mdm_agent_wire::runtime::Secret::parse(
             &base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&*bytes),
         )
         .map_err(|_| Error::Identity)
