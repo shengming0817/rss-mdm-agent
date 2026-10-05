@@ -210,7 +210,7 @@ impl<S: IdentityProvider> DeviceService<S> {
                 selected: None,
                 stopping: false,
                 recovery_cursor: None,
-                employees: Default::default(),
+                contexts: Default::default(),
                 fences: Default::default(),
                 credential_leases: Default::default(),
                 policy_commands: Default::default(),
@@ -464,7 +464,7 @@ impl<S: IdentityProvider> DeviceService<S> {
             self.core.available = Some(offered(&offer)?);
             network(self.client.received(&offer), &mut self.core, commands).await?;
             let materials = network(self.client.prepare(&offer), &mut self.core, commands).await?;
-            if matches!(offer.payload(),wire::TaskPayload::TaskSpec(p) if matches!(p.authorization,wire::ScriptAuthorization::SelfService {..}))
+            if matches!(offer.payload(),wire::TaskPayload::TaskSpec(p) if matches!(p.authorization,wire::TaskAuthorization::SelfService {..})) || matches!(offer.payload(),wire::TaskPayload::SoftwareTaskSpec(p) if matches!(p.authorization,wire::TaskAuthorization::SelfService {..}))
             {
                 let selection = self.bind_policy_offer(&offer)?;
                 backend::submit(self, offer, materials, Some(selection), commands).await?;
@@ -622,7 +622,7 @@ pub(crate) struct Core {
     pub(crate) selected: Option<Selection>,
     pub(crate) stopping: bool,
     pub(crate) recovery_cursor: Option<RequestId>,
-    employees: policy::Employees,
+    contexts: policy::Contexts,
     fences: Arc<policy::Fences>,
     credential_leases: std::collections::BTreeMap<RequestId, Arc<zeroize::Zeroizing<String>>>,
     policy_commands: policy::Commands,
@@ -737,6 +737,7 @@ impl Core {
     }
     fn start_task(&mut self, selection: Selection) -> Result<execution_ipc::host::Reply, Error> {
         use execution_ipc::host::Reply;
+        self.require_origin_context(&selection.subject, &selection.binding, &selection.origin)?;
         if !self.host.identity_ready() {
             return Err(Error::Denied);
         }
@@ -952,7 +953,7 @@ impl Core {
         if matches!(
             command.request.as_operation(),
             Some(
-                execution_ipc::host::Request::EmployeeSession { .. }
+                execution_ipc::host::Request::BindContext { .. } | Request::RevokeContext {}
                     | execution_ipc::host::Request::ObserveSoftware { .. }
                     | execution_ipc::host::Request::PolicyDirectory { .. }
                     | execution_ipc::host::Request::InvokePolicy { .. }
@@ -969,7 +970,7 @@ impl Core {
         let reply = (|| -> Result<Reply, Error> {
             match command.request.into_operation() {
                 Some(
-                    Request::EmployeeSession { .. }
+                    Request::BindContext { .. } | Request::RevokeContext {}
                     | Request::ObserveSoftware { .. }
                     | Request::PolicyDirectory { .. }
                     | Request::InvokePolicy { .. }
@@ -1438,11 +1439,13 @@ impl Selection {
                 config,
                 conversation,
                 tool_call,
+                context,
             } => BackendTrigger::Ai {
                 os_session,
                 config: config.clone(),
                 conversation: conversation.clone(),
                 tool_call: tool_call.clone(),
+            context: context.clone(),
             },
         })
     }
@@ -1456,12 +1459,14 @@ impl Selection {
                 config,
                 conversation,
                 tool_call,
+                context,
             } => (
                 os_session,
                 execution_ipc::host::ClientOrigin::Ai {
                     config: config.clone(),
                     conversation: conversation.clone(),
                     tool_call: tool_call.clone(),
+            context: context.clone(),
                 },
             ),
             _ => return Err(Error::Denied),

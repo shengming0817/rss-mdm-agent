@@ -72,6 +72,16 @@ pub struct ExecutionRisk {
     /// Exclusive trusted decision deadline.
     pub expires_at_unix_ms: u64,
 }
+/// Nonsecret reference returned by the native execution owner after binding a context.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct NativeContextRef {
+    /// Owner-assigned binding identity, scoped to the authenticated native peer.
+    pub id: Id,
+    /// Exact caller generation; retirement invalidates all work using it.
+    pub generation: Id,
+}
+
 /// Risk authority is explicit; local software rules never impersonate a Policy.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
@@ -138,9 +148,9 @@ pub enum PreparedAction {
         /// Eventual signed Offer; no task/attempt is invented before this exists.
         offer: Option<BackendTask>,
         /// Authenticated product employee, checked against the signed authorization.
-        actor: agent_api::runtime::ScriptActor,
+        user: Option<agent_api::runtime::SelfServiceUser>,
         /// Native product login generation.
-        generation: Id,
+        context: NativeContextRef,
         /// Bounded validity of the original preparation.
         expires_at_unix_ms: u64,
     },

@@ -138,11 +138,13 @@ pub(crate) async fn submit<S: IdentityProvider>(
                 config,
                 conversation,
                 tool_call,
+                context,
             } => execution_contract::BackendTrigger::Ai {
                 os_session,
                 config,
                 conversation,
                 tool_call,
+                context,
             },
         };
         plan = execution_contract::FrozenExecution::freeze(input, &plan::storage_limits().input)

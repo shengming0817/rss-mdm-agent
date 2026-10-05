@@ -8,33 +8,35 @@ use reqwest::Method;
 use serde::de::DeserializeOwned;
 use uuid::Uuid;
 impl<S: IdentityProvider, C: Clock> Client<S, C> {
-    async fn employee_json<T: DeserializeOwned>(
+    async fn self_service_json<T: DeserializeOwned>(
         &self,
-        secret: &str,
+        secret: Option<&str>,
         method: Method,
         path: &str,
         body: Option<Vec<u8>>,
     ) -> Result<T, Error> {
         self.active()?;
         self.now()?;
-        if secret.len() != 64
+        if secret.is_some_and(|secret| secret.len() != 64
             || !secret
                 .bytes()
-                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)))
         {
             return Err(Error::Identity);
         }
         let mut request = self
             .http
             .request(method, self.url(path)?)
-            .header("x-rss-user-session", secret)
-            .timeout(
+                        .timeout(
                 self.store
                     .cfg
                     .limits
                     .request_timeout
                     .min(std::time::Duration::from_secs(2)),
             );
+        if let Some(secret) = secret {
+            request = request.header("x-rss-user-session", secret);
+        }
         if let Some(body) = body {
             if body.len() > 131072 {
                 return Err(Error::Capacity);
@@ -55,19 +57,19 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
     /// Current authorized directory for an origin attested by the system service.
     pub async fn self_service_directory(
         &self,
-        secret: &str,
+        secret: Option<&str>,
         query: &wire::SelfServiceDirectory,
     ) -> Result<wire::SelfServiceDirectoryResponse, Error> {
         let source = match query.source {
-            wire::ScriptCaller::Human => "human",
-            wire::ScriptCaller::Ai => "ai",
+            wire::SelfServiceCaller::Human => "human",
+            wire::SelfServiceCaller::Ai => "ai",
         };
-        let mut path = format!("self-service/scripts?source={source}");
+        let mut path = format!("self-service?source={source}");
         if let Some(after) = &query.after {
             path.push_str(&format!("&after={after}"));
         }
         let response: wire::SelfServiceDirectoryResponse =
-            self.employee_json(secret, Method::GET, &path, None).await?;
+            self.self_service_json(secret, Method::GET, &path, None).await?;
         if response.items.len() > 64 || response.as_of < 0 {
             return Err(Error::Protocol);
         }
@@ -76,14 +78,14 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
     /// Send the original journal-frozen invocation. A lost response is recovered by request ID.
     pub async fn invoke_self_service(
         &self,
-        secret: &str,
+        secret: Option<&str>,
         request: &wire::SelfServiceInvoke,
     ) -> Result<wire::SelfServiceAccepted, Error> {
         let response: wire::SelfServiceAccepted = self
-            .employee_json(
+            .self_service_json(
                 secret,
                 Method::POST,
-                "self-service/scripts/invocations",
+                "self-service/invocations",
                 Some(encode(request)?),
             )
             .await?;
@@ -100,14 +102,14 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
     /// Employee-authorized status and structured result of the same original invocation.
     pub async fn self_service_status(
         &self,
-        secret: &str,
+        secret: Option<&str>,
         request: Uuid,
     ) -> Result<wire::SelfServiceStatus, Error> {
         let response: wire::SelfServiceStatus = self
-            .employee_json(
+            .self_service_json(
                 secret,
                 Method::GET,
-                &format!("self-service/scripts/invocations/{request}"),
+                &format!("self-service/invocations/{request}"),
                 None,
             )
             .await?;

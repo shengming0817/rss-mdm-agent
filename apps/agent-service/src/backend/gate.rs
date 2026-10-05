@@ -22,12 +22,12 @@ impl TrustedRisk {
             .checked_mul(1000)?;
         let (level, source) = match offer.payload() {
             wire::TaskPayload::TaskSpec(spec) => match &spec.authorization {
-                wire::ScriptAuthorization::SelfService {
+                wire::TaskAuthorization::SelfService {
                     policy_id,
                     policy_revision,
                     allow_ai: true,
                     risk_level,
-                    source: wire::ScriptCaller::Ai,
+                    source: wire::SelfServiceCaller::Ai,
                     ..
                 } => (
                     match risk_level {
@@ -53,7 +53,9 @@ impl TrustedRisk {
                 };
                 (
                     level,
-                    RiskSource::Software {
+                    if let wire::TaskAuthorization::SelfService { policy_id, policy_revision, allow_ai: true, source: wire::SelfServiceCaller::Ai, .. } = &spec.authorization {
+                        RiskSource::Policy { policy: VersionedRef { id: Id::new(policy_id.to_string()).ok()?, revision: Id::new(policy_revision.to_string()).ok()? } }
+                    } else { RiskSource::Software {
                         definition: Digest::new(
                             spec.definition_digest
                                 .iter()
@@ -61,7 +63,7 @@ impl TrustedRisk {
                                 .collect::<String>(),
                         )
                         .ok()?,
-                    },
+                    } },
                 )
             }
             _ => return None,

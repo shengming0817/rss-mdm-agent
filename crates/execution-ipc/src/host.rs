@@ -2,7 +2,7 @@
 use execution_contract::{Digest, Id, RequestId, VersionedRef};
 use serde::{Deserialize, Serialize};
 /// Current desktop/system IPC. No negotiation or legacy parser exists.
-pub const IPC_VERSION: u8 = 11;
+pub const IPC_VERSION: u8 = 12;
 /// Current protected installation document format.
 pub const DEPLOYMENT_VERSION: u32 = 5;
 
@@ -459,16 +459,18 @@ pub enum ClientOrigin {
         conversation: Id,
         /// Exact tool-call correlation.
         tool_call: Id,
+        /// Exact owner-issued execution context from the native bridge.
+        context: execution_contract::NativeContextRef,
     },
 }
 /// Native-only bearer handoff, never included in renderer, AI schema or journal records.
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct EmployeeSession {
+pub struct NativeContextSession {
     /// Only the employee secret, not the cookie or CSRF header.
-    pub credential: zeroize::Zeroizing<String>,
+    pub credential: Option<zeroize::Zeroizing<String>>,
     /// Native verified product employee.
-    pub actor: agent_api::runtime::ScriptActor,
+    pub user: Option<agent_api::runtime::SelfServiceUser>,
     /// Exact native product login generation.
     pub generation: Id,
     /// Current session expiry; never extended by an invocation.
@@ -491,12 +493,18 @@ pub enum Request {
         origin: ClientOrigin,
     },
     /// Bind or revoke the native employee session for this authenticated login.
-    EmployeeSession {
-        /// None revokes all pending self-service for this login.
-        value: Option<EmployeeSession>,
+    BindContext {
+        /// Device context, optionally augmented by a verified enterprise session.
+        value: NativeContextSession,
+        /// Existing binding for a refresh; absence requires a retired or absent context.
+        expected: Option<Id>,
     },
+    /// Retire this peer's current context using the independent control lane.
+    RevokeContext {},
     /// Query the current Policy directory; origin is attested by the native bridge.
     PolicyDirectory {
+        /// Exact current native context binding.
+        context: execution_contract::NativeContextRef,
         /// Backend page cursor.
         after: Option<Id>,
         /// Trusted native origin.
@@ -504,6 +512,8 @@ pub enum Request {
     },
     /// Freeze a Policy choice in the unique journal; neither source nor confirmation is a model field.
     InvokePolicy {
+        /// Exact current native context binding.
+        context: execution_contract::NativeContextRef,
         /// Exact directory choice and Input values.
         choice: execution_contract::PolicyChoice,
         /// Trusted native origin.
@@ -511,11 +521,15 @@ pub enum Request {
     },
     /// Sole employee response to the original risk-two Policy preparation.
     ConfirmPolicy {
+        /// Exact current native context binding.
+        context: execution_contract::NativeContextRef,
         /// Original stable request.
         request: RequestId,
     },
     /// Authorized result of the original Policy invocation.
     PolicyStatus {
+        /// Exact current native context binding.
+        context: execution_contract::NativeContextRef,
         /// Stable original request.
         request: RequestId,
     },
@@ -581,7 +595,12 @@ struct Envelope {
 )]
 pub enum Reply {
     /// Native employee handoff accepted; no enterprise permission is granted.
-    EmployeeBound,
+    ContextBound {
+        /// Nonsecret binding, attested by this native owner.
+        value: execution_contract::NativeContextRef,
+    },
+    /// Retirement acknowledged by the independent control lane.
+    ContextRevoked,
     /// Formal authorized Policy directory, not an execution permit.
     PolicyDirectory {
         /// Current server projection.
@@ -767,7 +786,7 @@ pub(crate) fn is_employee_revocation(bytes: &[u8]) -> bool {
     bytes.len() <= 65536
         && serde_json::from_slice::<Envelope>(bytes).is_ok_and(|e| {
             e.version == IPC_VERSION
-                && matches!(e.request, Request::EmployeeSession { value: None })
+                && matches!(e.request, Request::RevokeContext {})
         })
 }
 /// Decode a current revocation and dispatch only its authenticated ephemeral fence.
@@ -780,7 +799,7 @@ pub fn dispatch_fence(fence: &dyn SessionFence, peer: &Peer, bytes: &[u8]) -> Op
         return None;
     }
     match envelope.request {
-        Request::EmployeeSession { value: None } => Some(encode_reply(fence.revoke(peer))),
+        Request::RevokeContext {} => Some(encode_reply(fence.revoke(peer))),
         _ => None,
     }
 }

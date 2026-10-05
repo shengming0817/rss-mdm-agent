@@ -92,12 +92,12 @@ fn normalize(
                 if field == "payload" && chosen == "SignedTask" {
                     return (field.clone(), json!({"$ref":"#/definitions/TaskPayload"}));
                 }
-                if field == "event" && chosen == "TaskEventRequest" {
+                if field == "event" && chosen == "TaskEventRequest" && shape.get("$ref").is_none() {
                     let projected = normalize(shape, "TaskEvent", hints, definitions, true);
                     definitions.insert("TaskEvent".into(), projected);
                     return (field.clone(), json!({"$ref":"#/definitions/TaskEvent"}));
                 }
-                if field == "body" && chosen == "ReportRequest" {
+                if field == "body" && chosen == "ReportRequest" && shape.get("$ref").is_none() {
                     let body = shape.clone();
                     let projected = normalize(&body, "ReportBody", hints, definitions, true);
                     definitions.insert("ReportBody".into(), projected);

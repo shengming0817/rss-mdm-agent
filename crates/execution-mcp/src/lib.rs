@@ -121,11 +121,14 @@ pub fn policy_tool(
     {
         return Err(ServiceError::Denied);
     }
-    let mut schema = item.parameter_schema.clone();
+    let (mut schema, parameter_sources) = match &item.task {
+        agent_api::runtime::SelfServiceTask::Script { parameter_schema, parameter_sources, .. } => (parameter_schema.clone(), parameter_sources.clone()),
+        agent_api::runtime::SelfServiceTask::Software { .. } => (serde_json::json!({"type":"object","properties":{},"required":[],"additionalProperties":false}), std::collections::BTreeMap::new()),
+    };
     let object = schema.as_object_mut().ok_or(ServiceError::InvalidInput)?;
     let input = |key: &str| {
         matches!(
-            item.parameter_sources.get(key),
+            parameter_sources.get(key),
             Some(ScriptParameterSource::Input)
         )
     };

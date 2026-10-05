@@ -25,54 +25,6 @@ pub struct BindingProfile {
     pub capabilities: ::std::vec::Vec<Capability>,
     pub collections: ::std::vec::Vec<CollectionDefinition>,
 }
-#[doc = "`ReportSource`"]
-#[derive(
-    :: serde :: Deserialize,
-    :: serde :: Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
-    schemars :: JsonSchema,
-)]
-pub enum ReportSource {
-    #[serde(rename = "agent.builtin")]
-    AgentBuiltin,
-}
-impl ::std::fmt::Display for ReportSource {
-    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
-        match *self {
-            Self::AgentBuiltin => f.write_str("agent.builtin"),
-        }
-    }
-}
-impl ::std::str::FromStr for ReportSource {
-    type Err = self::error::ConversionError;
-    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-        match value {
-            "agent.builtin" => Ok(Self::AgentBuiltin),
-            _ => Err("invalid value".into()),
-        }
-    }
-}
-impl ::std::convert::TryFrom<&str> for ReportSource {
-    type Error = self::error::ConversionError;
-    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
-impl ::std::convert::TryFrom<::std::string::String> for ReportSource {
-    type Error = self::error::ConversionError;
-    fn try_from(
-        value: ::std::string::String,
-    ) -> ::std::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
 #[doc = "`Capability`"]
 #[derive(
     :: serde :: Deserialize,
@@ -224,6 +176,32 @@ pub struct ChunkedTaskResult {
     #[serde(rename = "collectedAt")]
     pub collected_at: i64,
 }
+#[doc = "`CollectedValue`"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Debug,
+    PartialEq,
+    Eq,
+    schemars :: JsonSchema,
+)]
+#[serde(tag = "kind", content = "value")]
+pub enum CollectedValue {
+    #[serde(rename = "value")]
+    Value(Scalar),
+    #[serde(rename = "null")]
+    Null,
+    #[serde(rename = "deleted")]
+    Deleted,
+    #[serde(rename = "unsupported")]
+    Unsupported,
+}
+impl ::std::convert::From<Scalar> for CollectedValue {
+    fn from(value: Scalar) -> Self {
+        Self::Value(value)
+    }
+}
 #[doc = "`CollectionDefinition`"]
 #[derive(
     :: serde :: Deserialize,
@@ -238,72 +216,25 @@ pub struct ChunkedTaskResult {
 pub struct CollectionDefinition {
     pub dataset: ::std::string::String,
     pub version: ::std::string::String,
-    pub source: CollectionDefinitionSource,
+    pub source: Source,
     pub fields: ::std::vec::Vec<FieldDefinition>,
 }
-#[doc = "`CollectionDefinitionSource`"]
+#[doc = "`EnrollmentEntry`"]
 #[derive(
     :: serde :: Deserialize,
     :: serde :: Serialize,
     Clone,
-    Copy,
     Debug,
-    Eq,
-    Hash,
-    Ord,
     PartialEq,
-    PartialOrd,
+    Eq,
     schemars :: JsonSchema,
 )]
-pub enum CollectionDefinitionSource {
-    #[serde(rename = "mdm.windows")]
-    MdmWindows,
-    #[serde(rename = "mdm.apple")]
-    MdmApple,
-    #[serde(rename = "agent.builtin")]
-    AgentBuiltin,
-    #[serde(rename = "agent.script")]
-    AgentScript,
-    #[serde(rename = "agent.osquery")]
-    AgentOsquery,
-}
-impl ::std::fmt::Display for CollectionDefinitionSource {
-    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
-        match *self {
-            Self::MdmWindows => f.write_str("mdm.windows"),
-            Self::MdmApple => f.write_str("mdm.apple"),
-            Self::AgentBuiltin => f.write_str("agent.builtin"),
-            Self::AgentScript => f.write_str("agent.script"),
-            Self::AgentOsquery => f.write_str("agent.osquery"),
-        }
-    }
-}
-impl ::std::str::FromStr for CollectionDefinitionSource {
-    type Err = self::error::ConversionError;
-    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-        match value {
-            "mdm.windows" => Ok(Self::MdmWindows),
-            "mdm.apple" => Ok(Self::MdmApple),
-            "agent.builtin" => Ok(Self::AgentBuiltin),
-            "agent.script" => Ok(Self::AgentScript),
-            "agent.osquery" => Ok(Self::AgentOsquery),
-            _ => Err("invalid value".into()),
-        }
-    }
-}
-impl ::std::convert::TryFrom<&str> for CollectionDefinitionSource {
-    type Error = self::error::ConversionError;
-    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
-impl ::std::convert::TryFrom<::std::string::String> for CollectionDefinitionSource {
-    type Error = self::error::ConversionError;
-    fn try_from(
-        value: ::std::string::String,
-    ) -> ::std::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
+#[serde(tag = "kind", deny_unknown_fields)]
+pub enum EnrollmentEntry {
+    #[serde(rename = "windows")]
+    Windows { server: ::std::string::String },
+    #[serde(rename = "macos")]
+    Macos { url: ::std::string::String },
 }
 #[doc = "`EnrollmentEntryOutcome`"]
 #[derive(
@@ -404,24 +335,7 @@ pub struct EnrollmentTaskSpec {
     #[serde(rename = "expiresAt")]
     pub expires_at: i64,
     pub organization: ::uuid::Uuid,
-    pub entry: EnrollmentTaskSpecEntry,
-}
-#[doc = "`EnrollmentTaskSpecEntry`"]
-#[derive(
-    :: serde :: Deserialize,
-    :: serde :: Serialize,
-    Clone,
-    Debug,
-    PartialEq,
-    Eq,
-    schemars :: JsonSchema,
-)]
-#[serde(tag = "kind", deny_unknown_fields)]
-pub enum EnrollmentTaskSpecEntry {
-    #[serde(rename = "windows")]
-    Windows { server: ::std::string::String },
-    #[serde(rename = "macos")]
-    Macos { url: ::std::string::String },
+    pub entry: EnrollmentEntry,
 }
 #[doc = "`ErrorBody`"]
 #[derive(
@@ -436,6 +350,106 @@ pub enum EnrollmentTaskSpecEntry {
 #[serde(deny_unknown_fields)]
 pub struct ErrorBody {
     pub code: ErrorCode,
+}
+#[doc = "`ErrorCode`"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+    schemars :: JsonSchema,
+)]
+pub enum ErrorCode {
+    #[serde(rename = "malformed_request")]
+    MalformedRequest,
+    #[serde(rename = "unsupported_wire")]
+    UnsupportedWire,
+    #[serde(rename = "unsupported_capability")]
+    UnsupportedCapability,
+    #[serde(rename = "invalid_identity")]
+    InvalidIdentity,
+    #[serde(rename = "credential_revoked")]
+    CredentialRevoked,
+    #[serde(rename = "certificate_expired")]
+    CertificateExpired,
+    #[serde(rename = "credential_retired")]
+    CredentialRetired,
+    #[serde(rename = "report_not_found")]
+    ReportNotFound,
+    #[serde(rename = "permission_denied")]
+    PermissionDenied,
+    #[serde(rename = "task_not_found")]
+    TaskNotFound,
+    #[serde(rename = "range_not_satisfiable")]
+    RangeNotSatisfiable,
+    #[serde(rename = "operation_conflict")]
+    OperationConflict,
+    #[serde(rename = "operation_unknown")]
+    OperationUnknown,
+    #[serde(rename = "service_unavailable")]
+    ServiceUnavailable,
+}
+impl ::std::fmt::Display for ErrorCode {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::MalformedRequest => f.write_str("malformed_request"),
+            Self::UnsupportedWire => f.write_str("unsupported_wire"),
+            Self::UnsupportedCapability => f.write_str("unsupported_capability"),
+            Self::InvalidIdentity => f.write_str("invalid_identity"),
+            Self::CredentialRevoked => f.write_str("credential_revoked"),
+            Self::CertificateExpired => f.write_str("certificate_expired"),
+            Self::CredentialRetired => f.write_str("credential_retired"),
+            Self::ReportNotFound => f.write_str("report_not_found"),
+            Self::PermissionDenied => f.write_str("permission_denied"),
+            Self::TaskNotFound => f.write_str("task_not_found"),
+            Self::RangeNotSatisfiable => f.write_str("range_not_satisfiable"),
+            Self::OperationConflict => f.write_str("operation_conflict"),
+            Self::OperationUnknown => f.write_str("operation_unknown"),
+            Self::ServiceUnavailable => f.write_str("service_unavailable"),
+        }
+    }
+}
+impl ::std::str::FromStr for ErrorCode {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "malformed_request" => Ok(Self::MalformedRequest),
+            "unsupported_wire" => Ok(Self::UnsupportedWire),
+            "unsupported_capability" => Ok(Self::UnsupportedCapability),
+            "invalid_identity" => Ok(Self::InvalidIdentity),
+            "credential_revoked" => Ok(Self::CredentialRevoked),
+            "certificate_expired" => Ok(Self::CertificateExpired),
+            "credential_retired" => Ok(Self::CredentialRetired),
+            "report_not_found" => Ok(Self::ReportNotFound),
+            "permission_denied" => Ok(Self::PermissionDenied),
+            "task_not_found" => Ok(Self::TaskNotFound),
+            "range_not_satisfiable" => Ok(Self::RangeNotSatisfiable),
+            "operation_conflict" => Ok(Self::OperationConflict),
+            "operation_unknown" => Ok(Self::OperationUnknown),
+            "service_unavailable" => Ok(Self::ServiceUnavailable),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ErrorCode {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ErrorCode {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
 }
 #[doc = "`ExecutionIdentity`"]
 #[derive(
@@ -549,6 +563,62 @@ impl ::std::convert::TryFrom<::std::string::String> for ExecutorProfile {
         value.parse()
     }
 }
+#[doc = "`FailureCode`"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+    schemars :: JsonSchema,
+)]
+pub enum FailureCode {
+    #[serde(rename = "permissionDenied")]
+    PermissionDenied,
+    #[serde(rename = "temporarilyUnavailable")]
+    TemporarilyUnavailable,
+    #[serde(rename = "collectionFailed")]
+    CollectionFailed,
+}
+impl ::std::fmt::Display for FailureCode {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::PermissionDenied => f.write_str("permissionDenied"),
+            Self::TemporarilyUnavailable => f.write_str("temporarilyUnavailable"),
+            Self::CollectionFailed => f.write_str("collectionFailed"),
+        }
+    }
+}
+impl ::std::str::FromStr for FailureCode {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "permissionDenied" => Ok(Self::PermissionDenied),
+            "temporarilyUnavailable" => Ok(Self::TemporarilyUnavailable),
+            "collectionFailed" => Ok(Self::CollectionFailed),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for FailureCode {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for FailureCode {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
 #[doc = "`FieldDefinition`"]
 #[derive(
     :: serde :: Deserialize,
@@ -561,14 +631,14 @@ impl ::std::convert::TryFrom<::std::string::String> for ExecutorProfile {
 )]
 #[serde(deny_unknown_fields)]
 pub struct FieldDefinition {
-    pub key: ::std::string::String,
+    pub key: FieldKey,
     pub version: u64,
     #[serde(rename = "valueType")]
     pub value_type: ValueType,
     pub nullable: bool,
     pub manual: bool,
     pub sources: ::std::collections::BTreeMap<::std::string::String, u16>,
-    pub platforms: ::std::collections::BTreeSet<TaskPlatform>,
+    pub platforms: ::std::collections::BTreeSet<Platform>,
     pub sensitivity: Sensitivity,
     #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub unit: ::std::option::Option<::std::string::String>,
@@ -578,6 +648,48 @@ pub struct FieldDefinition {
         deserialize_with = "::std::option::Option::deserialize"
     )]
     pub item_key: ::std::option::Option<::std::string::String>,
+}
+#[doc = "`FieldKey`"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+    schemars :: JsonSchema,
+)]
+#[serde(transparent)]
+pub struct FieldKey(pub ::std::string::String);
+impl ::std::ops::Deref for FieldKey {
+    type Target = ::std::string::String;
+    fn deref(&self) -> &::std::string::String {
+        &self.0
+    }
+}
+impl ::std::convert::From<FieldKey> for ::std::string::String {
+    fn from(value: FieldKey) -> Self {
+        value.0
+    }
+}
+impl ::std::convert::From<::std::string::String> for FieldKey {
+    fn from(value: ::std::string::String) -> Self {
+        Self(value)
+    }
+}
+impl ::std::fmt::Display for FieldKey {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+impl ::std::str::FromStr for FieldKey {
+    type Err = ::std::convert::Infallible;
+    fn from_str(value: &str) -> ::std::result::Result<Self, Self::Err> {
+        Ok(Self(value.to_string()))
+    }
 }
 #[doc = "`FieldValue`"]
 #[derive(
@@ -591,33 +703,119 @@ pub struct FieldDefinition {
 )]
 #[serde(deny_unknown_fields)]
 pub struct FieldValue {
-    pub field: ::std::string::String,
+    pub field: FieldKey,
     pub value: CollectedValue,
 }
-#[doc = "`CollectedValue`"]
+#[doc = "`IntakeStatus`"]
 #[derive(
     :: serde :: Deserialize,
     :: serde :: Serialize,
     Clone,
+    Copy,
     Debug,
-    PartialEq,
     Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
     schemars :: JsonSchema,
 )]
-#[serde(tag = "kind", content = "value")]
-pub enum CollectedValue {
-    #[serde(rename = "value")]
-    Value(Scalar),
-    #[serde(rename = "null")]
-    Null,
-    #[serde(rename = "deleted")]
-    Deleted,
-    #[serde(rename = "unsupported")]
-    Unsupported,
+pub enum IntakeStatus {
+    #[serde(rename = "durable")]
+    Durable,
 }
-impl ::std::convert::From<Scalar> for CollectedValue {
-    fn from(value: Scalar) -> Self {
-        Self::Value(value)
+impl ::std::fmt::Display for IntakeStatus {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Durable => f.write_str("durable"),
+        }
+    }
+}
+impl ::std::str::FromStr for IntakeStatus {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "durable" => Ok(Self::Durable),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for IntakeStatus {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for IntakeStatus {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "`ObservationStatus`"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+    schemars :: JsonSchema,
+)]
+pub enum ObservationStatus {
+    #[serde(rename = "pending")]
+    Pending,
+    #[serde(rename = "snapshot")]
+    Snapshot,
+    #[serde(rename = "needSnapshotPartial")]
+    NeedSnapshotPartial,
+    #[serde(rename = "needSnapshotCollectionFailed")]
+    NeedSnapshotCollectionFailed,
+    #[serde(rename = "stale")]
+    Stale,
+}
+impl ::std::fmt::Display for ObservationStatus {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Pending => f.write_str("pending"),
+            Self::Snapshot => f.write_str("snapshot"),
+            Self::NeedSnapshotPartial => f.write_str("needSnapshotPartial"),
+            Self::NeedSnapshotCollectionFailed => f.write_str("needSnapshotCollectionFailed"),
+            Self::Stale => f.write_str("stale"),
+        }
+    }
+}
+impl ::std::str::FromStr for ObservationStatus {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "pending" => Ok(Self::Pending),
+            "snapshot" => Ok(Self::Snapshot),
+            "needSnapshotPartial" => Ok(Self::NeedSnapshotPartial),
+            "needSnapshotCollectionFailed" => Ok(Self::NeedSnapshotCollectionFailed),
+            "stale" => Ok(Self::Stale),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for ObservationStatus {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ObservationStatus {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
     }
 }
 #[doc = "`OutputChunk`"]
@@ -711,27 +909,7 @@ impl ::std::convert::TryFrom<::std::string::String> for OutputQuality {
         value.parse()
     }
 }
-#[doc = "`ReportAck`"]
-#[derive(
-    :: serde :: Deserialize,
-    :: serde :: Serialize,
-    Clone,
-    Debug,
-    PartialEq,
-    Eq,
-    schemars :: JsonSchema,
-)]
-#[serde(deny_unknown_fields)]
-pub struct ReportAck {
-    #[serde(rename = "wireVersion")]
-    pub wire_version: u8,
-    #[serde(rename = "reportId")]
-    pub report_id: ::uuid::Uuid,
-    #[serde(rename = "receivedAt")]
-    pub received_at: i64,
-    pub intake: IntakeStatus,
-}
-#[doc = "`IntakeStatus`"]
+#[doc = "`Platform`"]
 #[derive(
     :: serde :: Deserialize,
     :: serde :: Serialize,
@@ -745,210 +923,37 @@ pub struct ReportAck {
     PartialOrd,
     schemars :: JsonSchema,
 )]
-pub enum IntakeStatus {
-    #[serde(rename = "durable")]
-    Durable,
+pub enum Platform {
+    #[serde(rename = "windows")]
+    Windows,
+    #[serde(rename = "macos")]
+    Macos,
 }
-impl ::std::fmt::Display for IntakeStatus {
+impl ::std::fmt::Display for Platform {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
-            Self::Durable => f.write_str("durable"),
+            Self::Windows => f.write_str("windows"),
+            Self::Macos => f.write_str("macos"),
         }
     }
 }
-impl ::std::str::FromStr for IntakeStatus {
+impl ::std::str::FromStr for Platform {
     type Err = self::error::ConversionError;
     fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
         match value {
-            "durable" => Ok(Self::Durable),
+            "windows" => Ok(Self::Windows),
+            "macos" => Ok(Self::Macos),
             _ => Err("invalid value".into()),
         }
     }
 }
-impl ::std::convert::TryFrom<&str> for IntakeStatus {
+impl ::std::convert::TryFrom<&str> for Platform {
     type Error = self::error::ConversionError;
     fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
         value.parse()
     }
 }
-impl ::std::convert::TryFrom<::std::string::String> for IntakeStatus {
-    type Error = self::error::ConversionError;
-    fn try_from(
-        value: ::std::string::String,
-    ) -> ::std::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
-#[doc = "`ReportBody`"]
-#[derive(
-    :: serde :: Deserialize,
-    :: serde :: Serialize,
-    Clone,
-    Debug,
-    PartialEq,
-    Eq,
-    schemars :: JsonSchema,
-)]
-#[serde(tag = "kind", deny_unknown_fields)]
-pub enum ReportBody {
-    #[serde(rename = "snapshot")]
-    Snapshot { values: ::std::vec::Vec<FieldValue> },
-    #[serde(rename = "partial")]
-    Partial { values: ::std::vec::Vec<FieldValue> },
-    #[serde(rename = "failed")]
-    Failed { code: FailureCode },
-}
-#[doc = "`FailureCode`"]
-#[derive(
-    :: serde :: Deserialize,
-    :: serde :: Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
-    schemars :: JsonSchema,
-)]
-pub enum FailureCode {
-    #[serde(rename = "permissionDenied")]
-    PermissionDenied,
-    #[serde(rename = "temporarilyUnavailable")]
-    TemporarilyUnavailable,
-    #[serde(rename = "collectionFailed")]
-    CollectionFailed,
-}
-impl ::std::fmt::Display for FailureCode {
-    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
-        match *self {
-            Self::PermissionDenied => f.write_str("permissionDenied"),
-            Self::TemporarilyUnavailable => f.write_str("temporarilyUnavailable"),
-            Self::CollectionFailed => f.write_str("collectionFailed"),
-        }
-    }
-}
-impl ::std::str::FromStr for FailureCode {
-    type Err = self::error::ConversionError;
-    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-        match value {
-            "permissionDenied" => Ok(Self::PermissionDenied),
-            "temporarilyUnavailable" => Ok(Self::TemporarilyUnavailable),
-            "collectionFailed" => Ok(Self::CollectionFailed),
-            _ => Err("invalid value".into()),
-        }
-    }
-}
-impl ::std::convert::TryFrom<&str> for FailureCode {
-    type Error = self::error::ConversionError;
-    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
-impl ::std::convert::TryFrom<::std::string::String> for FailureCode {
-    type Error = self::error::ConversionError;
-    fn try_from(
-        value: ::std::string::String,
-    ) -> ::std::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
-#[doc = "`ReportRequest`"]
-#[derive(
-    :: serde :: Deserialize,
-    :: serde :: Serialize,
-    Clone,
-    Debug,
-    PartialEq,
-    Eq,
-    schemars :: JsonSchema,
-)]
-#[serde(deny_unknown_fields)]
-pub struct ReportRequest {
-    #[serde(rename = "wireVersion")]
-    pub wire_version: u8,
-    #[serde(rename = "reportId")]
-    pub report_id: ::uuid::Uuid,
-    pub sequence: u64,
-    #[serde(rename = "observedAt")]
-    pub observed_at: i64,
-    pub collection: CollectionDefinition,
-    pub body: ReportBody,
-}
-#[doc = "`ReportStatus`"]
-#[derive(
-    :: serde :: Deserialize,
-    :: serde :: Serialize,
-    Clone,
-    Debug,
-    PartialEq,
-    Eq,
-    schemars :: JsonSchema,
-)]
-#[serde(deny_unknown_fields)]
-pub struct ReportStatus {
-    pub ack: ReportAck,
-    pub observation: ObservationStatus,
-    pub projection: ProjectionStatus,
-}
-#[doc = "`ObservationStatus`"]
-#[derive(
-    :: serde :: Deserialize,
-    :: serde :: Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
-    schemars :: JsonSchema,
-)]
-pub enum ObservationStatus {
-    #[serde(rename = "pending")]
-    Pending,
-    #[serde(rename = "snapshot")]
-    Snapshot,
-    #[serde(rename = "needSnapshotPartial")]
-    NeedSnapshotPartial,
-    #[serde(rename = "needSnapshotCollectionFailed")]
-    NeedSnapshotCollectionFailed,
-    #[serde(rename = "stale")]
-    Stale,
-}
-impl ::std::fmt::Display for ObservationStatus {
-    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
-        match *self {
-            Self::Pending => f.write_str("pending"),
-            Self::Snapshot => f.write_str("snapshot"),
-            Self::NeedSnapshotPartial => f.write_str("needSnapshotPartial"),
-            Self::NeedSnapshotCollectionFailed => f.write_str("needSnapshotCollectionFailed"),
-            Self::Stale => f.write_str("stale"),
-        }
-    }
-}
-impl ::std::str::FromStr for ObservationStatus {
-    type Err = self::error::ConversionError;
-    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-        match value {
-            "pending" => Ok(Self::Pending),
-            "snapshot" => Ok(Self::Snapshot),
-            "needSnapshotPartial" => Ok(Self::NeedSnapshotPartial),
-            "needSnapshotCollectionFailed" => Ok(Self::NeedSnapshotCollectionFailed),
-            "stale" => Ok(Self::Stale),
-            _ => Err("invalid value".into()),
-        }
-    }
-}
-impl ::std::convert::TryFrom<&str> for ObservationStatus {
-    type Error = self::error::ConversionError;
-    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
-impl ::std::convert::TryFrom<::std::string::String> for ObservationStatus {
+impl ::std::convert::TryFrom<::std::string::String> for Platform {
     type Error = self::error::ConversionError;
     fn try_from(
         value: ::std::string::String,
@@ -1012,7 +1017,68 @@ impl ::std::convert::TryFrom<::std::string::String> for ProjectionStatus {
         value.parse()
     }
 }
-#[doc = "`ErrorCode`"]
+#[doc = "`ReportAck`"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Debug,
+    PartialEq,
+    Eq,
+    schemars :: JsonSchema,
+)]
+#[serde(deny_unknown_fields)]
+pub struct ReportAck {
+    #[serde(rename = "wireVersion")]
+    pub wire_version: u8,
+    #[serde(rename = "reportId")]
+    pub report_id: ::uuid::Uuid,
+    #[serde(rename = "receivedAt")]
+    pub received_at: i64,
+    pub intake: IntakeStatus,
+}
+#[doc = "`ReportBody`"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Debug,
+    PartialEq,
+    Eq,
+    schemars :: JsonSchema,
+)]
+#[serde(tag = "kind", deny_unknown_fields)]
+pub enum ReportBody {
+    #[serde(rename = "snapshot")]
+    Snapshot { values: ::std::vec::Vec<FieldValue> },
+    #[serde(rename = "partial")]
+    Partial { values: ::std::vec::Vec<FieldValue> },
+    #[serde(rename = "failed")]
+    Failed { code: FailureCode },
+}
+#[doc = "`ReportRequest`"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Debug,
+    PartialEq,
+    Eq,
+    schemars :: JsonSchema,
+)]
+#[serde(deny_unknown_fields)]
+pub struct ReportRequest {
+    #[serde(rename = "wireVersion")]
+    pub wire_version: u8,
+    #[serde(rename = "reportId")]
+    pub report_id: ::uuid::Uuid,
+    pub sequence: u64,
+    #[serde(rename = "observedAt")]
+    pub observed_at: i64,
+    pub collection: CollectionDefinition,
+    pub body: ReportBody,
+}
+#[doc = "`ReportSource`"]
 #[derive(
     :: serde :: Deserialize,
     :: serde :: Serialize,
@@ -1026,85 +1092,105 @@ impl ::std::convert::TryFrom<::std::string::String> for ProjectionStatus {
     PartialOrd,
     schemars :: JsonSchema,
 )]
-pub enum ErrorCode {
-    #[serde(rename = "malformed_request")]
-    MalformedRequest,
-    #[serde(rename = "unsupported_wire")]
-    UnsupportedWire,
-    #[serde(rename = "unsupported_capability")]
-    UnsupportedCapability,
-    #[serde(rename = "invalid_identity")]
-    InvalidIdentity,
-    #[serde(rename = "report_not_found")]
-    ReportNotFound,
-    #[serde(rename = "operation_conflict")]
-    OperationConflict,
-    #[serde(rename = "operation_unknown")]
-    OperationUnknown,
-    #[serde(rename = "service_unavailable")]
-    ServiceUnavailable,
-    #[serde(rename = "permission_denied")]
-    PermissionDenied,
-    #[serde(rename = "task_not_found")]
-    TaskNotFound,
-    #[serde(rename = "range_not_satisfiable")]
-    RangeNotSatisfiable,
-    #[serde(rename = "credential_revoked")]
-    CredentialRevoked,
-    #[serde(rename = "certificate_expired")]
-    CertificateExpired,
-    #[serde(rename = "credential_retired")]
-    CredentialRetired,
+pub enum ReportSource {
+    #[serde(rename = "agent.builtin")]
+    AgentBuiltin,
 }
-impl ::std::fmt::Display for ErrorCode {
+impl ::std::fmt::Display for ReportSource {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
-            Self::MalformedRequest => f.write_str("malformed_request"),
-            Self::UnsupportedWire => f.write_str("unsupported_wire"),
-            Self::UnsupportedCapability => f.write_str("unsupported_capability"),
-            Self::InvalidIdentity => f.write_str("invalid_identity"),
-            Self::ReportNotFound => f.write_str("report_not_found"),
-            Self::OperationConflict => f.write_str("operation_conflict"),
-            Self::OperationUnknown => f.write_str("operation_unknown"),
-            Self::ServiceUnavailable => f.write_str("service_unavailable"),
-            Self::PermissionDenied => f.write_str("permission_denied"),
-            Self::TaskNotFound => f.write_str("task_not_found"),
-            Self::RangeNotSatisfiable => f.write_str("range_not_satisfiable"),
-            Self::CredentialRevoked => f.write_str("credential_revoked"),
-            Self::CertificateExpired => f.write_str("certificate_expired"),
-            Self::CredentialRetired => f.write_str("credential_retired"),
+            Self::AgentBuiltin => f.write_str("agent.builtin"),
         }
     }
 }
-impl ::std::str::FromStr for ErrorCode {
+impl ::std::str::FromStr for ReportSource {
     type Err = self::error::ConversionError;
     fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
         match value {
-            "malformed_request" => Ok(Self::MalformedRequest),
-            "unsupported_wire" => Ok(Self::UnsupportedWire),
-            "unsupported_capability" => Ok(Self::UnsupportedCapability),
-            "invalid_identity" => Ok(Self::InvalidIdentity),
-            "report_not_found" => Ok(Self::ReportNotFound),
-            "operation_conflict" => Ok(Self::OperationConflict),
-            "operation_unknown" => Ok(Self::OperationUnknown),
-            "service_unavailable" => Ok(Self::ServiceUnavailable),
-            "permission_denied" => Ok(Self::PermissionDenied),
-            "task_not_found" => Ok(Self::TaskNotFound),
-            "range_not_satisfiable" => Ok(Self::RangeNotSatisfiable),
-            "credential_revoked" => Ok(Self::CredentialRevoked),
-            "certificate_expired" => Ok(Self::CertificateExpired),
-            "credential_retired" => Ok(Self::CredentialRetired),
+            "agent.builtin" => Ok(Self::AgentBuiltin),
             _ => Err("invalid value".into()),
         }
     }
 }
-impl ::std::convert::TryFrom<&str> for ErrorCode {
+impl ::std::convert::TryFrom<&str> for ReportSource {
     type Error = self::error::ConversionError;
     fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
         value.parse()
     }
 }
-impl ::std::convert::TryFrom<::std::string::String> for ErrorCode {
+impl ::std::convert::TryFrom<::std::string::String> for ReportSource {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+#[doc = "`ReportStatus`"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Debug,
+    PartialEq,
+    Eq,
+    schemars :: JsonSchema,
+)]
+#[serde(deny_unknown_fields)]
+pub struct ReportStatus {
+    pub ack: ReportAck,
+    pub observation: ObservationStatus,
+    pub projection: ProjectionStatus,
+}
+#[doc = "`RunCancellation`"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+    schemars :: JsonSchema,
+)]
+pub enum RunCancellation {
+    #[serde(rename = "none")]
+    None,
+    #[serde(rename = "requested")]
+    Requested,
+    #[serde(rename = "confirmed")]
+    Confirmed,
+}
+impl ::std::fmt::Display for RunCancellation {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::None => f.write_str("none"),
+            Self::Requested => f.write_str("requested"),
+            Self::Confirmed => f.write_str("confirmed"),
+        }
+    }
+}
+impl ::std::str::FromStr for RunCancellation {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "none" => Ok(Self::None),
+            "requested" => Ok(Self::Requested),
+            "confirmed" => Ok(Self::Confirmed),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for RunCancellation {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for RunCancellation {
     type Error = self::error::ConversionError;
     fn try_from(
         value: ::std::string::String,
@@ -1130,23 +1216,18 @@ pub enum Scalar {
     Integer(i64),
     #[serde(rename = "number")]
     Number(crate::Number),
-    #[serde(rename = "boolean")]
-    Boolean(bool),
-    #[serde(rename = "time")]
-    Time(i64),
     #[serde(rename = "array")]
     Array(::std::vec::Vec<Scalar>),
     #[serde(rename = "object")]
     Object(::std::collections::BTreeMap<::std::string::String, Scalar>),
+    #[serde(rename = "boolean")]
+    Boolean(bool),
+    #[serde(rename = "time")]
+    Time(i64),
 }
 impl ::std::convert::From<crate::Number> for Scalar {
     fn from(value: crate::Number) -> Self {
         Self::Number(value)
-    }
-}
-impl ::std::convert::From<bool> for Scalar {
-    fn from(value: bool) -> Self {
-        Self::Boolean(value)
     }
 }
 impl ::std::convert::From<::std::vec::Vec<Scalar>> for Scalar {
@@ -1159,269 +1240,9 @@ impl ::std::convert::From<::std::collections::BTreeMap<::std::string::String, Sc
         Self::Object(value)
     }
 }
-#[doc = "`ScriptActor`"]
-#[derive(
-    :: serde :: Deserialize,
-    :: serde :: Serialize,
-    Clone,
-    Debug,
-    PartialEq,
-    Eq,
-    schemars :: JsonSchema,
-)]
-#[serde(deny_unknown_fields)]
-pub struct ScriptActor {
-    #[serde(rename = "tenantId")]
-    pub tenant_id: ::uuid::Uuid,
-    #[serde(rename = "instanceId")]
-    pub instance_id: ::uuid::Uuid,
-    #[serde(rename = "principalId")]
-    pub principal_id: ::uuid::Uuid,
-}
-#[doc = "`ScriptAuthorization`"]
-#[derive(
-    :: serde :: Deserialize,
-    :: serde :: Serialize,
-    Clone,
-    Debug,
-    PartialEq,
-    Eq,
-    schemars :: JsonSchema,
-)]
-#[serde(tag = "kind", deny_unknown_fields)]
-pub enum ScriptAuthorization {
-    #[serde(rename = "policy")]
-    Policy {
-        #[serde(rename = "policyId")]
-        policy_id: ::uuid::Uuid,
-        #[serde(rename = "policyVersion")]
-        policy_version: ::uuid::Uuid,
-    },
-    #[serde(rename = "remote_operation")]
-    RemoteOperation {
-        #[serde(rename = "operationId")]
-        operation_id: ::uuid::Uuid,
-    },
-    #[serde(rename = "self_service")]
-    SelfService {
-        #[serde(rename = "requestId")]
-        request_id: ::uuid::Uuid,
-        actor: ScriptActor,
-        source: ScriptCaller,
-        #[serde(rename = "policyId")]
-        policy_id: ::uuid::Uuid,
-        #[serde(rename = "policyRevision")]
-        policy_revision: u64,
-        #[serde(rename = "policyVersion")]
-        policy_version: ::uuid::Uuid,
-        #[serde(rename = "allowAi")]
-        allow_ai: bool,
-        #[serde(rename = "riskLevel")]
-        risk_level: u8,
-        confirmed: bool,
-    },
-}
-#[doc = "`ScriptCaller`"]
-#[derive(
-    :: serde :: Deserialize,
-    :: serde :: Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
-    schemars :: JsonSchema,
-)]
-pub enum ScriptCaller {
-    #[serde(rename = "human")]
-    Human,
-    #[serde(rename = "ai")]
-    Ai,
-}
-impl ::std::fmt::Display for ScriptCaller {
-    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
-        match *self {
-            Self::Human => f.write_str("human"),
-            Self::Ai => f.write_str("ai"),
-        }
-    }
-}
-impl ::std::str::FromStr for ScriptCaller {
-    type Err = self::error::ConversionError;
-    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-        match value {
-            "human" => Ok(Self::Human),
-            "ai" => Ok(Self::Ai),
-            _ => Err("invalid value".into()),
-        }
-    }
-}
-impl ::std::convert::TryFrom<&str> for ScriptCaller {
-    type Error = self::error::ConversionError;
-    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
-impl ::std::convert::TryFrom<::std::string::String> for ScriptCaller {
-    type Error = self::error::ConversionError;
-    fn try_from(
-        value: ::std::string::String,
-    ) -> ::std::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
-#[doc = "`ScriptCancellation`"]
-#[derive(
-    :: serde :: Deserialize,
-    :: serde :: Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
-    schemars :: JsonSchema,
-)]
-pub enum ScriptCancellation {
-    #[serde(rename = "none")]
-    None,
-    #[serde(rename = "requested")]
-    Requested,
-    #[serde(rename = "confirmed")]
-    Confirmed,
-}
-impl ::std::fmt::Display for ScriptCancellation {
-    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
-        match *self {
-            Self::None => f.write_str("none"),
-            Self::Requested => f.write_str("requested"),
-            Self::Confirmed => f.write_str("confirmed"),
-        }
-    }
-}
-impl ::std::str::FromStr for ScriptCancellation {
-    type Err = self::error::ConversionError;
-    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-        match value {
-            "none" => Ok(Self::None),
-            "requested" => Ok(Self::Requested),
-            "confirmed" => Ok(Self::Confirmed),
-            _ => Err("invalid value".into()),
-        }
-    }
-}
-impl ::std::convert::TryFrom<&str> for ScriptCancellation {
-    type Error = self::error::ConversionError;
-    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
-impl ::std::convert::TryFrom<::std::string::String> for ScriptCancellation {
-    type Error = self::error::ConversionError;
-    fn try_from(
-        value: ::std::string::String,
-    ) -> ::std::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
-#[doc = "`ScriptDelivery`"]
-#[derive(
-    :: serde :: Deserialize,
-    :: serde :: Serialize,
-    Clone,
-    Debug,
-    PartialEq,
-    Eq,
-    schemars :: JsonSchema,
-)]
-#[serde(tag = "kind", deny_unknown_fields)]
-pub enum ScriptDelivery {
-    #[serde(rename = "queued")]
-    Queued,
-    #[serde(rename = "claimed")]
-    Claimed {
-        attempt: ::uuid::Uuid,
-        #[serde(rename = "leaseUntil")]
-        lease_until: i64,
-    },
-    #[serde(rename = "received")]
-    Received {
-        attempt: ::uuid::Uuid,
-        #[serde(rename = "leaseUntil")]
-        lease_until: i64,
-    },
-}
-#[doc = "`ScriptExecution`"]
-#[derive(
-    :: serde :: Deserialize,
-    :: serde :: Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
-    schemars :: JsonSchema,
-)]
-pub enum ScriptExecution {
-    #[serde(rename = "not_started")]
-    NotStarted,
-    #[serde(rename = "running")]
-    Running,
-    #[serde(rename = "succeeded")]
-    Succeeded,
-    #[serde(rename = "failed")]
-    Failed,
-    #[serde(rename = "waiting_reboot")]
-    WaitingReboot,
-    #[serde(rename = "unknown")]
-    Unknown,
-}
-impl ::std::fmt::Display for ScriptExecution {
-    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
-        match *self {
-            Self::NotStarted => f.write_str("not_started"),
-            Self::Running => f.write_str("running"),
-            Self::Succeeded => f.write_str("succeeded"),
-            Self::Failed => f.write_str("failed"),
-            Self::WaitingReboot => f.write_str("waiting_reboot"),
-            Self::Unknown => f.write_str("unknown"),
-        }
-    }
-}
-impl ::std::str::FromStr for ScriptExecution {
-    type Err = self::error::ConversionError;
-    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-        match value {
-            "not_started" => Ok(Self::NotStarted),
-            "running" => Ok(Self::Running),
-            "succeeded" => Ok(Self::Succeeded),
-            "failed" => Ok(Self::Failed),
-            "waiting_reboot" => Ok(Self::WaitingReboot),
-            "unknown" => Ok(Self::Unknown),
-            _ => Err("invalid value".into()),
-        }
-    }
-}
-impl ::std::convert::TryFrom<&str> for ScriptExecution {
-    type Error = self::error::ConversionError;
-    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
-impl ::std::convert::TryFrom<::std::string::String> for ScriptExecution {
-    type Error = self::error::ConversionError;
-    fn try_from(
-        value: ::std::string::String,
-    ) -> ::std::result::Result<Self, self::error::ConversionError> {
-        value.parse()
+impl ::std::convert::From<bool> for Scalar {
+    fn from(value: bool) -> Self {
+        Self::Boolean(value)
     }
 }
 #[doc = "`ScriptOutputReference`"]
@@ -1461,22 +1282,6 @@ impl ::std::convert::From<::serde_json::Value> for ScriptParameterSource {
         Self::Fixed(value)
     }
 }
-#[doc = "`ScriptResource`"]
-#[derive(
-    :: serde :: Deserialize,
-    :: serde :: Serialize,
-    Clone,
-    Debug,
-    PartialEq,
-    Eq,
-    schemars :: JsonSchema,
-)]
-#[serde(deny_unknown_fields)]
-pub struct ScriptResource {
-    pub id: ::std::string::String,
-    pub version: ::std::string::String,
-    pub variant: ::std::string::String,
-}
 #[doc = "`ScriptRunResult`"]
 #[derive(
     :: serde :: Deserialize,
@@ -1512,25 +1317,6 @@ pub struct ScriptRunResult {
     pub diagnostics: TaskDiagnostics,
     pub trusted: bool,
 }
-#[doc = "`ScriptRunState`"]
-#[derive(
-    :: serde :: Deserialize,
-    :: serde :: Serialize,
-    Clone,
-    Debug,
-    PartialEq,
-    Eq,
-    schemars :: JsonSchema,
-)]
-#[serde(deny_unknown_fields)]
-pub struct ScriptRunState {
-    pub delivery: ScriptDelivery,
-    pub execution: ScriptExecution,
-    pub cancellation: ScriptCancellation,
-    pub deadline: i64,
-    #[serde(rename = "startedAt")]
-    pub started_at: ::std::option::Option<i64>,
-}
 #[doc = "`SelfServiceAccepted`"]
 #[derive(
     :: serde :: Deserialize,
@@ -1554,6 +1340,58 @@ pub struct SelfServiceAccepted {
     #[serde(rename = "policyVersion")]
     pub policy_version: ::uuid::Uuid,
 }
+#[doc = "`SelfServiceCaller`"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+    schemars :: JsonSchema,
+)]
+pub enum SelfServiceCaller {
+    #[serde(rename = "human")]
+    Human,
+    #[serde(rename = "ai")]
+    Ai,
+}
+impl ::std::fmt::Display for SelfServiceCaller {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Human => f.write_str("human"),
+            Self::Ai => f.write_str("ai"),
+        }
+    }
+}
+impl ::std::str::FromStr for SelfServiceCaller {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "human" => Ok(Self::Human),
+            "ai" => Ok(Self::Ai),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for SelfServiceCaller {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for SelfServiceCaller {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
 #[doc = "`SelfServiceDirectory`"]
 #[derive(
     :: serde :: Deserialize,
@@ -1566,7 +1404,7 @@ pub struct SelfServiceAccepted {
 )]
 #[serde(deny_unknown_fields)]
 pub struct SelfServiceDirectory {
-    pub source: ScriptCaller,
+    pub source: SelfServiceCaller,
     #[serde()]
     pub after: ::std::option::Option<::uuid::Uuid>,
 }
@@ -1590,12 +1428,7 @@ pub struct SelfServiceDirectoryItem {
     pub policy_version: ::uuid::Uuid,
     #[serde(rename = "selfService")]
     pub self_service: SelfServiceMetadata,
-    pub resource: ScriptResource,
-    #[serde(rename = "parameterSources")]
-    pub parameter_sources:
-        ::std::collections::BTreeMap<::std::string::String, ScriptParameterSource>,
-    #[serde(rename = "parameterSchema")]
-    pub parameter_schema: ::serde_json::Value,
+    pub task: SelfServiceTask,
 }
 #[doc = "`SelfServiceDirectoryResponse`"]
 #[derive(
@@ -1635,7 +1468,7 @@ pub struct SelfServiceInvoke {
     pub policy_revision: u64,
     #[serde(rename = "policyVersion")]
     pub policy_version: ::uuid::Uuid,
-    pub source: ScriptCaller,
+    pub source: SelfServiceCaller,
     pub confirmed: bool,
     pub parameters: ::std::collections::BTreeMap<::std::string::String, ::serde_json::Value>,
 }
@@ -1665,6 +1498,83 @@ pub struct SelfServiceMetadata {
     #[serde(rename = "riskLevel")]
     pub risk_level: u8,
 }
+#[doc = "`SelfServiceResult`"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Debug,
+    PartialEq,
+    Eq,
+    schemars :: JsonSchema,
+)]
+#[serde(tag = "kind", deny_unknown_fields)]
+pub enum SelfServiceResult {
+    #[serde(rename = "script")]
+    Script { evidence: ScriptRunResult },
+    #[serde(rename = "software")]
+    Software { effect: SelfServiceSoftwareEffect },
+}
+#[doc = "`SelfServiceSoftwareEffect`"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+    schemars :: JsonSchema,
+)]
+pub enum SelfServiceSoftwareEffect {
+    #[serde(rename = "verified")]
+    Verified,
+    #[serde(rename = "failed")]
+    Failed,
+    #[serde(rename = "waiting_reboot")]
+    WaitingReboot,
+    #[serde(rename = "unknown")]
+    Unknown,
+}
+impl ::std::fmt::Display for SelfServiceSoftwareEffect {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Verified => f.write_str("verified"),
+            Self::Failed => f.write_str("failed"),
+            Self::WaitingReboot => f.write_str("waiting_reboot"),
+            Self::Unknown => f.write_str("unknown"),
+        }
+    }
+}
+impl ::std::str::FromStr for SelfServiceSoftwareEffect {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "verified" => Ok(Self::Verified),
+            "failed" => Ok(Self::Failed),
+            "waiting_reboot" => Ok(Self::WaitingReboot),
+            "unknown" => Ok(Self::Unknown),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for SelfServiceSoftwareEffect {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for SelfServiceSoftwareEffect {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
 #[doc = "`SelfServiceStatus`"]
 #[derive(
     :: serde :: Deserialize,
@@ -1683,12 +1593,84 @@ pub struct SelfServiceStatus {
     pub run_id: ::uuid::Uuid,
     #[serde(rename = "attemptId")]
     pub attempt_id: ::std::option::Option<::uuid::Uuid>,
-    pub state: ScriptRunState,
+    pub state: TaskRunState,
     #[serde(rename = "availableAt")]
     pub available_at: i64,
     pub deadline: i64,
     #[serde(deserialize_with = "::std::option::Option::deserialize")]
-    pub result: ::std::option::Option<ScriptRunResult>,
+    pub result: ::std::option::Option<SelfServiceResult>,
+}
+#[doc = "`SelfServiceSubject`"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Debug,
+    PartialEq,
+    Eq,
+    schemars :: JsonSchema,
+)]
+#[serde(tag = "kind", content = "user")]
+pub enum SelfServiceSubject {
+    #[serde(rename = "device")]
+    Device,
+    #[serde(rename = "user")]
+    User(SelfServiceUser),
+}
+impl ::std::convert::From<SelfServiceUser> for SelfServiceSubject {
+    fn from(value: SelfServiceUser) -> Self {
+        Self::User(value)
+    }
+}
+#[doc = "`SelfServiceTask`"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Debug,
+    PartialEq,
+    Eq,
+    schemars :: JsonSchema,
+)]
+#[serde(tag = "kind", deny_unknown_fields)]
+pub enum SelfServiceTask {
+    #[serde(rename = "script")]
+    Script {
+        resource: TaskResource,
+        #[serde(rename = "runAs")]
+        run_as: ExecutionIdentity,
+        #[serde(rename = "parameterSources")]
+        parameter_sources:
+            ::std::collections::BTreeMap<::std::string::String, ScriptParameterSource>,
+        #[serde(rename = "parameterSchema")]
+        parameter_schema: ::serde_json::Value,
+    },
+    #[serde(rename = "software")]
+    Software {
+        resource: TaskResource,
+        #[serde(rename = "runAs")]
+        run_as: ExecutionIdentity,
+        target: SoftwareExecutionTarget,
+    },
+}
+#[doc = "`SelfServiceUser`"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Debug,
+    PartialEq,
+    Eq,
+    schemars :: JsonSchema,
+)]
+#[serde(deny_unknown_fields)]
+pub struct SelfServiceUser {
+    #[serde(rename = "tenantId")]
+    pub tenant_id: ::uuid::Uuid,
+    #[serde(rename = "instanceId")]
+    pub instance_id: ::uuid::Uuid,
+    #[serde(rename = "principalId")]
+    pub principal_id: ::uuid::Uuid,
 }
 #[doc = "`Sensitivity`"]
 #[derive(
@@ -1810,6 +1792,8 @@ pub struct SoftwareExecutionContext {
     pub os_version: [u16; 4usize],
     #[serde(rename = "systemBroker")]
     pub system_broker: bool,
+    #[serde(rename = "userHelper")]
+    pub user_helper: bool,
     #[serde(
         rename = "interactiveUser",
         deserialize_with = "::std::option::Option::deserialize"
@@ -3043,6 +3027,7 @@ pub struct SoftwareTaskSpec {
     pub expires_at: i64,
     #[serde(rename = "executionContext")]
     pub execution_context: SoftwareExecutionContext,
+    pub authorization: TaskAuthorization,
     pub steps: ::std::vec::Vec<SoftwareTaskStep>,
     #[serde(rename = "definitionDigest")]
     pub definition_digest: [u8; 32usize],
@@ -3140,6 +3125,74 @@ pub enum SoftwareTaskUser {
     #[serde(rename = "exact")]
     Exact(::std::string::String),
 }
+#[doc = "`Source`"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+    schemars :: JsonSchema,
+)]
+pub enum Source {
+    #[serde(rename = "agent.script")]
+    AgentScript,
+    #[serde(rename = "agent.osquery")]
+    AgentOsquery,
+    #[serde(rename = "mdm.apple")]
+    MdmApple,
+    #[serde(rename = "agent.builtin")]
+    AgentBuiltin,
+    #[serde(rename = "manual")]
+    Manual,
+    #[serde(rename = "mdm.windows")]
+    MdmWindows,
+}
+impl ::std::fmt::Display for Source {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::AgentScript => f.write_str("agent.script"),
+            Self::AgentOsquery => f.write_str("agent.osquery"),
+            Self::MdmApple => f.write_str("mdm.apple"),
+            Self::AgentBuiltin => f.write_str("agent.builtin"),
+            Self::Manual => f.write_str("manual"),
+            Self::MdmWindows => f.write_str("mdm.windows"),
+        }
+    }
+}
+impl ::std::str::FromStr for Source {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "agent.script" => Ok(Self::AgentScript),
+            "agent.osquery" => Ok(Self::AgentOsquery),
+            "mdm.apple" => Ok(Self::MdmApple),
+            "agent.builtin" => Ok(Self::AgentBuiltin),
+            "manual" => Ok(Self::Manual),
+            "mdm.windows" => Ok(Self::MdmWindows),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for Source {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for Source {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
 #[doc = "`TaskArchitecture`"]
 #[derive(
     :: serde :: Deserialize,
@@ -3191,6 +3244,49 @@ impl ::std::convert::TryFrom<::std::string::String> for TaskArchitecture {
     ) -> ::std::result::Result<Self, self::error::ConversionError> {
         value.parse()
     }
+}
+#[doc = "`TaskAuthorization`"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Debug,
+    PartialEq,
+    Eq,
+    schemars :: JsonSchema,
+)]
+#[serde(tag = "kind", deny_unknown_fields)]
+pub enum TaskAuthorization {
+    #[serde(rename = "policy")]
+    Policy {
+        #[serde(rename = "policyId")]
+        policy_id: ::uuid::Uuid,
+        #[serde(rename = "policyVersion")]
+        policy_version: ::uuid::Uuid,
+    },
+    #[serde(rename = "remote_operation")]
+    RemoteOperation {
+        #[serde(rename = "operationId")]
+        operation_id: ::uuid::Uuid,
+    },
+    #[serde(rename = "self_service")]
+    SelfService {
+        #[serde(rename = "requestId")]
+        request_id: ::uuid::Uuid,
+        subject: SelfServiceSubject,
+        source: SelfServiceCaller,
+        #[serde(rename = "policyId")]
+        policy_id: ::uuid::Uuid,
+        #[serde(rename = "policyRevision")]
+        policy_revision: u64,
+        #[serde(rename = "policyVersion")]
+        policy_version: ::uuid::Uuid,
+        #[serde(rename = "allowAi")]
+        allow_ai: bool,
+        #[serde(rename = "riskLevel")]
+        risk_level: u8,
+        confirmed: bool,
+    },
 }
 #[doc = "`TaskCancellation`"]
 #[derive(
@@ -3262,6 +3358,33 @@ pub struct TaskContent {
     pub length: u64,
     pub sha256: [u8; 32usize],
 }
+#[doc = "`TaskDelivery`"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Debug,
+    PartialEq,
+    Eq,
+    schemars :: JsonSchema,
+)]
+#[serde(tag = "kind", deny_unknown_fields)]
+pub enum TaskDelivery {
+    #[serde(rename = "queued")]
+    Queued,
+    #[serde(rename = "claimed")]
+    Claimed {
+        attempt: ::uuid::Uuid,
+        #[serde(rename = "leaseUntil")]
+        lease_until: i64,
+    },
+    #[serde(rename = "received")]
+    Received {
+        attempt: ::uuid::Uuid,
+        #[serde(rename = "leaseUntil")]
+        lease_until: i64,
+    },
+}
 #[doc = "`TaskDiagnostics`"]
 #[derive(
     :: serde :: Deserialize,
@@ -3303,14 +3426,14 @@ pub enum TaskEvent {
     Cancelled,
     #[serde(rename = "result")]
     Result(TaskResult),
-    #[serde(rename = "software_result")]
-    SoftwareResult(SoftwareTaskResult),
-    #[serde(rename = "enrollment_result")]
-    EnrollmentResult { outcome: EnrollmentEntryOutcome },
     #[serde(rename = "output_chunk")]
     OutputChunk(OutputChunk),
     #[serde(rename = "chunked_result")]
     ChunkedResult(ChunkedTaskResult),
+    #[serde(rename = "software_result")]
+    SoftwareResult(SoftwareTaskResult),
+    #[serde(rename = "enrollment_result")]
+    EnrollmentResult { outcome: EnrollmentEntryOutcome },
 }
 #[doc = "`TaskEventAck`"]
 #[derive(
@@ -3353,6 +3476,74 @@ pub struct TaskEventRequest {
     pub event: TaskEvent,
     #[serde(rename = "executionContext")]
     pub execution_context: SoftwareExecutionContext,
+}
+#[doc = "`TaskExecution`"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+    schemars :: JsonSchema,
+)]
+pub enum TaskExecution {
+    #[serde(rename = "not_started")]
+    NotStarted,
+    #[serde(rename = "running")]
+    Running,
+    #[serde(rename = "succeeded")]
+    Succeeded,
+    #[serde(rename = "failed")]
+    Failed,
+    #[serde(rename = "waiting_reboot")]
+    WaitingReboot,
+    #[serde(rename = "unknown")]
+    Unknown,
+}
+impl ::std::fmt::Display for TaskExecution {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::NotStarted => f.write_str("not_started"),
+            Self::Running => f.write_str("running"),
+            Self::Succeeded => f.write_str("succeeded"),
+            Self::Failed => f.write_str("failed"),
+            Self::WaitingReboot => f.write_str("waiting_reboot"),
+            Self::Unknown => f.write_str("unknown"),
+        }
+    }
+}
+impl ::std::str::FromStr for TaskExecution {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "not_started" => Ok(Self::NotStarted),
+            "running" => Ok(Self::Running),
+            "succeeded" => Ok(Self::Succeeded),
+            "failed" => Ok(Self::Failed),
+            "waiting_reboot" => Ok(Self::WaitingReboot),
+            "unknown" => Ok(Self::Unknown),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for TaskExecution {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for TaskExecution {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
 }
 #[doc = "`TaskFailure`"]
 #[derive(
@@ -3557,6 +3748,22 @@ impl ::std::convert::TryFrom<::std::string::String> for TaskPlatform {
         value.parse()
     }
 }
+#[doc = "`TaskResource`"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Debug,
+    PartialEq,
+    Eq,
+    schemars :: JsonSchema,
+)]
+#[serde(deny_unknown_fields)]
+pub struct TaskResource {
+    pub id: ::std::string::String,
+    pub version: ::std::string::String,
+    pub variant: ::std::string::String,
+}
 #[doc = "`TaskResult`"]
 #[derive(
     :: serde :: Deserialize,
@@ -3579,6 +3786,25 @@ pub struct TaskResult {
     pub diagnostics: TaskDiagnostics,
     #[serde(rename = "collectedAt")]
     pub collected_at: i64,
+}
+#[doc = "`TaskRunState`"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Debug,
+    PartialEq,
+    Eq,
+    schemars :: JsonSchema,
+)]
+#[serde(deny_unknown_fields)]
+pub struct TaskRunState {
+    pub delivery: TaskDelivery,
+    pub execution: TaskExecution,
+    pub cancellation: RunCancellation,
+    pub deadline: i64,
+    #[serde(rename = "startedAt")]
+    pub started_at: ::std::option::Option<i64>,
 }
 #[doc = "`TaskSpec`"]
 #[derive(
@@ -3612,8 +3838,8 @@ pub struct TaskSpec {
     pub expires_at: i64,
     #[serde(rename = "resourceDigest")]
     pub resource_digest: [u8; 32usize],
-    pub resource: ScriptResource,
-    pub authorization: ScriptAuthorization,
+    pub resource: TaskResource,
+    pub authorization: TaskAuthorization,
     pub parameters: ::std::collections::BTreeMap<::std::string::String, ::serde_json::Value>,
     pub deadline: i64,
     pub content: TaskContent,
@@ -3624,6 +3850,8 @@ pub struct TaskSpec {
     >,
     #[serde(rename = "runAs")]
     pub run_as: ExecutionIdentity,
+    #[serde(rename = "executionTarget")]
+    pub execution_target: SoftwareExecutionTarget,
     pub arguments: ::std::vec::Vec<::std::string::String>,
     pub environment: ::std::collections::BTreeMap<::std::string::String, ::std::string::String>,
     #[serde(rename = "timeoutSeconds")]
@@ -3645,14 +3873,6 @@ pub struct TaskSpec {
 )]
 #[serde(tag = "kind", deny_unknown_fields)]
 pub enum ValueType {
-    #[serde(rename = "integer")]
-    Integer,
-    #[serde(rename = "number")]
-    Number,
-    #[serde(rename = "boolean")]
-    Boolean,
-    #[serde(rename = "time")]
-    Time,
     #[serde(rename = "string")]
     String {
         #[serde(rename = "maxLength")]
@@ -3664,6 +3884,14 @@ pub enum ValueType {
     Enum {
         values: ::std::vec::Vec<::std::string::String>,
     },
+    #[serde(rename = "integer")]
+    Integer,
+    #[serde(rename = "number")]
+    Number,
+    #[serde(rename = "boolean")]
+    Boolean,
+    #[serde(rename = "time")]
+    Time,
     #[serde(rename = "array")]
     Array {
         items: ::std::boxed::Box<ValueType>,
@@ -3674,21 +3902,6 @@ pub enum ValueType {
     Object {
         properties: ::std::collections::BTreeMap<::std::string::String, ValueType>,
     },
-}
-#[doc = "`ValuesBody`"]
-#[derive(
-    :: serde :: Deserialize,
-    :: serde :: Serialize,
-    Clone,
-    Debug,
-    PartialEq,
-    Eq,
-    schemars :: JsonSchema,
-)]
-#[serde(deny_unknown_fields)]
-pub struct ValuesBody {
-    pub kind: ::std::string::String,
-    pub values: ::std::vec::Vec<FieldValue>,
 }
 #[doc = " Error types."]
 pub mod error {
@@ -3719,5 +3932,5 @@ pub mod error {
 pub const API_VERSION: u8 = 1;
 pub const WIRE_VERSION: u8 = 1;
 pub const SCHEMA_FINGERPRINT: &str =
-    "3dd22024a26099bcaf9f3755544c1b9c0a0eeb739150f4244036244b63ed9ee6";
+    "a3493c8e185d8f8a53c4b899a4bc82ae64dcc72e08be9ba23b3ff1021336f811";
 pub const SCHEMA_MANIFEST: &str = include_str!("../schema/runtime/agent-v1.schema-manifest.json");

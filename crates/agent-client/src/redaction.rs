@@ -7,7 +7,7 @@ pub struct CredentialRedactor {
 }
 impl CredentialRedactor {
     /// Retain native employee credentials solely for output protection, including delayed results.
-    pub fn protect_employee(
+    pub fn protect_user_session(
         &mut self,
         value: &std::sync::Arc<zeroize::Zeroizing<String>>,
     ) -> Result<(), Error> {
@@ -50,10 +50,10 @@ mod tests {
             employee: vec![],
         };
         let pending = Arc::new(zeroize::Zeroizing::new("pending-credential".into()));
-        redactor.protect_employee(&pending).unwrap();
+        redactor.protect_user_session(&pending).unwrap();
         for i in 0..300 {
             let current = Arc::new(zeroize::Zeroizing::new(format!("session-{i:04}")));
-            redactor.protect_employee(&current).unwrap();
+            redactor.protect_user_session(&current).unwrap();
             assert_eq!(
                 redactor
                     .redact(&format!("{} {}", pending.as_str(), current.as_str()))
@@ -64,7 +64,7 @@ mod tests {
         }
         drop(pending);
         let current = Arc::new(zeroize::Zeroizing::new("current".into()));
-        redactor.protect_employee(&current).unwrap();
+        redactor.protect_user_session(&current).unwrap();
         assert_eq!(redactor.employee.len(), 1);
     }
 }

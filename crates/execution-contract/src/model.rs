@@ -95,6 +95,8 @@ pub enum BackendTrigger {
     },
     /// Trusted desktop submitted the user's confirmed AI proposal.
     Ai {
+        /// Native owner binding at the original invocation, independent of provider identity.
+        context: crate::NativeContextRef,
         /// Actual native account and login session, supplied by ingress.
         os_session: OsSessionRef,
         /// Native AI connection configuration, not a provider identity grant.

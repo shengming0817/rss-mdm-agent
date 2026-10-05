@@ -63,13 +63,13 @@ const SCHEMAS: &[(&str, &str, &str)] = &[
     ),
     (
         "runtime",
-        "ScriptAuthorization",
-        include_str!("../schema/runtime/script-authorization-v1.schema.json"),
+        "TaskAuthorization",
+        include_str!("../schema/runtime/task-authorization-v1.schema.json"),
     ),
     (
         "runtime",
-        "ScriptResource",
-        include_str!("../schema/runtime/script-resource-v1.schema.json"),
+        "TaskResource",
+        include_str!("../schema/runtime/task-resource-v1.schema.json"),
     ),
     (
         "runtime",
