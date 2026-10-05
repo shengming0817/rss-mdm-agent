@@ -244,7 +244,7 @@ test("lost submit receipt recovers the same Rust attempt and keeps process exit 
     connection.router,
   );
 
-  store = unwrap(openSqliteStore({ path: aiDb, mode: "open" }));
+  store = unwrap(await openSqliteStore({ path: aiDb, mode: "open" }));
   const crashed = unwrap(await store.session(session.namespace));
   const successor = unwrap(
     await store.rebind({

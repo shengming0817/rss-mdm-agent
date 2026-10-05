@@ -1,3 +1,4 @@
+import { processWorkerAdapter } from "../../packages/ai-host/dist/process.js";
 import { fixturePersistence } from "./harness.mjs";
 import { workerRuntime } from "./worker-runtime.mjs";
 import assert from "node:assert/strict";
@@ -30,7 +31,7 @@ const unwrap = (result) => {
   return result.value;
 };
 const connection = (id) => ({
-  schemaVersion: 7,
+  schemaVersion: 8,
   kind: "connection",
   connectionId: id,
   name: id,
@@ -62,14 +63,14 @@ const until = async (action) => {
 test("real Host lazily opens phases, drains accepted work before switching, and replays receipts before opening providers", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "rss-phases-"));
   const store = unwrap(
-    openSqliteStore({ path: join(root, "ai.sqlite"), mode: "create" }),
+    await openSqliteStore({ path: join(root, "ai.sqlite"), mode: "create" }),
   );
   let opened = 0,
     disposed = 0;
   const host = unwrap(
     await createHost({
       credentialPersistence: fixturePersistence(store),
-      workerRuntime,
+      workers: processWorkerAdapter(workerRuntime),
       store,
       launchFences: store,
       delivery: null,
@@ -100,7 +101,7 @@ test("real Host lazily opens phases, drains accepted work before switching, and 
   assert.equal(opened, 0);
   assert.deepEqual(empty.stages, []);
   const command = (id, text = "quick") => ({
-    schemaVersion: 7,
+    schemaVersion: 8,
     kind: "command",
     sessionId: empty.namespace.sessionId,
     commandId: id,
@@ -292,16 +293,22 @@ test("real Host lazily opens phases, drains accepted work before switching, and 
     beforeDelete,
   );
   await suspendNativeCaller(host, {
-    schemaVersion: 7,
+    schemaVersion: 8,
     kind: "userContext",
     user: {
-      schemaVersion: 7,
+      schemaVersion: 8,
       kind: "testUser",
       userId: "alice",
       displayName: "Alice",
       nameKey: "alice",
     },
     generation: "restored-generation",
+    identity: {
+      mode: "device",
+      authorityId: "desktop-test",
+      tenantId: "local-test",
+      principalId: "alice",
+    },
   });
   host.activateCaller(caller);
   const beforeDeletedResume = opened;
@@ -317,12 +324,12 @@ test("real Host lazily opens phases, drains accepted work before switching, and 
 test("switching test users cancels queued model work and keeps the old user's receipts scoped", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "rss-switch-user-"));
   const store = unwrap(
-    openSqliteStore({ path: join(root, "ai.sqlite"), mode: "create" }),
+    await openSqliteStore({ path: join(root, "ai.sqlite"), mode: "create" }),
   );
   const host = unwrap(
     await createHost({
       credentialPersistence: fixturePersistence(store),
-      workerRuntime,
+      workers: processWorkerAdapter(workerRuntime),
       store,
       launchFences: store,
       delivery: null,
@@ -346,7 +353,7 @@ test("switching test users cancels queued model work and keeps the old user's re
   unwrap(await store.saveConnection(caller, connection("one"), null));
   const session = unwrap(await host.createSession(caller, {}, budget()));
   const command = (commandId, text) => ({
-    schemaVersion: 7,
+    schemaVersion: 8,
     kind: "command",
     sessionId: session.namespace.sessionId,
     commandId,
@@ -437,13 +444,13 @@ test("switching test users cancels queued model work and keeps the old user's re
 test("ordinary runtime snapshot cleanup is retained and retried after a failure", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "rss-runtime-cleanup-"));
   const store = unwrap(
-    openSqliteStore({ path: join(root, "ai.sqlite"), mode: "create" }),
+    await openSqliteStore({ path: join(root, "ai.sqlite"), mode: "create" }),
   );
   let attempts = 0;
   const host = unwrap(
     await createHost({
       credentialPersistence: fixturePersistence(store),
-      workerRuntime,
+      workers: processWorkerAdapter(workerRuntime),
       store,
       launchFences: store,
       delivery: null,
@@ -474,7 +481,7 @@ test("ordinary runtime snapshot cleanup is retained and retried after a failure"
     await host.submit(
       caller,
       {
-        schemaVersion: 7,
+        schemaVersion: 8,
         kind: "command",
         sessionId: session.namespace.sessionId,
         commandId: "quick",
@@ -498,7 +505,7 @@ test("ordinary runtime snapshot cleanup is retained and retried after a failure"
 test("saving is independent; explicit testing records success and preserves inputs on rejection", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "rss-connection-probe-"));
   const store = unwrap(
-    openSqliteStore({ path: join(root, "ai.sqlite"), mode: "create" }),
+    await openSqliteStore({ path: join(root, "ai.sqlite"), mode: "create" }),
   );
   let reject = false,
     disposed = 0;
@@ -506,7 +513,7 @@ test("saving is independent; explicit testing records success and preserves inpu
   const host = unwrap(
     await createHost({
       credentialPersistence: fixturePersistence(store),
-      workerRuntime,
+      workers: processWorkerAdapter(workerRuntime),
       store,
       launchFences: store,
       delivery: null,
@@ -587,13 +594,13 @@ test("saving is independent; explicit testing records success and preserves inpu
 test("failed probe disposal leaves worker capacity available and retries cleanup on close", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "rss-probe-disposal-"));
   const store = unwrap(
-    openSqliteStore({ path: join(root, "ai.sqlite"), mode: "create" }),
+    await openSqliteStore({ path: join(root, "ai.sqlite"), mode: "create" }),
   );
   let disposals = 0;
   const host = unwrap(
     await createHost({
       credentialPersistence: fixturePersistence(store),
-      workerRuntime,
+      workers: processWorkerAdapter(workerRuntime),
       store,
       launchFences: store,
       delivery: null,
@@ -643,13 +650,13 @@ test("failed probe disposal leaves worker capacity available and retries cleanup
 test("typed resolver and persistence failures keep closed codes and credential diagnostics", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "rss-closed-errors-"));
   const store = unwrap(
-    openSqliteStore({ path: join(root, "ai.sqlite"), mode: "create" }),
+    await openSqliteStore({ path: join(root, "ai.sqlite"), mode: "create" }),
   );
   const diagnostics = [];
   let resolverFailure = true;
   const host = unwrap(
     await createHost({
-      workerRuntime,
+      workers: processWorkerAdapter(workerRuntime),
       store,
       launchFences: store,
       delivery: null,
@@ -716,14 +723,14 @@ test("top-level close attempts every independent owner and is retryable by its c
 test("application persistence retains ciphertext without decrypting and lets only one competing revision commit", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "rss-connection-persistence-"));
   const store = unwrap(
-    openSqliteStore({ path: join(root, "ai.sqlite"), mode: "create" }),
+    await openSqliteStore({ path: join(root, "ai.sqlite"), mode: "create" }),
   );
   const encrypted = new Uint8Array(32).fill(9);
   let available = true,
     rejectProbe = false;
   const host = unwrap(
     await createHost({
-      workerRuntime,
+      workers: processWorkerAdapter(workerRuntime),
       store,
       launchFences: store,
       delivery: null,
@@ -831,7 +838,7 @@ test("user fence settles persistent offline queues across pages and propagates d
   );
   const root = await mkdtemp(join(tmpdir(), "rss-offline-fence-"));
   const path = join(root, "ai.sqlite");
-  let store = unwrap(openSqliteStore({ path, mode: "create" }));
+  let store = unwrap(await openSqliteStore({ path, mode: "create" }));
   const sessions = ["offline-one", "offline-two"].map((sessionId) => ({
     ...fixtureSession(),
     namespace: { ...caller, sessionId },
@@ -839,7 +846,7 @@ test("user fence settles persistent offline queues across pages and propagates d
   for (const session of sessions) {
     unwrap(await store.create(session));
     const command = {
-      schemaVersion: 7,
+      schemaVersion: 8,
       kind: "command",
       sessionId: session.namespace.sessionId,
       commandId: "queued",
@@ -863,7 +870,7 @@ test("user fence settles persistent offline queues across pages and propagates d
     );
   }
   unwrap(await store.close(budget()));
-  store = unwrap(openSqliteStore({ path, mode: "open" }));
+  store = unwrap(await openSqliteStore({ path, mode: "open" }));
   let available = false,
     opens = 0,
     pages = 0;
@@ -875,7 +882,7 @@ test("user fence settles persistent offline queues across pages and propagates d
   const host = unwrap(
     await createHost({
       credentialPersistence: fixturePersistence(store),
-      workerRuntime,
+      workers: processWorkerAdapter(workerRuntime),
       store,
       launchFences: store,
       delivery: null,
@@ -904,16 +911,22 @@ test("user fence settles persistent offline queues across pages and propagates d
   );
   store.suspend = suspend;
   await suspendNativeCaller(host, {
-    schemaVersion: 7,
+    schemaVersion: 8,
     kind: "userContext",
     user: {
-      schemaVersion: 7,
+      schemaVersion: 8,
       kind: "testUser",
       userId: "alice",
       displayName: "Alice",
       nameKey: "alice",
     },
     generation: "restored-generation",
+    identity: {
+      mode: "device",
+      authorityId: "desktop-test",
+      tenantId: "local-test",
+      principalId: "alice",
+    },
   });
   assert.ok(pages >= 3);
   assert.equal(opens, 0);
@@ -955,12 +968,12 @@ test("verification preserves definite failures and never calls unknown acceptanc
   ]) {
     const root = await mkdtemp(join(tmpdir(), "rss-verification-"));
     const store = unwrap(
-      openSqliteStore({ path: join(root, "ai.sqlite"), mode: "create" }),
+      await openSqliteStore({ path: join(root, "ai.sqlite"), mode: "create" }),
     );
     const host = unwrap(
       await createHost({
         credentialPersistence: fixturePersistence(store),
-        workerRuntime,
+        workers: processWorkerAdapter(workerRuntime),
         store,
         launchFences: store,
         delivery: null,
@@ -1009,12 +1022,12 @@ test("controlled connection verification requires the dedicated harmless tool ca
   ]) {
     const root = await mkdtemp(join(tmpdir(), "rss-tool-probe-"));
     const store = unwrap(
-      openSqliteStore({ path: join(root, "ai.sqlite"), mode: "create" }),
+      await openSqliteStore({ path: join(root, "ai.sqlite"), mode: "create" }),
     );
     const host = unwrap(
       await createHost({
         credentialPersistence: fixturePersistence(store),
-        workerRuntime,
+        workers: processWorkerAdapter(workerRuntime),
         store,
         launchFences: store,
         delivery: null,
@@ -1067,27 +1080,34 @@ test("controlled connection verification requires the dedicated harmless tool ca
   }
 });
 
-test("enterprise and guest callers use native identity, never display name or provider identity", async () => {
+test("user and device callers use native identity, never display name or provider identity", async () => {
   const user = {
-    schemaVersion: 7,
+    schemaVersion: 8,
     kind: "testUser",
     userId: "legacy",
     displayName: "same",
     nameKey: "same",
   };
   const context = {
-    schemaVersion: 7,
+    schemaVersion: 8,
     kind: "userContext",
     user,
     generation: "one",
+    executionBinding: "native-binding",
+    identity: {
+      mode: "device",
+      authorityId: "desktop-test",
+      tenantId: "local-test",
+      principalId: "fixture-actor",
+    },
   };
   assert.deepEqual(callerFor(context), {
-    tenantId: "test-users",
-    principalId: "legacy",
-    authorityId: "desktop-fixture",
+    tenantId: "local-test",
+    principalId: "fixture-actor",
+    authorityId: "desktop-test",
   });
   const identity = {
-    mode: "enterprise",
+    mode: "user_device",
     organizationId: "organization-a",
     tenantId: "tenant-a",
     principalId: "subject-a",
@@ -1108,12 +1128,20 @@ test("enterprise and guest callers use native identity, never display name or pr
     ),
     false,
   );
-  assert.throws(() => requireLocalExecution(a, callerFor(a)), /unbound origin/);
+  assert.doesNotThrow(() => requireLocalExecution(a, callerFor(a)));
+  assert.throws(
+    () =>
+      requireLocalExecution(
+        { ...a, executionBinding: undefined },
+        callerFor(a),
+      ),
+    /unbound origin/,
+  );
   assert.doesNotThrow(() => requireLocalExecution(context, callerFor(context)));
   const guest = {
     ...context,
     identity: {
-      mode: "guest",
+      mode: "device",
       authorityId: "desktop-guest",
       tenantId: "local-guest",
       principalId: "guest",
@@ -1160,12 +1188,12 @@ test("enterprise and guest callers use native identity, never display name or pr
 test("session creation replays a caller-owned identity without rebinding or duplicating", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "rss-create-intent-"));
   const store = unwrap(
-    openSqliteStore({ path: join(root, "ai.sqlite"), mode: "create" }),
+    await openSqliteStore({ path: join(root, "ai.sqlite"), mode: "create" }),
   );
   const host = unwrap(
     await createHost({
       credentialPersistence: fixturePersistence(store),
-      workerRuntime,
+      workers: processWorkerAdapter(workerRuntime),
       store,
       launchFences: store,
       delivery: null,

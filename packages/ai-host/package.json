@@ -29,6 +29,14 @@
     "./process-contract": {
       "types": "./dist/process-contract.d.ts",
       "import": "./dist/process-contract.js"
+    },
+    "./worker-adapter": {
+      "types": "./dist/worker-adapter.d.ts",
+      "import": "./dist/worker-adapter.js"
+    },
+    "./process": {
+      "types": "./dist/process.d.ts",
+      "import": "./dist/process.js"
     }
   },
   "scripts": {

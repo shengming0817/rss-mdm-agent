@@ -13,7 +13,7 @@ const session = JSON.parse(sessionJson);
 const command = JSON.parse(commandJson);
 const proposal = JSON.parse(proposalJson);
 const prepared = JSON.parse(preparedJson);
-const store = unwrap(openSqliteStore({ path, mode: "create" }));
+const store = unwrap(await openSqliteStore({ path, mode: "create" }));
 unwrap(await store.create(session));
 unwrap(
   await store.accept({

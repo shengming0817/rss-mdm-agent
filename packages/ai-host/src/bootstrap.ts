@@ -1,14 +1,16 @@
 import { PrivateLink } from "./private-link.js";
 import type {
   Binding,
-  Budget,
   Command,
   CommandRecord,
   DispatchAttempt,
+} from "@rss-mdm-agent/ai-contract/wire";
+import type {
+  Budget,
   ProviderAgentPort,
   ProviderConfiguration,
   ToolEndpoint,
-} from "@rss-mdm-agent/ai-contract";
+} from "@rss-mdm-agent/ai-contract/ports";
 import type { WorkerFactory } from "./worker.js";
 import { Channel } from "./channel.js";
 

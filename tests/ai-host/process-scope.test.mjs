@@ -3,6 +3,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { validScope } from "../../packages/ai-host/dist/launch-fence.js";
 import {
+  processWorkerAdapter,
   scopeAbsentWithin,
   WorkerPort,
 } from "../../packages/ai-host/dist/process.js";
@@ -44,7 +45,10 @@ test("a hanging scope probe cannot monopolize the Host event loop or close budge
 test("startup failure before ownership registration retains an uncertain launch fence", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "rss-provisional-scope-"));
   const store = unwrap(
-    openSqliteStore({ path: join(directory, "host.sqlite"), mode: "create" }),
+    await openSqliteStore({
+      path: join(directory, "host.sqlite"),
+      mode: "create",
+    }),
   );
   t.after(async () => {
     await store.close({
@@ -80,10 +84,10 @@ test("startup failure before ownership registration retains an uncertain launch 
   const host = unwrap(
     await createHost({
       credentialPersistence: fixturePersistence(store),
-      workerRuntime: {
+      workers: processWorkerAdapter({
         launcher: process.execPath,
         manifestDigest: "a".repeat(64),
-      },
+      }),
       delivery: null,
       store,
       launchFences: store,
@@ -99,4 +103,88 @@ test("startup failure before ownership registration retains an uncertain launch 
       signal: new AbortController().signal,
     }),
   );
+});
+
+test("production Host keeps an uncertain namespace fenced while another caller stays responsive", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "rss-host-probe-isolation-"));
+  const store = unwrap(
+    await openSqliteStore({ path: join(root, "host.sqlite"), mode: "create" }),
+  );
+  const session = fixtureSession();
+  unwrap(await store.create(session));
+  unwrap(
+    await store.reserveLaunch({
+      namespace: session.namespace,
+      launchId: "uncertain",
+      artifact: "fixture-provider",
+      runtimeDigest: "a".repeat(64),
+      phase: "reserved",
+    }),
+  );
+  unwrap(
+    await store.registerLaunch(session.namespace, "uncertain", {
+      kind: "processGroup",
+      root: 42,
+    }),
+  );
+  let probe, started;
+  const probing = new Promise((resolve) => {
+    started = resolve;
+  });
+  let first = true;
+  const host = unwrap(
+    await createHost({
+      store,
+      launchFences: store,
+      credentialPersistence: fixturePersistence(store),
+      delivery: null,
+      workers: {
+        create() {
+          throw Error("unknown fence must not launch a worker");
+        },
+        async absent() {
+          if (first) {
+            first = false;
+            return false;
+          }
+          started();
+          return new Promise((resolve) => {
+            probe = resolve;
+          });
+        },
+      },
+      resolve: async () => {
+        throw Error("unknown fence must not resolve a provider");
+      },
+    }),
+  );
+  t.after(async () => {
+    probe?.(false);
+    await host.close({ timeoutMs: 1000, signal: new AbortController().signal });
+    await store.close({
+      timeoutMs: 1000,
+      signal: new AbortController().signal,
+    });
+    await rm(root, { recursive: true, force: true });
+  });
+  // resume enters the actual production admission/recovery path for the fenced namespace.
+  const pending = host.resume(session.namespace, session.namespace.sessionId, {
+    timeoutMs: 1000,
+    signal: new AbortController().signal,
+  });
+  await probing;
+  const other = { ...session.namespace, principalId: "other-caller" };
+  const response = await Promise.race([
+    host.connections(other, {
+      timeoutMs: 1000,
+      signal: new AbortController().signal,
+    }),
+    new Promise((_, reject) =>
+      setTimeout(() => reject(Error("unrelated caller blocked by probe")), 500),
+    ),
+  ]);
+  assert.equal(response.ok, true, JSON.stringify(response));
+  probe(false);
+  assert.equal((await pending).ok, false);
+  assert.equal(unwrap(await store.launches()).length, 1);
 });

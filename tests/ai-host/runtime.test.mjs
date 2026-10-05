@@ -1,3 +1,4 @@
+import { processWorkerAdapter } from "../../packages/ai-host/dist/process.js";
 import { fixturePersistence } from "./harness.mjs";
 import { workerRuntime } from "./worker-runtime.mjs";
 import { activeStage } from "../../packages/ai-contract/dist/index.js";
@@ -9,7 +10,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRequire } from "node:module";
 import { createHost } from "../../packages/ai-host/dist/index.js";
-import { scopeAbsent } from "../../packages/ai-host/dist/process.js";
 import { openSqliteStore } from "../../packages/ai-store-sqlite/dist/index.js";
 import { runHostConformance } from "../../packages/ai-contract/dist/testing/index.js";
 import { createAccessService } from "../../packages/ai-access/dist/index.js";
@@ -90,7 +90,7 @@ async function setup(t, revision = "1", extras = {}) {
   host = unwrap(
     await createHost({
       credentialPersistence: fixturePersistence(store),
-      workerRuntime,
+      workers: processWorkerAdapter(workerRuntime),
       delivery: extras.admission
         ? {
             authorize: async () => ({ ok: true, value: "allowed" }),
@@ -155,7 +155,7 @@ async function setup(t, revision = "1", extras = {}) {
     await openFixture(host, store, caller, options, budget()),
   );
   const command = (id, text = "hold") => ({
-    schemaVersion: 7,
+    schemaVersion: 8,
     kind: "command",
     sessionId: session.namespace.sessionId,
     commandId: id,
@@ -348,7 +348,7 @@ test("standard ACP queued input outlives the request budget and executes in FIFO
     await f.host.cancel(
       caller,
       {
-        schemaVersion: 7,
+        schemaVersion: 8,
         kind: "command",
         sessionId: session.namespace.sessionId,
         commandId: "release-long-run",
@@ -670,7 +670,7 @@ for (const option of ["queueLimit", "workerLimit", "operationTimeoutMs"])
     for (const value of [0, -1, NaN, Infinity, 1.5]) {
       const result = await createHost({
         credentialPersistence: fixturePersistence({}),
-        workerRuntime,
+        workers: processWorkerAdapter(workerRuntime),
         delivery: null,
         store: {},
         resolve: async () => {},

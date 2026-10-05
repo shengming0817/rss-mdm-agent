@@ -11,7 +11,7 @@ import { unwrap } from "../ai-provider-conformance/support.mjs";
 export async function openHost(path, mode, beforeCommit) {
   const local = await readConfiguration(path);
   const store = unwrap(
-    openSqliteStore({ path: local.databasePath, mode: "open" }),
+    await openSqliteStore({ path: local.databasePath, mode: "open" }),
   );
   if (beforeCommit) {
     const commit = store.commit.bind(store);
