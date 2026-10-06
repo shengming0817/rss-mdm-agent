@@ -221,9 +221,6 @@ impl Deployment {
             )
         ))
     }
-    pub(crate) fn initialized(&self) -> Result<bool, Error> {
-        Ok(!never_initialized(&self.state_root)?)
-    }
     /// Check every existing database before any secret, directory, lock or material initialization.
     pub(crate) fn preflight(&self) -> Result<(), Error> {
         let network = self.network()?;
