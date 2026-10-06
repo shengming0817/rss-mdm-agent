@@ -2828,6 +2828,32 @@ fn material_scan_requires_independent_access_and_confirmation_only_strengthens_p
     let next = FrozenExecution::freeze(spec, &test_execution_limits()).unwrap();
     let _ = app.request_execution(&caller(), &next);
     assert!(!app.service_material_proof_current(checkpoint).unwrap());
+    let mut ran = false;
+    assert!(app
+        .with_service_material_proof(checkpoint, || {
+            ran = true;
+            Ok(())
+        })
+        .is_err());
+    assert!(!ran);
+}
+
+#[test]
+fn material_changes_authenticate_earlier_requests_without_restarting_history() {
+    let db = Database::new();
+    let host = TestHost::new();
+    let runner =
+        DeterministicTestRunner::new(id("test-runner"), TestScenario::Complete, 16).unwrap();
+    let mut app = open(&db, host.clone(), runner, false);
+    let input = plan();
+    let consumer = id("agent-delivery");
+    app.request_execution(&caller(), &input).unwrap();
+    let checkpoint = app.service_material_checkpoint().unwrap();
+    app.service_material_page(None, 1, &consumer).unwrap();
+    let mut spec = input.spec().clone();
+    spec.request.request_id = support::request("000-new-material-owner");
+    let next = FrozenExecution::freeze(spec, &test_execution_limits()).unwrap();
+    let _ = app.request_execution(&caller(), &next);
     for allowed in [Access::RunnerFact, Access::Deliver] {
         host.state.lock().unwrap().accesses = Some(vec![allowed]);
         assert!(matches!(
@@ -2865,14 +2891,6 @@ fn material_scan_requires_independent_access_and_confirmation_only_strengthens_p
     assert!(app
         .service_material_proof_current(delta_checkpoint)
         .unwrap());
-    let mut ran = false;
-    assert!(app
-        .with_service_material_proof(checkpoint, || {
-            ran = true;
-            Ok(())
-        })
-        .is_err());
-    assert!(!ran);
 }
 
 #[test]
