@@ -1,8 +1,6 @@
 //! One installation owner; packages and lab harnesses only invoke this boundary.
 //! ref: tauri tauri-cli-v2.11.2 crates/tauri-bundler/src/bundle/windows/nsis/installer.nsi.
 mod lifecycle;
-#[cfg(test)]
-pub(crate) use lifecycle::{resume_matches, run_upgrade, UpgradeStep};
 #[cfg(target_os = "macos")]
 mod macos;
 mod outcome;
