@@ -413,10 +413,7 @@ impl MaterialRoot {
                     if matches!(
                         e.kind(),
                         std::io::ErrorKind::NotFound | std::io::ErrorKind::DirectoryNotEmpty
-                    ) =>
-                {
-                    ()
-                }
+                    ) => {}
                 Err(_) => return Err(Error::Storage),
             }
         }

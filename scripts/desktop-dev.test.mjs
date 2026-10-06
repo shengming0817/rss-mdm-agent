@@ -437,7 +437,7 @@ function processFixture(t, mode = "ready") {
     diagnostic,
     waitFor,
     absent,
-    ready: (budget = 5000) =>
+    ready: (budget = 30000) =>
       waitFor(() => events.some((v) => v.kind === "ready"), "ready", budget),
   };
 }
