@@ -542,54 +542,57 @@ impl Server {
         let (stop, stopped) = tokio::sync::oneshot::channel();
         let server_data = data.clone();
         let server_time = time.clone();
-        let thread = std::thread::spawn(move || {
-            let runtime = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .unwrap();
-            runtime.block_on(async move {
-                let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-                let url = url::Url::parse(&format!(
-                    "{}://{}/",
-                    if tls { "https" } else { "http" },
-                    listener.local_addr().unwrap()
-                ))
-                .unwrap();
-                {
-                    let mut state = server_data.lock().unwrap();
-                    state.trust = pki::trust(url.as_str(), state.tenant);
-                }
-                let router = axum::Router::new()
-                    .fallback(handler)
-                    .with_state(server_data);
-                let serving = async move {
-                    if tls {
-                        let mut config = pki::server();
-                        config.time_provider = Arc::new(server_time);
-                        let listener = TlsListener {
-                            listener,
-                            acceptor: tokio_rustls::TlsAcceptor::from(Arc::new(config)),
-                        };
-                        axum::serve(
-                            listener,
-                            router.into_make_service_with_connect_info::<TlsIdentity>(),
-                        )
-                        .await
-                    } else {
-                        axum::serve(listener, router).await
+        let thread = std::thread::Builder::new()
+            .name("agent-test-server".into())
+            .spawn(move || {
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap();
+                runtime.block_on(async move {
+                    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+                    let url = url::Url::parse(&format!(
+                        "{}://{}/",
+                        if tls { "https" } else { "http" },
+                        listener.local_addr().unwrap()
+                    ))
+                    .unwrap();
+                    {
+                        let mut state = server_data.lock().unwrap();
+                        state.trust = pki::trust(url.as_str(), state.tenant);
                     }
-                };
-                if ready.send(url).is_err() {
-                    return;
-                }
-                tokio::select! {
-                    result = serving => result.unwrap(),
-                    _ = stopped => {},
-                }
-            });
-            // Drop outside the caller's async context, cancelling pending handlers
-            // and closing their sockets before the owner can release its budget.
-        });
+                    let router = axum::Router::new()
+                        .fallback(handler)
+                        .with_state(server_data);
+                    let serving = async move {
+                        if tls {
+                            let mut config = pki::server();
+                            config.time_provider = Arc::new(server_time);
+                            let listener = TlsListener {
+                                listener,
+                                acceptor: tokio_rustls::TlsAcceptor::from(Arc::new(config)),
+                            };
+                            axum::serve(
+                                listener,
+                                router.into_make_service_with_connect_info::<TlsIdentity>(),
+                            )
+                            .await
+                        } else {
+                            axum::serve(listener, router).await
+                        }
+                    };
+                    if ready.send(url).is_err() {
+                        return;
+                    }
+                    tokio::select! {
+                        result = serving => result.unwrap(),
+                        _ = stopped => {},
+                    }
+                });
+                // Drop outside the caller's async context, cancelling pending handlers
+                // and closing their sockets before the owner can release its budget.
+            })
+            .unwrap();
         let runtime = ServerRuntime {
             stop: Some(stop),
             thread: Some(thread),

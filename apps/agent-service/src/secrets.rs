@@ -37,12 +37,7 @@ mod tests {
     }
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn native_key_completes_real_mtls_and_reopens_original_binding() {
-        if crate::scenario_process::run_parent(concat!(
-            module_path!(),
-            "::native_key_completes_real_mtls_and_reopens_original_binding"
-        )) {
-            return;
-        }
+        let _budget = crate::scenario_budget::enter();
         use agent_client::{Client, OpenMode};
         use rss_mdm_agent_wire::runtime::{Capability, FailureCode, ReportBody};
         let server = crate::protocol_test_support::Server::tls().await;
@@ -111,12 +106,7 @@ mod tests {
     }
     #[test]
     fn real_keychain_keeps_credentials_immutable_and_namespaces_separate() {
-        if crate::scenario_process::run_parent(concat!(
-            module_path!(),
-            "::real_keychain_keeps_credentials_immutable_and_namespaces_separate"
-        )) {
-            return;
-        }
+        let _budget = crate::scenario_budget::enter();
         let root = std::env::temp_dir().canonicalize().unwrap().join(format!(
             "agent-keychain-{}-{}",
             std::process::id(),

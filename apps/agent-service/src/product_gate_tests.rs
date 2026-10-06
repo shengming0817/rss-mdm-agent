@@ -173,12 +173,7 @@ impl Case {
 
 #[tokio::test]
 async fn terminal_waiting_releases_capacity_without_changing_the_original_request() {
-    if crate::scenario_process::run_parent(concat!(
-        module_path!(),
-        "::terminal_waiting_releases_capacity_without_changing_the_original_request"
-    )) {
-        return;
-    }
+    let _budget = crate::scenario_budget::enter();
     for cause in 0..4 {
         let mut c = Case::new(match cause {
             0 => None,
@@ -271,12 +266,7 @@ async fn terminal_waiting_releases_capacity_without_changing_the_original_reques
 
 #[tokio::test]
 async fn failed_abandonment_retries_the_same_attempt_after_releasing_waiting() {
-    if crate::scenario_process::run_parent(concat!(
-        module_path!(),
-        "::failed_abandonment_retries_the_same_attempt_after_releasing_waiting"
-    )) {
-        return;
-    }
+    let _budget = crate::scenario_budget::enter();
     let mut c = Case::new(None).await;
     let ai = c.selection(false);
     c.service.core.start_task(ai).unwrap();
@@ -331,12 +321,7 @@ async fn failed_abandonment_retries_the_same_attempt_after_releasing_waiting() {
 
 #[tokio::test]
 async fn production_preparation_applies_the_risk_matrix_and_human_has_no_gate() {
-    if crate::scenario_process::run_parent(concat!(
-        module_path!(),
-        "::production_preparation_applies_the_risk_matrix_and_human_has_no_gate"
-    )) {
-        return;
-    }
+    let _budget = crate::scenario_budget::enter();
     for level in [
         Some(RiskLevel::Zero),
         Some(RiskLevel::One),
@@ -384,12 +369,7 @@ async fn production_preparation_applies_the_risk_matrix_and_human_has_no_gate() 
 
 #[tokio::test]
 async fn one_desktop_confirmation_retains_ai_origin_and_cannot_be_replaced_by_start() {
-    if crate::scenario_process::run_parent(concat!(
-        module_path!(),
-        "::one_desktop_confirmation_retains_ai_origin_and_cannot_be_replaced_by_start"
-    )) {
-        return;
-    }
+    let _budget = crate::scenario_budget::enter();
     let mut c = Case::new(Some(RiskLevel::Two)).await;
     let ai = c.selection(false);
     c.service.core.start_task(ai).unwrap();
@@ -450,12 +430,7 @@ async fn one_desktop_confirmation_retains_ai_origin_and_cannot_be_replaced_by_st
 
 #[tokio::test]
 async fn signed_start_needs_the_current_confirmed_request_and_frozen_action() {
-    if crate::scenario_process::run_parent(concat!(
-        module_path!(),
-        "::signed_start_needs_the_current_confirmed_request_and_frozen_action"
-    )) {
-        return;
-    }
+    let _budget = crate::scenario_budget::enter();
     let mut c = Case::new(Some(RiskLevel::Two)).await;
     let ai = c.selection(false);
     c.service.core.start_task(ai).unwrap();
@@ -520,16 +495,20 @@ async fn signed_start_needs_the_current_confirmed_request_and_frozen_action() {
 
 #[tokio::test]
 async fn material_gc_scans_every_journal_page_and_waits_for_delivery_confirmation() {
-    if crate::scenario_process::run_parent(concat!(
-        module_path!(),
-        "::material_gc_scans_every_journal_page_and_waits_for_delivery_confirmation"
-    )) {
-        return;
-    }
-    // The real signed offer must remain valid throughout the large historical-journal scan.
+    let _budget = crate::scenario_budget::enter();
+    material_gc_history(1).await;
+}
+
+#[tokio::test]
+#[ignore = "large historical journal; run explicitly for scale verification"]
+async fn material_gc_large_history_does_not_exhaust_live_candidate_budget() {
+    let _budget = crate::scenario_budget::enter();
+    material_gc_history(512).await;
+}
+
+async fn material_gc_history(materials_per_request: usize) {
+    // Keep Offer/Start expiry out of GC verification, including the manual scale case.
     let mut c = Case::with_offer_mode(None, 600, false).await;
-    // This case proves GC across 32,768 historical materials, not short Start expiry.
-    // Owner reconciliation may scan that history while the HTTP response is pending.
     c._server.data.lock().unwrap().start_validity_seconds = 600;
     let bytes = b"original journal material";
     let digest = execution_contract::Digest::new(format!("{:x}", Sha256::digest(bytes))).unwrap();
@@ -565,8 +544,8 @@ async fn material_gc_scans_every_journal_page_and_waits_for_delivery_confirmatio
         };
         spec.session_requirement = SessionRequirement::NotRequired {};
         if index < 64 {
-            // More than 32,768 distinct historical paths are already absent. They must
-            // not consume the bounded deletion-candidate budget of this small live root.
+            // Absent historical paths must not consume the deletion-candidate budget.
+            // The manual scale case supplies 32,768 of them before the final live row.
             spec.request.target.platform = Platform::Macos;
             spec.request.target.scope = TargetScope::Device {};
             spec.run_as = RunAs::System {
@@ -583,11 +562,13 @@ async fn material_gc_scans_every_journal_page_and_waits_for_delivery_confirmatio
                     reboot: Default::default(),
                 },
             };
-            let materials = (0..512)
+            let materials = (0..materials_per_request)
                 .map(|member| {
-                    let sha =
-                        execution_contract::Digest::new(format!("{:064x}", index * 512 + member))
-                            .unwrap();
+                    let sha = execution_contract::Digest::new(format!(
+                        "{:064x}",
+                        index * materials_per_request + member
+                    ))
+                    .unwrap();
                     SoftwareMaterial {
                         path: c
                             .service
@@ -838,12 +819,7 @@ async fn material_gc_scans_every_journal_page_and_waits_for_delivery_confirmatio
 
 #[tokio::test]
 async fn material_owner_rejects_a_replaced_journal_and_keeps_original_material() {
-    if crate::scenario_process::run_parent(concat!(
-        module_path!(),
-        "::material_owner_rejects_a_replaced_journal_and_keeps_original_material"
-    )) {
-        return;
-    }
+    let _budget = crate::scenario_budget::enter();
     let c = Case::new(None).await;
     let root = c.service.core.config.material_root.clone();
     let journal = c._root.path.join("execution.sqlite");
@@ -875,12 +851,7 @@ async fn material_owner_rejects_a_replaced_journal_and_keeps_original_material()
 #[cfg(unix)]
 #[tokio::test]
 async fn service_assembly_creates_and_reopens_journal_with_its_actual_budgets() {
-    if crate::scenario_process::run_parent(concat!(
-        module_path!(),
-        "::service_assembly_creates_and_reopens_journal_with_its_actual_budgets"
-    )) {
-        return;
-    }
+    let _budget = crate::scenario_budget::enter();
     let server = protocol::Server::new().await;
     let root = protocol::Root::new();
     let clock = SystemClock::new().unwrap();
@@ -942,12 +913,7 @@ async fn service_assembly_creates_and_reopens_journal_with_its_actual_budgets() 
 
 #[tokio::test]
 async fn renewal_and_revoked_restart_keep_the_existing_journal_authority() {
-    if crate::scenario_process::run_parent(concat!(
-        module_path!(),
-        "::renewal_and_revoked_restart_keep_the_existing_journal_authority"
-    )) {
-        return;
-    }
+    let _budget = crate::scenario_budget::enter();
     let mut case = Case::new(None).await;
     let selected = case.selection(false);
     case.service.core.start_task(selected).unwrap();
@@ -1080,12 +1046,7 @@ async fn renewal_and_revoked_restart_keep_the_existing_journal_authority() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn running_owner_publishes_current_credential_and_safe_status_without_execution_authority() {
-    if crate::scenario_process::run_parent(concat!(
-        module_path!(),
-        "::running_owner_publishes_current_credential_and_safe_status_without_execution_authority"
-    )) {
-        return;
-    }
+    let _budget = crate::scenario_budget::enter();
     use execution_ipc::host::{
         CredentialStatus, Handler, PeerPolicy, Readiness, RegistrationPhase,
     };
@@ -1180,12 +1141,7 @@ impl Case {
 }
 #[tokio::test]
 async fn native_user_handoff_rejects_another_origin_before_any_http_or_refresh() {
-    if crate::scenario_process::run_parent(concat!(
-        module_path!(),
-        "::native_user_handoff_rejects_another_origin_before_any_http_or_refresh"
-    )) {
-        return;
-    }
+    let _budget = crate::scenario_budget::enter();
     use execution_ipc::host::{NativeContextSession, Request};
     for refresh in [false, true] {
         let mut c = Case::new(None).await;
@@ -1231,12 +1187,7 @@ async fn native_user_handoff_rejects_another_origin_before_any_http_or_refresh()
 
 #[tokio::test]
 async fn policy_confirmation_is_single_exact_and_bound_to_employee_generation() {
-    if crate::scenario_process::run_parent(concat!(
-        module_path!(),
-        "::policy_confirmation_is_single_exact_and_bound_to_employee_generation"
-    )) {
-        return;
-    }
+    let _budget = crate::scenario_budget::enter();
     use execution_ipc::host::Request;
     let mut c = Case::new(Some(RiskLevel::Two)).await;
     let directory = protocol::policy_directory_fixture(c.service.client.configuration().tenant);
@@ -1364,12 +1315,7 @@ async fn policy_confirmation_is_single_exact_and_bound_to_employee_generation() 
 }
 #[tokio::test]
 async fn policy_low_risk_and_human_only_settings_have_separate_native_sources() {
-    if crate::scenario_process::run_parent(concat!(
-        module_path!(),
-        "::policy_low_risk_and_human_only_settings_have_separate_native_sources"
-    )) {
-        return;
-    }
+    let _budget = crate::scenario_budget::enter();
     use execution_ipc::host::Request;
     for human in [false, true] {
         let mut c = Case::new(Some(RiskLevel::Two)).await;
@@ -1435,12 +1381,7 @@ async fn policy_low_risk_and_human_only_settings_have_separate_native_sources() 
 
 #[tokio::test]
 async fn policy_offer_binds_the_original_journal_and_signed_start_before_dispatch() {
-    if crate::scenario_process::run_parent(concat!(
-        module_path!(),
-        "::policy_offer_binds_the_original_journal_and_signed_start_before_dispatch"
-    )) {
-        return;
-    }
+    let _budget = crate::scenario_budget::enter();
     use execution_ipc::host::Request;
     for device in [false, true] {
         for level in [1, 2] {
@@ -1688,12 +1629,7 @@ async fn policy_offer_binds_the_original_journal_and_signed_start_before_dispatc
 
 #[tokio::test]
 async fn revoked_generation_cannot_rebind_from_a_queued_native_handoff() {
-    if crate::scenario_process::run_parent(concat!(
-        module_path!(),
-        "::revoked_generation_cannot_rebind_from_a_queued_native_handoff"
-    )) {
-        return;
-    }
+    let _budget = crate::scenario_budget::enter();
     let mut c = Case::new(None).await;
     c.employee("generation-one").await;
     let epoch = c.service.core.fences.current(&c.scope()).unwrap();
@@ -1729,12 +1665,7 @@ async fn revoked_generation_cannot_rebind_from_a_queued_native_handoff() {
 
 #[tokio::test]
 async fn software_observation_rejects_unselected_definition_without_creating_an_attempt() {
-    if crate::scenario_process::run_parent(concat!(
-        module_path!(),
-        "::software_observation_rejects_unselected_definition_without_creating_an_attempt"
-    )) {
-        return;
-    }
+    let _budget = crate::scenario_budget::enter();
     use execution_ipc::host::Request;
     let mut c = Case::new(None).await;
     for change in 0..5 {
@@ -1785,12 +1716,7 @@ async fn software_observation_rejects_unselected_definition_without_creating_an_
 
 #[tokio::test]
 async fn settled_software_observation_replays_the_original_fact_and_never_creates_execution() {
-    if crate::scenario_process::run_parent(concat!(
-        module_path!(),
-        "::settled_software_observation_replays_the_original_fact_and_never_creates_execution"
-    )) {
-        return;
-    }
+    let _budget = crate::scenario_budget::enter();
     // The fixture supplies a trusted selection; the production native collector and SQLite
     // transition are real. This test does not claim proof of a registered OS helper session.
     use execution_ipc::host::Request;
@@ -1912,12 +1838,7 @@ async fn settled_software_observation_replays_the_original_fact_and_never_create
 
 #[tokio::test]
 async fn durable_ready_policy_resumes_original_uuid_from_each_native_entrypoint() {
-    if crate::scenario_process::run_parent(concat!(
-        module_path!(),
-        "::durable_ready_policy_resumes_original_uuid_from_each_native_entrypoint"
-    )) {
-        return;
-    }
+    let _budget = crate::scenario_budget::enter();
     use execution_ipc::host::Request;
     for entry in 0..3 {
         let mut c = Case::new(Some(RiskLevel::Two)).await;
@@ -2010,12 +1931,7 @@ async fn durable_ready_policy_resumes_original_uuid_from_each_native_entrypoint(
 }
 #[tokio::test]
 async fn unaccepted_policy_expiry_is_durable_and_status_remains_read_only() {
-    if crate::scenario_process::run_parent(concat!(
-        module_path!(),
-        "::unaccepted_policy_expiry_is_durable_and_status_remains_read_only"
-    )) {
-        return;
-    }
+    let _budget = crate::scenario_budget::enter();
     use execution_ipc::host::Request;
     let mut c = Case::new(Some(RiskLevel::Two)).await;
     let mut directory = protocol::policy_directory_fixture(c.service.client.configuration().tenant);
@@ -2109,12 +2025,7 @@ fn select_pki_refresh(root: &std::path::Path) {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn fresh_revocation_and_crl_expiry_close_admission_while_pending_status_waits() {
-    if crate::scenario_process::run_parent(concat!(
-        module_path!(),
-        "::fresh_revocation_and_crl_expiry_close_admission_while_pending_status_waits"
-    )) {
-        return;
-    }
+    let _budget = crate::scenario_budget::enter();
     for revocation in [true, false] {
         let mut c = Case::new(Some(RiskLevel::Two)).await;
         c.service.core.start_task(c.selection(false)).unwrap();
@@ -2194,12 +2105,7 @@ async fn fresh_revocation_and_crl_expiry_close_admission_while_pending_status_wa
 
 #[tokio::test]
 async fn explicit_upgrade_failures_and_exact_resume_preserve_registration_and_journal() {
-    if crate::scenario_process::run_parent(concat!(
-        module_path!(),
-        "::explicit_upgrade_failures_and_exact_resume_preserve_registration_and_journal"
-    )) {
-        return;
-    }
+    let _budget = crate::scenario_budget::enter();
     use crate::installation::{resume_matches, run_upgrade, UpgradeStep};
     for fault in [
         UpgradeStep::Stop,
@@ -2266,12 +2172,7 @@ async fn explicit_upgrade_failures_and_exact_resume_preserve_registration_and_jo
 
 #[tokio::test]
 async fn software_self_service_binds_signed_policy_and_native_context() {
-    if crate::scenario_process::run_parent(concat!(
-        module_path!(),
-        "::software_self_service_binds_signed_policy_and_native_context"
-    )) {
-        return;
-    }
+    let _budget = crate::scenario_budget::enter();
     use execution_ipc::host::Request;
     let mut c = Case::new(None).await;
     c.service.release_waiting();
@@ -2428,12 +2329,7 @@ impl Case {
 
 #[tokio::test]
 async fn device_directory_and_invocation_are_credential_free_with_or_without_employee_login() {
-    if crate::scenario_process::run_parent(concat!(
-        module_path!(),
-        "::device_directory_and_invocation_are_credential_free_with_or_without_employee_login"
-    )) {
-        return;
-    }
+    let _budget = crate::scenario_budget::enter();
     use execution_ipc::host::Request;
     for logged_in in [false, true] {
         let mut c = Case::new(None).await;
@@ -2504,12 +2400,7 @@ async fn device_directory_and_invocation_are_credential_free_with_or_without_emp
 
 #[tokio::test]
 async fn retired_ai_ingress_cannot_read_or_invoke_but_original_device_consent_continues() {
-    if crate::scenario_process::run_parent(concat!(
-        module_path!(),
-        "::retired_ai_ingress_cannot_read_or_invoke_but_original_device_consent_continues"
-    )) {
-        return;
-    }
+    let _budget = crate::scenario_budget::enter();
     use execution_ipc::host::Request;
     let mut c = Case::new(None).await;
     let mut item = protocol::policy_directory_fixture(c.service.client.configuration().tenant);
@@ -2596,12 +2487,7 @@ async fn retired_ai_ingress_cannot_read_or_invoke_but_original_device_consent_co
 
 #[tokio::test]
 async fn unknown_device_submission_queries_original_before_any_repeat_post_after_logout() {
-    if crate::scenario_process::run_parent(concat!(
-        module_path!(),
-        "::unknown_device_submission_queries_original_before_any_repeat_post_after_logout"
-    )) {
-        return;
-    }
+    let _budget = crate::scenario_budget::enter();
     use execution_ipc::host::Request;
     for accepted in [false, true] {
         let mut c = Case::new(None).await;
@@ -2675,12 +2561,7 @@ async fn unknown_device_submission_queries_original_before_any_repeat_post_after
 
 #[tokio::test]
 async fn fences_isolate_os_sessions_and_user_requests_never_downgrade() {
-    if crate::scenario_process::run_parent(concat!(
-        module_path!(),
-        "::fences_isolate_os_sessions_and_user_requests_never_downgrade"
-    )) {
-        return;
-    }
+    let _budget = crate::scenario_budget::enter();
     use execution_ipc::host::Request;
     let mut c = Case::new(None).await;
     let mut item = protocol::policy_directory_fixture(c.service.client.configuration().tenant);
@@ -2894,12 +2775,7 @@ impl Case {
 
 #[tokio::test]
 async fn device_recovery_reopens_both_journals_and_preserves_every_accepted_intent_at_capacity() {
-    if crate::scenario_process::run_parent(concat!(
-        module_path!(),
-        "::device_recovery_reopens_both_journals_and_preserves_every_accepted_intent_at_capacity"
-    )) {
-        return;
-    }
+    let _budget = crate::scenario_budget::enter();
     let mut c = Case::new(None).await;
     let (_sender, mut commands) = tokio::sync::mpsc::channel(1);
     c.service.release_waiting();
@@ -2970,12 +2846,7 @@ async fn device_recovery_reopens_both_journals_and_preserves_every_accepted_inte
 
 #[tokio::test]
 async fn recovery_never_reconstructs_device_consent_from_a_retired_journal_intent() {
-    if crate::scenario_process::run_parent(concat!(
-        module_path!(),
-        "::recovery_never_reconstructs_device_consent_from_a_retired_journal_intent"
-    )) {
-        return;
-    }
+    let _budget = crate::scenario_budget::enter();
     let mut c = Case::new(None).await;
     let (_sender, mut commands) = tokio::sync::mpsc::channel(1);
     c.service.release_waiting();
@@ -3019,12 +2890,7 @@ async fn recovery_never_reconstructs_device_consent_from_a_retired_journal_inten
 
 #[tokio::test]
 async fn actual_post_start_dispatch_boundary_rejects_revoked_user_before_any_runner_attempt() {
-    if crate::scenario_process::run_parent(concat!(
-        module_path!(),
-        "::actual_post_start_dispatch_boundary_rejects_revoked_user_before_any_runner_attempt"
-    )) {
-        return;
-    }
+    let _budget = crate::scenario_budget::enter();
     for revoke_original in [false, true] {
         let mut c = Case::new(None).await;
         c.service.release_waiting();
@@ -3087,12 +2953,7 @@ async fn actual_post_start_dispatch_boundary_rejects_revoked_user_before_any_run
 
 #[tokio::test]
 async fn expired_device_confirmation_checks_original_os_owner_before_read_or_write() {
-    if crate::scenario_process::run_parent(concat!(
-        module_path!(),
-        "::expired_device_confirmation_checks_original_os_owner_before_read_or_write"
-    )) {
-        return;
-    }
+    let _budget = crate::scenario_budget::enter();
     use execution_ipc::host::Request;
     let mut c = Case::new(None).await;
     c.device("original-device").await;
@@ -3162,12 +3023,7 @@ async fn expired_device_confirmation_checks_original_os_owner_before_read_or_wri
 
 #[tokio::test]
 async fn transient_start_replays_original_attempt_without_retiring_policy_or_consent() {
-    if crate::scenario_process::run_parent(concat!(
-        module_path!(),
-        "::transient_start_replays_original_attempt_without_retiring_policy_or_consent"
-    )) {
-        return;
-    }
+    let _budget = crate::scenario_budget::enter();
     for device in [false, true] {
         let mut c = Case::new(None).await;
         let (_sender, mut commands) = tokio::sync::mpsc::channel(1);
@@ -3318,12 +3174,7 @@ async fn transient_start_replays_original_attempt_without_retiring_policy_or_con
 
 #[tokio::test]
 async fn restarted_policy_expiry_preserves_original_run_queries_without_start() {
-    if crate::scenario_process::run_parent(concat!(
-        module_path!(),
-        "::restarted_policy_expiry_preserves_original_run_queries_without_start"
-    )) {
-        return;
-    }
+    let _budget = crate::scenario_budget::enter();
     use execution_ipc::host::Request;
     for offer_expired in [false, true] {
         let mut c = Case::new(None).await;

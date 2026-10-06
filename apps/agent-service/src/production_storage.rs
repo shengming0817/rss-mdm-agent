@@ -72,12 +72,7 @@ fn start(
 
 #[test]
 fn production_journal_requires_explicit_create_and_preserves_identity_on_reopen() {
-    if crate::scenario_process::run_parent(concat!(
-        module_path!(),
-        "::production_journal_requires_explicit_create_and_preserves_identity_on_reopen"
-    )) {
-        return;
-    }
+    let _budget = crate::scenario_budget::enter();
     let db = Database::new();
     assert!(start(&db, ProductionStartup::Open, "tenant-a").is_err());
     assert!(!db.path.exists());
@@ -91,12 +86,7 @@ fn production_journal_requires_explicit_create_and_preserves_identity_on_reopen(
 
 #[test]
 fn production_rejects_test_identity_and_test_runner_before_touching_storage() {
-    if crate::scenario_process::run_parent(concat!(
-        module_path!(),
-        "::production_rejects_test_identity_and_test_runner_before_touching_storage"
-    )) {
-        return;
-    }
+    let _budget = crate::scenario_budget::enter();
     let db = Database::new();
     assert!(matches!(
         assemble_journal(
@@ -126,12 +116,7 @@ fn production_rejects_test_identity_and_test_runner_before_touching_storage() {
 
 #[test]
 fn production_cannot_open_or_relabel_existing_test_journal() {
-    if crate::scenario_process::run_parent(concat!(
-        module_path!(),
-        "::production_cannot_open_or_relabel_existing_test_journal"
-    )) {
-        return;
-    }
+    let _budget = crate::scenario_budget::enter();
     let db = Database::new();
     let h = TestHost::new();
     drop(
@@ -149,12 +134,7 @@ fn production_cannot_open_or_relabel_existing_test_journal() {
 
 #[test]
 fn production_preserves_unsupported_schema_without_migration_or_recreation() {
-    if crate::scenario_process::run_parent(concat!(
-        module_path!(),
-        "::production_preserves_unsupported_schema_without_migration_or_recreation"
-    )) {
-        return;
-    }
+    let _budget = crate::scenario_budget::enter();
     let db = Database::new();
     drop(start(&db, ProductionStartup::Create, "tenant-a").unwrap());
     db.sql().pragma_update(None, "user_version", 999).unwrap();
@@ -168,12 +148,7 @@ fn production_preserves_unsupported_schema_without_migration_or_recreation() {
 
 #[test]
 fn invalid_production_inputs_leave_existing_journal_untouched() {
-    if crate::scenario_process::run_parent(concat!(
-        module_path!(),
-        "::invalid_production_inputs_leave_existing_journal_untouched"
-    )) {
-        return;
-    }
+    let _budget = crate::scenario_budget::enter();
     let db = Database::new();
     drop(start(&db, ProductionStartup::Create, "tenant-a").unwrap());
     let original = std::fs::read(&db.path).unwrap();
