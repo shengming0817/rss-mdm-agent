@@ -12,3 +12,9 @@
 默认集成分支为 develop，各产品独立构建和发布。使用根 manifest 与工具链文件指定的工具版本，运行 `pnpm install --frozen-lockfile` 后按桌面指南启动。
 
 本地 `make ci CI_BASE=origin/develop` 按影响范围选择检查，`make ci-full` 强制全量，`make ci-plan` 查看计划。范围和结果语义见[验证规则](docs/rules/verification-scope.md)。
+
+服务常规测试使用 `cargo test --locked -p agent-service --lib`；真实 HTTP/SQLite 场景共享资源预算，测试框架保留默认并行。大历史 journal 的 GC 规模验证单独运行，不进入常规 CI：
+
+```sh
+cargo test --locked -p agent-service --lib service::product_gate_tests::material_gc_large_history_does_not_exhaust_live_candidate_budget -- --exact --ignored
+```

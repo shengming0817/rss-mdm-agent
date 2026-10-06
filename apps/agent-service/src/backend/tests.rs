@@ -7,6 +7,7 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 #[tokio::test]
 async fn mismatched_and_unsubmitted_started_offers_settle_without_journal_or_cache_leaks() {
+    let _budget = crate::scenario_budget::enter();
     use agent_client::Error;
     use execution_app::*;
     let server = Server::new().await;
@@ -55,6 +56,7 @@ async fn mismatched_and_unsubmitted_started_offers_settle_without_journal_or_cac
 
 #[tokio::test]
 async fn denied_admission_without_attempt_delivers_and_releases() {
+    let _budget = crate::scenario_budget::enter();
     use execution_app::*;
     let server = Server::new().await;
     let root = Root::new();
@@ -110,6 +112,7 @@ async fn denied_admission_without_attempt_delivers_and_releases() {
 
 #[tokio::test]
 async fn reserved_binding_without_journal_can_settle_after_permission_revocation_and_restart() {
+    let _budget = crate::scenario_budget::enter();
     use execution_app::*;
     let server = Server::new().await;
     let root = Root::new();
@@ -243,16 +246,19 @@ async fn no_process_terminal(cancel: bool) {
 
 #[tokio::test]
 async fn durable_cancel_without_attempt_is_delivered_and_released() {
+    let _budget = crate::scenario_budget::enter();
     no_process_terminal(true).await;
 }
 
 #[tokio::test]
 async fn proven_never_dispatched_without_capture_is_delivered_and_released() {
+    let _budget = crate::scenario_budget::enter();
     no_process_terminal(false).await;
 }
 
 #[tokio::test]
 async fn accepted_remote_result_with_failed_local_confirmation_never_resends() {
+    let _budget = crate::scenario_budget::enter();
     use agent_client::Error;
     use execution_app::*;
     let server = Server::new().await;
@@ -422,16 +428,19 @@ async fn exercise_bridge(software: bool) {
 
 #[tokio::test]
 async fn script_bridge_recovers_without_dispatch_and_retries_only_confirmation() {
+    let _budget = crate::scenario_budget::enter();
     exercise_bridge(false).await;
 }
 
 #[tokio::test]
 async fn software_bridge_uses_journal_detection_and_remote_definition() {
+    let _budget = crate::scenario_budget::enter();
     exercise_bridge(true).await;
 }
 
 #[tokio::test]
 async fn partial_cache_reopens_and_checks_range_etag_and_reference_cleanup() {
+    let _budget = crate::scenario_budget::enter();
     let server = Server::new().await;
     let root = Root::new();
     let mut client = server.client(&root, OpenMode::Create);
@@ -573,6 +582,7 @@ async fn drain_delivery<R: execution_app::RunnerPort>(
 
 #[tokio::test]
 async fn expired_offers_retire_received_requests_with_one_task_budget_after_restart() {
+    let _budget = crate::scenario_budget::enter();
     let server = Server::new().await;
     let root = Root::new();
     let mut config = server.config();
@@ -630,6 +640,7 @@ async fn expired_offers_retire_received_requests_with_one_task_budget_after_rest
 
 #[tokio::test]
 async fn frozen_output_encodings_and_character_truncation_are_delivered() {
+    let _budget = crate::scenario_budget::enter();
     use execution_contract::{OutputQuality, ProcessEnd, TextEncoding};
     for (encoding, stdout, stderr, quality, end, expected) in [
         (
@@ -780,6 +791,7 @@ async fn check_encoded_result(
 
 #[tokio::test]
 async fn start_window_does_not_replace_the_signed_runtime_budget() {
+    let _budget = crate::scenario_budget::enter();
     use execution_app::*;
     let server = Server::new().await;
     let root = Root::new();
@@ -816,6 +828,7 @@ async fn start_window_does_not_replace_the_signed_runtime_budget() {
 
 #[tokio::test]
 async fn root_exit_is_delivered_while_overall_quiescence_stays_unknown() {
+    let _budget = crate::scenario_budget::enter();
     use execution_app::*;
     let server = Server::new().await;
     let root = Root::new();
@@ -877,6 +890,7 @@ async fn root_exit_is_delivered_while_overall_quiescence_stays_unknown() {
 
 #[tokio::test]
 async fn acknowledged_v6_result_is_not_replaced_by_later_local_facts() {
+    let _budget = crate::scenario_budget::enter();
     use execution_app::*;
     let server = Server::new().await;
     let root = Root::new();
@@ -1035,6 +1049,7 @@ impl Started {
 
 #[tokio::test]
 async fn pending_http_without_ipc_commands_still_reconciles_the_original_journal() {
+    let _budget = crate::scenario_budget::enter();
     use crate::service::{network_loop, NetworkEvent};
     let mut case = Started::new(0).await;
     let gate = std::sync::Arc::new(tokio::sync::Notify::new());
@@ -1071,6 +1086,7 @@ async fn pending_http_without_ipc_commands_still_reconciles_the_original_journal
 
 #[tokio::test]
 async fn durable_ack_then_partial_confirm_then_restart_confirms_only_original_sources() {
+    let _budget = crate::scenario_budget::enter();
     let mut case = Started::new(0).await;
     case.app
         .reconcile(&case.plan.spec().request.request_id)
@@ -1151,6 +1167,7 @@ async fn durable_ack_then_partial_confirm_then_restart_confirms_only_original_so
 
 #[tokio::test]
 async fn recovery_rejects_wrong_digest_and_attempt_without_dispatching() {
+    let _budget = crate::scenario_budget::enter();
     let case = Started::new(0).await;
     let Started {
         client,
@@ -1204,6 +1221,7 @@ async fn recovery_rejects_wrong_digest_and_attempt_without_dispatching() {
 
 #[tokio::test]
 async fn revoked_and_expired_unknown_keeps_original_execution_and_association() {
+    let _budget = crate::scenario_budget::enter();
     let mut case = Started::new(0).await;
     *case.runner.capture.lock().unwrap() = Some(CaptureSpec {
         quiescent: false,
@@ -1343,6 +1361,7 @@ async fn revoked_and_expired_unknown_keeps_original_execution_and_association() 
 
 #[tokio::test]
 async fn software_restart_projects_each_steps_own_committed_facts() {
+    let _budget = crate::scenario_budget::enter();
     use execution_app::RunnerPort;
     use execution_contract::{SoftwareCheckpoint as C, SoftwarePhase as P, SoftwareState as S};
     let mut case = Started::new(2).await;

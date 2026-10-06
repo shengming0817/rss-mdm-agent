@@ -1015,6 +1015,7 @@ mod result_tests {
     }
     #[tokio::test]
     async fn review_regression_step_results_never_borrow_another_steps_facts() {
+        let _budget = crate::scenario_budget::enter();
         let server = crate::protocol_test_support::Server::new().await;
         let spec = {
             let mut data = server.data.lock().unwrap();

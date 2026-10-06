@@ -381,6 +381,7 @@ mod tests {
     }
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn startup_prepares_interrupted_renewal_before_registered_handoff() {
+        let _budget = crate::scenario_budget::enter();
         for missing_key in [false, true] {
             let server = Server::tls().await;
             let root = Root::new();
@@ -508,6 +509,7 @@ mod tests {
     }
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn registration_owner_recovers_transient_failure_without_another_request() {
+        let _budget = crate::scenario_budget::enter();
         for fault in ["registration", "trust", "machine"] {
             for restart in [false, true] {
                 let server = Server::tls().await;
@@ -599,6 +601,7 @@ mod tests {
     }
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn full_registration_queue_cannot_drop_stop() {
+        let _budget = crate::scenario_budget::enter();
         let server = Server::tls().await;
         server.data.lock().unwrap().registration_failure = true;
         let root = Root::new();

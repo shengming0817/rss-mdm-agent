@@ -10,6 +10,7 @@ use sha2::{Digest as _, Sha256};
 
 #[test]
 fn production_network_io_progresses_while_the_owner_checks_synchronous_native_facts() {
+    let _budget = crate::scenario_budget::enter();
     use std::io::{Read, Write};
     use std::sync::atomic::{AtomicBool, Ordering};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -62,6 +63,7 @@ fn production_network_io_progresses_while_the_owner_checks_synchronous_native_fa
 
 #[tokio::test]
 async fn signed_start_compiles_exactly_and_never_creates_a_local_enterprise_approval() {
+    let _budget = crate::scenario_budget::enter();
     let server = protocol::Server::new().await;
     let root = protocol::Root::new();
     let clock = SystemClock::new().unwrap();
@@ -219,6 +221,7 @@ async fn signed_start_compiles_exactly_and_never_creates_a_local_enterprise_appr
 
 #[tokio::test]
 async fn osquery_compiler_revalidates_the_signed_query_and_uses_only_literal_arguments() {
+    let _budget = crate::scenario_budget::enter();
     for (query, valid) in [
         ("SELECT version FROM osquery_info", true),
         ("SELECT load_extension('x') FROM osquery_info", false),
@@ -286,6 +289,7 @@ async fn osquery_compiler_revalidates_the_signed_query_and_uses_only_literal_arg
 #[tokio::test]
 #[ignore = "native System/root material staging; run in the platform T3 service environment"]
 async fn current_software_steps_compile_from_exact_prefixed_artifacts() {
+    let _budget = crate::scenario_budget::enter();
     for supported_codes in [true, false] {
         let server = protocol::Server::new().await;
         {
