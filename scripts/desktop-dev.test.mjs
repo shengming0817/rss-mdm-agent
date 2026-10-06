@@ -301,8 +301,7 @@ function processFixture(t, mode = "ready") {
     import {writeSync} from 'node:fs';
     for (const signal of ['SIGINT','SIGTERM','SIGHUP']) process.on(signal,()=>{
       writeSync(1,JSON.stringify({kind:'signal',role:'grandchild',pid:process.pid,signal})+'\\n');
-      if (${JSON.stringify(mode)} === 'delayed-stop') setTimeout(()=>process.exit(0),200);
-      else process.exit(0);
+      if (${JSON.stringify(mode)} !== 'delayed-stop' || signal === 'SIGHUP') process.exit(0);
     });
     setInterval(()=>{},1000);
     if (${JSON.stringify(mode)} !== 'not-ready') process.send({kind:'ready',pid:process.pid});
@@ -315,10 +314,10 @@ function processFixture(t, mode = "ready") {
     import {writeSync} from 'node:fs';
     const emit=(v)=>writeSync(1,JSON.stringify(v)+'\\n');
     emit({kind:'parent',pid:process.pid});
-    if (${JSON.stringify(mode)} === 'early-exit') {
+    if (['early-exit','natural-success'].includes(${JSON.stringify(mode)})) {
       writeSync(1,'startup stdout sentinel\\n');
       writeSync(2,'startup stderr sentinel\\n');
-      process.exit(17);
+      process.exit(${JSON.stringify(mode)} === 'natural-success' ? 0 : 17);
     }
     const child=spawn(process.execPath,[${JSON.stringify(join(root, mode === "child-failure" ? "missing.mjs" : "grandchild.mjs"))}],{stdio:['ignore','inherit','inherit','ipc']});
     emit({kind:'child',pid:child.pid});
@@ -502,6 +501,16 @@ test(
     );
     await f.absent();
     assert.equal(f.state.code, 143, f.diagnostic("first cancellation"));
+  },
+);
+
+test(
+  "natural successful exit preserves zero after internal group cleanup",
+  { skip: process.platform === "win32" },
+  async (t) => {
+    const f = processFixture(t, "natural-success");
+    await f.absent();
+    assert.equal(f.state.code, 0, f.diagnostic("natural success"));
   },
 );
 

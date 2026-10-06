@@ -831,10 +831,7 @@ async fn material_gc_history(materials_per_request: usize) {
             )
             .unwrap();
     }
-    complete_material_gc(&mut c.service).unwrap();
-    assert!(!source.exists());
-    assert!(!other_source.exists());
-    complete_material_gc(&mut c.service).unwrap();
+    assert!(source.exists() && other_source.exists());
 
     let reconcile_started = std::time::Instant::now();
     c.service.core.reconcile().unwrap();
@@ -859,12 +856,18 @@ async fn material_gc_history(materials_per_request: usize) {
     let maximum = tokio::task::spawn_blocking(move || {
         use execution_ipc::host::Handler;
         let mut maximum = std::time::Duration::ZERO;
-        for _ in 0..30 {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        while source.exists() || other_source.exists() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "owner GC never completed"
+            );
             let started = std::time::Instant::now();
             assert!(matches!(
                 owner.service_status(),
                 Reply::ServiceStatus { .. }
             ));
+            assert!(started.elapsed() < std::time::Duration::from_secs(3));
             maximum = maximum.max(started.elapsed());
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
