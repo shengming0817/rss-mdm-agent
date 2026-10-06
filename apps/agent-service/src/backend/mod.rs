@@ -10,7 +10,9 @@ pub(crate) mod host;
 mod offer;
 pub(crate) mod plan;
 pub(crate) mod software;
-pub(crate) use bridge::{settled, ExecutionBridge};
+#[cfg(test)]
+pub(crate) use bridge::settled;
+pub(crate) use bridge::ExecutionBridge;
 #[cfg(test)]
 pub(crate) use dispatch::dispatch_started;
 pub(crate) use dispatch::submit;

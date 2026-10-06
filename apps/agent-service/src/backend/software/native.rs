@@ -595,6 +595,32 @@ pub(super) fn compile(
 
 #[cfg(all(test, target_os = "macos"))]
 mod gc_tests {
+    fn inventory_files(
+        root: &mut execution_runner::staging::MaterialRoot,
+    ) -> Result<std::collections::BTreeSet<std::path::PathBuf>, execution_app::Error> {
+        use execution_runner::staging::ReclaimPhase;
+        let mut pass = root.begin_reclamation();
+        while pass.phase() == ReclaimPhase::Inventory {
+            root.reclaim_step(&mut pass)?;
+        }
+        Ok(pass.files().cloned().collect())
+    }
+    fn finish_reclamation(
+        root: &mut execution_runner::staging::MaterialRoot,
+        candidates: &std::collections::BTreeMap<std::path::PathBuf, execution_contract::Digest>,
+        retained: &std::collections::BTreeSet<std::path::PathBuf>,
+    ) -> Result<execution_runner::staging::Reclaimed, execution_app::Error> {
+        use execution_runner::staging::ReclaimPhase;
+        let mut pass = root.begin_reclamation();
+        while pass.phase() == ReclaimPhase::Inventory {
+            root.reclaim_step(&mut pass)?;
+        }
+        pass.prove(candidates.clone(), retained.clone())?;
+        while pass.phase() != ReclaimPhase::Complete {
+            root.reclaim_step(&mut pass)?;
+        }
+        pass.into_result()
+    }
     use super::*;
     use crate::{backend::test_support::local, protocol_test_support as protocol};
     use agent_client::OpenMode;
@@ -770,7 +796,7 @@ mod gc_tests {
                 .unwrap();
             assert_eq!(original.digest(), input.digest());
             let refs = crate::recovery::references(&original, &config).unwrap();
-            let mut existing = root.existing_files().unwrap();
+            let mut existing = inventory_files(&mut root).unwrap();
             existing.remove(&config.material_root.join(".owner"));
             assert!(
                 existing.iter().all(|path| refs.contains_key(path)),
@@ -794,9 +820,13 @@ mod gc_tests {
                 .unwrap();
             assert!(!pending.is_empty());
             assert_eq!(
-                root.reclaim(&refs, &refs.keys().cloned().collect::<BTreeSet<_>>())
-                    .unwrap()
-                    .files,
+                finish_reclamation(
+                    &mut root,
+                    &refs,
+                    &refs.keys().cloned().collect::<BTreeSet<_>>()
+                )
+                .unwrap()
+                .files,
                 0
             );
             for item in pending {
@@ -811,12 +841,17 @@ mod gc_tests {
                 .service_delivery(&input.spec().request.request_id, &consumer, 1)
                 .unwrap()
                 .is_empty());
-            root.reclaim(&refs, &BTreeSet::new()).unwrap();
+            finish_reclamation(&mut root, &refs, &BTreeSet::new()).unwrap();
             assert_eq!(
-                root.existing_files().unwrap(),
+                inventory_files(&mut root).unwrap(),
                 BTreeSet::from([config.material_root.join(".owner")])
             );
-            assert_eq!(root.reclaim(&refs, &BTreeSet::new()).unwrap().files, 0);
+            assert_eq!(
+                finish_reclamation(&mut root, &refs, &BTreeSet::new())
+                    .unwrap()
+                    .files,
+                0
+            );
         }
     }
 }

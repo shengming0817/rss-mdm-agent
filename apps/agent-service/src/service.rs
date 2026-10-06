@@ -98,6 +98,7 @@ pub struct DeviceService<S: IdentityProvider = DeviceSecrets> {
     next_network: std::time::Instant,
     next_enrollment: std::time::Instant,
     recovering: bool,
+    pub(crate) material_gc: crate::material_gc::MaterialGc,
 }
 impl<S: IdentityProvider> DeviceService<S> {
     /// Open an already registered device. Create/open selection never follows an error fallback.
@@ -219,6 +220,7 @@ impl<S: IdentityProvider> DeviceService<S> {
             next_network: std::time::Instant::now(),
             next_enrollment: std::time::Instant::now(),
             recovering: true,
+            material_gc: Default::default(),
         })
     }
     /// Reconcile persisted intents and deliver existing evidence before claiming new work.
@@ -233,6 +235,7 @@ impl<S: IdentityProvider> DeviceService<S> {
         if self.core.stopping {
             return Ok(());
         }
+        self.reclaim_owner_step();
         if std::time::Instant::now() >= self.next_enrollment {
             self.core.reconcile()?;
             self.next_enrollment = std::time::Instant::now() + std::time::Duration::from_secs(2);
@@ -297,9 +300,6 @@ impl<S: IdentityProvider> DeviceService<S> {
             }
         }
         if self.core.selected.is_some() {
-            if self.waiting.is_some() {
-                self.reclaim_between_submissions();
-            }
             if let Some((offer, materials)) = self.waiting.take() {
                 let request = backend::request_id(&offer)?;
                 let selection = self.core.selected.take();
@@ -374,7 +374,7 @@ impl<S: IdentityProvider> DeviceService<S> {
                     .bridge
                     .finish(&mut self.client, task, &self.core.app, &caller)
                 {
-                    Ok(()) => match self.core.host.materials.retire(&input) {
+                    Ok(()) => match self.core.host.materials.retire(input.digest()) {
                         Ok(()) | Err(execution_app::Error::Conflict) => (),
                         Err(error) => return Err(map_app_error(error)),
                     },
@@ -457,7 +457,6 @@ impl<S: IdentityProvider> DeviceService<S> {
             }
         }
         self.recovering = false;
-        self.reclaim_between_submissions();
         let reports = 16.min(self.client.configuration().limits.pending_reports);
         network(self.client.flush_reports(reports), &mut self.core, commands).await?;
         let mut context = self.client.execution_context()?;
