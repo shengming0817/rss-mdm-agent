@@ -2791,3 +2791,137 @@ fn human_execution_requires_authorization_but_no_product_confirmation() {
     assert_eq!(runner.dispatch_count(), 1);
     assert_eq!(db.count("interactions"), 0);
 }
+
+#[test]
+fn material_scan_requires_independent_access_and_confirmation_only_strengthens_proof() {
+    let db = Database::new();
+    let host = TestHost::new();
+    let runner =
+        DeterministicTestRunner::new(id("test-runner"), TestScenario::Complete, 16).unwrap();
+    let mut app = open(&db, host.clone(), runner, false);
+    let input = plan();
+    let request = &input.spec().request.request_id;
+    let consumer = id("agent-delivery");
+    app.request_execution(&caller(), &input).unwrap();
+    app.reconcile(request).unwrap();
+    let checkpoint = app.service_material_checkpoint().unwrap();
+    let page = app.service_material_page(None, 1, &consumer).unwrap();
+    assert_eq!(page.items[0].input.digest(), input.digest());
+    assert!(!page.items[0].reclaimable);
+    for allowed in [Access::RunnerFact, Access::Deliver] {
+        host.state.lock().unwrap().accesses = Some(vec![allowed]);
+        assert!(matches!(
+            app.service_material_page(None, 1, &consumer),
+            Err(Error::Denied)
+        ));
+    }
+    host.state.lock().unwrap().accesses = None;
+    for item in app.service_delivery(request, &consumer, 64).unwrap() {
+        app.service_confirm(request, &consumer, &item.receipt.event_id)
+            .unwrap();
+    }
+    assert!(app.service_material_proof_current(checkpoint).unwrap());
+    assert!(app.service_material_page(None, 1, &consumer).unwrap().items[0].reclaimable);
+    // A newly inserted earlier key must invalidate even a cursor already beyond it.
+    let mut spec = input.spec().clone();
+    spec.request.request_id = support::request("000-new-material-owner");
+    let next = FrozenExecution::freeze(spec, &test_execution_limits()).unwrap();
+    let _ = app.request_execution(&caller(), &next);
+    assert!(!app.service_material_proof_current(checkpoint).unwrap());
+    let mut ran = false;
+    assert!(app
+        .with_service_material_proof(checkpoint, || {
+            ran = true;
+            Ok(())
+        })
+        .is_err());
+    assert!(!ran);
+}
+
+#[test]
+fn material_changes_authenticate_earlier_requests_without_restarting_history() {
+    let db = Database::new();
+    let host = TestHost::new();
+    let runner =
+        DeterministicTestRunner::new(id("test-runner"), TestScenario::Complete, 16).unwrap();
+    let mut app = open(&db, host.clone(), runner, false);
+    let input = plan();
+    let consumer = id("agent-delivery");
+    app.request_execution(&caller(), &input).unwrap();
+    let checkpoint = app.service_material_checkpoint().unwrap();
+    app.service_material_page(None, 1, &consumer).unwrap();
+    let mut spec = input.spec().clone();
+    spec.request.request_id = support::request("000-new-material-owner");
+    let next = FrozenExecution::freeze(spec, &test_execution_limits()).unwrap();
+    let _ = app.request_execution(&caller(), &next);
+    for allowed in [Access::RunnerFact, Access::Deliver] {
+        host.state.lock().unwrap().accesses = Some(vec![allowed]);
+        assert!(matches!(
+            app.service_material_changes(checkpoint, 1, &consumer),
+            Err(Error::Denied)
+        ));
+        assert!(matches!(
+            app.service_material_fact(&next.spec().request.request_id, &consumer),
+            Err(Error::Denied)
+        ));
+    }
+    host.state.lock().unwrap().accesses = None;
+    let mut delta_checkpoint = checkpoint;
+    let mut found = false;
+    let mut complete = false;
+    for _ in 0..16 {
+        let changes = app
+            .service_material_changes(delta_checkpoint, 1, &consumer)
+            .unwrap();
+        assert!(changes.items.len() <= 1);
+        found |= changes
+            .items
+            .iter()
+            .any(|item| item.input.digest() == next.digest());
+        delta_checkpoint = changes.checkpoint;
+        if changes.complete {
+            complete = true;
+            break;
+        }
+    }
+    assert!(
+        found && complete,
+        "earlier request must be authenticated through the receipt delta"
+    );
+    assert!(app
+        .service_material_proof_current(delta_checkpoint)
+        .unwrap());
+}
+
+#[test]
+fn external_mutation_of_already_scanned_material_row_invalidates_the_delete_fence() {
+    let db = Database::new();
+    let host = TestHost::new();
+    let runner =
+        DeterministicTestRunner::new(id("test-runner"), TestScenario::Complete, 16).unwrap();
+    let mut app = open(&db, host, runner, false);
+    let input = plan();
+    app.request_execution(&caller(), &input).unwrap();
+    let checkpoint = app.service_material_checkpoint().unwrap();
+    app.service_material_page(None, 1, &id("agent-delivery"))
+        .unwrap();
+    db.sql()
+        .execute("UPDATE executions SET digest=?1", ["bad-digest"])
+        .unwrap();
+    assert!(!app.service_material_proof_current(checkpoint).unwrap());
+    assert!(matches!(
+        app.service_material_changes(checkpoint, 1, &id("agent-delivery")),
+        Err(Error::Conflict)
+    ));
+    let mut ran = false;
+    assert!(app
+        .with_service_material_proof(checkpoint, || {
+            ran = true;
+            Ok(())
+        })
+        .is_err());
+    assert!(!ran);
+    assert!(app
+        .service_material_page(None, 1, &id("agent-delivery"))
+        .is_err());
+}

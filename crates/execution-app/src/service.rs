@@ -1049,27 +1049,79 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
             .input()
             .clone())
     }
-    /// Complete journal-owner scan for reclamation. Validate original rows before selecting
-    /// a device: a corrupt plan must not disappear behind a serialized device filter.
-    /// Any foreign binding or unreadable row aborts the page; no UI/model endpoint exists.
-    pub fn service_journal_tasks(
+    /// Capture a connection-local checkpoint for the exclusive device-owner GC.
+    pub fn service_material_checkpoint(&self) -> Result<J::MaterialCheckpoint, Error> {
+        Ok(self.journal.material_checkpoint()?)
+    }
+    /// Continue only proofs whose safety has not been weakened by a journal mutation.
+    pub fn service_material_proof_current(
+        &self,
+        checkpoint: J::MaterialCheckpoint,
+    ) -> Result<bool, Error> {
+        Ok(self.journal.material_proof_current(checkpoint)?)
+    }
+    /// Complete authenticated owner scan, without restoring UI details or a second input.
+    pub fn service_material_page(
         &self,
         after: Option<&RequestId>,
         limit: usize,
-    ) -> Result<crate::TaskPage, Error> {
-        let requests = self
-            .journal
-            .service_requests(after, limit, &self.adapter(None, None))?;
-        let next = if requests.len() == limit {
-            requests.last().cloned()
+        consumer: &execution_contract::Id,
+    ) -> Result<crate::ServiceMaterialPage, Error> {
+        let items =
+            self.journal
+                .material_page(after, limit, consumer, &self.adapter(None, None))?;
+        for item in &items {
+            self.check_binding(None, &item.input)?;
+        }
+        let next = if items.len() == limit {
+            items
+                .last()
+                .map(|i| i.input.spec().request.request_id.clone())
         } else {
             None
         };
-        let items = requests
-            .iter()
-            .map(|id| self.details_for(None, id, ExecutionAccess::RunnerFact))
-            .collect::<Result<_, _>>()?;
-        Ok(crate::TaskPage { items, next })
+        Ok(crate::ServiceMaterialPage { items, next })
+    }
+    /// Authenticate a newly associated request while a complete-journal scan is in progress.
+    pub fn service_material_fact(
+        &self,
+        request: &RequestId,
+        consumer: &execution_contract::Id,
+    ) -> Result<crate::ServiceMaterialFact, Error> {
+        let fact = self
+            .journal
+            .material_fact(request, consumer, &self.adapter(None, None))?;
+        self.check_binding(None, &fact.input)?;
+        Ok(fact)
+    }
+    /// Fold receipt-backed local changes into a proof without resetting its history cursor.
+    pub fn service_material_changes(
+        &self,
+        checkpoint: J::MaterialCheckpoint,
+        limit: usize,
+        consumer: &execution_contract::Id,
+    ) -> Result<crate::ServiceMaterialChanges<J::MaterialCheckpoint>, Error> {
+        let changes = self.journal.material_changes(
+            checkpoint,
+            limit,
+            consumer,
+            &self.adapter(None, None),
+        )?;
+        for item in &changes.items {
+            self.check_binding(None, &item.input)?;
+        }
+        Ok(changes)
+    }
+    /// Run one bounded filesystem step behind the authoritative journal's writer fence.
+    pub fn with_service_material_proof<T>(
+        &self,
+        checkpoint: J::MaterialCheckpoint,
+        action: impl FnOnce() -> Result<T, Error>,
+    ) -> Result<T, Error> {
+        if self.host.service_binding()? != self.binding {
+            return Err(Error::Denied);
+        }
+        self.journal.with_material_proof(checkpoint, action)
     }
     /// Internal device-owner recovery page; never exposed as a UI/model operation.
     pub fn service_tasks(

@@ -226,6 +226,40 @@ impl Store {
             return Ok(Start::Replay(decode(&bytes, self.limits.max_record_bytes)?));
         }
         authorize(host, access, scope, None)?;
+        // A retained active input cannot become less protected during this pass. A new
+        // input, or a receipt on a possibly terminal input, can weaken deletion proof.
+        // Confirmations only strengthen it; trust receipts are not delivered results.
+        if kind != OperationKind::Trust {
+            let bytes: Option<Vec<u8>> = tx
+                .query_row(
+                    &format!(
+                        "SELECT {} FROM executions WHERE scope=?1",
+                        bounded_blob("snapshot", self.limits.lifecycle.max_snapshot_bytes)
+                    ),
+                    [scope.interaction_subject().as_str()],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            let unsafe_change = match bytes {
+                None => true,
+                Some(bytes) => {
+                    let snapshot: execution_lifecycle::Snapshot =
+                        decode(&bytes, self.limits.lifecycle.max_snapshot_bytes)?;
+                    snapshot
+                        .attempt
+                        .as_ref()
+                        .is_none_or(|a| a.termination.is_some() || a.assessment.is_some())
+                }
+            };
+            if unsafe_change {
+                self.material_safety.set(
+                    self.material_safety
+                        .get()
+                        .checked_add(1)
+                        .ok_or(Error::Capacity)?,
+                );
+            }
+        }
         let now = host.reliable_now()?;
         let watermark: u64 = tx.query_row(
             "SELECT clock_watermark FROM metadata WHERE singleton=1",

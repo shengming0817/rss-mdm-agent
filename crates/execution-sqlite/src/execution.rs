@@ -19,13 +19,13 @@ impl Store {
     ) -> Result<ExecutionRecord, Error> {
         let tx = self.conn.unchecked_transaction()?;
         crate::database::ensure_current(&tx, &self.authority, self.limits)?;
-        let bytes: Vec<u8> = tx.query_row(
+        let (key, bytes, digest): (String, Vec<u8>, String) = tx.query_row(
             &format!(
-                "SELECT {} FROM executions WHERE request_id=?1",
+                "SELECT scope,{},digest FROM executions WHERE request_id=?1",
                 bounded_blob("plan", self.limits.input.max_input_bytes)
             ),
             [request.as_str()],
-            |row| row.get(0),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )?;
         let spec = execution_contract::decode_execution(&bytes, &self.limits.input)
             .map_err(|_| Error::Corrupt)?;
@@ -33,18 +33,14 @@ impl Store {
         let scope = Scope::from_input(&plan);
         self.check_scope(&scope)?;
         access.authorize(&scope, host)?;
-        if &plan.spec().request.request_id != request {
+        if &plan.spec().request.request_id != request
+            || scope.interaction_subject().as_str() != key
+            || hash(plan.digest())? != digest
+        {
             return Err(Error::Corrupt);
         }
-        let receipt: Option<Vec<u8>> = tx.query_row(
-            &format!("SELECT {} FROM receipts WHERE scope=?1 AND kind='admission' ORDER BY sequence DESC LIMIT 1", bounded_blob("body", self.limits.max_record_bytes)),
-            [scope.interaction_subject().as_str()], |r| r.get(0),
-        ).optional()?;
-        let admission = receipt
-            .map(|b| decode::<Receipt>(&b, self.limits.max_record_bytes))
-            .transpose()?
-            .and_then(|r| r.admission);
-        let execution = load_execution(&tx, &scope, self.limits)?.1;
+        let admission = crate::material::latest_admission(&tx, &scope, self.limits)?;
+        let execution = load_state(&tx, &scope, plan.clone(), self.limits)?.0;
         let process = if matches!(
             access,
             ExecutionAccess::Result | ExecutionAccess::Audit | ExecutionAccess::RunnerFact
@@ -521,6 +517,15 @@ pub(crate) fn load_execution(
     limits: Limits,
 ) -> Result<(FrozenExecution, Execution, u8), Error> {
     let plan = load_plan(conn, scope, limits)?;
+    let (state, reserve) = load_state(conn, scope, plan.clone(), limits)?;
+    Ok((plan, state, reserve))
+}
+pub(crate) fn load_state(
+    conn: &Connection,
+    scope: &Scope,
+    plan: FrozenExecution,
+    limits: Limits,
+) -> Result<(Execution, u8), Error> {
     let (bytes, revision, reserve): (Vec<u8>, u64, u8) = conn.query_row(
         &format!(
             "SELECT {},revision,reserve FROM executions WHERE scope=?1",
@@ -529,12 +534,11 @@ pub(crate) fn load_execution(
         [scope.interaction_subject().as_str()],
         |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
     )?;
-    let state =
-        Execution::decode(plan.clone(), &bytes, limits.lifecycle).map_err(|_| Error::Corrupt)?;
+    let state = Execution::decode(plan, &bytes, limits.lifecycle).map_err(|_| Error::Corrupt)?;
     if state.snapshot().revision != revision {
         return Err(Error::Corrupt);
     }
-    Ok((plan, state, reserve))
+    Ok((state, reserve))
 }
 fn terminal_reserve(
     old: &lifecycle::Snapshot,

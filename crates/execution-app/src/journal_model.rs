@@ -785,3 +785,28 @@ impl AuditRecord {
         }
     }
 }
+
+/// One authenticated GC input; no process output or UI details are returned.
+pub struct ServiceMaterialFact {
+    /// Original bounded input, restored exactly once by the journal adapter.
+    pub input: FrozenExecution,
+    /// Current terminal state and an empty durable delivery backlog for this consumer.
+    pub reclaimable: bool,
+}
+/// A bounded complete-journal page; foreign or corrupt rows abort instead of being filtered out.
+pub struct ServiceMaterialPage {
+    /// Authenticated original inputs and their minimum retention facts.
+    pub items: Vec<ServiceMaterialFact>,
+    /// Strict keyset continuation; absence means all remaining rows were inspected.
+    pub next: Option<RequestId>,
+}
+
+/// Bounded receipt-backed updates to a material proof; checkpoints are adapter-local.
+pub struct ServiceMaterialChanges<C> {
+    /// Authenticated current facts for changed execution scopes.
+    pub items: Vec<ServiceMaterialFact>,
+    /// Continuation checkpoint; usable for deletion only once complete is true.
+    pub checkpoint: C,
+    /// All committed changes through this checkpoint were inspected.
+    pub complete: bool,
+}

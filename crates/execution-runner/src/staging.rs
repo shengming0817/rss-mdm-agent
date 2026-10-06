@@ -1,6 +1,6 @@
 //! Immutable execution materials retained independently of transport-cache acknowledgements.
 mod root;
-pub use root::{MaterialRoot, Reclaimed};
+pub use root::{MaterialRoot, ReclaimPhase, Reclaimed, Reclamation};
 
 use execution_app::Error;
 use execution_contract::Digest;

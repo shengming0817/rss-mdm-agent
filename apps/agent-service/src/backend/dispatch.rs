@@ -240,7 +240,7 @@ pub(crate) fn dispatch_started<S: IdentityProvider>(
             .core
             .host
             .materials
-            .retire(&plan)
+            .retire(plan.digest())
             .map_err(crate::error::app_error)?;
     }
     result

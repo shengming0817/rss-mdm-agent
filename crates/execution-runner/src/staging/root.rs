@@ -1,6 +1,8 @@
 //! One exclusive material root; the caller supplies settlement from the authoritative journal.
 use super::*;
+mod reclamation;
 use fs2::FileExt;
+pub use reclamation::{ReclaimPhase, Reclamation};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs::File,
@@ -17,6 +19,8 @@ pub struct MaterialRoot {
     pub(super) path: PathBuf,
     _lease: crate::platform::PathLease,
     _owner: File,
+    instance: std::sync::Arc<()>,
+    generation: u64,
     #[cfg(any(test, feature = "test-support"))]
     fixture_owned: bool,
 }
@@ -120,6 +124,8 @@ impl MaterialRoot {
             path,
             _lease: lease,
             _owner: owner,
+            instance: std::sync::Arc::new(()),
+            generation: 0,
             #[cfg(any(test, feature = "test-support"))]
             fixture_owned: !immutable,
         })
@@ -132,6 +138,7 @@ impl MaterialRoot {
         expected: &Digest,
         length: u64,
     ) -> Result<PathBuf, Error> {
+        self.generation = self.generation.checked_add(1).ok_or(Error::Capacity)?;
         super::publish(self, subject, source, expected, length)
     }
     /// Extract a verified manifest into immutable hard-linked members.
@@ -142,6 +149,7 @@ impl MaterialRoot {
         digest: &Digest,
         manifest: &execution_contract::BundleManifest,
     ) -> Result<BTreeMap<String, PathBuf>, Error> {
+        self.generation = self.generation.checked_add(1).ok_or(Error::Capacity)?;
         super::bundle(self, subject, archive, digest, manifest)
     }
     /// Create an immutable native filename alias of an owned exact artifact.
@@ -152,6 +160,7 @@ impl MaterialRoot {
         name: &str,
         subject: Option<&str>,
     ) -> Result<PathBuf, Error> {
+        self.generation = self.generation.checked_add(1).ok_or(Error::Capacity)?;
         super::native_export(self, source, expected, name, subject)
     }
     pub(super) fn contained(&self, path: &Path) -> Result<(), Error> {
@@ -182,16 +191,6 @@ impl MaterialRoot {
     }
     pub(super) fn directory_lease(&self, path: &Path) -> Result<crate::platform::PathLease, Error> {
         crate::platform::PathLease::directory(path, self.immutable())
-    }
-    /// Snapshot the bounded set of existing file names without keeping every data handle open.
-    /// Missing historical journal coordinates do not consume the physical reclamation budget.
-    pub fn existing_files(&self) -> Result<BTreeSet<PathBuf>, Error> {
-        Ok(self
-            .inventory()?
-            .into_iter()
-            .filter(|entry| entry.identity.is_some())
-            .map(|entry| entry.path)
-            .collect())
     }
     pub(super) fn verified(
         &self,
@@ -282,127 +281,8 @@ impl MaterialRoot {
         self.quota(0, 1)?;
         std::fs::hard_link(source, destination).map_err(|_| Error::Storage)
     }
-    /// Reclaim only exact candidates proved settled by the sole journal owner. Retained paths
-    /// include every unresolved journal and live registry/helper reference. A missing retained
-    /// object, unknown alias, invalid coordinate or failed scan preserves all candidates.
-    /// Call only between submissions, after the complete journal/reference scan has succeeded.
-    pub fn reclaim(
-        &mut self,
-        candidates: &BTreeMap<PathBuf, Digest>,
-        retained: &BTreeSet<PathBuf>,
-    ) -> Result<Reclaimed, Error> {
-        if candidates.len() > MAX_ENTRIES || retained.len() > MAX_ENTRIES {
-            return Err(Error::Capacity);
-        }
-        let entries = self.inventory()?;
-        let mut protected = BTreeSet::new();
-        let mut protected_directories = BTreeSet::new();
-        for path in retained.iter().filter(|p| p.starts_with(&self.path)) {
-            self.contained(path)?;
-            if path
-                .symlink_metadata()
-                .map_err(|_| Error::Storage)?
-                .is_dir()
-            {
-                let _lease = crate::platform::PathLease::source(path, self.immutable())?;
-                protected_directories.insert(path.clone());
-                continue;
-            }
-            let (file, _lease) = self.file(path)?;
-            protected.insert(crate::platform::storage_identity(&file)?);
-        }
-        let mut proven = BTreeSet::new();
-        for (path, digest) in candidates {
-            self.contained(path)?;
-            if !managed_file(&self.path, path, digest) {
-                return Err(Error::Denied);
-            }
-            // Already removed names are valid after a partial prior reclamation.
-            match path.symlink_metadata() {
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
-                Err(_) => return Err(Error::Storage),
-                Ok(_) => (),
-            }
-            let (file, _lease) = self.verified(path, digest)?;
-            proven.insert(crate::platform::storage_identity(&file)?);
-        }
-        let mut link_counts = BTreeMap::<Identity, u64>::new();
-        for entry in &entries {
-            if let Some(id) = entry.identity {
-                *link_counts.entry(id).or_default() += 1;
-            }
-        }
-        for entry in &entries {
-            if let Some(id) = entry.identity {
-                // Unenumerated aliases outside this root have no settlement proof.
-                if link_counts[&id] != entry.links {
-                    protected.insert(id);
-                }
-
-                if !candidates.contains_key(&entry.path) && !pending_name(&self.path, &entry.path) {
-                    protected.insert(id);
-                }
-            }
-        }
-        let mut result = Reclaimed::default();
-        let mut released = BTreeSet::new();
-        // Sorted deterministic names, then deepest empty directories. Each deletion rechecks
-        // the object identity, so failure/restart never selects a different file by pathname.
-        let mut files: Vec<_> = entries.iter().filter(|e| e.identity.is_some()).collect();
-        files.sort_by(|a, b| a.path.cmp(&b.path));
-        for entry in files {
-            let id = entry.identity.unwrap();
-            if protected.contains(&id)
-                || !(proven.contains(&id) || pending_name(&self.path, &entry.path))
-            {
-                continue;
-            }
-            let (file, lease) = self.file(&entry.path)?;
-            if crate::platform::storage_identity(&file)? != id {
-                return Err(Error::Conflict);
-            }
-            drop(file);
-            drop(lease); // Windows must release its no-delete-sharing leaf before unlink.
-            match std::fs::remove_file(&entry.path) {
-                Ok(()) => {
-                    result.files += 1;
-                    if released.insert(id) {
-                        result.bytes += entry.bytes;
-                    }
-                }
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
-                Err(_) => return Err(Error::Storage),
-            }
-        }
-        let mut directories: Vec<_> = entries.iter().filter(|e| e.identity.is_none()).collect();
-        directories.sort_by(|a, b| {
-            b.path
-                .components()
-                .count()
-                .cmp(&a.path.components().count())
-                .then(a.path.cmp(&b.path))
-        });
-        for entry in directories {
-            if protected_directories
-                .iter()
-                .any(|p| p.starts_with(&entry.path))
-                || !managed_directory(&self.path, &entry.path)
-            {
-                continue;
-            }
-            match std::fs::remove_dir(&entry.path) {
-                Ok(()) => result.directories += 1,
-                Err(e)
-                    if matches!(
-                        e.kind(),
-                        std::io::ErrorKind::NotFound | std::io::ErrorKind::DirectoryNotEmpty
-                    ) => {}
-                Err(_) => return Err(Error::Storage),
-            }
-        }
-        Ok(result)
-    }
 }
+
 fn hex(value: &str) -> bool {
     value.len() == 64
         && value
@@ -480,6 +360,29 @@ mod tests {
             path,
         )
     }
+    fn registry_paths(registry: &crate::MaterialRegistry) -> BTreeSet<PathBuf> {
+        let mut snapshot = registry.retained_materials().unwrap();
+        let mut paths = BTreeSet::new();
+        while !snapshot.complete() {
+            paths.extend(snapshot.step().unwrap());
+        }
+        paths
+    }
+    fn finish_reclamation(
+        root: &mut MaterialRoot,
+        candidates: &BTreeMap<PathBuf, Digest>,
+        retained: &BTreeSet<PathBuf>,
+    ) -> Result<Reclaimed, Error> {
+        let mut pass = root.begin_reclamation();
+        while pass.phase() == ReclaimPhase::Inventory {
+            root.reclaim_step(&mut pass)?;
+        }
+        root.prove_reclamation(&mut pass, candidates, retained)?;
+        while pass.phase() != ReclaimPhase::Complete {
+            root.reclaim_step(&mut pass)?;
+        }
+        pass.into_result()
+    }
     fn digest(bytes: &[u8]) -> Digest {
         Digest::new(format!("{:x}", Sha256::digest(bytes))).unwrap()
     }
@@ -490,6 +393,237 @@ mod tests {
                 .unwrap(),
             digest,
         )
+    }
+    #[test]
+    fn incremental_hash_preserves_candidates_until_complete_and_rejects_late_aliases() {
+        let (mut root, path) = fixture();
+        let bytes = vec![7; 3 * 1024 * 1024];
+        let (source, digest) = publish(&mut root, &bytes);
+        let mut pass = root.begin_reclamation();
+        while pass.phase() == ReclaimPhase::Inventory {
+            root.reclaim_step(&mut pass).unwrap();
+        }
+        root.prove_reclamation(
+            &mut pass,
+            &BTreeMap::from([(source.clone(), digest)]),
+            &BTreeSet::new(),
+        )
+        .unwrap();
+        root.reclaim_step(&mut pass).unwrap(); // retained coordinates
+        root.reclaim_step(&mut pass).unwrap(); // first MiB
+        assert_eq!(pass.phase(), ReclaimPhase::Verifying);
+        assert!(source.exists());
+        while pass.phase() == ReclaimPhase::Verifying {
+            root.reclaim_step(&mut pass).unwrap();
+        }
+        let outside = path.with_extension("late-alias");
+        std::fs::hard_link(&source, &outside).unwrap();
+        assert!(matches!(root.reclaim_step(&mut pass), Err(Error::Conflict)));
+        assert!(source.exists());
+        std::fs::remove_file(outside).unwrap();
+        drop(pass);
+        drop(root);
+        std::fs::remove_dir_all(path).unwrap();
+    }
+    #[test]
+    fn reauthentication_keeps_hash_progress_and_new_references_can_stop_deletion() {
+        let (mut root, path) = fixture();
+        let (source, digest) = publish(&mut root, &vec![3; 8 * 1024 * 1024]);
+        let candidates = BTreeMap::from([(source.clone(), digest)]);
+        let retained: BTreeSet<_> = (0..65)
+            .map(|index| {
+                let file = path.join(format!("retained-{index}"));
+                std::fs::write(&file, b"retained").unwrap();
+                file
+            })
+            .collect();
+        let mut pass = root.begin_reclamation();
+        while pass.phase() == ReclaimPhase::Inventory {
+            root.reclaim_step(&mut pass).unwrap();
+        }
+        root.prove_reclamation(&mut pass, &candidates, &retained)
+            .unwrap();
+        for index in 0..80 {
+            if index % 2 == 0 {
+                publish(&mut root, format!("other-{index}").as_bytes());
+                pass.recheck_proof().unwrap();
+                root.prove_reclamation(&mut pass, &candidates, &retained)
+                    .unwrap();
+            }
+            root.reclaim_step(&mut pass).unwrap();
+            if pass.phase() == ReclaimPhase::Files {
+                break;
+            }
+        }
+        assert_eq!(
+            pass.phase(),
+            ReclaimPhase::Files,
+            "unrelated publication must not starve reference verification or hashing"
+        );
+        publish(&mut root, b"new reference");
+        assert!(matches!(root.reclaim_step(&mut pass), Err(Error::Conflict)));
+        pass.recheck_proof().unwrap();
+        root.prove_reclamation(&mut pass, &candidates, &BTreeSet::from([source.clone()]))
+            .unwrap();
+        while pass.phase() != ReclaimPhase::Complete {
+            root.reclaim_step(&mut pass).unwrap();
+        }
+        assert!(
+            source.exists(),
+            "fresh retained reference must override cached bytes"
+        );
+        drop(pass);
+        drop(root);
+        std::fs::remove_dir_all(path).unwrap();
+    }
+    #[test]
+    fn continuing_publication_preserves_directory_cleanup_progress() {
+        let (mut root, path) = fixture();
+        let namespace = path.join("system");
+        std::fs::create_dir(&namespace).unwrap();
+        for index in 0..128 {
+            std::fs::create_dir_all(namespace.join(format!("bundle-{index:064x}/nested"))).unwrap();
+        }
+        for index in 0..256 {
+            std::fs::write(path.join(format!("unknown-{index}")), b"unknown").unwrap();
+        }
+        let mut pass = root.begin_reclamation();
+        while pass.phase() == ReclaimPhase::Inventory {
+            root.reclaim_step(&mut pass).unwrap();
+        }
+        let candidates = BTreeMap::new();
+        let retained = BTreeSet::new();
+        root.prove_reclamation(&mut pass, &candidates, &retained)
+            .unwrap();
+        for index in 0..200 {
+            if index % 3 == 0 {
+                publish(&mut root, format!("appended-{index}").as_bytes());
+                pass.recheck_proof().unwrap();
+                root.prove_reclamation(&mut pass, &candidates, &retained)
+                    .unwrap();
+            }
+            root.reclaim_step(&mut pass).unwrap();
+            if pass.phase() == ReclaimPhase::Complete {
+                break;
+            }
+        }
+        assert_eq!(pass.phase(), ReclaimPhase::Complete);
+        assert_eq!(pass.into_result().unwrap().directories, 256);
+        assert!(path.join("unknown-0").exists());
+        drop(root);
+        std::fs::remove_dir_all(path).unwrap();
+    }
+    #[test]
+    fn live_reference_walk_keeps_progress_when_recipes_are_added_or_retired() {
+        let plan = execution_contract::decode_execution(
+            include_bytes!("../../../execution-contract/tests/fixtures/plan.json"),
+            &execution_app::test_execution_limits(),
+        )
+        .unwrap();
+        let recipe = |prefix: &str, count: usize| crate::Artifacts {
+            interpreter: PathBuf::new(),
+            content: PathBuf::new(),
+            work_root: PathBuf::new(),
+            program: vec![crate::SoftwareStepArtifacts {
+                mutations: BTreeMap::new(),
+                detection: None,
+                files: (0..count)
+                    .map(|i| {
+                        (
+                            PathBuf::from(format!("{prefix}-{i}")),
+                            plan.launch.artifact.clone(),
+                        )
+                    })
+                    .collect(),
+            }],
+            delegate: None,
+            controlled_input: None,
+            fixture_owned: true,
+        };
+        let old = Digest::new("a".repeat(64)).unwrap();
+        let retired = Digest::new("b".repeat(64)).unwrap();
+        let registry = crate::MaterialRegistry::from_materials(
+            BTreeMap::from([
+                (old.as_str().to_owned(), recipe("old", 130)),
+                (retired.as_str().to_owned(), recipe("retired", 130)),
+            ]),
+            32,
+        )
+        .unwrap();
+        let mut walk = registry.retained_materials().unwrap();
+        let mut paths: BTreeSet<_> = walk.step().unwrap().into_iter().collect();
+        registry.retire(&retired).unwrap();
+        for index in 0..16 {
+            registry.entries.lock().unwrap().insert(
+                format!("{index:064x}"),
+                std::sync::Arc::new(recipe(&format!("new-{index}"), 1)),
+            );
+            registry.refresh_retained(&mut walk).unwrap();
+            let batch = walk.step().unwrap();
+            assert!(batch.len() <= 64);
+            paths.extend(batch);
+        }
+        while !walk.complete() {
+            paths.extend(walk.step().unwrap());
+        }
+        for index in 0..130 {
+            assert!(paths.contains(&PathBuf::from(format!("old-{index}"))));
+        }
+        for index in 0..16 {
+            assert!(paths.contains(&PathBuf::from(format!("new-{index}-0"))));
+        }
+        assert!(!paths.contains(&PathBuf::from("retired-129")));
+    }
+    #[test]
+    fn reauthentication_does_not_reuse_hashes_after_content_changes() {
+        let (mut root, path) = fixture();
+        let (source, digest) = publish(&mut root, b"original");
+        let candidates = BTreeMap::from([(source.clone(), digest)]);
+        let mut pass = root.begin_reclamation();
+        while pass.phase() == ReclaimPhase::Inventory {
+            root.reclaim_step(&mut pass).unwrap();
+        }
+        root.prove_reclamation(&mut pass, &candidates, &BTreeSet::new())
+            .unwrap();
+        while pass.phase() == ReclaimPhase::Verifying {
+            root.reclaim_step(&mut pass).unwrap();
+        }
+        assert_eq!(pass.phase(), ReclaimPhase::Files);
+        std::fs::write(&source, b"changed bytes").unwrap();
+        pass.recheck_proof().unwrap();
+        root.prove_reclamation(&mut pass, &candidates, &BTreeSet::new())
+            .unwrap();
+        loop {
+            if let Err(error) = root.reclaim_step(&mut pass) {
+                assert!(matches!(error, Error::Conflict));
+                break;
+            }
+            assert!(source.exists());
+        }
+        assert!(source.exists());
+        drop(pass);
+        drop(root);
+        std::fs::remove_dir_all(path).unwrap();
+    }
+    #[test]
+    fn append_only_publication_preserves_inventory_but_owner_reopen_rejects_it() {
+        let (mut root, path) = fixture();
+        let mut before_publish = root.begin_reclamation();
+        publish(&mut root, b"new material");
+        root.reclaim_step(&mut before_publish).unwrap();
+        drop(before_publish);
+        drop(root);
+        let root = MaterialRoot::open_bound(&path, &"a".repeat(64), false).unwrap();
+        let mut before_reopen = root.begin_reclamation();
+        drop(root);
+        let mut root = MaterialRoot::open_bound(&path, &"a".repeat(64), false).unwrap();
+        assert!(matches!(
+            root.reclaim_step(&mut before_reopen),
+            Err(Error::Conflict)
+        ));
+        drop(before_reopen);
+        drop(root);
+        std::fs::remove_dir_all(path).unwrap();
     }
     #[test]
     fn exclusive_owner_and_binding_survive_reopen_without_overwrite() {
@@ -535,17 +669,17 @@ mod tests {
         let candidates =
             BTreeMap::from([(source.clone(), digest.clone()), (alias.clone(), digest)]);
         assert_eq!(
-            root.reclaim(&candidates, &BTreeSet::from([alias.clone()]))
+            finish_reclamation(&mut root, &candidates, &BTreeSet::from([alias.clone()]))
                 .unwrap()
                 .files,
             0
         );
         assert!(source.exists() && alias.exists());
-        let result = root.reclaim(&candidates, &BTreeSet::new()).unwrap();
+        let result = finish_reclamation(&mut root, &candidates, &BTreeSet::new()).unwrap();
         assert_eq!((result.files, result.bytes), (2, 256));
         root.quota(MAX_BYTES - 64, MAX_ENTRIES - 1).unwrap();
         assert_eq!(
-            root.reclaim(&candidates, &BTreeSet::new()).unwrap(),
+            finish_reclamation(&mut root, &candidates, &BTreeSet::new()).unwrap(),
             Reclaimed::default()
         );
         drop(root);
@@ -595,7 +729,7 @@ mod tests {
             (base, digest.clone()),
             (member, digest),
         ]);
-        let result = root.reclaim(&candidates, &BTreeSet::new()).unwrap();
+        let result = finish_reclamation(&mut root, &candidates, &BTreeSet::new()).unwrap();
         assert_eq!(
             (result.files, result.bytes),
             (3, archive.len() as u64 + bytes.len() as u64)
@@ -620,9 +754,13 @@ mod tests {
         ));
         assert!(!path.join("system").join(fresh.as_str()).exists());
         assert_eq!(
-            root.reclaim(&BTreeMap::from([(source, old_digest)]), &BTreeSet::new())
-                .unwrap()
-                .bytes,
+            finish_reclamation(
+                &mut root,
+                &BTreeMap::from([(source, old_digest)]),
+                &BTreeSet::new()
+            )
+            .unwrap()
+            .bytes,
             12
         );
         assert!(
@@ -642,19 +780,25 @@ mod tests {
         std::fs::hard_link(&source, &alias).unwrap();
         let candidates = BTreeMap::from([(source.clone(), digest)]);
         assert_eq!(
-            root.reclaim(&candidates, &BTreeSet::new()).unwrap().files,
+            finish_reclamation(&mut root, &candidates, &BTreeSet::new())
+                .unwrap()
+                .files,
             0
         );
         std::fs::remove_file(alias).unwrap();
         let outside = path.with_extension("alias");
         std::fs::hard_link(&source, &outside).unwrap();
         assert_eq!(
-            root.reclaim(&candidates, &BTreeSet::new()).unwrap().files,
+            finish_reclamation(&mut root, &candidates, &BTreeSet::new())
+                .unwrap()
+                .files,
             0
         );
         std::fs::remove_file(outside).unwrap();
         assert_eq!(
-            root.reclaim(&candidates, &BTreeSet::new()).unwrap().files,
+            finish_reclamation(&mut root, &candidates, &BTreeSet::new())
+                .unwrap()
+                .files,
             1
         );
         assert!(unknown.exists());
@@ -675,12 +819,10 @@ mod tests {
             (second.clone(), second_digest),
         ]);
         let missing = path.join("system").join("0".repeat(64));
-        assert!(root
-            .reclaim(&candidates, &BTreeSet::from([missing]))
-            .is_err());
+        assert!(finish_reclamation(&mut root, &candidates, &BTreeSet::from([missing])).is_err());
         assert!(first.exists() && second.exists());
         std::fs::write(&second, b"corruption").unwrap();
-        assert!(root.reclaim(&candidates, &BTreeSet::new()).is_err());
+        assert!(finish_reclamation(&mut root, &candidates, &BTreeSet::new()).is_err());
         assert!(first.exists() && alias.exists());
         candidates.remove(&second);
         // Simulate interruption after one alias was deleted. The next owner completes the
@@ -689,7 +831,9 @@ mod tests {
         drop(root);
         let mut root = MaterialRoot::open_bound(&path, &"a".repeat(64), false).unwrap();
         assert_eq!(
-            root.reclaim(&candidates, &BTreeSet::new()).unwrap().files,
+            finish_reclamation(&mut root, &candidates, &BTreeSet::new())
+                .unwrap()
+                .files,
             1
         );
         assert!(!alias.exists() && second.exists());
@@ -726,18 +870,21 @@ mod tests {
         )
         .unwrap();
         let running = registry.get(plan.digest().as_str()).unwrap().unwrap();
-        assert!(matches!(registry.retire(&plan), Err(Error::Conflict)));
+        assert!(matches!(
+            registry.retire(plan.digest()),
+            Err(Error::Conflict)
+        ));
         let candidates = BTreeMap::from([(source.clone(), digest)]);
         assert_eq!(
-            root.reclaim(&candidates, &registry.retained_paths().unwrap())
+            finish_reclamation(&mut root, &candidates, &registry_paths(&registry))
                 .unwrap()
                 .files,
             0
         );
         drop(running);
-        registry.retire(&plan).unwrap();
+        registry.retire(plan.digest()).unwrap();
         assert_eq!(
-            root.reclaim(&candidates, &registry.retained_paths().unwrap())
+            finish_reclamation(&mut root, &candidates, &registry_paths(&registry))
                 .unwrap()
                 .files,
             1
@@ -752,14 +899,18 @@ mod tests {
         let pending = source.parent().unwrap().join(".pending-123-456");
         std::fs::hard_link(&source, &pending).unwrap();
         assert_eq!(
-            root.reclaim(&BTreeMap::new(), &BTreeSet::from([source.clone()]))
-                .unwrap()
-                .files,
+            finish_reclamation(
+                &mut root,
+                &BTreeMap::new(),
+                &BTreeSet::from([source.clone()])
+            )
+            .unwrap()
+            .files,
             0
         );
         // Unknown source remains, so even its temporary alias is preserved conservatively.
         assert_eq!(
-            root.reclaim(&BTreeMap::new(), &BTreeSet::new())
+            finish_reclamation(&mut root, &BTreeMap::new(), &BTreeSet::new())
                 .unwrap()
                 .files,
             0
@@ -768,7 +919,7 @@ mod tests {
         let malformed = path.join("system/.pending-unknown");
         std::fs::write(&malformed, b"unknown").unwrap();
         assert_eq!(
-            root.reclaim(&BTreeMap::new(), &BTreeSet::new())
+            finish_reclamation(&mut root, &BTreeMap::new(), &BTreeSet::new())
                 .unwrap()
                 .files,
             1

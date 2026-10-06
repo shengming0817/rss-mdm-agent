@@ -15,6 +15,7 @@ use zeroize::Zeroize;
 pub struct MaterialRegistry {
     pub(crate) entries: Arc<std::sync::Mutex<BTreeMap<String, Arc<Artifacts>>>>,
     capacity: usize,
+    generation: Arc<std::sync::atomic::AtomicU64>,
 }
 impl MaterialRegistry {
     /// Create an empty registry with an explicit finite capacity.
@@ -33,6 +34,7 @@ impl MaterialRegistry {
                 values.into_iter().map(|(k, v)| (k, Arc::new(v))).collect(),
             )),
             capacity,
+            generation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         })
     }
     /// Register exact material coordinates once. Re-registration cannot replace live or idle content.
@@ -45,6 +47,7 @@ impl MaterialRegistry {
         if entries.len() >= self.capacity {
             return Err(Error::Capacity);
         }
+        self.advance_generation()?;
         entries.insert(plan.digest().as_str().into(), Arc::new(value));
         Ok(())
     }
@@ -70,40 +73,69 @@ impl MaterialRegistry {
             .map_err(|_| Error::Unavailable)?
             .contains_key(plan.digest().as_str()))
     }
-    /// Snapshot every registered and live physical reference for the exclusive service owner.
-    /// This includes helper recipes; retirement alone never authorizes disk deletion.
-    pub fn retained_paths(&self) -> Result<std::collections::BTreeSet<PathBuf>, Error> {
+    /// Current recipe membership generation; snapshots never count as active execution leases.
+    pub fn generation(&self) -> u64 {
+        self.generation.load(std::sync::atomic::Ordering::Acquire)
+    }
+    fn advance_generation(&self) -> Result<(), Error> {
+        self.generation
+            .fetch_update(
+                std::sync::atomic::Ordering::AcqRel,
+                std::sync::atomic::Ordering::Acquire,
+                |n| n.checked_add(1),
+            )
+            .map_err(|_| Error::Capacity)?;
+        Ok(())
+    }
+    /// Start an incremental reference walk. Weak handles do not block legitimate retirement.
+    pub fn retained_materials(&self) -> Result<RetainedMaterials, Error> {
+        let mut walk = RetainedMaterials {
+            roots: Vec::new(),
+            stack: Vec::new(),
+            seen: Default::default(),
+        };
+        self.refresh_retained(&mut walk)?;
+        Ok(walk)
+    }
+    /// Fold new immutable recipes into an in-flight walk, retaining its earlier progress.
+    pub fn refresh_retained(&self, walk: &mut RetainedMaterials) -> Result<(), Error> {
         let entries = self.entries.lock().map_err(|_| Error::Unavailable)?;
-        let mut pending: Vec<&Artifacts> = entries.values().map(Arc::as_ref).collect();
-        let mut paths = std::collections::BTreeSet::new();
-        while let Some(value) = pending.pop() {
-            for path in [&value.interpreter, &value.content, &value.work_root] {
-                if !path.as_os_str().is_empty() {
-                    paths.insert(path.clone());
-                }
+        for value in entries.values() {
+            // Weak handles keep allocations unique for this walk; no pointer is dereferenced.
+            if walk.seen.contains(&(Arc::as_ptr(value) as usize)) {
+                continue;
             }
-            for step in &value.program {
-                pending.extend(step.mutations.values().map(Box::as_ref));
-                pending.extend(step.detection.as_deref());
-                paths.extend(step.files.iter().map(|(path, _)| path.clone()));
-            }
-            if paths.len() > 32_768 || pending.len() > 32_768 {
+            if walk.roots.len() >= 32768 {
                 return Err(Error::Capacity);
             }
+            walk.seen.insert(Arc::as_ptr(value) as usize);
+            let root = walk.roots.len();
+            walk.roots.push(Arc::downgrade(value));
+            walk.stack.push(ReferenceCursor {
+                root,
+                route: Vec::new(),
+                field: 0,
+                step: 0,
+                file: 0,
+                child: 0,
+            });
         }
-        Ok(paths)
+        Ok(())
     }
     /// Retire settled material coordinates; in-use leases remain owned by the running attempt.
     /// The service calls this only after the journal and delivery owners have settled the task.
-    pub fn retire(&self, plan: &FrozenExecution) -> Result<(), Error> {
+    pub fn retire(&self, digest: &Digest) -> Result<(), Error> {
         let mut entries = self.entries.lock().map_err(|_| Error::Unavailable)?;
         if entries
-            .get(plan.digest().as_str())
+            .get(digest.as_str())
             .is_some_and(|v| Arc::strong_count(v) > 1)
         {
             return Err(Error::Conflict);
         }
-        entries.remove(plan.digest().as_str());
+        if entries.contains_key(digest.as_str()) {
+            self.advance_generation()?;
+            entries.remove(digest.as_str());
+        }
         Ok(())
     }
 }
@@ -584,4 +616,92 @@ pub(crate) fn verify_material_kind(
     }
     file.rewind().map_err(|_| Error::Unavailable)?;
     Ok((file, lease))
+}
+
+struct ReferenceCursor {
+    root: usize,
+    route: Vec<(usize, usize)>,
+    field: usize,
+    step: usize,
+    file: usize,
+    child: usize,
+}
+/// Incremental snapshot of registered native/helper recipes, independent of task history.
+pub struct RetainedMaterials {
+    roots: Vec<std::sync::Weak<Artifacts>>,
+    seen: std::collections::BTreeSet<usize>,
+    stack: Vec<ReferenceCursor>,
+}
+impl RetainedMaterials {
+    /// Whether all recipe references have been inspected.
+    pub fn complete(&self) -> bool {
+        self.stack.is_empty()
+    }
+    /// Inspect at most 64 recipe/path coordinates; additions are folded through refresh_retained.
+    pub fn step(&mut self) -> Result<Vec<PathBuf>, Error> {
+        let mut paths = Vec::new();
+        for _ in 0..64 {
+            let Some(cursor) = self.stack.last_mut() else {
+                break;
+            };
+            let Some(root) = self.roots[cursor.root].upgrade() else {
+                // Retirement is allowed only without active Arc leases.
+                self.stack.pop();
+                continue;
+            };
+            let mut node = root.as_ref();
+            for &(step, child) in &cursor.route {
+                let step = node.program.get(step).ok_or(Error::Conflict)?;
+                node = step
+                    .mutations
+                    .values()
+                    .map(Box::as_ref)
+                    .chain(step.detection.as_deref())
+                    .nth(child)
+                    .ok_or(Error::Conflict)?;
+            }
+            if cursor.field < 3 {
+                let path = [&node.interpreter, &node.content, &node.work_root][cursor.field];
+                cursor.field += 1;
+                if !path.as_os_str().is_empty() {
+                    paths.push(path.clone());
+                }
+            } else if let Some(step) = node.program.get(cursor.step) {
+                if let Some((path, _)) = step.files.get(cursor.file) {
+                    cursor.file += 1;
+                    paths.push(path.clone());
+                } else if step
+                    .mutations
+                    .values()
+                    .map(Box::as_ref)
+                    .chain(step.detection.as_deref())
+                    .nth(cursor.child)
+                    .is_some()
+                {
+                    let mut route = cursor.route.clone();
+                    route.push((cursor.step, cursor.child));
+                    cursor.child += 1;
+                    let root = cursor.root;
+                    if route.len() > 48 || self.stack.len() >= 32768 {
+                        return Err(Error::Capacity);
+                    }
+                    self.stack.push(ReferenceCursor {
+                        root,
+                        route,
+                        field: 0,
+                        step: 0,
+                        file: 0,
+                        child: 0,
+                    });
+                } else {
+                    cursor.step += 1;
+                    cursor.file = 0;
+                    cursor.child = 0;
+                }
+            } else {
+                self.stack.pop();
+            }
+        }
+        Ok(paths)
+    }
 }

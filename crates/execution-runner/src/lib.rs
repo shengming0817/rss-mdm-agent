@@ -16,7 +16,8 @@ pub mod staging;
 #[cfg(target_os = "macos")]
 use macos as platform;
 pub use materialize::{
-    Artifacts, InputBytes, InputResolver, MaterialRegistry, SoftwareStepArtifacts,
+    Artifacts, InputBytes, InputResolver, MaterialRegistry, RetainedMaterials,
+    SoftwareStepArtifacts,
 };
 pub use runner::NativeRunner;
 

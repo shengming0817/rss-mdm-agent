@@ -493,6 +493,113 @@ async fn signed_start_needs_the_current_confirmed_request_and_frozen_action() {
     .is_err());
 }
 
+fn complete_material_gc<S: agent_client::IdentityProvider>(
+    service: &mut crate::DeviceService<S>,
+) -> Result<(), agent_client::Error> {
+    service.material_gc = Default::default();
+    for _ in 0..20000 {
+        service.reclaim_step()?;
+        if service.material_gc.idle() {
+            return Ok(());
+        }
+    }
+    panic!("GC did not complete its fixed-step pass");
+}
+
+#[tokio::test]
+async fn material_gc_finishes_old_content_under_continuing_publication_and_new_journal_rows() {
+    let _budget = crate::scenario_budget::enter();
+    let mut c = Case::new(None).await;
+    let caller = c.service.core.caller();
+    let consumer = plan::id("backend-results").unwrap();
+    let bytes = vec![5; 8 * 1024 * 1024];
+    let digest = execution_contract::Digest::new(format!("{:x}", Sha256::digest(&bytes))).unwrap();
+    let old = c
+        .service
+        .core
+        .material_root
+        .publish(None, bytes.as_slice(), &digest, bytes.len() as u64)
+        .unwrap();
+    let mut spec: ExecutionInput = serde_json::from_str(include_str!(
+        "../../../crates/execution-contract/tests/fixtures/plan.json"
+    ))
+    .unwrap();
+    spec.request.authority = c.service.core.host.binding.authority.clone();
+    spec.request.actor = caller.actor.clone();
+    spec.request.target.device = c.service.core.host.binding.device.clone();
+    spec.request.initiator = Initiator::Backend {
+        task: plan::id("gc-continuing-task").unwrap(),
+        attempt: plan::id("gc-continuing-attempt").unwrap(),
+        trigger: BackendTrigger::Automatic {},
+    };
+    spec.request.delegation = None;
+    spec.run_as = RunAs::System {
+        platform: spec.request.target.platform,
+    };
+    spec.session_requirement = SessionRequirement::NotRequired {};
+    let register = |service: &mut DeviceService<protocol::Secrets>,
+                    name: String,
+                    digest: execution_contract::Digest| {
+        let mut next = spec.clone();
+        next.request.request_id = RequestId::new(name).unwrap();
+        next.launch.artifact.sha256 = digest;
+        let input = FrozenExecution::freeze(next, &plan::storage_limits().input).unwrap();
+        assert!(matches!(
+            service.core.app.request_execution(&caller, &input),
+            Err(execution_app::Error::Unbound)
+        ));
+        service
+            .core
+            .app
+            .cancel(&caller, &input.spec().request.request_id)
+            .unwrap();
+        for item in service
+            .core
+            .app
+            .service_delivery(&input.spec().request.request_id, &consumer, 64)
+            .unwrap()
+        {
+            service
+                .core
+                .app
+                .service_confirm(
+                    &input.spec().request.request_id,
+                    &consumer,
+                    &item.receipt.event_id,
+                )
+                .unwrap();
+        }
+    };
+    for index in 0..65 {
+        register(&mut c.service, format!("gc-old-{index:03}"), digest.clone());
+    }
+    let mut publications = 0;
+    for step in 0..512 {
+        if step % 16 == 0 {
+            let bytes = format!("new material {step}");
+            let digest =
+                execution_contract::Digest::new(format!("{:x}", Sha256::digest(bytes.as_bytes())))
+                    .unwrap();
+            c.service
+                .core
+                .material_root
+                .publish(None, bytes.as_bytes(), &digest, bytes.len() as u64)
+                .unwrap();
+            register(&mut c.service, format!("gc-new-{step:03}"), digest);
+            publications += 1;
+        }
+        c.service.reclaim_step().unwrap();
+        if !old.exists() {
+            assert!(
+                publications >= 2,
+                "fixture must interleave publication with the old pass"
+            );
+            return;
+        }
+    }
+    panic!("continuing publication starved reclamation of settled old material");
+}
+
 #[tokio::test]
 async fn material_gc_scans_every_journal_page_and_waits_for_delivery_confirmation() {
     let _budget = crate::scenario_budget::enter();
@@ -508,6 +615,7 @@ async fn material_gc_large_history_does_not_exhaust_live_candidate_budget() {
 
 async fn material_gc_history(materials_per_request: usize) {
     // Keep Offer/Start expiry out of GC verification, including the manual scale case.
+    let fixture_started = std::time::Instant::now();
     let mut c = Case::with_offer_mode(None, 600, false).await;
     c._server.data.lock().unwrap().start_validity_seconds = 600;
     let bytes = b"original journal material";
@@ -658,7 +766,13 @@ async fn material_gc_history(materials_per_request: usize) {
         .unwrap()
         .next
         .is_some());
-    c.service.reclaim_materials().unwrap();
+    eprintln!(
+        "material_gc_fixture_ms={}",
+        fixture_started.elapsed().as_millis()
+    );
+    let gc_started = std::time::Instant::now();
+    complete_material_gc(&mut c.service).unwrap();
+    eprintln!("material_gc_pass_ms={}", gc_started.elapsed().as_millis());
     assert!(
         source.exists(),
         "the last page still retains the shared object for delivery retry"
@@ -712,7 +826,7 @@ async fn material_gc_history(materials_per_request: usize) {
         rusqlite::params![serde_json::to_vec(&corrupted).unwrap(), last.as_str()],
     )
     .unwrap();
-    assert!(c.service.reclaim_materials().is_err());
+    assert!(complete_material_gc(&mut c.service).is_err());
     assert!(
         source.exists(),
         "failed or incomplete journal proof preserves all candidates"
@@ -739,14 +853,14 @@ async fn material_gc_history(materials_per_request: usize) {
         cdhash: None,
     };
     c.service.core.config.interpreters[0].image = pinned.clone();
-    c.service.reclaim_materials().unwrap();
+    complete_material_gc(&mut c.service).unwrap();
     assert!(source.exists(), "the configured interpreter remains pinned");
     c.service.core.config.interpreters[0].image = original_image;
     c.service.core.config.managers.push(SoftwareManager {
         executor: SoftwareManagerKind::PackageInstaller,
         image: pinned,
     });
-    c.service.reclaim_materials().unwrap();
+    complete_material_gc(&mut c.service).unwrap();
     assert!(source.exists(), "the configured manager remains pinned");
     c.service.core.config.managers.clear();
     // An unresolved original journal input can retain an interpreter no longer in config.
@@ -789,7 +903,7 @@ async fn material_gc_history(materials_per_request: usize) {
         .app
         .cancel(&caller, &pending_input.spec().request.request_id)
         .unwrap();
-    c.service.reclaim_materials().unwrap();
+    complete_material_gc(&mut c.service).unwrap();
     assert!(
         source.exists(),
         "the unresolved interpreter digest remains protected"
@@ -811,10 +925,53 @@ async fn material_gc_history(materials_per_request: usize) {
             )
             .unwrap();
     }
-    c.service.reclaim_materials().unwrap();
-    assert!(!source.exists());
-    assert!(!other_source.exists());
-    c.service.reclaim_materials().unwrap();
+    assert!(source.exists() && other_source.exists());
+
+    let reconcile_started = std::time::Instant::now();
+    c.service.core.reconcile().unwrap();
+    eprintln!(
+        "material_gc_reconcile_ms={}",
+        reconcile_started.elapsed().as_millis()
+    );
+    // Leave a fresh pass at its journal phase before starting the real owner thread.
+    // Commands use the production 3-second ServiceHandle timeout while large rows
+    // are scanned on successive owner ticks. Transport fixtures remain alive here.
+    c.service.material_gc = Default::default();
+    c.service.reclaim_step().unwrap();
+    c.service.waiting = None;
+    c.service.next_network = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    c.service.next_enrollment = c.service.next_network;
+    let policy = execution_ipc::host::PeerPolicy {
+        images: vec![c.service.core.config.interpreters[0].image.clone()],
+        subjects: vec!["0".into()],
+        interactive: false,
+    };
+    let mut owner = c.service.spawn(policy, None).unwrap();
+    let maximum = tokio::task::spawn_blocking(move || {
+        use execution_ipc::host::Handler;
+        let mut maximum = std::time::Duration::ZERO;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        while source.exists() || other_source.exists() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "owner GC never completed"
+            );
+            let started = std::time::Instant::now();
+            assert!(matches!(
+                owner.service_status(),
+                Reply::ServiceStatus { .. }
+            ));
+            assert!(started.elapsed() < std::time::Duration::from_secs(3));
+            maximum = maximum.max(started.elapsed());
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        owner.stop().unwrap();
+        maximum
+    })
+    .await
+    .unwrap();
+    assert!(maximum < std::time::Duration::from_secs(3));
+    eprintln!("material_gc_owner_ipc_max_ms={}", maximum.as_millis());
 }
 
 #[tokio::test]
