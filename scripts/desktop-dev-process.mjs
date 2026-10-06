@@ -214,7 +214,9 @@ export function runPreparation(command, args, cwd, environment = process.env) {
       detached: true,
       env: environment,
     });
-    let exitCode, timer, deadline;
+    let exitCode, cancellation, cleanupFailed, timer, deadline;
+    const signalCode = (signal) =>
+      ({ SIGINT: 130, SIGTERM: 143, SIGHUP: 129 })[signal] ?? 1;
     const alive = () => {
       try {
         process.kill(-child.pid, 0);
@@ -236,7 +238,9 @@ export function runPreparation(command, args, cwd, environment = process.env) {
       process.off("SIGINT", interrupt);
       process.off("SIGTERM", terminate);
       process.off("SIGHUP", hangup);
-      resolve(exitCode);
+      resolve(
+        cleanupFailed ? 1 : cancellation ? signalCode(cancellation) : exitCode,
+      );
     };
     const stop = (signal) => {
       send(signal);
@@ -246,14 +250,18 @@ export function runPreparation(command, args, cwd, environment = process.env) {
         if (!alive() && exitCode !== undefined) finish();
         else if (Date.now() >= deadline + 1000) {
           console.error("[desktop dev] process group cleanup unconfirmed");
-          exitCode = 1;
+          cleanupFailed = true;
           finish();
         } else if (Date.now() >= deadline) send("SIGKILL");
       }, 50);
     };
-    const interrupt = () => stop("SIGINT");
-    const terminate = () => stop("SIGTERM");
-    const hangup = () => stop("SIGHUP");
+    const cancel = (signal) => {
+      cancellation ??= signal;
+      stop(signal);
+    };
+    const interrupt = () => cancel("SIGINT");
+    const terminate = () => cancel("SIGTERM");
+    const hangup = () => cancel("SIGHUP");
     process.on("SIGINT", interrupt);
     process.on("SIGTERM", terminate);
     process.on("SIGHUP", hangup);
@@ -265,15 +273,7 @@ export function runPreparation(command, args, cwd, environment = process.env) {
       reject(error);
     });
     child.once("exit", (code, signal) => {
-      exitCode =
-        code ??
-        (signal === "SIGINT"
-          ? 130
-          : signal === "SIGTERM"
-            ? 143
-            : signal === "SIGHUP"
-              ? 129
-              : 1);
+      exitCode = code ?? signalCode(signal);
       stop("SIGTERM");
     });
   });

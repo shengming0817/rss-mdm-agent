@@ -299,9 +299,10 @@ function processFixture(t, mode = "ready") {
     join(root, "grandchild.mjs"),
     `
     import {writeSync} from 'node:fs';
-    for (const signal of ['SIGTERM','SIGHUP']) process.on(signal,()=>{
+    for (const signal of ['SIGINT','SIGTERM','SIGHUP']) process.on(signal,()=>{
       writeSync(1,JSON.stringify({kind:'signal',role:'grandchild',pid:process.pid,signal})+'\\n');
-      process.exit(0);
+      if (${JSON.stringify(mode)} === 'delayed-stop') setTimeout(()=>process.exit(0),200);
+      else process.exit(0);
     });
     setInterval(()=>{},1000);
     if (${JSON.stringify(mode)} !== 'not-ready') process.send({kind:'ready',pid:process.pid});
@@ -323,15 +324,14 @@ function processFixture(t, mode = "ready") {
     emit({kind:'child',pid:child.pid});
     child.on('error',(error)=>{writeSync(2,String(error));process.exitCode=19;});
     let stopping;
-    for (const signal of ['SIGTERM','SIGHUP']) process.on(signal,()=>{
+    for (const signal of ['SIGINT','SIGTERM','SIGHUP']) process.on(signal,()=>{
       emit({kind:'signal',role:'parent',pid:process.pid,signal});
       stopping ??= signal;
     });
     child.on('message',(value)=>{if(value.kind==='ready') emit({kind:'ready',parent:process.pid,child:child.pid});});
     child.on('close',(code)=>{
       if (stopping) {
-        process.removeAllListeners(stopping);
-        process.kill(process.pid,stopping);
+        process.exitCode=0;
       } else process.exitCode=code ?? 19;
     });
   `,
@@ -444,6 +444,7 @@ function processFixture(t, mode = "ready") {
 }
 
 for (const [signal, expectedCode] of [
+  ["SIGINT", 130],
   ["SIGTERM", 143],
   ["SIGHUP", 129],
 ])
@@ -470,6 +471,39 @@ for (const [signal, expectedCode] of [
       assert.equal(f.state.code, expectedCode, f.diagnostic("exit code"));
     },
   );
+
+test(
+  "repeated cancellation keeps the first signal after a normal child exit",
+  { skip: process.platform === "win32" },
+  async (t) => {
+    const f = processFixture(t, "delayed-stop");
+    await f.ready();
+    f.wrapper.kill("SIGTERM");
+    await f.waitFor(
+      () =>
+        f.events.some(
+          (e) =>
+            e.kind === "signal" &&
+            e.role === "grandchild" &&
+            e.signal === "SIGTERM",
+        ),
+      "first signal",
+    );
+    f.wrapper.kill("SIGHUP");
+    await f.waitFor(
+      () =>
+        f.events.some(
+          (e) =>
+            e.kind === "signal" &&
+            e.role === "grandchild" &&
+            e.signal === "SIGHUP",
+        ),
+      "second signal",
+    );
+    await f.absent();
+    assert.equal(f.state.code, 143, f.diagnostic("first cancellation"));
+  },
+);
 
 test(
   "startup early exit reports code and both output streams",
