@@ -980,13 +980,13 @@ fn material_registry_is_bounded_immutable_and_retains_live_leases() {
     let other = FrozenExecution::freeze(input, &execution_app::test_execution_limits()).unwrap();
     assert_eq!(registry.register(&other, source()), Err(Error::Capacity));
     let lease = registry.get(plan.digest().as_str()).unwrap().unwrap();
-    assert_eq!(registry.retire(&plan), Err(Error::Conflict));
+    assert_eq!(registry.retire(plan.digest()), Err(Error::Conflict));
     drop(lease);
-    registry.retire(&plan).unwrap();
+    registry.retire(plan.digest()).unwrap();
     registry.register(&other, source()).unwrap();
     let mut substituted = source();
     substituted.content = f.root.join("source");
-    registry.retire(&other).unwrap();
+    registry.retire(other.digest()).unwrap();
     assert_eq!(registry.register(&other, substituted), Err(Error::Denied));
 }
 

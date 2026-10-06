@@ -303,7 +303,7 @@ impl Helper {
             Command::Acknowledge { input, process } => {
                 let input = self.input(*input)?;
                 self.runner.acknowledge_capture(&input, &process)?;
-                self.materials.retire(&input)?;
+                self.materials.retire(input.digest())?;
                 Reply::Acknowledged
             }
             Command::Stop { input, attempt } => {
