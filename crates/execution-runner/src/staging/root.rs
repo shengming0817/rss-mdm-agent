@@ -377,7 +377,7 @@ mod tests {
         while pass.phase() == ReclaimPhase::Inventory {
             root.reclaim_step(&mut pass)?;
         }
-        root.prove_reclamation(&mut pass, candidates.clone(), retained.clone())?;
+        root.prove_reclamation(&mut pass, candidates, retained)?;
         while pass.phase() != ReclaimPhase::Complete {
             root.reclaim_step(&mut pass)?;
         }
@@ -405,8 +405,8 @@ mod tests {
         }
         root.prove_reclamation(
             &mut pass,
-            BTreeMap::from([(source.clone(), digest)]),
-            BTreeSet::new(),
+            &BTreeMap::from([(source.clone(), digest)]),
+            &BTreeSet::new(),
         )
         .unwrap();
         root.reclaim_step(&mut pass).unwrap(); // retained coordinates
@@ -430,17 +430,24 @@ mod tests {
         let (mut root, path) = fixture();
         let (source, digest) = publish(&mut root, &vec![3; 8 * 1024 * 1024]);
         let candidates = BTreeMap::from([(source.clone(), digest)]);
+        let retained: BTreeSet<_> = (0..65)
+            .map(|index| {
+                let file = path.join(format!("retained-{index}"));
+                std::fs::write(&file, b"retained").unwrap();
+                file
+            })
+            .collect();
         let mut pass = root.begin_reclamation();
         while pass.phase() == ReclaimPhase::Inventory {
             root.reclaim_step(&mut pass).unwrap();
         }
-        root.prove_reclamation(&mut pass, candidates.clone(), BTreeSet::new())
+        root.prove_reclamation(&mut pass, &candidates, &retained)
             .unwrap();
         for index in 0..80 {
-            if index % 4 == 0 {
+            if index % 2 == 0 {
                 publish(&mut root, format!("other-{index}").as_bytes());
                 pass.recheck_proof().unwrap();
-                root.prove_reclamation(&mut pass, candidates.clone(), BTreeSet::new())
+                root.prove_reclamation(&mut pass, &candidates, &retained)
                     .unwrap();
             }
             root.reclaim_step(&mut pass).unwrap();
@@ -451,12 +458,12 @@ mod tests {
         assert_eq!(
             pass.phase(),
             ReclaimPhase::Files,
-            "unrelated publication must not starve hashing"
+            "unrelated publication must not starve reference verification or hashing"
         );
         publish(&mut root, b"new reference");
         assert!(matches!(root.reclaim_step(&mut pass), Err(Error::Conflict)));
         pass.recheck_proof().unwrap();
-        root.prove_reclamation(&mut pass, candidates, BTreeSet::from([source.clone()]))
+        root.prove_reclamation(&mut pass, &candidates, &BTreeSet::from([source.clone()]))
             .unwrap();
         while pass.phase() != ReclaimPhase::Complete {
             root.reclaim_step(&mut pass).unwrap();
@@ -470,6 +477,104 @@ mod tests {
         std::fs::remove_dir_all(path).unwrap();
     }
     #[test]
+    fn continuing_publication_preserves_directory_cleanup_progress() {
+        let (mut root, path) = fixture();
+        let namespace = path.join("system");
+        std::fs::create_dir(&namespace).unwrap();
+        for index in 0..128 {
+            std::fs::create_dir_all(namespace.join(format!("bundle-{index:064x}/nested"))).unwrap();
+        }
+        for index in 0..256 {
+            std::fs::write(path.join(format!("unknown-{index}")), b"unknown").unwrap();
+        }
+        let mut pass = root.begin_reclamation();
+        while pass.phase() == ReclaimPhase::Inventory {
+            root.reclaim_step(&mut pass).unwrap();
+        }
+        let candidates = BTreeMap::new();
+        let retained = BTreeSet::new();
+        root.prove_reclamation(&mut pass, &candidates, &retained)
+            .unwrap();
+        for index in 0..200 {
+            if index % 3 == 0 {
+                publish(&mut root, format!("appended-{index}").as_bytes());
+                pass.recheck_proof().unwrap();
+                root.prove_reclamation(&mut pass, &candidates, &retained)
+                    .unwrap();
+            }
+            root.reclaim_step(&mut pass).unwrap();
+            if pass.phase() == ReclaimPhase::Complete {
+                break;
+            }
+        }
+        assert_eq!(pass.phase(), ReclaimPhase::Complete);
+        assert_eq!(pass.into_result().unwrap().directories, 256);
+        assert!(path.join("unknown-0").exists());
+        drop(root);
+        std::fs::remove_dir_all(path).unwrap();
+    }
+    #[test]
+    fn live_reference_walk_keeps_progress_when_recipes_are_added_or_retired() {
+        let plan = execution_contract::decode_execution(
+            include_bytes!("../../../execution-contract/tests/fixtures/plan.json"),
+            &execution_app::test_execution_limits(),
+        )
+        .unwrap();
+        let recipe = |prefix: &str, count: usize| crate::Artifacts {
+            interpreter: PathBuf::new(),
+            content: PathBuf::new(),
+            work_root: PathBuf::new(),
+            program: vec![crate::SoftwareStepArtifacts {
+                mutations: BTreeMap::new(),
+                detection: None,
+                files: (0..count)
+                    .map(|i| {
+                        (
+                            PathBuf::from(format!("{prefix}-{i}")),
+                            plan.launch.artifact.clone(),
+                        )
+                    })
+                    .collect(),
+            }],
+            delegate: None,
+            controlled_input: None,
+            fixture_owned: true,
+        };
+        let old = Digest::new("a".repeat(64)).unwrap();
+        let retired = Digest::new("b".repeat(64)).unwrap();
+        let registry = crate::MaterialRegistry::from_materials(
+            BTreeMap::from([
+                (old.as_str().to_owned(), recipe("old", 130)),
+                (retired.as_str().to_owned(), recipe("retired", 130)),
+            ]),
+            32,
+        )
+        .unwrap();
+        let mut walk = registry.retained_materials().unwrap();
+        let mut paths: BTreeSet<_> = walk.step().unwrap().into_iter().collect();
+        registry.retire(&retired).unwrap();
+        for index in 0..16 {
+            registry.entries.lock().unwrap().insert(
+                format!("{index:064x}"),
+                std::sync::Arc::new(recipe(&format!("new-{index}"), 1)),
+            );
+            registry.refresh_retained(&mut walk).unwrap();
+            let batch = walk.step().unwrap();
+            assert!(batch.len() <= 64);
+            paths.extend(batch);
+        }
+        while !walk.complete() {
+            paths.extend(walk.step().unwrap());
+        }
+        for index in 0..130 {
+            assert!(paths.contains(&PathBuf::from(format!("old-{index}"))));
+        }
+        for index in 0..16 {
+            assert!(paths.contains(&PathBuf::from(format!("new-{index}-0"))));
+        }
+        assert!(!paths.contains(&PathBuf::from("retired-129")));
+    }
+    #[test]
     fn reauthentication_does_not_reuse_hashes_after_content_changes() {
         let (mut root, path) = fixture();
         let (source, digest) = publish(&mut root, b"original");
@@ -478,7 +583,7 @@ mod tests {
         while pass.phase() == ReclaimPhase::Inventory {
             root.reclaim_step(&mut pass).unwrap();
         }
-        root.prove_reclamation(&mut pass, candidates.clone(), BTreeSet::new())
+        root.prove_reclamation(&mut pass, &candidates, &BTreeSet::new())
             .unwrap();
         while pass.phase() == ReclaimPhase::Verifying {
             root.reclaim_step(&mut pass).unwrap();
@@ -486,14 +591,14 @@ mod tests {
         assert_eq!(pass.phase(), ReclaimPhase::Files);
         std::fs::write(&source, b"changed bytes").unwrap();
         pass.recheck_proof().unwrap();
-        root.prove_reclamation(&mut pass, candidates, BTreeSet::new())
+        root.prove_reclamation(&mut pass, &candidates, &BTreeSet::new())
             .unwrap();
         loop {
             if let Err(error) = root.reclaim_step(&mut pass) {
-                assert!(matches!(error, Error::Denied));
+                assert!(matches!(error, Error::Conflict));
                 break;
             }
-            assert_ne!(pass.phase(), ReclaimPhase::Files);
+            assert!(source.exists());
         }
         assert!(source.exists());
         drop(pass);

@@ -89,20 +89,38 @@ impl MaterialRegistry {
     }
     /// Start an incremental reference walk. Weak handles do not block legitimate retirement.
     pub fn retained_materials(&self) -> Result<RetainedMaterials, Error> {
+        let mut walk = RetainedMaterials {
+            roots: Vec::new(),
+            stack: Vec::new(),
+            seen: Default::default(),
+        };
+        self.refresh_retained(&mut walk)?;
+        Ok(walk)
+    }
+    /// Fold new immutable recipes into an in-flight walk, retaining its earlier progress.
+    pub fn refresh_retained(&self, walk: &mut RetainedMaterials) -> Result<(), Error> {
         let entries = self.entries.lock().map_err(|_| Error::Unavailable)?;
-        let roots: Vec<_> = entries.values().map(Arc::downgrade).collect();
-        let stack = (0..roots.len())
-            .rev()
-            .map(|root| ReferenceCursor {
+        for value in entries.values() {
+            // Weak handles keep allocations unique for this walk; no pointer is dereferenced.
+            if walk.seen.contains(&(Arc::as_ptr(value) as usize)) {
+                continue;
+            }
+            if walk.roots.len() >= 32768 {
+                return Err(Error::Capacity);
+            }
+            walk.seen.insert(Arc::as_ptr(value) as usize);
+            let root = walk.roots.len();
+            walk.roots.push(Arc::downgrade(value));
+            walk.stack.push(ReferenceCursor {
                 root,
                 route: Vec::new(),
                 field: 0,
                 step: 0,
                 file: 0,
                 child: 0,
-            })
-            .collect();
-        Ok(RetainedMaterials { roots, stack })
+            });
+        }
+        Ok(())
     }
     /// Retire settled material coordinates; in-use leases remain owned by the running attempt.
     /// The service calls this only after the journal and delivery owners have settled the task.
@@ -611,6 +629,7 @@ struct ReferenceCursor {
 /// Incremental snapshot of registered native/helper recipes, independent of task history.
 pub struct RetainedMaterials {
     roots: Vec<std::sync::Weak<Artifacts>>,
+    seen: std::collections::BTreeSet<usize>,
     stack: Vec<ReferenceCursor>,
 }
 impl RetainedMaterials {
@@ -618,14 +637,18 @@ impl RetainedMaterials {
     pub fn complete(&self) -> bool {
         self.stack.is_empty()
     }
-    /// Inspect at most 64 recipe/path coordinates. Membership changes invalidate the snapshot.
+    /// Inspect at most 64 recipe/path coordinates; additions are folded through refresh_retained.
     pub fn step(&mut self) -> Result<Vec<PathBuf>, Error> {
         let mut paths = Vec::new();
         for _ in 0..64 {
             let Some(cursor) = self.stack.last_mut() else {
                 break;
             };
-            let root = self.roots[cursor.root].upgrade().ok_or(Error::Conflict)?;
+            let Some(root) = self.roots[cursor.root].upgrade() else {
+                // Retirement is allowed only without active Arc leases.
+                self.stack.pop();
+                continue;
+            };
             let mut node = root.as_ref();
             for &(step, child) in &cursor.route {
                 let step = node.program.get(step).ok_or(Error::Conflict)?;

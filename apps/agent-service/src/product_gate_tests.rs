@@ -570,9 +570,11 @@ async fn material_gc_finishes_old_content_under_continuing_publication_and_new_j
                 .unwrap();
         }
     };
-    register(&mut c.service, "gc-old".into(), digest);
+    for index in 0..65 {
+        register(&mut c.service, format!("gc-old-{index:03}"), digest.clone());
+    }
     let mut publications = 0;
-    for step in 0..160 {
+    for step in 0..512 {
         if step % 16 == 0 {
             let bytes = format!("new material {step}");
             let digest =

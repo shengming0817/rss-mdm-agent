@@ -60,6 +60,7 @@ pub struct Reclamation {
     instance: std::sync::Weak<()>,
     generation: u64,
     phase: ReclaimPhase,
+    resume: ReclaimPhase,
     pending: Vec<PathBuf>,
     directory: Option<(ReadDir, crate::platform::PathLease)>,
     entries: BTreeMap<PathBuf, Entry>,
@@ -72,8 +73,9 @@ pub struct Reclamation {
     protected_directories: BTreeSet<PathBuf>,
     proven: BTreeMap<Identity, Verified>,
     cursor: Option<PathBuf>,
-    retained_done: bool,
-    candidates_done: bool,
+    pending_retained: BTreeSet<PathBuf>,
+    pending_candidates: BTreeMap<PathBuf, Digest>,
+    allowed_links: BTreeMap<Identity, u64>,
     hashing: Option<Hashing>,
     result: Reclaimed,
 }
@@ -97,6 +99,9 @@ impl Reclamation {
     pub fn recheck_proof(&mut self) -> Result<(), Error> {
         if self.phase == ReclaimPhase::Complete {
             return Err(Error::Conflict);
+        }
+        if matches!(self.phase, ReclaimPhase::Files | ReclaimPhase::Directories) {
+            self.resume = self.phase;
         }
         if self.phase != ReclaimPhase::Inventory {
             self.phase = ReclaimPhase::AwaitingProof;
@@ -123,6 +128,7 @@ impl MaterialRoot {
             instance: std::sync::Arc::downgrade(&self.instance),
             generation: self.generation,
             phase: ReclaimPhase::Inventory,
+            resume: ReclaimPhase::Files,
             pending: vec![self.path.clone()],
             directory: None,
             entries: BTreeMap::new(),
@@ -135,8 +141,9 @@ impl MaterialRoot {
             protected_directories: BTreeSet::new(),
             proven: BTreeMap::new(),
             cursor: None,
-            retained_done: false,
-            candidates_done: false,
+            pending_retained: BTreeSet::new(),
+            pending_candidates: BTreeMap::new(),
+            allowed_links: BTreeMap::new(),
             hashing: None,
             result: Reclaimed::default(),
         }
@@ -146,8 +153,8 @@ impl MaterialRoot {
     pub fn prove_reclamation(
         &self,
         pass: &mut Reclamation,
-        candidates: BTreeMap<PathBuf, Digest>,
-        retained: BTreeSet<PathBuf>,
+        candidates: &BTreeMap<PathBuf, Digest>,
+        retained: &BTreeSet<PathBuf>,
     ) -> Result<(), Error> {
         if !pass
             .instance
@@ -166,14 +173,35 @@ impl MaterialRoot {
         {
             pass.hashing = None;
         }
+        // Preserve verification cursors. Only changed coordinates join the work queues;
+        // old retained identities stay protected for the rest of this physical pass.
+        pass.pending_retained
+            .extend(retained.difference(&pass.retained).cloned());
+        pass.pending_candidates
+            .retain(|p, d| candidates.get(p) == Some(d));
+        for (path, digest) in candidates {
+            if pass.candidates.get(path) != Some(digest) {
+                pass.pending_candidates.insert(path.clone(), digest.clone());
+            }
+            if !pass.candidates.contains_key(path) {
+                if let Some(id) = pass.entries.get(path).and_then(|e| e.identity) {
+                    *pass.allowed_links.entry(id).or_default() += 1;
+                }
+            }
+        }
+        for path in pass
+            .candidates
+            .keys()
+            .filter(|p| !candidates.contains_key(*p))
+        {
+            if let Some(id) = pass.entries.get(path).and_then(|e| e.identity) {
+                let count = pass.allowed_links.get_mut(&id).ok_or(Error::Conflict)?;
+                *count = count.checked_sub(1).ok_or(Error::Conflict)?;
+            }
+        }
         pass.generation = self.generation;
-        pass.candidates = candidates;
-        pass.retained = retained;
-        pass.protected.clear();
-        pass.protected_directories.clear();
-        pass.cursor = None;
-        pass.retained_done = false;
-        pass.candidates_done = false;
+        pass.candidates.clone_from(candidates);
+        pass.retained.extend(retained.iter().cloned());
         pass.phase = ReclaimPhase::Verifying;
         Ok(())
     }
@@ -239,6 +267,9 @@ impl MaterialRoot {
                     )
                 };
                 *pass.links.entry(identity).or_default() += 1;
+                if pending_name(&self.path, &path) {
+                    *pass.allowed_links.entry(identity).or_default() += 1;
+                }
                 (Some(identity), bytes, links)
             } else {
                 return Err(Error::Denied);
@@ -262,22 +293,11 @@ impl MaterialRoot {
         Ok(())
     }
     fn verification_step(&self, pass: &mut Reclamation) -> Result<(), Error> {
-        if !pass.retained_done {
+        if !pass.pending_retained.is_empty() {
             for _ in 0..METADATA_STEP {
-                let next = pass
-                    .retained
-                    .range::<PathBuf, _>((
-                        pass.cursor.as_ref().map_or(Unbounded, Excluded),
-                        Unbounded,
-                    ))
-                    .next()
-                    .cloned();
-                let Some(path) = next else {
-                    pass.retained_done = true;
-                    pass.cursor = None;
+                let Some(path) = pass.pending_retained.pop_first() else {
                     break;
                 };
-                pass.cursor = Some(path.clone());
                 if !path.starts_with(&self.path) {
                     continue;
                 }
@@ -297,26 +317,16 @@ impl MaterialRoot {
             }
             return Ok(());
         }
-        if !pass.candidates_done {
+        {
             let mut bytes_left = HASH_STEP;
             let mut names_left = METADATA_STEP;
             while bytes_left != 0 && names_left != 0 {
                 if pass.hashing.is_none() {
-                    let next = pass
-                        .candidates
-                        .range::<PathBuf, _>((
-                            pass.cursor.as_ref().map_or(Unbounded, Excluded),
-                            Unbounded,
-                        ))
-                        .next()
-                        .map(|(p, d)| (p.clone(), d.clone()));
-                    let Some((path, expected)) = next else {
-                        pass.candidates_done = true;
-                        pass.cursor = None;
+                    let Some((path, expected)) = pass.pending_candidates.pop_first() else {
+                        pass.phase = pass.resume;
                         break;
                     };
                     names_left -= 1;
-                    pass.cursor = Some(path.clone());
                     self.contained(&path)?;
                     if !managed_file(&self.path, &path, &expected) {
                         return Err(Error::Denied);
@@ -394,32 +404,8 @@ impl MaterialRoot {
                     hashing.hasher.update(&buffer[..amount]);
                 }
             }
-            return Ok(());
+            Ok(())
         }
-        for _ in 0..METADATA_STEP {
-            let next = pass
-                .entries
-                .range::<PathBuf, _>((pass.cursor.as_ref().map_or(Unbounded, Excluded), Unbounded))
-                .next()
-                .map(|(p, e)| (p.clone(), e.identity, e.links));
-            let Some((path, identity, links)) = next else {
-                pass.phase = ReclaimPhase::Files;
-                pass.cursor = None;
-                return Ok(());
-            };
-            pass.cursor = Some(path.clone());
-            if let Some(id) = identity {
-                if pass.links[&id] != links
-                    || (!pass.candidates.contains_key(&path) && !pending_name(&self.path, &path))
-                    || path
-                        .ancestors()
-                        .any(|p| pass.protected_directories.contains(p))
-                {
-                    pass.protected.insert(id);
-                }
-            }
-        }
-        Ok(())
     }
     fn files_step(&self, pass: &mut Reclamation) -> Result<(), Error> {
         for _ in 0..DELETE_STEP {
@@ -438,6 +424,11 @@ impl MaterialRoot {
                 continue;
             };
             if pass.protected.contains(&id)
+                || pass.links[&id] != links
+                || pass.allowed_links.get(&id).copied().unwrap_or(0) != pass.links[&id]
+                || path
+                    .ancestors()
+                    .any(|p| pass.protected_directories.contains(p))
                 || !(pass.proven.contains_key(&id) || pending_name(&self.path, &path))
             {
                 continue;

@@ -32,7 +32,7 @@ struct Key {
 }
 struct Pass {
     key: Key,
-    inventory_generation: u64,
+    initial: Key,
     physical: Reclamation,
     cursor: Option<RequestId>,
     scanned: bool,
@@ -42,8 +42,6 @@ struct Pass {
     interpreters: BTreeSet<String>,
     retire: BTreeMap<String, Digest>,
     live: Option<RetainedMaterials>,
-    filter_cursor: Option<PathBuf>,
-    filtered: bool,
     retry: bool,
 }
 impl<S: IdentityProvider> DeviceService<S> {
@@ -98,17 +96,25 @@ impl<S: IdentityProvider> DeviceService<S> {
                 pass.physical
                     .recheck_proof()
                     .map_err(crate::error::app_error)?;
-                pass.associated = key.associated.clone();
-                pass.retained = key.pins.iter().cloned().collect();
-                pass.key = key.clone();
-                pass.cursor = None;
-                pass.scanned = false;
-                pass.candidates.clear();
-                pass.interpreters.clear();
-                pass.retire.clear();
-                pass.live = None;
-                pass.filter_cursor = None;
-                pass.filtered = false;
+                pass.associated
+                    .extend(key.associated.difference(&pass.key.associated).cloned());
+                pass.associated
+                    .retain(|request| key.associated.contains(request));
+                pass.retained.extend(key.pins.iter().cloned());
+                if key.registry != pass.key.registry {
+                    if let Some(live) = &mut pass.live {
+                        self.core
+                            .host
+                            .materials
+                            .refresh_retained(live)
+                            .map_err(crate::error::app_error)?;
+                    }
+                }
+                // The journal checkpoint advances only through authenticated receipt deltas.
+                pass.key.root = key.root;
+                pass.key.registry = key.registry;
+                pass.key.associated = key.associated.clone();
+                pass.key.pins = key.pins.clone();
             }
         }
         if self.material_gc.pass.is_none() {
@@ -116,7 +122,7 @@ impl<S: IdentityProvider> DeviceService<S> {
                 return Ok(());
             }
             self.material_gc.pass = Some(Pass {
-                inventory_generation: key.root,
+                initial: key.clone(),
                 associated: key.associated.clone(),
                 retained: key.pins.iter().cloned().collect(),
                 key,
@@ -127,8 +133,6 @@ impl<S: IdentityProvider> DeviceService<S> {
                 interpreters: BTreeSet::new(),
                 retire: BTreeMap::new(),
                 live: None,
-                filter_cursor: None,
-                filtered: false,
                 retry: false,
             });
         }
@@ -147,8 +151,7 @@ impl<S: IdentityProvider> DeviceService<S> {
                     );
                 }
                 // New names appended during this pass belong to the next inventory.
-                pass.key.root = pass.inventory_generation;
-                self.material_gc.completed = if pass.retry { None } else { Some(pass.key) };
+                self.material_gc.completed = if pass.retry { None } else { Some(pass.initial) };
                 Ok(())
             }
             Ok(()) => {
@@ -190,66 +193,7 @@ impl<S: IdentityProvider> DeviceService<S> {
                 .service_material_page(pass.cursor.as_ref(), 1, &consumer)
                 .map_err(crate::error::app_error)?;
             for item in page.items {
-                let input = item.input;
-                let communicating = pass.associated.remove(&input.spec().request.request_id);
-                let references = crate::recovery::references(&input, &self.core.config)?;
-                if item.reclaimable && !communicating {
-                    if self
-                        .core
-                        .host
-                        .materials
-                        .registered(&input)
-                        .map_err(crate::error::app_error)?
-                    {
-                        pass.retire
-                            .insert(input.digest().as_str().to_owned(), input.digest().clone());
-                    }
-                    for (path, digest) in references
-                        .into_iter()
-                        .filter(|(p, _)| pass.physical.contains_file(p))
-                    {
-                        if pass
-                            .candidates
-                            .insert(path, digest.clone())
-                            .is_some_and(|d| d != digest)
-                        {
-                            return Err(Error::Untrusted);
-                        }
-                    }
-                } else {
-                    pass.retained.extend(references.into_keys());
-                    pass.interpreters.insert(
-                        input
-                            .spec()
-                            .launch
-                            .interpreter
-                            .artifact
-                            .sha256
-                            .as_str()
-                            .to_owned(),
-                    );
-                    if let Some(program) = input.spec().execution.software_program() {
-                        for step in &program.steps {
-                            for invocation in crate::recovery::software_invocations(step) {
-                                pass.interpreters.insert(
-                                    invocation
-                                        .launch
-                                        .interpreter
-                                        .artifact
-                                        .sha256
-                                        .as_str()
-                                        .to_owned(),
-                                );
-                            }
-                        }
-                    }
-                }
-                if pass.retained.len() > 32768
-                    || pass.candidates.len() > 32768
-                    || pass.interpreters.len() > 32768
-                {
-                    return Err(Error::Capacity);
-                }
+                self.project_material_fact(pass, item)?;
             }
             match page.next {
                 Some(next) => {
@@ -259,12 +203,33 @@ impl<S: IdentityProvider> DeviceService<S> {
                     pass.cursor = Some(next);
                 }
                 None => {
-                    if !pass.associated.is_empty() {
-                        return Err(Error::Conflict);
-                    }
                     pass.scanned = true;
                 }
             }
+            return Ok(());
+        }
+        let consumer = crate::backend::plan::id("backend-results")?;
+        // A newly associated request can precede the historical request cursor.
+        if let Some(request) = pass.associated.pop_first() {
+            let fact = self
+                .core
+                .app
+                .service_material_fact(&request, &consumer)
+                .map_err(crate::error::app_error)?;
+            self.project_material_fact(pass, fact)?;
+            return Ok(());
+        }
+        let changes = self
+            .core
+            .app
+            .service_material_changes(pass.key.checkpoint, 1, &consumer)
+            .map_err(crate::error::app_error)?;
+        let changed = !changes.items.is_empty();
+        for fact in changes.items {
+            self.project_material_fact(pass, fact)?;
+        }
+        pass.key.checkpoint = changes.checkpoint;
+        if !changes.complete || changed {
             return Ok(());
         }
         // Retire only after every journal page and delivery/reference read has succeeded.
@@ -275,28 +240,6 @@ impl<S: IdentityProvider> DeviceService<S> {
                 Err(error) => return Err(crate::error::app_error(error)),
             }
             pass.key.registry = self.core.host.materials.generation();
-            return Ok(());
-        }
-        if !pass.filtered {
-            use std::ops::Bound::{Excluded, Unbounded};
-            for _ in 0..64 {
-                let next = pass
-                    .candidates
-                    .range::<PathBuf, _>((
-                        pass.filter_cursor.as_ref().map_or(Unbounded, Excluded),
-                        Unbounded,
-                    ))
-                    .next()
-                    .map(|(p, d)| (p.clone(), d.clone()));
-                let Some((path, digest)) = next else {
-                    pass.filtered = true;
-                    break;
-                };
-                pass.filter_cursor = Some(path.clone());
-                if pass.interpreters.contains(digest.as_str()) {
-                    pass.candidates.remove(&path);
-                }
-            }
             return Ok(());
         }
         if pass.live.is_none() {
@@ -319,12 +262,94 @@ impl<S: IdentityProvider> DeviceService<S> {
         }
         self.core
             .material_root
-            .prove_reclamation(
-                &mut pass.physical,
-                std::mem::take(&mut pass.candidates),
-                std::mem::take(&mut pass.retained),
-            )
+            .prove_reclamation(&mut pass.physical, &pass.candidates, &pass.retained)
             .map_err(crate::error::app_error)
+    }
+    fn project_material_fact(
+        &self,
+        pass: &mut Pass,
+        fact: execution_app::ServiceMaterialFact,
+    ) -> Result<(), Error> {
+        let input = fact.input;
+        let request = &input.spec().request.request_id;
+        pass.associated.remove(request);
+        let communicating = pass.key.associated.contains(request);
+        let references = crate::recovery::references(&input, &self.core.config)?;
+        if fact.reclaimable && !communicating {
+            if self
+                .core
+                .host
+                .materials
+                .registered(&input)
+                .map_err(crate::error::app_error)?
+            {
+                pass.retire
+                    .insert(input.digest().as_str().to_owned(), input.digest().clone());
+            }
+            for (path, digest) in references
+                .into_iter()
+                .filter(|(p, _)| pass.physical.contains_file(p))
+            {
+                if pass.interpreters.contains(digest.as_str()) {
+                    pass.retained.insert(path.clone());
+                }
+                if pass
+                    .candidates
+                    .insert(path, digest.clone())
+                    .is_some_and(|old| old != digest)
+                {
+                    return Err(Error::Untrusted);
+                }
+            }
+        } else {
+            // Within one pass references only strengthen. A later pass may release them.
+            pass.retire.remove(input.digest().as_str());
+            pass.retained.extend(references.into_keys());
+            let mut new_interpreters = BTreeSet::new();
+            new_interpreters.insert(
+                input
+                    .spec()
+                    .launch
+                    .interpreter
+                    .artifact
+                    .sha256
+                    .as_str()
+                    .to_owned(),
+            );
+            if let Some(program) = input.spec().execution.software_program() {
+                for step in &program.steps {
+                    for invocation in crate::recovery::software_invocations(step) {
+                        new_interpreters.insert(
+                            invocation
+                                .launch
+                                .interpreter
+                                .artifact
+                                .sha256
+                                .as_str()
+                                .to_owned(),
+                        );
+                    }
+                }
+            }
+            new_interpreters.retain(|digest| !pass.interpreters.contains(digest));
+            if !new_interpreters.is_empty() {
+                // This is the bounded physical projection, never a full-history rescan.
+                pass.retained.extend(
+                    pass.candidates
+                        .iter()
+                        .filter(|(_, digest)| new_interpreters.contains(digest.as_str()))
+                        .map(|(path, _)| path.clone()),
+                );
+                pass.interpreters.extend(new_interpreters);
+            }
+        }
+        if pass.retained.len() > 32768
+            || pass.candidates.len() > 32768
+            || pass.interpreters.len() > 32768
+        {
+            return Err(Error::Capacity);
+        }
+        Ok(())
     }
     pub(crate) fn reclaim_owner_step(&mut self) {
         if let Err(error) = self.reclaim_step() {
