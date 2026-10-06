@@ -50,11 +50,14 @@ mod tests {
         let mut guards: Vec<_> = (0..SCENARIOS).map(|_| budget.enter()).collect();
         std::thread::scope(|scope| {
             let (entered, entry) = mpsc::channel();
+            let (attempting, attempt) = mpsc::channel();
             let budget = &budget;
             scope.spawn(move || {
+                attempting.send(()).unwrap();
                 let _guard = budget.enter();
                 entered.send(()).unwrap();
             });
+            attempt.recv_timeout(Duration::from_secs(2)).unwrap();
             assert!(matches!(
                 entry.recv_timeout(Duration::from_millis(50)),
                 Err(mpsc::RecvTimeoutError::Timeout)
