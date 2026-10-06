@@ -192,6 +192,9 @@ mod tests;
 #[path = "../../../tests/agent-protocol/mod.rs"]
 mod protocol_test_support;
 
+#[cfg(test)]
+mod scenario_process;
+
 mod os_version;
 mod secrets;
 
