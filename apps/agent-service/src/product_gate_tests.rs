@@ -2104,6 +2104,50 @@ async fn fresh_revocation_and_crl_expiry_close_admission_while_pending_status_wa
 }
 
 #[tokio::test]
+async fn retired_installation_command_preserves_live_registration_and_journal() {
+    let _budget = crate::scenario_budget::enter();
+    let mut c = Case::new(Some(RiskLevel::Two)).await;
+    c.service.core.start_task(c.selection(false)).unwrap();
+    let binding = c.service.client.registration().unwrap();
+    let record = c.record();
+    let owner = c.service.core.host.binding.clone();
+    let secrets = c._server.secrets.0.lock().unwrap().clone();
+    let config = c._root.path.join("execution.json");
+    let candidate = c._root.path.join("candidate.json");
+    let old =
+        serde_json::to_vec(&serde_json::json!({"version":4,"installation_id":"retained"})).unwrap();
+    let next = serde_json::to_vec(&serde_json::json!({"version":2,"product_version":"candidate"}))
+        .unwrap();
+    std::fs::write(&config, &old).unwrap();
+    std::fs::write(&candidate, &next).unwrap();
+    for _ in 0..2 {
+        // The running communication owner retains its writer lease throughout rejection.
+        let lease =
+            platform_private_storage::open_existing(&c._root.path.join("client.lock")).unwrap();
+        assert!(fs2::FileExt::try_lock_exclusive(&lease).is_err());
+        let args = vec![
+            "upgrade-device-pki".into(),
+            "--scope".into(),
+            "system".into(),
+            "--config".into(),
+            config.clone().into(),
+            "--candidate".into(),
+            candidate.clone().into(),
+        ];
+        assert_eq!(crate::installation::run(&args), Err(Error::Configuration));
+        assert!(fs2::FileExt::try_lock_exclusive(&lease).is_err());
+        assert_eq!(std::fs::read(&config).unwrap(), old);
+        assert_eq!(std::fs::read(&candidate).unwrap(), next);
+        assert!(!c._root.path.join("installation.lock").exists());
+        assert!(!c._root.path.join("install-manifests").exists());
+        assert_eq!(c.service.client.registration().unwrap(), binding);
+        assert_eq!(c.record(), record);
+        assert_eq!(c.service.core.host.binding, owner);
+        assert_eq!(*c._server.secrets.0.lock().unwrap(), secrets);
+    }
+}
+
+#[tokio::test]
 async fn software_self_service_binds_signed_policy_and_native_context() {
     let _budget = crate::scenario_budget::enter();
     use execution_ipc::host::Request;

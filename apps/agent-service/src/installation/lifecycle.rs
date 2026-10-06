@@ -494,6 +494,34 @@ fn installation_lock(config: &Path, system: bool) -> Result<std::fs::File, Error
 mod tests {
     use super::*;
     #[test]
+    fn unknown_commands_are_rejected_before_platform_dispatch_or_installation_state() {
+        for command in ["upgrade-device-pki", "unknown-command"] {
+            for explicit_config in [false, true] {
+                std::thread::spawn(move || {
+                    let root = crate::protocol_test_support::Root::new();
+                    let absent = root.path.join("absent");
+                    let mut args = vec![OsString::from(command), "--scope".into(), "system".into()];
+                    if explicit_config {
+                        args.extend([
+                            "--config".into(),
+                            absent.join("execution.json").into(),
+                            "--candidate".into(),
+                            absent.join("candidate.json").into(),
+                        ]);
+                    }
+                    assert_eq!(crate::installation::run(&args), Err(Error::Configuration));
+                    assert!(!absent.exists());
+                    assert_eq!(std::fs::read_dir(&root.path).unwrap().count(), 0);
+                    let report = outcome::snapshot();
+                    assert_eq!(report.phase, "preflight");
+                    assert_eq!(report.failure_phase.as_deref(), Some("preflight"));
+                })
+                .join()
+                .unwrap();
+            }
+        }
+    }
+    #[test]
     fn uncertain_native_activity_blocks_publication_and_rollback() {
         let mut events = vec![];
         assert!(transition(|step| {
