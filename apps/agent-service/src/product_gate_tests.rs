@@ -2104,69 +2104,46 @@ async fn fresh_revocation_and_crl_expiry_close_admission_while_pending_status_wa
 }
 
 #[tokio::test]
-async fn explicit_upgrade_failures_and_exact_resume_preserve_registration_and_journal() {
+async fn retired_installation_command_preserves_live_registration_and_journal() {
     let _budget = crate::scenario_budget::enter();
-    use crate::installation::{resume_matches, run_upgrade, UpgradeStep};
-    for fault in [
-        UpgradeStep::Stop,
-        UpgradeStep::Lease,
-        UpgradeStep::Publish,
-        UpgradeStep::Register,
-    ] {
-        let mut c = Case::new(Some(RiskLevel::Two)).await;
-        c.service.core.start_task(c.selection(false)).unwrap();
-        let binding = c.service.client.registration().unwrap();
-        let record = c.record();
-        let owner = c.service.core.host.binding.clone();
-        let config = c._root.path.join("upgrade-config.json");
-        let old = serde_json::json!({"version":4,"installation_id":"retained","installation_artifact":"old"});
-        let next = serde_json::json!({"version":5,"installation_id":"retained","installation_artifact":"new"});
-        std::fs::write(&config, serde_json::to_vec(&old).unwrap()).unwrap();
-        let mut registered = false;
-        assert_eq!(
-            run_upgrade(false, |step| {
-                if step == fault {
-                    return Err(Error::Unavailable);
-                }
-                if step == UpgradeStep::Publish {
-                    let staged = config.with_extension("staged");
-                    std::fs::write(&staged, serde_json::to_vec(&next).unwrap()).unwrap();
-                    std::fs::rename(staged, &config).unwrap();
-                }
-                if step == UpgradeStep::Register {
-                    registered = true;
-                }
-                Ok(())
-            })
-            .unwrap_err(),
-            Error::Unavailable
-        );
-        assert!(!registered);
-        let retained: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(&config).unwrap()).unwrap();
-        if fault == UpgradeStep::Register {
-            assert_eq!(retained, next);
-            assert_eq!(
-                resume_matches("new", Path::new("/service"), "other", Path::new("/service"))
-                    .unwrap_err(),
-                Error::Conflict
-            );
-            resume_matches("new", Path::new("/service"), "new", Path::new("/service")).unwrap();
-            run_upgrade(true, |step| {
-                assert!(matches!(step, UpgradeStep::Register | UpgradeStep::Desktop));
-                if step == UpgradeStep::Register {
-                    registered = true;
-                }
-                Ok(())
-            })
-            .unwrap();
-            assert!(registered);
-        } else {
-            assert_eq!(retained, old);
-        }
+    let mut c = Case::new(Some(RiskLevel::Two)).await;
+    c.service.core.start_task(c.selection(false)).unwrap();
+    let binding = c.service.client.registration().unwrap();
+    let record = c.record();
+    let owner = c.service.core.host.binding.clone();
+    let secrets = c._server.secrets.0.lock().unwrap().clone();
+    let config = c._root.path.join("execution.json");
+    let candidate = c._root.path.join("candidate.json");
+    let old =
+        serde_json::to_vec(&serde_json::json!({"version":4,"installation_id":"retained"})).unwrap();
+    let next = serde_json::to_vec(&serde_json::json!({"version":2,"product_version":"candidate"}))
+        .unwrap();
+    std::fs::write(&config, &old).unwrap();
+    std::fs::write(&candidate, &next).unwrap();
+    for _ in 0..2 {
+        // The running communication owner retains its writer lease throughout rejection.
+        let lease =
+            platform_private_storage::open_existing(&c._root.path.join("client.lock")).unwrap();
+        assert!(fs2::FileExt::try_lock_exclusive(&lease).is_err());
+        let args = vec![
+            "upgrade-device-pki".into(),
+            "--scope".into(),
+            "system".into(),
+            "--config".into(),
+            config.clone().into(),
+            "--candidate".into(),
+            candidate.clone().into(),
+        ];
+        assert_eq!(crate::installation::run(&args), Err(Error::Configuration));
+        assert!(fs2::FileExt::try_lock_exclusive(&lease).is_err());
+        assert_eq!(std::fs::read(&config).unwrap(), old);
+        assert_eq!(std::fs::read(&candidate).unwrap(), next);
+        assert!(!c._root.path.join("installation.lock").exists());
+        assert!(!c._root.path.join("install-manifests").exists());
         assert_eq!(c.service.client.registration().unwrap(), binding);
         assert_eq!(c.record(), record);
         assert_eq!(c.service.core.host.binding, owner);
+        assert_eq!(*c._server.secrets.0.lock().unwrap(), secrets);
     }
 }
 

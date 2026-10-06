@@ -12,7 +12,7 @@
 
 默认 macOS 为 ad-hoc 开发签名，Windows 为明确标记的开发包。正式包增加 `--release`：macOS 设置 `RSS_MACOS_APP_SIGNING_IDENTITY`、`RSS_MACOS_INSTALLER_SIGNING_IDENTITY` 和已存在的 `RSS_MACOS_NOTARY_PROFILE` Keychain 引用；Windows 设置 `RSS_WINDOWS_SIGNING_THUMBPRINT`，可选 `RSS_SIGNTOOL` 完整路径。构建不会接收证书密码；正式 macOS 包完成 notarization / stapling，正式 Windows 包与原生资源进行 Authenticode 签名。缺少正式签名配置会失败。
 
-每次构建安装到独立版本目录，升级先核对完整候选、原生架构、签名及持久状态，再停旧服务和原子发布 V4 部署配置。失败保留可核实的注册与状态；候选活动未确认停止时不切回旧配置。ad-hoc 服务更换代码身份后无法读取旧 Keychain 项，会在停机前拒绝升级，不重建凭据或放宽 ACL。V3 配置不会迁移或兼容读取。
+每次构建安装到独立版本目录，升级先核对完整候选、原生架构、签名及持久状态，再停旧服务和原子发布当前格式部署配置。失败保留可核实的注册与状态；候选活动未确认停止时不切回旧配置。ad-hoc 服务更换代码身份后无法读取旧 Keychain 项，会在停机前拒绝升级，不重建凭据或放宽 ACL。旧格式配置不会迁移或兼容读取。
 
 普通安装不创建 Enrollment、设备密钥或 journal；桌面通过认证 IPC 发起机器注册。管理员也可导入独立的安装材料：公开 envelope schema 由实际 Rust decoder 生成，位于 `apps/agent-service/schema/install-bootstrap-v1.schema.json`，GrantReceipt 定义直接从固定协议包派生，公开 schema 可独立解析；服务端保持唯一协议来源。envelope 的 `origin`、`tenant`、`target`、`installation_artifact` 必须与已安装候选完全相同；后者取 `package-manifest.json` 的 `candidateSha256`。材料还含原始 `operationId` 与服务端 GrantReceipt，secret 单独置于 root / LocalSystem 私有文件或标准输入中，不进入包、argv、日志或 URL。
 
@@ -28,7 +28,7 @@
 
 初装从实际互动登录发现主体及 helper 路径；无人登录的静默初装必须提供管理员保护的 profile（`subjects` 与 `helper_work_roots`）。Windows EXE 接受 `/S /PROFILE=绝对路径`；macOS 可先固定 profile 于 `/Library/Application Support/RSS MDM Agent/install-profile.json` 再运行 `installer -pkg ... -target /`。桌面启动请求 Rust owner 注册当前配置用户的 helper，AI Host 随该桌面运行。
 
-卸载只移除匹配注册与程序；设备身份、Keychain / DPAPI 引用、通信库、journal、材料及用户数据保留。Windows 使用系统卸载入口或 `uninstall.exe /S`；macOS 管理员使用 `<受保护的服务程序> --installation uninstall --binary <当前配置的服务程序>`。重装核对 retained V4 上下文并复用安装 ID，原程序已移除时由新候选只读检查 retained 密钥与日志。没有隐式清库、换库或共享凭据删除入口。程序先从 versions 退役到精确版本的 retired 目录；删除失败可用同一版本入口重试，不清理其它版本。
+卸载只移除匹配注册与程序；设备身份、Keychain / DPAPI 引用、通信库、journal、材料及用户数据保留。Windows 使用系统卸载入口或 `uninstall.exe /S`；macOS 管理员使用 `<受保护的服务程序> --installation uninstall --binary <当前配置的服务程序>`。重装核对 retained 当前格式上下文并复用安装 ID，原程序已移除时由新候选只读检查 retained 密钥与日志。没有隐式清库、换库或共享凭据删除入口。程序先从 versions 退役到精确版本的 retired 目录；删除失败可用同一版本入口重试，不清理其它版本。
 
 Windows 安装操作返回 UUID 和不含输入内容的阶段回执。等待超时表示结果未知，worker 可能仍在运行；使用 `--installation operation-status --operation <UUID>` 核实，确认进程退出后回收该 worker。回执保留失败阶段、闭合错误、可得的原生退出码和补偿结果；超时后不要据命令退出自行删除正在使用的程序。
 
@@ -187,4 +187,4 @@ Agent 部署生成使用 `.env` 的 RSS_AGENT_ORIGIN、必填 RSS_AGENT_CA_FILE�
 
 管理员恢复需要停止系统服务，准备服务端为**同一注册**签发的受保护 `GrantImport` JSON（`operationId`、`grant`），通过 `rss-execution-service --installation recover --scope system --config <部署路径> --grant <JSON路径> --secret-file <私有secret路径>` 交给原 installation owner。Windows 沿既有 SCM worker 转为 LocalSystem，macOS 使用系统管理员执行；secret 文件由原私有输入规则保护，不把 secret 放入 argv。此入口不替换未决操作，也不创建新注册；成功激活只恢复新任务准入。owner 尝试重新启动原服务；核对认证 IPC readiness，并按既有私有材料处理方式清理输入 secret。初始 Bootstrap envelope 保持版本 1。
 
-旧 Deployment 4 / Candidate 1 被运行时直接拒绝。使用受保护的新 Candidate 2 包中服务二进制执行 `--installation upgrade-device-pki --scope system --config <旧部署路径> --candidate <新candidate.json>`：owner 核对立即前一版格式、同一 origin/tenant、既有 HTTPS CA 和持久化通信/执行绑定，停止旧 owner 并独占 lease 后原子发布新配置和程序 pin。安装 ID、设备注册、通信数据库版本 6 和执行日志不变。旧 retained manifest 保留，转换后的 Candidate 2 单独按摘要留存；中断后重复**相同命令和候选**完成安装，不能改换候选或降级。旧部署必须已有受保护 HTTPS CA；升级不采用系统默认 HTTPS 信任。
+旧 Deployment 4 / Candidate 1 保持原样并被拒绝；本仓不提供历史格式转换、兼容读取或重试入口。当前格式的安装与 apply/refresh 只处理当前候选及当前部署，沿用既有候选、代码身份、持久状态与设备归属校验。拒绝旧格式不停止原 owner、不覆盖配置或 retained manifest、不转换通信库，也不重建注册、凭据或执行 journal。管理员应保留旧部署及持久材料，不通过改写版本号、删除状态或重新注册绕过拒绝。

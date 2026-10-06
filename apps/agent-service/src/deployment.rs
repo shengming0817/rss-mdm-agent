@@ -53,7 +53,10 @@ impl Deployment {
     pub(crate) fn metadata(path: &Path) -> Result<Self, Error> {
         let bytes =
             installation_security::read_protected(path).map_err(|_| Error::Configuration)?;
-        let value: Self = serde_json::from_slice(&bytes).map_err(|_| Error::Configuration)?;
+        Self::decode_metadata(&bytes)
+    }
+    fn decode_metadata(bytes: &[u8]) -> Result<Self, Error> {
+        let value: Self = serde_json::from_slice(bytes).map_err(|_| Error::Configuration)?;
         if value.version != execution_ipc::host::DEPLOYMENT_VERSION
             || value.ipc_version != execution_ipc::host::IPC_VERSION
             || value.installation_id.is_nil()
@@ -217,9 +220,6 @@ impl Deployment {
                     .map_err(|_| Error::Configuration)?
             )
         ))
-    }
-    pub(crate) fn initialized(&self) -> Result<bool, Error> {
-        Ok(!never_initialized(&self.state_root)?)
     }
     /// Check every existing database before any secret, directory, lock or material initialization.
     pub(crate) fn preflight(&self) -> Result<(), Error> {
@@ -601,6 +601,45 @@ mod tests {
         assert_eq!(startup_failure(Error::Storage), K::Unavailable);
         assert_eq!(startup_failure(Error::Configuration), K::InvalidInput);
         assert_eq!(startup_failure(Error::Untrusted), K::Denied);
+    }
+    #[test]
+    fn metadata_rejects_previous_version_and_retired_fields_without_conversion() {
+        let root = crate::protocol_test_support::Root::new();
+        let image = serde_json::json!({"path":"/unused", "sha256":"a".repeat(64)});
+        let peer =
+            serde_json::json!({"images":[image.clone()], "subjects":["501"], "interactive":true});
+        let current = serde_json::json!({
+            "version": execution_ipc::host::DEPLOYMENT_VERSION,
+            "ipc_version": execution_ipc::host::IPC_VERSION,
+            "origin":"https://agent.example.org", "tenant":uuid::Uuid::new_v4(),
+            "signing_keys":{}, "ca_file":root.path.join("https-ca.pem"),
+            "installation_id":uuid::Uuid::new_v4(), "installation_artifact":"a".repeat(64),
+            "registration_clients":peer.clone(), "clients":peer, "service":image,
+            "state_root":root.path.join("state"), "helper_work_roots":{},
+            "execution":{"work_root":root.path.join("work"), "material_root":root.path.join("materials"),
+                "processes":1, "interpreters":[], "managers":[]}
+        });
+        let bytes = serde_json::to_vec(&current).unwrap();
+        let accepted = Deployment::decode_metadata(&bytes).unwrap();
+        assert_eq!(accepted.installation_artifact, "a".repeat(64));
+        for old in [
+            {
+                let mut v = current.clone();
+                v["version"] = 4.into();
+                v
+            },
+            {
+                let mut v = current;
+                v["device_ca_file"] = "/protected/device-ca.pem".into();
+                v
+            },
+        ] {
+            let original = serde_json::to_vec(&old).unwrap();
+            assert!(matches!(
+                Deployment::decode_metadata(&original),
+                Err(Error::Configuration)
+            ));
+        }
     }
     #[test]
     fn refresh_requires_both_original_markers_without_initializing_missing_state() {

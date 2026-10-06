@@ -34,3 +34,47 @@ fn envelope_schema_stays_bound_to_decoder_and_remote_producer() {
     .unwrap();
     assert_eq!(published, bootstrap_schema().unwrap());
 }
+
+#[test]
+fn candidate_rejects_previous_version_and_retired_fields() {
+    let root = crate::protocol_test_support::Root::new();
+    let image = Artifact {
+        path: root.path.join("service"),
+        sha256: "a".repeat(64),
+        cdhash: None,
+    };
+    let candidate = Candidate {
+        version: 2,
+        product_version: "test".into(),
+        target: Target::current().unwrap(),
+        root: root.path.clone(),
+        service: image,
+        desktop: Artifact {
+            path: root.path.join("desktop"),
+            sha256: "b".repeat(64),
+            cdhash: None,
+        },
+        runtime_root: root.path.join("runtime"),
+        runtime_sha256: "c".repeat(64),
+        origin: "https://agent.example.org".into(),
+        tenant: uuid::Uuid::new_v4(),
+        signing_keys: BTreeMap::from([(
+            "key".into(),
+            "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE".into(),
+        )]),
+        ca_pem: Some(String::from_utf8(crate::protocol_test_support::pki::ca()).unwrap()),
+        signing_mode: SigningMode::Development,
+    };
+    let current = serde_json::to_value(&candidate).unwrap();
+    let decoded: Candidate = serde_json::from_value(current.clone()).unwrap();
+    // Current metadata reaches native artifact checks; this pure fixture has no installed images.
+    assert_eq!(decoded.validate(), Err(Error::Identity));
+    let mut old = current.clone();
+    old["version"] = 1.into();
+    let decoded: Candidate = serde_json::from_value(old).unwrap();
+    assert_eq!(decoded.validate(), Err(Error::Configuration));
+    let mut old_field = current;
+    old_field["device_ca_pem"] = "retired-device-ca".into();
+    assert!(serde_json::from_value::<Candidate>(old_field).is_err());
+    assert_eq!(std::fs::read_dir(&root.path).unwrap().count(), 0);
+}
