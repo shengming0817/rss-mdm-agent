@@ -1,7 +1,7 @@
 //! A complete integration scenario owns its process-local descriptor budget.
 //! ref: Rust library/std/src/process.rs@1.96.0 (Child::try_wait, kill and wait).
 use std::{
-    io::{self, Read, Seek, SeekFrom},
+    io,
     process::{Child, Command, Stdio},
     time::{Duration, Instant},
 };
@@ -43,9 +43,11 @@ impl Drop for Owner {
 
 fn run(mut command: Command, case: &str, timeout: Duration) -> io::Result<()> {
     let root = crate::protocol_test_support::Root::new();
-    let mut log = platform_private_storage::create_new(&root.path.join("scenario.log"))?;
+    let log_path = root.path.join("scenario.log");
+    let log = platform_private_storage::create_new(&log_path)?;
     command.stdout(log.try_clone()?).stderr(log.try_clone()?);
     let mut owner = Owner(command.spawn()?);
+    let pid = owner.0.id();
     // Do not retain the command's extra log handles while waiting.
     drop(command);
     let deadline = Instant::now() + timeout;
@@ -60,16 +62,16 @@ fn run(mut command: Command, case: &str, timeout: Duration) -> io::Result<()> {
         }
         std::thread::sleep(Duration::from_millis(10));
     };
-    log.seek(SeekFrom::Start(0))?;
-    let mut output = String::new();
-    log.read_to_string(&mut output)?;
+    // Windows creates a write-only, non-shared private file. Close the writer
+    // after the child exits before reopening it for diagnostic reads.
+    drop(log);
+    let output = std::fs::read_to_string(log_path)?;
     // Exit success alone is insufficient: libtest also succeeds with zero matches.
-    let entered = output
-        .lines()
-        .any(|line| line == format!("{ENTERED}{case}"));
+    let expected = format!("{ENTERED}{case}");
+    let entered = output.lines().any(|line| line == expected);
     if !status.is_some_and(|status| status.success()) || !entered {
         return Err(io::Error::other(format!(
-            "isolated scenario {case}: status={status:?}, entered={entered}\n{output}"
+            "isolated scenario {case}: pid={pid}, status={status:?}, entered={entered}\n{output}"
         )));
     }
     print!("{output}");
@@ -152,7 +154,45 @@ mod tests {
     fn timeout_reaps_the_child() {
         let mut waiting = command(CASE);
         waiting.env(PROBE, "wait");
-        let error = run(waiting, CASE, Duration::from_millis(100)).unwrap_err();
-        assert!(error.to_string().contains("status=None"));
+        let error = run(waiting, CASE, Duration::from_secs(1)).unwrap_err();
+        let error = error.to_string();
+        assert!(error.contains("status=None, entered=true"));
+        #[cfg(unix)]
+        assert_reaped(
+            error
+                .split("pid=")
+                .nth(1)
+                .unwrap()
+                .split(',')
+                .next()
+                .unwrap()
+                .parse()
+                .unwrap(),
+        );
+    }
+
+    #[cfg(unix)]
+    fn assert_reaped(pid: u32) {
+        // SAFETY: signal zero only queries existence of the child's process.
+        assert_eq!(unsafe { libc::kill(pid as libc::pid_t, 0) }, -1);
+        assert_eq!(io::Error::last_os_error().raw_os_error(), Some(libc::ESRCH));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn parent_unwind_reaps_the_child() {
+        let mut waiting = command(CASE);
+        waiting
+            .env(PROBE, "wait")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let owner = Owner(waiting.spawn().unwrap());
+        let pid = owner.0.id();
+        let panic = std::panic::catch_unwind(move || {
+            let _owner = owner;
+            panic!("parent failure");
+        });
+        assert!(panic.is_err());
+        assert_reaped(pid);
     }
 }

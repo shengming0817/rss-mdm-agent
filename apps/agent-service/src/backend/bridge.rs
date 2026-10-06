@@ -1015,6 +1015,12 @@ mod result_tests {
     }
     #[tokio::test]
     async fn review_regression_step_results_never_borrow_another_steps_facts() {
+        if crate::scenario_process::run_parent(concat!(
+            module_path!(),
+            "::review_regression_step_results_never_borrow_another_steps_facts"
+        )) {
+            return;
+        }
         let server = crate::protocol_test_support::Server::new().await;
         let spec = {
             let mut data = server.data.lock().unwrap();

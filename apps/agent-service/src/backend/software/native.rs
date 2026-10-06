@@ -603,6 +603,12 @@ mod gc_tests {
 
     #[tokio::test]
     async fn native_compiler_reclaims_all_frozen_inputs_across_intents_and_upgrade_strategies() {
+        if crate::scenario_process::run_parent(concat!(
+            module_path!(),
+            "::native_compiler_reclaims_all_frozen_inputs_across_intents_and_upgrade_strategies"
+        )) {
+            return;
+        }
         let db = local::Database::new();
         let root_path = db.path.parent().unwrap().join("materials");
         platform_private_storage::directory(&root_path).unwrap();
