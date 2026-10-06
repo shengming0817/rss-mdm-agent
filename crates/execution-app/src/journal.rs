@@ -28,6 +28,22 @@ pub trait JournalPort {
         consumer: &Id,
         host: &impl JournalHost,
     ) -> Result<Vec<ServiceMaterialFact>, JournalError>;
+    /// Authenticate one associated request independently of the history cursor.
+    fn material_fact(
+        &self,
+        request: &RequestId,
+        consumer: &Id,
+        host: &impl JournalHost,
+    ) -> Result<ServiceMaterialFact, JournalError>;
+    /// Inspect a bounded segment of committed receipts without restarting historical proof.
+    /// External connection changes reject the continuation; no mutation is performed.
+    fn material_changes(
+        &self,
+        checkpoint: Self::MaterialCheckpoint,
+        limit: usize,
+        consumer: &Id,
+        host: &impl JournalHost,
+    ) -> Result<ServiceMaterialChanges<Self::MaterialCheckpoint>, JournalError>;
     /// Fence concurrent writers while the sole product owner performs a small physical deletion.
     /// The callback does not access this journal; an error preserves remaining materials.
     fn with_material_proof<T>(

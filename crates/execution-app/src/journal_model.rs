@@ -800,3 +800,13 @@ pub struct ServiceMaterialPage {
     /// Strict keyset continuation; absence means all remaining rows were inspected.
     pub next: Option<RequestId>,
 }
+
+/// Bounded receipt-backed updates to a material proof; checkpoints are adapter-local.
+pub struct ServiceMaterialChanges<C> {
+    /// Authenticated current facts for changed execution scopes.
+    pub items: Vec<ServiceMaterialFact>,
+    /// Continuation checkpoint; usable for deletion only once complete is true.
+    pub checkpoint: C,
+    /// All committed changes through this checkpoint were inspected.
+    pub complete: bool,
+}

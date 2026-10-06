@@ -11,6 +11,7 @@ pub struct MaterialCheckpoint {
     safety: u64,
     external: u64,
     changes: u64,
+    receipt: u64,
 }
 pub(crate) fn owner_id() -> u64 {
     static NEXT: AtomicU64 = AtomicU64::new(1);
@@ -26,6 +27,11 @@ impl Store {
                 .conn
                 .pragma_query_value(None, "data_version", |r| r.get(0))?,
             changes: self.conn.total_changes(),
+            receipt: self.conn.query_row(
+                "SELECT COALESCE(MAX(sequence),0) FROM receipts",
+                [],
+                |r| r.get(0),
+            )?,
         })
     }
     pub(crate) fn sql_material_proof_current(
@@ -70,53 +76,136 @@ impl Store {
             bounded_blob("plan", self.limits.input.max_input_bytes)))?;
         let rows = statement.query_map(
             params![after.map_or("", RequestId::as_str), limit as i64],
-            |r| {
-                Ok((
-                    r.get::<_, String>(0)?,
-                    r.get::<_, String>(1)?,
-                    r.get::<_, Vec<u8>>(2)?,
-                    r.get::<_, String>(3)?,
-                ))
-            },
+            material_row,
         )?;
         let mut facts = Vec::new();
         for row in rows {
-            let (request, key, bytes, digest) = row?;
-            let spec = execution_contract::decode_execution(&bytes, &self.limits.input)
-                .map_err(|_| Error::Corrupt)?;
-            let input =
-                FrozenExecution::freeze(spec, &self.limits.input).map_err(|_| Error::Corrupt)?;
-            let scope = Scope::from_input(&input);
-            self.check_scope(&scope)?;
-            if input.spec().request.request_id.as_str() != request
-                || scope.interaction_subject().as_str() != key
-                || hash(input.digest())? != digest
-            {
-                return Err(Error::Corrupt);
-            }
-            authorize(host, Access::RunnerFact, &scope, None)?;
-            authorize(host, Access::Deliver, &scope, Some(consumer))?;
-            let execution = load_state(&tx, &scope, input.clone(), self.limits)?.0;
-            let admission = latest_admission(&tx, &scope, self.limits)?;
-            // Preserve the existing evidence integrity checks, without another plan restoration.
-            if let Some(attempt) = &execution.snapshot().attempt {
-                let process = crate::process::capture(&tx, &attempt.id, self.limits)?;
-                if process.is_some_and(|p| p.content_digest != *input.digest()) {
-                    return Err(Error::Corrupt);
-                }
-                let progress = crate::software_progress::read(&tx, &attempt.id, self.limits)?;
-                if progress.is_some_and(|p| !p.valid_for(&input)) {
-                    return Err(Error::Corrupt);
-                }
-            }
-            let pending: bool = tx.query_row(
-                "SELECT EXISTS(SELECT 1 FROM receipts r WHERE r.scope=?1 AND r.kind!='trust' AND NOT EXISTS(SELECT 1 FROM confirmations c WHERE c.scope=r.scope AND c.consumer=?2 AND c.sequence=r.sequence))",
-                params![key, consumer.as_str()], |r| r.get(0))?;
-            let reclaimable = material_settled(&execution, admission) && !pending;
-            facts.push(ServiceMaterialFact { input, reclaimable });
+            facts.push(self.material_fact_row(&tx, row?, consumer, host)?);
         }
         Ok(facts)
     }
+    pub(crate) fn sql_material_fact(
+        &self,
+        request: &RequestId,
+        consumer: &Id,
+        host: &impl JournalHost,
+    ) -> Result<ServiceMaterialFact, Error> {
+        let tx = self.conn.unchecked_transaction()?;
+        crate::database::ensure_current(&tx, &self.authority, self.limits)?;
+        let row = tx.query_row(
+            &format!(
+                "SELECT request_id,scope,{},digest FROM executions WHERE request_id=?1",
+                bounded_blob("plan", self.limits.input.max_input_bytes)
+            ),
+            [request.as_str()],
+            material_row,
+        )?;
+        self.material_fact_row(&tx, row, consumer, host)
+    }
+    pub(crate) fn sql_material_changes(
+        &self,
+        checkpoint: MaterialCheckpoint,
+        limit: usize,
+        consumer: &Id,
+        host: &impl JournalHost,
+    ) -> Result<ServiceMaterialChanges<MaterialCheckpoint>, Error> {
+        if !(1..=128).contains(&limit) {
+            return Err(Error::InvalidInput);
+        }
+        let tx = self.conn.unchecked_transaction()?;
+        let current = self.sql_material_checkpoint()?;
+        if current.owner != checkpoint.owner
+            || current.external != checkpoint.external
+            || current.receipt < checkpoint.receipt
+        {
+            return Err(Error::Conflict);
+        }
+        // Receipts commit atomically with every new/widened execution. Read by the indexed
+        // immutable sequence, including non-material receipts so skipping is also bounded.
+        let mut statement = tx.prepare("SELECT sequence,scope,kind FROM receipts WHERE sequence>?1 AND sequence<=?2 ORDER BY sequence LIMIT ?3")?;
+        let rows = statement.query_map(
+            params![checkpoint.receipt, current.receipt, limit as i64],
+            |r| {
+                Ok((
+                    r.get::<_, u64>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                ))
+            },
+        )?;
+        let mut next = checkpoint;
+        let mut items = Vec::new();
+        for row in rows {
+            let (sequence, scope, kind) = row?;
+            next.receipt = sequence;
+            if kind == "trust" {
+                continue;
+            }
+            let row = tx
+                .query_row(
+                    &format!(
+                        "SELECT request_id,scope,{},digest FROM executions WHERE scope=?1",
+                        bounded_blob("plan", self.limits.input.max_input_bytes)
+                    ),
+                    [scope],
+                    material_row,
+                )
+                .optional()?;
+            if let Some(row) = row {
+                items.push(self.material_fact_row(&tx, row, consumer, host)?);
+            }
+        }
+        let complete = next.receipt == current.receipt;
+        Ok(ServiceMaterialChanges {
+            items,
+            checkpoint: if complete { current } else { next },
+            complete,
+        })
+    }
+    fn material_fact_row(
+        &self,
+        conn: &rusqlite::Connection,
+        row: (String, String, Vec<u8>, String),
+        consumer: &Id,
+        host: &impl JournalHost,
+    ) -> Result<ServiceMaterialFact, Error> {
+        let (request, key, bytes, digest) = row;
+        let spec = execution_contract::decode_execution(&bytes, &self.limits.input)
+            .map_err(|_| Error::Corrupt)?;
+        let input =
+            FrozenExecution::freeze(spec, &self.limits.input).map_err(|_| Error::Corrupt)?;
+        let scope = Scope::from_input(&input);
+        self.check_scope(&scope)?;
+        if input.spec().request.request_id.as_str() != request
+            || scope.interaction_subject().as_str() != key
+            || hash(input.digest())? != digest
+        {
+            return Err(Error::Corrupt);
+        }
+        authorize(host, Access::RunnerFact, &scope, None)?;
+        authorize(host, Access::Deliver, &scope, Some(consumer))?;
+        let execution = load_state(conn, &scope, input.clone(), self.limits)?.0;
+        let admission = latest_admission(conn, &scope, self.limits)?;
+        // Preserve the existing evidence integrity checks, without another plan restoration.
+        if let Some(attempt) = &execution.snapshot().attempt {
+            let process = crate::process::capture(conn, &attempt.id, self.limits)?;
+            if process.is_some_and(|p| p.content_digest != *input.digest()) {
+                return Err(Error::Corrupt);
+            }
+            let progress = crate::software_progress::read(conn, &attempt.id, self.limits)?;
+            if progress.is_some_and(|p| !p.valid_for(&input)) {
+                return Err(Error::Corrupt);
+            }
+        }
+        let pending: bool = conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM receipts r WHERE r.scope=?1 AND r.kind!='trust' AND NOT EXISTS(SELECT 1 FROM confirmations c WHERE c.scope=r.scope AND c.consumer=?2 AND c.sequence=r.sequence))",
+                params![key, consumer.as_str()], |r| r.get(0))?;
+        let reclaimable = material_settled(&execution, admission) && !pending;
+        Ok(ServiceMaterialFact { input, reclaimable })
+    }
+}
+fn material_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<(String, String, Vec<u8>, String)> {
+    Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
 }
 pub(crate) fn latest_admission(
     conn: &rusqlite::Connection,

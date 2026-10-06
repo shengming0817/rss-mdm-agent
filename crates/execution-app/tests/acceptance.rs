@@ -2828,6 +2828,43 @@ fn material_scan_requires_independent_access_and_confirmation_only_strengthens_p
     let next = FrozenExecution::freeze(spec, &test_execution_limits()).unwrap();
     let _ = app.request_execution(&caller(), &next);
     assert!(!app.service_material_proof_current(checkpoint).unwrap());
+    for allowed in [Access::RunnerFact, Access::Deliver] {
+        host.state.lock().unwrap().accesses = Some(vec![allowed]);
+        assert!(matches!(
+            app.service_material_changes(checkpoint, 1, &consumer),
+            Err(Error::Denied)
+        ));
+        assert!(matches!(
+            app.service_material_fact(&next.spec().request.request_id, &consumer),
+            Err(Error::Denied)
+        ));
+    }
+    host.state.lock().unwrap().accesses = None;
+    let mut delta_checkpoint = checkpoint;
+    let mut found = false;
+    let mut complete = false;
+    for _ in 0..16 {
+        let changes = app
+            .service_material_changes(delta_checkpoint, 1, &consumer)
+            .unwrap();
+        assert!(changes.items.len() <= 1);
+        found |= changes
+            .items
+            .iter()
+            .any(|item| item.input.digest() == next.digest());
+        delta_checkpoint = changes.checkpoint;
+        if changes.complete {
+            complete = true;
+            break;
+        }
+    }
+    assert!(
+        found && complete,
+        "earlier request must be authenticated through the receipt delta"
+    );
+    assert!(app
+        .service_material_proof_current(delta_checkpoint)
+        .unwrap());
     let mut ran = false;
     assert!(app
         .with_service_material_proof(checkpoint, || {
@@ -2854,6 +2891,10 @@ fn external_mutation_of_already_scanned_material_row_invalidates_the_delete_fenc
         .execute("UPDATE executions SET digest=?1", ["bad-digest"])
         .unwrap();
     assert!(!app.service_material_proof_current(checkpoint).unwrap());
+    assert!(matches!(
+        app.service_material_changes(checkpoint, 1, &id("agent-delivery")),
+        Err(Error::Conflict)
+    ));
     let mut ran = false;
     assert!(app
         .with_service_material_proof(checkpoint, || {

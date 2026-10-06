@@ -24,6 +24,25 @@ impl JournalPort for Store {
         self.sql_material_page(after, limit, consumer, host)
             .map_err(Into::into)
     }
+    fn material_fact(
+        &self,
+        request: &RequestId,
+        consumer: &Id,
+        host: &impl JournalHost,
+    ) -> Result<ServiceMaterialFact, JournalError> {
+        self.sql_material_fact(request, consumer, host)
+            .map_err(Into::into)
+    }
+    fn material_changes(
+        &self,
+        checkpoint: MaterialCheckpoint,
+        limit: usize,
+        consumer: &Id,
+        host: &impl JournalHost,
+    ) -> Result<ServiceMaterialChanges<MaterialCheckpoint>, JournalError> {
+        self.sql_material_changes(checkpoint, limit, consumer, host)
+            .map_err(Into::into)
+    }
     fn with_material_proof<T>(
         &self,
         checkpoint: MaterialCheckpoint,

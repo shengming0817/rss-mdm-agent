@@ -1082,6 +1082,36 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
         };
         Ok(crate::ServiceMaterialPage { items, next })
     }
+    /// Authenticate a newly associated request while a complete-journal scan is in progress.
+    pub fn service_material_fact(
+        &self,
+        request: &RequestId,
+        consumer: &execution_contract::Id,
+    ) -> Result<crate::ServiceMaterialFact, Error> {
+        let fact = self
+            .journal
+            .material_fact(request, consumer, &self.adapter(None, None))?;
+        self.check_binding(None, &fact.input)?;
+        Ok(fact)
+    }
+    /// Fold receipt-backed local changes into a proof without resetting its history cursor.
+    pub fn service_material_changes(
+        &self,
+        checkpoint: J::MaterialCheckpoint,
+        limit: usize,
+        consumer: &execution_contract::Id,
+    ) -> Result<crate::ServiceMaterialChanges<J::MaterialCheckpoint>, Error> {
+        let changes = self.journal.material_changes(
+            checkpoint,
+            limit,
+            consumer,
+            &self.adapter(None, None),
+        )?;
+        for item in &changes.items {
+            self.check_binding(None, &item.input)?;
+        }
+        Ok(changes)
+    }
     /// Run one bounded filesystem step behind the authoritative journal's writer fence.
     pub fn with_service_material_proof<T>(
         &self,
