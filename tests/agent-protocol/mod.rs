@@ -428,7 +428,29 @@ pub struct Server {
     pub data: Arc<Mutex<Data>>,
     pub time: Time,
     pub secrets: Secrets,
-    task: tokio::task::JoinHandle<()>,
+    _runtime: ServerRuntime,
+}
+
+// axum spawns each accepted connection. Cancelling only its listener leaves those
+// tasks alive; a dedicated runtime owns and cancels the entire server together.
+// ref: axum 0.8.9 src/serve/mod.rs; tokio 1.53.1 src/runtime/runtime.rs.
+struct ServerRuntime {
+    stop: Option<tokio::sync::oneshot::Sender<()>>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+impl Drop for ServerRuntime {
+    fn drop(&mut self) {
+        if let Some(stop) = self.stop.take() {
+            let _ = stop.send(());
+        }
+        if let Some(thread) = self.thread.take() {
+            if let Err(panic) = thread.join() {
+                if !std::thread::panicking() {
+                    std::panic::resume_unwind(panic);
+                }
+            }
+        }
+    }
 }
 impl Server {
     pub async fn new() -> Self {
@@ -516,45 +538,69 @@ impl Server {
             claim_inputs: vec![],
             claims: BTreeMap::new(),
         }));
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let url = url::Url::parse(&format!(
-            "{}://{}/",
-            if tls { "https" } else { "http" },
-            listener.local_addr().unwrap()
-        ))
-        .unwrap();
-        {
-            let mut state = data.lock().unwrap();
-            state.trust = pki::trust(url.as_str(), state.tenant);
-        }
-        let router = axum::Router::new()
-            .fallback(handler)
-            .with_state(data.clone());
-        let data_time = time.clone();
-        let task = tokio::spawn(async move {
-            if tls {
-                let mut config = pki::server();
-                config.time_provider = Arc::new(data_time);
-                let listener = TlsListener {
-                    listener,
-                    acceptor: tokio_rustls::TlsAcceptor::from(Arc::new(config)),
-                };
-                axum::serve(
-                    listener,
-                    router.into_make_service_with_connect_info::<TlsIdentity>(),
-                )
-                .await
+        let (ready, started) = tokio::sync::oneshot::channel();
+        let (stop, stopped) = tokio::sync::oneshot::channel();
+        let server_data = data.clone();
+        let server_time = time.clone();
+        let thread = std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
                 .unwrap();
-            } else {
-                axum::serve(listener, router).await.unwrap();
-            }
+            runtime.block_on(async move {
+                let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+                let url = url::Url::parse(&format!(
+                    "{}://{}/",
+                    if tls { "https" } else { "http" },
+                    listener.local_addr().unwrap()
+                ))
+                .unwrap();
+                {
+                    let mut state = server_data.lock().unwrap();
+                    state.trust = pki::trust(url.as_str(), state.tenant);
+                }
+                let router = axum::Router::new()
+                    .fallback(handler)
+                    .with_state(server_data);
+                let serving = async move {
+                    if tls {
+                        let mut config = pki::server();
+                        config.time_provider = Arc::new(server_time);
+                        let listener = TlsListener {
+                            listener,
+                            acceptor: tokio_rustls::TlsAcceptor::from(Arc::new(config)),
+                        };
+                        axum::serve(
+                            listener,
+                            router.into_make_service_with_connect_info::<TlsIdentity>(),
+                        )
+                        .await
+                    } else {
+                        axum::serve(listener, router).await
+                    }
+                };
+                if ready.send(url).is_err() {
+                    return;
+                }
+                tokio::select! {
+                    result = serving => result.unwrap(),
+                    _ = stopped => {},
+                }
+            });
+            // Drop outside the caller's async context, cancelling pending handlers
+            // and closing their sockets before the owner can release its budget.
         });
+        let runtime = ServerRuntime {
+            stop: Some(stop),
+            thread: Some(thread),
+        };
+        let url = started.await.expect("test server failed to start");
         Self {
             url,
             data,
             time,
             secrets: Secrets::new(),
-            task,
+            _runtime: runtime,
         }
     }
     pub fn config(&self) -> Config {
@@ -598,11 +644,6 @@ impl Server {
             .unwrap();
         client.drive_pki().await.unwrap();
         client.registration().unwrap()
-    }
-}
-impl Drop for Server {
-    fn drop(&mut self) {
-        self.task.abort();
     }
 }
 async fn handler(
