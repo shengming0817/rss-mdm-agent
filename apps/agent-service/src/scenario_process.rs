@@ -16,10 +16,12 @@ pub(crate) fn run_parent(case_id: &str) -> bool {
     if let Some(selected) = std::env::var_os(CHILD_CASE) {
         assert_eq!(selected, case, "isolated scenario marker mismatch");
         descriptor_budget().expect("isolated scenario descriptor budget");
-        eprintln!("{ENTERED}{case}");
+        // Serial libtest may already have written an unterminated progress line.
+        eprintln!("\n{ENTERED}{case}");
         return false;
     }
-    run(command(case), case, Duration::from_secs(120)).unwrap();
+    // The existing 32,768-material GC scenario grants its Offer/Start 600 seconds.
+    run(command(case), case, Duration::from_secs(600)).unwrap();
     true
 }
 
@@ -130,6 +132,9 @@ mod tests {
     #[test]
     fn exact_ignored_scenario_executes_and_failure_propagates() {
         run(command(CASE), CASE, Duration::from_secs(5)).unwrap();
+        let mut serial = command(CASE);
+        serial.env("RUST_TEST_THREADS", "1");
+        run(serial, CASE, Duration::from_secs(5)).unwrap();
         let mut failed = command(CASE);
         failed.env(PROBE, "fail");
         let error = run(failed, CASE, Duration::from_secs(5)).unwrap_err();
