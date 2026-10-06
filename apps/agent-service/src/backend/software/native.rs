@@ -615,7 +615,7 @@ mod gc_tests {
         while pass.phase() == ReclaimPhase::Inventory {
             root.reclaim_step(&mut pass)?;
         }
-        pass.prove(candidates.clone(), retained.clone())?;
+        root.prove_reclamation(&mut pass, candidates.clone(), retained.clone())?;
         while pass.phase() != ReclaimPhase::Complete {
             root.reclaim_step(&mut pass)?;
         }

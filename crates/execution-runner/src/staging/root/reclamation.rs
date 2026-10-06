@@ -34,6 +34,25 @@ struct Hashing {
     identity: Identity,
     hasher: Sha256,
     bytes: u64,
+    stamp: Stamp,
+}
+#[derive(Clone, PartialEq, Eq)]
+struct Stamp {
+    length: u64,
+    modified: std::time::SystemTime,
+}
+impl Stamp {
+    fn read(file: &File) -> Result<Self, Error> {
+        let metadata = file.metadata().map_err(|_| Error::Storage)?;
+        Ok(Self {
+            length: metadata.len(),
+            modified: metadata.modified().map_err(|_| Error::Storage)?,
+        })
+    }
+}
+struct Verified {
+    digest: Digest,
+    stamp: Stamp,
 }
 /// One resumable pass, bound to its exclusive MaterialRoot. It holds no journal authority.
 pub struct Reclamation {
@@ -51,7 +70,7 @@ pub struct Reclamation {
     retained: BTreeSet<PathBuf>,
     protected: BTreeSet<Identity>,
     protected_directories: BTreeSet<PathBuf>,
-    proven: BTreeSet<Identity>,
+    proven: BTreeMap<Identity, Verified>,
     cursor: Option<PathBuf>,
     retained_done: bool,
     candidates_done: bool,
@@ -74,21 +93,14 @@ impl Reclamation {
     pub fn contains_file(&self, path: &Path) -> bool {
         self.entries.get(path).is_some_and(|e| e.identity.is_some())
     }
-    /// Transfer a complete journal/reference proof. The producer remains responsible for its currency.
-    pub fn prove(
-        &mut self,
-        candidates: BTreeMap<PathBuf, Digest>,
-        retained: BTreeSet<PathBuf>,
-    ) -> Result<(), Error> {
-        if self.phase != ReclaimPhase::AwaitingProof {
+    /// Suspend deletion for a fresh journal/reference proof without discarding object verification.
+    pub fn recheck_proof(&mut self) -> Result<(), Error> {
+        if self.phase == ReclaimPhase::Complete {
             return Err(Error::Conflict);
         }
-        if candidates.len() > MAX_ENTRIES || retained.len() > MAX_ENTRIES {
-            return Err(Error::Capacity);
+        if self.phase != ReclaimPhase::Inventory {
+            self.phase = ReclaimPhase::AwaitingProof;
         }
-        self.candidates = candidates;
-        self.retained = retained;
-        self.phase = ReclaimPhase::Verifying;
         Ok(())
     }
     /// Completed physical result. Consuming an unfinished pass cannot claim successful reclamation.
@@ -100,7 +112,7 @@ impl Reclamation {
     }
 }
 impl MaterialRoot {
-    /// Publication generation; any attempted publication invalidates previous inventories.
+    /// Publication generation; new names require a later inventory and a fresh deletion proof.
     pub fn generation(&self) -> u64 {
         self.generation
     }
@@ -121,13 +133,49 @@ impl MaterialRoot {
             retained: BTreeSet::new(),
             protected: BTreeSet::new(),
             protected_directories: BTreeSet::new(),
-            proven: BTreeSet::new(),
+            proven: BTreeMap::new(),
             cursor: None,
             retained_done: false,
             candidates_done: false,
             hashing: None,
             result: Reclaimed::default(),
         }
+    }
+    /// Attach a complete current journal/reference proof, preserving immutable object progress.
+    /// The caller authenticates references; this owner binds deletion to current publication state.
+    pub fn prove_reclamation(
+        &self,
+        pass: &mut Reclamation,
+        candidates: BTreeMap<PathBuf, Digest>,
+        retained: BTreeSet<PathBuf>,
+    ) -> Result<(), Error> {
+        if !pass
+            .instance
+            .ptr_eq(&std::sync::Arc::downgrade(&self.instance))
+            || pass.phase != ReclaimPhase::AwaitingProof
+        {
+            return Err(Error::Conflict);
+        }
+        if candidates.len() > MAX_ENTRIES || retained.len() > MAX_ENTRIES {
+            return Err(Error::Capacity);
+        }
+        if pass
+            .hashing
+            .as_ref()
+            .is_some_and(|h| candidates.get(&h.path) != Some(&h.expected))
+        {
+            pass.hashing = None;
+        }
+        pass.generation = self.generation;
+        pass.candidates = candidates;
+        pass.retained = retained;
+        pass.protected.clear();
+        pass.protected_directories.clear();
+        pass.cursor = None;
+        pass.retained_done = false;
+        pass.candidates_done = false;
+        pass.phase = ReclaimPhase::Verifying;
+        Ok(())
     }
     /// Advance bounded metadata, hash or unlink work. OS calls themselves have no wall-clock guarantee.
     /// Caller checks the current journal and live-reference proof before every Files/Directories step.
@@ -136,7 +184,8 @@ impl MaterialRoot {
             .instance
             .ptr_eq(&std::sync::Arc::downgrade(&self.instance))
             || pass.root != self.path
-            || pass.generation != self.generation
+            || (matches!(pass.phase, ReclaimPhase::Files | ReclaimPhase::Directories)
+                && pass.generation != self.generation)
         {
             return Err(Error::Conflict);
         }
@@ -286,6 +335,15 @@ impl MaterialRoot {
                     {
                         return Err(Error::Conflict);
                     }
+                    let stamp = Stamp::read(&file)?;
+                    if pass
+                        .proven
+                        .get(&identity)
+                        .is_some_and(|p| p.digest == expected && p.stamp == stamp)
+                    {
+                        continue;
+                    }
+                    pass.proven.remove(&identity);
                     pass.hashing = Some(Hashing {
                         path,
                         expected,
@@ -294,9 +352,13 @@ impl MaterialRoot {
                         _lease: lease,
                         hasher: Sha256::new(),
                         bytes: 0,
+                        stamp,
                     });
                 }
                 let hashing = pass.hashing.as_mut().unwrap();
+                if Stamp::read(&hashing.file)? != hashing.stamp {
+                    return Err(Error::Conflict);
+                }
                 let mut buffer = [0u8; 65536];
                 let amount = hashing
                     .file
@@ -309,11 +371,17 @@ impl MaterialRoot {
                     }
                     // The retained source lease pins the object throughout its incremental hash.
                     if crate::platform::storage_identity(&hashing.file)? != hashing.identity
-                        || hashing.path != *pass.cursor.as_ref().unwrap()
+                        || Stamp::read(&hashing.file)? != hashing.stamp
                     {
                         return Err(Error::Conflict);
                     }
-                    pass.proven.insert(hashing.identity);
+                    pass.proven.insert(
+                        hashing.identity,
+                        Verified {
+                            digest: hashing.expected,
+                            stamp: hashing.stamp,
+                        },
+                    );
                 } else {
                     bytes_left -= amount;
                     hashing.bytes = hashing
@@ -370,7 +438,7 @@ impl MaterialRoot {
                 continue;
             };
             if pass.protected.contains(&id)
-                || !(pass.proven.contains(&id) || pending_name(&self.path, &path))
+                || !(pass.proven.contains_key(&id) || pending_name(&self.path, &path))
             {
                 continue;
             }
@@ -381,9 +449,15 @@ impl MaterialRoot {
             {
                 return Err(Error::Conflict);
             }
+            if let Some(proven) = pass.proven.get(&id) {
+                if Stamp::read(&file)? != proven.stamp {
+                    return Err(Error::Conflict);
+                }
+            }
             drop(file);
             drop(lease);
             std::fs::remove_file(&path).map_err(|_| Error::Storage)?;
+            pass.entries.remove(&path);
             pass.result.files += 1;
             *pass.removed.entry(id).or_default() += 1;
             if pass.removed[&id] == pass.links[&id] {

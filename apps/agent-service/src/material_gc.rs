@@ -32,6 +32,7 @@ struct Key {
 }
 struct Pass {
     key: Key,
+    inventory_generation: u64,
     physical: Reclamation,
     cursor: Option<RequestId>,
     scanned: bool,
@@ -81,7 +82,7 @@ impl<S: IdentityProvider> DeviceService<S> {
                 )
                 .collect(),
         };
-        if let Some(pass) = &self.material_gc.pass {
+        if let Some(pass) = &mut self.material_gc.pass {
             if key.root != pass.key.root
                 || key.registry != pass.key.registry
                 || key.associated != pass.key.associated
@@ -92,7 +93,22 @@ impl<S: IdentityProvider> DeviceService<S> {
                     .service_material_proof_current(pass.key.checkpoint)
                     .map_err(crate::error::app_error)?
             {
-                self.material_gc.pass = None;
+                // Publication appends immutable names. Reauthenticate deletion, but retain
+                // existing inventory and identity-bound hashes (ref: tokio coop made_progress).
+                pass.physical
+                    .recheck_proof()
+                    .map_err(crate::error::app_error)?;
+                pass.associated = key.associated.clone();
+                pass.retained = key.pins.iter().cloned().collect();
+                pass.key = key.clone();
+                pass.cursor = None;
+                pass.scanned = false;
+                pass.candidates.clear();
+                pass.interpreters.clear();
+                pass.retire.clear();
+                pass.live = None;
+                pass.filter_cursor = None;
+                pass.filtered = false;
             }
         }
         if self.material_gc.pass.is_none() {
@@ -100,6 +116,7 @@ impl<S: IdentityProvider> DeviceService<S> {
                 return Ok(());
             }
             self.material_gc.pass = Some(Pass {
+                inventory_generation: key.root,
                 associated: key.associated.clone(),
                 retained: key.pins.iter().cloned().collect(),
                 key,
@@ -129,6 +146,8 @@ impl<S: IdentityProvider> DeviceService<S> {
                         result.files, result.bytes, result.directories
                     );
                 }
+                // New names appended during this pass belong to the next inventory.
+                pass.key.root = pass.inventory_generation;
                 self.material_gc.completed = if pass.retry { None } else { Some(pass.key) };
                 Ok(())
             }
@@ -298,8 +317,10 @@ impl<S: IdentityProvider> DeviceService<S> {
             }
             return Ok(());
         }
-        pass.physical
-            .prove(
+        self.core
+            .material_root
+            .prove_reclamation(
+                &mut pass.physical,
                 std::mem::take(&mut pass.candidates),
                 std::mem::take(&mut pass.retained),
             )

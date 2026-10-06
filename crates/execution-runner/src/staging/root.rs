@@ -377,7 +377,7 @@ mod tests {
         while pass.phase() == ReclaimPhase::Inventory {
             root.reclaim_step(&mut pass)?;
         }
-        pass.prove(candidates.clone(), retained.clone())?;
+        root.prove_reclamation(&mut pass, candidates.clone(), retained.clone())?;
         while pass.phase() != ReclaimPhase::Complete {
             root.reclaim_step(&mut pass)?;
         }
@@ -403,8 +403,12 @@ mod tests {
         while pass.phase() == ReclaimPhase::Inventory {
             root.reclaim_step(&mut pass).unwrap();
         }
-        pass.prove(BTreeMap::from([(source.clone(), digest)]), BTreeSet::new())
-            .unwrap();
+        root.prove_reclamation(
+            &mut pass,
+            BTreeMap::from([(source.clone(), digest)]),
+            BTreeSet::new(),
+        )
+        .unwrap();
         root.reclaim_step(&mut pass).unwrap(); // retained coordinates
         root.reclaim_step(&mut pass).unwrap(); // first MiB
         assert_eq!(pass.phase(), ReclaimPhase::Verifying);
@@ -422,14 +426,86 @@ mod tests {
         std::fs::remove_dir_all(path).unwrap();
     }
     #[test]
-    fn inventories_cannot_cross_publication_or_owner_lifetimes() {
+    fn reauthentication_keeps_hash_progress_and_new_references_can_stop_deletion() {
+        let (mut root, path) = fixture();
+        let (source, digest) = publish(&mut root, &vec![3; 8 * 1024 * 1024]);
+        let candidates = BTreeMap::from([(source.clone(), digest)]);
+        let mut pass = root.begin_reclamation();
+        while pass.phase() == ReclaimPhase::Inventory {
+            root.reclaim_step(&mut pass).unwrap();
+        }
+        root.prove_reclamation(&mut pass, candidates.clone(), BTreeSet::new())
+            .unwrap();
+        for index in 0..80 {
+            if index % 4 == 0 {
+                publish(&mut root, format!("other-{index}").as_bytes());
+                pass.recheck_proof().unwrap();
+                root.prove_reclamation(&mut pass, candidates.clone(), BTreeSet::new())
+                    .unwrap();
+            }
+            root.reclaim_step(&mut pass).unwrap();
+            if pass.phase() == ReclaimPhase::Files {
+                break;
+            }
+        }
+        assert_eq!(
+            pass.phase(),
+            ReclaimPhase::Files,
+            "unrelated publication must not starve hashing"
+        );
+        publish(&mut root, b"new reference");
+        assert!(matches!(root.reclaim_step(&mut pass), Err(Error::Conflict)));
+        pass.recheck_proof().unwrap();
+        root.prove_reclamation(&mut pass, candidates, BTreeSet::from([source.clone()]))
+            .unwrap();
+        while pass.phase() != ReclaimPhase::Complete {
+            root.reclaim_step(&mut pass).unwrap();
+        }
+        assert!(
+            source.exists(),
+            "fresh retained reference must override cached bytes"
+        );
+        drop(pass);
+        drop(root);
+        std::fs::remove_dir_all(path).unwrap();
+    }
+    #[test]
+    fn reauthentication_does_not_reuse_hashes_after_content_changes() {
+        let (mut root, path) = fixture();
+        let (source, digest) = publish(&mut root, b"original");
+        let candidates = BTreeMap::from([(source.clone(), digest)]);
+        let mut pass = root.begin_reclamation();
+        while pass.phase() == ReclaimPhase::Inventory {
+            root.reclaim_step(&mut pass).unwrap();
+        }
+        root.prove_reclamation(&mut pass, candidates.clone(), BTreeSet::new())
+            .unwrap();
+        while pass.phase() == ReclaimPhase::Verifying {
+            root.reclaim_step(&mut pass).unwrap();
+        }
+        assert_eq!(pass.phase(), ReclaimPhase::Files);
+        std::fs::write(&source, b"changed bytes").unwrap();
+        pass.recheck_proof().unwrap();
+        root.prove_reclamation(&mut pass, candidates, BTreeSet::new())
+            .unwrap();
+        loop {
+            if let Err(error) = root.reclaim_step(&mut pass) {
+                assert!(matches!(error, Error::Denied));
+                break;
+            }
+            assert_ne!(pass.phase(), ReclaimPhase::Files);
+        }
+        assert!(source.exists());
+        drop(pass);
+        drop(root);
+        std::fs::remove_dir_all(path).unwrap();
+    }
+    #[test]
+    fn append_only_publication_preserves_inventory_but_owner_reopen_rejects_it() {
         let (mut root, path) = fixture();
         let mut before_publish = root.begin_reclamation();
         publish(&mut root, b"new material");
-        assert!(matches!(
-            root.reclaim_step(&mut before_publish),
-            Err(Error::Conflict)
-        ));
+        root.reclaim_step(&mut before_publish).unwrap();
         drop(before_publish);
         drop(root);
         let root = MaterialRoot::open_bound(&path, &"a".repeat(64), false).unwrap();

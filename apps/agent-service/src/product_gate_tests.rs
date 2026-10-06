@@ -507,6 +507,98 @@ fn complete_material_gc<S: agent_client::IdentityProvider>(
 }
 
 #[tokio::test]
+async fn material_gc_finishes_old_content_under_continuing_publication_and_new_journal_rows() {
+    let _budget = crate::scenario_budget::enter();
+    let mut c = Case::new(None).await;
+    let caller = c.service.core.caller();
+    let consumer = plan::id("backend-results").unwrap();
+    let bytes = vec![5; 8 * 1024 * 1024];
+    let digest = execution_contract::Digest::new(format!("{:x}", Sha256::digest(&bytes))).unwrap();
+    let old = c
+        .service
+        .core
+        .material_root
+        .publish(None, bytes.as_slice(), &digest, bytes.len() as u64)
+        .unwrap();
+    let mut spec: ExecutionInput = serde_json::from_str(include_str!(
+        "../../../crates/execution-contract/tests/fixtures/plan.json"
+    ))
+    .unwrap();
+    spec.request.authority = c.service.core.host.binding.authority.clone();
+    spec.request.actor = caller.actor.clone();
+    spec.request.target.device = c.service.core.host.binding.device.clone();
+    spec.request.initiator = Initiator::Backend {
+        task: plan::id("gc-continuing-task").unwrap(),
+        attempt: plan::id("gc-continuing-attempt").unwrap(),
+        trigger: BackendTrigger::Automatic {},
+    };
+    spec.request.delegation = None;
+    spec.run_as = RunAs::System {
+        platform: spec.request.target.platform,
+    };
+    spec.session_requirement = SessionRequirement::NotRequired {};
+    let register = |service: &mut DeviceService<protocol::Secrets>,
+                    name: String,
+                    digest: execution_contract::Digest| {
+        let mut next = spec.clone();
+        next.request.request_id = RequestId::new(name).unwrap();
+        next.launch.artifact.sha256 = digest;
+        let input = FrozenExecution::freeze(next, &plan::storage_limits().input).unwrap();
+        assert!(matches!(
+            service.core.app.request_execution(&caller, &input),
+            Err(execution_app::Error::Unbound)
+        ));
+        service
+            .core
+            .app
+            .cancel(&caller, &input.spec().request.request_id)
+            .unwrap();
+        for item in service
+            .core
+            .app
+            .service_delivery(&input.spec().request.request_id, &consumer, 64)
+            .unwrap()
+        {
+            service
+                .core
+                .app
+                .service_confirm(
+                    &input.spec().request.request_id,
+                    &consumer,
+                    &item.receipt.event_id,
+                )
+                .unwrap();
+        }
+    };
+    register(&mut c.service, "gc-old".into(), digest);
+    let mut publications = 0;
+    for step in 0..160 {
+        if step % 16 == 0 {
+            let bytes = format!("new material {step}");
+            let digest =
+                execution_contract::Digest::new(format!("{:x}", Sha256::digest(bytes.as_bytes())))
+                    .unwrap();
+            c.service
+                .core
+                .material_root
+                .publish(None, bytes.as_bytes(), &digest, bytes.len() as u64)
+                .unwrap();
+            register(&mut c.service, format!("gc-new-{step:03}"), digest);
+            publications += 1;
+        }
+        c.service.reclaim_step().unwrap();
+        if !old.exists() {
+            assert!(
+                publications >= 2,
+                "fixture must interleave publication with the old pass"
+            );
+            return;
+        }
+    }
+    panic!("continuing publication starved reclamation of settled old material");
+}
+
+#[tokio::test]
 async fn material_gc_scans_every_journal_page_and_waits_for_delivery_confirmation() {
     let _budget = crate::scenario_budget::enter();
     material_gc_history(1).await;
