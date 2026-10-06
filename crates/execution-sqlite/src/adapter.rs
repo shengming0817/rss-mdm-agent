@@ -6,6 +6,32 @@ use execution_interaction::{Interaction, Reference, Spec};
 use execution_lifecycle::{CommandEvent, ObservationEvent, ObservationVerifier};
 
 impl JournalPort for Store {
+    type MaterialCheckpoint = MaterialCheckpoint;
+    fn material_checkpoint(&self) -> Result<MaterialCheckpoint, JournalError> {
+        self.sql_material_checkpoint().map_err(Into::into)
+    }
+    fn material_proof_current(&self, checkpoint: MaterialCheckpoint) -> Result<bool, JournalError> {
+        self.sql_material_proof_current(checkpoint)
+            .map_err(Into::into)
+    }
+    fn material_page(
+        &self,
+        after: Option<&RequestId>,
+        limit: usize,
+        consumer: &Id,
+        host: &impl JournalHost,
+    ) -> Result<Vec<ServiceMaterialFact>, JournalError> {
+        self.sql_material_page(after, limit, consumer, host)
+            .map_err(Into::into)
+    }
+    fn with_material_proof<T>(
+        &self,
+        checkpoint: MaterialCheckpoint,
+        action: impl FnOnce() -> Result<T, execution_app::Error>,
+    ) -> Result<T, execution_app::Error> {
+        self.sql_with_material_proof(checkpoint, action)
+    }
+
     fn authority(&self) -> &Authority {
         &self.authority
     }

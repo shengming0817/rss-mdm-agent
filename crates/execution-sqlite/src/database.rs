@@ -23,6 +23,8 @@ pub struct Store {
     pub(crate) conn: Connection,
     pub(crate) limits: Limits,
     pub(crate) authority: Authority,
+    pub(crate) material_owner: u64,
+    pub(crate) material_safety: std::cell::Cell<u64>,
 }
 /// Opening an unsupported database never creates a write-capable handle.
 pub enum OpenOutcome {
@@ -154,6 +156,8 @@ impl Store {
             conn,
             limits,
             authority: stored,
+            material_owner: crate::material::owner_id(),
+            material_safety: Default::default(),
         })))
     }
 }

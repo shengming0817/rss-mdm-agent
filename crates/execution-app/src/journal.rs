@@ -11,6 +11,31 @@ use execution_lifecycle::{CommandEvent, ObservationEvent, ObservationVerifier};
 /// cannot be split into separately visible writes. Callbacks are bounded and non-reentrant.
 /// An adapter is trusted product code: the type boundary does not prove external persistence.
 pub trait JournalPort {
+    /// Adapter-owned connection-local reclamation checkpoint, with no serialization contract.
+    type MaterialCheckpoint: Copy + Eq;
+    /// Capture local and external changes for a reclamation pass.
+    fn material_checkpoint(&self) -> Result<Self::MaterialCheckpoint, JournalError>;
+    /// Whether changes could have weakened a completed or partial reclamation proof.
+    fn material_proof_current(
+        &self,
+        checkpoint: Self::MaterialCheckpoint,
+    ) -> Result<bool, JournalError>;
+    /// Authenticate all rows in one bounded page, including independent delivery permission.
+    fn material_page(
+        &self,
+        after: Option<&RequestId>,
+        limit: usize,
+        consumer: &Id,
+        host: &impl JournalHost,
+    ) -> Result<Vec<ServiceMaterialFact>, JournalError>;
+    /// Fence concurrent writers while the sole product owner performs a small physical deletion.
+    /// The callback does not access this journal; an error preserves remaining materials.
+    fn with_material_proof<T>(
+        &self,
+        checkpoint: Self::MaterialCheckpoint,
+        action: impl FnOnce() -> Result<T, Error>,
+    ) -> Result<T, Error>;
+
     /// Authority actually bound to this opened journal.
     fn authority(&self) -> &Authority;
     /// Immutable decoder/execution envelope selected when this journal was opened.
