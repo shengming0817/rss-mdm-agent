@@ -20,12 +20,21 @@ export type FieldBinding = {
 const plain = (value: unknown): value is Record<string, any> =>
   !!value && typeof value === "object" && !Array.isArray(value);
 const value = (input: unknown): OperationValue => {
-  if (input === null || ["string", "number", "boolean"].includes(typeof input))
+  if (["string", "number", "boolean"].includes(typeof input))
     return input as OperationValue;
-  if (Array.isArray(input) && input.every((item) => typeof item === "string"))
-    return input;
   return JSON.stringify(input) ?? "";
 };
+function unsafeSchema(input: unknown): boolean {
+  if (Array.isArray(input)) return input.some(unsafeSchema);
+  if (!plain(input)) return false;
+  return (
+    "$ref" in input ||
+    "$dynamicRef" in input ||
+    input.writeOnly === true ||
+    input.format === "password" ||
+    Object.values(input).some(unsafeSchema)
+  );
+}
 const presentation = (
   template: OperationPresentation["template"],
   fields: OperationField[] = [],
@@ -46,6 +55,7 @@ function policyFields(action: Policy, editable: boolean) {
   if (task.kind !== "script")
     return { fields, bindings, specialized: false, blocked };
   const schema = plain(task.parameterSchema) ? task.parameterSchema : {};
+  const unsafe = unsafeSchema(schema);
   const properties = plain(schema.properties) ? schema.properties : {};
   const required = Array.isArray(schema.required) ? schema.required : [];
   for (const [key, source] of Object.entries(task.parameterSources)) {
@@ -60,7 +70,7 @@ function policyFields(action: Policy, editable: boolean) {
       required: required.includes(key),
     };
     // No secret material can enter generic current/proposal/history or an untrusted capture port.
-    if (spec.writeOnly === true || spec.format === "password") {
+    if (unsafe) {
       f.readonly = true;
       f.reason = "此操作尚无可信秘密输入接缝";
       bindings.push({ id, key, editable: false, value: undefined });
@@ -271,6 +281,16 @@ export function operationProjection(
         : "尚无可信观察结果";
       snapshot.allowed = ["refresh"];
     }
+  }
+  const origin = operationOrigin(view);
+  if (origin.kind === "ai") {
+    snapshot.source = `AI 发起 · ${snapshot.source}`;
+    snapshot.logs.push(
+      `AI 会话 / 调用：${origin.conversation} / ${origin.toolCall}`,
+      `AI 配置：${origin.config.id} / ${origin.config.revision}`,
+      `本机账号 / 会话：${origin.osSession.account.subject} / ${origin.osSession.session}`,
+      `授权范围：${scope.authority} / ${scope.tenant} / ${scope.principal}`,
+    );
   }
   return { snapshot, presentation: ui, bindings };
 }

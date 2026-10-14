@@ -3505,6 +3505,23 @@ async fn operation_draft_freezes_current_parameters_once_and_queries_do_not_exec
         assert_eq!(invocation["parameters"]["name"], "User edit");
         assert_eq!(invocation["source"], "ai");
         assert_eq!(invocation["confirmed"], level == 2);
+        drop(data);
+        let c = c.reopen();
+        assert_eq!(c.policy_record(&choice.request), *submitted);
+        let mut forged = (*submitted).clone();
+        forged.revision += 1;
+        if let PreparedAction::Policy { choice, .. } = &mut forged.action {
+            choice
+                .parameters
+                .insert("name".into(), serde_json::json!("changed after restart"));
+        }
+        assert!(c
+            .service
+            .core
+            .app
+            .record_backend_request(&c.service.core.caller(), Some(&submitted), &forged)
+            .is_err());
+        assert_eq!(c.policy_record(&choice.request), *submitted);
     }
 }
 
@@ -3512,7 +3529,7 @@ async fn operation_draft_freezes_current_parameters_once_and_queries_do_not_exec
 async fn operation_draft_rejects_changed_policy_and_retired_native_context() {
     let _budget = crate::scenario_budget::enter();
     use execution_ipc::host::Request;
-    for revoke in [false, true] {
+    for mode in 0..3 {
         let mut c = Case::new(None).await;
         let directory = protocol::policy_directory_fixture(c.service.client.configuration().tenant);
         c._server.data.lock().unwrap().self_service_directory =
@@ -3539,9 +3556,13 @@ async fn operation_draft_rejects_changed_policy_and_retired_native_context() {
         else {
             panic!("draft")
         };
-        let context = c.context();
-        if revoke {
-            c.policy_call(Request::RevokeContext {}).await;
+        if mode == 2 {
+            c = c.reopen();
+            assert_eq!(c.policy_record(&choice.request), *value);
+            assert!(c._server.data.lock().unwrap().invocations.is_empty());
+            c.employee("generation-restart").await;
+        } else if mode == 1 {
+            c.employee("generation-two").await;
         } else {
             c._server
                 .data
@@ -3555,7 +3576,7 @@ async fn operation_draft_rejects_changed_policy_and_retired_native_context() {
         }
         assert!(matches!(
             c.policy_call(Request::SubmitPolicy {
-                context,
+                context: c.context(),
                 input: PolicySubmission {
                     request: choice.request.clone(),
                     revision: value.revision,
@@ -3578,5 +3599,58 @@ async fn operation_draft_rejects_changed_policy_and_retired_native_context() {
             .unwrap();
         assert_eq!(retained.state, BackendRequestState::Draft);
         assert!(retained.confirmation.is_none());
+    }
+}
+
+#[tokio::test]
+async fn operation_draft_rejects_secret_and_unresolved_schemas_before_persistence() {
+    let _budget = crate::scenario_budget::enter();
+    use execution_ipc::host::Request;
+    for schema in [
+        serde_json::json!({"type":"object","properties":{"name":{"type":"string","writeOnly":true}}}),
+        serde_json::json!({"type":"object","properties":{"name":{"type":"object","properties":{"secret":{"format":"password"}}}}}),
+        serde_json::json!({"$ref":"#/$defs/secret","$defs":{"secret":{"type":"string","writeOnly":true}}}),
+    ] {
+        let mut c = Case::new(None).await;
+        let mut directory =
+            protocol::policy_directory_fixture(c.service.client.configuration().tenant);
+        if let wire::SelfServiceTask::Script {
+            parameter_schema, ..
+        } = &mut directory.task
+        {
+            *parameter_schema = schema;
+        }
+        c._server.data.lock().unwrap().self_service_directory =
+            Some(wire::SelfServiceDirectoryResponse {
+                items: vec![directory.clone()],
+                next_cursor: None,
+                as_of: c._server.time.now().unwrap(),
+            });
+        let choice = PolicyChoice {
+            request: RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap(),
+            policy_id: plan::id(directory.policy_id.to_string()).unwrap(),
+            policy_revision: directory.policy_revision,
+            policy_version: plan::id(directory.policy_version.to_string()).unwrap(),
+            parameters: std::collections::BTreeMap::from([(
+                "name".into(),
+                serde_json::json!("secret-must-not-be-returned"),
+            )]),
+        };
+        let reply = c
+            .policy_call(Request::PreparePolicy {
+                context: c.context(),
+                choice: choice.clone(),
+                origin: c.selection.origin.clone(),
+            })
+            .await;
+        assert!(matches!(reply, Reply::Rejected));
+        assert!(c
+            .service
+            .core
+            .app
+            .backend_request(&c.service.core.caller(), &choice.request)
+            .unwrap()
+            .is_none());
+        assert!(c._server.data.lock().unwrap().invocations.is_empty());
     }
 }

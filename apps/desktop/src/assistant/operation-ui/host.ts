@@ -71,7 +71,10 @@ export async function connectOperation(
           raw.value.action.kind === "policy" &&
           raw.value.state !== "draft"
         )
-          await c.reconcilePolicyPreparation?.(scope.instance);
+          await c.reconcilePolicyPreparation?.(scope.instance).catch(() => {
+            // Reconciliation may need the backend. The authenticated local record
+            // remains the source of truth even while that network is unavailable.
+          });
         valid();
         return c.executionDetails(operationId, signal);
       })()

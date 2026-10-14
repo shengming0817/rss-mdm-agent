@@ -138,6 +138,32 @@ fn uuid(value: &str) -> Result<Uuid, Error> {
     }
     Ok(parsed)
 }
+// Generic operation cards have no secret reference owner. Reject unresolved schema
+// references as well: they cannot prove that nested values are safe to persist/display.
+fn operation_parameters_supported(directory: &wire::SelfServiceDirectoryItem) -> Result<(), Error> {
+    fn unsafe_schema(value: &serde_json::Value) -> bool {
+        match value {
+            serde_json::Value::Object(fields) => {
+                fields.contains_key("$ref")
+                    || fields.contains_key("$dynamicRef")
+                    || fields.get("writeOnly") == Some(&serde_json::Value::Bool(true))
+                    || fields.get("format").and_then(|v| v.as_str()) == Some("password")
+                    || fields.values().any(unsafe_schema)
+            }
+            serde_json::Value::Array(values) => values.iter().any(unsafe_schema),
+            _ => false,
+        }
+    }
+    if let wire::SelfServiceTask::Script {
+        parameter_schema, ..
+    } = &directory.task
+    {
+        if unsafe_schema(parameter_schema) {
+            return Err(Error::Unsupported);
+        }
+    }
+    Ok(())
+}
 fn parameters(
     directory: &wire::SelfServiceDirectoryItem,
     inputs: &BTreeMap<String, serde_json::Value>,
@@ -679,6 +705,9 @@ impl<S: IdentityProvider> DeviceService<S> {
                     {
                         return Err(Error::Denied);
                     }
+                    if draft {
+                        operation_parameters_supported(&directory)?;
+                    }
                     if !draft {
                         parameters(&directory, &choice.parameters)?;
                     } else if choice.parameters.keys().any(|key| {
@@ -815,6 +844,21 @@ impl<S: IdentityProvider> DeviceService<S> {
                         },
                         _ => return Err(Error::Denied),
                     };
+                    let ClientOrigin::Ai {
+                        context: original_context,
+                        ..
+                    } = &origin
+                    else {
+                        return Err(Error::Denied);
+                    };
+                    if original_context != &bound.context {
+                        return Err(Error::Identity);
+                    }
+                    self.core.require_origin_context(
+                        &command.subject,
+                        &bound.scope.binding,
+                        &origin,
+                    )?;
                     let mut after = None;
                     let mut current = None;
                     for _ in 0..16 {
@@ -841,9 +885,15 @@ impl<S: IdentityProvider> DeviceService<S> {
                     {
                         return Err(Error::Conflict);
                     }
+                    operation_parameters_supported(&current)?;
                     parameters(&current, &input.parameters)?;
                     // Network waits can revoke the context; recheck before the atomic freeze.
                     self.core.context(command)?;
+                    self.core.require_origin_context(
+                        &command.subject,
+                        &bound.scope.binding,
+                        &origin,
+                    )?;
                     self.core.current_policy_access(&previous)?;
                     let mut next = previous.clone();
                     next.revision += 1;
@@ -869,10 +919,13 @@ impl<S: IdentityProvider> DeviceService<S> {
                                 .min(now.saturating_add(60_000)),
                         });
                     }
-                    self.core
-                        .app
-                        .record_backend_request(&self.core.caller(), Some(&previous), &next)
-                        .map_err(map_app_error)?;
+                    {
+                        let _fence = self.core.fences.admit(&bound.scope, bound.epoch)?;
+                        self.core
+                            .app
+                            .record_backend_request(&self.core.caller(), Some(&previous), &next)
+                            .map_err(map_app_error)?;
+                    }
                     Reply::PolicyRequest {
                         value: Box::new(self.send_policy(next, &bound, commands).await?),
                     }

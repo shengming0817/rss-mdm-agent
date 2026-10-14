@@ -256,6 +256,65 @@ describe("production operation adapter", () => {
       operationProjection(raw as BackendTaskView, scope, 2).snapshot.phase,
     ).toBe("unknown");
   });
+  it("still reads the authorized local request when backend reconciliation fails", async () => {
+    const f = fixture();
+    f.record.state = "submitting";
+    f.controller.reconcilePolicyPreparation = async () => {
+      throw Error("backend offline");
+    };
+    const bridge = await connectOperation(
+      f.controller,
+      "delivery",
+      new AbortController().signal,
+    );
+    f.record.state = "failed";
+    f.record.failure = "revoked";
+    const snapshot = await bridge.read();
+    expect(snapshot.phase).toBe("failed");
+    expect(snapshot.reason).toContain("revoked");
+    expect(f.requests()).toBe(0);
+  });
+  it("default approval submits original array parameters without rewriting them as display text", async () => {
+    const f = fixture();
+    if (
+      f.record.action.kind !== "policy" ||
+      f.record.action.directory.task.kind !== "script"
+    )
+      throw Error("fixture");
+    f.record.action.directory.task.parameterSchema = {
+      type: "object",
+      properties: {
+        name: { type: "array", items: { type: "string" } },
+        path: { type: "array", items: { type: "string" } },
+      },
+      required: ["name", "path"],
+    };
+    f.record.action.choice.parameters.name = ["one"];
+    f.record.action.directory.task.parameterSources.path = {
+      kind: "fixed",
+      value: ["fixed"],
+    };
+    const bridge = await connectOperation(
+      f.controller,
+      "delivery",
+      new AbortController().signal,
+    );
+    expect(bridge.presentation.template).toBe("OperationApproval");
+    const card = createOperationController(
+      bridge.presentation,
+      bridge.snapshot,
+      bridge.host,
+      new OperationDrafts(),
+    );
+    await card.act("submit");
+    expect(f.requests()).toBe(1);
+    expect(f.sent[0]).toEqual({
+      request: "operation-1",
+      revision: 1,
+      parameters: { name: ["one"] },
+    });
+    card.dispose();
+  });
   it("unsupported editable schemas use approval while secret inputs never enter the projection", () => {
     const f = fixture();
     if (
@@ -288,5 +347,24 @@ describe("production operation adapter", () => {
     const result = operationProjection(f.raw, scope, 2);
     expect(JSON.stringify(result.snapshot)).not.toContain("do-not-display");
     expect(result.snapshot.allowed).not.toContain("submit");
+    task.parameterSchema = {
+      type: "object",
+      properties: {
+        name: {
+          type: "object",
+          properties: { secret: { format: "password" } },
+        },
+      },
+    };
+    f.record.action.choice.parameters.name = {
+      secret: "nested-do-not-display",
+    };
+    expect(
+      JSON.stringify(operationProjection(f.raw, scope, 3).snapshot),
+    ).not.toContain("nested-do-not-display");
+    task.parameterSchema = { $ref: "#/unresolved" };
+    expect(operationProjection(f.raw, scope, 4).snapshot.allowed).not.toContain(
+      "submit",
+    );
   });
 });
