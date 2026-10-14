@@ -472,6 +472,14 @@ impl<S: IdentityProvider> DeviceService<S> {
                     administrator: false,
                 });
         self.client.set_execution_context(context)?;
+        let interpreters = self.core.config.interpreters.clone();
+        let environment = network(
+            crate::collection_environment::observe(&interpreters),
+            &mut self.core,
+            commands,
+        )
+        .await?;
+        self.client.set_collection_environment(environment)?;
         let claim = match network(self.client.claim(), &mut self.core, commands).await {
             Ok(v) => v,
             Err(e) => {
