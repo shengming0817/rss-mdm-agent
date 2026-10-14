@@ -99,7 +99,7 @@ function Invoke-HardwareScan {
     $scan = New-Scan "windows.hardware.$Section" $MaxItems $MaxBytes $TimeoutSeconds
     try {
         if (-not $IsWindows) { throw [PlatformNotSupportedException]::new('windows required') }
-        $rows = @(Read-Hardware $Section $TimeoutSeconds)
+        $rows = @(Read-Hardware $Section (Get-RemainingSeconds $scan))
         Assert-ScanBudget $scan
         if ($rows.Count -gt $MaxItems) { Add-Coverage $scan $Section '' '' 'truncated' $MaxItems }
         else {

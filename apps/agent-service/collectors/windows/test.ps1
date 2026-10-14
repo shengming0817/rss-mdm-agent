@@ -84,4 +84,33 @@ $scan = New-Scan software 100 65536 120
 $items = [Collections.Generic.List[object]]::new()
 Add-PackagedRows $scan $items @($rows[0], $rows[0]) $false
 Assert ((Get-ScanResult $scan).exit -ne 0) 'duplicate item identity must not be complete'
+$scan = New-Scan software 100 65536 120
+Add-Coverage $scan source '' '' complete
+$scan.fields['device.software.installations'] = @()
+# Deterministic frozen clock: no sleep or Windows provider needed to reproduce late completion.
+$scan.clock = @{Elapsed = [TimeSpan]::FromSeconds(121)}
+$result = Get-ScanResult $scan
+$late = $result.json | ConvertFrom-Json -AsHashtable
+Assert ($result.exit -ne 0 -and $late.status -eq 'partial' -and $late.fields.Count -eq 0) 'late completion must never replace inventory'
+# Exercise the production compatibility path with host-only provider substitutes.
+& {
+    function Join-Path { param($Path, $ChildPath) return $ChildPath }
+    function Test-Path { param($LiteralPath, $PathType) return $true }
+    function Import-Module {
+        [CmdletBinding()] param($Name, [switch]$UseWindowsPowerShell)
+        Write-Warning 'Compatibility proxy warning'
+    }
+    function Get-PSSession { [CmdletBinding()] param($Name) return 'fake-session' }
+    function Invoke-Command {
+        [CmdletBinding()] param($Session, $ArgumentList, $ScriptBlock)
+        Write-Warning 'Remote provider warning'
+        return '{"rows":[],"overflow":false}'
+    }
+    $scan = New-Scan software 100 65536 120
+    $items = [Collections.Generic.List[object]]::new()
+    $packages = [Collections.Generic.List[object]]::new()
+    $output = @(Read-PackagedSoftware $scan $items $packages 3>&1)
+    Assert ($output.Count -eq 0) 'compatibility warnings must not contaminate JSON stdout'
+    Assert ($scan.coverage.Count -eq 2 -and (Get-ScanResult $scan).exit -eq 0) 'fake compatibility path must complete both sources'
+}
 Write-Output 'Windows collector pure logic and production script syntax passed (Windows APIs not executed)'

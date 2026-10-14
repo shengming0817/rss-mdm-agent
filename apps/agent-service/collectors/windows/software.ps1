@@ -101,16 +101,18 @@ function Read-PackagedSoftware {
             $system = [Environment]::GetFolderPath([Environment+SpecialFolder]::System)
             $path = Join-Path $system "WindowsPowerShell\v1.0\Modules\$module\$module.psd1"
             if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw [NotSupportedException]::new('module unavailable') }
-            Import-Module -Name $path -UseWindowsPowerShell -ErrorAction Stop
+            Import-Module -Name $path -UseWindowsPowerShell -WarningAction SilentlyContinue -ErrorAction Stop
             $session = Get-PSSession -Name WinPSCompatSession -ErrorAction Stop
             $limit = $Scan.limit
-            $raw = Invoke-Command -Session $session -ArgumentList $kind,$limit,$Scan.bytes -ErrorAction Stop -ScriptBlock {
+            $raw = Invoke-Command -Session $session -ArgumentList $kind,$limit,$Scan.bytes -WarningAction SilentlyContinue -ErrorAction Stop -ScriptBlock {
                 param($kind, $limit, $maxBytes)
                 $ErrorActionPreference = 'Stop'
+                $ProgressPreference = 'SilentlyContinue'
+                $WarningPreference = 'SilentlyContinue'
                 $rows = [Collections.Generic.List[object]]::new()
                 $overflow = $false; $rowBytes = 0
                 if ($kind -eq 'registered') {
-                    foreach ($p in @(Get-AppxPackage -AllUsers -PackageTypeFilter Main,Framework,Resource,Bundle,Optional -ErrorAction Stop)) {
+                    foreach ($p in @(Get-AppxPackage -AllUsers -PackageTypeFilter Main,Framework,Resource,Bundle,Optional -ErrorAction Stop | Select-Object -First ($limit + 1))) {
                         if ($overflow -or $rows.Count -gt $limit) { $overflow = $true; break }
                         $users = @($p.PackageUserInformation)
                         if ($users.Count -eq 0) { throw 'package registration unavailable' }
@@ -123,7 +125,7 @@ function Read-PackagedSoftware {
                         }
                     }
                 } else {
-                    foreach ($p in @(Get-AppxProvisionedPackage -Online -ErrorAction Stop)) {
+                    foreach ($p in @(Get-AppxProvisionedPackage -Online -ErrorAction Stop | Select-Object -First ($limit + 1))) {
                         if ($overflow -or $rows.Count -gt $limit) { $overflow = $true; break }
                         $row = @{ package_full_name=[string]$p.PackageName; family=''; architecture=[string]$p.Architecture; resource_id=[string]$p.ResourceId; name=[string]$p.DisplayName; version=[string]$p.Version; publisher=''; location='' }
                         $rowBytes += [Text.Encoding]::UTF8.GetByteCount((ConvertTo-Json -InputObject $row -Compress))
@@ -148,7 +150,7 @@ function Invoke-SoftwareScan {
     $packages = [Collections.Generic.List[object]]::new()
     try {
         if (-not $IsWindows) { throw [PlatformNotSupportedException]::new('windows required') }
-        $profiles = @(Read-Profiles $TimeoutSeconds)
+        $profiles = @(Read-Profiles (Get-RemainingSeconds $scan))
         $scan.data.profiles = $profiles
         Add-Coverage $scan 'profiles' '' '' 'complete' $profiles.Count
         $views = if ([Environment]::Is64BitOperatingSystem) { @('32','64') } else { @('32') }
@@ -161,7 +163,7 @@ function Invoke-SoftwareScan {
         }
         Read-PackagedSoftware $scan $installations $packages
         Assert-ScanBudget $scan
-        $after = @(Read-Profiles $TimeoutSeconds)
+        $after = @(Read-Profiles (Get-RemainingSeconds $scan))
         if ((Get-ProfileFingerprint $profiles) -ne (Get-ProfileFingerprint $after)) { Add-Coverage $scan 'profiles.changed' '' '' 'partial' }
     } catch { Add-Coverage $scan 'scan' '' '' (Get-SafeStatus $_) }
     $scan.fields['device.software.installations'] = @($installations.ToArray() | Sort-Object id)

@@ -15,6 +15,11 @@ function Assert-ScanBudget {
     param($Scan)
     if ($Scan.clock.Elapsed.TotalSeconds -ge $Scan.deadline) { throw [TimeoutException]::new('deadline') }
 }
+function Get-RemainingSeconds {
+    param($Scan)
+    Assert-ScanBudget $Scan
+    return [Math]::Max(1, [int][Math]::Ceiling($Scan.deadline - $Scan.clock.Elapsed.TotalSeconds))
+}
 function Get-SafeStatus {
     param($ErrorRecord)
     if ($ErrorRecord.CategoryInfo.Category -in @('PermissionDenied','SecurityError')) { return 'denied' }
@@ -49,15 +54,23 @@ function Add-ScanItem {
 }
 function Get-ScanResult {
     param($Scan)
+    $expired = $Scan.clock.Elapsed.TotalSeconds -ge $Scan.deadline
+    if ($expired -and $Scan.coverage.Count -lt 4096) { Add-Coverage $Scan 'deadline' '' '' 'partial' }
     $states = @($Scan.coverage | ForEach-Object { $_.status })
-    $complete = $states.Count -gt 0 -and @($states | Where-Object { $_ -ne 'complete' }).Count -eq 0
-    $status = if ($complete) { 'complete' } elseif ($states -contains 'truncated') { 'truncated' } elseif ($states -contains 'complete') { 'partial' } elseif ($states.Count -gt 0 -and @($states | Select-Object -Unique).Count -eq 1) { $states[0] } else { 'failed' }
+    $complete = -not $expired -and $states.Count -gt 0 -and @($states | Where-Object { $_ -ne 'complete' }).Count -eq 0
+    $status = if ($expired) { 'partial' } elseif ($complete) { 'complete' } elseif ($states -contains 'truncated') { 'truncated' } elseif ($states -contains 'complete') { 'partial' } elseif ($states.Count -gt 0 -and @($states | Select-Object -Unique).Count -eq 1) { $states[0] } else { 'failed' }
     $result = [ordered]@{
         format = $Scan.format; collector = $Scan.collector; version = $Scan.version
         scope = $Scan.scope; status = $status; coverage = @($Scan.coverage.ToArray())
         fields = $(if ($complete) { $Scan.fields } else { @{} }); evidence = $Scan.data
     }
     $json = ConvertTo-Json -InputObject $result -Depth 32 -Compress
+    # Serialization is part of the deadline; a late complete payload must never escape.
+    if ($result.status -eq 'complete' -and $Scan.clock.Elapsed.TotalSeconds -ge $Scan.deadline) {
+        $result.status = 'partial'; $result.fields = @{}
+        $result.evidence = @{ reason = 'deadline'; collected_items = $Scan.count }
+        $json = ConvertTo-Json -InputObject $result -Depth 32 -Compress
+    }
     if ([Text.Encoding]::UTF8.GetByteCount($json) -gt $Scan.bytes) {
         $result.status = 'truncated'; $result.fields = @{}
         # Never trim a list into an apparently complete replacement. Keep only bounded scan metadata.
