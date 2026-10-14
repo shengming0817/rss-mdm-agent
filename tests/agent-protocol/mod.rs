@@ -1138,7 +1138,7 @@ pub fn collections() -> Vec<rss_mdm_agent_wire::runtime::CollectionDefinition> {
         "sensitivity":"standard","unit":null,"searchable":true,"itemKey":null
     })).collect();
     vec![serde_json::from_value(
-        json!({"dataset":"inventory","version":"1","source":"agent.builtin","fields":fields}),
+        json!({"dataset":"inventory","version":"1","source":"agent.builtin","scope":rss_mdm_agent_wire::CollectionScope::Device,"fields":fields}),
     )
     .unwrap()]
 }

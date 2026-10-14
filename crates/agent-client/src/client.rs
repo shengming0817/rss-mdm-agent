@@ -52,10 +52,8 @@ pub struct Claim {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ClaimState {
-    operation: Uuid,
-    profiles: Vec<wire::ExecutorProfile>,
+    request: wire::TaskClaimRequest,
     recover_until: i64,
-    execution_context: wire::SoftwareExecutionContext,
 }
 /// Fully recovered protocol wrappers; the offer is historical and never grants launch.
 pub struct ResumedStart {
@@ -76,6 +74,7 @@ pub struct Client<S, C> {
     pub(crate) secrets: S,
     pub(crate) clock: C,
     profiles: Vec<wire::ExecutorProfile>,
+    environment: rss_mdm_agent_wire::CollectionEnvironment,
     pub(crate) delivery_owner: Uuid,
 }
 impl<S: IdentityProvider, C: Clock> Client<S, C> {
@@ -83,6 +82,15 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
     pub fn set_profiles(&mut self, profiles: Vec<wire::ExecutorProfile>) -> Result<(), Error> {
         wire::TaskClaimRequest::new(Uuid::new_v4(), profiles.clone(), self.execution_context()?)?;
         self.profiles = profiles;
+        Ok(())
+    }
+    /// Observe current collection prerequisites; pending claims retain their original evidence.
+    pub fn set_collection_environment(
+        &mut self,
+        environment: rss_mdm_agent_wire::CollectionEnvironment,
+    ) -> Result<(), Error> {
+        environment.validate()?;
+        self.environment = environment;
         Ok(())
     }
     /// Current persisted context, independent of frozen pending operations.
@@ -171,6 +179,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             secrets,
             clock,
             profiles: Vec::new(),
+            environment: Default::default(),
         };
         client.prepare_pending_enrollment()?;
         // Opening retained state must not depend on an expired or unavailable predecessor signer.
@@ -397,21 +406,19 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                     .checked_add(60)
                     .ok_or(Error::Clock)?;
                 let state = ClaimState {
-                    operation: Uuid::new_v4(),
-                    profiles: self.profiles.clone(),
-                    execution_context: self.execution_context()?,
+                    request: wire::TaskClaimRequest::new(
+                        Uuid::new_v4(),
+                        self.profiles.clone(),
+                        self.execution_context()?,
+                    )?
+                    .with_environment(self.environment.clone())?,
                     recover_until: now.checked_add(grace).ok_or(Error::Clock)?,
                 };
                 self.store.put("claim", &state)?;
                 state
             }
         };
-        let operation = state.operation;
-        let body = encode(&wire::TaskClaimRequest::new(
-            operation,
-            state.profiles.clone(),
-            state.execution_context.clone(),
-        )?)?;
+        let body = encode(&state.request)?;
         let result: wire::TaskClaimResponse =
             self.json(Method::POST, "tasks/claim", Some(&body)).await?;
         let cancellations = result.cancellations().to_owned();

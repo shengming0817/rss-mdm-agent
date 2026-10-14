@@ -692,11 +692,21 @@ async fn claim_retry_freezes_executor_profiles_and_context_across_restart() {
     client
         .set_profiles(vec![ExecutorProfile::PosixSh, ExecutorProfile::Osquery])
         .unwrap();
+    let environment = rss_mdm_agent_wire::CollectionEnvironment {
+        edition: Some("Professional".into()),
+        tools: [("powershell".into(), "7.4.13".into())].into(),
+    };
+    client
+        .set_collection_environment(environment.clone())
+        .unwrap();
     server.data.lock().unwrap().claim_failure = true;
     assert!(matches!(client.claim().await, Err(Error::Unavailable)));
     drop(client);
     let mut client = server.client(&root, OpenMode::Existing);
     client.set_profiles(vec![]).unwrap();
+    client
+        .set_collection_environment(Default::default())
+        .unwrap();
     let mut context = client.execution_context().unwrap();
     context.os_version = [15, 1, 0, 0];
     client.set_execution_context(context).unwrap();
@@ -706,9 +716,48 @@ async fn claim_retry_freezes_executor_profiles_and_context_across_restart() {
     assert_eq!(inputs.len(), 2);
     assert_eq!(inputs[0], inputs[1]);
     assert_eq!(
+        inputs[0]["environment"],
+        serde_json::to_value(environment).unwrap()
+    );
+    assert_eq!(
         inputs[0]["profiles"],
         serde_json::json!(["posix_sh", "osquery"])
     );
+    client.claim().await.unwrap();
+    let inputs = server.data.lock().unwrap().claim_inputs.clone();
+    assert_ne!(inputs[1]["operationId"], inputs[2]["operationId"]);
+    assert_eq!(
+        inputs[2]["environment"],
+        serde_json::json!({"edition":null,"tools":{}})
+    );
+}
+
+#[tokio::test]
+async fn obsolete_claim_is_rejected_without_resetting_identity_or_sending_a_new_request() {
+    let server = Server::new().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    drop(client);
+    let old = serde_json::to_vec(&serde_json::json!({
+        "operation":Uuid::new_v4(), "profiles":[], "recover_until":1000,
+        "execution_context":server.config().execution_context,
+    }))
+    .unwrap();
+    let db = rusqlite::Connection::open(root.path.join("communication.sqlite")).unwrap();
+    db.execute("INSERT INTO state(key,body) VALUES('claim',?1)", [&old])
+        .unwrap();
+    drop(db);
+    let mut client = server.client(&root, OpenMode::Existing);
+    assert!(client.claim().await.is_err());
+    assert!(server.data.lock().unwrap().claim_inputs.is_empty());
+    assert!(client.registration().is_ok());
+    drop(client);
+    let db = rusqlite::Connection::open(root.path.join("communication.sqlite")).unwrap();
+    let retained: Vec<u8> = db
+        .query_row("SELECT body FROM state WHERE key='claim'", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(retained, old);
 }
 
 #[tokio::test]

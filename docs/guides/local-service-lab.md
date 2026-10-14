@@ -188,3 +188,21 @@ Agent 部署生成使用 `.env` 的 RSS_AGENT_ORIGIN、必填 RSS_AGENT_CA_FILE�
 管理员恢复需要停止系统服务，准备服务端为**同一注册**签发的受保护 `GrantImport` JSON（`operationId`、`grant`），通过 `rss-execution-service --installation recover --scope system --config <部署路径> --grant <JSON路径> --secret-file <私有secret路径>` 交给原 installation owner。Windows 沿既有 SCM worker 转为 LocalSystem，macOS 使用系统管理员执行；secret 文件由原私有输入规则保护，不把 secret 放入 argv。此入口不替换未决操作，也不创建新注册；成功激活只恢复新任务准入。owner 尝试重新启动原服务；核对认证 IPC readiness，并按既有私有材料处理方式清理输入 secret。初始 Bootstrap envelope 保持版本 1。
 
 旧 Deployment 4 / Candidate 1 保持原样并被拒绝；本仓不提供历史格式转换、兼容读取或重试入口。当前格式的安装与 apply/refresh 只处理当前候选及当前部署，沿用既有候选、代码身份、持久状态与设备归属校验。拒绝旧格式不停止原 owner、不覆盖配置或 retained manifest、不转换通信库，也不重建注册、凭据或执行 journal。管理员应保留旧部署及持久材料，不通过改写版本号、删除状态或重新注册绕过拒绝。
+
+## Windows 标准硬件与软件采集资源
+
+Agent 的 `apps/agent-service/collectors/windows/export.py --output <目录>` 生成两份独立 PowerShell 文件及内容摘要 manifest。服务端 Windows 平台项消费固定 Agent revision 的这些资源，以既有 Resource/Script Task 发布；导出不注册模板、不访问服务端，也不修改租户配置。硬件资源的 `-Section` 从资源声明的组中选择，电池与其它硬件组分别执行。软件资源一次扫描设备及冻结用户集合；执行身份为 System，解释器沿用受保护 PowerShell7 的绝对路径及摘要。
+
+模板参数必须与同一签名任务的预算一致：`-MaxItems` 不超过模板行数预算，`-MaxBytes` 小于输出字节预算（预留换行及 envelope），`-TimeoutSeconds` 小于任务执行时限。列表字段通过 `/fields/<字段名>` 映射到 M01 标准字段；软件的 installations 与 packages 分别表示安装实例和设备预配。`manifest.json` 只描述资源内容，不是 Agent wire 或服务端模板定义。Agent 直接通过 Cargo 固定 revision 消费 `rss-mdm-agent-wire`，不复制协议 schema。
+
+只有所有预期来源完成，资源才退出 0 并填充 `fields`；合法空清单仍为完整结果。未加载的用户 hive 不挂载，读取失败、用户集合变化、非 Installed 的包注册状态及预算超限均阻止完整替换。非完整运行退出 2，`fields` 为空，已采集数据和各来源状态保留在 `evidence`/`coverage`；超出输出预算时省略证据并明确标记截断。上次完整软件资产继续保留，当前 M01 不提供按 SID 局部更新，也不把这些证据状态自动投影成相同名称的资产质量。Appx/Dism 使用系统目录模块与本地 Windows PowerShell 5.1 兼容会话，不提供任意模块或命令选择。
+
+Win32 身份绑定来源、SID、注册表视图和卸载子键；MSIX 身份绑定包全名、SID 和来源，保留并存版本及 provisioning 区别。采集不执行卸载字符串、不查询 Win32_Product、不把 WinGet 名称相似当成身份匹配。磁盘、卷及网卡采用原生身份；占位序列号/UUID 不用于生成设备身份。内存字段遵循 OS 可见 physical_memory 语义；电池无实例或多个实例无法解释为单个百分比时报告 unsupported。
+
+签入环境来自当前 EditionID 和已校验工具版本。完整 `TaskClaimRequest` 持久冻结，网络重试不刷新其 environment；后续新请求才使用新观察值。升级到 M01 前须完成旧候选的未决操作；本候选拒绝旧 claim/collection 格式，不进行兼容解码或自动清空 journal。
+
+### 宿主纯逻辑验证
+
+使用官方 [PowerShell 7.4.13 release](https://github.com/PowerShell/PowerShell/releases/tag/v7.4.13) 的当前宿主原生候选，核对 release 校验和并解压到临时目录；不需要安装 Windows 工具链。macOS arm64 tar.gz SHA-256 为 `a65060c521317f4f8873b5fdda8cb8981f5310462248e82f824b219505ddc3a7`。设置 `COLLECTION_PWSH=<绝对 pwsh 路径>` 后运行 `python3 apps/agent-service/collectors/windows/verify.py`；本仓 CI 对受影响 Agent service 执行同一检查，缺少工具时失败，不当作通过。该检查执行真实 PowerShell AST 解析与纯函数断言，不调用 Windows API。
+
+真实 LocalSystem 枚举、两个注册表视图、多用户、Appx/Dism 会话、安装/升级/卸载及 Windows 架构支持由独立 T3 验证。开发机纯逻辑和协议恢复通过不等于 Windows 原生验证通过。

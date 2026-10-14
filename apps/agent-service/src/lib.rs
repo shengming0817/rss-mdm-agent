@@ -1,6 +1,7 @@
 //! Backend-authorized execution through the existing admission and journal owners.
 //! No local enterprise approver, source catalog or policy-signing authority is introduced.
 mod backend;
+mod collection_environment;
 pub mod deployment;
 mod error;
 mod material_gc;

@@ -12,6 +12,7 @@ impl OutputPolicy for FixtureOutput {
 }
 #[derive(Clone)]
 pub struct CaptureSpec {
+    pub exit_code: i32,
     pub quiescent: bool,
     pub stdout: Vec<u8>,
     pub stderr: Vec<u8>,
@@ -54,7 +55,7 @@ impl execution_app::RunnerPort for CapturingRunner {
                 runner: self.id(),
                 scope: execution_contract::ProcessScope::ProcessGroup { owner: 1, group: 1 },
                 finished: true,
-                exit_code: Some(0),
+                exit_code: Some(capture.as_ref().map_or(0, |v| v.exit_code)),
                 end: capture
                     .as_ref()
                     .map_or(execution_contract::ProcessEnd::Exited, |v| v.end),
