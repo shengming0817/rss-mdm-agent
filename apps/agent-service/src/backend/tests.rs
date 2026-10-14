@@ -751,6 +751,7 @@ async fn check_encoded_result(
         ready: Default::default(),
         progress: Default::default(),
         capture: std::sync::Arc::new(std::sync::Mutex::new(Some(CaptureSpec {
+            exit_code: 0,
             quiescent: true,
             stdout,
             stderr,
@@ -847,6 +848,7 @@ async fn root_exit_is_delivered_while_overall_quiescence_stays_unknown() {
         ready: Default::default(),
         progress: Default::default(),
         capture: std::sync::Arc::new(std::sync::Mutex::new(Some(CaptureSpec {
+            exit_code: 0,
             quiescent: false,
             stdout: b"{\"ok\":true}".to_vec(),
             stderr: vec![],
@@ -909,6 +911,7 @@ async fn acknowledged_v6_result_is_not_replaced_by_later_local_facts() {
         ready: Default::default(),
         progress: Default::default(),
         capture: std::sync::Arc::new(std::sync::Mutex::new(Some(CaptureSpec {
+            exit_code: 0,
             quiescent: false,
             stdout: b"{\"ok\":true}".to_vec(),
             stderr: vec![],
@@ -1224,6 +1227,7 @@ async fn revoked_and_expired_unknown_keeps_original_execution_and_association() 
     let _budget = crate::scenario_budget::enter();
     let mut case = Started::new(0).await;
     *case.runner.capture.lock().unwrap() = Some(CaptureSpec {
+        exit_code: 0,
         quiescent: false,
         stdout: b"{\"ok\":true}".to_vec(),
         stderr: vec![],
@@ -1446,6 +1450,7 @@ async fn software_restart_projects_each_steps_own_committed_facts() {
     assert!(progress.valid_for(&case.plan));
     *case.runner.progress.lock().unwrap() = Some(progress.clone());
     *case.runner.capture.lock().unwrap() = Some(CaptureSpec {
+        exit_code: 0,
         quiescent: false,
         stdout: vec![],
         stderr: vec![],
@@ -1492,4 +1497,45 @@ async fn software_restart_projects_each_steps_own_committed_facts() {
     assert_eq!(steps[0]["process"]["kind"], "exited");
     assert_eq!(steps[1]["process"]["kind"], "failed");
     assert_eq!(runner.inner.dispatch_count(), 1);
+}
+
+#[tokio::test]
+async fn noncomplete_collection_cannot_be_projected_as_complete_or_reexecuted_after_ack_loss() {
+    let _budget = crate::scenario_budget::enter();
+    for state in ["partial", "unsupported", "denied", "failed", "truncated"] {
+        let mut case = Started::new(0).await;
+        let output = serde_json::json!({"format":1,"status":state,"fields":{},
+            "coverage":[{"source":"win32.uninstall.64","owner":"S-1-5-21-1","status":state}],
+            "evidence":{"installations":[{"id":"retained","name":"Application","version":"2"}]}});
+        *case.runner.capture.lock().unwrap() = Some(CaptureSpec {
+            exit_code: 2,
+            quiescent: true,
+            stdout: serde_json::to_vec(&output).unwrap(),
+            stderr: vec![],
+            quality: execution_contract::OutputQuality::Complete,
+            end: execution_contract::ProcessEnd::Exited,
+        });
+        case.app
+            .reconcile(&case.plan.spec().request.request_id)
+            .unwrap();
+        case.server.data.lock().unwrap().result_failure = true;
+        assert!(case
+            .bridge
+            .flush(&mut case.client, case.task, &mut case.app, 64)
+            .await
+            .is_err());
+        drop(case.client);
+        case.client = case.server.client(&case.root, OpenMode::Existing);
+        case.bridge
+            .flush(&mut case.client, case.task, &mut case.app, 64)
+            .await
+            .unwrap();
+        let data = case.server.data.lock().unwrap();
+        assert_eq!(data.results.len(), 1);
+        let event = &data.results.values().next().unwrap()["event"];
+        assert_eq!(event["quality"], "partial");
+        assert_eq!(event["exitCode"], 2);
+        assert_eq!(event["output"], output);
+        assert_eq!(case.runner.inner.dispatch_count(), 1);
+    }
 }

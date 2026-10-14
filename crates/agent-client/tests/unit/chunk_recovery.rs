@@ -9,7 +9,19 @@ async fn lost_chunk_ack_replays_identical_bytes_after_restart_and_requires_every
     let offer = client.claim().await.unwrap().offer.unwrap();
     let task = offer.task_id();
     let attempt = offer.payload().attempt_id();
-    let value = serde_json::json!([{"name":"x".repeat(400000)}]);
+    let items: Vec<_> = (0..1500)
+        .map(|index| {
+            serde_json::json!({
+                "id":format!("installation-{index}"), "native_id":format!("product-{index}"),
+                "name":"Application", "version":"2.1", "publisher":"Publisher",
+                "scope":"user", "owner":format!("S-1-5-21-{}", index % 3),
+                "origin":"win32.uninstall.64", "location":"C:\\Program Files\\Application"
+            })
+        })
+        .collect();
+    let value = serde_json::json!({"format":1,"status":"complete",
+        "fields":{"device.software.installations":items}});
+    assert!(serde_json::to_vec(&value).unwrap().len() > OUTPUT_CHUNK_BYTES);
     let result = TaskResult::new(
         Some(0),
         OutputQuality::Complete,

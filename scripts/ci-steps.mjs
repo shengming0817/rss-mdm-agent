@@ -147,6 +147,11 @@ export const steps = [
   ["components", "pnpm", ["test"]],
   ["boundaries", "pnpm", ["check:boundaries"], ["boundaries"]],
   ["docs and diff", "node", ["scripts/check-docs.mjs"]],
+  [
+    "Windows collector pure logic",
+    "python3",
+    ["apps/agent-service/collectors/windows/verify.py"],
+  ],
   ["rust fmt", "cargo", ["fmt", "--all", "--", "--check"]],
   ["rust build", "cargo", ["build", "--workspace", "--locked"]],
   ["rust test", "cargo", ["test", "--workspace", "--locked"]],
