@@ -256,6 +256,173 @@ describe("production operation adapter", () => {
       operationProjection(raw as BackendTaskView, scope, 2).snapshot.phase,
     ).toBe("unknown");
   });
+  it("separates software effect target from enterprise admission and execution identity", async () => {
+    for (const userTarget of [true, false]) {
+      const f = fixture();
+      if (f.record.action.kind !== "policy") throw Error("fixture");
+      f.record.action.directory.subject = userTarget
+        ? { kind: "device" }
+        : {
+            kind: "user",
+            user: {
+              tenantId: "enterprise-tenant",
+              instanceId: "enterprise-instance",
+              principalId: "enterprise-user",
+            },
+          };
+      f.record.action.directory.task = {
+        kind: "software",
+        resource: f.record.action.directory.task.resource,
+        runAs: "system",
+        target: userTarget
+          ? {
+              kind: "user",
+              identity: "S-1-5-21-OTHER",
+              sessionId: "target-login2",
+            }
+          : { kind: "device" },
+      };
+      const bridge = await connectOperation(
+        f.controller,
+        "delivery",
+        new AbortController().signal,
+      );
+      expect(bridge.snapshot.targetLabel).toContain(
+        userTarget ? "S-1-5-21-OTHER / 登录会话 target-login2" : "本机设备",
+      );
+      expect(bridge.snapshot.targetLabel).not.toContain("enterprise-user");
+      expect(bridge.snapshot.approval.enterprise).toContain(
+        userTarget ? "设备准入主体" : "enterprise-user",
+      );
+      expect(bridge.snapshot.approval.elevation).toContain("系统执行身份");
+    }
+  });
+  it("host query and remount recover uncertainty without replaying a failed save", async () => {
+    const f = fixture(),
+      drafts = new OperationDrafts();
+    f.controller.submitOperation = async () => {
+      throw Error("offline before write");
+    };
+    let bridge = await connectOperation(
+      f.controller,
+      "delivery",
+      new AbortController().signal,
+    );
+    let card = createOperationController(
+      bridge.presentation,
+      bridge.snapshot,
+      bridge.host,
+      drafts,
+    );
+    card.edit("field0", "User unsaved edit");
+    await card.act("submit");
+    expect(card.state.unknown).toBe(true);
+    await bridge.read(); // The host button/poll path, not the renderer's refresh action.
+    expect(card.state.unknown).toBe(false);
+    expect(card.state.notice).toBe("");
+    expect(card.editable("field0")).toBe(true);
+    expect(card.can("submit")).toBe(true);
+    await card.act("submit");
+    card.dispose();
+    bridge = await connectOperation(
+      f.controller,
+      "delivery",
+      new AbortController().signal,
+    );
+    card = createOperationController(
+      bridge.presentation,
+      bridge.snapshot,
+      bridge.host,
+      drafts,
+    );
+    expect(card.state.unknown).toBe(false);
+    expect(card.state.draft.values.field0).toBe("User unsaved edit");
+    expect(f.requests()).toBe(0);
+    card.dispose();
+  });
+  it("a read begun before a failed save cannot release the uncertainty barrier", async () => {
+    const f = fixture();
+    const bridge = await connectOperation(
+      f.controller,
+      "delivery",
+      new AbortController().signal,
+    );
+    const card = createOperationController(
+      bridge.presentation,
+      bridge.snapshot,
+      bridge.host,
+      new OperationDrafts(),
+    );
+    const read = f.controller.executionDetails;
+    let finish!: (value: BackendTaskView) => void;
+    f.controller.executionDetails = () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      });
+    const stale = bridge.read().catch((error) => error);
+    f.controller.submitOperation = async () => {
+      throw Error("lost reply");
+    };
+    await card.act("submit");
+    finish(structuredClone(f.raw));
+    expect(await stale).toBeInstanceOf(Error);
+    expect(card.state.unknown).toBe(true);
+    expect(card.can("submit")).toBe(false);
+    f.controller.executionDetails = read;
+    await bridge.read();
+    expect(card.state.unknown).toBe(false);
+    expect(card.can("submit")).toBe(true);
+    expect(f.requests()).toBe(0);
+    card.dispose();
+  });
+  it("cancelled cards retain unsaved values across layout changes but reset incompatible fields", async () => {
+    const f = fixture(),
+      drafts = new OperationDrafts();
+    let bridge = await connectOperation(
+      f.controller,
+      "delivery",
+      new AbortController().signal,
+    );
+    let card = createOperationController(
+      bridge.presentation,
+      bridge.snapshot,
+      bridge.host,
+      drafts,
+    );
+    card.edit("field0", "User unsaved edit");
+    await card.act("cancel");
+    card.dispose();
+    bridge = await connectOperation(
+      f.controller,
+      "delivery",
+      new AbortController().signal,
+    );
+    expect(bridge.presentation.template).toBe("OperationApproval");
+    card = createOperationController(
+      bridge.presentation,
+      bridge.snapshot,
+      bridge.host,
+      drafts,
+    );
+    expect(card.state.draft.values.field0).toBe("User unsaved edit");
+    expect(card.state.draft.dirty.has("field0")).toBe(true);
+    expect(card.can("submit")).toBe(false);
+    expect(card.editable("field0")).toBe(false);
+    expect(card.state.notice).not.toContain("版本已变化");
+    card.dispose();
+    const changed = structuredClone(bridge.presentation);
+    changed.fields[0].maxLength = 16;
+    card = createOperationController(
+      changed,
+      bridge.snapshot,
+      bridge.host,
+      drafts,
+    );
+    expect(card.state.draft.values.field0).toBe("AI suggestion");
+    expect(card.state.draft.dirty.size).toBe(0);
+    expect(card.state.notice).toContain("版本已变化");
+    card.dispose();
+  });
   it("remount reads stay newer after the system clock moves backwards", async () => {
     const f = fixture();
     const first = await connectOperation(

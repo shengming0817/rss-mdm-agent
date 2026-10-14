@@ -80,7 +80,10 @@ export interface OperationHostPort {
   ): Promise<OperationSnapshot>;
   observe(
     scope: OperationScope,
-    update: (snapshot: OperationSnapshot) => void,
+    update: (observation: {
+      snapshot: OperationSnapshot;
+      kind: "query" | "projection";
+    }) => void,
   ): () => void;
   choosePath?(
     scope: OperationScope,

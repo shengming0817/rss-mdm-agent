@@ -198,14 +198,15 @@ export function operationFixture(
         }
       : {}),
   };
-  const listeners = new Set<(snapshot: OperationSnapshot) => void>();
+  const listeners = new Set<Parameters<OperationHostPort["observe"]>[1]>();
   const secrets = new Map<string, { field: string; value: string }>();
   const events: OperationEvent[] = [];
   let loseReceipt = false;
   const read = () => structuredClone(snapshot);
   const publish = () => {
     snapshot.revision++;
-    for (const listener of listeners) listener(read());
+    for (const listener of listeners)
+      listener({ snapshot: read(), kind: "projection" });
   };
   const host: OperationHostPort = {
     async read() {

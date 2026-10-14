@@ -31,10 +31,13 @@ export async function connectOperation(
     instance: requestId(raw),
   };
   let revision = ++projectionRevision;
-  const listeners = new Set<(snapshot: OperationSnapshot) => void>();
+  const listeners = new Set<Parameters<OperationHostPort["observe"]>[1]>();
   const initial = operationProjection(raw, scope, revision);
   let latest = operationSnapshot(initial.snapshot);
   let pending: Promise<OperationSnapshot> | undefined;
+  let mutationEpoch = 0,
+    mutating = false;
+  let queriedEpoch: number | undefined = 0;
   const valid = () => {
     const current = c.view.value;
     if (
@@ -62,12 +65,16 @@ export async function connectOperation(
     latest = operationSnapshot(
       operationProjection(raw, scope, revision).snapshot,
     );
-    for (const listener of listeners) listener(latest);
+    queriedEpoch = mutationEpoch;
+    for (const listener of listeners)
+      listener({ snapshot: latest, kind: "query" });
     return latest;
   };
   const read = async () => {
     valid();
-    if (!pending)
+    if (!pending) {
+      const epoch = mutationEpoch;
+      const duringMutation = mutating;
       pending = (async () => {
         if (
           raw.kind === "pending" &&
@@ -79,7 +86,10 @@ export async function connectOperation(
             // remains the source of truth even while that network is unavailable.
           });
         valid();
-        return c.executionDetails(operationId, signal);
+        const next = await c.executionDetails(operationId, signal);
+        if (duringMutation || mutating || mutationEpoch !== epoch)
+          throw Error("查询跨越提交，请重新查询原请求");
+        return next;
       })()
         .then(accept)
         .catch((error) => {
@@ -91,12 +101,15 @@ export async function connectOperation(
             reason: "原操作状态暂时无法核实，请查询原请求。",
             allowed: ["refresh"],
           };
-          for (const listener of listeners) listener(latest);
+          queriedEpoch = undefined;
+          for (const listener of listeners)
+            listener({ snapshot: latest, kind: "projection" });
           throw error;
         })
         .finally(() => {
           pending = undefined;
         });
+    }
     return pending;
   };
   const host: OperationHostPort = {
@@ -107,6 +120,11 @@ export async function connectOperation(
     },
     observe: (_, listener) => {
       listeners.add(listener);
+      listener({
+        snapshot: latest,
+        kind:
+          !mutating && queriedEpoch === mutationEpoch ? "query" : "projection",
+      });
       return () => listeners.delete(listener);
     },
     async dispatch(event, input) {
@@ -118,60 +136,68 @@ export async function connectOperation(
         !latest.allowed.includes(event.kind)
       )
         throw Error("操作状态已变化，请刷新");
-      if (event.kind === "submit") {
-        if (
-          raw.kind !== "pending" ||
-          (latest.expiresAtMs !== undefined && Date.now() >= latest.expiresAtMs)
-        )
-          throw Error("原准备已失效");
-        const record = raw.value,
-          action = record.action;
-        if (action.kind === "policy" && record.state === "draft") {
-          const parameters = { ...action.choice.parameters };
-          for (const binding of initial.bindings)
-            if (binding.editable) {
-              if (Object.hasOwn(event.values, binding.id))
-                parameters[binding.key] = event.values[binding.id];
-              else delete parameters[binding.key];
+      mutationEpoch++;
+      mutating = true;
+      try {
+        if (event.kind === "submit") {
+          if (
+            raw.kind !== "pending" ||
+            (latest.expiresAtMs !== undefined &&
+              Date.now() >= latest.expiresAtMs)
+          )
+            throw Error("原准备已失效");
+          const record = raw.value,
+            action = record.action;
+          if (action.kind === "policy" && record.state === "draft") {
+            const parameters = { ...action.choice.parameters };
+            for (const binding of initial.bindings)
+              if (binding.editable) {
+                if (Object.hasOwn(event.values, binding.id))
+                  parameters[binding.key] = event.values[binding.id];
+                else delete parameters[binding.key];
+              }
+            try {
+              await c.submitOperation({
+                request: scope.instance,
+                revision: record.revision,
+                parameters,
+              });
+            } catch (error) {
+              const reasons: Record<string, string> = {
+                operation_invalid_parameters:
+                  "参数未通过可信校验；草稿已保留，请刷新后修改。",
+                operation_conflict:
+                  "操作版本或参数已变化；草稿已保留，请查询原请求。",
+                operation_expired: "原准备已过期；草稿已保留，不能沿用旧确认。",
+                operation_denied: "当前身份或权限不允许此操作。",
+                operation_unsupported: "当前服务不支持此操作。",
+              };
+              const code =
+                error && typeof error === "object" && "code" in error
+                  ? String(error.code)
+                  : "";
+              if (Object.hasOwn(reasons, code))
+                throw new OperationRejectedError(reasons[code]);
+              throw error;
             }
-          try {
-            await c.submitOperation({
-              request: scope.instance,
-              revision: record.revision,
-              parameters,
-            });
-          } catch (error) {
-            const reasons: Record<string, string> = {
-              operation_invalid_parameters:
-                "参数未通过可信校验；草稿已保留，请刷新后修改。",
-              operation_conflict:
-                "操作版本或参数已变化；草稿已保留，请查询原请求。",
-              operation_expired: "原准备已过期；草稿已保留，不能沿用旧确认。",
-              operation_denied: "当前身份或权限不允许此操作。",
-              operation_unsupported: "当前服务不支持此操作。",
-            };
-            const code =
-              error && typeof error === "object" && "code" in error
-                ? String(error.code)
-                : "";
-            if (Object.hasOwn(reasons, code))
-              throw new OperationRejectedError(reasons[code]);
-            throw error;
-          }
-        } else if (
-          action.kind === "policy" &&
-          record.state === "awaitingConfirmation"
-        )
-          await c.confirmPolicyPreparation(scope.instance);
-        else if (
-          action.kind === "offered" &&
-          record.state === "awaitingConfirmation"
-        )
-          await c.confirmPreparation(action.offer);
-        else throw Error("当前状态不允许提交");
-      } else if (event.kind === "cancel")
-        await c.cancelPreparation(scope.instance);
-      else throw Error("此操作不接受普通问答");
+          } else if (
+            action.kind === "policy" &&
+            record.state === "awaitingConfirmation"
+          )
+            await c.confirmPolicyPreparation(scope.instance);
+          else if (
+            action.kind === "offered" &&
+            record.state === "awaitingConfirmation"
+          )
+            await c.confirmPreparation(action.offer);
+          else throw Error("当前状态不允许提交");
+        } else if (event.kind === "cancel")
+          await c.cancelPreparation(scope.instance);
+        else throw Error("此操作不接受普通问答");
+      } finally {
+        mutating = false;
+        mutationEpoch++;
+      }
       // In-flight pre-submit reads cannot overwrite the resulting authoritative state.
       if (pending) await pending.catch(() => {});
       return read();

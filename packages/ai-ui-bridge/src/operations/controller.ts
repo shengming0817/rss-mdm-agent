@@ -33,6 +33,7 @@ interface Execution {
   snapshot: OperationSnapshot;
   busy: boolean;
   unknown: boolean;
+  unknownRevision: number;
 }
 /** Owned by the application, not a renderer or localStorage. */
 export class OperationDrafts {
@@ -42,7 +43,12 @@ export class OperationDrafts {
     const key = scopeKey(snapshot.scope);
     let entry = this.executions.get(key);
     if (!entry) {
-      entry = reactive({ snapshot, busy: false, unknown: false });
+      entry = reactive({
+        snapshot,
+        busy: false,
+        unknown: false,
+        unknownRevision: -1,
+      });
       this.executions.set(key, entry);
     }
     return entry;
@@ -52,7 +58,21 @@ export class OperationDrafts {
     presentation: OperationPresentation,
   ): Draft {
     const key = scopeKey(snapshot.scope);
-    const schema = JSON.stringify(presentation);
+    // Parameter compatibility is independent of layout and runtime readonly reasons.
+    const schema = JSON.stringify({
+      version: presentation.version,
+      fields: presentation.fields.map((f) => ({
+        id: f.id,
+        component: f.component,
+        required: f.required,
+        min: f.min,
+        max: f.max,
+        maxLength: f.maxLength,
+        options: f.options?.map((option) => option.id),
+        submitMode: f.submitMode,
+      })),
+      rules: presentation.rules,
+    });
     let draft = this.entries.get(key);
     if (!draft || draft.schema !== schema) {
       const schemaReset = !!draft;
@@ -120,6 +140,7 @@ export function createOperationController(
       return execution.unknown;
     },
     set unknown(value: boolean) {
+      if (value) execution.unknownRevision = execution.snapshot.revision;
       execution.unknown = value;
     },
     get stale() {
@@ -144,12 +165,26 @@ export function createOperationController(
       .filter((f) => f.component === "SecretField")
       .map((f) => f.id),
   );
-  function merge(snapshot: OperationSnapshot, acknowledge = false) {
+  function merge(
+    snapshot: OperationSnapshot,
+    acknowledge = false,
+    queried = false,
+  ) {
     const next = operationSnapshot(snapshot);
     if (scopeKey(next.scope) !== scopeKey(scope))
       throw new Error("操作主体或目标不匹配");
     if (next.revision < state.snapshot.revision) return false;
     state.snapshot = next;
+    if (
+      queried &&
+      next.revision > execution.unknownRevision &&
+      !state.busy &&
+      state.unknown &&
+      next.phase !== "unknown"
+    ) {
+      state.unknown = false;
+      state.notice = "";
+    }
     if (
       acknowledge &&
       !["failed", "denied", "unknown", "cancelled"].includes(next.phase)
@@ -411,7 +446,8 @@ export function createOperationController(
           : await host.dispatch(event, scope);
       if (!merge(snapshot, kind === "submit"))
         throw new Error("操作状态已过期");
-      state.unknown = false;
+      state.unknown = snapshot.phase === "unknown";
+      if (!state.unknown) state.notice = "";
       if (kind === "submit") {
         clearSecrets();
       }
@@ -438,9 +474,9 @@ export function createOperationController(
       state.busy = false;
     }
   }
-  const stop = host.observe(scope, (snapshot) => {
+  const stop = host.observe(scope, ({ snapshot, kind }) => {
     try {
-      merge(snapshot);
+      merge(snapshot, false, kind === "query");
     } catch {
       state.notice = "操作状态无法核实";
       state.unknown = true;

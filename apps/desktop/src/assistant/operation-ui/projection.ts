@@ -257,7 +257,16 @@ export function operationProjection(
         action.directory.task.runAs === "system"
           ? "系统执行身份；OS 条件由服务复核"
           : "本机登录用户执行";
-      snapshot.targetLabel = `${scope.target} · ${action.directory.subject.kind === "device" ? "设备目标" : `企业用户 ${action.directory.subject.user.principalId}`}`;
+      const task = action.directory.task;
+      snapshot.targetLabel =
+        task.kind === "software" && task.target.kind === "user"
+          ? `${scope.target} · 目标 OS 用户 ${task.target.identity} / 登录会话 ${task.target.sessionId}`
+          : `${scope.target} · 本机设备`;
+      const subject = action.directory.subject;
+      snapshot.approval.enterprise =
+        subject.kind === "device"
+          ? "设备准入主体；企业批准仍由执行服务核验"
+          : `企业准入主体 ${subject.user.tenantId} / ${subject.user.instanceId} / ${subject.user.principalId}；企业批准仍由执行服务核验`;
       for (const binding of bindings)
         if (binding.value !== undefined)
           snapshot.proposal[binding.id] = value(binding.value);

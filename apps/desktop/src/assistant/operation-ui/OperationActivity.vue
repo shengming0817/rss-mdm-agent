@@ -53,7 +53,7 @@ async function refresh() {
       if (owner !== active || active.signal.aborted) return;
       assembly.value = next;
       snapshot.value = next.snapshot;
-      stop = next.host.observe(next.scope, (value) => {
+      stop = next.host.observe(next.scope, ({ snapshot: value }) => {
         if (!active.signal.aborted) {
           snapshot.value = value;
           details.value = next.current();
