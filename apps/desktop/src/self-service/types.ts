@@ -8,27 +8,6 @@
  */
 export type RequestId = string;
 /**
- * Query result spanning preparation and actual execution without inventing a frozen plan.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "BackendTaskView".
- */
-export type BackendTaskView =
-  | {
-      kind: "pending";
-      /**
-       * Original offer, caller binding and durable preparation state.
-       */
-      value: BackendRequest;
-    }
-  | {
-      kind: "execution";
-      /**
-       * Real frozen input projection and lifecycle facts.
-       */
-      value: ExecutionTaskDetails;
-    };
-/**
  * One preparation reference, before or after a signed Offer has arrived.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
@@ -375,6 +354,7 @@ export type RiskSource =
  * via the `definition` "BackendRequestState".
  */
 export type BackendRequestState =
+  | "draft"
   | "observed"
   | "awaitingConfirmation"
   | "ready"
@@ -420,6 +400,27 @@ export type BackendTrigger =
        * Tool request reference used for audit correlation.
        */
       toolCall: Id;
+    };
+/**
+ * Query result spanning preparation and actual execution without inventing a frozen plan.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "BackendTaskView".
+ */
+export type BackendTaskView =
+  | {
+      kind: "pending";
+      /**
+       * Original offer, caller binding and durable preparation state.
+       */
+      value: BackendRequest;
+    }
+  | {
+      kind: "execution";
+      /**
+       * Real frozen input projection and lifecycle facts.
+       */
+      value: ExecutionTaskDetails;
     };
 /**
  * Safe counts only; individual paths and network destinations remain protected.
@@ -935,48 +936,47 @@ export type TaskExecution =
   | "unknown";
 
 export interface SelfServiceCommands {
-  appearance_snapshot: Command9;
-  self_service_cancel: Command8;
-  self_service_confirm: Command7;
-  self_service_execute: Command7;
+  ai_operation_submit: Command4;
+  appearance_snapshot: Command10;
+  self_service_cancel: Command9;
+  self_service_confirm: Command8;
+  self_service_execute: Command8;
   self_service_observe_software: Command;
-  self_service_policy_confirm: Command4;
+  self_service_policy_confirm: Command5;
   self_service_policy_directory: Command2;
   self_service_policy_invoke: Command3;
-  self_service_policy_status: Command5;
-  self_service_snapshot: Command6;
+  self_service_policy_status: Command6;
+  self_service_snapshot: Command7;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command9".
+ * via the `definition` "Command4".
  */
-export interface Command9 {
-  input: null;
-  output: AppearanceSnapshot;
+export interface Command4 {
+  input: PolicySubmission;
+  output: BackendRequest;
 }
 /**
+ * Authenticated desktop submission of the currently displayed policy parameters.
+ *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "AppearanceSnapshot".
+ * via the `definition` "PolicySubmission".
  */
-export interface AppearanceSnapshot {
-  highContrast: boolean;
-  materialEnabled: boolean;
-  reducedMotion: boolean;
-}
-/**
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command8".
- */
-export interface Command8 {
-  input: ActionRef;
-  output: BackendTaskView;
-}
-/**
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "ActionRef".
- */
-export interface ActionRef {
-  requestId: RequestId;
+export interface PolicySubmission {
+  /**
+   * Complete current values, never inferred from a model response.
+   */
+  parameters: {
+    [k: string]: unknown;
+  };
+  /**
+   * Original preparation identity; retained after response loss.
+   */
+  request: RequestId;
+  /**
+   * Exact displayed journal revision.
+   */
+  revision: number;
 }
 /**
  * User intent retained in the sole execution journal before a frozen execution exists.
@@ -986,7 +986,7 @@ export interface ActionRef {
  */
 export interface BackendRequest {
   /**
-   * The sole immutable choice and appended backend association.
+   * The sole choice, frozen on submission, and appended backend association.
    */
   action: PreparedAction;
   /**
@@ -1413,6 +1413,38 @@ export interface VersionedRef {
   revision: Id;
 }
 /**
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "Command10".
+ */
+export interface Command10 {
+  input: null;
+  output: AppearanceSnapshot;
+}
+/**
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "AppearanceSnapshot".
+ */
+export interface AppearanceSnapshot {
+  highContrast: boolean;
+  materialEnabled: boolean;
+  reducedMotion: boolean;
+}
+/**
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "Command9".
+ */
+export interface Command9 {
+  input: ActionRef;
+  output: BackendTaskView;
+}
+/**
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "ActionRef".
+ */
+export interface ActionRef {
+  requestId: RequestId;
+}
+/**
  * One authorized record read provides both lifecycle status and frozen plan facts.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
@@ -1759,9 +1791,9 @@ export interface ProcessSummary {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command7".
+ * via the `definition` "Command8".
  */
-export interface Command7 {
+export interface Command8 {
   input: BackendSelection;
   output: TaskSubmission;
 }
@@ -1791,9 +1823,9 @@ export interface Command {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command4".
+ * via the `definition` "Command5".
  */
-export interface Command4 {
+export interface Command5 {
   input: ActionRef;
   output: BackendRequest;
 }
@@ -1842,9 +1874,9 @@ export interface Command3 {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command5".
+ * via the `definition` "Command6".
  */
-export interface Command5 {
+export interface Command6 {
   input: ActionRef;
   output: PolicyStatus;
 }
@@ -1991,9 +2023,9 @@ export interface TaskRunState {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command6".
+ * via the `definition` "Command7".
  */
-export interface Command6 {
+export interface Command7 {
   input: SnapshotQuery;
   output: Snapshot;
 }

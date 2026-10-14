@@ -153,3 +153,22 @@ pub(crate) enum ToolOutput<T> {
     Ok { result: T },
     Error { error: ErrorView },
 }
+
+/// Registered form suggestion. This prepares a card and never executes a tool.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct OperationProposal {
+    /// Closed registered scene; no arbitrary UI tree.
+    pub scene: OperationScene,
+    /// Exact tool name from the authenticated policy directory.
+    pub tool: String,
+    /// Suggested input fields. The user may change them before submission.
+    pub parameters: serde_json::Map<String, serde_json::Value>,
+}
+/// Product scenes supported by this preparation boundary.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub enum OperationScene {
+    /// Policy parameter editing, with default approval when no specialized form exists.
+    #[serde(rename = "policy.parameters.v1")]
+    PolicyParameters,
+}

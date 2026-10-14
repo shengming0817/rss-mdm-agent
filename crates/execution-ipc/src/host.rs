@@ -2,7 +2,7 @@
 use execution_contract::{Digest, Id, RequestId, VersionedRef};
 use serde::{Deserialize, Serialize};
 /// Current desktop/system IPC. No negotiation or legacy parser exists.
-pub const IPC_VERSION: u8 = 13;
+pub const IPC_VERSION: u8 = 14;
 /// Current protected installation document format.
 pub const DEPLOYMENT_VERSION: u32 = 5;
 
@@ -569,6 +569,22 @@ pub enum Request {
         /// Trusted native origin.
         origin: ClientOrigin,
     },
+    /// Prepare an editable AI operation, without sending or granting consent.
+    PreparePolicy {
+        /// Current authenticated native binding.
+        context: execution_contract::NativeContextRef,
+        /// Policy identity and non-authoritative initial suggestions.
+        choice: execution_contract::PolicyChoice,
+        /// Attested AI origin; never renderer supplied.
+        origin: ClientOrigin,
+    },
+    /// Freeze current parameters and record the authenticated user's save intent.
+    SubmitPolicy {
+        /// Current native binding, revalidated by the service.
+        context: execution_contract::NativeContextRef,
+        /// Original request, displayed revision and final values.
+        input: execution_contract::PolicySubmission,
+    },
     /// Sole employee response to the original risk-two Policy preparation.
     ConfirmPolicy {
         /// Exact current native context binding.
@@ -644,6 +660,11 @@ struct Envelope {
     rename_all_fields = "camelCase"
 )]
 pub enum Reply {
+    /// Known pre-submission rejection, distinct from an ambiguous response loss.
+    OperationRejected {
+        /// Closed, non-sensitive diagnosis.
+        reason: execution_contract::OperationRejection,
+    },
     /// Native employee handoff accepted; no enterprise permission is granted.
     ContextBound {
         /// Nonsecret binding, attested by this native owner.

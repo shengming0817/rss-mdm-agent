@@ -108,7 +108,7 @@ async fn discovery_exposes_backend_references_and_rejects_old_script_and_catalog
         .await;
     let list = w.recv().await;
     let tools = list["result"]["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 8);
+    assert_eq!(tools.len(), 9);
     for tool in tools {
         jsonschema::draft202012::new(&tool["inputSchema"]).unwrap();
         jsonschema::draft202012::new(&tool["outputSchema"]).unwrap();

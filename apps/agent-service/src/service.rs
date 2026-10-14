@@ -1093,6 +1093,8 @@ impl Core {
                     | execution_ipc::host::Request::ObserveSoftware { .. }
                     | execution_ipc::host::Request::PolicyDirectory { .. }
                     | execution_ipc::host::Request::InvokePolicy { .. }
+                    | execution_ipc::host::Request::PreparePolicy { .. }
+                    | execution_ipc::host::Request::SubmitPolicy { .. }
                     | execution_ipc::host::Request::ConfirmPolicy { .. }
                     | execution_ipc::host::Request::PolicyStatus { .. }
             )
@@ -1111,6 +1113,8 @@ impl Core {
                     | Request::ObserveSoftware { .. }
                     | Request::PolicyDirectory { .. }
                     | Request::InvokePolicy { .. }
+                    | Request::PreparePolicy { .. }
+                    | Request::SubmitPolicy { .. }
                     | Request::ConfirmPolicy { .. }
                     | Request::PolicyStatus { .. },
                 ) => Err(Error::Denied),

@@ -92,6 +92,7 @@ fn main() {
             "self_service_policy_directory",
             "self_service_policy_invoke",
             "self_service_policy_confirm",
+            "ai_operation_submit",
             "self_service_policy_status",
             "self_service_observe_software",
             "self_service_snapshot",

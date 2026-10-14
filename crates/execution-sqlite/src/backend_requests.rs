@@ -59,7 +59,11 @@ impl Store {
         authorize(host, Access::Execute, scope, None)?;
         use execution_contract::BackendRequestState as S;
         let transition = match expected.map(|p| p.state) {
-            None => matches!(next.state, S::AwaitingConfirmation | S::Ready | S::Failed),
+            None => matches!(
+                next.state,
+                S::Draft | S::AwaitingConfirmation | S::Ready | S::Failed
+            ),
+            Some(S::Draft) => matches!(next.state, S::Ready | S::Cancelled | S::Failed),
             Some(S::AwaitingConfirmation) => {
                 matches!(next.state, S::Ready | S::Cancelled | S::Failed)
             }
@@ -106,11 +110,11 @@ impl Store {
             return Err(Error::Conflict);
         }
         if expected.is_some_and(|p| {
-            !p.action.same_choice(&next.action)
+            !(p.action.same_choice(&next.action) || p.finalizes_draft(next))
                 || p.trigger != next.trigger
                 || p.risk != next.risk
                 || (p.confirmation != next.confirmation
-                    && !(p.state == S::AwaitingConfirmation
+                    && !(matches!(p.state, S::Draft | S::AwaitingConfirmation)
                         && next.state == S::Ready
                         && p.confirmation.is_none()
                         && next.confirmation.is_some()))

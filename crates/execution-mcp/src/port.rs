@@ -46,6 +46,14 @@ pub trait ExecutionServicePort: Send + Sync + 'static {
     ) -> impl Future<Output = Result<execution_contract::BackendRequest, ServiceError>> + Send {
         async { Err(ServiceError::Denied) }
     }
+    /// Prepare a registered operation without dispatch or confirmation.
+    fn prepare_operation(
+        &self,
+        _: OperationProposal,
+        _: CancellationToken,
+    ) -> impl Future<Output = Result<execution_contract::BackendRequest, ServiceError>> + Send {
+        async { Err(ServiceError::Unsupported) }
+    }
     /// Structured employee-authorized result for the original Policy request.
     fn policy_status(
         &self,

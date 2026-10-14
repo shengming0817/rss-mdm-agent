@@ -76,6 +76,7 @@ fn constrain_schema_integers(value: &mut Value) {
 pub(crate) enum ToolKind {
     Tasks,
     PolicyTools,
+    PrepareOperation,
     PolicyStatus,
     SoftwareRead,
     Capabilities,
@@ -89,9 +90,10 @@ enum Effect {
     MayPersist,
 }
 impl ToolKind {
-    const ALL: [Self; 8] = [
+    const ALL: [Self; 9] = [
         Self::Tasks,
         Self::PolicyTools,
+        Self::PrepareOperation,
         Self::PolicyStatus,
         Self::SoftwareRead,
         Self::Capabilities,
@@ -103,6 +105,7 @@ impl ToolKind {
     fn descriptor(self) -> (&'static str, &'static str, Effect) {
         match self {
             Self::SoftwareRead => ("execution_software_observe", "Collect a fresh bounded native software fact from one current signed definition step. No installation or script execution.", Effect::ReadOnly),
+            Self::PrepareOperation => ("execution_operation_prepare", "Show an editable operation card for a current policy tool. Use for requests to display or edit settings. Suggestions do not execute: the user saves the final parameters in the desktop. Only registered scenes are accepted.", Effect::MayPersist),
             Self::PolicyTools => ("execution_policy_tools", "Current employee-authorized script tools. Policy publication, allowAi and risk are verified for this AI origin.", Effect::ReadOnly),
             Self::PolicyStatus => ("execution_policy_status", "Read structured status and result for the original Policy request. Unknown never permits another invocation.", Effect::ReadOnly),
             Self::Tasks => ("execution_tasks", "Verified backend tasks. Select the exact task, attempt and revision; presence never authorizes execution.", Effect::ReadOnly),
@@ -129,6 +132,9 @@ impl ToolKind {
                 execution_contract::SoftwareReadSelection,
                 execution_contract::BackendRequest,
             >(self),
+            Self::PrepareOperation => {
+                tool::<OperationProposal, execution_contract::BackendRequest>(self)
+            }
             Self::PolicyTools => tool::<Empty, Vec<Value>>(self),
             Self::PolicyStatus => tool::<OperationRequest, Value>(self),
             Self::Tasks => tool::<Empty, Vec<BackendTask>>(self),
@@ -214,6 +220,10 @@ impl<S: ExecutionServicePort> Handler<S> {
         match kind {
             ToolKind::SoftwareRead => result(
                 async { Ok(self.service.observe_software(decode(raw)?, wait).await?) }.await,
+                max,
+            ),
+            ToolKind::PrepareOperation => result(
+                async { Ok(self.service.prepare_operation(decode(raw)?, wait).await?) }.await,
                 max,
             ),
             ToolKind::PolicyTools => result(

@@ -3377,3 +3377,206 @@ async fn restarted_policy_expiry_preserves_original_run_queries_without_start() 
             .is_empty());
     }
 }
+
+#[tokio::test]
+async fn operation_draft_freezes_current_parameters_once_and_queries_do_not_execute() {
+    let _budget = crate::scenario_budget::enter();
+    use execution_ipc::host::Request;
+    for level in [1, 2] {
+        let mut c = Case::new(None).await;
+        let mut directory =
+            protocol::policy_directory_fixture(c.service.client.configuration().tenant);
+        directory.self_service.risk_level = level;
+        c._server.data.lock().unwrap().self_service_directory =
+            Some(wire::SelfServiceDirectoryResponse {
+                items: vec![directory.clone()],
+                next_cursor: None,
+                as_of: c._server.time.now().unwrap(),
+            });
+        c.employee("generation-one").await;
+        let choice = PolicyChoice {
+            request: RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap(),
+            policy_id: plan::id(directory.policy_id.to_string()).unwrap(),
+            policy_revision: directory.policy_revision,
+            policy_version: plan::id(directory.policy_version.to_string()).unwrap(),
+            parameters: Default::default(), // An incomplete draft is not an executable choice.
+        };
+        let Reply::PolicyRequest { value: draft } = c
+            .policy_call(Request::PreparePolicy {
+                context: c.context(),
+                choice: choice.clone(),
+                origin: c.selection.origin.clone(),
+            })
+            .await
+        else {
+            panic!("draft")
+        };
+        assert_eq!(draft.state, BackendRequestState::Draft);
+        assert!(draft.confirmation.is_none());
+        for _ in 0..2 {
+            let Reply::PolicyRequest { value } = c
+                .policy_call(Request::PolicyStatus {
+                    context: c.context(),
+                    request: choice.request.clone(),
+                })
+                .await
+            else {
+                panic!("draft query")
+            };
+            assert_eq!(*value, *draft);
+        }
+        // The original confirmation endpoint cannot accidentally authorize a draft.
+        c.policy_call(Request::ConfirmPolicy {
+            context: c.context(),
+            request: choice.request.clone(),
+        })
+        .await;
+        assert!(c._server.data.lock().unwrap().invocations.is_empty());
+        let mut input = PolicySubmission {
+            request: choice.request.clone(),
+            revision: draft.revision,
+            parameters: std::collections::BTreeMap::from([(
+                "path".into(),
+                serde_json::json!("/tmp/forged"),
+            )]),
+        };
+        assert!(matches!(
+            c.policy_call(Request::SubmitPolicy {
+                context: c.context(),
+                input: input.clone()
+            })
+            .await,
+            Reply::OperationRejected {
+                reason: OperationRejection::InvalidParameters
+            }
+        ));
+        input.parameters =
+            std::collections::BTreeMap::from([("name".into(), serde_json::json!("User edit"))]);
+        input.revision += 1;
+        assert!(matches!(
+            c.policy_call(Request::SubmitPolicy {
+                context: c.context(),
+                input: input.clone()
+            })
+            .await,
+            Reply::OperationRejected {
+                reason: OperationRejection::Conflict
+            }
+        ));
+        input.revision = draft.revision;
+        let Reply::PolicyRequest { value: submitted } = c
+            .policy_call(Request::SubmitPolicy {
+                context: c.context(),
+                input: input.clone(),
+            })
+            .await
+        else {
+            panic!("save")
+        };
+        assert_eq!(submitted.state, BackendRequestState::Submitting);
+        assert_eq!(submitted.confirmation.is_some(), level == 2);
+        // A lost reply is recovered by the same request and same frozen final values.
+        let Reply::PolicyRequest { value: repeated } = c
+            .policy_call(Request::SubmitPolicy {
+                context: c.context(),
+                input: input.clone(),
+            })
+            .await
+        else {
+            panic!("replay")
+        };
+        assert_eq!(*repeated, *submitted);
+        input
+            .parameters
+            .insert("name".into(), serde_json::json!("different"));
+        assert!(matches!(
+            c.policy_call(Request::SubmitPolicy {
+                context: c.context(),
+                input
+            })
+            .await,
+            Reply::OperationRejected {
+                reason: OperationRejection::Conflict
+            }
+        ));
+        let data = c._server.data.lock().unwrap();
+        assert_eq!(data.invocations.len(), 1);
+        let invocation = &data.invocations.values().next().unwrap().0;
+        assert_eq!(invocation["parameters"]["name"], "User edit");
+        assert_eq!(invocation["source"], "ai");
+        assert_eq!(invocation["confirmed"], level == 2);
+    }
+}
+
+#[tokio::test]
+async fn operation_draft_rejects_changed_policy_and_retired_native_context() {
+    let _budget = crate::scenario_budget::enter();
+    use execution_ipc::host::Request;
+    for revoke in [false, true] {
+        let mut c = Case::new(None).await;
+        let directory = protocol::policy_directory_fixture(c.service.client.configuration().tenant);
+        c._server.data.lock().unwrap().self_service_directory =
+            Some(wire::SelfServiceDirectoryResponse {
+                items: vec![directory.clone()],
+                next_cursor: None,
+                as_of: c._server.time.now().unwrap(),
+            });
+        c.employee("generation-one").await;
+        let choice = PolicyChoice {
+            request: RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap(),
+            policy_id: plan::id(directory.policy_id.to_string()).unwrap(),
+            policy_revision: directory.policy_revision,
+            policy_version: plan::id(directory.policy_version.to_string()).unwrap(),
+            parameters: Default::default(),
+        };
+        let Reply::PolicyRequest { value } = c
+            .policy_call(Request::PreparePolicy {
+                context: c.context(),
+                choice: choice.clone(),
+                origin: c.selection.origin.clone(),
+            })
+            .await
+        else {
+            panic!("draft")
+        };
+        let context = c.context();
+        if revoke {
+            c.policy_call(Request::RevokeContext {}).await;
+        } else {
+            c._server
+                .data
+                .lock()
+                .unwrap()
+                .self_service_directory
+                .as_mut()
+                .unwrap()
+                .items[0]
+                .policy_revision += 1;
+        }
+        assert!(matches!(
+            c.policy_call(Request::SubmitPolicy {
+                context,
+                input: PolicySubmission {
+                    request: choice.request.clone(),
+                    revision: value.revision,
+                    parameters: std::collections::BTreeMap::from([(
+                        "name".into(),
+                        serde_json::json!("User edit")
+                    )]),
+                }
+            })
+            .await,
+            Reply::OperationRejected { .. }
+        ));
+        assert!(c._server.data.lock().unwrap().invocations.is_empty());
+        let retained = c
+            .service
+            .core
+            .app
+            .backend_request(&c.service.core.caller(), &choice.request)
+            .unwrap()
+            .unwrap();
+        assert_eq!(retained.state, BackendRequestState::Draft);
+        assert!(retained.confirmation.is_none());
+    }
+}
