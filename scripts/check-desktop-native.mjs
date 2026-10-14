@@ -1401,6 +1401,73 @@ try {
         otherScales: "unverified",
       };
 
+      await navigate("AI 助手");
+      await browser.$('input[aria-label="显示操作模板"]').click();
+      for (const template of [
+        "SettingsForm",
+        "ObjectActions",
+        "ResourceSelection",
+        "ChangeReview",
+        "TaskExecution",
+        "GuidedFlow",
+        "OperationApproval",
+      ]) {
+        await selectValue(
+          await browser.$('select[aria-label="操作模板"]'),
+          template,
+        );
+        const card = await browser.$(
+          `article[aria-label="${template} 操作示例"]`,
+        );
+        await wait(() => card.isDisplayed());
+        await card.scrollIntoView();
+        if (template === "SettingsForm")
+          await card.$('input[type="text"]').setValue("原生用户修改");
+        if (template === "GuidedFlow") await card.$("button=下一步").click();
+        if (["ObjectActions", "ResourceSelection"].includes(template))
+          await card.$('input[aria-label="选择 测试对象 A"]').click();
+        if (template === "TaskExecution") await card.$("button=继续").click();
+        else
+          await card
+            .$(
+              `button=${template === "OperationApproval" ? "确认操作" : "保存"}`,
+            )
+            .click();
+        if (template === "TaskExecution") {
+          await wait(async () => !(await card.$("fieldset").isExisting()));
+          assert.ok((await card.getText()).includes("执行中"));
+          assert.equal(await card.$("button=取消操作").isEnabled(), true);
+        } else {
+          await wait(async () =>
+            (await card.getText()).includes("fixture 已核实"),
+          );
+          assert.ok((await card.getText()).includes("核实成功"));
+          if (template === "SettingsForm") {
+            assert.equal(
+              await card.$('input[type="text"]').getValue(),
+              "原生用户修改",
+            );
+            assert.ok(
+              (await card.$(".operation-table").getText()).includes(
+                "原生用户修改",
+              ),
+            );
+          }
+          if (["ObjectActions", "ResourceSelection"].includes(template)) {
+            const rows = await card.$$("tbody tr");
+            const selected = await rows[0].getText();
+            assert.ok(
+              selected.includes("测试对象 A") && selected.includes("已核实"),
+            );
+            assert.ok(!(await rows[1].getText()).includes("已核实"));
+          }
+        }
+        await browser.saveScreenshot(
+          join(reports, `desktop-native-operation-${template}.png`),
+        );
+        result.checks.push(`native-operation-${template}`);
+      }
+      await browser.$('input[aria-label="显示操作模板"]').click();
       result.windowsAppearance = "unverified; no Windows host";
       await browser.setWindowSize(1100, 760);
       mark("native visual close and reopen main window");

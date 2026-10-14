@@ -66,6 +66,15 @@ const uiDependencies = {
   "reka-ui": "2.10.5",
 };
 const uiImports = {
+  "apps/desktop/src/App.vue": ["@rss-mdm-agent/ai-ui-bridge"],
+  "apps/desktop/src/assistant/operation-ui/NodeView.ts": [
+    "@a2ui/web_core/v0_9",
+    "@rss-mdm-agent/ai-contract/operations",
+  ],
+  "apps/desktop/src/assistant/operation-ui/OperationCard.vue": [
+    "@a2ui/web_core/v0_9",
+    "@rss-mdm-agent/ai-contract/operations",
+  ],
   "packages/ui/src/index.ts": ["@lucide/vue", "reka-ui"],
   "packages/ui/src/components/AppShell.vue": ["@lucide/vue"],
   "packages/ui/src/components/NavigationList.vue": ["@lucide/vue"],
@@ -262,6 +271,10 @@ export function checkSource(file, source) {
     )
       globals.add("Error");
     const assistantGlobals = {
+      "apps/desktop/src/assistant/operation-ui/NodeView.ts": [
+        "Symbol",
+        "document",
+      ],
       "apps/desktop/src/App.vue": ["setInterval", "clearInterval"],
       "apps/desktop/src/Workspace.vue": ["HTMLElement", "ResizeObserver"],
       "apps/desktop/src/assistant/resource-context.ts": ["JSON"],
@@ -488,6 +501,14 @@ export function checkSource(file, source) {
           ? staticText(node.argumentExpression)
           : null;
       const dataRoots = {
+        "apps/desktop/src/assistant/operation-ui/NodeView.ts": [
+          "c.presentation.steps",
+          "s!.draft.values",
+          "s?.errors",
+          "s?.secrets",
+          "snapshot.current",
+          "phaseLabels",
+        ],
         "apps/desktop/src/self-service/PolicyPreparation.vue": [
           "action.choice.parameters",
         ],
@@ -585,14 +606,15 @@ export function checkTree(treeRoot = root, executable) {
     Object.keys(desktop.dependencies ?? {})
       .sort()
       .join() !==
-      "@rss-mdm-agent/ai-client,@rss-mdm-agent/ai-contract,@rss-mdm-agent/ai-ui-bridge,@rss-mdm-agent/execution-bindings,@rss-mdm-agent/ui,@tauri-apps/api,ajv,vue" ||
+      "@a2ui/web_core,@rss-mdm-agent/ai-client,@rss-mdm-agent/ai-contract,@rss-mdm-agent/ai-ui-bridge,@rss-mdm-agent/execution-bindings,@rss-mdm-agent/ui,@tauri-apps/api,ajv,vue" ||
+    desktop.dependencies?.["@a2ui/web_core"] !== "0.11.0" ||
     desktop.dependencies?.ajv !== "8.20.0" ||
     desktop.dependencies?.["@tauri-apps/api"] !== "2.11.1" ||
     Object.keys(desktop.optionalDependencies ?? {}).length ||
     Object.keys(desktop.peerDependencies ?? {}).length
   )
     errors.push(
-      "desktop production dependencies must be UI, public AI contract/client/bridge, generated execution bindings, pinned Ajv schema validation, Vue and pinned Tauri core only",
+      "desktop production dependencies must be UI, public AI contract/client/bridge, generated execution bindings, pinned A2UI core, pinned Ajv schema validation, Vue and pinned Tauri core only",
     );
   const config = JSON.parse(read("apps/desktop/src-tauri/tauri.conf.json"));
   const capabilityFiles = files(

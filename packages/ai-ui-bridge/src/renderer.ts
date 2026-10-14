@@ -1,9 +1,11 @@
 import { ClientError, type InteractionView } from "@rss-mdm-agent/ai-client";
 import { RendererError } from "./errors.js";
-import "@a2ui/lit/v0_9";
+import type { NodeMount } from "./operations/surface.js";
 import {
   Catalog,
   MessageProcessor,
+  NodeResolver,
+  getValue,
   type A2uiMessage,
 } from "@a2ui/web_core/v0_9";
 import {
@@ -30,6 +32,7 @@ export interface RendererOptions {
   onAction(request: ActionRequest): Promise<void>;
   onError(error: RendererError): void;
   now?: () => number;
+  mount: NodeMount;
 }
 export interface SurfaceRendererHandle {
   replace(
@@ -44,6 +47,8 @@ export interface SurfaceRendererHandle {
 }
 /** Disposable official renderer cache. All recovery truth remains in ai-client. */
 export class SurfaceRenderer implements SurfaceRendererHandle {
+  private unmount?: () => void;
+  private resolver?: NodeResolver;
   private processor?: MessageProcessor<typeof A2uiText>;
   private pending?: ActionRequest;
   private sending = false;
@@ -156,12 +161,10 @@ export class SurfaceRenderer implements SurfaceRendererHandle {
       }
       if (!model || !model.componentsModel.get("root"))
         throw new RendererError("renderer_invalid");
-      const element = document.createElement("a2ui-surface") as HTMLElement & {
-        surface: typeof model;
-      };
-      element.surface = model;
-      element.inert = !enabled;
-      this.container.replaceChildren(element);
+      this.resolver = new NodeResolver(model, catalog);
+      const root = getValue(this.resolver.rootNode);
+      if (!root) throw new RendererError("renderer_invalid");
+      this.unmount = this.options.mount(this.container, root, enabled);
     } catch {
       this.clear();
       throw new RendererError("renderer_invalid");
@@ -202,6 +205,10 @@ export class SurfaceRenderer implements SurfaceRendererHandle {
     }
   }
   clear(): void {
+    this.unmount?.();
+    this.unmount = undefined;
+    this.resolver?.dispose();
+    this.resolver = undefined;
     this.processor?.model.dispose();
     this.processor = undefined;
     this.container.replaceChildren();

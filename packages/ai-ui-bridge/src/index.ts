@@ -1,3 +1,4 @@
+import type { NodeMount } from "./operations/surface.js";
 import { RendererError } from "./errors.js";
 export { questions } from "./questions.js";
 export type { Question } from "./questions.js";
@@ -51,6 +52,7 @@ export const RuntimeSurface = defineComponent({
     sessionId: { type: String, required: true },
     instanceId: { type: String, required: true },
     now: { type: Function as PropType<() => number>, default: Date.now },
+    mount: { type: Function as PropType<NodeMount>, required: true },
     rendererFactory: {
       type: Function as PropType<RendererFactory>,
       default: createSurfaceRenderer,
@@ -150,6 +152,7 @@ export const RuntimeSurface = defineComponent({
       try {
         const created = await props.rendererFactory(container.value, {
           now: props.now,
+          mount: props.mount,
           onAction: async (request) => {
             const receipt = await props.runtime.action(request);
             if (current === epoch && mounted) {
@@ -218,3 +221,11 @@ export const RuntimeSurface = defineComponent({
       ]);
   },
 });
+
+export {
+  createOperationController,
+  OperationDrafts,
+} from "./operations/controller.js";
+export type { OperationController } from "./operations/controller.js";
+export { createOperationSurface } from "./operations/surface.js";
+export type { NodeMount } from "./operations/surface.js";

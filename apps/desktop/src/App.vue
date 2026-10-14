@@ -7,6 +7,8 @@ import {
   nextTick,
   watch,
 } from "vue";
+import { OperationDrafts } from "@rss-mdm-agent/ai-ui-bridge";
+const operationDrafts = new OperationDrafts();
 import Workspace from "./Workspace.vue";
 import { createAppearance } from "./appearance";
 import type { AssistantServices } from "./assistant/controller";
@@ -167,6 +169,13 @@ onBeforeUnmount(() => {
       :fixture="!!environment"
       @navigate="navigate"
     >
+      <template #operation-cards="slotProps"
+        ><slot
+          name="operation-cards"
+          :visible="slotProps.visible"
+          :session-id="slotProps.sessionId"
+          :drafts="operationDrafts"
+      /></template>
       <template #account-summary>
         <strong>{{ selectedUser?.user.displayName ?? "账户与连接" }}</strong>
         <small>{{

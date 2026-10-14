@@ -40,7 +40,6 @@ const allowed = {
   "packages/ai-ui-bridge": [
     "@rss-mdm-agent/ai-contract",
     "@rss-mdm-agent/ai-client",
-    "@a2ui/lit",
     "@a2ui/web_core",
     "vue",
   ],

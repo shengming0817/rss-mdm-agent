@@ -329,6 +329,7 @@ try {
     state.mount = () => {
       state.app = api.createApp(api.RuntimeSurface, {
         runtime,
+        mount: api.mountNode,
         rendererFactory: async (container, options) => {
           if (state.failure === "load") throw Error("load fixture");
           const renderer = await api.createSurfaceRenderer(container, options);
@@ -379,13 +380,14 @@ try {
     s.now = 100;
     s.update();
   });
-  if (await card.locator("a2ui-surface").evaluate((e) => e.inert))
+  if (await card.locator(".rss-a2ui-surface").evaluate((e) => e.inert))
     throw new Error("inclusive interaction deadline disabled too soon");
   await page.evaluate(() => {
     window.surfaceTest.interactionTest.now = 101;
   });
   await page.waitForFunction(
-    () => document.querySelector("#interaction-fixture a2ui-surface")?.inert,
+    () =>
+      document.querySelector("#interaction-fixture .rss-a2ui-surface")?.inert,
   );
   if (
     await card
@@ -398,7 +400,7 @@ try {
     s.now = 0;
     s.update();
   });
-  await card.locator("a2ui-surface").getByRole("button").click();
+  await card.locator(".rss-a2ui-surface").getByRole("button").click();
   await page.waitForFunction(
     () => window.surfaceTest.interactionTest.attempts.length === 1,
   );
@@ -435,7 +437,7 @@ try {
       responseCommandId: undefined,
     }),
   );
-  await card.locator("a2ui-surface").getByRole("button").click();
+  await card.locator(".rss-a2ui-surface").getByRole("button").click();
   await page.waitForFunction(
     () => window.surfaceTest.interactionTest.attempts.length === 2,
   );
@@ -445,7 +447,8 @@ try {
     s.reject(new window.surfaceTest.ClientError("already_answered"));
   });
   await page.waitForFunction(
-    () => document.querySelector("#interaction-fixture a2ui-surface")?.inert,
+    () =>
+      document.querySelector("#interaction-fixture .rss-a2ui-surface")?.inert,
   );
   if (
     await card
@@ -457,7 +460,7 @@ try {
   await page.evaluate(() =>
     window.surfaceTest.interactionTest.update({ status: "pending" }),
   );
-  await card.locator("a2ui-surface").getByRole("button").click();
+  await card.locator(".rss-a2ui-surface").getByRole("button").click();
   await page.waitForFunction(
     () => window.surfaceTest.interactionTest.attempts.length === 3,
   );
@@ -615,14 +618,16 @@ try {
         .waitFor();
     if (kind === "data") {
       assert.equal(
-        await page.locator("a2ui-surface img,a2ui-surface script").count(),
+        await page
+          .locator(".rss-a2ui-surface img,.rss-a2ui-surface script")
+          .count(),
         0,
       );
       assert.equal(await page.evaluate(() => Boolean(window.injected)), false);
     }
     if (kind === "components") {
       await page.getByText("卡片已更新", { exact: true }).waitFor();
-      await page.locator("a2ui-surface input").fill("browser answer");
+      await page.locator(".rss-a2ui-surface input").fill("browser answer");
       await page.evaluate(() => {
         const runtime = window.assistantRuntime,
           action = runtime.action.bind(runtime);
@@ -1217,6 +1222,45 @@ try {
       [],
     ),
   );
+  await page.getByLabel("显示操作模板", { exact: true }).check();
+  for (const template of [
+    "SettingsForm",
+    "ObjectActions",
+    "ResourceSelection",
+    "ChangeReview",
+    "TaskExecution",
+    "GuidedFlow",
+    "OperationApproval",
+  ]) {
+    await page.getByLabel("操作模板", { exact: true }).selectOption(template);
+    const card = page.getByRole("article", {
+      name: `${template} 操作示例`,
+      exact: true,
+    });
+    await card.waitFor();
+    if (template === "SettingsForm")
+      await card.getByLabel("名称", { exact: true }).fill("浏览器用户修改");
+    if (["ObjectActions", "ResourceSelection"].includes(template))
+      await card.getByLabel("选择 测试对象 A").check();
+    if (template === "GuidedFlow")
+      await card.getByRole("button", { name: "下一步", exact: true }).click();
+    if (template === "TaskExecution") {
+      await card.getByRole("button", { name: "继续", exact: true }).click();
+      await card.getByRole("button", { name: "取消操作", exact: true }).click();
+      await card.getByText("fixture 已取消", { exact: true }).waitFor();
+    } else {
+      await card
+        .getByRole("button", {
+          name: template === "OperationApproval" ? "确认操作" : "保存",
+          exact: true,
+        })
+        .click();
+      await card
+        .getByText("fixture 已核实；不是系统执行证据", { exact: true })
+        .waitFor();
+    }
+  }
+  await page.getByLabel("显示操作模板", { exact: true }).uncheck();
   assert.deepEqual(errors, []);
   console.log(
     "PASS assistant product navigation, caller pagination, busy queue/steer, multi-window questions, permission abort, A2UI lifecycle, trusted execution and reconnect",

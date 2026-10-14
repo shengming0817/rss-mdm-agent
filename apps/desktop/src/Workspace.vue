@@ -355,7 +355,12 @@ onBeforeUnmount(() => {
           :portal-target="target ?? headerHost"
           @settings="emit('navigate', 'settings')"
           @tasks="emit('navigate', 'tasks')"
-      /></Teleport>
+          ><template #operation-cards="slotProps"
+            ><slot
+              name="operation-cards"
+              :visible="slotProps.visible"
+              :session-id="slotProps.sessionId" /></template></Assistant
+      ></Teleport>
       <ModalDrawer
         v-if="contextOpen && !wide && candidate && assistant"
         class="resource-context-drawer"

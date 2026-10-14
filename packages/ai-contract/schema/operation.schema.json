@@ -1,0 +1,647 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:rss-mdm-agent:operation-presentation:1",
+  "title": "OperationContract",
+  "anyOf": [
+    {
+      "$ref": "#/$defs/OperationPresentation"
+    },
+    {
+      "$ref": "#/$defs/OperationSnapshot"
+    },
+    {
+      "$ref": "#/$defs/OperationEvent"
+    }
+  ],
+  "$defs": {
+    "OperationValue": {
+      "anyOf": [
+        {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 4096
+          },
+          "maxItems": 128
+        }
+      ]
+    },
+    "OperationField": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_-]+$"
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "component": {
+          "enum": [
+            "TextField",
+            "NumberField",
+            "SelectField",
+            "Switch",
+            "Checkbox",
+            "RadioGroup",
+            "PathPicker",
+            "DateTimeField",
+            "SecretField"
+          ]
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "readonly": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "min": {
+          "type": "number"
+        },
+        "max": {
+          "type": "number"
+        },
+        "maxLength": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8192
+        },
+        "options": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^[a-zA-Z0-9_-]+$"
+              },
+              "label": {
+                "type": "string",
+                "maxLength": 256
+              },
+              "disabledReason": {
+                "type": "string",
+                "maxLength": 4096
+              }
+            },
+            "required": ["id", "label"],
+            "additionalProperties": false
+          },
+          "maxItems": 128
+        },
+        "submitMode": {
+          "enum": ["draft", "immediate"]
+        },
+        "section": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_-]+$"
+        }
+      },
+      "required": ["id", "label", "component"],
+      "additionalProperties": false
+    },
+    "OperationRule": {
+      "type": "object",
+      "properties": {
+        "field": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_-]+$"
+        },
+        "when": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_-]+$"
+        },
+        "equals": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "kind": {
+          "enum": ["required", "equals"]
+        },
+        "message": {
+          "type": "string",
+          "maxLength": 256
+        }
+      },
+      "required": ["field", "when", "equals", "kind", "message"],
+      "additionalProperties": false
+    },
+    "OperationPresentation": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "template": {
+          "enum": [
+            "SettingsForm",
+            "ObjectActions",
+            "ResourceSelection",
+            "ChangeReview",
+            "TaskExecution",
+            "GuidedFlow",
+            "OperationApproval"
+          ]
+        },
+        "fields": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/OperationField"
+          },
+          "maxItems": 128
+        },
+        "rules": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/OperationRule"
+          },
+          "maxItems": 128
+        },
+        "sections": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^[a-zA-Z0-9_-]+$"
+              },
+              "label": {
+                "type": "string",
+                "maxLength": 256
+              }
+            },
+            "required": ["id", "label"],
+            "additionalProperties": false
+          },
+          "maxItems": 16
+        },
+        "layout": {
+          "enum": ["sections", "tabs", "disclosure"]
+        },
+        "selection": {
+          "enum": ["single", "multiple"]
+        },
+        "steps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^[a-zA-Z0-9_-]+$"
+              },
+              "label": {
+                "type": "string",
+                "maxLength": 256
+              },
+              "fields": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[a-zA-Z0-9_-]+$"
+                },
+                "maxItems": 128
+              }
+            },
+            "required": ["id", "label", "fields"],
+            "additionalProperties": false
+          },
+          "maxItems": 16
+        }
+      },
+      "required": ["version", "template", "fields", "rules", "sections"],
+      "additionalProperties": false
+    },
+    "OperationScope": {
+      "type": "object",
+      "properties": {
+        "authority": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "tenant": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "principal": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "session": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "target": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "instance": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_-]+$"
+        }
+      },
+      "required": [
+        "authority",
+        "tenant",
+        "principal",
+        "session",
+        "target",
+        "instance"
+      ],
+      "additionalProperties": false
+    },
+    "OperationObject": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_-]+$"
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "detail": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "disabledReason": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "status": {
+          "type": "string",
+          "maxLength": 256
+        }
+      },
+      "required": ["id", "label", "detail"],
+      "additionalProperties": false
+    },
+    "OperationInteraction": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_-]+$"
+        },
+        "question": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "options": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^[a-zA-Z0-9_-]+$"
+              },
+              "label": {
+                "type": "string",
+                "maxLength": 256
+              }
+            },
+            "required": ["id", "label"],
+            "additionalProperties": false
+          },
+          "maxItems": 16
+        },
+        "expiresAtMs": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": ["id", "question", "options", "expiresAtMs"],
+      "additionalProperties": false
+    },
+    "OperationSnapshot": {
+      "type": "object",
+      "properties": {
+        "scope": {
+          "$ref": "#/$defs/OperationScope"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "baseline": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "source": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "targetLabel": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "impact": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "current": {
+          "type": "object",
+          "maxProperties": 128,
+          "propertyNames": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[a-zA-Z0-9_-]+$"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/OperationValue"
+          }
+        },
+        "proposal": {
+          "type": "object",
+          "maxProperties": 128,
+          "propertyNames": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[a-zA-Z0-9_-]+$"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/OperationValue"
+          }
+        },
+        "phase": {
+          "enum": [
+            "ready",
+            "submitting",
+            "waiting",
+            "running",
+            "failed",
+            "unknown",
+            "succeeded",
+            "pending_effect",
+            "cancelled",
+            "denied"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "allowed": {
+          "type": "array",
+          "items": {
+            "enum": ["submit", "cancel", "refresh", "answer"]
+          },
+          "maxItems": 4
+        },
+        "approval": {
+          "type": "object",
+          "properties": {
+            "user": {
+              "type": "string",
+              "maxLength": 256
+            },
+            "enterprise": {
+              "type": "string",
+              "maxLength": 256
+            },
+            "elevation": {
+              "type": "string",
+              "maxLength": 256
+            }
+          },
+          "required": ["user", "enterprise", "elevation"],
+          "additionalProperties": false
+        },
+        "objects": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/OperationObject"
+          },
+          "maxItems": 128
+        },
+        "logs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 2048
+          },
+          "maxItems": 200
+        },
+        "progress": {
+          "type": "object",
+          "properties": {
+            "completed": {
+              "type": "number",
+              "minimum": 0
+            },
+            "total": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          },
+          "required": ["completed", "total"],
+          "additionalProperties": false
+        },
+        "result": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "interaction": {
+          "$ref": "#/$defs/OperationInteraction"
+        }
+      },
+      "required": [
+        "scope",
+        "revision",
+        "baseline",
+        "title",
+        "source",
+        "targetLabel",
+        "impact",
+        "current",
+        "proposal",
+        "phase",
+        "allowed",
+        "approval",
+        "objects",
+        "logs"
+      ],
+      "additionalProperties": false
+    },
+    "OperationEvent": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_-]+$"
+        },
+        "instance": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_-]+$"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "kind": {
+          "enum": ["submit", "cancel", "refresh", "answer"]
+        },
+        "values": {
+          "type": "object",
+          "maxProperties": 128,
+          "propertyNames": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[a-zA-Z0-9_-]+$"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/OperationValue"
+          }
+        },
+        "selection": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[a-zA-Z0-9_-]+$"
+          },
+          "maxItems": 128
+        },
+        "secretRefs": {
+          "type": "object",
+          "maxProperties": 128,
+          "propertyNames": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[a-zA-Z0-9_-]+$"
+          },
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[a-zA-Z0-9_-]+$"
+          }
+        },
+        "interactionId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_-]+$"
+        },
+        "answer": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_-]+$"
+        }
+      },
+      "required": [
+        "id",
+        "instance",
+        "revision",
+        "kind",
+        "values",
+        "selection",
+        "secretRefs"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "x-components": [
+    "OperationSurface",
+    "Section",
+    "FieldGroup",
+    "Tabs",
+    "Disclosure",
+    "TextField",
+    "NumberField",
+    "SelectField",
+    "Switch",
+    "Checkbox",
+    "RadioGroup",
+    "PathPicker",
+    "DateTimeField",
+    "SecretField",
+    "ReadonlyRow",
+    "ObjectList",
+    "SelectableTable",
+    "ChangePreview",
+    "Notice",
+    "Progress",
+    "ResultSummary",
+    "LogView",
+    "ActionBar",
+    "ConfirmationPanel",
+    "ApprovalStatus",
+    "StepFlow",
+    "PendingInteraction"
+  ]
+}

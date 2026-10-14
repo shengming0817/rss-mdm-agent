@@ -27,6 +27,7 @@ import {
   ChevronRight,
 } from "@rss-mdm-agent/ui";
 import { copyText } from "./clipboard";
+import { mountNode } from "./operation-ui/NodeView";
 import { RuntimeSurface } from "@rss-mdm-agent/ai-ui-bridge";
 import type { CommandView, TimelineItem } from "@rss-mdm-agent/ai-client";
 import {
@@ -470,6 +471,11 @@ async function copy(text: string) {
         aria-label="会话时间线"
         @scroll="trackScroll"
       >
+        <slot
+          name="operation-cards"
+          :visible="visible"
+          :session-id="s.selected"
+        />
         <article
           v-for="row in rows"
           :key="s.selected + ':' + row.kind + ':' + row.key"
@@ -547,6 +553,7 @@ async function copy(text: string) {
             @answer="c.respond(row.key, $event)"
           />
           <RuntimeSurface
+            :mount="mountNode"
             v-else-if="row.surface && runtime && s.a2ui"
             :key="
               view!.namespace.sessionId + ':' + row.key + ':' + view!.generation

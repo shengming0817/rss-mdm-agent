@@ -1,3 +1,4 @@
+import { generateOperations } from "./generate-operation-contract.mjs";
 import { withPreparation, preparedArtifact } from "./preparation.mjs";
 import { format } from "prettier";
 import ts from "typescript";
@@ -268,6 +269,7 @@ if (formatted.status !== 0)
   throw new Error("Rust generation formatting failed");
 outputs.set("crates/ai-session-contract/src/generated.rs", formatted.stdout);
 outputs.set("crates/ai-session-contract/src/schema.json", schemaText);
+await generateOperations(outputs, compileValidator);
 for (const [path, content] of outputs) {
   const url = new URL("../" + path, import.meta.url);
   if (process.argv.includes("--check")) {

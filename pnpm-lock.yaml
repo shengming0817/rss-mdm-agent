@@ -92,6 +92,9 @@ importers:
 
   apps/desktop:
     dependencies:
+      '@a2ui/web_core':
+        specifier: 0.11.0
+        version: 0.11.0
       '@rss-mdm-agent/ai-client':
         specifier: workspace:*
         version: link:../../packages/ai-client
@@ -305,9 +308,6 @@ importers:
 
   packages/ai-ui-bridge:
     dependencies:
-      '@a2ui/lit':
-        specifier: 0.11.0
-        version: 0.11.0(signal-polyfill@0.2.2)
       '@a2ui/web_core':
         specifier: 0.11.0
         version: 0.11.0
@@ -341,14 +341,6 @@ importers:
         version: 3.5.38(typescript@5.6.2)
 
 packages:
-
-  '@a2ui/lit@0.11.0':
-    resolution: {integrity: sha512-HIJbubc9wKr/3zG1k1tGmZuI4XaAQrBVj7z6BY1fswLL7Q+q/8lwkiR4Pif2mMX88WCPcV2HoriPUk+X0PHnCA==}
-    peerDependencies:
-      '@a2ui/markdown-it': ^0.1.2
-    peerDependenciesMeta:
-      '@a2ui/markdown-it':
-        optional: true
 
   '@a2ui/web_core@0.11.0':
     resolution: {integrity: sha512-HIrisBO5yAsNb1NFQRRSVLLNWaPlDu7LShwZ/j1qRUWT/W/J7g8dJFEKbq0/nUofI7ZiieDlDXQtrJmwo24Nzw==}
@@ -1547,9 +1539,6 @@ packages:
     resolution: {integrity: sha512-D+ORp73rTmvGVfq01+4uBmgVZqrPqU9N9xCZCfexaCDlVk0WQsaqid1dGsi6eScJuHt4Cp8s1i5/4CsecxFTKQ==}
     cpu: [x64]
     os: [win32]
-
-  '@lit-labs/signals@0.3.0':
-    resolution: {integrity: sha512-PfB5FLtorVfkhwTWXOPNT/rvrVdSDY8siwPyR17ztrViRbMqxy1TQBcHqJoA4303QT8yXPGxYtGKJGj7fEfEwg==}
 
   '@lit-labs/ssr-dom-shim@1.6.0':
     resolution: {integrity: sha512-VHb0ALPMTlgKjM6yIxxoQNnpKyUKLD04VzeQdsiXkMqkvYlAHxq9glGLmgbb889/1GsohSOAjvQYoiBppXFqrQ==}
@@ -3218,14 +3207,6 @@ packages:
     resolution: {integrity: sha512-bzyZ1e88w9O1iNJbKnOlvYTrWPDl46O1bG0D3XInv+9tkPrxrN8jUUTiFlDkkmKWgn1M6CfIA13SuGqOa9Korw==}
     engines: {node: '>=14'}
 
-  signal-polyfill@0.2.2:
-    resolution: {integrity: sha512-p63Y4Er5/eMQ9RHg0M0Y64NlsQKpiu6MDdhBXpyywRuWiPywhJTpKJ1iB5K2hJEbFZ0BnDS7ZkJ+0AfTuL37Rg==}
-
-  signal-utils@0.21.1:
-    resolution: {integrity: sha512-i9cdLSvVH4j8ql8mz2lyrA93xL499P8wEbIev3ldSriXeUwqh+wM4Q5VPhIZ19gPtIS4BOopJuKB8l1+wH9LCg==}
-    peerDependencies:
-      signal-polyfill: ^0.2.0
-
   smart-buffer@4.2.0:
     resolution: {integrity: sha512-94hK0Hh8rPqQl2xXc3HsaBoOXKV20MToPkcXvwbISWLEs+64sBq5kFgn2kJDHb1Pry9yrP0dxrCI9RRci7RXKg==}
     engines: {node: '>= 6.0.0', npm: '>= 3.0.0'}
@@ -3603,17 +3584,6 @@ packages:
     resolution: {integrity: sha512-v5l/aFXZQeai4awLbOpSoHecE9UiMrnfx75tEXLjNonXVARxQ5mOeipTjROUchszUNCqnE+hqAMujRsRHsut2Q==}
 
 snapshots:
-
-  '@a2ui/lit@0.11.0(signal-polyfill@0.2.2)':
-    dependencies:
-      '@a2ui/web_core': 0.11.0
-      '@lit-labs/signals': 0.3.0
-      '@lit/context': 1.1.6
-      lit: 3.3.3
-      signal-utils: 0.21.1(signal-polyfill@0.2.2)
-      zod: 3.25.76
-    transitivePeerDependencies:
-      - signal-polyfill
 
   '@a2ui/web_core@0.11.0':
     dependencies:
@@ -4633,11 +4603,6 @@ snapshots:
 
   '@koromix/koffi-win32-x64@3.3.0':
     optional: true
-
-  '@lit-labs/signals@0.3.0':
-    dependencies:
-      lit: 3.3.3
-      signal-polyfill: 0.2.2
 
   '@lit-labs/ssr-dom-shim@1.6.0': {}
 
@@ -6399,12 +6364,6 @@ snapshots:
   siginfo@2.0.0: {}
 
   signal-exit@4.1.0: {}
-
-  signal-polyfill@0.2.2: {}
-
-  signal-utils@0.21.1(signal-polyfill@0.2.2):
-    dependencies:
-      signal-polyfill: 0.2.2
 
   smart-buffer@4.2.0: {}
 
