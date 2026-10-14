@@ -17,7 +17,7 @@ export function operationFixture(
   template: OperationPresentation["template"] = "SettingsForm",
 ) {
   const presentation: OperationPresentation = {
-    version: 1,
+    version: 2,
     template,
     layout: template === "ChangeReview" ? "disclosure" : "tabs",
     selection: template === "ObjectActions" ? "single" : "multiple",
@@ -198,14 +198,15 @@ export function operationFixture(
         }
       : {}),
   };
-  const listeners = new Set<(snapshot: OperationSnapshot) => void>();
+  const listeners = new Set<Parameters<OperationHostPort["observe"]>[1]>();
   const secrets = new Map<string, { field: string; value: string }>();
   const events: OperationEvent[] = [];
   let loseReceipt = false;
   const read = () => structuredClone(snapshot);
   const publish = () => {
     snapshot.revision++;
-    for (const listener of listeners) listener(read());
+    for (const listener of listeners)
+      listener({ snapshot: read(), kind: "projection" });
   };
   const host: OperationHostPort = {
     async read() {

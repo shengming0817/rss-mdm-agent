@@ -131,6 +131,32 @@ pub struct PolicyChoice {
     /// Only Resource fields whose Policy source is Input.
     pub parameters: std::collections::BTreeMap<String, serde_json::Value>,
 }
+/// Definite rejection before submission; transport and storage ambiguity are never this type.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum OperationRejection {
+    /// Complete parameters did not satisfy the trusted schema.
+    InvalidParameters,
+    /// The displayed preparation or policy changed.
+    Conflict,
+    /// The original preparation or context expired.
+    Expired,
+    /// Current identity or authority does not permit this action.
+    Denied,
+    /// The required capability is unavailable.
+    Unsupported,
+}
+/// Authenticated desktop submission of the currently displayed policy parameters.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PolicySubmission {
+    /// Original preparation identity; retained after response loss.
+    pub request: RequestId,
+    /// Exact displayed journal revision.
+    pub revision: u64,
+    /// Complete current values, never inferred from a model response.
+    pub parameters: std::collections::BTreeMap<String, serde_json::Value>,
+}
 /// One preparation reference, before or after a signed Offer has arrived.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(
@@ -310,6 +336,8 @@ pub struct BackendStepSummary {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum BackendRequestState {
+    /// Editable AI operation prepared without consent or dispatch.
+    Draft,
     /// A bounded native observation was collected; no execution attempt or side effect exists.
     Observed,
     /// Risk-two AI action awaiting its sole explicit product confirmation.
@@ -344,7 +372,7 @@ pub enum BackendRequestFailure {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct BackendRequest {
-    /// The sole immutable choice and appended backend association.
+    /// The sole choice, frozen on submission, and appended backend association.
     pub action: PreparedAction,
     /// OS-authenticated original trigger; never accepted from an IPC request body.
     pub trigger: crate::BackendTrigger,
@@ -361,6 +389,34 @@ pub struct BackendRequest {
 }
 
 impl BackendRequest {
+    /// The only parameter-changing transition: atomically freeze an unsubmitted draft.
+    pub fn finalizes_draft(&self, next: &Self) -> bool {
+        if self.state != BackendRequestState::Draft || next.state != BackendRequestState::Ready {
+            return false;
+        }
+        let mut frozen = self.action.clone();
+        match (&mut frozen, &next.action) {
+            (
+                PreparedAction::Policy {
+                    choice,
+                    run_id: None,
+                    offer: None,
+                    ..
+                },
+                PreparedAction::Policy {
+                    choice: final_choice,
+                    run_id: None,
+                    offer: None,
+                    ..
+                },
+            ) => {
+                choice.parameters = final_choice.parameters.clone();
+                frozen.same_choice(&next.action)
+            }
+            _ => false,
+        }
+    }
+
     /// Actual native login bound to the original employee action.
     pub fn trigger_os_session(&self) -> Option<&Id> {
         match &self.trigger {
@@ -389,6 +445,21 @@ impl BackendRequest {
             ) {
                 return false;
             }
+        }
+        if self.state == S::Draft {
+            return matches!(
+                &self.action,
+                PreparedAction::Policy {
+                    run_id: None,
+                    offer: None,
+                    ..
+                }
+            ) && matches!(self.trigger, crate::BackendTrigger::Ai { .. })
+                && self.confirmation.is_none()
+                && self.risk.as_ref().is_some_and(|risk| {
+                    matches!(risk.level, RiskLevel::One | RiskLevel::Two)
+                        && risk.expires_at_unix_ms > 0
+                });
         }
         let terminal = matches!(self.state, S::Cancelled | S::Failed);
         match &self.trigger {

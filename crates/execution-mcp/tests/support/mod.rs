@@ -125,6 +125,18 @@ impl ExecutionServicePort for TestService {
             Err(ServiceError::Unbound)
         }
     }
+    async fn prepare_operation(
+        &self,
+        _: OperationProposal,
+        _: CancellationToken,
+    ) -> Result<execution_contract::BackendRequest, ServiceError> {
+        self.authorize()?;
+        tokio::time::sleep(Duration::from_millis(
+            self.submit_delay_ms.load(Ordering::SeqCst) as u64,
+        ))
+        .await;
+        Err(ServiceError::Denied)
+    }
     async fn policy_tools(
         &self,
         _: CancellationToken,

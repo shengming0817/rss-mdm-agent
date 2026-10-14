@@ -1,7 +1,7 @@
 import { mount, flushPromises } from "@vue/test-utils";
 import { expect, it, vi } from "vitest";
 import { computed, shallowRef } from "vue";
-import ExecutionActivity from "./ExecutionActivity.vue";
+import ExecutionActivity from "./operation-ui/OperationActivity.vue";
 import { createAssistant } from "./controller";
 import { taskPresentation } from "./execution-presentation";
 import { copyText } from "./clipboard";
@@ -12,6 +12,25 @@ import type {
   ExecutionTaskDetails,
 } from "@rss-mdm-agent/execution-bindings/task-details";
 
+function assistant() {
+  const c = createAssistant(undefined, () => "id");
+  return {
+    ...c,
+    view: computed(
+      () =>
+        ({
+          generation: "generation-1",
+          namespace: {
+            authorityId: "a",
+            tenantId: "t",
+            principalId: "p",
+            sessionId: "session",
+          },
+        }) as NonNullable<typeof c.view.value>,
+    ),
+  };
+}
+
 function task(
   phase: ExecutionTaskDetails["status"]["phase"],
   assessment: ExecutionTaskDetails["status"]["assessment"] = null,
@@ -19,6 +38,10 @@ function task(
   const value = structuredClone(
     fixtures.outcomeUnknown,
   ) as ExecutionTaskDetails;
+  value.action.initiator = {
+    kind: "backend",
+    trigger: structuredClone(fixtures.proposed.trigger),
+  } as ExecutionTaskDetails["action"]["initiator"];
   value.status.phase = phase;
   value.status.assessment = assessment;
   return value;
@@ -43,8 +66,8 @@ it("does not infer success from cancellation requests, process exit or software 
   expect(taskPresentation(value).cancel).toContain("已请求取消");
 });
 
-it("refreshes a card and its open drawer from one authorized snapshot and retains it on read failure", async () => {
-  const c = createAssistant(undefined, () => "id");
+it("refreshes a card and its open drawer from one authorized snapshot and invalidates actions on read failure", async () => {
+  const c = assistant();
   c.state.selected = "session";
   const read = vi
     .spyOn(c, "executionDetails")
@@ -61,6 +84,10 @@ it("refreshes a card and its open drawer from one authorized snapshot and retain
   });
   try {
     await flushPromises();
+    await vi.waitFor(
+      () => expect(wrapper.find(".operation-card").exists()).toBe(true),
+      { timeout: 5000 },
+    );
     await wrapper
       .findAll("button")
       .find((b) => b.text() === "查看设备操作")!
@@ -72,19 +99,19 @@ it("refreshes a card and its open drawer from one authorized snapshot and retain
     });
     await wrapper
       .findAll("button")
-      .find((b) => b.text() === "刷新执行状态")!
+      .find((b) => b.text() === "查询原任务")!
       .trigger("click");
     await flushPromises();
-    expect(wrapper.get(".task-status").text()).toBe("已核实符合预期");
+    expect(wrapper.text()).toContain("已核实符合预期");
     expect(wrapper.get(".execution-phase").text()).toBe("执行结果已核实");
     read.mockRejectedValueOnce(new Error("offline"));
     await wrapper
       .findAll("button")
-      .find((b) => b.text() === "刷新执行状态")!
+      .find((b) => b.text() === "查询原任务")!
       .trigger("click");
     await flushPromises();
-    expect(wrapper.get(".task-status").text()).toBe("已核实符合预期");
-    expect(wrapper.text()).toContain("当前显示上次已读取记录");
+    expect(wrapper.text()).toContain("结果未知");
+    expect(wrapper.text()).toContain("当前内容不能作为执行依据");
     expect(read.mock.calls.every(([id]) => id === "tool")).toBe(true);
     await wrapper.setProps({ visible: false });
     expect(wrapper.find("dialog").exists()).toBe(false);
@@ -95,7 +122,7 @@ it("refreshes a card and its open drawer from one authorized snapshot and retain
 });
 
 it("discards a late task read after the view has been hidden", async () => {
-  const c = createAssistant(undefined, () => "id");
+  const c = assistant();
   let finish!: (value: BackendTaskView) => void;
   vi.spyOn(c, "executionDetails").mockImplementation(
     () =>
@@ -125,10 +152,11 @@ it("discards a late task read after the view has been hidden", async () => {
 });
 
 it("keeps one pending task read while conversation snapshots stream in the same generation", async () => {
-  const c = createAssistant(undefined, () => "id");
+  const c = assistant();
   c.state.selected = "session";
   const snapshot = shallowRef({
     generation: "generation-1",
+    namespace: c.view.value!.namespace,
   } as NonNullable<typeof c.view.value>);
   const controller = { ...c, view: computed(() => snapshot.value) };
   let finish!: (value: BackendTaskView) => void;
@@ -175,7 +203,7 @@ it("reports clipboard rejection without a native fallback or clipboard read", as
 });
 
 it("keeps preparation actions and revocation visible in the modern task card", async () => {
-  const c = createAssistant(undefined, () => "id");
+  const c = assistant();
   const request = offer();
   const read = vi.spyOn(c, "executionDetails").mockResolvedValue({
     kind: "pending",
@@ -186,7 +214,10 @@ it("keeps preparation actions and revocation visible in the modern task card", a
       risk: null,
       confirmation: null,
       failure: null,
-      trigger: { kind: "automatic" },
+      trigger: structuredClone(fixtures.proposed.trigger) as Extract<
+        BackendTaskView,
+        { kind: "pending" }
+      >["value"]["trigger"],
     },
   });
   const confirm = vi
@@ -204,12 +235,13 @@ it("keeps preparation actions and revocation visible in the modern task card", a
   });
   try {
     await flushPromises();
-    expect(wrapper.text()).toContain("安装");
+    expect(wrapper.text()).toContain("install");
     expect(wrapper.text()).toContain("固定软件 1.0");
     await wrapper
       .findAll("button")
-      .find((b) => b.text() === "确认上述操作")!
+      .find((b) => b.text() === "确认操作")!
       .trigger("click");
+    await flushPromises();
     expect(confirm).toHaveBeenCalledWith(request);
     read.mockResolvedValueOnce({
       kind: "pending",
@@ -220,16 +252,24 @@ it("keeps preparation actions and revocation visible in the modern task card", a
         risk: null,
         confirmation: null,
         failure: "revoked",
-        trigger: { kind: "automatic" },
+        trigger: structuredClone(fixtures.proposed.trigger) as Extract<
+          BackendTaskView,
+          { kind: "pending" }
+        >["value"]["trigger"],
       },
     });
     await wrapper
       .findAll("button")
-      .find((b) => b.text() === "刷新状态")!
+      .find((b) => b.text() === "查询原任务")!
       .trigger("click");
     await flushPromises();
-    expect(wrapper.text()).toContain("后台授权已撤销");
-    expect(wrapper.text()).not.toContain("确认上述操作");
+    expect(wrapper.text()).toContain("revoked");
+    expect(
+      wrapper
+        .findAll("button")
+        .find((b) => b.text() === "确认操作")!
+        .attributes("disabled"),
+    ).toBeDefined();
     expect(wrapper.text()).not.toContain("撤销请求");
   } finally {
     wrapper.unmount();
@@ -238,7 +278,7 @@ it("keeps preparation actions and revocation visible in the modern task card", a
 });
 
 it("opens execution details only through the parent selection without requerying or owning a second toggle", async () => {
-  const c = createAssistant(undefined, () => "id");
+  const c = assistant();
   c.state.selected = "session";
   const read = vi
     .spyOn(c, "executionDetails")

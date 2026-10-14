@@ -138,6 +138,32 @@ fn uuid(value: &str) -> Result<Uuid, Error> {
     }
     Ok(parsed)
 }
+// Generic operation cards have no secret reference owner. Reject unresolved schema
+// references as well: they cannot prove that nested values are safe to persist/display.
+fn operation_parameters_supported(directory: &wire::SelfServiceDirectoryItem) -> Result<(), Error> {
+    fn unsafe_schema(value: &serde_json::Value) -> bool {
+        match value {
+            serde_json::Value::Object(fields) => {
+                fields.contains_key("$ref")
+                    || fields.contains_key("$dynamicRef")
+                    || fields.get("writeOnly") == Some(&serde_json::Value::Bool(true))
+                    || fields.get("format").and_then(|v| v.as_str()) == Some("password")
+                    || fields.values().any(unsafe_schema)
+            }
+            serde_json::Value::Array(values) => values.iter().any(unsafe_schema),
+            _ => false,
+        }
+    }
+    if let wire::SelfServiceTask::Script {
+        parameter_schema, ..
+    } = &directory.task
+    {
+        if unsafe_schema(parameter_schema) {
+            return Err(Error::Unsupported);
+        }
+    }
+    Ok(())
+}
 fn parameters(
     directory: &wire::SelfServiceDirectoryItem,
     inputs: &BTreeMap<String, serde_json::Value>,
@@ -412,7 +438,43 @@ impl<S: IdentityProvider> DeviceService<S> {
                 continue;
             }
             let result = self.policy_command(&command, commands).await;
+            let operation_submit = match command.request.as_operation() {
+                Some(Request::SubmitPolicy { input, .. }) => self
+                    .core
+                    .app
+                    .backend_request(&self.core.caller(), &input.request)
+                    .is_ok_and(|record| {
+                        record.is_none_or(|r| r.state == BackendRequestState::Draft)
+                    }),
+                _ => false,
+            };
             let reply = match result {
+                Err(error)
+                    if operation_submit
+                        && matches!(
+                            error,
+                            Error::Protocol
+                                | Error::Conflict
+                                | Error::Expired
+                                | Error::Identity
+                                | Error::Denied
+                                | Error::Unsupported
+                        ) =>
+                {
+                    Reply::OperationRejected {
+                        reason: match error {
+                            Error::Protocol => {
+                                execution_contract::OperationRejection::InvalidParameters
+                            }
+                            Error::Conflict => execution_contract::OperationRejection::Conflict,
+                            Error::Expired => execution_contract::OperationRejection::Expired,
+                            Error::Unsupported => {
+                                execution_contract::OperationRejection::Unsupported
+                            }
+                            _ => execution_contract::OperationRejection::Denied,
+                        },
+                    }
+                }
                 Ok(reply) => reply,
                 Err(Error::Unavailable | Error::Capacity | Error::Expired) => Reply::Unavailable,
                 Err(_) => Reply::Rejected,
@@ -562,6 +624,8 @@ impl<S: IdentityProvider> DeviceService<S> {
         let expected = match request {
             Request::PolicyDirectory { context, .. }
             | Request::InvokePolicy { context, .. }
+            | Request::PreparePolicy { context, .. }
+            | Request::SubmitPolicy { context, .. }
             | Request::ConfirmPolicy { context, .. }
             | Request::PolicyStatus { context, .. } => context,
             _ => return Err(Error::Protocol),
@@ -582,7 +646,12 @@ impl<S: IdentityProvider> DeviceService<S> {
                         .await?,
                 }
             }
-            Request::InvokePolicy { choice, origin, .. } => {
+            Request::InvokePolicy { choice, origin, .. }
+            | Request::PreparePolicy { choice, origin, .. } => {
+                let draft = matches!(request, Request::PreparePolicy { .. });
+                if draft && !matches!(origin, ClientOrigin::Ai { .. }) {
+                    return Err(Error::Denied);
+                }
                 uuid(choice.request.as_str())?;
                 let caller = self.core.caller();
                 let bound_trigger = trigger(&self.core, command, origin)?;
@@ -598,7 +667,10 @@ impl<S: IdentityProvider> DeviceService<S> {
                     else {
                         return Err(Error::Conflict);
                     };
-                    if original != choice || previous.trigger != bound_trigger {
+                    if original != choice
+                        || previous.trigger != bound_trigger
+                        || (!draft && previous.state == BackendRequestState::Draft)
+                    {
                         return Err(Error::Conflict);
                     }
                     self.core.policy_context(&previous)?;
@@ -633,7 +705,25 @@ impl<S: IdentityProvider> DeviceService<S> {
                     {
                         return Err(Error::Denied);
                     }
-                    parameters(&directory, &choice.parameters)?;
+                    if draft {
+                        operation_parameters_supported(&directory)?;
+                    }
+                    if !draft {
+                        parameters(&directory, &choice.parameters)?;
+                    } else if choice.parameters.keys().any(|key| {
+                        let wire::SelfServiceTask::Script {
+                            parameter_sources, ..
+                        } = &directory.task
+                        else {
+                            return true;
+                        };
+                        !matches!(
+                            parameter_sources.get(key),
+                            Some(wire::ScriptParameterSource::Input {})
+                        )
+                    }) {
+                        return Err(Error::Protocol);
+                    }
                     let now = self.core.host.clock.millis()?;
                     let (access, until) = match &directory.subject {
                         wire::SelfServiceSubject::Device {} => {
@@ -685,7 +775,9 @@ impl<S: IdentityProvider> DeviceService<S> {
                         risk: risk.clone(),
                         confirmation: None,
                         revision: 1,
-                        state: if risk.is_some_and(|r| r.level == RiskLevel::Two) {
+                        state: if draft {
+                            BackendRequestState::Draft
+                        } else if risk.is_some_and(|r| r.level == RiskLevel::Two) {
                             BackendRequestState::AwaitingConfirmation
                         } else {
                             BackendRequestState::Ready
@@ -702,6 +794,140 @@ impl<S: IdentityProvider> DeviceService<S> {
                         .map_err(map_app_error)?;
                     Reply::PolicyRequest {
                         value: Box::new(self.send_policy(record, &bound, commands).await?),
+                    }
+                }
+            }
+            Request::SubmitPolicy { input, .. } => {
+                let previous = self
+                    .core
+                    .app
+                    .backend_request(&self.core.caller(), &input.request)
+                    .map_err(map_app_error)?
+                    .ok_or(Error::Denied)?;
+                if trigger_subject(&previous.trigger) != Some(command.subject.as_str())
+                    || previous.trigger_os_session() != command.binding.as_ref()
+                {
+                    return Err(Error::Denied);
+                }
+                self.core.current_policy_access(&previous)?;
+                let PreparedAction::Policy {
+                    choice, directory, ..
+                } = &previous.action
+                else {
+                    return Err(Error::Denied);
+                };
+                if previous.state != BackendRequestState::Draft {
+                    if choice.parameters != input.parameters {
+                        return Ok(Reply::OperationRejected {
+                            reason: execution_contract::OperationRejection::Conflict,
+                        });
+                    }
+                    Reply::PolicyRequest {
+                        value: Box::new(previous),
+                    }
+                } else {
+                    if previous.revision != input.revision {
+                        return Err(Error::Conflict);
+                    }
+                    let origin = match &previous.trigger {
+                        BackendTrigger::Ai {
+                            config,
+                            conversation,
+                            tool_call,
+                            context,
+                            ..
+                        } => ClientOrigin::Ai {
+                            config: config.clone(),
+                            conversation: conversation.clone(),
+                            tool_call: tool_call.clone(),
+                            context: context.clone(),
+                        },
+                        _ => return Err(Error::Denied),
+                    };
+                    let ClientOrigin::Ai {
+                        context: original_context,
+                        ..
+                    } = &origin
+                    else {
+                        return Err(Error::Denied);
+                    };
+                    if original_context != &bound.context {
+                        return Err(Error::Identity);
+                    }
+                    self.core.require_origin_context(
+                        &command.subject,
+                        &bound.scope.binding,
+                        &origin,
+                    )?;
+                    let mut after = None;
+                    let mut current = None;
+                    for _ in 0..16 {
+                        let page = self
+                            .policy_directory(&bound, &origin, after.take(), commands)
+                            .await?;
+                        current = page
+                            .items
+                            .into_iter()
+                            .find(|item| item.policy_id == directory.policy_id);
+                        if current.is_some() || page.next_cursor.is_none() {
+                            break;
+                        }
+                        after = page
+                            .next_cursor
+                            .map(|id| plan::id(id.to_string()))
+                            .transpose()?;
+                    }
+                    let current = current.ok_or(Error::Denied)?;
+                    if serde_json::to_value(&current).map_err(|_| Error::Protocol)?
+                        != serde_json::to_value(directory).map_err(|_| Error::Protocol)?
+                        || !current.self_service.published
+                        || !current.self_service.allow_ai
+                    {
+                        return Err(Error::Conflict);
+                    }
+                    operation_parameters_supported(&current)?;
+                    parameters(&current, &input.parameters)?;
+                    // Network waits can revoke the context; recheck before the atomic freeze.
+                    self.core.context(command)?;
+                    self.core.require_origin_context(
+                        &command.subject,
+                        &bound.scope.binding,
+                        &origin,
+                    )?;
+                    self.core.current_policy_access(&previous)?;
+                    let mut next = previous.clone();
+                    next.revision += 1;
+                    next.state = BackendRequestState::Ready;
+                    if let PreparedAction::Policy { choice, .. } = &mut next.action {
+                        choice.parameters = input.parameters.clone();
+                    }
+                    if next
+                        .risk
+                        .as_ref()
+                        .is_some_and(|risk| risk.level == RiskLevel::Two)
+                    {
+                        let BackendTrigger::Ai { os_session, .. } = &next.trigger else {
+                            return Err(Error::Denied);
+                        };
+                        let now = self.core.host.clock.millis()?;
+                        next.confirmation = Some(execution_contract::BackendConfirmation {
+                            os_session: os_session.clone(),
+                            confirmed_at_unix_ms: now,
+                            expires_at_unix_ms: next
+                                .action
+                                .expires_at_unix_ms()
+                                .min(now.saturating_add(60_000)),
+                        });
+                    }
+                    {
+                        let _fence = self.core.fences.admit(&bound.scope, bound.epoch)?;
+                        self.core
+                            .app
+                            .record_backend_request(&self.core.caller(), Some(&previous), &next)
+                            .map_err(map_app_error)?;
+                    }
+                    Reply::PolicyRequest {
+                        value: Box::new(self.send_policy(next, &bound, commands).await?),
                     }
                 }
             }
@@ -791,7 +1017,8 @@ impl<S: IdentityProvider> DeviceService<S> {
                     Reply::PolicyRequest {
                         value: Box::new(self.send_policy(previous, &bound, commands).await?),
                     }
-                } else if previous.state == BackendRequestState::Cancelled
+                } else if previous.state == BackendRequestState::Draft
+                    || previous.state == BackendRequestState::Cancelled
                     || (previous.state == BackendRequestState::Failed
                         && previous.failure != Some(BackendRequestFailure::Expired))
                 {

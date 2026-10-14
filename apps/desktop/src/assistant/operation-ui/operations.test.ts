@@ -1,9 +1,9 @@
+import { createOperationSurface } from "@rss-mdm-agent/ai-ui-bridge/surface";
 import { describe, it, expect } from "vitest";
 import { mount, flushPromises } from "@vue/test-utils";
 import {
   createOperationController,
   OperationDrafts,
-  createOperationSurface,
 } from "@rss-mdm-agent/ai-ui-bridge";
 import {
   operationPresentation,

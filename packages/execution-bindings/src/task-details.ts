@@ -110,7 +110,7 @@ export type StopOutcome = "acknowledged" | "failed";
  */
 export interface BackendRequest {
   /**
-   * The sole immutable choice and appended backend association.
+   * The sole choice, frozen on submission, and appended backend association.
    */
   action:
     | {
@@ -181,6 +181,7 @@ export interface BackendRequest {
    * Preparation state, separate from execution lifecycle.
    */
   state:
+    | "draft"
     | "observed"
     | "awaitingConfirmation"
     | "ready"

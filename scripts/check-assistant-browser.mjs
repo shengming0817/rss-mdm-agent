@@ -798,9 +798,13 @@ try {
   await page.keyboard.press("Escape");
   const activity = page.locator(".execution-activity");
   fixture.selectScenario("proposed");
-  await activity.getByRole("button", { name: "刷新状态", exact: true }).click();
+  await navigate("软件中心");
+  await navigate("AI 助手");
   await activity
-    .getByRole("button", { name: "确认上述操作", exact: true })
+    .getByRole("button", { name: "查询原任务", exact: true })
+    .click();
+  await activity
+    .getByRole("button", { name: "确认操作", exact: true })
     .waitFor();
   const pending = fixture.details(fixture.execution.offer.request);
   assert.equal(pending.value.trigger.conversation, sessionId);
@@ -810,20 +814,24 @@ try {
       (response) =>
         response.url().endsWith("/__fixture/confirm") && response.ok(),
     ),
-    activity.getByRole("button", { name: "确认上述操作", exact: true }).click(),
+    activity.getByRole("button", { name: "确认操作", exact: true }).click(),
   ]);
   assert.equal(
     fixture.details(fixture.execution.offer.request).kind,
     "execution",
   );
   fixture.selectScenario("proposed");
-  await activity.getByRole("button", { name: "刷新状态", exact: true }).click();
+  await navigate("软件中心");
+  await navigate("AI 助手");
+  await activity
+    .getByRole("button", { name: "查询原任务", exact: true })
+    .click();
   await Promise.all([
     page.waitForResponse(
       (response) =>
         response.url().endsWith("/__fixture/cancel") && response.ok(),
     ),
-    activity.getByRole("button", { name: "撤销请求", exact: true }).click(),
+    activity.getByRole("button", { name: "取消操作", exact: true }).click(),
   ]);
   assert.equal(
     fixture.details(fixture.execution.offer.request).value.status
@@ -834,7 +842,9 @@ try {
     fixture.details(fixture.execution.offer.request).value.status.phase,
     "running",
   );
-  await activity.getByRole("button", { name: "刷新状态", exact: true }).click();
+  await activity
+    .getByRole("button", { name: "查询原任务", exact: true })
+    .click();
   fixture.setExecution("approvalRequired");
   const formatted = page
     .locator(".markdown-message")

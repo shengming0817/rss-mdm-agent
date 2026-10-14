@@ -11,7 +11,7 @@ mod transport;
 pub use config::McpLimits;
 pub use model::{
     CancelDisposition, CancelResult, CapabilityState, CapabilityView, OperationPhase,
-    OperationRequest, OperationStatus, ServiceError,
+    OperationProposal, OperationRequest, OperationScene, OperationStatus, ServiceError,
 };
 pub use port::ExecutionServicePort;
 

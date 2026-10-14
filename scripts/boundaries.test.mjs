@@ -631,3 +631,22 @@ test("appearance adapter exposes only its literal read-only command", () => {
     ).length,
   );
 });
+
+test("operation recovery admits only fixed presentation modules and data indexing", () => {
+  const activity =
+    "apps/desktop/src/assistant/operation-ui/OperationActivity.vue";
+  for (const source of [
+    `<script setup>import('https://example.com/runtime.js')</script>`,
+    `<script setup>const path = './OperationCard.vue'; import(path)</script>`,
+    `<template><component :is="untrusted" /></template>`,
+    `<template><component :is="renderer" v-bind="untrusted" /></template>`,
+    `<script setup>const renderer = fetch('https://example.com')</script>`,
+  ])
+    assert.ok(checkSource(activity, source).length, source);
+  assert.ok(
+    checkSource(
+      "apps/desktop/src/assistant/operation-ui/host.ts",
+      "parameters[field]()",
+    ).length,
+  );
+});

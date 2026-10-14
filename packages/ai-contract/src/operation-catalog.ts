@@ -1,6 +1,6 @@
 // @generated from operation.schema.json and fixed upstream catalog.
 export const operationCatalog = {
-  catalogId: "urn:rss-mdm-agent:a2ui:operation:1",
+  catalogId: "urn:rss-mdm-agent:a2ui:operation:2",
   components: {
     Text: {
       type: "object",

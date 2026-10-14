@@ -6,6 +6,7 @@
     "allow-self-service-policy-directory",
     "allow-self-service-policy-invoke",
     "allow-self-service-policy-confirm",
+    "allow-ai-operation-submit",
     "allow-self-service-policy-status",
     "allow-self-service-observe-software",
     "allow-self-service-snapshot",

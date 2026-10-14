@@ -13,6 +13,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./surface": {
+      "types": "./dist/operations/surface.d.ts",
+      "import": "./dist/operations/surface.js"
     }
   },
   "scripts": {

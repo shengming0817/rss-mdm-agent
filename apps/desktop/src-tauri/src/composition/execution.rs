@@ -256,6 +256,98 @@ impl ExecutionHandle {
             _ => Err(bad(Error::OutcomeUnknown)),
         }
     }
+    async fn policy_call(
+        &self,
+        name: &str,
+        args: serde_json::Map<String, serde_json::Value>,
+        draft: bool,
+    ) -> Result<BackendRequest, mcp::ServiceError> {
+        let ClientOrigin::Ai { tool_call, .. } = &self.origin else {
+            return Err(mcp::ServiceError::Denied);
+        };
+        let request = RequestId::new(
+            uuid::Uuid::parse_str(tool_call.as_str())
+                .map_err(|_| mcp::ServiceError::InvalidInput)?
+                .to_string(),
+        )
+        .map_err(|_| mcp::ServiceError::InvalidInput)?;
+        let mut after = None;
+        for _ in 0..16 {
+            let page = self
+                .policy_directory(ui::PolicyDirectoryQuery { after })
+                .await
+                .map_err(|_| mcp::ServiceError::Unavailable)?;
+            for item in page.items {
+                if mcp::policy_tool_name(&item) == name {
+                    mcp::policy_tool(&item)?;
+                    let choice = PolicyChoice {
+                        request,
+                        policy_id: Id::new(item.policy_id.to_string())
+                            .map_err(|_| mcp::ServiceError::InvalidInput)?,
+                        policy_revision: item.policy_revision,
+                        policy_version: Id::new(item.policy_version.to_string())
+                            .map_err(|_| mcp::ServiceError::InvalidInput)?,
+                        parameters: args.into_iter().collect(),
+                    };
+                    return if draft {
+                        self.prepare_policy(choice).await
+                    } else {
+                        self.invoke_policy(choice).await
+                    }
+                    .map_err(|_| mcp::ServiceError::OutcomeUnknown);
+                }
+            }
+            after = page
+                .next_cursor
+                .map(|id| Id::new(id.to_string()))
+                .transpose()
+                .map_err(|_| mcp::ServiceError::InvalidInput)?;
+            if after.is_none() {
+                break;
+            }
+        }
+        Err(mcp::ServiceError::Denied)
+    }
+    pub async fn prepare_policy(&self, choice: PolicyChoice) -> ui::Result<BackendRequest> {
+        match self
+            .request(Request::PreparePolicy {
+                context: self.context_ref()?,
+                choice,
+                origin: self.origin.clone(),
+            })
+            .await
+            .map_err(bad)?
+        {
+            Reply::PolicyRequest { value } => Ok(*value),
+            _ => Err(bad(Error::OutcomeUnknown)),
+        }
+    }
+    pub async fn submit_policy(
+        &self,
+        input: execution_contract::PolicySubmission,
+    ) -> ui::Result<BackendRequest> {
+        match self
+            .request(Request::SubmitPolicy {
+                context: self.context_ref()?,
+                input,
+            })
+            .await
+            .map_err(bad)?
+        {
+            Reply::PolicyRequest { value } => Ok(*value),
+            Reply::OperationRejected { reason } => Err(ui::error(
+                match reason {
+                    OperationRejection::InvalidParameters => "operation_invalid_parameters",
+                    OperationRejection::Conflict => "operation_conflict",
+                    OperationRejection::Expired => "operation_expired",
+                    OperationRejection::Denied => "operation_denied",
+                    OperationRejection::Unsupported => "operation_unsupported",
+                },
+                "操作未提交，请核对原准备和当前参数",
+            )),
+            _ => Err(bad(Error::OutcomeUnknown)),
+        }
+    }
     pub async fn confirm_policy(&self, input: ui::ActionRef) -> ui::Result<BackendRequest> {
         match self
             .request(Request::ConfirmPolicy {
@@ -513,49 +605,16 @@ impl mcp::ExecutionServicePort for ExecutionHandle {
         args: serde_json::Map<String, serde_json::Value>,
         _: CancellationToken,
     ) -> Result<BackendRequest, mcp::ServiceError> {
-        let ClientOrigin::Ai { tool_call, .. } = &self.origin else {
-            return Err(mcp::ServiceError::Denied);
-        };
-        let request = RequestId::new(
-            uuid::Uuid::parse_str(tool_call.as_str())
-                .map_err(|_| mcp::ServiceError::InvalidInput)?
-                .to_string(),
-        )
-        .map_err(|_| mcp::ServiceError::InvalidInput)?;
-        let mut after = None;
-        for _ in 0..16 {
-            let page = self
-                .policy_directory(ui::PolicyDirectoryQuery { after })
-                .await
-                .map_err(|_| mcp::ServiceError::Unavailable)?;
-            for item in page.items {
-                if mcp::policy_tool_name(&item) == name {
-                    mcp::policy_tool(&item)?;
-                    return self
-                        .invoke_policy(PolicyChoice {
-                            request,
-                            policy_id: Id::new(item.policy_id.to_string())
-                                .map_err(|_| mcp::ServiceError::InvalidInput)?,
-                            policy_revision: item.policy_revision,
-                            policy_version: Id::new(item.policy_version.to_string())
-                                .map_err(|_| mcp::ServiceError::InvalidInput)?,
-                            parameters: args.into_iter().collect(),
-                        })
-                        .await
-                        .map_err(|_| mcp::ServiceError::OutcomeUnknown);
-                }
-            }
-            after = page
-                .next_cursor
-                .map(|id| Id::new(id.to_string()))
-                .transpose()
-                .map_err(|_| mcp::ServiceError::InvalidInput)?;
-            if after.is_none() {
-                break;
-            }
-        }
-        Err(mcp::ServiceError::Denied)
+        self.policy_call(name, args, false).await
     }
+    async fn prepare_operation(
+        &self,
+        input: mcp::OperationProposal,
+        _: CancellationToken,
+    ) -> Result<BackendRequest, mcp::ServiceError> {
+        self.policy_call(&input.tool, input.parameters, true).await
+    }
+
     async fn policy_status(
         &self,
         request: mcp::OperationRequest,

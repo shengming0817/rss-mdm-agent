@@ -3,6 +3,7 @@ import {
   operationPresentation,
   operationSnapshot,
   operationEvent,
+  OperationRejectedError,
   type OperationPresentation,
   type OperationSnapshot,
   type OperationHostPort,
@@ -32,6 +33,7 @@ interface Execution {
   snapshot: OperationSnapshot;
   busy: boolean;
   unknown: boolean;
+  unknownRevision: number;
 }
 /** Owned by the application, not a renderer or localStorage. */
 export class OperationDrafts {
@@ -41,7 +43,12 @@ export class OperationDrafts {
     const key = scopeKey(snapshot.scope);
     let entry = this.executions.get(key);
     if (!entry) {
-      entry = reactive({ snapshot, busy: false, unknown: false });
+      entry = reactive({
+        snapshot,
+        busy: false,
+        unknown: false,
+        unknownRevision: -1,
+      });
       this.executions.set(key, entry);
     }
     return entry;
@@ -51,7 +58,21 @@ export class OperationDrafts {
     presentation: OperationPresentation,
   ): Draft {
     const key = scopeKey(snapshot.scope);
-    const schema = JSON.stringify(presentation);
+    // Parameter compatibility is independent of layout and runtime readonly reasons.
+    const schema = JSON.stringify({
+      version: presentation.version,
+      fields: presentation.fields.map((f) => ({
+        id: f.id,
+        component: f.component,
+        required: f.required,
+        min: f.min,
+        max: f.max,
+        maxLength: f.maxLength,
+        options: f.options?.map((option) => option.id),
+        submitMode: f.submitMode,
+      })),
+      rules: presentation.rules,
+    });
     let draft = this.entries.get(key);
     if (!draft || draft.schema !== schema) {
       const schemaReset = !!draft;
@@ -73,7 +94,7 @@ export class OperationDrafts {
   }
 }
 const fallback: OperationPresentation = {
-  version: 1,
+  version: 2,
   template: "OperationApproval",
   fields: [],
   rules: [],
@@ -119,6 +140,7 @@ export function createOperationController(
       return execution.unknown;
     },
     set unknown(value: boolean) {
+      if (value) execution.unknownRevision = execution.snapshot.revision;
       execution.unknown = value;
     },
     get stale() {
@@ -130,6 +152,7 @@ export function createOperationController(
     fallbackReason,
     step: 0,
     interactionExpired: false,
+    preparationExpired: false,
     secrets: {} as Record<string, string>,
     capturing: new Set<string>(),
   });
@@ -142,12 +165,26 @@ export function createOperationController(
       .filter((f) => f.component === "SecretField")
       .map((f) => f.id),
   );
-  function merge(snapshot: OperationSnapshot, acknowledge = false) {
+  function merge(
+    snapshot: OperationSnapshot,
+    acknowledge = false,
+    queried = false,
+  ) {
     const next = operationSnapshot(snapshot);
     if (scopeKey(next.scope) !== scopeKey(scope))
       throw new Error("操作主体或目标不匹配");
     if (next.revision < state.snapshot.revision) return false;
     state.snapshot = next;
+    if (
+      queried &&
+      next.revision > execution.unknownRevision &&
+      !state.busy &&
+      state.unknown &&
+      next.phase !== "unknown"
+    ) {
+      state.unknown = false;
+      state.notice = "";
+    }
     if (
       acknowledge &&
       !["failed", "denied", "unknown", "cancelled"].includes(next.phase)
@@ -156,14 +193,22 @@ export function createOperationController(
       draft.baseline = next.baseline;
     }
     clearTimeout(deadline);
+    state.preparationExpired =
+      next.expiresAtMs !== undefined && now() >= next.expiresAtMs;
     const interaction = next.interaction;
     state.interactionExpired = !!interaction && now() > interaction.expiresAtMs;
-    if (!disposed && interaction && !state.interactionExpired)
+    const deadlines = [interaction?.expiresAtMs, next.expiresAtMs].filter(
+      (value): value is number => value !== undefined && value >= now(),
+    );
+    if (!disposed && deadlines.length)
       deadline = setTimeout(
         () => {
-          state.interactionExpired = now() > interaction.expiresAtMs;
+          state.preparationExpired =
+            next.expiresAtMs !== undefined && now() >= next.expiresAtMs;
+          state.interactionExpired =
+            !!interaction && now() > interaction.expiresAtMs;
         },
-        Math.min(2147483647, Math.max(1, interaction.expiresAtMs - now() + 1)),
+        Math.min(2147483647, Math.max(1, Math.min(...deadlines) - now() + 1)),
       );
     const values = { ...next.current, ...next.proposal };
     for (const id of Object.keys(draft.values)) {
@@ -176,9 +221,11 @@ export function createOperationController(
         !draft.dirty.has(id)
       )
         draft.values[id] = fields.get(id)?.readonly
-          ? (next.current[id] ?? null)
+          ? (next.current[id] ?? next.proposal[id] ?? null)
           : value;
     }
+    if (state.preparationExpired)
+      state.notice = "原准备已过期；请核对原请求，草稿已保留。";
     if (next.phase !== "ready") clearSecrets();
     // A value represented by a secret field can never enter generic draft or projection data.
     for (const id of secretFields) {
@@ -197,7 +244,11 @@ export function createOperationController(
     return (
       !disposed &&
       !state.busy &&
-      (kind !== "submit" || !state.capturing.size) &&
+      (kind !== "submit" ||
+        (!state.capturing.size &&
+          !state.preparationExpired &&
+          (state.snapshot.expiresAtMs === undefined ||
+            now() < state.snapshot.expiresAtMs))) &&
       state.snapshot.allowed.includes(kind) &&
       (kind !== "answer" ||
         (!!state.snapshot.interaction &&
@@ -216,6 +267,7 @@ export function createOperationController(
       !disposed &&
       !state.busy &&
       !state.unknown &&
+      !state.preparationExpired &&
       !f.readonly &&
       !f.reason &&
       state.snapshot.allowed.includes("submit") &&
@@ -394,24 +446,37 @@ export function createOperationController(
           : await host.dispatch(event, scope);
       if (!merge(snapshot, kind === "submit"))
         throw new Error("操作状态已过期");
-      state.unknown = false;
+      state.unknown = snapshot.phase === "unknown";
+      if (!state.unknown) state.notice = "";
       if (kind === "submit") {
         clearSecrets();
       }
-    } catch {
-      state.unknown = kind !== "refresh" || state.unknown;
-      state.notice =
-        kind === "refresh"
-          ? "无法查询操作状态"
-          : "结果未知，请查询原操作，勿重复提交";
+    } catch (error) {
+      if (error instanceof OperationRejectedError) {
+        state.unknown = false;
+        state.notice = error.message;
+        state.snapshot = {
+          ...state.snapshot,
+          phase: "denied",
+          allowed: state.snapshot.allowed.filter(
+            (action) => action === "refresh" || action === "cancel",
+          ),
+        };
+      } else {
+        state.unknown = kind !== "refresh" || state.unknown;
+        state.notice =
+          kind === "refresh"
+            ? "无法查询操作状态"
+            : "结果未知，请查询原操作，勿重复提交";
+      }
       clearSecrets();
     } finally {
       state.busy = false;
     }
   }
-  const stop = host.observe(scope, (snapshot) => {
+  const stop = host.observe(scope, ({ snapshot, kind }) => {
     try {
-      merge(snapshot);
+      merge(snapshot, false, kind === "query");
     } catch {
       state.notice = "操作状态无法核实";
       state.unknown = true;

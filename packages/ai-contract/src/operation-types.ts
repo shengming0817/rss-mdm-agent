@@ -7,7 +7,7 @@ export type OperationContract =
 export type OperationValue = (string | number | boolean | null) | string[];
 
 export interface OperationPresentation {
-  version: 1;
+  version: 2;
   template:
     | "SettingsForm"
     | "ObjectActions"
@@ -101,6 +101,7 @@ export interface OperationSnapshot {
     | "submitting"
     | "waiting"
     | "running"
+    | "execution_ended"
     | "failed"
     | "unknown"
     | "succeeded"
@@ -131,6 +132,7 @@ export interface OperationSnapshot {
   };
   result?: string;
   interaction?: OperationInteraction;
+  expiresAtMs?: number;
 }
 export interface OperationScope {
   authority: string;

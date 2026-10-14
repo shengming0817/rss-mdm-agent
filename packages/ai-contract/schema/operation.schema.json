@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:rss-mdm-agent:operation-presentation:1",
+  "$id": "urn:rss-mdm-agent:operation-presentation:2",
   "title": "OperationContract",
   "anyOf": [
     {
@@ -173,7 +173,7 @@
       "type": "object",
       "properties": {
         "version": {
-          "const": 1
+          "const": 2
         },
         "template": {
           "enum": [
@@ -435,6 +435,7 @@
             "submitting",
             "waiting",
             "running",
+            "execution_ended",
             "failed",
             "unknown",
             "succeeded",
@@ -509,6 +510,11 @@
         },
         "interaction": {
           "$ref": "#/$defs/OperationInteraction"
+        },
+        "expiresAtMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
         }
       },
       "required": [
