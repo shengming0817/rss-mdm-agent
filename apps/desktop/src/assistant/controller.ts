@@ -1,3 +1,4 @@
+import { OperationDrafts } from "@rss-mdm-agent/ai-ui-bridge";
 import { operationRequestId } from "@rss-mdm-agent/execution-bindings";
 import type {
   Connection,
@@ -45,6 +46,10 @@ export interface AssistantServices {
   /** Explicit human action; models cannot invoke this native presentation callback. */
   confirmTask?(task: BackendTask): Promise<void>;
   confirmPolicy?(request: string): Promise<void>;
+  reconcilePolicy?(request: string): Promise<void>;
+  submitOperation?(
+    input: import("../self-service/types").SelfServiceCommands["ai_operation_submit"]["input"],
+  ): Promise<void>;
   cancelTask?(request: string): Promise<void>;
 }
 export interface PermissionView {
@@ -893,14 +898,16 @@ export function createAssistant(
       !(
         delivery.proposal.name === "execution_execute" ||
         delivery.proposal.name.startsWith("policy_") ||
-        delivery.proposal.name === "execution_software_observe"
+        delivery.proposal.name === "execution_software_observe" ||
+        delivery.proposal.name === "execution_operation_prepare"
       ) ||
       !services?.taskDetails
     )
       throw new ClientError("unavailable");
     const requestId =
       delivery.proposal.name.startsWith("policy_") ||
-      delivery.proposal.name === "execution_software_observe"
+      delivery.proposal.name === "execution_software_observe" ||
+      delivery.proposal.name === "execution_operation_prepare"
         ? operationId
         : operationRequestId(
             delivery.proposal.name,
@@ -969,7 +976,9 @@ export function createAssistant(
       if (detailsOwner === owner) detailsOwner = undefined;
     }
   }
+  const operationDrafts = new OperationDrafts();
   function dispose() {
+    operationDrafts.clear();
     epoch++;
     taskEpoch++;
     connectionOwner?.abort();
@@ -1045,6 +1054,16 @@ export function createAssistant(
     permission,
     taskDetails,
     executionDetails,
+    operationDrafts,
+    async submitOperation(
+      input: import("../self-service/types").SelfServiceCommands["ai_operation_submit"]["input"],
+    ) {
+      if (!services?.submitOperation) throw new ClientError("unavailable");
+      await services.submitOperation(input);
+    },
+    async reconcilePolicyPreparation(request: string) {
+      await services?.reconcilePolicy?.(request);
+    },
     async confirmPolicyPreparation(request: string) {
       if (!services?.confirmPolicy) throw new ClientError("unavailable");
       await services.confirmPolicy(request);

@@ -92,6 +92,7 @@ export class ParentTransport implements Transport {
 const methods = new Set([
   "execution_software_observe",
   "execution_policy_tools",
+  "execution_operation_prepare",
   "execution_policy_status",
   "execution_tasks",
   "execution_capabilities",
@@ -255,18 +256,21 @@ export async function connectExecution(
         "execution_capabilities",
         "execution_status",
       ].includes(proposal.name);
-      const id = proposal.name.startsWith("policy_")
-        ? proposal.callId
-        : read
-          ? randomUUID()
-          : operationRequestId(proposal.name, proposal.arguments);
+      const id =
+        proposal.name.startsWith("policy_") ||
+        proposal.name === "execution_operation_prepare"
+          ? proposal.callId
+          : read
+            ? randomUUID()
+            : operationRequestId(proposal.name, proposal.arguments);
       if (!isId(id)) return fail("invalid_input");
       const digest = createHash("sha256")
         .update(JSON.stringify([namespace, commandId, proposal.name, id]))
         .digest("hex");
       const operationId =
         proposal.name.startsWith("policy_") ||
-        proposal.name === "execution_software_observe"
+        proposal.name === "execution_software_observe" ||
+        proposal.name === "execution_operation_prepare"
           ? `${digest.slice(0, 8)}-${digest.slice(8, 12)}-4${digest.slice(13, 16)}-a${digest.slice(17, 20)}-${digest.slice(20, 32)}`
           : digest;
       return ok({
@@ -295,7 +299,10 @@ export async function connectExecution(
     reconcile: async (request, b) => {
       const { name, arguments: args } = request.body.proposal;
       try {
-        if (name.startsWith("policy_")) {
+        if (
+          name.startsWith("policy_") ||
+          name === "execution_operation_prepare"
+        ) {
           const status = await call(
             request,
             "execution_policy_status",

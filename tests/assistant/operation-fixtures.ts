@@ -17,7 +17,7 @@ export function operationFixture(
   template: OperationPresentation["template"] = "SettingsForm",
 ) {
   const presentation: OperationPresentation = {
-    version: 1,
+    version: 2,
     template,
     layout: template === "ChangeReview" ? "disclosure" : "tabs",
     selection: template === "ObjectActions" ? "single" : "multiple",

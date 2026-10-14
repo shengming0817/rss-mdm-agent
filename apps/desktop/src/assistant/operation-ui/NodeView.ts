@@ -41,6 +41,7 @@ const phaseLabels: Record<string, string> = {
   submitting: "提交中",
   waiting: "等待交互",
   running: "执行中",
+  execution_ended: "执行结束，等待核实",
   failed: "失败",
   unknown: "结果未知",
   succeeded: "核实成功",

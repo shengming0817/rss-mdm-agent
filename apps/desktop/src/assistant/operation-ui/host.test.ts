@@ -1,0 +1,292 @@
+import { describe, it, expect } from "vitest";
+import { shallowRef } from "vue";
+import {
+  createOperationController,
+  OperationDrafts,
+} from "@rss-mdm-agent/ai-ui-bridge";
+import type {
+  ExecutionTaskDetails,
+  BackendRequest,
+  BackendTaskView,
+} from "@rss-mdm-agent/execution-bindings/task-details";
+import { operationSnapshot } from "@rss-mdm-agent/ai-contract/operations";
+import type { AssistantController } from "../controller";
+import fixtures from "../../../../../tests/assistant/execution-fixtures.json";
+import { connectOperation } from "./host";
+import { operationProjection } from "./projection";
+function fixture() {
+  const record: BackendRequest = {
+    ...(structuredClone(fixtures.proposed) as BackendRequest),
+    state: "draft",
+    revision: 1,
+    confirmation: null,
+    failure: null,
+    action: {
+      kind: "policy",
+      choice: {
+        request: "operation-1",
+        policyId: "policy-1",
+        policyRevision: 1,
+        policyVersion: "version-1",
+        parameters: { name: "AI suggestion" },
+      },
+      directory: {
+        policyId: "policy-1",
+        policyRevision: 1,
+        policyVersion: "version-1",
+        subject: { kind: "device" },
+        selfService: {
+          published: true,
+          allowAi: true,
+          riskLevel: 2,
+          displayName: "Repair",
+          description: "Trusted repair",
+          category: "support",
+          keywords: [],
+          prerequisites: "device",
+          sideEffects: "Changes configuration",
+        },
+        task: {
+          kind: "script",
+          runAs: "system",
+          resource: { id: "resource", version: "v1", variant: "default" },
+          parameterSources: {
+            name: { kind: "input" },
+            path: { kind: "fixed", value: "/Applications" },
+          },
+          parameterSchema: {
+            type: "object",
+            properties: {
+              name: { type: "string", maxLength: 32 },
+              path: { type: "string" },
+            },
+            required: ["name", "path"],
+          },
+        },
+      },
+      access: { kind: "device" },
+      runId: null,
+      offer: null,
+      expiresAtUnixMs: Date.now() + 60_000,
+    },
+  };
+  const raw: BackendTaskView = { kind: "pending", value: record };
+  let requests = 0,
+    loseReply = false,
+    rejection = "";
+  const sent: unknown[] = [];
+  const controller = {
+    view: shallowRef({
+      namespace: {
+        sessionId: "session",
+        principalId: "principal",
+        authorityId: "authority",
+        tenantId: "tenant",
+      },
+    }),
+    executionDetails: async () => structuredClone(raw),
+    submitOperation: async (input: any) => {
+      if (rejection) throw { code: rejection };
+      requests++;
+      sent.push(input);
+      if (record.action.kind !== "policy") throw Error("fixture");
+      record.action.choice.parameters = input.parameters;
+      record.revision++;
+      record.state = "submitting";
+      if (loseReply) throw Error("lost reply");
+    },
+    confirmPolicyPreparation: async () => {
+      throw Error("duplicate confirmation");
+    },
+    cancelPreparation: async () => {
+      record.state = "cancelled";
+      record.revision++;
+    },
+  } as unknown as AssistantController;
+  return {
+    controller,
+    record,
+    raw,
+    sent,
+    requests: () => requests,
+    loseReply: () => {
+      loseReply = true;
+    },
+    reject: (code: string) => {
+      rejection = code;
+    },
+  };
+}
+
+describe("production operation adapter", () => {
+  it("submits edited current values and preserves fixed parameters at the service boundary", async () => {
+    const f = fixture(),
+      stop = new AbortController();
+    const bridge = await connectOperation(
+      f.controller,
+      "delivery",
+      stop.signal,
+    );
+    const card = createOperationController(
+      bridge.presentation,
+      bridge.snapshot,
+      bridge.host,
+      new OperationDrafts(),
+    );
+    expect(bridge.presentation.template).toBe("SettingsForm");
+    card.edit("field0", "User edit");
+    expect(f.requests()).toBe(0);
+    expect(card.editable("field1")).toBe(false);
+    await card.act("submit");
+    expect(f.requests()).toBe(1);
+    expect(f.sent[0]).toEqual({
+      request: "operation-1",
+      revision: 1,
+      parameters: { name: "User edit" },
+    });
+    expect(card.state.snapshot.phase).toBe("waiting");
+    card.dispose();
+    stop.abort();
+  });
+  it("lost save receipt and renderer remount keep the original request until queried", async () => {
+    const f = fixture(),
+      stop = new AbortController(),
+      drafts = new OperationDrafts();
+    const bridge = await connectOperation(
+      f.controller,
+      "delivery",
+      stop.signal,
+    );
+    let card = createOperationController(
+      bridge.presentation,
+      bridge.snapshot,
+      bridge.host,
+      drafts,
+    );
+    f.loseReply();
+    card.edit("field0", "User edit");
+    await card.act("submit");
+    expect(card.state.unknown).toBe(true);
+    card.fallback();
+    card.dispose();
+    card = createOperationController(
+      bridge.presentation,
+      bridge.snapshot,
+      bridge.host,
+      drafts,
+    );
+    await card.act("submit");
+    expect(f.requests()).toBe(1);
+    await card.act("refresh");
+    expect(card.can("submit")).toBe(false);
+    expect(card.state.snapshot.scope.instance).toBe("operation-1");
+    expect(card.state.snapshot.phase).toBe("waiting");
+    card.dispose();
+    stop.abort();
+  });
+  it("known native refusal preserves edits and does not become an ambiguous submission", async () => {
+    const f = fixture(),
+      stop = new AbortController();
+    const bridge = await connectOperation(
+      f.controller,
+      "delivery",
+      stop.signal,
+    );
+    const card = createOperationController(
+      bridge.presentation,
+      bridge.snapshot,
+      bridge.host,
+      new OperationDrafts(),
+    );
+    card.edit("field0", "User edit");
+    f.reject("operation_conflict");
+    await card.act("submit");
+    expect(card.state.unknown).toBe(false);
+    expect(card.state.notice).toContain("版本");
+    expect(card.state.draft.values.field0).toBe("User edit");
+    expect(card.can("submit")).toBe(false);
+    expect(f.requests()).toBe(0);
+    card.dispose();
+    stop.abort();
+  });
+  it("rejects a switched user and blocks expiry even without a server update", async () => {
+    const f = fixture(),
+      stop = new AbortController();
+    const bridge = await connectOperation(
+      f.controller,
+      "delivery",
+      stop.signal,
+    );
+    const card = createOperationController(
+      bridge.presentation,
+      bridge.snapshot,
+      bridge.host,
+      new OperationDrafts(),
+      () => bridge.snapshot.expiresAtMs!,
+    );
+    expect(card.can("submit")).toBe(false);
+    card.dispose();
+    f.controller.view.value!.namespace.principalId = "other";
+    await expect(bridge.read()).rejects.toThrow("上下文");
+    expect(f.requests()).toBe(0);
+    stop.abort();
+  });
+  it("never labels execution-ended or unknown assessment as verified success", () => {
+    const scope = {
+      authority: "a",
+      tenant: "t",
+      principal: "p",
+      session: "s",
+      target: "d",
+      instance: "i",
+    };
+    const raw: Extract<BackendTaskView, { kind: "execution" }> = {
+      kind: "execution",
+      value: structuredClone(fixtures.running) as ExecutionTaskDetails,
+    };
+    raw.value.status.phase = "executionEnded";
+    expect(
+      operationSnapshot(
+        operationProjection(raw as BackendTaskView, scope, 1).snapshot,
+      ).phase,
+    ).toBe("execution_ended");
+    raw.value.status.phase = "verified";
+    raw.value.status.assessment = "unknown";
+    expect(
+      operationProjection(raw as BackendTaskView, scope, 2).snapshot.phase,
+    ).toBe("unknown");
+  });
+  it("unsupported editable schemas use approval while secret inputs never enter the projection", () => {
+    const f = fixture();
+    if (
+      f.record.action.kind !== "policy" ||
+      f.record.action.directory.task.kind !== "script"
+    )
+      throw Error("fixture");
+    const task = f.record.action.directory.task;
+    task.parameterSchema = {
+      type: "object",
+      properties: { name: { type: "object" }, path: { type: "string" } },
+    };
+    f.record.action.choice.parameters.name = { nested: true };
+    const scope = {
+      authority: "a",
+      tenant: "t",
+      principal: "p",
+      session: "s",
+      target: "d",
+      instance: "i",
+    };
+    expect(operationProjection(f.raw, scope, 1).presentation.template).toBe(
+      "OperationApproval",
+    );
+    task.parameterSchema = {
+      type: "object",
+      properties: { name: { type: "string", writeOnly: true } },
+    };
+    f.record.action.choice.parameters.name = "do-not-display";
+    const result = operationProjection(f.raw, scope, 2);
+    expect(JSON.stringify(result.snapshot)).not.toContain("do-not-display");
+    expect(result.snapshot.allowed).not.toContain("submit");
+  });
+});

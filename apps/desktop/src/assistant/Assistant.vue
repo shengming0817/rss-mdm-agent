@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import {
   computed,
+  defineAsyncComponent,
+  h,
   nextTick,
   onBeforeUnmount,
   onMounted,
@@ -27,8 +29,12 @@ import {
   ChevronRight,
 } from "@rss-mdm-agent/ui";
 import { copyText } from "./clipboard";
-import { mountNode } from "./operation-ui/NodeView";
-import { RuntimeSurface } from "@rss-mdm-agent/ai-ui-bridge";
+const RuntimeSurface = defineAsyncComponent({
+  loader: () => import("./operation-ui/QuestionSurface.vue"),
+  errorComponent: {
+    render: () => h("p", { role: "alert" }, "交互界面不可用，请查询原会话。"),
+  },
+});
 import type { CommandView, TimelineItem } from "@rss-mdm-agent/ai-client";
 import {
   operationMessage,
@@ -39,7 +45,7 @@ import SessionConnection from "./SessionConnection.vue";
 defineEmits<{ settings: []; tasks: [] }>();
 import QuestionCard from "./QuestionCard.vue";
 import ExecutionDetails from "./ExecutionDetails.vue";
-import ExecutionActivity from "./ExecutionActivity.vue";
+import OperationActivity from "./operation-ui/OperationActivity.vue";
 const diagnosticsOpen = ref(false),
   connectionOpen = ref(false),
   menuOpen = ref(false);
@@ -524,12 +530,13 @@ async function copy(text: string) {
             <pre>{{ JSON.stringify(row.tool.arguments, null, 2) }}</pre>
             <pre>{{ row.tool.result?.text }}</pre>
           </details>
-          <ExecutionActivity
+          <OperationActivity
             v-else-if="
               row.delivery &&
               (row.delivery.proposal.name === 'execution_execute' ||
                 row.delivery.proposal.name.startsWith('policy_') ||
-                row.delivery.proposal.name === 'execution_software_observe')
+                row.delivery.proposal.name === 'execution_software_observe' ||
+                row.delivery.proposal.name === 'execution_operation_prepare')
             "
             :controller="c"
             :operation-id="row.key"
@@ -553,7 +560,6 @@ async function copy(text: string) {
             @answer="c.respond(row.key, $event)"
           />
           <RuntimeSurface
-            :mount="mountNode"
             v-else-if="row.surface && runtime && s.a2ui"
             :key="
               view!.namespace.sessionId + ':' + row.key + ':' + view!.generation

@@ -130,7 +130,7 @@ const schema31 = {
     OperationPresentation: {
       type: "object",
       properties: {
-        version: { const: 1 },
+        version: { const: 2 },
         template: {
           enum: [
             "SettingsForm",
@@ -317,6 +317,7 @@ const schema31 = {
             "submitting",
             "waiting",
             "running",
+            "execution_ended",
             "failed",
             "unknown",
             "succeeded",
@@ -362,6 +363,7 @@ const schema31 = {
         },
         result: { type: "string", maxLength: 4096 },
         interaction: { $ref: "#/$defs/OperationInteraction" },
+        expiresAtMs: { type: "integer", minimum: 0, maximum: 9007199254740991 },
       },
       required: [
         "scope",

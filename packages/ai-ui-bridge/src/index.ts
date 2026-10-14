@@ -227,5 +227,4 @@ export {
   OperationDrafts,
 } from "./operations/controller.js";
 export type { OperationController } from "./operations/controller.js";
-export { createOperationSurface } from "./operations/surface.js";
 export type { NodeMount } from "./operations/surface.js";

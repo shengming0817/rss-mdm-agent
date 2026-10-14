@@ -479,6 +479,7 @@ export async function createFixture() {
       unwrap(await host.store.commit(commit));
       const initiator = {
         kind: "ai",
+        context: { id: "fixture-binding", generation: "fixture-generation" },
         provider: "test-fixture",
         config: { id: "fixture", revision: "1" },
         conversation: sessionId,

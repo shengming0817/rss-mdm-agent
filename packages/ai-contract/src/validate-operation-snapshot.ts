@@ -130,7 +130,7 @@ const schema31 = {
     OperationPresentation: {
       type: "object",
       properties: {
-        version: { const: 1 },
+        version: { const: 2 },
         template: {
           enum: [
             "SettingsForm",
@@ -317,6 +317,7 @@ const schema31 = {
             "submitting",
             "waiting",
             "running",
+            "execution_ended",
             "failed",
             "unknown",
             "succeeded",
@@ -362,6 +363,7 @@ const schema31 = {
         },
         result: { type: "string", maxLength: 4096 },
         interaction: { $ref: "#/$defs/OperationInteraction" },
+        expiresAtMs: { type: "integer", minimum: 0, maximum: 9007199254740991 },
       },
       required: [
         "scope",
@@ -500,6 +502,7 @@ const schema32 = {
         "submitting",
         "waiting",
         "running",
+        "execution_ended",
         "failed",
         "unknown",
         "succeeded",
@@ -545,6 +548,7 @@ const schema32 = {
     },
     result: { type: "string", maxLength: 4096 },
     interaction: { $ref: "#/$defs/OperationInteraction" },
+    expiresAtMs: { type: "integer", minimum: 0, maximum: 9007199254740991 },
   },
   required: [
     "scope",
@@ -2190,6 +2194,7 @@ function validate21(
                                   data19 === "submitting" ||
                                   data19 === "waiting" ||
                                   data19 === "running" ||
+                                  data19 === "execution_ended" ||
                                   data19 === "failed" ||
                                   data19 === "unknown" ||
                                   data19 === "succeeded" ||
@@ -4278,6 +4283,96 @@ function validate21(
                                               var valid0 = _errs118 === errors;
                                             } else {
                                               var valid0 = true;
+                                            }
+                                            if (valid0) {
+                                              if (
+                                                data.expiresAtMs !== undefined
+                                              ) {
+                                                let data48 = data.expiresAtMs;
+                                                const _errs137 = errors;
+                                                if (
+                                                  !(
+                                                    typeof data48 == "number" &&
+                                                    !(data48 % 1) &&
+                                                    !isNaN(data48) &&
+                                                    isFinite(data48)
+                                                  )
+                                                ) {
+                                                  validate21.errors = [
+                                                    {
+                                                      instancePath:
+                                                        instancePath +
+                                                        "/expiresAtMs",
+                                                      schemaPath:
+                                                        "#/properties/expiresAtMs/type",
+                                                      keyword: "type",
+                                                      params: {
+                                                        type: "integer",
+                                                      },
+                                                      message:
+                                                        "must be integer",
+                                                    },
+                                                  ];
+                                                  return false;
+                                                }
+                                                if (errors === _errs137) {
+                                                  if (
+                                                    typeof data48 == "number" &&
+                                                    isFinite(data48)
+                                                  ) {
+                                                    if (
+                                                      data48 >
+                                                        9007199254740991 ||
+                                                      isNaN(data48)
+                                                    ) {
+                                                      validate21.errors = [
+                                                        {
+                                                          instancePath:
+                                                            instancePath +
+                                                            "/expiresAtMs",
+                                                          schemaPath:
+                                                            "#/properties/expiresAtMs/maximum",
+                                                          keyword: "maximum",
+                                                          params: {
+                                                            comparison: "<=",
+                                                            limit: 9007199254740991,
+                                                          },
+                                                          message:
+                                                            "must be <= 9007199254740991",
+                                                        },
+                                                      ];
+                                                      return false;
+                                                    } else {
+                                                      if (
+                                                        data48 < 0 ||
+                                                        isNaN(data48)
+                                                      ) {
+                                                        validate21.errors = [
+                                                          {
+                                                            instancePath:
+                                                              instancePath +
+                                                              "/expiresAtMs",
+                                                            schemaPath:
+                                                              "#/properties/expiresAtMs/minimum",
+                                                            keyword: "minimum",
+                                                            params: {
+                                                              comparison: ">=",
+                                                              limit: 0,
+                                                            },
+                                                            message:
+                                                              "must be >= 0",
+                                                          },
+                                                        ];
+                                                        return false;
+                                                      }
+                                                    }
+                                                  }
+                                                }
+                                                var valid0 =
+                                                  _errs137 === errors;
+                                              } else {
+                                                var valid0 = true;
+                                              }
                                             }
                                           }
                                         }

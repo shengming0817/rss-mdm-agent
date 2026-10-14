@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { createOperationSurface } from "@rss-mdm-agent/ai-ui-bridge/surface";
 import {
   computed,
   onBeforeUnmount,
@@ -11,7 +12,6 @@ import {
 import { effect, getValue, type ComponentNode } from "@a2ui/web_core/v0_9";
 import {
   createOperationController,
-  createOperationSurface,
   OperationDrafts,
   type OperationController,
 } from "@rss-mdm-agent/ai-ui-bridge";

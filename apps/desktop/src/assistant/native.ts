@@ -54,6 +54,19 @@ export function nativeAssistant(): AssistantServices | undefined {
       );
       return { runtime, mode: "live" };
     },
+    async submitOperation(input) {
+      await invoke("ai_operation_submit", { generation, input });
+      if (generation !== userGeneration())
+        throw new ClientError("request_failed");
+    },
+    async reconcilePolicy(requestId) {
+      await invoke("self_service_policy_status", {
+        generation,
+        input: { requestId },
+      });
+      if (generation !== userGeneration())
+        throw new ClientError("request_failed");
+    },
     async confirmPolicy(requestId) {
       await invoke("self_service_policy_confirm", {
         generation,

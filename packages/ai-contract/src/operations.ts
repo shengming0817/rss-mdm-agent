@@ -15,6 +15,12 @@ export class OperationInputError extends Error {
     super("操作界面数据无效或版本不支持");
   }
 }
+/** Definite native-service rejection. Transport ambiguity must never be wrapped as this error. */
+export class OperationRejectedError extends Error {
+  constructor(message: string) {
+    super(message);
+  }
+}
 function bounded<T>(input: unknown, validate: (input: unknown) => boolean): T {
   let raw: string;
   try {

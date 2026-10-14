@@ -3,6 +3,7 @@ import {
   operationPresentation,
   operationSnapshot,
   operationEvent,
+  OperationRejectedError,
   type OperationPresentation,
   type OperationSnapshot,
   type OperationHostPort,
@@ -73,7 +74,7 @@ export class OperationDrafts {
   }
 }
 const fallback: OperationPresentation = {
-  version: 1,
+  version: 2,
   template: "OperationApproval",
   fields: [],
   rules: [],
@@ -130,6 +131,7 @@ export function createOperationController(
     fallbackReason,
     step: 0,
     interactionExpired: false,
+    preparationExpired: false,
     secrets: {} as Record<string, string>,
     capturing: new Set<string>(),
   });
@@ -156,14 +158,22 @@ export function createOperationController(
       draft.baseline = next.baseline;
     }
     clearTimeout(deadline);
+    state.preparationExpired =
+      next.expiresAtMs !== undefined && now() >= next.expiresAtMs;
     const interaction = next.interaction;
     state.interactionExpired = !!interaction && now() > interaction.expiresAtMs;
-    if (!disposed && interaction && !state.interactionExpired)
+    const deadlines = [interaction?.expiresAtMs, next.expiresAtMs].filter(
+      (value): value is number => value !== undefined && value >= now(),
+    );
+    if (!disposed && deadlines.length)
       deadline = setTimeout(
         () => {
-          state.interactionExpired = now() > interaction.expiresAtMs;
+          state.preparationExpired =
+            next.expiresAtMs !== undefined && now() >= next.expiresAtMs;
+          state.interactionExpired =
+            !!interaction && now() > interaction.expiresAtMs;
         },
-        Math.min(2147483647, Math.max(1, interaction.expiresAtMs - now() + 1)),
+        Math.min(2147483647, Math.max(1, Math.min(...deadlines) - now() + 1)),
       );
     const values = { ...next.current, ...next.proposal };
     for (const id of Object.keys(draft.values)) {
@@ -176,9 +186,11 @@ export function createOperationController(
         !draft.dirty.has(id)
       )
         draft.values[id] = fields.get(id)?.readonly
-          ? (next.current[id] ?? null)
+          ? (next.current[id] ?? next.proposal[id] ?? null)
           : value;
     }
+    if (state.preparationExpired)
+      state.notice = "原准备已过期；请核对原请求，草稿已保留。";
     if (next.phase !== "ready") clearSecrets();
     // A value represented by a secret field can never enter generic draft or projection data.
     for (const id of secretFields) {
@@ -197,7 +209,11 @@ export function createOperationController(
     return (
       !disposed &&
       !state.busy &&
-      (kind !== "submit" || !state.capturing.size) &&
+      (kind !== "submit" ||
+        (!state.capturing.size &&
+          !state.preparationExpired &&
+          (state.snapshot.expiresAtMs === undefined ||
+            now() < state.snapshot.expiresAtMs))) &&
       state.snapshot.allowed.includes(kind) &&
       (kind !== "answer" ||
         (!!state.snapshot.interaction &&
@@ -216,6 +232,7 @@ export function createOperationController(
       !disposed &&
       !state.busy &&
       !state.unknown &&
+      !state.preparationExpired &&
       !f.readonly &&
       !f.reason &&
       state.snapshot.allowed.includes("submit") &&
@@ -398,12 +415,24 @@ export function createOperationController(
       if (kind === "submit") {
         clearSecrets();
       }
-    } catch {
-      state.unknown = kind !== "refresh" || state.unknown;
-      state.notice =
-        kind === "refresh"
-          ? "无法查询操作状态"
-          : "结果未知，请查询原操作，勿重复提交";
+    } catch (error) {
+      if (error instanceof OperationRejectedError) {
+        state.unknown = false;
+        state.notice = error.message;
+        state.snapshot = {
+          ...state.snapshot,
+          phase: "denied",
+          allowed: state.snapshot.allowed.filter(
+            (action) => action === "refresh" || action === "cancel",
+          ),
+        };
+      } else {
+        state.unknown = kind !== "refresh" || state.unknown;
+        state.notice =
+          kind === "refresh"
+            ? "无法查询操作状态"
+            : "结果未知，请查询原操作，勿重复提交";
+      }
       clearSecrets();
     } finally {
       state.busy = false;
