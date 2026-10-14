@@ -59,7 +59,16 @@ function Convert-Hardware {
                 $item = switch ($Section) {
                     'disks' { @{ id = $id; name = (Get-RequiredText $r.Model); size_bytes = (Get-BytesValue $r.Size) } }
                     'volumes' { @{ id = $id; name = [string]$r.Label; filesystem = (Get-RequiredText $r.FileSystem); size_bytes = (Get-BytesValue $r.Capacity); free_bytes = (Get-BytesValue $r.FreeSpace); system_volume = [bool]$r.BootVolume } }
-                    'network' { @{ id = $id; name = (Get-RequiredText $r.Name); addresses = @($r.Addresses | ForEach-Object { Get-RequiredText $_ } | Sort-Object -Unique) } }
+                    'network' {
+                        $addresses = @($r.Addresses | ForEach-Object { Get-RequiredText $_ } | Sort-Object -Unique)
+                        # M01 device.network.interfaces.addresses has a 64-item capacity.
+                        if ($addresses.Count -gt 64) {
+                            $failure = [IO.InvalidDataException]::new('network address limit')
+                            $failure.Data['network_address_limit'] = @{ observed = $addresses.Count; limit = 64 }
+                            throw $failure
+                        }
+                        @{ id = $id; name = (Get-RequiredText $r.Name); addresses = $addresses }
+                    }
                 }
                 $items.Add($item)
             }
@@ -107,7 +116,12 @@ function Invoke-HardwareScan {
             $scan.count = $rows.Count
             Add-Coverage $scan $Section '' '' 'complete' $rows.Count
         }
-    } catch { Add-Coverage $scan $Section '' '' (Get-SafeStatus $_) }
+    } catch {
+        if ($_.Exception.Data.Contains('network_address_limit')) {
+            $scan.data.network_address_limit = $_.Exception.Data['network_address_limit']
+        }
+        Add-Coverage $scan $Section '' '' (Get-SafeStatus $_)
+    }
     return $scan
 }
 if ($MyInvocation.InvocationName -ne '.') {

@@ -26,6 +26,25 @@ foreach ($serial in @('To Be Filled By O.E.M.','00000000','System Serial Number'
 $rejected = $false
 try { $null = Convert-Hardware battery @() } catch { $rejected = (Get-SafeStatus $_) -eq 'unsupported' }
 Assert $rejected 'no battery must be unsupported, not zero percent'
+# Substitute only the OS provider; exercise the production scan/result path on the host.
+& {
+    New-Variable -Name IsWindows -Value $true -Scope Local -Force
+    function Read-Hardware { param($Section, $TimeoutSeconds) return $networkRows }
+    foreach ($count in @(64, 65)) {
+        $networkRows = @(@{InterfaceGuid='11111111-1111-1111-1111-111111111111';Name='Ethernet';Addresses=@(1..$count | ForEach-Object { "2001:db8::$_" })})
+        $result = Get-ScanResult (Invoke-HardwareScan network 100 65536 120)
+        $body = $result.json | ConvertFrom-Json -AsHashtable
+        if ($count -eq 64) {
+            Assert ($result.exit -eq 0 -and $body.status -eq 'complete' -and $body.fields['device.network.interfaces'][0].addresses.Count -eq 64) '64 addresses must remain complete'
+        } else {
+            Assert ($result.exit -ne 0 -and $body.status -ne 'complete' -and $body.fields.Count -eq 0) '65 addresses must not replace network inventory'
+            Assert ($body.evidence.network_address_limit.observed -eq 65 -and $body.evidence.network_address_limit.limit -eq 64) 'address overflow must retain bounded evidence'
+        }
+    }
+    $networkRows[0].Addresses = @('2001:db8::1') * 65
+    $deduplicated = Get-ScanResult (Invoke-HardwareScan network 100 65536 120)
+    Assert ($deduplicated.exit -eq 0) 'capacity applies after address deduplication'
+}
 . (Join-Path $Resources 'windows-software-v1.ps1')
 $first = Get-SoftwareItem 'win32.uninstall.64' 'S-1-5-21-1' '64' '{product}' 'App' '1' 'Publisher' 'C:\App'
 $upgrade = Get-SoftwareItem 'win32.uninstall.64' 'S-1-5-21-1' '64' '{product}' 'Renamed' '2' 'Publisher' 'D:\App'
