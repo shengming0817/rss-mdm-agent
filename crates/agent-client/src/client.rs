@@ -418,7 +418,6 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                 state
             }
         };
-        let operation = state.request.operation_id();
         let body = encode(&state.request)?;
         let result: wire::TaskClaimResponse =
             self.json(Method::POST, "tasks/claim", Some(&body)).await?;
