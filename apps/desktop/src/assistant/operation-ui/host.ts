@@ -8,6 +8,9 @@ import {
 import { operationOrigin, operationProjection, requestId } from "./projection";
 import type { BackendTaskView } from "@rss-mdm-agent/execution-bindings/task-details";
 
+// View ordering survives renderer remounts and wall-clock corrections; it is not a journal revision.
+let projectionRevision = 0;
+
 /** One view adapter. All durable decisions remain in the authenticated system service. */
 export async function connectOperation(
   c: AssistantController,
@@ -27,7 +30,7 @@ export async function connectOperation(
     target: origin.osSession.device,
     instance: requestId(raw),
   };
-  let revision = Date.now();
+  let revision = ++projectionRevision;
   const listeners = new Set<(snapshot: OperationSnapshot) => void>();
   const initial = operationProjection(raw, scope, revision);
   let latest = operationSnapshot(initial.snapshot);
@@ -55,7 +58,7 @@ export async function connectOperation(
     )
       throw Error("操作绑定已变化");
     raw = next;
-    revision = Math.max(Date.now(), revision + 1);
+    revision = ++projectionRevision;
     latest = operationSnapshot(
       operationProjection(raw, scope, revision).snapshot,
     );
@@ -80,7 +83,7 @@ export async function connectOperation(
       })()
         .then(accept)
         .catch((error) => {
-          revision = Math.max(Date.now(), revision + 1);
+          revision = ++projectionRevision;
           latest = {
             ...latest,
             revision,

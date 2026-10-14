@@ -394,7 +394,7 @@ async fn official_rmcp_client_can_consume_the_bounded_service() {
             .unwrap()
             .tools
             .len(),
-        8
+        9
     );
     client.cancel().await.unwrap();
     timeout(Duration::from_secs(2), task)
@@ -558,6 +558,12 @@ async fn every_tool_advertises_and_times_out_according_to_its_effects() {
     let tools = list["result"]["tools"].as_array().unwrap();
     let operation = json!({"operationRequestId":"original-id"});
     let cases = [
+        (
+            "execution_operation_prepare",
+            json!({"scene":"policy.parameters.v1", "tool":"policy_fixture", "parameters":{}}),
+            false,
+            "outcomeUnknown",
+        ),
         ("execution_policy_tools", json!({}), true, "unavailable"),
         (
             "execution_policy_status",

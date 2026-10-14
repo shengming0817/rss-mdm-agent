@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { shallowRef } from "vue";
 import {
   createOperationController,
@@ -256,6 +256,28 @@ describe("production operation adapter", () => {
       operationProjection(raw as BackendTaskView, scope, 2).snapshot.phase,
     ).toBe("unknown");
   });
+  it("remount reads stay newer after the system clock moves backwards", async () => {
+    const f = fixture();
+    const first = await connectOperation(
+      f.controller,
+      "delivery",
+      new AbortController().signal,
+    );
+    const clock = vi.spyOn(Date, "now").mockReturnValue(1);
+    try {
+      const next = await connectOperation(
+        f.controller,
+        "delivery",
+        new AbortController().signal,
+      );
+      expect(next.snapshot.revision).toBeGreaterThan(first.snapshot.revision);
+      expect((await next.read()).revision).toBeGreaterThan(
+        next.snapshot.revision,
+      );
+    } finally {
+      clock.mockRestore();
+    }
+  });
   it("still reads the authorized local request when backend reconciliation fails", async () => {
     const f = fixture();
     f.record.state = "submitting";
@@ -285,15 +307,11 @@ describe("production operation adapter", () => {
       type: "object",
       properties: {
         name: { type: "array", items: { type: "string" } },
-        path: { type: "array", items: { type: "string" } },
+        path: { type: "string" },
       },
       required: ["name", "path"],
     };
     f.record.action.choice.parameters.name = ["one"];
-    f.record.action.directory.task.parameterSources.path = {
-      kind: "fixed",
-      value: ["fixed"],
-    };
     const bridge = await connectOperation(
       f.controller,
       "delivery",

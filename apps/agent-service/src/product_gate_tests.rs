@@ -3506,7 +3506,7 @@ async fn operation_draft_freezes_current_parameters_once_and_queries_do_not_exec
         assert_eq!(invocation["source"], "ai");
         assert_eq!(invocation["confirmed"], level == 2);
         drop(data);
-        let c = c.reopen();
+        let mut c = c.reopen();
         assert_eq!(c.policy_record(&choice.request), *submitted);
         let mut forged = (*submitted).clone();
         forged.revision += 1;

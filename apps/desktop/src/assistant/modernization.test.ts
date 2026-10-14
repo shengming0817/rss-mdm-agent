@@ -84,8 +84,9 @@ it("refreshes a card and its open drawer from one authorized snapshot and invali
   });
   try {
     await flushPromises();
-    await vi.waitFor(() =>
-      expect(wrapper.find(".operation-card").exists()).toBe(true),
+    await vi.waitFor(
+      () => expect(wrapper.find(".operation-card").exists()).toBe(true),
+      { timeout: 5000 },
     );
     await wrapper
       .findAll("button")

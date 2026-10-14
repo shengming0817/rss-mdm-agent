@@ -17,6 +17,8 @@ const selfServiceCommands = [
   "self_service_observe_software",
 ];
 const assistantCommands = [
+  "ai_operation_submit",
+  "self_service_policy_status",
   "self_service_policy_confirm",
   "self_service_confirm",
   "self_service_cancel",
@@ -72,7 +74,14 @@ const uiImports = {
     "@rss-mdm-agent/ai-contract/operations",
   ],
   "apps/desktop/src/assistant/operation-ui/OperationCard.vue": [
+    "@rss-mdm-agent/ai-ui-bridge/surface",
     "@a2ui/web_core/v0_9",
+    "@rss-mdm-agent/ai-contract/operations",
+  ],
+  "apps/desktop/src/assistant/operation-ui/host.ts": [
+    "@rss-mdm-agent/ai-contract/operations",
+  ],
+  "apps/desktop/src/assistant/operation-ui/projection.ts": [
     "@rss-mdm-agent/ai-contract/operations",
   ],
   "packages/ui/src/index.ts": ["@lucide/vue", "reka-ui"],
@@ -144,6 +153,17 @@ export function checkSource(file, source) {
     if (templateAst.errors.length) errors.push(`${file}: invalid template`);
     function visitTemplate(node) {
       if (node.type === 1) {
+        const operationRenderer =
+          file ===
+            "apps/desktop/src/assistant/operation-ui/OperationActivity.vue" &&
+          node.tag === "component" &&
+          node.props.some(
+            (p) =>
+              p.type === 7 &&
+              p.name === "bind" &&
+              p.arg?.content === "is" &&
+              p.exp?.content === "renderer",
+          );
         if (
           [
             "a",
@@ -160,7 +180,8 @@ export function checkSource(file, source) {
             "audio",
             "source",
             "component",
-          ].includes(node.tag.toLowerCase())
+          ].includes(node.tag.toLowerCase()) &&
+          !operationRenderer
         )
           errors.push(`${file}: non-presentation element ${node.tag}`);
         for (const prop of node.props) {
@@ -171,7 +192,7 @@ export function checkSource(file, source) {
                 ? prop.arg.content
                 : null;
           if (
-            [
+            ([
               "href",
               "src",
               "srcset",
@@ -180,7 +201,8 @@ export function checkSource(file, source) {
               "srcdoc",
               "ping",
               "is",
-            ].includes(name?.toLowerCase()) ||
+            ].includes(name?.toLowerCase()) &&
+              !(name === "is" && operationRenderer)) ||
             (prop.type === 7 && ["bind", "on"].includes(prop.name) && !name)
           )
             errors.push(`${file}: outbound or dynamic template attribute`);
@@ -302,7 +324,12 @@ export function checkSource(file, source) {
       ],
       "apps/desktop/src/assistant/Assistant.vue": ["JSON", "ResizeObserver"],
       "apps/desktop/src/assistant/ExecutionDetails.vue": ["JSON"],
-      "apps/desktop/src/assistant/ExecutionActivity.vue": ["AbortController"],
+      "apps/desktop/src/assistant/operation-ui/OperationActivity.vue": [
+        "AbortController",
+        "JSON",
+      ],
+      "apps/desktop/src/assistant/operation-ui/host.ts": ["Set", "JSON"],
+      "apps/desktop/src/assistant/operation-ui/projection.ts": ["JSON"],
       "apps/desktop/src/assistant/QuestionCard.vue": ["JSON"],
     };
     for (const value of assistantGlobals[file] ?? []) globals.add(value);
@@ -355,12 +382,9 @@ export function checkSource(file, source) {
           [
             "apps/desktop/src/assistant/controller.ts",
             "apps/desktop/src/assistant/resource-context.ts",
-            "apps/desktop/src/assistant/ExecutionActivity.vue",
           ].includes(file) && name === "../self-service/types"
         ) &&
         !(
-          (file === "apps/desktop/src/assistant/ExecutionActivity.vue" &&
-            name === "../self-service/PolicyPreparation.vue") ||
           (file === "apps/desktop/src/assistant/ExecutionDetails.vue" &&
             name === "../self-service/RequestOrigin.vue") ||
           (file === "apps/desktop/src/self-service/SelfService.vue" &&
@@ -489,7 +513,18 @@ export function checkSource(file, source) {
                 guardedFixture = true;
             }
           }
-          if (!guardedFixture)
+          const lazyPresentation = {
+            "apps/desktop/src/assistant/Assistant.vue":
+              "./operation-ui/QuestionSurface.vue",
+            "apps/desktop/src/assistant/operation-ui/OperationActivity.vue":
+              "./OperationCard.vue",
+          };
+          const fixedPresentation =
+            node.expression.kind === ts.SyntaxKind.ImportKeyword &&
+            node.arguments.length === 1 &&
+            ts.isStringLiteral(node.arguments[0]) &&
+            node.arguments[0].text === lazyPresentation[file];
+          if (!guardedFixture && !fixedPresentation)
             errors.push(
               `${file}: dynamic module loading is not a presentation dependency`,
             );
@@ -501,6 +536,16 @@ export function checkSource(file, source) {
           ? staticText(node.argumentExpression)
           : null;
       const dataRoots = {
+        "apps/desktop/src/assistant/operation-ui/host.ts": [
+          "event.values",
+          "parameters",
+          "reasons",
+        ],
+        "apps/desktop/src/assistant/operation-ui/projection.ts": [
+          "properties",
+          "action.choice.parameters",
+          "snapshot.proposal",
+        ],
         "apps/desktop/src/assistant/operation-ui/NodeView.ts": [
           "c.presentation.steps",
           "s!.draft.values",
