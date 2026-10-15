@@ -8,6 +8,7 @@ use tokio::io::AsyncReadExt;
 
 pub(crate) async fn observe(interpreters: &[Interpreter]) -> Result<CollectionEnvironment, Error> {
     let mut environment = CollectionEnvironment {
+        native_engines: crate::collection_worker::engines(),
         edition: edition(),
         tools: Default::default(),
     };
@@ -76,6 +77,7 @@ fn version(bytes: &[u8], name: &str) -> Option<String> {
         text
     };
     let evidence = CollectionEnvironment {
+        native_engines: Default::default(),
         edition: None,
         tools: [(name.into(), value.into())].into(),
     };
@@ -117,6 +119,7 @@ fn edition() -> Option<String> {
     }
     let value = String::from_utf16(&buffer[..end]).ok()?;
     CollectionEnvironment {
+        native_engines: Default::default(),
         edition: Some(value.clone()),
         tools: Default::default(),
     }

@@ -2,34 +2,9 @@
 use super::*;
 use crate::software_worker::{WorkerOperation as O, WorkerRequest};
 use rss_mdm_agent_wire::runtime as wire;
-use std::{io::Read, path::Path};
+use std::path::Path;
 
-pub(super) fn pin(path: &Path) -> Result<SoftwareMaterial, Error> {
-    installation_security::protected(path).map_err(|_| Error::Untrusted)?;
-    let file = std::fs::File::open(path)?;
-    if file.metadata()?.len() > 256 * 1024 * 1024 {
-        return Err(Error::Capacity);
-    }
-    use sha2::{Digest as _, Sha256};
-    let mut hash = Sha256::new();
-    let mut buffer = [0u8; 65536];
-    let mut file = file;
-    loop {
-        let count = file.read(&mut buffer)?;
-        if count == 0 {
-            break;
-        }
-        hash.update(&buffer[..count]);
-    }
-    let digest: [u8; 32] = hash.finalize().into();
-    let reference = artifact(&digest)?;
-    execution_runner::staging::verify_retained(path, &reference.sha256)
-        .map_err(crate::error::app_error)?;
-    Ok(SoftwareMaterial {
-        path: path.to_str().ok_or(Error::Configuration)?.into(),
-        artifact: reference,
-    })
-}
+use super::plan::pin;
 type NativeIdentity = (
     RunAs,
     SessionRequirement,

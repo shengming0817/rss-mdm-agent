@@ -3,6 +3,7 @@ use agent_client::{Error, Offer};
 use rss_mdm_agent_wire::runtime as wire;
 use sha2::Digest as _;
 mod bridge;
+mod collection;
 pub(crate) mod commands;
 mod dispatch;
 pub(crate) mod gate;
@@ -23,6 +24,7 @@ pub(crate) fn request_id(offer: &Offer) -> Result<execution_contract::RequestId,
         serde_json_canonicalizer::to_vec(value).map_err(|_| Error::Protocol)
     }
     let authorization = match offer.payload() {
+        wire::TaskPayload::Collection(v) => Some(&v.authorization),
         wire::TaskPayload::Script(v) => Some(&v.authorization),
         wire::TaskPayload::Software(v) => Some(&v.authorization),
         _ => None,
@@ -32,6 +34,13 @@ pub(crate) fn request_id(offer: &Offer) -> Result<execution_contract::RequestId,
             .map_err(|_| Error::Protocol);
     }
     let bytes = match offer.payload() {
+        wire::TaskPayload::Collection(v) => encode(&(
+            v.tenant_id,
+            &v.device_id,
+            v.registration_id,
+            v.generation,
+            v.task_id,
+        ))?,
         wire::TaskPayload::Script(v) => encode(&(
             v.tenant_id,
             &v.device_id,
@@ -56,3 +65,6 @@ pub(crate) fn request_id(offer: &Offer) -> Result<execution_contract::RequestId,
 pub(crate) mod test_support;
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod collection_tests;

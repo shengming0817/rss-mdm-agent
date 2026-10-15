@@ -6,6 +6,9 @@ pub(crate) fn offered(offer: &Offer) -> Result<execution_contract::BackendTask, 
     let bytes = serde_json::to_vec(offer.payload()).map_err(|_| Error::Protocol)?;
     Ok(execution_contract::BackendTask {
         summary: match offer.payload() {
+            wire::TaskPayload::Collection(_) => {
+                execution_contract::BackendTaskSummary::Collection {}
+            }
             wire::TaskPayload::Script(p) => execution_contract::BackendTaskSummary::Script {
                 identity: display_identity(p.run_as),
             },

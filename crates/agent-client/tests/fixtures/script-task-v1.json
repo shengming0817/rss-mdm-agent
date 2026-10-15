@@ -1,1 +1,48 @@
-{"wireVersion":1,"tenantId":"00000001-1111-4111-8111-111111111111","deviceId":"device-1","platform":"macos","architecture":"aarch64","registrationId":"00000002-1111-4111-8111-111111111111","generation":1,"taskId":"00000003-1111-4111-8111-111111111111","attemptId":"00000004-1111-4111-8111-111111111111","permit":"offer","expiresAt":4000,"resourceDigest":[3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3],"resource":{"id":"fixture-resource","version":"v1","variant":"default"},"authorization":{"kind":"policy","policyId":"00000003-1111-4111-8111-111111111111","policyVersion":"00000003-1111-4111-8111-111111111111"},"parameters":{"a":1,"z":"x"},"deadline":5000,"content":{"length":1,"sha256":[7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7,7]},"profile":"posix_sh","sqlParameters":null,"runAs":"system","executionTarget":{"kind":"device"},"arguments":[],"environment":{},"timeoutSeconds":30,"outputBytes":65536,"maxRows":1}
+{
+  "kind": "script",
+  "task": {
+    "wireVersion": 1,
+    "tenantId": "00000001-1111-4111-8111-111111111111",
+    "deviceId": "device-1",
+    "platform": "macos",
+    "architecture": "aarch64",
+    "registrationId": "00000002-1111-4111-8111-111111111111",
+    "generation": 1,
+    "taskId": "00000003-1111-4111-8111-111111111111",
+    "attemptId": "00000004-1111-4111-8111-111111111111",
+    "permit": "offer",
+    "expiresAt": 4000,
+    "resourceDigest": [
+      3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3,
+      3, 3, 3, 3, 3, 3, 3
+    ],
+    "resource": {
+      "id": "fixture-resource",
+      "version": "v1",
+      "variant": "default"
+    },
+    "authorization": {
+      "kind": "policy",
+      "policyId": "00000003-1111-4111-8111-111111111111",
+      "policyVersion": "00000003-1111-4111-8111-111111111111"
+    },
+    "parameters": { "a": 1, "z": "x" },
+    "deadline": 5000,
+    "content": {
+      "length": 1,
+      "sha256": [
+        7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7,
+        7, 7, 7, 7, 7, 7, 7, 7
+      ]
+    },
+    "profile": "posix_sh",
+    "sqlParameters": null,
+    "runAs": "system",
+    "executionTarget": { "kind": "device" },
+    "arguments": [],
+    "environment": {},
+    "timeoutSeconds": 30,
+    "outputBytes": 65536,
+    "maxRows": 1
+  }
+}

@@ -693,6 +693,7 @@ async fn claim_retry_freezes_executor_profiles_and_context_across_restart() {
         .set_profiles(vec![ExecutorProfile::PosixSh, ExecutorProfile::Osquery])
         .unwrap();
     let environment = rss_mdm_agent_wire::CollectionEnvironment {
+        native_engines: Default::default(),
         edition: Some("Professional".into()),
         tools: [("powershell".into(), "7.4.13".into())].into(),
     };

@@ -299,6 +299,8 @@ pub struct BackendConfirmation {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
 pub enum BackendTaskSummary {
+    /// Native device collection; definitions remain backend-owned.
+    Collection {},
     /// Fixed backend script; executable input is not exposed to the UI.
     Script {
         /// Account class selected by the backend.

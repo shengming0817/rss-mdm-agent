@@ -382,6 +382,11 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             },
         )
         .map_err(|_| Error::Untrusted)?;
+        if let wire::TaskPayload::Collection(v) = p {
+            if !v.plan.supported_by(&self.environment.native_engines) {
+                return Err(Error::Unsupported);
+            }
+        }
         if matches!(p, wire::TaskPayload::Enrollment(_)) {
             return Err(Error::Unsupported);
         }
@@ -547,6 +552,30 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         source: &str,
     ) -> Result<wire::TaskEventRequest, Error> {
         let event = match event {
+            wire::TaskEvent::CollectionResult(result) => {
+                use sha2::{Digest, Sha256};
+                let bytes = serde_json::to_vec(&result).map_err(|_| Error::Protocol)?;
+                if bytes.len() > wire::OUTPUT_CHUNK_BYTES {
+                    let manifest = wire::OutputManifest::new(
+                        bytes.len().try_into().map_err(|_| Error::Capacity)?,
+                        Sha256::digest(&bytes).into(),
+                    )?;
+                    for (index, bytes) in bytes.chunks(wire::OUTPUT_CHUNK_BYTES).enumerate() {
+                        let chunk = wire::OutputChunk::new(manifest.clone(), index as u16, bytes)?;
+                        let key = format!("chunk/{task}/{attempt}/{:02}", chunk.index());
+                        self.event_request(
+                            &key,
+                            task,
+                            attempt,
+                            wire::TaskEvent::OutputChunk(chunk),
+                            None,
+                        )?;
+                    }
+                    wire::TaskEvent::ChunkedCollectionResult { manifest }
+                } else {
+                    wire::TaskEvent::CollectionResult(result)
+                }
+            }
             wire::TaskEvent::Result(result)
                 if serde_json::to_vec(result.output())
                     .map_err(|_| Error::Protocol)?
@@ -575,8 +604,10 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         task: Uuid,
         request: &wire::TaskEventRequest,
     ) -> Result<(), Error> {
-        let wire::TaskEvent::ChunkedResult(reference) = request.event() else {
-            return Ok(());
+        let manifest = match request.event() {
+            wire::TaskEvent::ChunkedResult(reference) => reference.manifest(),
+            wire::TaskEvent::ChunkedCollectionResult { manifest } => manifest,
+            _ => return Ok(()),
         };
         let prefix = format!("chunk/{task}/{}/", request.attempt_id());
         let rows = {
@@ -592,7 +623,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                 .collect::<Result<Vec<_>, _>>()?;
             rows
         };
-        if rows.len() != reference.manifest().count() {
+        if rows.len() != manifest.count() {
             return Err(Error::Storage);
         }
         for (index, (key, body, accepted)) in rows.into_iter().enumerate() {
@@ -601,7 +632,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                 return Err(Error::Storage);
             };
             if usize::from(chunk.index()) != index
-                || chunk.manifest() != reference.manifest()
+                || chunk.manifest() != manifest
                 || chunk_request.attempt_id() != request.attempt_id()
             {
                 return Err(Error::Storage);
@@ -762,6 +793,12 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
 }
 pub(crate) fn same_input(a: &wire::TaskPayload, b: &wire::TaskPayload) -> bool {
     match (a, b) {
+        (wire::TaskPayload::Collection(a), wire::TaskPayload::Collection(b)) => {
+            let mut b = b.clone();
+            b.permit = a.permit;
+            b.expires_at = a.expires_at;
+            &b == a
+        }
         (wire::TaskPayload::Script(a), wire::TaskPayload::Script(b)) => {
             let mut b = b.clone();
             b.permit = a.permit;
