@@ -128,6 +128,9 @@ fn firewall_profiles_keep_uint16_states_instead_of_health_booleans() {
     let result = sample(&q, &input);
     assert!(result.complete_for(&q, now().unwrap()));
     assert_eq!(result.rows, input);
+    assert_eq!(result.rows[0]["Enabled"], json!(1));
+    assert_eq!(result.rows[1]["Enabled"], json!(2));
+    assert_eq!(result.rows[2]["Enabled"], json!(65535));
     let invalid = sample(&q, &[row(json!({"Name": "Domain", "Enabled": true}))]);
     assert_eq!(invalid.status, Status::Invalid);
     assert!(!invalid.enumeration_complete);
