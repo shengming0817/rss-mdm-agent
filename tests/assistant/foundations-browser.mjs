@@ -47,7 +47,16 @@ export async function checkFoundations(browser, url) {
       assert.equal(await input.getAttribute("readonly"), "");
       await page.getByLabel("只读（适用输入）", { exact: true }).uncheck();
       await page.getByLabel("错误", { exact: true }).uncheck();
+      await select("U12");
+      await page.getByLabel("必填字段", { exact: true }).fill("required label");
       await select("U07");
+      await page.getByText("复选框", { exact: true }).click();
+      assert.equal(
+        await page
+          .getByRole("checkbox", { name: "复选框", exact: true })
+          .getAttribute("aria-checked"),
+        "true",
+      );
       await page.getByRole("button", { name: "混合状态", exact: true }).click();
       assert.equal(
         await page

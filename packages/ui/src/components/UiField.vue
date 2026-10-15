@@ -28,9 +28,12 @@ defineExpose({ focus: () => control?.focus() });
 </script>
 <template>
   <div class="ui-field">
-    <label :for="id" :id="`${id}-label`" @click.prevent="control?.focus()"
-      >{{ label }}<span v-if="required" aria-hidden="true"> *</span></label
-    >
+    <div class="ui-field-heading">
+      <label :for="id" :id="`${id}-label`" @click="control?.focus()">{{
+        label
+      }}</label
+      ><span v-if="required" aria-hidden="true"> *</span>
+    </div>
     <slot :id="id" :labelled-by="`${id}-label`" />
     <p
       v-if="description || error"
