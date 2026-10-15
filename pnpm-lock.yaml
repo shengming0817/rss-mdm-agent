@@ -5,7 +5,7 @@ settings:
   excludeLinksFromLockfile: false
 
 patchedDependencies:
-  reka-ui@2.10.5: f07cd5ae3630cdfc04d28d5ac9a1142742b977d2836c93301a10f53e6973c7b2
+  reka-ui@2.10.5: 52cd6b5fb4485b2cf6736dae74cf4dfc8432213e35119a57bb0f2aee5f2a64f6
 
 importers:
 
@@ -341,7 +341,7 @@ importers:
         version: 15.0.2
       reka-ui:
         specifier: 2.10.5
-        version: 2.10.5(patch_hash=f07cd5ae3630cdfc04d28d5ac9a1142742b977d2836c93301a10f53e6973c7b2)(vue@3.5.38(typescript@5.6.2))
+        version: 2.10.5(patch_hash=52cd6b5fb4485b2cf6736dae74cf4dfc8432213e35119a57bb0f2aee5f2a64f6)(vue@3.5.38(typescript@5.6.2))
       vue:
         specifier: ^3.5.38
         version: 3.5.38(typescript@5.6.2)
@@ -6183,7 +6183,7 @@ snapshots:
 
   readdirp@4.1.2: {}
 
-  reka-ui@2.10.5(patch_hash=f07cd5ae3630cdfc04d28d5ac9a1142742b977d2836c93301a10f53e6973c7b2)(vue@3.5.38(typescript@5.6.2)):
+  reka-ui@2.10.5(patch_hash=52cd6b5fb4485b2cf6736dae74cf4dfc8432213e35119a57bb0f2aee5f2a64f6)(vue@3.5.38(typescript@5.6.2)):
     dependencies:
       '@floating-ui/dom': 1.8.0
       '@floating-ui/vue': 1.1.11(vue@3.5.38(typescript@5.6.2))

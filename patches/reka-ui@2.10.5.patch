@@ -34,6 +34,32 @@ index 172f19d4f0d8d4e83c43057779dd915d633de4aa..e4614dac67df1e542bf3f285452193e4
  			defaultValue: defaultValue.value,
  			passive: props.modelValue === void 0
  		});
+diff --git a/dist/Popover/PopoverContentImpl.cjs b/dist/Popover/PopoverContentImpl.cjs
+index 2d91bda42e21e4016d6c444457e15b4743c828d0..eab1e08303db4de88fdb92a93922dd1f7538597a 100644
+--- a/dist/Popover/PopoverContentImpl.cjs
++++ b/dist/Popover/PopoverContentImpl.cjs
+@@ -146,7 +146,7 @@ var PopoverContentImpl_vue_vue_type_script_setup_true_lang_default = /* @__PURE_
+ 						id: (0, vue.unref)(rootContext).contentId,
+ 						ref: (0, vue.unref)(forwardRef),
+ 						"data-state": (0, vue.unref)(rootContext).open.value ? "open" : "closed",
+-						"aria-labelledby": (0, vue.unref)(rootContext).triggerId,
++						"aria-labelledby": _ctx.$attrs["aria-labelledby"] ?? (_ctx.$attrs["aria-label"] ? void 0 : (0, vue.unref)(rootContext).triggerId),
+ 						style: {
+ 							"--reka-popover-content-transform-origin": "var(--reka-popper-transform-origin)",
+ 							"--reka-popover-content-available-width": "var(--reka-popper-available-width)",
+diff --git a/dist/Popover/PopoverContentImpl.js b/dist/Popover/PopoverContentImpl.js
+index 62e6d858e98b1d31b6699b7d1fd5022bf1b43dce..e58bfe48a9222d9b1a0c6124fc00a2db377f32dd 100644
+--- a/dist/Popover/PopoverContentImpl.js
++++ b/dist/Popover/PopoverContentImpl.js
+@@ -145,7 +145,7 @@ var PopoverContentImpl_vue_vue_type_script_setup_true_lang_default = /* @__PURE_
+ 						id: unref(rootContext).contentId,
+ 						ref: unref(forwardRef),
+ 						"data-state": unref(rootContext).open.value ? "open" : "closed",
+-						"aria-labelledby": unref(rootContext).triggerId,
++						"aria-labelledby": _ctx.$attrs["aria-labelledby"] ?? (_ctx.$attrs["aria-label"] ? void 0 : unref(rootContext).triggerId),
+ 						style: {
+ 							"--reka-popover-content-transform-origin": "var(--reka-popper-transform-origin)",
+ 							"--reka-popover-content-available-width": "var(--reka-popper-available-width)",
 diff --git a/dist/TimeField/TimeFieldRoot.cjs b/dist/TimeField/TimeFieldRoot.cjs
 index ed6ad3285a2e184ec787e0e7323a20fe5416920a..fe09a15c4bf15d009fddd2cef8036bb92b256ba5 100644
 --- a/dist/TimeField/TimeFieldRoot.cjs
@@ -94,6 +120,58 @@ index 18a9fd33a4ed9717b0e7b3e0296132330a3cd45c..fecf0f48b94b628fe82700d4fa75d8dd
  			providerContext.onToastRemove();
  		});
  		provideToastRootContext({ onClose: handleClose });
+diff --git a/dist/Tree/TreeRoot.cjs b/dist/Tree/TreeRoot.cjs
+index 9b53d6f4fa99ec2291331ae4c88b16e8959b6fcd..7b9a0c16aa4a537f361bee3e7cc22c3d52b8eb86 100644
+--- a/dist/Tree/TreeRoot.cjs
++++ b/dist/Tree/TreeRoot.cjs
+@@ -93,7 +93,7 @@ var TreeRoot_vue_vue_type_script_setup_true_lang_default = /* @__PURE__ */ (0, v
+ 		const virtualKeydownHook = (0, __vueuse_core.createEventHook)();
+ 		const modelValue = (0, __vueuse_core.useVModel)(props, "modelValue", emits, {
+ 			defaultValue: props.defaultValue ?? (multiple.value ? [] : void 0),
+-			passive: true,
++			passive: props.modelValue === void 0,
+ 			deep: true
+ 		});
+ 		const expanded = (0, __vueuse_core.useVModel)(props, "expanded", emits, {
+diff --git a/dist/Tree/TreeRoot.js b/dist/Tree/TreeRoot.js
+index 3cc2fd7ef5476300f7cf84bab90cb904362c276b..529c518d58646c451cc3d2e3538a51a5a07f39e5 100644
+--- a/dist/Tree/TreeRoot.js
++++ b/dist/Tree/TreeRoot.js
+@@ -92,7 +92,7 @@ var TreeRoot_vue_vue_type_script_setup_true_lang_default = /* @__PURE__ */ defin
+ 		const virtualKeydownHook = createEventHook();
+ 		const modelValue = useVModel(props, "modelValue", emits, {
+ 			defaultValue: props.defaultValue ?? (multiple.value ? [] : void 0),
+-			passive: true,
++			passive: props.modelValue === void 0,
+ 			deep: true
+ 		});
+ 		const expanded = useVModel(props, "expanded", emits, {
+diff --git a/dist/index4.d.cts b/dist/index4.d.cts
+index 878b3bdea06deb145bda76ef2d72b87a546f366b..c2c44300affdc04ee7acd1444359d487edb539e1 100644
+--- a/dist/index4.d.cts
++++ b/dist/index4.d.cts
+@@ -10310,7 +10310,7 @@ type __VLS_PrettifyLocal$1<T> = (T extends any ? { [K in keyof T]: T[K] } : { [K
+ //#region src/Tree/TreeRoot.vue.d.ts
+ interface TreeRootProps<T = Record<string, any>, U extends Record<string, any> = Record<string, any>, M extends boolean = false> extends PrimitiveProps {
+   /** The controlled value of the tree. Can be binded with `v-model`. */
+-  modelValue?: M extends true ? U[] : U;
++  modelValue?: M extends true ? U[] : U | null;
+   /** The value of the tree when initially rendered. Use when you do not need to control the state of the tree */
+   defaultValue?: M extends true ? U[] : U;
+   /** List of items */
+diff --git a/dist/index4.d.ts b/dist/index4.d.ts
+index 3018c4b7297e116f80e0b2c635e7528521c20217..63c824aec706f57e6d8144f6a4f363c56eadfc94 100644
+--- a/dist/index4.d.ts
++++ b/dist/index4.d.ts
+@@ -10310,7 +10310,7 @@ type __VLS_PrettifyLocal$1<T> = (T extends any ? { [K in keyof T]: T[K] } : { [K
+ //#region src/Tree/TreeRoot.vue.d.ts
+ interface TreeRootProps<T = Record<string, any>, U extends Record<string, any> = Record<string, any>, M extends boolean = false> extends PrimitiveProps {
+   /** The controlled value of the tree. Can be binded with `v-model`. */
+-  modelValue?: M extends true ? U[] : U;
++  modelValue?: M extends true ? U[] : U | null;
+   /** The value of the tree when initially rendered. Use when you do not need to control the state of the tree */
+   defaultValue?: M extends true ? U[] : U;
+   /** List of items */
 diff --git a/src/DateField/DateFieldRoot.vue b/src/DateField/DateFieldRoot.vue
 index cab8aeb3283448ac8e8bb6b350b36a6188caec2d..4d7f3bfdcf5aaa4d9397b568273631a2ec65954a 100644
 --- a/src/DateField/DateFieldRoot.vue
@@ -113,6 +191,19 @@ index cab8aeb3283448ac8e8bb6b350b36a6188caec2d..4d7f3bfdcf5aaa4d9397b568273631a2
    defaultValue: defaultValue.value,
    passive: (props.modelValue === undefined) as false,
  }) as Ref<DateValue>
+diff --git a/src/Popover/PopoverContentImpl.vue b/src/Popover/PopoverContentImpl.vue
+index 4cdcbac23f2649c78b3e2449cf2d3718a4353126..69b26ab5ea6b6ebb9060b81bcd58b7ef728d3a5a 100644
+--- a/src/Popover/PopoverContentImpl.vue
++++ b/src/Popover/PopoverContentImpl.vue
+@@ -70,7 +70,7 @@ useFocusGuards()
+         :id="rootContext.contentId"
+         :ref="forwardRef"
+         :data-state="rootContext.open.value ? 'open' : 'closed'"
+-        :aria-labelledby="rootContext.triggerId"
++        :aria-labelledby="$attrs['aria-labelledby'] ?? ($attrs['aria-label'] ? undefined : rootContext.triggerId)"
+         :style="{
+           '--reka-popover-content-transform-origin':
+             'var(--reka-popper-transform-origin)',
 diff --git a/src/TimeField/TimeFieldRoot.vue b/src/TimeField/TimeFieldRoot.vue
 index 74b21472b4c0090dbe08a786d34589285e0d5e67..3de60c3f35ebb6dedd524572ff7d9f89d27800ca 100644
 --- a/src/TimeField/TimeFieldRoot.vue
@@ -143,4 +234,26 @@ index 72ab0d989680d4771b3c37e924cf7a065ee71f16..c8df2f161c776e8b407e9a8984915d45
 +  window.clearTimeout(closeTimerRef.value)
    providerContext.onToastRemove()
  })
+ 
+diff --git a/src/Tree/TreeRoot.vue b/src/Tree/TreeRoot.vue
+index 36fd2ad4073676bc9eac34e3a6f31fd18d6fb786..c27e753b14f0eb99d16034fc70d1543dfce71130 100644
+--- a/src/Tree/TreeRoot.vue
++++ b/src/Tree/TreeRoot.vue
+@@ -5,7 +5,7 @@ import { flatten } from './utils'
+ 
+ export interface TreeRootProps<T = Record<string, any>, U extends Record<string, any> = Record<string, any>, M extends boolean = false> extends PrimitiveProps {
+   /** The controlled value of the tree. Can be binded with `v-model`. */
+-  modelValue?: M extends true ? U[] : U
++  modelValue?: M extends true ? U[] : U | null
+   /** The value of the tree when initially rendered. Use when you do not need to control the state of the tree */
+   defaultValue?: M extends true ? U[] : U
+   /** List of items */
+@@ -112,7 +112,7 @@ const virtualKeydownHook = createEventHook<KeyboardEvent>()
+ const modelValue = useVModel(props, 'modelValue', emits, {
+   // @ts-expect-error idk
+   defaultValue: props.defaultValue ?? (multiple.value ? [] : undefined),
+-  passive: true,
++  passive: (props.modelValue === undefined) as false,
+   deep: true,
+ }) as Ref<U | U[]>
  

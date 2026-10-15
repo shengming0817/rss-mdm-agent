@@ -251,3 +251,24 @@ it("keeps split dragging owned by one pointer and releases it on unmount", async
   wrapper.unmount();
   expect(release).toHaveBeenCalledWith(1);
 });
+
+import { UiPopover } from "../src";
+it("uses the popover's supplied accessible name instead of its trigger text", async () => {
+  const wrapper = mount(UiPopover, {
+    props: { open: true, label: "Named popup" },
+    slots: {
+      trigger: () => h(UiButton, {}, () => "Launch"),
+      default: () => h("input"),
+    },
+    attachTo: document.body,
+  });
+  await flushPromises();
+  const popup = document.querySelector(
+    '[role="dialog"][aria-label="Named popup"]',
+  )!;
+  expect(
+    document.getElementById(popup.getAttribute("aria-labelledby")!)
+      ?.textContent,
+  ).toBe("Named popup");
+  wrapper.unmount();
+});

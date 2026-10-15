@@ -47,7 +47,7 @@ function activate(node: UiTreeNode) {
     v-slot="{ flattenItems }"
     class="ui-tree"
     :items="items"
-    :model-value="multiple ? selected : selected[0]"
+    :model-value="multiple ? selected : (selected[0] ?? null)"
     :multiple="multiple"
     :expanded="expanded"
     :get-key="(node: UiTreeNode) => node.id"

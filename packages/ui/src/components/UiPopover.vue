@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useId } from "vue";
 import {
   PopoverRoot,
   PopoverTrigger,
@@ -9,6 +10,7 @@ import { useUiContext } from "../context";
 defineProps<{ open: boolean; label: string }>();
 const emit = defineEmits<{ "update:open": [value: boolean] }>();
 const { portal } = useUiContext();
+const titleId = `ui-popover-title-${useId()}`;
 </script>
 <template>
   <PopoverRoot :open="open" @update:open="emit('update:open', $event)"
@@ -17,7 +19,9 @@ const { portal } = useUiContext();
       ><PopoverContent
         class="ui-popup ui-popover"
         :aria-label="label"
+        :aria-labelledby="titleId"
         :side-offset="6"
+        ><span :id="titleId" class="sr-only">{{ label }}</span
         ><slot /></PopoverContent></PopoverPortal
   ></PopoverRoot>
 </template>

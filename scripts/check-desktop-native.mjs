@@ -1449,6 +1449,7 @@ try {
           await browser.$('select[aria-label="操作模板"]'),
           template,
         );
+        mark(`native operation controls ${template}`);
         const card = await browser.$(
           `article[aria-label="${template} 操作示例"]`,
         );
@@ -1481,9 +1482,7 @@ try {
               "原生用户修改",
             );
             assert.ok(
-              (await card.$(".operation-table").getText()).includes(
-                "原生用户修改",
-              ),
+              (await card.$(".ui-table").getText()).includes("原生用户修改"),
             );
           }
           if (["ObjectActions", "ResourceSelection"].includes(template)) {

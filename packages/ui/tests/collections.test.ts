@@ -122,3 +122,20 @@ describe("controlled collections and feedback", () => {
     wrapper.unmount();
   });
 });
+
+it("does not select a tree node until the caller accepts the selection", async () => {
+  const wrapper = mount(UiTree, {
+    props: {
+      items: [{ id: "a", label: "Alpha" }],
+      modelValue: [],
+      expanded: [],
+      label: "Tree",
+    },
+  });
+  await wrapper.get('[role="treeitem"]').trigger("click");
+  expect(wrapper.emitted("update:modelValue")).toEqual([[["a"]]]);
+  expect(wrapper.get('[role="treeitem"]').attributes("aria-selected")).toBe(
+    "false",
+  );
+  wrapper.unmount();
+});
