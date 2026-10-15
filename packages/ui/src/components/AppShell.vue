@@ -144,14 +144,10 @@ onBeforeUnmount(() => observer?.disconnect());
 .navigation-footer {
   padding-top: 12px;
 }
-.navigation-drawer {
+:global(.navigation-drawer) {
   --rss-drawer-width: 280px;
   --rss-drawer-padding: 16px;
   background: var(--rss-color-navigation);
-}
-.navigation-drawer[data-state="open"] {
-  display: flex;
-  flex-direction: column;
 }
 main {
   flex: 1;

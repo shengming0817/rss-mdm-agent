@@ -552,15 +552,11 @@ onBeforeUnmount(() => {
   height: 100%;
   min-height: 0;
 }
-.resource-context-drawer {
+:global(.resource-context-drawer) {
   --rss-drawer-width: 520px;
   --rss-drawer-padding: 16px;
 }
-.resource-context-drawer[data-state="open"] {
-  display: flex;
-  flex-direction: column;
-}
-.resource-context-drawer :deep(.ui-dialog-body > .context-panel) {
+:global(.resource-context-drawer .ui-dialog-body > .context-panel) {
   flex: 1;
   min-height: 0;
 }

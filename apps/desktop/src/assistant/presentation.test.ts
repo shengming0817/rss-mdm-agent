@@ -179,6 +179,7 @@ it.each(["prompt", "cancel", "respond"] as const)(
     };
     c.state.views.set(session.namespace.sessionId, v);
     const wrapper = mount(Assistant, {
+      attachTo: document.body,
       props: { controller: c, visible: true, presentation: "main" },
     });
     expect(wrapper.text()).not.toContain("unavailable");
@@ -187,13 +188,17 @@ it.each(["prompt", "cancel", "respond"] as const)(
     await new DOMWrapper(document.querySelector('[role="menuitem"]')!).trigger(
       "click",
     );
-    expect(wrapper.text()).toContain("unavailable");
-    expect(wrapper.text()).toContain("先恢复历史并核对");
-    expect(wrapper.text()).toContain("不证明模型已终止");
+    await flushPromises();
+    const diagnostics = () =>
+      document.querySelector('[role="dialog"][aria-label="会话详情与诊断"]')
+        ?.textContent ?? "";
+    expect(diagnostics()).toContain("unavailable");
+    expect(diagnostics()).toContain("先恢复历史并核对");
+    expect(diagnostics()).toContain("不证明模型已终止");
     for (const state of ["reconciliation_required", "terminal"] as const) {
       c.state.views.get(session.namespace.sessionId)!.commands.p.state = state;
       await wrapper.vm.$nextTick();
-      expect(wrapper.text()).toContain("unavailable");
+      expect(diagnostics()).toContain("unavailable");
     }
     expect(wrapper.text()).not.toContain("等待模型终止事实");
     wrapper.unmount();
@@ -344,6 +349,7 @@ it.each([
     c.state.selected = "session-1";
     c.state.errors.set("session-1", code);
     const wrapper = mount(Assistant, {
+      attachTo: document.body,
       props: { controller: c, visible: true, presentation: "main" },
     });
     const notice = wrapper.get(".conversation-notice");

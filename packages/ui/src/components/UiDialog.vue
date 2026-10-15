@@ -48,6 +48,7 @@ function restore(event: Event) {
         v-bind="$attrs"
         class="ui-dialog"
         :aria-label="title"
+        aria-modal="true"
         :data-presentation="presentation"
         :data-side="side"
         :data-platform="configuration.platform"

@@ -539,6 +539,7 @@
   right: 0;
   transform: none;
   width: min(var(--rss-drawer-width), 100vw);
+  height: 100dvh;
   max-height: 100dvh;
   border-radius: 0;
 }

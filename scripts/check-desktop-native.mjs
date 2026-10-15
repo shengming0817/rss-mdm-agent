@@ -1321,9 +1321,15 @@ try {
             );
         });
         try {
-          selectInputSource("com.apple.inputmethod.SCIM.ITABC");
           await browser.switchToWindow("main");
           await browser.$(".composer textarea").click();
+          native("get frontmost");
+          selectInputSource("com.apple.inputmethod.SCIM.ITABC");
+          assert.equal(
+            inputSources().current,
+            "com.apple.inputmethod.SCIM.ITABC",
+            "owned application's Chinese input source selected",
+          );
           for (const code of [45, 34, 4, 0, 31]) key(code);
           await wait(() =>
             browser.execute(() =>
