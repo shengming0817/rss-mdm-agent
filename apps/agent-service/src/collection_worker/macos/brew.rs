@@ -2,7 +2,7 @@
 //! ref: Homebrew/brew@7cce6eac8d897b0b8440e16f33dbcb21770da7cf Library/Homebrew/cmd/info.rb.
 use super::*;
 use std::{collections::BTreeSet, os::unix::fs::MetadataExt};
-const SANDBOX: &str = "(version 1)(allow default)(deny file-write*)(allow file-write* (literal \"/dev/null\"))(deny network*)";
+pub(super) const SANDBOX: &str = "(version 1)(allow default)(deny file-write*)(allow file-write* (literal \"/dev/null\"))(deny network*)";
 pub(super) fn collect(
     c: &Context<'_>,
     prefix: &str,
@@ -112,6 +112,7 @@ fn protected_tree(c: &Context<'_>, root: &Path) -> Result<()> {
             }
             installation_security::protected(&target).map_err(|_| Status::Denied)?;
         } else if meta.is_dir() {
+            installation_security::protected(&path).map_err(|_| Status::Denied)?;
             for entry in std::fs::read_dir(&path)? {
                 pending.push(entry?.path());
                 if pending.len() > 100_000 {
@@ -120,6 +121,8 @@ fn protected_tree(c: &Context<'_>, root: &Path) -> Result<()> {
             }
         } else if !meta.is_file() {
             return Err(Status::Denied.into());
+        } else {
+            installation_security::protected(&path).map_err(|_| Status::Denied)?;
         }
     }
     Ok(())

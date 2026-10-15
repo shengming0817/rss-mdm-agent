@@ -250,8 +250,88 @@ fn actual_fixed_system_tool_has_bounded_owner_and_output() {
 }
 #[test]
 fn actual_brew_sandbox_denies_writes_and_network() {
-    let status=std::process::Command::new("/usr/bin/sandbox-exec")
-        .args(["-p","(version 1)(allow default)(deny file-write*)(allow file-write* (literal \"/dev/null\"))(deny network*)","/usr/bin/touch","/tmp/rss-collection-must-not-exist"])
-        .stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().unwrap();
-    assert!(!status.success());
+    let invoke = |args: &[&str]| {
+        std::process::Command::new("/usr/bin/sandbox-exec")
+            .args(["-p", brew::SANDBOX])
+            .args(args)
+            .env_clear()
+            .output()
+            .unwrap()
+    };
+    assert!(
+        invoke(&["/usr/bin/true"]).status.success(),
+        "sandbox must actually launch"
+    );
+    let path = std::env::temp_dir().join(format!("rss-sandbox-{}", uuid::Uuid::new_v4()));
+    assert!(!path.exists());
+    let write = invoke(&["/usr/bin/touch", path.to_str().unwrap()]);
+    assert!(!write.status.success());
+    assert!(!path.exists());
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let baseline = std::net::TcpStream::connect(addr).unwrap();
+    drop(listener.accept().unwrap());
+    drop(baseline);
+    listener.set_nonblocking(true).unwrap();
+    let url = format!("http://{addr}/");
+    let network = invoke(&[
+        "/usr/bin/curl",
+        "--noproxy",
+        "*",
+        "--connect-timeout",
+        "1",
+        "--max-time",
+        "2",
+        &url,
+    ]);
+    assert!(!network.status.success());
+    assert_eq!(
+        listener.accept().unwrap_err().kind(),
+        std::io::ErrorKind::WouldBlock
+    );
+}
+#[test]
+fn apfs_boot_snapshot_is_not_a_logical_volume_or_a_new_identity() {
+    let mut volume = plist::Dictionary::from_iter::<[(&str, plist::Value); 2]>([
+        ("APFSVolumeUUID", "logical-system".into()),
+        ("Roles", vec![plist::Value::String("System".into())].into()),
+    ]);
+    let container = plist::Dictionary::from_iter::<[(&str, plist::Value); 1]>([(
+        "APFSContainerUUID",
+        "container".into(),
+    )]);
+    let mut info = plist::Dictionary::from_iter::<[(&str, plist::Value); 5]>([
+        ("FilesystemType", "apfs".into()),
+        ("VolumeName", "System".into()),
+        ("TotalSize", 1000u64.into()),
+        ("VolumeUUID", "logical-system".into()),
+        ("APFSVolumeGroupID", "boot-group".into()),
+    ]);
+    let mut root = info.clone();
+    root.insert("VolumeUUID".into(), "snapshot-1".into());
+    root.insert("APFSSnapshot".into(), true.into());
+    let first = hardware::volume_row(&info, Some((&container, &volume)), &root)
+        .unwrap()
+        .unwrap();
+    assert_eq!(first["id"], "logical-system");
+    assert_eq!(first["system_volume"], true);
+    root.insert("VolumeUUID".into(), "snapshot-2".into());
+    assert_eq!(
+        hardware::volume_row(&info, Some((&container, &volume)), &root)
+            .unwrap()
+            .unwrap(),
+        first
+    );
+    assert!(hardware::volume_row(&root, None, &root).unwrap().is_none());
+    volume.insert(
+        "Roles".into(),
+        vec![plist::Value::String("Data".into())].into(),
+    );
+    info.insert("VolumeUUID".into(), "data".into());
+    assert_eq!(
+        hardware::volume_row(&info, Some((&container, &volume)), &root)
+            .unwrap()
+            .unwrap()["system_volume"],
+        false
+    );
 }

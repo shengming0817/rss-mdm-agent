@@ -10,7 +10,7 @@ pub(super) fn collect(
         Identity | Firmware => {
             let value = c.command_plist(
                 "system_profiler",
-                &["-xml", "SPHardwareDataType", "-detailLevel", "mini"],
+                &["-xml", "SPHardwareDataType", "-detailLevel", "basic"],
             )?;
             let blocks = value.as_array().ok_or(Status::Invalid)?;
             let hardware = blocks
@@ -92,39 +92,31 @@ pub(super) fn collect(
         Volumes => {
             let value = c.command_plist("diskutil", &["list", "-plist"])?;
             let root = c.command_plist("diskutil", &["info", "-plist", "/"])?;
-            let system_uuid = text(object(&root)?, "VolumeUUID")?;
+            let apfs = c.command_plist("diskutil", &["apfs", "list", "-plist"])?;
+            let mut volumes = BTreeMap::new();
+            for container in array(object(&apfs)?, "Containers")? {
+                let container = object(container)?;
+                for volume in array(container, "Volumes")? {
+                    let volume = object(volume)?;
+                    if volumes
+                        .insert(text(volume, "DeviceIdentifier")?, (container, volume))
+                        .is_some()
+                    {
+                        return Err(Status::Invalid.into());
+                    }
+                }
+            }
             for device in array(object(&value)?, "AllDisks")? {
                 c.check()?;
                 let device = device.as_string().ok_or(Status::Invalid)?;
                 let value = c.command_plist("diskutil", &["info", "-plist", device])?;
-                let d = object(&value)?;
-                let Some(filesystem) = d.get("FilesystemType").and_then(plist::Value::as_string)
-                else {
-                    continue;
-                };
-                let id = text(d, "VolumeUUID")?;
-                let mut r = row(&[
-                    ("id", id.into()),
-                    ("name", text(d, "VolumeName")?.into()),
-                    ("filesystem", filesystem.into()),
-                    ("size_bytes", uint(d, "TotalSize")?.to_string().into()),
-                    ("system_volume", json!(id == system_uuid)),
-                ]);
-                if let Some(free) = d
-                    .get("FreeSpace")
-                    .and_then(plist::Value::as_unsigned_integer)
-                {
-                    r.insert("free_bytes".into(), free.to_string().into());
+                if let Some(r) = volume_row(
+                    object(&value)?,
+                    volumes.get(device).copied(),
+                    object(&root)?,
+                )? {
+                    rows.push(r)?;
                 }
-                if let Some(container) = d
-                    .get("APFSContainerReference")
-                    .and_then(plist::Value::as_string)
-                {
-                    let value = c.command_plist("diskutil", &["info", "-plist", container])?;
-                    let d = object(&value)?;
-                    r.insert("container_id".into(), text(d, "DiskUUID")?.into());
-                }
-                rows.push(r)?;
             }
         }
         Battery => {
@@ -150,6 +142,63 @@ pub(super) fn collect(
         Network => network(c, rows)?,
     }
     Ok(())
+}
+// diskutil list includes mounted snapshots. Only the APFS container manifest owns
+// logical-volume identities; boot snapshots are related through the volume group.
+pub(super) fn volume_row(
+    d: &plist::Dictionary,
+    apfs: Option<(&plist::Dictionary, &plist::Dictionary)>,
+    root: &plist::Dictionary,
+) -> Result<Option<Row>> {
+    if d.get("APFSSnapshot").and_then(plist::Value::as_boolean) == Some(true) {
+        return Ok(None);
+    }
+    let Some(filesystem) = d.get("FilesystemType").and_then(plist::Value::as_string) else {
+        return Ok(None);
+    };
+    let (id, system) = if filesystem == "apfs" {
+        let (_, v) = apfs.ok_or(Status::Invalid)?;
+        let system_role = array(v, "Roles")?
+            .iter()
+            .any(|r| r.as_string() == Some("System"));
+        let group = d.get("APFSVolumeGroupID").and_then(plist::Value::as_string);
+        let root_group = root
+            .get("APFSVolumeGroupID")
+            .and_then(plist::Value::as_string);
+        let id = text(v, "APFSVolumeUUID")?;
+        (
+            id,
+            system_role
+                && (group.is_some() && group == root_group
+                    || Some(id) == root.get("VolumeUUID").and_then(plist::Value::as_string)),
+        )
+    } else {
+        let id = text(d, "VolumeUUID")?;
+        (
+            id,
+            Some(id) == root.get("VolumeUUID").and_then(plist::Value::as_string),
+        )
+    };
+    let mut r = row(&[
+        ("id", id.into()),
+        ("name", text(d, "VolumeName")?.into()),
+        ("filesystem", filesystem.into()),
+        ("size_bytes", uint(d, "TotalSize")?.to_string().into()),
+        ("system_volume", json!(system)),
+    ]);
+    if let Some(free) = d
+        .get("FreeSpace")
+        .and_then(plist::Value::as_unsigned_integer)
+    {
+        r.insert("free_bytes".into(), free.to_string().into());
+    }
+    if let Some((container, _)) = apfs {
+        r.insert(
+            "container_id".into(),
+            text(container, "APFSContainerUUID")?.into(),
+        );
+    }
+    Ok(Some(r))
 }
 pub(super) fn containers(value: &plist::Value, rows: &mut Rows<'_>) -> Result<()> {
     for value in array(object(value)?, "Containers")? {

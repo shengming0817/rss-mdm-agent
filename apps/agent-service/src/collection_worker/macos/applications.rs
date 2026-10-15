@@ -90,7 +90,27 @@ fn walk(
         let kind = entry.file_type()?;
         c.consume(name.as_bytes().len())?;
         if kind.is_symlink() {
-            return Err(Status::Denied.into());
+            let alias = path.join(&name);
+            // Apple's sealed Safari lives in a Cryptex. Admit only this fixed alias
+            // and a root-protected resolved target, then reopen it without following links.
+            if alias != Path::new("/Applications/Safari.app")
+                || std::fs::symlink_metadata(&alias)?.uid() != 0
+                || std::fs::read_link(&alias)?
+                    != Path::new("../System/Cryptexes/App/System/Applications/Safari.app")
+            {
+                return Err(Status::Denied.into());
+            }
+            let target = alias.canonicalize()?;
+            if !target.starts_with("/System/Volumes/Preboot") {
+                return Err(Status::Denied.into());
+            }
+            installation_security::protected(&target).map_err(|_| Status::Denied)?;
+            let child = open_root(&target)?;
+            application(c, &child, &target, &alias, owner, rows)?;
+            if alias.canonicalize()? != target {
+                return Err(Status::Invalid.into());
+            }
+            continue;
         }
         if !kind.is_dir() {
             continue;
@@ -98,7 +118,7 @@ fn walk(
         let child = openat(dir, &name, true)?;
         let child_path = path.join(&name);
         if child_path.extension().is_some_and(|e| e == "app") {
-            application(c, &child, &child_path, owner, rows)?;
+            application(c, &child, &child_path, &child_path, owner, rows)?;
         } else {
             if depth <= 1 {
                 return Err(Status::Truncated.into());
@@ -120,6 +140,7 @@ fn application(
     c: &Context<'_>,
     dir: &File,
     path: &Path,
+    location: &Path,
     owner: &str,
     rows: &mut Rows<'_>,
 ) -> Result<()> {
@@ -134,7 +155,7 @@ fn application(
     let value =
         plist::Value::from_reader(std::io::Cursor::new(bytes)).map_err(|_| Status::Invalid)?;
     let d = object(&value)?;
-    let location = path.to_str().ok_or(Status::Invalid)?;
+    let location = location.to_str().ok_or(Status::Invalid)?;
     let mut r = decode(d, location, owner)?;
     let (status, team) = signature::inspect(path)?;
     r.insert("signature_status".into(), status.into());

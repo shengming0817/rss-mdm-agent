@@ -82,6 +82,17 @@ pub(super) fn query(
     child.wait()?;
     let bytes = reader.join().map_err(|_| Error::Unavailable)??;
     let diagnostics = diagnostics.join().map_err(|_| Error::Unavailable)??;
+    let time = now()?;
+    // Forced termination has no completion receipt. The Job already proves cleanup.
+    if timed_out {
+        return Ok(failure(q, w::NativeQueryStatus::Timeout, time));
+    }
+    if bytes.len() > cap as usize {
+        return Ok(failure(q, w::NativeQueryStatus::Truncated, time));
+    }
+    if exit.is_none_or(|v| !v.success()) {
+        return Ok(failure(q, w::NativeQueryStatus::Invalid, time));
+    }
     let control: CollectionCompletion =
         serde_json::from_slice(&diagnostics).map_err(|_| Error::Unavailable)?;
     input.observed.fetch_add(
@@ -94,16 +105,6 @@ pub(super) fn query(
         || control.output_sha256 != hex(&bytes)
     {
         return Err(Error::Unavailable);
-    }
-    let time = now()?;
-    if timed_out {
-        return Ok(failure(q, w::NativeQueryStatus::Timeout, time));
-    }
-    if bytes.len() > cap as usize {
-        return Ok(failure(q, w::NativeQueryStatus::Truncated, time));
-    }
-    if exit.is_none_or(|v| !v.success()) {
-        return Ok(failure(q, w::NativeQueryStatus::Invalid, time));
     }
     Ok(decode_query(q, &bytes, time))
 }
