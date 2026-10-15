@@ -100,9 +100,9 @@ export async function checkFoundations(browser, url) {
       await menu.click();
       await page.keyboard.press("ArrowDown");
       await page.keyboard.press("Escape");
-      assert.equal(
-        await menu.evaluate((el) => el === document.activeElement),
-        true,
+      await page.waitForFunction(
+        (el) => el === document.activeElement,
+        await menu.elementHandle(),
       );
       await select("U22");
       const trigger = page.getByRole("button", {
@@ -131,9 +131,9 @@ export async function checkFoundations(browser, url) {
       );
       await page.keyboard.press("Escape");
       await dialog.waitFor({ state: "detached" });
-      assert.equal(
-        await trigger.evaluate((el) => el === document.activeElement),
-        true,
+      await page.waitForFunction(
+        (el) => el === document.activeElement,
+        await trigger.elementHandle(),
       );
       await page.getByLabel("减少动态", { exact: true }).check();
       await page.getByLabel("高对比", { exact: true }).check();
