@@ -12,8 +12,7 @@ pub(crate) fn compile(
     payload: &w::CollectionTaskSpec,
     binding: &execution_app::ServiceBinding,
     actor: &ActorId,
-    config: &crate::ExecutionConfig,
-    root: &mut MaterialRoot,
+    (config, root): (&crate::ExecutionConfig, &mut MaterialRoot),
     delegate: Option<std::sync::Arc<execution_ipc::helper::Connection>>,
 ) -> Result<(FrozenExecution, Artifacts), Error> {
     let w::TaskPayload::Collection(original) = offer.payload() else {
