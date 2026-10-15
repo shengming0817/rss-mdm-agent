@@ -176,6 +176,7 @@ export function checkSource(file, source) {
     [
       "packages/ui/src/components/UiDateInput.vue",
       "packages/ui/src/components/UiTimeInput.vue",
+      "packages/ui/src/components/UiDateTimeInput.vue",
     ].includes(file)
   )
     allowed.push("@internationalized/date");

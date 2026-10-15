@@ -1,0 +1,146 @@
+diff --git a/dist/DateField/DateFieldRoot.cjs b/dist/DateField/DateFieldRoot.cjs
+index 189e95283df0f0f471653acf089f70c6f3e4869d..626eb54df72a111b587827b0d813ca68027f9734 100644
+--- a/dist/DateField/DateFieldRoot.cjs
++++ b/dist/DateField/DateFieldRoot.cjs
+@@ -125,7 +125,12 @@ var DateFieldRoot_vue_vue_type_script_setup_true_lang_default = /* @__PURE__ */
+ 		(0, vue.onMounted)(() => {
+ 			require_date_segment.getSegmentElements(parentElement.value).forEach((item) => segmentElements.value.add(item));
+ 		});
+-		const modelValue = (0, __vueuse_core.useVModel)(props, "modelValue", emits, {
++		const modelValue = (0, __vueuse_core.useVModel)(props, "modelValue", (event, value) => {
++            emits(event, value);
++            if (value != null && props.modelValue !== undefined) (0, vue.nextTick)(() => {
++                segmentValues.value = props.modelValue ? { ...require_date_parser.syncSegmentValues({ value: props.modelValue, formatter }) } : { ...initialSegments };
++            });
++        }, {
+ 			defaultValue: defaultValue.value,
+ 			passive: props.modelValue === void 0
+ 		});
+diff --git a/dist/DateField/DateFieldRoot.js b/dist/DateField/DateFieldRoot.js
+index 172f19d4f0d8d4e83c43057779dd915d633de4aa..e4614dac67df1e542bf3f285452193e4281574a8 100644
+--- a/dist/DateField/DateFieldRoot.js
++++ b/dist/DateField/DateFieldRoot.js
+@@ -124,7 +124,12 @@ var DateFieldRoot_vue_vue_type_script_setup_true_lang_default = /* @__PURE__ */
+ 		onMounted(() => {
+ 			getSegmentElements(parentElement.value).forEach((item) => segmentElements.value.add(item));
+ 		});
+-		const modelValue = useVModel(props, "modelValue", emits, {
++		const modelValue = useVModel(props, "modelValue", (event, value) => {
++            emits(event, value);
++            if (value != null && props.modelValue !== undefined) nextTick(() => {
++                segmentValues.value = props.modelValue ? { ...syncSegmentValues({ value: props.modelValue, formatter }) } : { ...initialSegments };
++            });
++        }, {
+ 			defaultValue: defaultValue.value,
+ 			passive: props.modelValue === void 0
+ 		});
+diff --git a/dist/TimeField/TimeFieldRoot.cjs b/dist/TimeField/TimeFieldRoot.cjs
+index ed6ad3285a2e184ec787e0e7323a20fe5416920a..fe09a15c4bf15d009fddd2cef8036bb92b256ba5 100644
+--- a/dist/TimeField/TimeFieldRoot.cjs
++++ b/dist/TimeField/TimeFieldRoot.cjs
+@@ -128,7 +128,12 @@ var TimeFieldRoot_vue_vue_type_script_setup_true_lang_default = /* @__PURE__ */
+ 		(0, vue.onMounted)(() => {
+ 			require_date_segment.getTimeFieldSegmentElements(parentElement.value).forEach((item) => segmentElements.value.add(item));
+ 		});
+-		const modelValue = (0, __vueuse_core.useVModel)(props, "modelValue", emits, {
++		const modelValue = (0, __vueuse_core.useVModel)(props, "modelValue", (event, value) => {
++            emits(event, value);
++            if (value != null && props.modelValue !== undefined) (0, vue.nextTick)(() => {
++                segmentValues.value = props.modelValue ? { ...require_date_parser.syncTimeSegmentValues({ value: convertValue(props.modelValue), formatter }) } : { ...initialSegments };
++            });
++        }, {
+ 			defaultValue: defaultValue.value,
+ 			passive: props.modelValue === void 0
+ 		});
+diff --git a/dist/TimeField/TimeFieldRoot.js b/dist/TimeField/TimeFieldRoot.js
+index 901886fe97c69a152de6f43a186c3f6741b26563..06d0d2d3c9755ebb81826bb90f94339dd9be667c 100644
+--- a/dist/TimeField/TimeFieldRoot.js
++++ b/dist/TimeField/TimeFieldRoot.js
+@@ -127,7 +127,12 @@ var TimeFieldRoot_vue_vue_type_script_setup_true_lang_default = /* @__PURE__ */
+ 		onMounted(() => {
+ 			getTimeFieldSegmentElements(parentElement.value).forEach((item) => segmentElements.value.add(item));
+ 		});
+-		const modelValue = useVModel(props, "modelValue", emits, {
++		const modelValue = useVModel(props, "modelValue", (event, value) => {
++            emits(event, value);
++            if (value != null && props.modelValue !== undefined) nextTick(() => {
++                segmentValues.value = props.modelValue ? { ...syncTimeSegmentValues({ value: convertValue(props.modelValue), formatter }) } : { ...initialSegments };
++            });
++        }, {
+ 			defaultValue: defaultValue.value,
+ 			passive: props.modelValue === void 0
+ 		});
+diff --git a/dist/Toast/ToastRootImpl.cjs b/dist/Toast/ToastRootImpl.cjs
+index d3319ff3316c6fc07a17e12ee8c7dc9e876875e7..125fb94840be4a771c491cfa10e24bcba1d76373 100644
+--- a/dist/Toast/ToastRootImpl.cjs
++++ b/dist/Toast/ToastRootImpl.cjs
+@@ -124,6 +124,7 @@ var ToastRootImpl_vue_vue_type_script_setup_true_lang_default = /* @__PURE__ */
+ 			providerContext.onToastAdd();
+ 		});
+ 		(0, vue.onUnmounted)(() => {
++			window.clearTimeout(closeTimerRef.value);
+ 			providerContext.onToastRemove();
+ 		});
+ 		provideToastRootContext({ onClose: handleClose });
+diff --git a/dist/Toast/ToastRootImpl.js b/dist/Toast/ToastRootImpl.js
+index 18a9fd33a4ed9717b0e7b3e0296132330a3cd45c..fecf0f48b94b628fe82700d4fa75d8ddc6c04191 100644
+--- a/dist/Toast/ToastRootImpl.js
++++ b/dist/Toast/ToastRootImpl.js
+@@ -123,6 +123,7 @@ var ToastRootImpl_vue_vue_type_script_setup_true_lang_default = /* @__PURE__ */
+ 			providerContext.onToastAdd();
+ 		});
+ 		onUnmounted(() => {
++			window.clearTimeout(closeTimerRef.value);
+ 			providerContext.onToastRemove();
+ 		});
+ 		provideToastRootContext({ onClose: handleClose });
+diff --git a/src/DateField/DateFieldRoot.vue b/src/DateField/DateFieldRoot.vue
+index cab8aeb3283448ac8e8bb6b350b36a6188caec2d..4d7f3bfdcf5aaa4d9397b568273631a2ec65954a 100644
+--- a/src/DateField/DateFieldRoot.vue
++++ b/src/DateField/DateFieldRoot.vue
+@@ -133,7 +133,13 @@ onMounted(() => {
+   getSegmentElements(parentElement.value).forEach(item => segmentElements.value.add(item as HTMLElement))
+ })
+ 
+-const modelValue = useVModel(props, 'modelValue', emits, {
++const modelValue = useVModel(props, 'modelValue', (event, value) => {
++  emits(event, value)
++  // Reconcile completed edits after the caller accepts, normalizes, or rejects them.
++  if (value != null && props.modelValue !== undefined) nextTick(() => {
++    segmentValues.value = props.modelValue ? { ...syncSegmentValues({ value: props.modelValue, formatter }) } : { ...initialSegments }
++  })
++}, {
+   defaultValue: defaultValue.value,
+   passive: (props.modelValue === undefined) as false,
+ }) as Ref<DateValue>
+diff --git a/src/TimeField/TimeFieldRoot.vue b/src/TimeField/TimeFieldRoot.vue
+index 74b21472b4c0090dbe08a786d34589285e0d5e67..3de60c3f35ebb6dedd524572ff7d9f89d27800ca 100644
+--- a/src/TimeField/TimeFieldRoot.vue
++++ b/src/TimeField/TimeFieldRoot.vue
+@@ -141,7 +141,13 @@ onMounted(() => {
+   getTimeFieldSegmentElements(parentElement.value).forEach(item => segmentElements.value.add(item as HTMLElement))
+ })
+ 
+-const modelValue = useVModel(props, 'modelValue', emits, {
++const modelValue = useVModel(props, 'modelValue', (event, value) => {
++  emits(event, value)
++  // Reconcile completed edits after the caller accepts, normalizes, or rejects them.
++  if (value != null && props.modelValue !== undefined) nextTick(() => {
++    segmentValues.value = props.modelValue ? { ...syncTimeSegmentValues({ value: convertValue(props.modelValue), formatter }) } : { ...initialSegments }
++  })
++}, {
+   defaultValue: defaultValue.value,
+   passive: (props.modelValue === undefined) as false,
+ }) as Ref<TimeValue>
+diff --git a/src/Toast/ToastRootImpl.vue b/src/Toast/ToastRootImpl.vue
+index 72ab0d989680d4771b3c37e924cf7a065ee71f16..c8df2f161c776e8b407e9a8984915d45077c4112 100644
+--- a/src/Toast/ToastRootImpl.vue
++++ b/src/Toast/ToastRootImpl.vue
+@@ -171,6 +171,7 @@ onMounted(() => {
+   providerContext.onToastAdd()
+ })
+ onUnmounted(() => {
++  window.clearTimeout(closeTimerRef.value)
+   providerContext.onToastRemove()
+ })
+ 

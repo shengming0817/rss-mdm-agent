@@ -21,10 +21,9 @@ function activate(id?: string) {
 </script>
 <template>
   <ListboxRoot
-    :model-value="multiple ? modelValue : modelValue[0]"
+    :model-value="multiple ? modelValue : (modelValue[0] ?? null)"
     :multiple="multiple"
     :disabled="disabled"
-    :aria-label="label"
     class="ui-list"
     @update:model-value="
       emit(
@@ -35,7 +34,7 @@ function activate(id?: string) {
     @highlight="highlighted = $event?.value as string | undefined"
     @keydown.enter="!$event.isComposing && activate(highlighted)"
   >
-    <ListboxContent
+    <ListboxContent :aria-label="label"
       ><ListboxItem
         v-for="item in items"
         :key="item.id"

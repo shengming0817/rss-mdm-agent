@@ -1,8 +1,7 @@
 <script setup lang="ts">
-import { ref, watch } from "vue";
-import UiDateInput from "./UiDateInput.vue";
-import UiTimeInput from "./UiTimeInput.vue";
-import UiField from "./UiField.vue";
+import { computed, ref } from "vue";
+import { parseDateTime } from "@internationalized/date";
+import { DateFieldRoot, DateFieldInput } from "reka-ui";
 import { useFieldControl } from "../field";
 defineOptions({ inheritAttrs: false });
 const props = defineProps<{
@@ -11,48 +10,39 @@ const props = defineProps<{
   readonly?: boolean;
 }>();
 const emit = defineEmits<{ "update:modelValue": [value: string] }>();
-const date = ref(""),
-  time = ref("");
-watch(
-  () => props.modelValue,
-  (value) => {
-    const parts = (value ?? "").split("T");
-    date.value = parts.at(0) ?? "";
-    time.value = parts.at(1) ?? "";
-  },
-  { immediate: true },
-);
-const dateControl = ref<InstanceType<typeof UiDateInput>>();
-const focus = () => dateControl.value?.focus();
+const value = computed(() => {
+  try {
+    return props.modelValue ? parseDateTime(props.modelValue) : null;
+  } catch {
+    return null;
+  }
+});
+const control = ref<InstanceType<typeof DateFieldRoot>>();
+const focus = () =>
+  (control.value?.$el as HTMLElement)
+    ?.querySelector<HTMLElement>('[role="spinbutton"]')
+    ?.focus();
 const field = useFieldControl(focus);
-function update() {
-  emit(
-    "update:modelValue",
-    date.value && time.value ? `${date.value}T${time.value}` : "",
-  );
-}
 defineExpose({ focus });
+// Reka owns incomplete segment editing; completed values are always caller-controlled.
 </script>
 <template>
-  <div
-    class="ui-date-time"
-    role="group"
-    :aria-labelledby="field.id ? `${field.id}-label` : undefined"
+  <DateFieldRoot
+    ref="control"
+    v-slot="{ segments }"
     v-bind="{ ...field, ...$attrs }"
+    class="ui-date-field"
+    :model-value="value"
+    :disabled="disabled"
+    :readonly="readonly"
+    granularity="minute"
+    :hour-cycle="24"
+    @update:model-value="emit('update:modelValue', $event?.toString() ?? '')"
+    ><DateFieldInput
+      v-for="segment in segments"
+      :key="segment.part"
+      :part="segment.part"
+      >{{ segment.value }}</DateFieldInput
+    ></DateFieldRoot
   >
-    <UiField label="日期"
-      ><UiDateInput
-        ref="dateControl"
-        v-model="date"
-        :disabled="disabled"
-        :readonly="readonly"
-        @update:model-value="update" /></UiField
-    ><UiField label="时间"
-      ><UiTimeInput
-        v-model="time"
-        :disabled="disabled"
-        :readonly="readonly"
-        @update:model-value="update"
-    /></UiField>
-  </div>
 </template>

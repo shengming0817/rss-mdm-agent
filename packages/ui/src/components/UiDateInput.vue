@@ -50,7 +50,7 @@ defineExpose({ focus });
 </script>
 <template>
   <DatePickerRoot
-    :model-value="value"
+    :model-value="value ?? null"
     :min-value="date(min)"
     :max-value="date(max)"
     :disabled="disabled"

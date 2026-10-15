@@ -556,11 +556,11 @@ onBeforeUnmount(() => {
   --rss-drawer-width: 520px;
   --rss-drawer-padding: 16px;
 }
-.resource-context-drawer[open] {
+.resource-context-drawer[data-state="open"] {
   display: flex;
   flex-direction: column;
 }
-.resource-context-drawer > :deep(.context-panel) {
+.resource-context-drawer :deep(.ui-dialog-body > .context-panel) {
   flex: 1;
   min-height: 0;
 }

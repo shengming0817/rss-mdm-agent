@@ -149,7 +149,7 @@ onBeforeUnmount(() => observer?.disconnect());
   --rss-drawer-padding: 16px;
   background: var(--rss-color-navigation);
 }
-.navigation-drawer[open] {
+.navigation-drawer[data-state="open"] {
   display: flex;
   flex-direction: column;
 }

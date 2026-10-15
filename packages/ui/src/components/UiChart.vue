@@ -67,8 +67,8 @@ const rows = computed(() =>
     id: String(index),
     label,
     ...Object.fromEntries(
-      selected.value.map((series) => [
-        series.id,
+      selected.value.map((series, seriesIndex) => [
+        `series-${seriesIndex}`,
         Number.isFinite(series.values[index])
           ? `${series.values[index]}${props.unit}`
           : "—",
@@ -78,7 +78,10 @@ const rows = computed(() =>
 );
 const columns = computed(() => [
   { key: "label", label: "类别" },
-  ...selected.value.map((series) => ({ key: series.id, label: series.label })),
+  ...selected.value.map((series, index) => ({
+    key: `series-${index}`,
+    label: series.label,
+  })),
 ]);
 </script>
 <template>
@@ -124,6 +127,17 @@ const columns = computed(() => [
           :stroke-dasharray="index % 2 ? '7 4' : undefined"
         />
         <template v-for="(_, position) in categories" :key="position">
+          <circle
+            v-if="
+              kind === 'line' &&
+              series.values[position] != null &&
+              Number.isFinite(series.values[position])
+            "
+            :cx="x(position)"
+            :cy="y(series.values[position]!)"
+            r="3.5"
+            :fill="color(props.series.indexOf(series))"
+          />
           <rect
             v-if="
               kind === 'bar' &&

@@ -538,7 +538,7 @@
   left: auto;
   right: 0;
   transform: none;
-  width: min(520px, 100vw);
+  width: min(var(--rss-drawer-width), 100vw);
   max-height: 100dvh;
   border-radius: 0;
 }
@@ -685,4 +685,15 @@
   display: flex;
   gap: 12px;
   flex-wrap: wrap;
+}
+
+.ui-dialog[data-presentation="drawer"] > header {
+  padding: var(--rss-drawer-padding);
+}
+.ui-dialog[data-presentation="drawer"] > .ui-dialog-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  gap: 0;
+  padding: 0 var(--rss-drawer-padding) var(--rss-drawer-padding);
 }

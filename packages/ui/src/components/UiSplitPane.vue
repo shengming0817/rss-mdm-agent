@@ -37,9 +37,15 @@ function release() {
   pointer = undefined;
 }
 function down(event: PointerEvent) {
-  if (event.button !== 0) return;
+  if (event.button !== 0 || pointer !== undefined) return;
   pointer = event.pointerId;
   separator.value?.setPointerCapture(pointer);
+}
+function end(event: PointerEvent) {
+  if (event.pointerId === pointer) release();
+}
+function lost(event: PointerEvent) {
+  if (event.pointerId === pointer) pointer = undefined;
 }
 function move(event: PointerEvent) {
   if (pointer !== event.pointerId || !root.value) return;
@@ -95,9 +101,9 @@ onBeforeUnmount(release);
       :aria-valuemax="Math.round(bounds.max * 100)"
       @pointerdown="down"
       @pointermove="move"
-      @pointerup="release"
-      @pointercancel="release"
-      @lostpointercapture="pointer = undefined"
+      @pointerup="end"
+      @pointercancel="end"
+      @lostpointercapture="lost"
       @keydown="key"
     />
     <div class="ui-split-panel" style="flex: 1"><slot name="second" /></div>

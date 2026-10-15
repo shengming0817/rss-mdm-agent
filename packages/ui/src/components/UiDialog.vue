@@ -11,6 +11,7 @@ import {
 } from "reka-ui";
 import { useUiContext } from "../context";
 import { UiButton } from "./primitives";
+defineOptions({ inheritAttrs: false });
 const props = withDefaults(
   defineProps<{
     open: boolean;
@@ -44,6 +45,7 @@ function restore(event: Event) {
   <DialogRoot :open="open" @update:open="emit('update:open', $event)"
     ><DialogPortal v-if="portal"
       ><DialogOverlay class="ui-dialog-backdrop" /><DialogContent
+        v-bind="$attrs"
         class="ui-dialog"
         :aria-label="title"
         :data-presentation="presentation"

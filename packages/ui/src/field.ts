@@ -19,6 +19,7 @@ export function useFieldControl(focus: () => void) {
   onBeforeUnmount(() => unregister?.());
   return computed(() => ({
     id: field?.id,
+    "aria-labelledby": field ? `${field.id}-label` : undefined,
     "aria-describedby": field?.descriptionId.value,
     "aria-invalid": field?.invalid.value || undefined,
   }));

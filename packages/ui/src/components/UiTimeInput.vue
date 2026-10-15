@@ -34,7 +34,7 @@ defineExpose({ focus });
     v-slot="{ segments }"
     v-bind="{ ...field, ...$attrs }"
     class="ui-date-field"
-    :model-value="value"
+    :model-value="value ?? null"
     :min-value="time(min)"
     :max-value="time(max)"
     :disabled="disabled"

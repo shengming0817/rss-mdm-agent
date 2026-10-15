@@ -35,7 +35,7 @@ defineExpose({ focus });
 </script>
 <template>
   <ComboboxRoot
-    :model-value="modelValue"
+    :model-value="modelValue ?? null"
     :disabled="disabled || readonly"
     :ignore-filter="true"
     @update:model-value="

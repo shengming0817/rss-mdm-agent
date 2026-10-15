@@ -34,7 +34,7 @@ defineExpose({ focus });
 </script>
 <template>
   <SelectRoot
-    :model-value="modelValue || undefined"
+    :model-value="modelValue ?? null"
     :disabled="disabled"
     @update:model-value="
       !props.readonly && emit('update:modelValue', String($event ?? ''))

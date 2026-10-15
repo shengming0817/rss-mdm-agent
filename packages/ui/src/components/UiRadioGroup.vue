@@ -28,7 +28,7 @@ defineExpose({ focus });
     v-bind="{ ...field, ...$attrs }"
     class="ui-radio-group"
     :aria-label="label"
-    :model-value="modelValue"
+    :model-value="modelValue ?? null"
     :disabled="disabled"
     :aria-readonly="readonly || undefined"
     @update:model-value="
