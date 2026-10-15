@@ -88,28 +88,9 @@ fn walk(
         let entry = entry?;
         let name = entry.file_name();
         let kind = entry.file_type()?;
-        c.consume(name.as_bytes().len())?;
+        // A directory alias is not an application bundle inside this approved root.
+        // In particular Safari's Cryptex alias must not broaden /Applications into Preboot.
         if kind.is_symlink() {
-            let alias = path.join(&name);
-            // Apple's sealed Safari lives in a Cryptex. Admit only this fixed alias
-            // and a root-protected resolved target, then reopen it without following links.
-            if alias != Path::new("/Applications/Safari.app")
-                || std::fs::symlink_metadata(&alias)?.uid() != 0
-                || std::fs::read_link(&alias)?
-                    != Path::new("../System/Cryptexes/App/System/Applications/Safari.app")
-            {
-                return Err(Status::Denied.into());
-            }
-            let target = alias.canonicalize()?;
-            if !target.starts_with("/System/Volumes/Preboot") {
-                return Err(Status::Denied.into());
-            }
-            installation_security::protected(&target).map_err(|_| Status::Denied)?;
-            let child = open_root(&target)?;
-            application(c, &child, &target, &alias, owner, rows)?;
-            if alias.canonicalize()? != target {
-                return Err(Status::Invalid.into());
-            }
             continue;
         }
         if !kind.is_dir() {
@@ -118,7 +99,7 @@ fn walk(
         let child = openat(dir, &name, true)?;
         let child_path = path.join(&name);
         if child_path.extension().is_some_and(|e| e == "app") {
-            application(c, &child, &child_path, &child_path, owner, rows)?;
+            application(c, &child, &child_path, owner, rows)?;
         } else {
             if depth <= 1 {
                 return Err(Status::Truncated.into());
@@ -140,43 +121,57 @@ fn application(
     c: &Context<'_>,
     dir: &File,
     path: &Path,
-    location: &Path,
     owner: &str,
     rows: &mut Rows<'_>,
 ) -> Result<()> {
+    application_inspecting(c, dir, path, owner, rows, signature::inspect)
+}
+fn application_inspecting(
+    c: &Context<'_>,
+    dir: &File,
+    path: &Path,
+    owner: &str,
+    rows: &mut Rows<'_>,
+    inspect: impl FnOnce(&Path) -> Result<(&'static str, Option<String>)>,
+) -> Result<()> {
+    let app_before = dir.metadata()?;
     let contents = openat(dir, std::ffi::OsStr::new("Contents"), true)?;
+    let contents_before = contents.metadata()?;
     let file = openat(&contents, std::ffi::OsStr::new("Info.plist"), false)?;
     let before = file.metadata()?;
-    let mut bytes = Vec::new();
-    (&file)
-        .take(c.cap.saturating_sub(c.bytes.get()) as u64 + 1)
-        .read_to_end(&mut bytes)?;
-    c.consume(bytes.len())?;
+    let bytes = c.read_bounded(&file, usize::MAX)?;
     let value =
         plist::Value::from_reader(std::io::Cursor::new(bytes)).map_err(|_| Status::Invalid)?;
     let d = object(&value)?;
-    let location = location.to_str().ok_or(Status::Invalid)?;
+    let location = path.to_str().ok_or(Status::Invalid)?;
     let mut r = decode(d, location, owner)?;
-    let (status, team) = signature::inspect(path)?;
+    let (status, team) = inspect(path)?;
     r.insert("signature_status".into(), status.into());
     if let Some(team) = team {
         r.insert("team_id".into(), team.into());
     }
     // A raced path/signature observation cannot turn into complete presence evidence.
-    let current = openat(&contents, std::ffi::OsStr::new("Info.plist"), false)?.metadata()?;
+    let reopened = openat(dir, std::ffi::OsStr::new("Contents"), true)?;
+    let current = openat(&reopened, std::ffi::OsStr::new("Info.plist"), false)?.metadata()?;
     let named = std::fs::symlink_metadata(path)?;
-    let held = dir.metadata()?;
-    if current.ino() != before.ino()
-        || current.dev() != before.dev()
-        || current.mtime_nsec() != before.mtime_nsec()
-        || current.mtime() != before.mtime()
-        || named.ino() != held.ino()
-        || named.dev() != held.dev()
+    if !same_snapshot(&app_before, &dir.metadata()?)
+        || !same_snapshot(&app_before, &named)
+        || !same_snapshot(&contents_before, &reopened.metadata()?)
+        || !same_snapshot(&before, &current)
     {
         return Err(Status::Invalid.into());
     }
     rows.push(r)?;
     Ok(())
+}
+fn same_snapshot(a: &std::fs::Metadata, b: &std::fs::Metadata) -> bool {
+    a.dev() == b.dev()
+        && a.ino() == b.ino()
+        && a.len() == b.len()
+        && a.mtime() == b.mtime()
+        && a.mtime_nsec() == b.mtime_nsec()
+        && a.ctime() == b.ctime()
+        && a.ctime_nsec() == b.ctime_nsec()
 }
 pub(super) fn decode(d: &plist::Dictionary, location: &str, owner: &str) -> Result<Row> {
     let native = text(d, "CFBundleIdentifier")?;
@@ -208,7 +203,7 @@ pub(super) fn decode(d: &plist::Dictionary, location: &str, owner: &str) -> Resu
 mod tests {
     use super::*;
     #[test]
-    fn real_directory_scan_retains_copies_and_detects_delete_depth_and_symlink() {
+    fn real_directory_scan_retains_copies_and_excludes_symlink_targets() {
         let root = std::env::temp_dir().join(format!("rss-collection-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir(&root).unwrap();
         struct Cleanup(PathBuf);
@@ -249,6 +244,22 @@ mod tests {
         assert!(result.complete_for(&q, now().unwrap()));
         assert_eq!(result.rows.len(), 2);
         assert_ne!(result.rows[0]["id"], result.rows[1]["id"]);
+        let app = root.join("A.app");
+        let app_dir = open_root(&app).unwrap();
+        let mut changed_rows = Rows::new(&q, now().unwrap());
+        let changed = application_inspecting(&c, &app_dir, &app, "", &mut changed_rows, |path| {
+            std::fs::rename(path.join("Contents"), path.join("old-contents"))?;
+            std::fs::create_dir(path.join("Contents"))?;
+            std::fs::copy(
+                path.join("old-contents/Info.plist"),
+                path.join("Contents/Info.plist"),
+            )?;
+            Ok(("signed", None))
+        });
+        assert!(matches!(changed, Err(Fault::Query(Status::Invalid))));
+        assert!(changed_rows.finish(Ok(())).rows.is_empty());
+        std::fs::remove_dir_all(app.join("Contents")).unwrap();
+        std::fs::rename(app.join("old-contents"), app.join("Contents")).unwrap();
         std::fs::remove_dir_all(root.join("B.app")).unwrap();
         let mut rows = Rows::new(&q, now().unwrap());
         walk(&c, &dir, &root, "", 2, &mut rows).unwrap();
@@ -259,11 +270,31 @@ mod tests {
             walk(&c, &dir, &root, "", 1, &mut rows),
             Err(Fault::Query(Status::Truncated))
         ));
-        std::os::unix::fs::symlink("/", root.join("escape")).unwrap();
+        let outside = root.with_file_name(format!("rss-outside-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(outside.join("External.app/Contents")).unwrap();
+        let _outside_cleanup = Cleanup(outside.clone());
+        std::fs::write(
+            outside.join("External.app/Contents/Info.plist"),
+            b"invalid plist",
+        )
+        .unwrap();
+        for (target, name) in [
+            (outside.join("External.app"), "Escape.app"),
+            (outside.clone(), "outside-directory"),
+            (root.join("A.app"), "Alias.app"),
+            (outside.join("missing"), "Dangling.app"),
+        ] {
+            std::os::unix::fs::symlink(target, root.join(name)).unwrap();
+        }
+        assert!(open_root(&root.join("Alias.app")).is_err());
         let mut rows = Rows::new(&q, now().unwrap());
-        assert!(matches!(
-            walk(&c, &dir, &root, "", 2, &mut rows),
-            Err(Fault::Query(Status::Denied))
-        ));
+        walk(&c, &dir, &root, "", 2, &mut rows).unwrap();
+        let result = rows.finish(Ok(()));
+        assert!(result.complete_for(&q, now().unwrap()));
+        assert_eq!(result.rows.len(), 1);
+        assert_eq!(
+            result.rows[0]["location"],
+            root.join("A.app").to_str().unwrap()
+        );
     }
 }

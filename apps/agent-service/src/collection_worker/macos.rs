@@ -18,10 +18,10 @@ mod tests;
 mod tool;
 
 pub(super) fn tools(
-    config: &crate::ExecutionConfig,
+    _config: &crate::ExecutionConfig,
     plan: &w::NativeCollectionPlan,
 ) -> std::result::Result<BTreeMap<String, SoftwareMaterial>, Error> {
-    let mut names = std::collections::BTreeSet::new();
+    let mut names = std::collections::BTreeSet::from(["sandbox-exec"]);
     for q in plan.spec().queries.values() {
         use w::NativeQueryDefinition::*;
         match q.definition {
@@ -32,9 +32,7 @@ pub(super) fn tools(
                 names.insert("pkgutil");
             }
             MacosApplications { .. } => {}
-            MacosBrew { .. } => {
-                names.insert("sandbox-exec");
-            }
+            MacosBrew { .. } => {}
             _ => return Err(Error::Unsupported),
         }
     }
@@ -49,27 +47,6 @@ pub(super) fn tools(
         // Missing tools are recorded by the query, never interpreted as an empty inventory.
         if path.try_exists()? {
             result.insert(name.into(), crate::backend::plan::pin(&path)?);
-        }
-    }
-    if plan
-        .spec()
-        .queries
-        .values()
-        .any(|q| matches!(q.definition, w::NativeQueryDefinition::MacosBrew { .. }))
-    {
-        for (i, m) in config
-            .managers
-            .iter()
-            .filter(|m| m.executor == crate::SoftwareManagerKind::Brew)
-            .enumerate()
-        {
-            m.image
-                .verify(&m.image.path)
-                .map_err(|_| Error::Untrusted)?;
-            result.insert(
-                format!("brew-{i}"),
-                crate::backend::plan::pin(&m.image.path)?,
-            );
         }
     }
     Ok(result)
@@ -109,11 +86,12 @@ impl Context<'_> {
         }
     }
     fn consume(&self, n: usize) -> Result<()> {
-        self.check()?;
+        super::macos_supervisor::observe(n).map_err(|_| Fault::Unclosed)?;
         self.bytes.set(self.bytes.get().saturating_add(n));
         self.input
             .observed
             .fetch_add(n as u64, std::sync::atomic::Ordering::Relaxed);
+        self.check()?;
         if self.bytes.get() > self.cap
             || self
                 .input
@@ -143,10 +121,24 @@ impl Context<'_> {
         if !file.metadata()?.is_file() {
             return Err(Status::Invalid.into());
         }
-        let left = self.cap.saturating_sub(self.bytes.get());
+        self.read_bounded(&file, usize::MAX)
+    }
+    fn read_bounded(&self, mut reader: impl Read, maximum: usize) -> Result<Vec<u8>> {
+        self.check()?;
+        let limit = self.cap.saturating_sub(self.bytes.get()).min(maximum);
+        super::macos_supervisor::begin_read().map_err(|_| Fault::Unclosed)?;
         let mut bytes = Vec::new();
-        file.take(left as u64 + 1).read_to_end(&mut bytes)?;
-        self.consume(bytes.len())?;
+        let read = (&mut reader).take(limit as u64 + 1).read_to_end(&mut bytes);
+        // Account partial reads even on I/O failure. EndRead follows the observation ACK;
+        // a forced termination in between leaves an explicit incomplete accounting state.
+        let accounted = self.consume(bytes.len());
+        let ended = super::macos_supervisor::end_read().map_err(|_| Fault::Unclosed);
+        accounted?;
+        ended?;
+        read?;
+        if bytes.len() > limit {
+            return Err(Status::Truncated.into());
+        }
         Ok(bytes)
     }
     fn plist(&self, path: &Path) -> Result<plist::Value> {
@@ -178,6 +170,7 @@ pub(super) fn execute(
             .saturating_sub(250),
     )
     .min(Duration::from_secs(q.budget.timeout_seconds.into()));
+    let native_cap = super::macos_supervisor::remaining_budget()?.saturating_sub(1);
     let context = Context {
         input,
         until: Instant::now() + remaining,
@@ -188,7 +181,12 @@ pub(super) fn execute(
             .spec()
             .budget
             .output_bytes
-            .saturating_sub(512) as usize,
+            .saturating_sub(512)
+            .min(q.budget.output_bytes) as usize,
+    };
+    let context = Context {
+        cap: context.cap.min(native_cap),
+        ..context
     };
     let mut rows = Rows::new(q, time);
     let status = (|| {
@@ -279,4 +277,9 @@ fn home(uid: u32) -> Result<PathBuf> {
         .to_str()
         .map_err(|_| Status::Invalid)?;
     Ok(PathBuf::from(path))
+}
+
+#[cfg(test)]
+pub(super) fn test_input(definition: w::NativeQueryDefinition) -> Input {
+    tests::input(tests::query(definition))
 }

@@ -210,12 +210,13 @@ macOS 硬件、Applications、PKG receipts 和 Homebrew 使用同一 Collection 
 设备读取由 System broker 执行，用户 Applications 与 Brew 必须经过当前登录用户的认证 helper；
 会话改变后原授权不可继续使用，不以 root 或离线账号切换兜底。应用存在、PKG 收据和 Brew 记录分别保存，
 单个根或 prefix 的结果不能解释为设备全量软件快照；用户/prefix 的资产范围投影由服务端提供。
+Applications 只枚举批准物理根内的应用目录，不跟随目录别名（包括 Safari 的 Cryptex 链接）；链接目标不作为该根已采集的应用。
 
-Brew 仅使用 deployment 中已有 `execution.managers` 的 `brew` 工具配置，prefix 不是可执行文件来源。
-当前适配器验证 Homebrew 7.0.7 的 installed JSON v2；配置必须指向管理员保护的真实工具文件，
-安装代码与加载的 formula/cask 材料也须管理员保护。普通用户可修改的 Homebrew 安装不满足这一执行边界。
-查询核对当前非 root 用户及实际 prefix，在只读、禁网沙箱内执行；缺失工具、版本不匹配或权限不足明确失败，
-Agent 不安装、更新或修复 Homebrew。不同 prefix 可配置不同可信 manager，不能让一个 prefix 的结果覆盖另一个。
+Brew v2 只读取批准 prefix 内 Cellar/Caskroom 的安装记录与可识别 JSON，不调用 brew、Ruby 或 shell，
+不依赖 `execution.managers` 中的 Brew 配置；用户可写的安装元数据按不可信数据处理。
+版本与 tap 来自安装记录，不从当前仓库版本或默认 tap 推断；不能解析的历史格式、链接越界、权限不足、
+扫描期间变化或预算耗尽均保留非完整状态，不能当作完整空清单。不同用户、prefix、tap、包类型与安装版本保持独立身份。
+旧 Brew v1 引擎和蓝图不再支持，须先结算旧任务、保留 journal，再与服务端协调升级；不保留命令执行回退。
 
 原生查询、清理和诊断共享任务预算。完整传输不等于完整采集，进程退出也不等于所有工作已收尾。
 固定 worker 的本地收尾控制消息只记录执行事实；服务端结果仍直接使用唯一 wire DTO。

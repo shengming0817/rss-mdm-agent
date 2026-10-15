@@ -1,12 +1,39 @@
 use super::*;
-use serde_json::json;
+#[test]
+fn partial_file_read_failure_accounts_observed_bytes() {
+    struct Partial(bool);
+    impl std::io::Read for Partial {
+        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            if self.0 {
+                return Err(std::io::Error::other("fixture read failure"));
+            }
+            self.0 = true;
+            buffer[..3].copy_from_slice(b"abc");
+            Ok(3)
+        }
+    }
+    let input = input(query(w::NativeQueryDefinition::MacosPkgReceipts {}));
+    let context = Context {
+        input: &input,
+        until: Instant::now() + std::time::Duration::from_secs(5),
+        bytes: Cell::new(0),
+        cap: 1024,
+    };
+    assert!(matches!(
+        context.read_bounded(Partial(false), 1024),
+        Err(Fault::Query(Status::Invalid))
+    ));
+    assert_eq!(context.bytes.get(), 3);
+    assert_eq!(input.observed.load(std::sync::atomic::Ordering::Relaxed), 3);
+}
+
 pub(super) fn query(definition: w::NativeQueryDefinition) -> w::NativeQuery {
     let cardinality = match &definition {
         w::NativeQueryDefinition::MacosHardware { section } => section.cardinality(),
         _ => w::NativeCardinality::List,
     };
     w::NativeQuery {
-        version: 1,
+        version: definition.engine().contract_version(),
         definition,
         cardinality,
         instance_keys: if cardinality == w::NativeCardinality::List {
@@ -146,63 +173,6 @@ fn receipt_is_evidence_even_when_install_location_does_not_exist() {
     assert_eq!(r["location"], "/missing-example");
 }
 #[test]
-fn brew_installed_versions_prefixes_taps_and_empty_results_are_distinct() {
-    let definition = |prefix: &str| w::NativeQueryDefinition::MacosBrew {
-        prefix: prefix.into(),
-        package: w::MacosBrewPackage::Formula,
-        taps: Default::default(),
-    };
-    let q = query(definition("/opt/homebrew"));
-    let value = json!({"formulae":[{"name":"example","tap":"homebrew/core","installed":[{"version":"1"},{"version":"2"}]}],"casks":[]});
-    let mut rows = Rows::new(&q, now().unwrap());
-    brew::decode(
-        &value,
-        "/opt/homebrew",
-        "501",
-        w::MacosBrewPackage::Formula,
-        &Default::default(),
-        &mut rows,
-    )
-    .unwrap();
-    let r = rows.finish(Ok(()));
-    assert!(r.complete_for(&q, now().unwrap()));
-    assert_eq!(r.rows.len(), 2);
-    assert_ne!(r.rows[0]["id"], r.rows[1]["id"]);
-    let mut rows = Rows::new(&q, now().unwrap());
-    brew::decode(
-        &value,
-        "/opt/homebrew",
-        "501",
-        w::MacosBrewPackage::Formula,
-        &["other/tap".into()].into(),
-        &mut rows,
-    )
-    .unwrap();
-    assert_eq!(rows.finish(Ok(())).rows.len(), 0);
-    let other = query(definition("/usr/local"));
-    let mut rows = Rows::new(&other, now().unwrap());
-    brew::decode(
-        &value,
-        "/usr/local",
-        "501",
-        w::MacosBrewPackage::Formula,
-        &Default::default(),
-        &mut rows,
-    )
-    .unwrap();
-    assert_ne!(rows.finish(Ok(())).rows[0]["id"], r.rows[0]["id"]);
-    let mut rows = Rows::new(&q, now().unwrap());
-    assert!(brew::decode(
-        &json!({}),
-        "/opt/homebrew",
-        "501",
-        w::MacosBrewPackage::Formula,
-        &Default::default(),
-        &mut rows
-    )
-    .is_err());
-}
-#[test]
 fn actual_host_memory_os_cpu_and_network_use_native_providers() {
     // Provider-only T2: no claim of privileged service installation or enterprise authorization.
     for section in [
@@ -230,65 +200,6 @@ fn missing_tool_timeout_and_empty_inventory_are_not_interchangeable() {
     assert_eq!(execute(&input, &q).unwrap().status, Status::Timeout);
     let empty = Rows::new(&q, now().unwrap()).finish(Ok(()));
     assert!(empty.complete_for(&q, now().unwrap()));
-}
-#[test]
-fn actual_fixed_system_tool_has_bounded_owner_and_output() {
-    let q = query(w::NativeQueryDefinition::MacosHardware {
-        section: w::MacosHardwareSection::Identity,
-    });
-    let mut input = input(q.clone());
-    input.tools.insert(
-        "system_profiler".into(),
-        crate::backend::plan::pin(Path::new("/usr/sbin/system_profiler")).unwrap(),
-    );
-    let result = execute(&input, &q).unwrap();
-    assert!(
-        result.complete_for(&q, now().unwrap()),
-        "{:?}",
-        result.status
-    );
-}
-#[test]
-fn actual_brew_sandbox_denies_writes_and_network() {
-    let invoke = |args: &[&str]| {
-        std::process::Command::new("/usr/bin/sandbox-exec")
-            .args(["-p", brew::SANDBOX])
-            .args(args)
-            .env_clear()
-            .output()
-            .unwrap()
-    };
-    assert!(
-        invoke(&["/usr/bin/true"]).status.success(),
-        "sandbox must actually launch"
-    );
-    let path = std::env::temp_dir().join(format!("rss-sandbox-{}", uuid::Uuid::new_v4()));
-    assert!(!path.exists());
-    let write = invoke(&["/usr/bin/touch", path.to_str().unwrap()]);
-    assert!(!write.status.success());
-    assert!(!path.exists());
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let addr = listener.local_addr().unwrap();
-    let baseline = std::net::TcpStream::connect(addr).unwrap();
-    drop(listener.accept().unwrap());
-    drop(baseline);
-    listener.set_nonblocking(true).unwrap();
-    let url = format!("http://{addr}/");
-    let network = invoke(&[
-        "/usr/bin/curl",
-        "--noproxy",
-        "*",
-        "--connect-timeout",
-        "1",
-        "--max-time",
-        "2",
-        &url,
-    ]);
-    assert!(!network.status.success());
-    assert_eq!(
-        listener.accept().unwrap_err().kind(),
-        std::io::ErrorKind::WouldBlock
-    );
 }
 #[test]
 fn apfs_boot_snapshot_is_not_a_logical_volume_or_a_new_identity() {

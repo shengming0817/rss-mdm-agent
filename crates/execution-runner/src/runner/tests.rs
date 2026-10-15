@@ -954,6 +954,7 @@ fn repeated_supervision_errors_do_not_renew_shutdown_time_or_overwrite_first_rea
     assert_eq!(facts.failure_kind, ProcessFailureKind::Capture);
 }
 
+mod collection_tests;
 mod software_tests;
 
 #[test]
