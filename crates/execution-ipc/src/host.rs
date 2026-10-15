@@ -61,6 +61,8 @@ pub enum RegistrationPhase {
     IssuanceUnknown,
     /// Original activation needs recovery.
     ActivationUnknown,
+    /// New registration admission is paused; retain original material and expiry.
+    Paused,
     /// Original request or credential is rejected.
     Rejected,
 }

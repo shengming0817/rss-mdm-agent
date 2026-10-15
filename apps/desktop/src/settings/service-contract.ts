@@ -83,6 +83,7 @@ export interface RegistrationStatus {
     | "active"
     | "issuanceUnknown"
     | "activationUnknown"
+    | "paused"
     | "rejected";
   /**
    * SHA256 of the exact request public key.

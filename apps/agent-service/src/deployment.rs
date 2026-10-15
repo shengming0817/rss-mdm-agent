@@ -524,7 +524,7 @@ pub(crate) fn startup_failure(error: Error) -> execution_contract::ProcessFailur
         Error::Protocol | Error::Configuration => K::InvalidInput,
         Error::Schema | Error::Unsupported => K::Unsupported,
         Error::Capacity => K::Capacity,
-        Error::Conflict => K::Conflict,
+        Error::Conflict | Error::EnrollmentPaused => K::Conflict,
         Error::Storage
         | Error::Unavailable
         | Error::Clock

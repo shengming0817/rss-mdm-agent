@@ -29,6 +29,8 @@ pub enum EnrollmentPhase {
     ActivationUnknown,
     /// Original authorization or credential is unavailable; retain all state.
     Rejected,
+    /// Administrative admission pause; pending material and original expiry are retained.
+    Paused,
 }
 /// Bounded public progress, without secrets, key references, certificate bodies or storage paths.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -117,6 +119,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         });
         let operation_failure = state.pending.as_ref().and_then(|p| p.failure);
         let phase = match operation_failure.or(failure) {
+            Some(enroll::ErrorCode::EnrollmentPaused) => EnrollmentPhase::Paused,
             Some(enroll::ErrorCode::IssuanceUnknown) => EnrollmentPhase::IssuanceUnknown,
             Some(enroll::ErrorCode::ActivationUnknown) => EnrollmentPhase::ActivationUnknown,
             Some(code) if code != enroll::ErrorCode::ServiceUnavailable => {

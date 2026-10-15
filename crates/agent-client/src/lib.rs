@@ -66,6 +66,9 @@ pub enum Error {
     /// Original activation result is unknown.
     #[error("Agent activation unknown")]
     ActivationUnknown,
+    /// Admission is paused; retain the original operation, key and deadline.
+    #[error("new registration admission paused")]
+    EnrollmentPaused,
     /// A budget was exhausted before new work.
     #[error("Agent capacity exhausted")]
     Capacity,

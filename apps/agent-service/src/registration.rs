@@ -21,6 +21,7 @@ pub(crate) fn project(value: EnrollmentStatus) -> RegistrationStatus {
         EnrollmentPhase::IssuanceUnknown => RegistrationPhase::IssuanceUnknown,
         EnrollmentPhase::ActivationUnknown => RegistrationPhase::ActivationUnknown,
         EnrollmentPhase::Rejected => RegistrationPhase::Rejected,
+        EnrollmentPhase::Paused => RegistrationPhase::Paused,
     };
     let credential = match value.failure {
         Some(rss_mdm_agent_wire::enroll::ErrorCode::CertificateExpired) => {
