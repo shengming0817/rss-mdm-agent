@@ -174,23 +174,33 @@ fn truncation_does_not_publish_first_n_as_a_complete_snapshot() {
 fn task_reuses_identical_queries_and_keeps_independent_failures() {
     let p = plan();
     let mut calls = 0;
-    let result = collect(&p, now().unwrap() + 30, |_, q, _| {
-        calls += 1;
-        Ok(Rows::new(q, now().unwrap()).finish(Ok(())))
-    })
+    let result = collect(
+        &p,
+        now().unwrap() + 30,
+        (now().unwrap() as u64 + 30) * 1000,
+        |_, q, _| {
+            calls += 1;
+            Ok(Rows::new(q, now().unwrap()).finish(Ok(())))
+        },
+    )
     .unwrap();
     assert_eq!(calls, 1);
     assert_eq!(result.queries.len(), 2);
     let mut spec = p.spec().clone();
     spec.queries.get_mut("b").unwrap().budget.max_rows = 1;
     let p = w::NativeCollectionPlan::new(spec).unwrap();
-    let result = collect(&p, now().unwrap() + 30, |id, q, _| {
-        Ok(if id == "a" {
-            failure(q, Status::Denied, now().unwrap())
-        } else {
-            Rows::new(q, now().unwrap()).finish(Ok(()))
-        })
-    })
+    let result = collect(
+        &p,
+        now().unwrap() + 30,
+        (now().unwrap() as u64 + 30) * 1000,
+        |id, q, _| {
+            Ok(if id == "a" {
+                failure(q, Status::Denied, now().unwrap())
+            } else {
+                Rows::new(q, now().unwrap()).finish(Ok(()))
+            })
+        },
+    )
     .unwrap();
     assert_eq!(result.queries["a"].status, Status::Denied);
     assert!(result.queries["b"].complete_for(&p.spec().queries["b"], now().unwrap()));
@@ -204,4 +214,81 @@ fn insufficient_envelope_budget_is_rejected_before_execution() {
     }
     let p = w::NativeCollectionPlan::new(spec).unwrap();
     assert!(preflight(&p).is_err());
+}
+
+#[test]
+fn common_cutoff_accounts_for_initialization_and_preserves_timeout_evidence() {
+    let p = plan();
+    let result = collect(&p, now().unwrap() + 30, 1, |_, _, _| {
+        panic!("expired budget must not dispatch")
+    })
+    .unwrap();
+    assert!(result.queries.values().all(|r| r.status == Status::Timeout));
+    let wall = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+    collect(&p, now().unwrap() + 30, wall + 2000, |_, q, remaining| {
+        assert!(remaining <= std::time::Duration::from_millis(1750));
+        Ok(failure(q, Status::Timeout, now().unwrap()))
+    })
+    .unwrap();
+}
+#[test]
+fn malformed_quiescent_query_output_does_not_discard_other_queries() {
+    let mut spec = plan().spec().clone();
+    spec.queries.get_mut("b").unwrap().budget.max_rows = 1;
+    let p = w::NativeCollectionPlan::new(spec).unwrap();
+    let result = collect(
+        &p,
+        now().unwrap() + 30,
+        (now().unwrap() as u64 + 30) * 1000,
+        |id, q, _| {
+            Ok(if id == "a" {
+                decode_query(q, b"not-json", now().unwrap())
+            } else {
+                Rows::new(q, now().unwrap()).finish(Ok(()))
+            })
+        },
+    )
+    .unwrap();
+    assert_eq!(result.queries["a"].status, Status::Invalid);
+    assert!(result.queries["b"].complete_for(&p.spec().queries["b"], now().unwrap()));
+    assert!(collect(
+        &p,
+        now().unwrap() + 30,
+        (now().unwrap() as u64 + 30) * 1000,
+        |_, _, _| Err(Error::Unavailable)
+    )
+    .is_err());
+}
+#[test]
+fn adapter_inventory_joins_addresses_without_requiring_a_loopback_adapter() {
+    let adapters = vec![Row::from([("InterfaceIndex".into(), json!(2))])];
+    let addresses = vec![
+        Row::from([
+            ("InterfaceIndex".into(), json!(1)),
+            ("IPAddress".into(), json!("127.0.0.1")),
+        ]),
+        Row::from([
+            ("InterfaceIndex".into(), json!(2)),
+            ("IPAddress".into(), json!("192.0.2.1")),
+        ]),
+        Row::from([
+            ("InterfaceIndex".into(), json!(2)),
+            ("IPAddress".into(), json!("192.0.2.1")),
+        ]),
+    ];
+    let joined = adapter_addresses(&adapters, addresses).unwrap();
+    assert_eq!(joined.len(), 1);
+    assert_eq!(joined[&2], ["192.0.2.1".to_owned()].into());
+    let invalid = vec![Row::from([
+        ("InterfaceIndex".into(), json!(2)),
+        ("IPAddress".into(), json!("bad")),
+    ])];
+    assert_eq!(adapter_addresses(&adapters, invalid), Err(Status::Invalid));
+    assert_eq!(
+        adapter_addresses(&[adapters[0].clone(), adapters[0].clone()], vec![]),
+        Err(Status::Invalid)
+    );
 }

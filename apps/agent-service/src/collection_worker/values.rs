@@ -292,3 +292,39 @@ pub(super) fn cim_value(c: w::CimType, raw: CimValue) -> Result<Value, Status> {
     }
     Ok(value)
 }
+
+/// Address enrichment is bounded by the completely enumerated adapter set.
+/// IP-only interfaces (notably loopback) are not missing adapter evidence.
+pub(super) fn adapter_addresses(
+    adapters: &[Row],
+    addresses: Vec<Row>,
+) -> Result<BTreeMap<u64, BTreeSet<String>>, Status> {
+    let index = |r: &Row| {
+        r.get("InterfaceIndex")
+            .and_then(Value::as_u64)
+            .ok_or(Status::Missing)
+    };
+    let mut result = BTreeMap::new();
+    for adapter in adapters {
+        if result.insert(index(adapter)?, BTreeSet::new()).is_some() {
+            return Err(Status::Invalid);
+        }
+    }
+    for row in addresses {
+        let Some(values) = result.get_mut(&index(&row)?) else {
+            continue;
+        };
+        let ip = row
+            .get("IPAddress")
+            .and_then(Value::as_str)
+            .ok_or(Status::Missing)?
+            .parse::<std::net::IpAddr>()
+            .map_err(|_| Status::Invalid)?
+            .to_string();
+        values.insert(ip);
+        if values.len() > 64 {
+            return Err(Status::Truncated);
+        }
+    }
+    Ok(result)
+}

@@ -23,6 +23,7 @@ pub(crate) const PROFILE: &str = "native-collection-worker";
 #[serde(deny_unknown_fields)]
 pub(crate) struct Input {
     pub task: w::CollectionTaskSpec,
+    pub finish_by_unix_ms: u64,
     pub image_sha256: Digest,
 }
 pub(crate) fn engines() -> w::NativeEngines {
@@ -146,9 +147,12 @@ pub fn run(path: &Path, query: Option<&str>) -> Result<i32, Error> {
         let result = windows::execute(q, input.task.deadline);
         serde_json::to_vec(&result).map_err(|_| Error::Protocol)?
     } else {
-        let result = collect(&input.task.plan, input.task.deadline, |id, q, remaining| {
-            supervisor::query(path, &input, id, q, remaining)
-        })?;
+        let result = collect(
+            &input.task.plan,
+            input.task.deadline,
+            input.finish_by_unix_ms,
+            |id, q, remaining| supervisor::query(path, &input, id, q, remaining),
+        )?;
         serde_json::to_vec(&result).map_err(|_| Error::Protocol)?
     };
     #[cfg(not(windows))]
@@ -166,6 +170,7 @@ pub fn run(path: &Path, query: Option<&str>) -> Result<i32, Error> {
 fn collect(
     plan: &w::NativeCollectionPlan,
     deadline: i64,
+    finish_by_unix_ms: u64,
     mut execute: impl FnMut(
         &str,
         &w::NativeQuery,
@@ -173,19 +178,32 @@ fn collect(
     ) -> Result<w::NativeQueryResult, Error>,
 ) -> Result<w::NativeCollectionResult, Error> {
     preflight(plan)?;
+    // Compilation precedes runner dispatch. This conservative common cutoff includes
+    // staging, process startup and worker initialization without extending authorization.
+    let wall_ms = u64::try_from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|_| Error::Clock)?
+            .as_millis(),
+    )
+    .map_err(|_| Error::Clock)?;
+    let available = std::time::Duration::from_millis(
+        finish_by_unix_ms
+            .saturating_sub(wall_ms)
+            .saturating_sub(250),
+    )
+    .min(std::time::Duration::from_secs(u64::from(
+        plan.spec().budget.timeout_seconds,
+    )));
     let started = std::time::Instant::now();
     let mut result = empty_result(plan, now()?);
     let mut cache: BTreeMap<[u8; 32], w::NativeQueryResult> = BTreeMap::new();
     for (id, q) in &plan.spec().queries {
         let time = now()?;
-        if time >= deadline
-            || started.elapsed().as_secs() >= u64::from(plan.spec().budget.timeout_seconds)
-        {
+        if time >= deadline || started.elapsed() >= available {
             break;
         }
-        let remaining =
-            std::time::Duration::from_secs(u64::from(plan.spec().budget.timeout_seconds))
-                .saturating_sub(started.elapsed());
+        let remaining = available.saturating_sub(started.elapsed());
         let mut value = if let Some(value) = cache.get(&q.digest()) {
             value.clone()
         } else {
@@ -227,4 +245,10 @@ fn collect(
     result.collected_at = now()?;
     result.validate_for(plan, result.collected_at)?;
     Ok(result)
+}
+
+#[cfg(any(windows, test))]
+fn decode_query(q: &w::NativeQuery, bytes: &[u8], time: i64) -> w::NativeQueryResult {
+    serde_json::from_slice(bytes)
+        .unwrap_or_else(|_| failure(q, w::NativeQueryStatus::Invalid, time))
 }

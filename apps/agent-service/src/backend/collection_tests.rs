@@ -66,6 +66,7 @@ async fn native_capture_survives_lost_ack_and_restart_without_recollection() {
         task.expires_at as u64 * 1000 + input.budget.total_timeout_ms;
     let bytes = serde_json::to_vec(&crate::collection_worker::Input {
         task: (**task).clone(),
+        finish_by_unix_ms: input.validity.not_before_unix_ms + input.budget.total_timeout_ms,
         image_sha256: input.launch.interpreter.artifact.sha256.clone(),
     })
     .unwrap();

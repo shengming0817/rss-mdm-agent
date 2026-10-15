@@ -43,9 +43,20 @@ pub(crate) fn compile(
     if seconds == 0 {
         return Err(Error::Expired);
     }
+    let compiled_at_ms = u64::try_from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|_| Error::Clock)?
+            .as_millis(),
+    )
+    .map_err(|_| Error::Clock)?;
+    let finish_by_unix_ms = compiled_at_ms
+        .checked_add(seconds * 1000)
+        .ok_or(Error::Clock)?;
     let image = plan::pin(&std::env::current_exe()?)?;
     let input = crate::collection_worker::Input {
         task: payload.clone(),
+        finish_by_unix_ms,
         image_sha256: image.artifact.sha256.clone(),
     };
     let bytes = serde_json::to_vec(&input).map_err(|_| Error::Protocol)?;
@@ -125,7 +136,7 @@ pub(crate) fn compile(
                 max_attempts: 1,
             },
             validity: ValidityWindow {
-                not_before_unix_ms: 0,
+                not_before_unix_ms: compiled_at_ms,
                 expires_at_unix_ms: u64::try_from(payload.expires_at)
                     .map_err(|_| Error::Clock)?
                     .checked_add(seconds)
@@ -159,6 +170,12 @@ pub(crate) fn verify_input(
 ) -> Result<(), Error> {
     let input = crate::collection_worker::Input {
         task: task.clone(),
+        finish_by_unix_ms: plan
+            .spec()
+            .validity
+            .not_before_unix_ms
+            .checked_add(plan.spec().budget.total_timeout_ms)
+            .ok_or(Error::Clock)?,
         image_sha256: plan.spec().launch.interpreter.artifact.sha256.clone(),
     };
     let bytes = serde_json::to_vec(&input).map_err(|_| Error::Protocol)?;

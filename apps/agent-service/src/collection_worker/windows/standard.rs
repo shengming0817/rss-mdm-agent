@@ -120,20 +120,7 @@ pub(super) fn read(
                 &[("InterfaceIndex", Uint32), ("IPAddress", String)],
                 budget,
             )?;
-            let mut by_index: BTreeMap<u64, BTreeSet<std::string::String>> = BTreeMap::new();
-            for row in addresses {
-                let ip = text(&row, "IPAddress")?
-                    .parse::<std::net::IpAddr>()
-                    .map_err(|_| Status::Invalid)?
-                    .to_string();
-                let values = by_index
-                    .entry(integer(&row, "InterfaceIndex")?)
-                    .or_default();
-                values.insert(ip);
-                if values.len() > 64 {
-                    return Err(Status::Truncated);
-                }
-            }
+            let mut by_index = super::super::values::adapter_addresses(&adapters, addresses)?;
             let mut seen = BTreeSet::new();
             for row in adapters {
                 budget.check()?;
@@ -154,10 +141,10 @@ pub(super) fn read(
                     ),
                 ]))?;
             }
-            // Unmatched addresses may belong to hidden interfaces; a complete list cannot omit them.
-            if !by_index.is_empty() {
-                return Err(Status::Invalid);
-            }
+            // The enumerated set is MSFT_NetAdapter. MSFT_NetIPAddress also contains
+            // IP-only interfaces (including loopback); those are outside this adapter
+            // inventory. Both provider enumerations must still finish successfully.
+            // ref: MicrosoftDocs/azure-docs virtual-network/how-to-virtual-machine-mtu.md
             Ok(())
         }
         w::NativeQueryDefinition::WindowsBattery => {

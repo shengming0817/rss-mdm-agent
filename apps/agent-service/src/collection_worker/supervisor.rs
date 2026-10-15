@@ -93,5 +93,5 @@ pub(super) fn query(
     if exit.is_none_or(|v| !v.success()) {
         return Ok(failure(q, w::NativeQueryStatus::Invalid, time));
     }
-    serde_json::from_slice(&bytes).map_err(|_| Error::Protocol)
+    Ok(decode_query(q, &bytes, time))
 }
