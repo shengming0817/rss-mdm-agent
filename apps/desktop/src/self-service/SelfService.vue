@@ -213,8 +213,14 @@ function failureLabel(value: string) {
           <button type="button" @click="closeResource">关闭详情</button>
         </div>
         <p>
-          {{ resource.summary.kind === "software" ? "软件详情" : "脚本详情" }} ·
-          未提供分类 · 后台未提供资源说明
+          {{
+            resource.summary.kind === "software"
+              ? "软件详情"
+              : resource.summary.kind === "collection"
+                ? "采集详情"
+                : "脚本详情"
+          }}
+          · 未提供分类 · 后台未提供资源说明
         </p>
         <ol v-if="resource.summary.kind === 'software'">
           <li v-for="(step, index) in resource.summary.steps" :key="index">
@@ -230,7 +236,10 @@ function failureLabel(value: string) {
         </ol>
         <p v-else>
           运行身份：{{
-            resource.summary.identity === "system" ? "系统账号" : "当前用户"
+            resource.summary.kind === "collection" ||
+            resource.summary.identity === "system"
+              ? "系统账号"
+              : "当前用户"
           }}
         </p>
         <p>
@@ -272,8 +281,18 @@ function failureLabel(value: string) {
           </ol>
         </template>
         <p v-else>
-          后台固定脚本 ·
-          {{ s.item.summary.identity === "system" ? "系统账号" : "当前用户" }}
+          {{
+            s.item.summary.kind === "collection"
+              ? "原生设备采集"
+              : "后台固定脚本"
+          }}
+          ·
+          {{
+            s.item.summary.kind === "collection" ||
+            s.item.summary.identity === "system"
+              ? "系统账号"
+              : "当前用户"
+          }}
         </p>
         <button :disabled="s.busy || s.uncertain" @click="c.confirm">
           确认并执行
@@ -310,8 +329,14 @@ function failureLabel(value: string) {
               </ol>
             </template>
             <p v-else>
-              后台固定脚本 ·
               {{
+                pending.action.offer.summary.kind === "collection"
+                  ? "原生设备采集"
+                  : "后台固定脚本"
+              }}
+              ·
+              {{
+                pending.action.offer.summary.kind === "collection" ||
                 pending.action.offer.summary.identity === "system"
                   ? "系统账号"
                   : "当前用户"

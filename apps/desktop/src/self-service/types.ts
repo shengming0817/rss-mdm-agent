@@ -138,6 +138,9 @@ export type SoftwareDetectionFailure =
  */
 export type BackendTaskSummary =
   | {
+      kind: "collection";
+    }
+  | {
       /**
        * Account class selected by the backend.
        */

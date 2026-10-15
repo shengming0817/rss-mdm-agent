@@ -20,10 +20,23 @@ fn run() -> Result<(), Error> {
             );
         }
     }
+    if let [mode, path, query] = args.as_slice() {
+        if mode == "--collection-query" {
+            let code = agent_service::collection_worker::run(
+                std::path::Path::new(path),
+                Some(query.to_str().ok_or(Error::Configuration)?),
+            )?;
+            std::process::exit(code);
+        }
+    }
     if args.first().is_some_and(|a| a == "--installation") {
         return agent_service::installation::run(&args[1..]);
     }
     if let [mode, path] = args.as_slice() {
+        if mode == "--collection-worker" {
+            let code = agent_service::collection_worker::run(std::path::Path::new(path), None)?;
+            std::process::exit(code);
+        }
         if mode == "--software-worker" {
             let code = agent_service::software_worker::run(std::path::Path::new(path))?;
             std::process::exit(code);

@@ -136,6 +136,25 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
                     u64::from(v.output_bytes),
                 )
             }
+            wire::TaskPayload::Collection(v) => {
+                if !matches!(
+                    plan.spec().execution,
+                    execution_contract::ExecutionSpec::Process {}
+                ) || plan.spec().launch.interpreter.profile.id.as_str()
+                    != crate::collection_worker::PROFILE
+                    || plan.spec().request.operation.resource.revision.as_str()
+                        != super::plan::hex(&v.resource_digest)
+                {
+                    return Err(Error::Untrusted);
+                }
+                (
+                    &v.device_id,
+                    v.platform,
+                    wire::ExecutionIdentity::System,
+                    u64::from(v.plan.spec().budget.timeout_seconds) * 1000,
+                    u64::from(v.plan.spec().budget.output_bytes),
+                )
+            }
             wire::TaskPayload::Software(v) => {
                 let program = plan
                     .spec()
@@ -220,6 +239,9 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
         let plan = &plan;
         let caller = &caller;
         client.validate_start(&start)?;
+        if let wire::TaskPayload::Collection(task) = start.payload() {
+            super::collection::verify_input(plan, task)?;
+        }
         if !start.matches_payload(&input) {
             return Err(Error::Untrusted);
         }
@@ -546,6 +568,9 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
             if terminal == execution_app::DeliveryTerminal::Cancelled {
                 return Ok(Some(wire::TaskEvent::Cancelled));
             }
+            if matches!(payload, wire::TaskPayload::Collection(_)) {
+                return Ok(None);
+            }
             let diagnostics = wire::TaskDiagnostics::new(
                 String::new(),
                 String::new(),
@@ -595,6 +620,39 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
                 &self.policy,
                 evidence.observed_at_unix_ms,
             )?)));
+        }
+        if let wire::TaskPayload::Collection(spec) = payload {
+            if process.end != ProcessEnd::Exited
+                || !process.quiescent
+                || process.quality != OutputQuality::Complete
+                || process.exit_code != Some(0)
+            {
+                return Ok(None); // Retain unknown evidence; no native result was durably captured.
+            }
+            let mut result: wire::NativeCollectionResult =
+                serde_json::from_slice(&process.stdout).map_err(|_| Error::Protocol)?;
+            let now =
+                i64::try_from(evidence.observed_at_unix_ms / 1000).map_err(|_| Error::Clock)?;
+            result.validate_for(&spec.plan, now)?;
+            for (id, query) in &mut result.queries {
+                let definition = &spec.plan.spec().queries[id];
+                // Do not rewrite typed values or identities into redacted but apparently valid facts.
+                let text = serde_json::to_string(&query.rows).map_err(|_| Error::Protocol)?;
+                if self.policy.redact(&text)? != text {
+                    *query = crate::collection_worker::failure(
+                        definition,
+                        wire::NativeQueryStatus::Denied,
+                        query.collected_at,
+                    );
+                } else if query.status == wire::NativeQueryStatus::Complete
+                    && !query.complete_for(definition, now)
+                {
+                    query.status = wire::NativeQueryStatus::Invalid;
+                    query.enumeration_complete = false;
+                }
+            }
+            result.validate_for(&spec.plan, now)?;
+            return Ok(Some(wire::TaskEvent::CollectionResult(result)));
         }
         let (stdout, malformed, diagnostics) = project_diagnostics(
             &self.policy,

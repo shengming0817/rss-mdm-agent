@@ -322,6 +322,9 @@ export interface BackendTask {
    */
   summary:
     | {
+        kind: "collection";
+      }
+    | {
         /**
          * Account class selected by the backend.
          */
@@ -602,6 +605,9 @@ export interface BackendTask1 {
    * Complete safe action preview, immutable with the offer revision.
    */
   summary:
+    | {
+        kind: "collection";
+      }
     | {
         /**
          * Account class selected by the backend.

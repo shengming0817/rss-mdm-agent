@@ -288,6 +288,76 @@ impl Data {
             key_id: "test".into(),
         }
     }
+    pub fn native_collection(&mut self) {
+        self.reset_current_task();
+        self.attempt = Uuid::new_v4();
+        let query = NativeQuery {
+            version: 1,
+            definition: NativeQueryDefinition::WindowsWmi {
+                namespace: "root\\cimv2".into(),
+                class: "Vendor_Inventory".into(),
+                properties: [
+                    (
+                        "Id".into(),
+                        WmiProperty {
+                            cim_type: CimType::String,
+                            array: false,
+                        },
+                    ),
+                    (
+                        "Name".into(),
+                        WmiProperty {
+                            cim_type: CimType::String,
+                            array: false,
+                        },
+                    ),
+                ]
+                .into(),
+                filter: None,
+            },
+            cardinality: NativeCardinality::List,
+            instance_keys: vec!["Id".into()],
+            budget: NativeBudget {
+                timeout_seconds: 30,
+                output_bytes: 1048576,
+                max_rows: 4096,
+            },
+        };
+        let plan = NativeCollectionPlan::new(NativePlanSpec {
+            version: 1,
+            scope: rss_mdm_agent_wire::CollectionScope::Device,
+            budget: query.budget,
+            queries: [("items".into(), query)].into(),
+        })
+        .unwrap();
+        let task = CollectionTaskSpec {
+            wire_version: 1,
+            tenant_id: self.tenant,
+            device_id: "device-1".into(),
+            platform: TaskPlatform::Windows,
+            architecture: TaskArchitecture::Aarch64,
+            registration_id: self.registration,
+            generation: 1,
+            task_id: self.task,
+            attempt_id: self.attempt,
+            permit: TaskPermit::Offer,
+            expires_at: self.time.now().unwrap() + 60,
+            resource_digest: [3; 32],
+            resource: TaskResource {
+                id: "fixture-native".into(),
+                version: "v1".into(),
+                variant: "windows".into(),
+            },
+            authorization: TaskAuthorization::Policy {
+                policy_id: self.task,
+                policy_version: self.task,
+            },
+            deadline: self.time.now().unwrap() + 300,
+            plan_digest: plan.digest(),
+            plan,
+        };
+        self.offer = Some(self.signed(TaskPayload::Collection(Box::new(task))));
+    }
     pub fn script(&mut self) {
         self.attempt = Uuid::new_v4();
         self.reset_current_task();
@@ -612,7 +682,10 @@ impl Server {
             execution_context: execution_context(),
             origin: self.url.clone(),
             tenant: data.tenant,
-            platform: TaskPlatform::Macos,
+            platform: data
+                .offer
+                .as_ref()
+                .map_or(TaskPlatform::Macos, |s| s.payload.platform()),
             architecture: TaskArchitecture::Aarch64,
             keys: BTreeMap::from([("test".into(), data.signer.public_key().as_ref().to_vec())]),
             limits: Limits::test_defaults(),
@@ -633,7 +706,18 @@ impl Server {
             self.time.clone(),
         )
         .unwrap();
-        client.set_profiles(vec![ExecutorProfile::PosixSh]).unwrap();
+        if client.configuration().platform == TaskPlatform::Windows {
+            client.set_profiles(vec![]).unwrap();
+            client
+                .set_collection_environment(rss_mdm_agent_wire::CollectionEnvironment {
+                    edition: None,
+                    tools: Default::default(),
+                    native_engines: [(NativeEngine::WindowsWmi, 1)].into(),
+                })
+                .unwrap();
+        } else {
+            client.set_profiles(vec![ExecutorProfile::PosixSh]).unwrap();
+        }
         client
     }
     pub async fn register(&self, client: &mut Client<Secrets, Time>) -> BindingProfile {
@@ -1059,6 +1143,10 @@ fn start_event(d: &mut Data, operation: String) -> Response {
         let mut payload = d.offer.as_ref().unwrap().payload.clone();
         let expiry = d.time.now().unwrap() + d.start_validity_seconds;
         match &mut payload {
+            TaskPayload::Collection(v) => {
+                v.permit = TaskPermit::Start;
+                v.expires_at = expiry;
+            }
             TaskPayload::Script(v) => {
                 v.permit = TaskPermit::Start;
                 v.expires_at = expiry;

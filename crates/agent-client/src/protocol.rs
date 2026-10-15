@@ -47,6 +47,12 @@ pub fn verify_task<'a>(
 ) -> Result<VerifiedTask<'a>, Error> {
     let p = &signed.payload;
     let (tenant, device, registration, generation) = match p {
+        TaskPayload::Collection(v) => (
+            v.tenant_id,
+            v.device_id.as_str(),
+            v.registration_id,
+            v.generation,
+        ),
         TaskPayload::Script(v) => (
             v.tenant_id,
             v.device_id.as_str(),
@@ -81,6 +87,10 @@ pub fn verify_task<'a>(
         || signed.signature.len() != 86
     {
         return Err(Error::Protocol);
+    }
+    if matches!(p, TaskPayload::Collection(v) if matches!(v.authorization, TaskAuthorization::SelfService { .. }))
+    {
+        return Err(Error::Unsupported);
     }
     if let TaskPayload::Software(spec) = p {
         validate_software_admission(spec)?;

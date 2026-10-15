@@ -24,7 +24,11 @@ export function resourceContext(
     software ? "软件中心" : "工具中心",
     "未提供分类",
     item.title,
-    software ? "软件详情" : "脚本详情",
+    software
+      ? "软件详情"
+      : item.summary.kind === "collection"
+        ? "采集详情"
+        : "脚本详情",
   ];
   const data = {
     hierarchy: {
@@ -33,7 +37,7 @@ export function resourceContext(
       name: path[2],
       detail: path[3],
     },
-    kind: software ? "software" : "script",
+    kind: item.summary.kind,
     source:
       source === "s1"
         ? "明确标注的测试展示信息，无真实执行承诺"

@@ -22,7 +22,9 @@ fn recipe(
     run_as: &RunAs,
     session: &SessionRequirement,
 ) -> Result<Artifacts, Error> {
-    let interpreter = if launch.interpreter.profile.id.as_str() == "native-software-worker" {
+    let interpreter = if ["native-software-worker", "native-collection-worker"]
+        .contains(&launch.interpreter.profile.id.as_str())
+    {
         let image = std::env::current_exe()?;
         execution_runner::staging::verify_retained(&image, &launch.interpreter.artifact.sha256)
             .map_err(crate::error::app_error)?;

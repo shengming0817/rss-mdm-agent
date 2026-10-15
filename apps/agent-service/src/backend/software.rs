@@ -323,7 +323,7 @@ pub(crate) fn compile(
                 (config, root),
                 helper.clone(),
                 intent,
-                (&architecture, native::pin(&std::env::current_exe()?)?),
+                (&architecture, plan::pin(&std::env::current_exe()?)?),
             )?;
             steps.push(compiled);
             sources.push(source);

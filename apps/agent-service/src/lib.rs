@@ -2,6 +2,7 @@
 //! No local enterprise approver, source catalog or policy-signing authority is introduced.
 mod backend;
 mod collection_environment;
+pub mod collection_worker;
 pub mod deployment;
 mod error;
 mod material_gc;

@@ -693,6 +693,7 @@ async fn claim_retry_freezes_executor_profiles_and_context_across_restart() {
         .set_profiles(vec![ExecutorProfile::PosixSh, ExecutorProfile::Osquery])
         .unwrap();
     let environment = rss_mdm_agent_wire::CollectionEnvironment {
+        native_engines: Default::default(),
         edition: Some("Professional".into()),
         tools: [("powershell".into(), "7.4.13".into())].into(),
     };
@@ -728,7 +729,7 @@ async fn claim_retry_freezes_executor_profiles_and_context_across_restart() {
     assert_ne!(inputs[1]["operationId"], inputs[2]["operationId"]);
     assert_eq!(
         inputs[2]["environment"],
-        serde_json::json!({"edition":null,"tools":{}})
+        serde_json::json!({"edition":null,"tools":{},"nativeEngines":{}})
     );
 }
 
