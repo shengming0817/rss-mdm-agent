@@ -33,3 +33,7 @@ export {
   UserRound,
   ChevronRight,
 } from "@lucide/vue";
+
+export { default as UiProvider } from "./components/UiProvider.vue";
+export * from "./context";
+export * from "./components/primitives";
