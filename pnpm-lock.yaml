@@ -327,6 +327,9 @@ importers:
 
   packages/ui:
     dependencies:
+      '@internationalized/date':
+        specifier: 3.12.4
+        version: 3.12.4
       '@lucide/vue':
         specifier: 1.49.0
         version: 1.49.0(vue@3.5.38(typescript@5.6.2))
