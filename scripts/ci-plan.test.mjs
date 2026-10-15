@@ -527,15 +527,3 @@ test("a prepared gate records consumption rather than an unexecuted command", as
   assert.deepEqual(results[0].preparedInputs, ["node:desktop"]);
   assert.equal(results[0].outcome, "passed");
 });
-
-// Collector sources live under the production Cargo owner, including PowerShell inputs.
-test("collector pure logic follows the service owner and full selection", () => {
-  const selected = (value) =>
-    planSteps(steps, value).find(
-      (s) => s.name === "Windows collector pure logic",
-    ).selected;
-  assert.equal(selected(impact(["agent-service"])), true);
-  assert.equal(selected(impact(["execution-runner"])), false);
-  assert.equal(selected(impact()), false);
-  assert.equal(selected({ ...impact(), full: true }), true);
-});

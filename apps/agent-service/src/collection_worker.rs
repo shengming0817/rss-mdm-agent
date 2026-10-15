@@ -207,8 +207,7 @@ fn collect(
         let mut value = if let Some(value) = cache.get(&q.digest()) {
             value.clone()
         } else {
-            let value = execute(id, q, remaining)?;
-            value
+            execute(id, q, remaining)?
         };
         if value.query_digest != q.digest() || value.collected_at < 1 || value.collected_at > now()?
         {

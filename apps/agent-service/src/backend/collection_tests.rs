@@ -54,6 +54,8 @@ async fn native_capture_survives_lost_ack_and_restart_without_recollection() {
     };
     let mut input = adapted_plan(false, "device-1", &offer).spec().clone();
     input.request.target.platform = Platform::Windows;
+    input.constraints = IsolationPolicy::OsIdentity {};
+    input.launch.cwd = r"C:\ProgramData\RSS".into();
     input.run_as = RunAs::System {
         platform: Platform::Windows,
     };
