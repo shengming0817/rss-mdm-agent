@@ -79,6 +79,11 @@ export async function checkFoundations(browser, url) {
       await branch.focus();
       await page.keyboard.press("ArrowRight");
       await page.getByRole("treeitem", { name: /由调用方加载/ }).waitFor();
+      await select("U15");
+      const activeRow = page.getByRole("row").filter({ hasText: "选项 A" });
+      await activeRow.focus();
+      await page.keyboard.press("Enter");
+      await page.getByText("表格激活 a", { exact: true }).waitFor();
       await select("U16");
       await page.getByRole("tab", { name: "选项 A", exact: true }).focus();
       await page.keyboard.press("ArrowRight");
@@ -150,6 +155,28 @@ export async function checkFoundations(browser, url) {
       });
       await page.setViewportSize({ width: 550, height: 820 });
       await select("U26");
+      const lineChart = page.getByRole("figure", {
+        name: "数据趋势",
+        exact: true,
+      });
+      const originalDash = await lineChart
+        .locator("path")
+        .nth(1)
+        .getAttribute("stroke-dasharray");
+      await lineChart
+        .getByRole("checkbox", { name: "系列 A", exact: true })
+        .click();
+      assert.equal(
+        await lineChart.locator("path").getAttribute("stroke-dasharray"),
+        originalDash,
+      );
+      await lineChart
+        .getByRole("checkbox", { name: "系列 A", exact: true })
+        .click();
+      assert.equal(
+        await lineChart.locator("path").nth(1).getAttribute("stroke-dasharray"),
+        originalDash,
+      );
       assert.equal(
         await page.evaluate(
           () => document.documentElement.scrollWidth > innerWidth,

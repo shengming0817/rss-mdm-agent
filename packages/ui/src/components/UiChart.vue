@@ -47,6 +47,7 @@ const colors = [
   "var(--rss-color-danger)",
 ];
 const color = (index: number) => colors[index % 4];
+const dashed = (series: ChartSeries) => props.series.indexOf(series) % 2 === 1;
 function path(series: ChartSeries) {
   let started = false;
   return props.categories
@@ -102,7 +103,7 @@ const columns = computed(() => [
         /><span
           :style="{
             borderColor: color(index),
-            borderStyle: index % 2 ? 'dashed' : 'solid',
+            borderStyle: dashed(series) ? 'dashed' : 'solid',
           }"
           aria-hidden="true"
         />{{ series.label }}</label
@@ -124,7 +125,7 @@ const columns = computed(() => [
           fill="none"
           :stroke="color(props.series.indexOf(series))"
           stroke-width="2.5"
-          :stroke-dasharray="index % 2 ? '7 4' : undefined"
+          :stroke-dasharray="dashed(series) ? '7 4' : undefined"
         />
         <template v-for="(_, position) in categories" :key="position">
           <circle

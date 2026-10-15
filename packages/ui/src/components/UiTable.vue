@@ -10,6 +10,8 @@ const props = withDefaults(
     selection?: "none" | "single" | "multiple";
     modelValue?: string[];
     disabled?: boolean;
+    /** Enable row actions; read-only tables keep ordinary table tab order. */
+    activatable?: boolean;
     sort?: { key: string; direction: "ascending" | "descending" };
     page?: number;
     pageCount?: number;
@@ -23,6 +25,32 @@ const emit = defineEmits<{
   activate: [id: string];
 }>();
 const id = useId();
+// ref: react-aria selection/useSelectableItem.ts — action and selection are separate.
+function activate(row: UiRow, event: MouseEvent | KeyboardEvent) {
+  if (
+    !props.activatable ||
+    props.disabled ||
+    row.disabled ||
+    event.defaultPrevented
+  )
+    return;
+  if (event.type === "keydown") {
+    const key = event as KeyboardEvent;
+    if (key.isComposing || key.repeat || event.target !== event.currentTarget)
+      return;
+  } else {
+    const target = event.target as Element | null;
+    if (
+      target?.closest("tr") !== event.currentTarget ||
+      target?.closest(
+        "button,a,input,select,textarea,[contenteditable],[role='button'],[role='link'],[role='checkbox'],[role='switch'],[role='combobox']",
+      )
+    )
+      return;
+  }
+  event.preventDefault();
+  emit("activate", row.id);
+}
 function select(row: UiRow) {
   if (props.disabled || row.disabled) return;
   emit(
@@ -75,7 +103,10 @@ function select(row: UiRow) {
           v-for="row in rows"
           :key="row.id"
           :data-selected="modelValue.includes(row.id) || undefined"
-          @dblclick="!disabled && !row.disabled && emit('activate', row.id)"
+          :tabindex="activatable && !disabled && !row.disabled ? 0 : undefined"
+          :aria-disabled="disabled || row.disabled || undefined"
+          @dblclick="activate(row, $event)"
+          @keydown.enter.self="activate(row, $event)"
         >
           <td v-if="selection !== 'none'">
             <input

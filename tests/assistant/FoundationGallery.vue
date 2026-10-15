@@ -323,6 +323,8 @@ function load(id: string) {
             />
             <UiTable
               v-else-if="family === 'U15'"
+              activatable
+              @activate="log(`表格激活 ${$event}`)"
               :rows="rows"
               :columns="[
                 { key: 'label', label: '名称', sortable: true },

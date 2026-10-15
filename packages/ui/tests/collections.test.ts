@@ -1,3 +1,4 @@
+import { h } from "vue";
 import { mount } from "@vue/test-utils";
 import { describe, it, expect } from "vitest";
 import {
@@ -137,5 +138,66 @@ it("does not select a tree node until the caller accepts the selection", async (
   expect(wrapper.get('[role="treeitem"]').attributes("aria-selected")).toBe(
     "false",
   );
+  wrapper.unmount();
+});
+
+it("keeps chart series styles stable when earlier series are hidden and restored", async () => {
+  const wrapper = mount(UiChart, {
+    props: {
+      label: "Chart",
+      categories: ["one", "two"],
+      series: [
+        { id: "a", label: "Alpha", values: [1, 2] },
+        { id: "b", label: "Beta", values: [3, 4] },
+      ],
+      modelValue: ["a", "b"],
+    },
+  });
+  const original = wrapper.findAll("path")[1].attributes("stroke-dasharray");
+  expect(original).toBe("7 4");
+  await wrapper.setProps({ modelValue: ["b"] });
+  expect(wrapper.get("path").attributes("stroke-dasharray")).toBe(original);
+  expect(
+    wrapper.findAll(".ui-chart-legend label > span")[1].attributes("style"),
+  ).toContain("dashed");
+  await wrapper.setProps({ modelValue: ["a", "b"] });
+  expect(wrapper.findAll("path")[1].attributes("stroke-dasharray")).toBe(
+    original,
+  );
+  wrapper.unmount();
+});
+it("table Enter and double click use one activation policy without consuming cell controls", async () => {
+  const wrapper = mount(UiTable, {
+    props: {
+      label: "Rows",
+      rows: items,
+      columns: [{ key: "label", label: "Name" }],
+      selection: "multiple",
+      activatable: true,
+    },
+    slots: { cell: ({ row }) => h("button", { type: "button" }, row.label) },
+  });
+  const rows = wrapper.findAll("tbody tr");
+  expect(rows[0].attributes("tabindex")).toBe("0");
+  expect(rows[1].attributes("tabindex")).toBeUndefined();
+  await rows[0].trigger("keydown", { key: "Enter" });
+  await rows[0].get("td").trigger("dblclick");
+  expect(wrapper.emitted("activate")).toEqual([["a"], ["a"]]);
+  await rows[0].get("button").trigger("keydown", { key: "Enter" });
+  await rows[0].get("button").trigger("dblclick");
+  await rows[0].get("input").trigger("keydown", { key: "Enter" });
+  await rows[0].get("input").trigger("dblclick");
+  await rows[1].trigger("keydown", { key: "Enter" });
+  await rows[1].get("td").trigger("dblclick");
+  await rows[0].trigger("keydown", { key: "Enter", isComposing: true });
+  await rows[0].trigger("keydown", { key: "Enter", repeat: true });
+  expect(wrapper.emitted("activate")).toHaveLength(2);
+  await wrapper.setProps({ disabled: true });
+  await rows[0].trigger("keydown", { key: "Enter" });
+  expect(wrapper.emitted("activate")).toHaveLength(2);
+  await wrapper.setProps({ disabled: false, activatable: false });
+  expect(rows[0].attributes("tabindex")).toBeUndefined();
+  await rows[0].trigger("keydown", { key: "Enter" });
+  expect(wrapper.emitted("activate")).toHaveLength(2);
   wrapper.unmount();
 });
