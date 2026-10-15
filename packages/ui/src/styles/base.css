@@ -73,30 +73,6 @@
   color: var(--rss-color-text-muted);
   font-size: var(--rss-font-size-sm);
 }
-.rss-popover,
-.rss-menu {
-  z-index: 10;
-  padding: 12px;
-  max-width: calc(100vw - 24px);
-  max-height: var(--reka-popover-content-available-height, calc(100vh - 24px));
-  overflow: auto;
-  border: 1px solid var(--rss-color-border-strong);
-  border-radius: var(--rss-radius-md);
-  background: var(--rss-color-surface);
-  box-shadow: 0 8px 32px #0002;
-}
-.rss-popover {
-  width: 380px;
-}
-.rss-menu [role="menuitem"] {
-  padding: 10px 12px;
-  border-radius: var(--rss-radius-sm);
-  cursor: pointer;
-  outline: 0;
-}
-.rss-menu [data-highlighted] {
-  background: var(--rss-color-accent-bg);
-}
 :root {
   --a2ui-color-background: var(--rss-color-bg);
   --a2ui-color-surface: var(--rss-color-surface);

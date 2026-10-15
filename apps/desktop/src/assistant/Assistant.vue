@@ -12,16 +12,10 @@ import {
 import {
   MessageComposer,
   MessageStream,
-  ModalDrawer,
+  UiDialog,
   UiPopover,
-  UiPopoverTrigger,
-  UiPopoverContent,
-  UiPopoverPortal,
+  UiButton,
   UiMenu,
-  UiMenuTrigger,
-  UiMenuContent,
-  UiMenuPortal,
-  UiMenuItem,
   MoreHorizontal,
   ChevronDown,
   Sparkles,
@@ -42,7 +36,13 @@ import {
   type AssistantController,
 } from "./controller";
 import SessionConnection from "./SessionConnection.vue";
-defineEmits<{ settings: []; tasks: [] }>();
+const emit = defineEmits<{ settings: []; tasks: [] }>();
+async function selectMenu(id: string) {
+  menuOpen.value = false;
+  await nextTick();
+  if (id === "diagnostics") diagnosticsOpen.value = true;
+  else emit("settings");
+}
 import QuestionCard from "./QuestionCard.vue";
 import ExecutionDetails from "./ExecutionDetails.vue";
 import OperationActivity from "./operation-ui/OperationActivity.vue";
@@ -97,7 +97,6 @@ function scrollEnd() {
 const props = defineProps<{
   controller: AssistantController;
   visible: boolean;
-  portalTarget?: HTMLElement;
   headerTarget?: HTMLElement;
   presentation: "main" | "context";
 }>();
@@ -390,54 +389,39 @@ async function copy(text: string) {
         <header v-show="visible" class="conversation-header">
           <h1 v-if="presentation === 'main'" tabindex="-1">{{ title }}</h1>
           <span v-else class="context-session">{{ title }}</span>
-          <UiPopover v-model:open="connectionOpen">
-            <UiPopoverTrigger class="connection-trigger"
-              >{{ connectionName }} <ChevronDown :size="14" aria-hidden="true"
-            /></UiPopoverTrigger>
-            <UiPopoverPortal :to="portalTarget"
-              ><UiPopoverContent
-                class="rss-ui rss-popover connection-menu"
-                :side-offset="8"
-                align="end"
-                aria-label="AI 连接选择"
-              >
-                <div ref="connectionPanel">
-                  <SessionConnection :controller="c" /><button
-                    @click="
-                      connectionOpen = false;
-                      $emit('settings');
-                    "
-                  >
-                    管理 AI 连接
-                  </button>
-                </div>
-              </UiPopoverContent></UiPopoverPortal
-            >
-          </UiPopover>
-          <!-- The native drawer owns dialog focus; its launcher must not trap it. -->
-          <UiMenu v-model:open="menuOpen" :modal="false">
-            <UiMenuTrigger
-              class="icon-button conversation-menu"
-              aria-label="更多"
-              ><MoreHorizontal :size="20" aria-hidden="true"
-            /></UiMenuTrigger>
-            <UiMenuPortal :to="portalTarget"
-              ><UiMenuContent
-                class="rss-ui rss-menu"
-                @close-auto-focus="
-                  (event) => {
-                    if (diagnosticsOpen) event.preventDefault();
-                  }
+          <UiPopover v-model:open="connectionOpen" label="AI 连接选择">
+            <template #trigger
+              ><UiButton class="connection-trigger"
+                >{{ connectionName }}
+                <ChevronDown :size="14" aria-hidden="true" /></UiButton
+            ></template>
+            <div ref="connectionPanel">
+              <SessionConnection :controller="c" /><UiButton
+                @click="
+                  connectionOpen = false;
+                  $emit('settings');
                 "
-                :side-offset="8"
-                align="end"
+                >管理 AI 连接</UiButton
               >
-                <UiMenuItem @select="diagnosticsOpen = true"
-                  >会话详情与诊断</UiMenuItem
-                >
-                <UiMenuItem @select="$emit('settings')">设置</UiMenuItem>
-              </UiMenuContent></UiMenuPortal
-            >
+            </div>
+          </UiPopover>
+          <UiMenu
+            v-model:open="menuOpen"
+            label="会话菜单"
+            :items="[
+              { id: 'diagnostics', label: '会话详情与诊断' },
+              { id: 'settings', label: '设置' },
+            ]"
+            @select="selectMenu"
+          >
+            <template #trigger
+              ><UiButton
+                icon
+                variant="ghost"
+                class="conversation-menu"
+                aria-label="更多"
+                ><MoreHorizontal :size="20" aria-hidden="true" /></UiButton
+            ></template>
           </UiMenu>
         </header>
       </Teleport>
@@ -803,18 +787,22 @@ async function copy(text: string) {
       </header>
       <div ref="detailsHost" />
     </aside>
-    <ModalDrawer
+    <UiDialog
+      :open="true"
+      presentation="drawer"
       v-else-if="visible && openedOperation"
-      label="设备操作详情"
+      title="设备操作详情"
       side="right"
-      @close="closeDetails"
+      @update:open="closeDetails"
       ><div ref="detailsHost"
-    /></ModalDrawer>
-    <ModalDrawer
+    /></UiDialog>
+    <UiDialog
+      :open="true"
+      presentation="drawer"
       v-if="visible && diagnosticsOpen"
-      label="会话详情与诊断"
+      title="会话详情与诊断"
       side="right"
-      @close="diagnosticsOpen = false"
+      @update:open="diagnosticsOpen = false"
     >
       <p>会话编号：{{ s.selected || "尚未创建" }}</p>
       <p v-if="s.mode === 's1'">S1 测试装配 · 无真实执行</p>
@@ -876,6 +864,6 @@ async function copy(text: string) {
         <p v-if="s.taskError" role="alert">{{ s.taskError }}</p>
         <ExecutionDetails v-if="s.task" :details="s.task" :now="clock" />
       </details>
-    </ModalDrawer>
+    </UiDialog>
   </section>
 </template>

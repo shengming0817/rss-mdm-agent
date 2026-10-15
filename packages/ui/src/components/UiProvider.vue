@@ -2,12 +2,15 @@
 import { computed, provide, ref } from "vue";
 import { ConfigProvider } from "reka-ui";
 import { uiContext, type UiPlatform, type UiTheme } from "../context";
-const props = withDefaults(defineProps<{
-  platform: UiPlatform;
-  theme?: UiTheme;
-  reducedMotion?: boolean;
-  highContrast?: boolean;
-}>(), { theme: "system", reducedMotion: false, highContrast: false });
+const props = withDefaults(
+  defineProps<{
+    platform: UiPlatform;
+    theme?: UiTheme;
+    reducedMotion?: boolean;
+    highContrast?: boolean;
+  }>(),
+  { theme: "system", reducedMotion: false, highContrast: false },
+);
 const portal = ref<HTMLElement>();
 provide(uiContext, { configuration: props, portal });
 const attributes = computed(() => ({

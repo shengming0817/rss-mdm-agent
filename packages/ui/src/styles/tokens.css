@@ -66,7 +66,8 @@
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root,
+  .ui-provider:not([data-theme="light"]) {
     --rss-color-bg: #131815;
     --rss-color-native-navigation: rgba(25, 30, 26, 0.82);
     --rss-color-navigation: #191e1a;
@@ -97,32 +98,32 @@
 }
 
 .ui-provider[data-theme="dark"] {
-    --rss-color-bg: #131815;
-    --rss-color-native-navigation: rgba(25, 30, 26, 0.82);
-    --rss-color-navigation: #191e1a;
-    --rss-color-surface: #1d241f;
-    --rss-color-surface-hover: rgba(255, 255, 255, 0.05);
-    --rss-color-text: #eef2eb;
-    --rss-color-text-muted: #a8b3a7;
-    --rss-color-border: #343d35;
-    --rss-color-border-strong: #465248;
+  --rss-color-bg: #131815;
+  --rss-color-native-navigation: rgba(25, 30, 26, 0.82);
+  --rss-color-navigation: #191e1a;
+  --rss-color-surface: #1d241f;
+  --rss-color-surface-hover: rgba(255, 255, 255, 0.05);
+  --rss-color-text: #eef2eb;
+  --rss-color-text-muted: #a8b3a7;
+  --rss-color-border: #343d35;
+  --rss-color-border-strong: #465248;
 
-    --rss-color-accent: #c3bef5;
-    --rss-color-on-accent: #131815;
-    --rss-color-accent-bg: #353247;
-    --rss-color-accent-badge-bg: #353247;
+  --rss-color-accent: #c3bef5;
+  --rss-color-on-accent: #131815;
+  --rss-color-accent-bg: #353247;
+  --rss-color-accent-badge-bg: #353247;
 
-    --rss-color-neutral-bg: #252d27;
+  --rss-color-neutral-bg: #252d27;
 
-    --rss-color-success: #5cc185;
-    --rss-color-success-bg: rgba(58, 157, 93, 0.22);
-    --rss-color-warn: #e0a83c;
-    --rss-color-warn-dot: #e0a000;
-    --rss-color-warn-bg: rgba(224, 160, 0, 0.14);
-    --rss-color-warn-bg-strong: rgba(224, 160, 0, 0.24);
-    --rss-color-warn-border: rgba(224, 160, 0, 0.4);
-    --rss-color-danger: #e0686a;
-    --rss-color-danger-bg: rgba(197, 41, 42, 0.2);
+  --rss-color-success: #5cc185;
+  --rss-color-success-bg: rgba(58, 157, 93, 0.22);
+  --rss-color-warn: #e0a83c;
+  --rss-color-warn-dot: #e0a000;
+  --rss-color-warn-bg: rgba(224, 160, 0, 0.14);
+  --rss-color-warn-bg-strong: rgba(224, 160, 0, 0.24);
+  --rss-color-warn-border: rgba(224, 160, 0, 0.4);
+  --rss-color-danger: #e0686a;
+  --rss-color-danger-bg: rgba(197, 41, 42, 0.2);
 }
 
 .ui-provider[data-theme="light"] {

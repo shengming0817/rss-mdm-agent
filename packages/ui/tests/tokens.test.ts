@@ -16,7 +16,11 @@ it("every UI token reference has a scoped definition", () => {
     for (const match of source.matchAll(/var\((--[\w-]+)/g))
       expect(
         definitions.has(match[1]) ||
-          match[1] === "--reka-popover-content-available-height",
+          [
+            "--reka-popover-content-available-height",
+            "--reka-popper-available-height",
+            "--reka-select-trigger-width",
+          ].includes(match[1]),
         `${file}: ${match[1]}`,
       ).toBe(true);
   }

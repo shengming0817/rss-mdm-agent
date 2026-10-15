@@ -956,6 +956,33 @@ try {
   if (visualOnly) {
     mark("visual fixture in the product main WKWebView");
     await text("开发 fixture · 无真实设备执行");
+    await click("基础控件");
+    await click("对话框与附属面板");
+    await click("打开对话框");
+    await wait(() =>
+      browser.$('[role="dialog"][aria-label="示例对话框"]').isDisplayed(),
+    );
+    key(48);
+    await wait(() =>
+      browser.execute(
+        () =>
+          !!document.activeElement?.closest(
+            '[role="dialog"][aria-label="示例对话框"]',
+          ),
+      ),
+    );
+    key(53);
+    await wait(
+      async () =>
+        !(await browser
+          .$('[role="dialog"][aria-label="示例对话框"]')
+          .isExisting()),
+    );
+    await browser.saveScreenshot(
+      join(reports, "desktop-native-foundations.png"),
+    );
+    await click("返回应用");
+    mark("macOS foundation dialog keyboard focus and cleanup");
     await navigate("AI 助手");
     await wait(() => browser.$(".composer textarea").isDisplayed());
     await browser.$(".new-conversation").click();
@@ -1115,7 +1142,7 @@ try {
           } else {
             assert.equal(
               await browser
-                .$('dialog[aria-label="设备操作详情"]')
+                .$('[role="dialog"][aria-label="设备操作详情"]')
                 .isDisplayed(),
               true,
             );
@@ -1190,7 +1217,7 @@ try {
               browser.execute(
                 () =>
                   !document.querySelector(
-                    'dialog[aria-label="资源上下文 AI"][open], aside[aria-label="资源上下文 AI"]',
+                    '[role="dialog"][aria-label="资源上下文 AI"][open], aside[aria-label="资源上下文 AI"]',
                   ) &&
                   document.activeElement?.getAttribute("data-action") ===
                     "ask-ai",
@@ -1577,7 +1604,7 @@ try {
     await wait(() => browser.$('[aria-label="打开主导航"]').isDisplayed());
     await browser.$('[aria-label="打开主导航"]').click();
     const navigation = await browser.execute(() => {
-      const el = document.querySelector('dialog[aria-label="主导航"]');
+      const el = document.querySelector('[role="dialog"][aria-label="主导航"]');
       const rect = el.getBoundingClientRect();
       const style = getComputedStyle(el);
       return {
@@ -1599,7 +1626,10 @@ try {
       join(reports, "desktop-native-navigation.png"),
     );
     key(53);
-    await wait(async () => !(await browser.$("dialog[open]").isExisting()));
+    await wait(
+      async () =>
+        !(await browser.$('[role="dialog"][data-state="open"]').isExisting()),
+    );
     await wait(() =>
       browser.execute(
         () =>
@@ -1661,10 +1691,15 @@ try {
     await text("完成 READ");
     await text("查看设备操作");
     await click("查看设备操作");
-    await wait(() => browser.$("dialog[open]").isDisplayed());
+    await wait(() =>
+      browser.$('[role="dialog"][data-state="open"]').isDisplayed(),
+    );
     // Native Escape closes the actual execution inspector and restores its trigger.
     key(53);
-    await wait(async () => !(await browser.$("dialog[open]").isExisting()));
+    await wait(
+      async () =>
+        !(await browser.$('[role="dialog"][data-state="open"]').isExisting()),
+    );
     assert.equal(
       await browser.execute(() => document.activeElement?.textContent?.trim()),
       "查看设备操作",
@@ -1715,7 +1750,7 @@ try {
     assert.equal(
       await browser.execute(() => {
         const r = document
-          .querySelector('dialog[aria-label="主导航"]')
+          .querySelector('[role="dialog"][aria-label="主导航"]')
           .getBoundingClientRect();
         return r.left === 0 && r.right <= innerWidth;
       }),
@@ -1725,13 +1760,16 @@ try {
       join(reports, "desktop-native-navigation-narrow.png"),
     );
     key(53);
-    await wait(async () => !(await browser.$("dialog[open]").isExisting()));
+    await wait(
+      async () =>
+        !(await browser.$('[role="dialog"][data-state="open"]').isExisting()),
+    );
     await browser.$('[aria-label="打开主导航"]').click();
     assert.equal(
       await browser.execute(
         () =>
           document
-            .querySelector('dialog[aria-label="主导航"]')
+            .querySelector('[role="dialog"][aria-label="主导航"]')
             .getBoundingClientRect().left,
       ),
       0,
@@ -1744,14 +1782,20 @@ try {
       await wait(() =>
         browser.execute(
           (previous) =>
-            Boolean(document.activeElement?.closest("dialog[open]")) &&
-            document.activeElement?.outerHTML !== previous,
+            Boolean(
+              document.activeElement?.closest(
+                '[role="dialog"][data-state="open"]',
+              ),
+            ) && document.activeElement?.outerHTML !== previous,
           previous,
         ),
       );
     }
     key(53);
-    await wait(async () => !(await browser.$("dialog[open]").isExisting()));
+    await wait(
+      async () =>
+        !(await browser.$('[role="dialog"][data-state="open"]').isExisting()),
+    );
     assert.equal(
       await browser.execute(() =>
         document.activeElement?.getAttribute("aria-label"),
@@ -1891,27 +1935,25 @@ try {
       if (width < 1440) {
         mark(`resource context ${width}×${height}: native diagnostic focus`);
         await browser.$(".connection-trigger").click();
-        await wait(() =>
-          browser.$('.context-panel [aria-label="AI 连接选择"]').isDisplayed(),
-        );
+        await wait(() => browser.$('[aria-label="AI 连接选择"]').isDisplayed());
         key(53);
         await wait(
           async () =>
             !(await browser.$('[aria-label="AI 连接选择"]').isDisplayed()),
         );
         await browser.$('[aria-label="更多"]').click();
+        await wait(() => browser.$('[role="menuitem"]').isDisplayed());
+        await browser.$('[role="menuitem"]').click();
         await wait(() =>
-          browser.$('.context-panel [role="menuitem"]').isDisplayed(),
-        );
-        await browser.$('.context-panel [role="menuitem"]').click();
-        await wait(() =>
-          browser.$('dialog[aria-label="会话详情与诊断"]').isDisplayed(),
+          browser
+            .$('[role="dialog"][aria-label="会话详情与诊断"]')
+            .isDisplayed(),
         );
         await wait(() =>
           browser.execute(
             () =>
               document.activeElement
-                .closest("dialog")
+                .closest('[role="dialog"]')
                 ?.getAttribute("aria-label") === "会话详情与诊断",
           ),
         );
@@ -1920,7 +1962,7 @@ try {
           browser.execute(
             () =>
               document.activeElement
-                .closest("dialog")
+                .closest('[role="dialog"]')
                 ?.getAttribute("aria-label") === "会话详情与诊断",
           ),
         );
@@ -1928,7 +1970,7 @@ try {
         await wait(
           async () =>
             !(await browser
-              .$('dialog[aria-label="会话详情与诊断"]')
+              .$('[role="dialog"][aria-label="会话详情与诊断"]')
               .isExisting()),
         );
       }
@@ -2383,9 +2425,9 @@ try {
         focusedAction: document.activeElement?.getAttribute("data-action"),
         focusedLabel: document.activeElement?.getAttribute("aria-label"),
         focusedClass: document.activeElement?.className,
-        dialogLabels: [...document.querySelectorAll("dialog[open]")].map((el) =>
-          el.getAttribute("aria-label"),
-        ),
+        dialogLabels: [
+          ...document.querySelectorAll('[role="dialog"][data-state="open"]'),
+        ].map((el) => el.getAttribute("aria-label")),
         navigation: [
           ...document.querySelectorAll(".navigation-primary button"),
         ].map((el) => ({

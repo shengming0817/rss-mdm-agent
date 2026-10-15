@@ -1,5 +1,5 @@
 import { activeStage } from "@rss-mdm-agent/ai-contract";
-import { mount } from "@vue/test-utils";
+import { DOMWrapper, mount } from "@vue/test-utils";
 import { expect, it, vi } from "vitest";
 import App from "./App.vue";
 import Assistant from "./assistant/Assistant.vue";
@@ -10,7 +10,7 @@ it("replaces the old sample with an explicitly read-only browser preview", async
   const fetch = vi
     .spyOn(globalThis, "fetch")
     .mockRejectedValue(new Error("unexpected network"));
-  const wrapper = mount(App);
+  const wrapper = mount(App, { attachTo: document.body });
   expect(wrapper.text()).toContain("浏览器只读预览");
   expect(wrapper.text()).toContain("软件中心");
   expect(wrapper.text()).toContain("工具中心");
@@ -28,7 +28,7 @@ it("replaces the old sample with an explicitly read-only browser preview", async
 it("expires navigation badge, background entry and question card together without a server update", async () => {
   vi.useFakeTimers();
   vi.setSystemTime(100);
-  const wrapper = mount(App);
+  const wrapper = mount(App, { attachTo: document.body });
   try {
     await wrapper
       .findAll("button")
@@ -85,7 +85,11 @@ it("expires navigation badge, background entry and question card together withou
     await wrapper.vm.$nextTick();
     await wrapper.get('[aria-label="打开主导航"]').trigger("click");
     expect(wrapper.find('[aria-label="待回应 2"]').exists()).toBe(true);
-    await wrapper.get('dialog[aria-label="主导航"]').trigger("cancel");
+    await new DOMWrapper(
+      document.querySelector('[role=\"dialog\"][aria-label=\"主导航\"]')!,
+    )
+      .get('[aria-label^="关闭"]')
+      .trigger("click");
     expect(wrapper.find(".assistant .notice").text()).toContain("新对话");
     expect(
       wrapper.find(".question-card fieldset").attributes("disabled"),
@@ -98,7 +102,11 @@ it("expires navigation badge, background entry and question card together withou
         .find((b) => b.text().startsWith("AI 助手"))!
         .text(),
     ).toBe("AI 助手");
-    await wrapper.get('dialog[aria-label="主导航"]').trigger("cancel");
+    await new DOMWrapper(
+      document.querySelector('[role=\"dialog\"][aria-label=\"主导航\"]')!,
+    )
+      .get('[aria-label^="关闭"]')
+      .trigger("click");
     expect(wrapper.find(".assistant .notice").exists()).toBe(false);
     expect(
       wrapper.find(".question-card fieldset").attributes("disabled"),
@@ -106,13 +114,14 @@ it("expires navigation badge, background entry and question card together withou
     expect(wrapper.find(".question-card").text()).toContain("已过期");
   } finally {
     wrapper.unmount();
+    await vi.advanceTimersByTimeAsync(0);
     expect(vi.getTimerCount()).toBe(0);
     vi.useRealTimers();
   }
 });
 
 it("keeps settings and diagnostics reachable without an AI connection", async () => {
-  const wrapper = mount(App);
+  const wrapper = mount(App, { attachTo: document.body });
   const settings = wrapper
     .findAll("button")
     .find((button) => button.text() === "设置");

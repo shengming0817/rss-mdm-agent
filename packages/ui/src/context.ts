@@ -18,11 +18,27 @@ export function useUiContext(): UiContext {
   if (!context) throw new Error("UI controls require UiProvider");
   return context;
 }
-export interface UiFocusable { focus(): void }
-export interface UiOption { value: string; label: string; disabled?: boolean }
-export interface UiItem { id: string; label: string; disabled?: boolean }
-export interface UiColumn { key: string; label: string; sortable?: boolean }
-export interface UiRow extends UiItem { [key: string]: unknown }
+export interface UiFocusable {
+  focus(): void;
+}
+export interface UiOption {
+  value: string;
+  label: string;
+  disabled?: boolean;
+}
+export interface UiItem {
+  id: string;
+  label: string;
+  disabled?: boolean;
+}
+export interface UiColumn {
+  key: string;
+  label: string;
+  sortable?: boolean;
+}
+export interface UiRow extends UiItem {
+  [key: string]: unknown;
+}
 export interface UiTreeNode extends UiItem {
   children?: UiTreeNode[];
   hasChildren?: boolean;

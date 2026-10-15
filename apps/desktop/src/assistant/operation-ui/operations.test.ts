@@ -471,13 +471,15 @@ describe("operation Vue templates", () => {
       },
     });
     await flushPromises();
-    await wrapper.get('input[role="switch"]').setValue(true);
+    await wrapper.get('[role="switch"]').trigger("click");
     await button(wrapper, "保存").trigger("click");
     await flushPromises();
     expect(wrapper.find('[aria-invalid="true"]').exists()).toBe(true);
+    (wrapper.findAll('[role="tab"]')[0].element as HTMLElement).focus();
     await wrapper
-      .get('[role="tablist"]')
+      .findAll('[role="tab"]')[0]
       .trigger("keydown", { key: "ArrowRight" });
+    await flushPromises();
     expect(wrapper.findAll('[role="tab"]')[1].attributes("aria-selected")).toBe(
       "true",
     );
@@ -498,7 +500,7 @@ describe("operation Vue templates", () => {
 describe("question TextField variants", () => {
   for (const [variant, selector, value] of [
     ["longText", "textarea", "line one\nline two"],
-    ["number", 'input[type="number"]', "42"],
+    ["number", 'input[role="spinbutton"]', "42"],
     ["obscured", 'input[type="password"]', "masked input"],
   ])
     it(`preserves ${variant} rendering and writable binding`, async () => {
@@ -539,6 +541,7 @@ describe("question TextField variants", () => {
         props: { node: getValue(resolver.rootNode)! },
       });
       await wrapper.get(selector).setValue(value);
+      if (variant === "number") await wrapper.get(selector).trigger("blur");
       expect(surface.dataModel.get("/answer")).toBe(value);
       wrapper.unmount();
       resolver.dispose();

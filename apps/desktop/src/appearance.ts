@@ -51,3 +51,7 @@ export function createAppearance(
     },
   };
 }
+
+export const desktopPlatform = /Mac/.test(navigator.platform)
+  ? "macos"
+  : "windows";
