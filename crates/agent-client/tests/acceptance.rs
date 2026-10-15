@@ -1417,3 +1417,23 @@ async fn paused_activation_preserves_original_key_candidate_and_expiry_across_re
         .iter()
         .all(|call| call == &data.activation_calls[0]));
 }
+
+#[tokio::test]
+async fn native_start_rejects_a_changed_execution_context() {
+    let server = Server::new().await;
+    server.data.lock().unwrap().native_collection();
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    let offer = client.claim().await.unwrap().offer.unwrap();
+    client.received(&offer).await.unwrap();
+    let material = client.prepare(&offer).await.unwrap();
+    let mut context = client.execution_context().unwrap();
+    context.system_broker = false;
+    client.set_execution_context(context).unwrap();
+    assert!(matches!(
+        client.request_start(&offer, &material).await,
+        Err(Error::Untrusted)
+    ));
+    assert!(server.data.lock().unwrap().start_ops.is_empty());
+}
