@@ -78,6 +78,7 @@ it("closes assistant modals when leaving the page and preserves the conversation
   currentUser.value = current;
   vi.mocked(invoke).mockRejectedValue({ code: "ai_unavailable" });
   const wrapper = mount(Workspace, {
+    attachTo: document.body,
     props: {
       ready: true,
       busy: false,
@@ -89,11 +90,18 @@ it("closes assistant modals when leaving the page and preserves the conversation
     await flushPromises();
     await wrapper.get(".composer textarea").setValue("继续核对设备状态");
     await wrapper.get('[aria-label="打开主导航"]').trigger("click");
-    expect(wrapper.find("dialog").exists()).toBe(true);
+    expect(!!document.querySelector('[role="dialog"][aria-modal="true"]')).toBe(
+      true,
+    );
     await wrapper.setProps({ page: "tasks" });
-    expect(wrapper.find("dialog").exists()).toBe(false);
+    await flushPromises();
+    expect(!!document.querySelector('[role="dialog"][aria-modal="true"]')).toBe(
+      false,
+    );
     await wrapper.setProps({ page: "assistant" });
-    expect(wrapper.find("dialog").exists()).toBe(false);
+    expect(!!document.querySelector('[role="dialog"][aria-modal="true"]')).toBe(
+      false,
+    );
     expect(
       (wrapper.get(".composer textarea").element as HTMLTextAreaElement).value,
     ).toBe("继续核对设备状态");

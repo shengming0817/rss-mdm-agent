@@ -10,7 +10,8 @@ import {
 import { OperationDrafts } from "@rss-mdm-agent/ai-ui-bridge";
 const operationDrafts = new OperationDrafts();
 import Workspace from "./Workspace.vue";
-import { createAppearance } from "./appearance";
+import { UiProvider } from "@rss-mdm-agent/ui";
+import { createAppearance, desktopPlatform } from "./appearance";
 import type { AssistantServices } from "./assistant/controller";
 import {
   currentUser,
@@ -147,82 +148,94 @@ onBeforeUnmount(() => {
 });
 </script>
 <template>
-  <div
-    ref="content"
-    class="app-root"
-    :class="{
-      'native-material': appearance.state.materialEnabled,
-      'reduced-motion': appearance.state.reducedMotion,
-      'high-contrast': appearance.state.highContrast,
-    }"
+  <UiProvider
+    :platform="desktopPlatform"
+    :reduced-motion="appearance.state.reducedMotion"
+    :high-contrast="appearance.state.highContrast"
   >
-    <Workspace
-      :inert="loading ? true : undefined"
-      :key="selectedUser?.generation ?? 'anonymous'"
-      :ready="environment ? !!selectedUser : !accountEnabled || !!selectedUser"
-      :busy="loading"
-      :assistant-services="assistantServices"
-      :self-service-port="selfServicePort"
-      :page="page"
-      :host="host"
-      :service-port="environment?.service"
-      :fixture="!!environment"
-      @navigate="navigate"
+    <div
+      ref="content"
+      class="app-root"
+      :class="{
+        'native-material': appearance.state.materialEnabled,
+        'reduced-motion': appearance.state.reducedMotion,
+        'high-contrast': appearance.state.highContrast,
+      }"
     >
-      <template #operation-cards="slotProps"
-        ><slot
-          name="operation-cards"
-          :visible="slotProps.visible"
-          :session-id="slotProps.sessionId"
-          :drafts="operationDrafts"
-      /></template>
-      <template #account-summary>
-        <strong>{{ selectedUser?.user.displayName ?? "账户与连接" }}</strong>
-        <small>{{
-          selectedUser?.identity.mode === "user_device"
-            ? "企业工作区"
-            : selectedUser?.identity.mode === "device"
-              ? "不登录使用"
-              : selectedUser
-                ? "测试用户 · 非企业认证"
-                : "选择使用身份"
-        }}</small>
-      </template>
-      <template #user>
-        <p v-if="environment">开发 fixture 身份，不访问生产账户。</p>
-        <template v-else>
-          <TestUsers
-            :users="users"
-            :current="
-              selectedUser?.identity.authorityId === 'desktop-test'
-                ? selectedUser
-                : undefined
-            "
-            :native="accountEnabled"
-            :loading="loading"
-            :message="message"
-            @select="select"
-          />
-          <Account
-            :loading="loading"
-            :message="accountMessage || accountNotice"
-            @guest="accountAction(enterGuest)"
-            @logout="accountAction(logoutAccount)"
-            @login="
-              (org, login) => accountAction(() => loginEnterprise(org, login))
-            "
-          />
+      <Workspace
+        :inert="loading ? true : undefined"
+        :key="selectedUser?.generation ?? 'anonymous'"
+        :ready="
+          environment ? !!selectedUser : !accountEnabled || !!selectedUser
+        "
+        :busy="loading"
+        :assistant-services="assistantServices"
+        :self-service-port="selfServicePort"
+        :page="page"
+        :host="host"
+        :service-port="environment?.service"
+        :fixture="!!environment"
+        @navigate="navigate"
+      >
+        <template #operation-cards="slotProps"
+          ><slot
+            name="operation-cards"
+            :visible="slotProps.visible"
+            :session-id="slotProps.sessionId"
+            :drafts="operationDrafts"
+        /></template>
+        <template #account-summary>
+          <strong>{{ selectedUser?.user.displayName ?? "账户与连接" }}</strong>
+          <small>{{
+            selectedUser?.identity.mode === "user_device"
+              ? "企业工作区"
+              : selectedUser?.identity.mode === "device"
+                ? "不登录使用"
+                : selectedUser
+                  ? "测试用户 · 非企业认证"
+                  : "选择使用身份"
+          }}</small>
         </template>
-      </template>
-    </Workspace>
-  </div>
-  <aside v-if="environment" class="fixture-controls" aria-label="开发 fixture">
-    <strong>开发 fixture · 无真实设备执行</strong
-    ><slot name="fixture-controls" />
-  </aside>
-  <p v-if="loading" class="account-progress" role="status">
-    正在读取或切换账户…
-  </p>
+        <template #user>
+          <p v-if="environment">开发 fixture 身份，不访问生产账户。</p>
+          <template v-else>
+            <TestUsers
+              :users="users"
+              :current="
+                selectedUser?.identity.authorityId === 'desktop-test'
+                  ? selectedUser
+                  : undefined
+              "
+              :native="accountEnabled"
+              :loading="loading"
+              :message="message"
+              @select="select"
+            />
+            <Account
+              :loading="loading"
+              :message="accountMessage || accountNotice"
+              @guest="accountAction(enterGuest)"
+              @logout="accountAction(logoutAccount)"
+              @login="
+                (org, login) => accountAction(() => loginEnterprise(org, login))
+              "
+            />
+          </template>
+        </template>
+      </Workspace>
+    </div>
+    <aside
+      v-if="environment"
+      class="fixture-controls"
+      aria-label="开发 fixture"
+    >
+      <strong>开发 fixture · 无真实设备执行</strong
+      ><slot name="fixture-controls" />
+    </aside>
+    <p v-if="loading" class="account-progress" role="status">
+      正在读取或切换账户…
+    </p>
+  </UiProvider>
 </template>
 <style scoped>
 .app-root {

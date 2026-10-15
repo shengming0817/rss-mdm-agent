@@ -132,6 +132,7 @@ test("AI host build removes orphaned compiler output before packing", (t) => {
     "package.json",
     "pnpm-lock.yaml",
     "pnpm-workspace.yaml",
+    "patches",
   ])
     symlinkSync(join(root, name), join(isolatedRoot, name));
   cpSync(join(root, "apps/ai-host"), isolated, {
@@ -175,6 +176,23 @@ test("AI host build removes orphaned compiler output before packing", (t) => {
   );
   const artifacts = packHost(isolatedRoot, destination);
   const deployed = materializeDeploymentLock(isolatedRoot, destination);
+  const deploymentPolicy = load(
+    readFileSync(join(destination, "pnpm-workspace.yaml"), "utf8"),
+  );
+  const sourcePolicy = load(
+    readFileSync(join(root, "pnpm-workspace.yaml"), "utf8"),
+  );
+  assert.deepEqual(
+    deploymentPolicy.patchedDependencies,
+    sourcePolicy.patchedDependencies,
+  );
+  for (const patch of Object.values(sourcePolicy.patchedDependencies ?? {})) {
+    const path = typeof patch === "string" ? patch : patch.path;
+    assert.equal(
+      readFileSync(join(destination, path), "utf8"),
+      readFileSync(join(root, path), "utf8"),
+    );
+  }
   const source = load(readFileSync(join(root, "pnpm-lock.yaml"), "utf8"));
   for (const [key, snapshot] of Object.entries(source.snapshots))
     assert.deepEqual(

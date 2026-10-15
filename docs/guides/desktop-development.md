@@ -168,3 +168,18 @@ macOS 透明 WebView 启用了 Tauri 的 `macos-private-api`，该路径影响 M
 企业脚本与工具读取当前登录员工和设备共同获准的 Policy 自助目录。填写 Resource 的 Input 参数后，人工入口会展示配置 revision、执行版本、资源版本和最终参数；`allowAi=false` 只关闭 AI 入口。
 AI 使用实际注册的 Policy 工具，风险 2 的原请求需要本人在桌面卡片确认一次。确认后策略变更、退出登录或期限届满会阻止启动。
 提交回执丢失时查询原请求 UUID；未知结果不允许创建新请求重试。脚本结果保留原始采集时间、完整度、schema/预算判断与输出引用，软件检测只返回受限原生 observation。
+
+
+## 基础控件展示
+
+`pnpm dev:assistant-fixture` 启动后，在打印的地址追加 `?foundations=windows`、
+`?foundations=macos` 或 `?foundations=both`，可分别或并排操作 U01–U26。
+并排视图使用独立文档隔离浮层焦点；两侧使用同一组件目录和展示实现。
+`pnpm dev --fixture` 的“基础控件”入口直接展示当前平台，支持返回应用。
+这些入口只属于开发装配，不进入生产导航。
+
+组件按 Windows 11 / macOS 26 的交互方向适配；Mac 浏览器中的 Windows 视图不证明 Windows 原生行为。
+平台控件参考 [Windows controls](https://learn.microsoft.com/en-us/windows/apps/develop/ui/controls/)、
+[Apple HIG](https://developer.apple.com/design/human-interface-guidelines/)，
+行为基础固定为 [Reka UI v2.10.5](https://github.com/unovue/reka-ui/tree/v2.10.5/packages/core/src)。
+实际 OS/build、浏览器和原生检查结果随交付 PR 记录。

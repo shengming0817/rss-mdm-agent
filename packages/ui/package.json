@@ -25,6 +25,7 @@
     "build": "vite build && vue-tsc -p tsconfig.build.json"
   },
   "dependencies": {
+    "@internationalized/date": "3.12.4",
     "@lucide/vue": "1.49.0",
     "markdown-it": "15.0.2",
     "reka-ui": "2.10.5"

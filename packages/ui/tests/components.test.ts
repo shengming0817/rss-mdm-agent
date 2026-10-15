@@ -2,50 +2,14 @@ import { mount } from "@vue/test-utils";
 import { describe, expect, it, vi } from "vitest";
 import {
   AppShell,
-  NavigationList,
-  SplitPane,
+  UiNavigation,
+  UiSplitPane,
   MessageStream,
   MessageComposer,
   StatusList,
-  ModalDrawer,
 } from "../src";
 
 describe("text-only presentation", () => {
-  it("cycles modal focus in both directions without disabled or hidden controls", async () => {
-    const wrapper = mount(ModalDrawer, {
-      props: { label: "最近对话", side: "left" },
-      attachTo: document.body,
-      slots: {
-        default:
-          '<button disabled>disabled</button><button style="display:none">hidden</button><input aria-label="search"><button>last</button>',
-      },
-    });
-    try {
-      const first = wrapper.get('[aria-label="关闭最近对话"]');
-      const search = wrapper.get("input");
-      const last = wrapper.findAll("button").at(-1)!;
-      // happy-dom has no layout; provide visible boxes only for these controls.
-      for (const control of [first, search, last])
-        vi.spyOn(control.element, "getClientRects").mockReturnValue({
-          length: 1,
-        } as DOMRectList);
-      vi.spyOn(
-        wrapper.get("[style]").element,
-        "getClientRects",
-      ).mockReturnValue({ length: 0 } as DOMRectList);
-      (first.element as HTMLElement).focus();
-      await first.trigger("keydown", { key: "Tab" });
-      expect(document.activeElement).toBe(search.element);
-      await search.trigger("keydown", { key: "Tab", shiftKey: true });
-      expect(document.activeElement).toBe(first.element);
-      await first.trigger("keydown", { key: "Tab", shiftKey: true });
-      expect(document.activeElement).toBe(last.element);
-      await last.trigger("keydown", { key: "Tab" });
-      expect(document.activeElement).toBe(first.element);
-    } finally {
-      wrapper.unmount();
-    }
-  });
   it("can block sending while retaining an editable busy-run draft", async () => {
     const wrapper = mount(MessageComposer, {
       props: { modelValue: "next round", canSubmit: false },
@@ -150,9 +114,10 @@ describe("composer intent", () => {
 });
 
 it("navigation emits only an enabled id and reflects active state", async () => {
-  const wrapper = mount(NavigationList, {
+  const wrapper = mount(UiNavigation, {
     props: {
-      activeId: "a",
+      modelValue: "a",
+      label: "导航",
       items: [
         { id: "a", label: "Alpha" },
         { id: "b", label: "Beta", disabled: true },
@@ -162,7 +127,7 @@ it("navigation emits only an enabled id and reflects active state", async () => 
   expect(wrapper.get('[aria-current="page"]').text()).toBe("Alpha");
   await wrapper.findAll("button")[0].trigger("click");
   await wrapper.findAll("button")[1].trigger("click");
-  expect(wrapper.emitted("select")).toEqual([["a"]]);
+  expect(wrapper.emitted("update:modelValue")).toEqual([["a"]]);
 });
 
 it("lays out all named slots without querying a host", () => {
@@ -189,37 +154,22 @@ it("lays out all named slots without querying a host", () => {
   expect(fetchSpy).not.toHaveBeenCalled();
 });
 
-it("split keyboard bounds, dynamic minimum and pointer capture agree with ARIA", async () => {
-  const wrapper = mount(SplitPane, {
-    props: { initialTopRatio: 0.5, minRatio: 0.15 },
-    slots: { top: "Top", bottom: "Bottom" },
+it("controlled split bounds and orientation agree with ARIA", async () => {
+  const wrapper = mount(UiSplitPane, {
+    props: { modelValue: 0.5, min: 0.15, max: 0.85, direction: "vertical" },
+    slots: { first: "Top", second: "Bottom" },
   });
   const divider = wrapper.get('[role="separator"]');
   await divider.trigger("keydown", { key: "Home" });
+  expect(wrapper.emitted("update:modelValue")?.at(-1)).toEqual([0.15]);
+  expect(divider.attributes("aria-valuenow")).toBe("50");
+  await wrapper.setProps({ modelValue: 0.15 });
   expect(divider.attributes("aria-valuenow")).toBe("15");
   await divider.trigger("keydown", { key: "End" });
-  expect(divider.attributes("aria-valuenow")).toBe("85");
-  await divider.trigger("keydown", { key: "ArrowUp" });
-  expect(divider.attributes("aria-valuenow")).toBe("83");
-  await wrapper.setProps({ minRatio: 0.3 });
+  expect(wrapper.emitted("update:modelValue")?.at(-1)).toEqual([0.85]);
+  await wrapper.setProps({ modelValue: 0.9, max: 0.7 });
   expect(divider.attributes("aria-valuenow")).toBe("70");
-  expect(divider.attributes("aria-valuemax")).toBe("70");
-  const capture = vi.fn();
-  Object.defineProperty(divider.element, "setPointerCapture", {
-    value: capture,
-  });
-  vi.spyOn(wrapper.element, "getBoundingClientRect").mockReturnValue({
-    top: 100,
-    height: 100,
-  } as DOMRect);
-  await divider.trigger("pointerdown", { pointerId: 1, button: 0 });
-  expect(capture).toHaveBeenCalledWith(1);
-  await divider.trigger("pointermove", { pointerId: 1, clientY: 150 });
-  expect(divider.attributes("aria-valuenow")).toBe("50");
-  await divider.trigger("lostpointercapture");
-  await divider.trigger("pointermove", { pointerId: 1, clientY: 200 });
-  expect(divider.attributes("aria-valuenow")).toBe("50");
-  expect(wrapper.emitted("resize")?.at(-1)).toEqual([0.5]);
+  wrapper.unmount();
 });
 
 it("announces appended messages and status updates through stable live regions", async () => {

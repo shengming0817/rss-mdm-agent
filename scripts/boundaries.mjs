@@ -66,6 +66,7 @@ const uiDependencies = {
   "@lucide/vue": "1.49.0",
   "markdown-it": "15.0.2",
   "reka-ui": "2.10.5",
+  "@internationalized/date": "3.12.4",
 };
 const uiImports = {
   "apps/desktop/src/App.vue": ["@rss-mdm-agent/ai-ui-bridge"],
@@ -86,11 +87,46 @@ const uiImports = {
   ],
   "packages/ui/src/index.ts": ["@lucide/vue", "reka-ui"],
   "packages/ui/src/components/AppShell.vue": ["@lucide/vue"],
-  "packages/ui/src/components/NavigationList.vue": ["@lucide/vue"],
   "packages/ui/src/components/MessageComposer.vue": ["@lucide/vue"],
-  "packages/ui/src/components/ModalDrawer.vue": ["@lucide/vue"],
   "packages/ui/src/internal/markdown.ts": ["markdown-it"],
 };
+const uiFoundations = new Set(
+  [
+    "UiProvider",
+    "UiField",
+    "UiTextInput",
+    "UiNumberInput",
+    "UiSearchInput",
+    "UiCheckbox",
+    "UiSwitch",
+    "UiRadioGroup",
+    "UiSlider",
+    "UiSelect",
+    "UiCombobox",
+    "UiDateInput",
+    "UiTimeInput",
+    "UiDateTimeInput",
+    "UiList",
+    "UiTree",
+    "UiTable",
+    "UiTabs",
+    "UiNavigation",
+    "UiCollapsible",
+    "UiSplitPane",
+    "UiDialog",
+    "UiPopover",
+    "UiMenu",
+    "UiTooltip",
+    "UiToasts",
+    "UiChart",
+  ].map((name) => `packages/ui/src/components/${name}.vue`),
+);
+const uiLogic = new Set([
+  "packages/ui/src/components/primitives.ts",
+  "packages/ui/src/components/feedback.ts",
+  "packages/ui/src/context.ts",
+  "packages/ui/src/field.ts",
+]);
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 function files(dir) {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -131,6 +167,19 @@ export function checkSource(file, source) {
       ]
     : ["vue"];
   allowed.push(...(uiImports[file] ?? []));
+  if (
+    uiFoundations.has(file) ||
+    file === "packages/ui/src/components/feedback.ts"
+  )
+    allowed.push("reka-ui");
+  if (
+    [
+      "packages/ui/src/components/UiDateInput.vue",
+      "packages/ui/src/components/UiTimeInput.vue",
+      "packages/ui/src/components/UiDateTimeInput.vue",
+    ].includes(file)
+  )
+    allowed.push("@internationalized/date");
   if (file === "apps/desktop/src/self-service/PolicySelfService.vue")
     allowed.push("ajv");
   if (nativeAdapters.has(file)) allowed.push("@tauri-apps/api/core");
@@ -203,7 +252,10 @@ export function checkSource(file, source) {
               "is",
             ].includes(name?.toLowerCase()) &&
               !(name === "is" && operationRenderer)) ||
-            (prop.type === 7 && ["bind", "on"].includes(prop.name) && !name)
+            (prop.type === 7 &&
+              ["bind", "on"].includes(prop.name) &&
+              !name &&
+              !(prop.name === "bind" && uiFoundations.has(file)))
           )
             errors.push(`${file}: outbound or dynamic template attribute`);
         }
@@ -268,8 +320,22 @@ export function checkSource(file, source) {
       globals.add("String");
       globals.add("Boolean");
     }
-    if (file === "packages/ui/src/components/ModalDrawer.vue")
-      globals.add("HTMLElement");
+    if (uiFoundations.has(file) || uiLogic.has(file))
+      for (const name of [
+        "defineOptions",
+        "defineExpose",
+        "Object",
+        "Array",
+        "String",
+        "Boolean",
+        "Symbol",
+        "Error",
+      ])
+        globals.add(name);
+    if (file === "packages/ui/src/components/UiDialog.vue")
+      for (const name of ["document", "HTMLElement"]) globals.add(name);
+    if (file === "packages/ui/src/components/UiSearchInput.vue")
+      for (const name of ["setTimeout", "clearTimeout"]) globals.add(name);
     if (file === "packages/ui/src/components/AppShell.vue")
       globals.add("ResizeObserver");
     if (file === "apps/desktop/src/assistant/clipboard.ts")
@@ -296,6 +362,7 @@ export function checkSource(file, source) {
       "apps/desktop/src/assistant/operation-ui/NodeView.ts": [
         "Symbol",
         "document",
+        "Set",
       ],
       "apps/desktop/src/App.vue": ["setInterval", "clearInterval"],
       "apps/desktop/src/Workspace.vue": ["HTMLElement", "ResizeObserver"],
@@ -304,6 +371,7 @@ export function checkSource(file, source) {
       "apps/desktop/src/self-service/PolicySelfService.vue": ["JSON", "crypto"],
       "apps/desktop/src/self-service/controller.ts": ["crypto"],
       "apps/desktop/src/appearance.ts": [
+        "navigator",
         "Promise",
         "Error",
         "setTimeout",
@@ -536,6 +604,20 @@ export function checkSource(file, source) {
           ? staticText(node.argumentExpression)
           : null;
       const dataRoots = {
+        "packages/ui/src/components/UiList.vue": ["_ctx.modelValue"],
+        "packages/ui/src/components/UiMenu.vue": ["_ctx.items"],
+        "packages/ui/src/components/UiSlider.vue": ["$event!"],
+        "packages/ui/src/components/UiTree.vue": [
+          "_ctx.selected",
+          "selected.value",
+        ],
+        "packages/ui/src/components/UiTable.vue": ["row"],
+        "packages/ui/src/components/UiChart.vue": [
+          "series.values",
+          "props.categories",
+          "colors",
+        ],
+        "packages/ui/src/components/feedback.ts": ["marks"],
         "apps/desktop/src/assistant/operation-ui/host.ts": [
           "event.values",
           "parameters",
@@ -548,6 +630,8 @@ export function checkSource(file, source) {
         ],
         "apps/desktop/src/assistant/operation-ui/NodeView.ts": [
           "c.presentation.steps",
+          "nodes",
+          "ids",
           "s!.draft.values",
           "s?.errors",
           "s?.secrets",
@@ -610,7 +694,14 @@ export function checkSource(file, source) {
           "setHTMLUnsafe",
           "write",
           "writeln",
-        ].includes(member)
+        ].includes(member) &&
+        !(
+          member === "open" &&
+          uiFoundations.has(file) &&
+          ts.isPropertyAccessExpression(node) &&
+          ["props", "_ctx"].includes(node.expression.getText(ast)) &&
+          !(ts.isCallExpression(node.parent) && node.parent.expression === node)
+        )
       )
         errors.push(`${file}: non-presentation member ${member}`);
       ts.forEachChild(node, visit);

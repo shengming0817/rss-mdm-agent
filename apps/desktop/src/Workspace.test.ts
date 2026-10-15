@@ -1,5 +1,5 @@
 import { policyFixturePort } from "../../../tests/self-service/support";
-import { mount, flushPromises } from "@vue/test-utils";
+import { DOMWrapper, mount, flushPromises } from "@vue/test-utils";
 import { it, expect, vi } from "vitest";
 import Workspace from "./Workspace.vue";
 import Assistant from "./assistant/Assistant.vue";
@@ -41,7 +41,9 @@ it("requires explicit conversation selection, keeps one view and preserves stage
   await flushPromises();
   await resource.get('[data-action="ask-ai"]').trigger("click");
   await flushPromises();
-  const drawer = w.get('dialog[aria-label="资源上下文 AI"]');
+  const drawer = new DOMWrapper(
+    document.querySelector('[role=\"dialog\"][aria-label=\"资源上下文 AI\"]')!,
+  );
   expect(drawer.text()).toContain("办公套件");
   const c = w.getComponent(Assistant).props("controller");
   expect(c.context.value).toBeUndefined();
@@ -59,9 +61,11 @@ it("requires explicit conversation selection, keeps one view and preserves stage
     "软件详情",
   ]);
   c.draft.value = "我的问题";
-  await drawer.trigger("cancel");
+  await drawer.get('[aria-label^="关闭"]').trigger("click");
   await flushPromises();
-  expect(w.find('dialog[aria-label="资源上下文 AI"]').exists()).toBe(false);
+  expect(
+    !!document.querySelector('[role="dialog"][aria-label="资源上下文 AI"]'),
+  ).toBe(false);
   expect(c.draft.value).toBe("我的问题");
   expect(c.context.value).toBeDefined();
   await w.setProps({ page: "assistant" });
@@ -156,7 +160,11 @@ it("changes the same assistant to compact resource presentation and stages sugge
     expect(execute).not.toHaveBeenCalled();
     await w.get('[data-action="ask-ai"]').trigger("click");
     await flushPromises();
-    const panel = w.get('dialog[aria-label="资源上下文 AI"]');
+    const panel = new DOMWrapper(
+      document.querySelector(
+        '[role=\"dialog\"][aria-label=\"资源上下文 AI\"]',
+      )!,
+    );
     await panel.get("select").setValue("new");
     await panel.get('[data-action="choose-conversation"]').trigger("click");
     await flushPromises();
@@ -167,7 +175,7 @@ it("changes the same assistant to compact resource presentation and stages sugge
     expect(c.draft.value).toContain("资源");
     expect(prompt).not.toHaveBeenCalled();
     expect(execute).not.toHaveBeenCalled();
-    await panel.trigger("cancel");
+    await panel.get('[aria-label^="关闭"]').trigger("click");
     await flushPromises();
     await w.setProps({ page: "assistant" });
     expect(view.props("presentation")).toBe("main");

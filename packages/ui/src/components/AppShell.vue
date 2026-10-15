@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref, useId, watch } from "vue";
 import { PanelLeft } from "@lucide/vue";
-import ModalDrawer from "./ModalDrawer.vue";
+import UiDialog from "./UiDialog.vue";
 const props = defineProps<{
   navigationEnabled: boolean;
   contentMode: "conversation" | "page";
@@ -72,13 +72,15 @@ onBeforeUnmount(() => observer?.disconnect());
       <main :class="contentMode"><slot /></main>
       <footer class="shell-status"><slot name="status" /></footer>
     </div>
-    <ModalDrawer
+    <UiDialog
+      :open="true"
+      presentation="drawer"
       v-if="navigationEnabled && compact && navigationOpen"
       :id="navigationId"
       class="navigation-drawer"
-      label="主导航"
+      title="主导航"
       side="left"
-      @close="navigationOpen = false"
+      @update:open="navigationOpen = false"
     >
       <div class="navigation-brand"><slot name="navigation-brand" /></div>
       <div class="navigation-scroll">
@@ -90,7 +92,7 @@ onBeforeUnmount(() => observer?.disconnect());
       <div class="navigation-footer">
         <slot name="navigation-footer" :navigate="navigate" />
       </div>
-    </ModalDrawer>
+    </UiDialog>
   </div>
 </template>
 <style scoped>
@@ -142,14 +144,10 @@ onBeforeUnmount(() => observer?.disconnect());
 .navigation-footer {
   padding-top: 12px;
 }
-.navigation-drawer {
+:global(.navigation-drawer) {
   --rss-drawer-width: 280px;
   --rss-drawer-padding: 16px;
   background: var(--rss-color-navigation);
-}
-.navigation-drawer[open] {
-  display: flex;
-  flex-direction: column;
 }
 main {
   flex: 1;

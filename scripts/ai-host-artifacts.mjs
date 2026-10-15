@@ -95,6 +95,20 @@ export function packHost(root, directory) {
     ),
   );
   const policy = load(readFileSync(join(root, "pnpm-workspace.yaml"), "utf8"));
+  // The projected lock retains the source graph, including patch hashes. Keep
+  // its install configuration and patch bytes identical in the isolated tree.
+  const patchedDependencies = policy.patchedDependencies ?? {};
+  for (const entry of Object.values(patchedDependencies)) {
+    const patch = typeof entry === "string" ? entry : entry.path;
+    assert.ok(
+      typeof patch === "string" &&
+        !isAbsolute(patch) &&
+        !patch.split(/[\\/]/).includes(".."),
+      "patch must stay inside the workspace",
+    );
+    mkdirSync(dirname(join(directory, patch)), { recursive: true });
+    copyFileSync(join(root, patch), join(directory, patch));
+  }
   // pnpm 11's registry-policy verifier also sees file: tarballs. These local
   // artifacts have no registry publish date/provenance; their bytes are hashed below.
   const localExcludes = names.map((name) => {
@@ -110,6 +124,9 @@ export function packHost(root, directory) {
         packages: [],
         overrides: dependencies,
         allowBuilds: policy.allowBuilds ?? {},
+        ...(Object.keys(patchedDependencies).length
+          ? { patchedDependencies }
+          : {}),
         minimumReleaseAgeExclude: [
           ...(policy.minimumReleaseAgeExclude ?? []),
           ...localExcludes,

@@ -10,10 +10,18 @@ import {
 } from "vue";
 import {
   AppShell,
-  NavigationList,
+  UiNavigation,
+  UiBadge,
+  UiIcon,
+  House,
+  Package,
+  Terminal,
+  Activity,
+  Monitor,
+  Settings as SettingsIcon,
   Sparkles,
   UserRound,
-  ModalDrawer,
+  UiDialog,
 } from "@rss-mdm-agent/ui";
 import ConversationList from "./assistant/ConversationList.vue";
 import { nativeAssistant } from "./assistant/native";
@@ -256,33 +264,48 @@ onBeforeUnmount(() => {
       </div>
     </template>
     <template #navigation="{ navigate }"
-      ><NavigationList
+      ><UiNavigation
+        label="工作区导航"
         :items="[
           {
             id: 'assistant',
             label: 'AI 助手',
-            icon: 'assistant',
-            badge: attention,
           },
-          { id: 'home', icon: 'home', label: '首页' },
-          { id: 'software', icon: 'software', label: '软件中心' },
-          { id: 'tools', icon: 'tools', label: '工具中心' },
-          { id: 'tasks', icon: 'tasks', label: '请求与任务' },
+          { id: 'home', label: '首页' },
+          { id: 'software', label: '软件中心' },
+          { id: 'tools', label: '工具中心' },
+          { id: 'tasks', label: '请求与任务' },
           {
             id: 'help',
-            icon: 'device',
             label: '设备与帮助 · 未接线',
             disabled: true,
           },
         ]"
-        :active-id="page"
-        @select="
+        :model-value="page"
+        @update:model-value="
           (id) => {
             emit('navigate', id);
             navigate();
           }
         "
-    /></template>
+      >
+        <template #icon="{ item }"
+          ><UiIcon
+            ><Sparkles v-if="item.id === 'assistant'" /><House
+              v-else-if="item.id === 'home'" /><Package
+              v-else-if="item.id === 'software'" /><Terminal
+              v-else-if="item.id === 'tools'" /><Activity
+              v-else-if="item.id === 'tasks'" /><Monitor v-else /></UiIcon
+        ></template>
+        <template #trailing="{ item }"
+          ><UiBadge
+            v-if="item.id === 'assistant' && attention"
+            :aria-label="`待回应 ${attention}`"
+            >{{ attention }}</UiBadge
+          ></template
+        >
+      </UiNavigation></template
+    >
     <template #conversations="{ navigate }"
       ><ConversationList
         v-if="assistant"
@@ -293,16 +316,21 @@ onBeforeUnmount(() => {
         "
     /></template>
     <template #navigation-footer="{ navigate }"
-      ><NavigationList
-        :items="[{ id: 'settings', icon: 'settings', label: '设置' }]"
-        :active-id="page"
-        @select="
+      ><UiNavigation
+        label="工作区导航"
+        :items="[{ id: 'settings', label: '设置' }]"
+        :model-value="page"
+        @update:model-value="
           (id) => {
             emit('navigate', id);
             navigate();
           }
         "
-      />
+      >
+        <template #icon
+          ><UiIcon><SettingsIcon /></UiIcon
+        ></template>
+      </UiNavigation>
       <button
         class="workspace-account"
         type="button"
@@ -352,7 +380,6 @@ onBeforeUnmount(() => {
           :controller="assistant"
           :presentation="contextOpen && chosen ? 'context' : 'main'"
           :header-target="headerHost"
-          :portal-target="target ?? headerHost"
           @settings="emit('navigate', 'settings')"
           @tasks="emit('navigate', 'tasks')"
           ><template #operation-cards="slotProps"
@@ -361,12 +388,14 @@ onBeforeUnmount(() => {
               :visible="slotProps.visible"
               :session-id="slotProps.sessionId" /></template></Assistant
       ></Teleport>
-      <ModalDrawer
+      <UiDialog
+        :open="true"
+        presentation="drawer"
         v-if="contextOpen && !wide && candidate && assistant"
         class="resource-context-drawer"
-        label="资源上下文 AI"
+        title="资源上下文 AI"
         side="right"
-        @close="closeContext"
+        @update:open="closeContext"
       >
         <ContextPanel
           v-model:selection="contextSelection"
@@ -386,7 +415,7 @@ onBeforeUnmount(() => {
           @main="mainConversation"
           ><div ref="panelHost" class="assistant-panel-host"
         /></ContextPanel>
-      </ModalDrawer>
+      </UiDialog>
       <aside
         v-if="contextOpen && wide && candidate && assistant"
         class="resource-context-aside"
@@ -523,15 +552,11 @@ onBeforeUnmount(() => {
   height: 100%;
   min-height: 0;
 }
-.resource-context-drawer {
+:global(.resource-context-drawer) {
   --rss-drawer-width: 520px;
   --rss-drawer-padding: 16px;
 }
-.resource-context-drawer[open] {
-  display: flex;
-  flex-direction: column;
-}
-.resource-context-drawer > :deep(.context-panel) {
+:global(.resource-context-drawer .ui-dialog-body > .context-panel) {
   flex: 1;
   min-height: 0;
 }

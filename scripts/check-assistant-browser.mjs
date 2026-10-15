@@ -1,6 +1,7 @@
 import { prepareRun } from "./preparation.mjs";
 // Renderer integration with FakeHost; native application evidence lives in check:desktop-native.
 import assert from "node:assert/strict";
+import { checkFoundations } from "../tests/assistant/foundations-browser.mjs";
 import { mkdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
@@ -23,7 +24,7 @@ const diagnostics = async () => {
     .click();
 };
 const navigate = async (name) => {
-  const dialog = page.locator("dialog[open]");
+  const dialog = page.locator('[role="dialog"][data-state="open"]');
   if (await dialog.count()) await page.keyboard.press("Escape");
   const trigger = page.getByRole("button", { name: "打开主导航", exact: true });
   if (page.viewportSize().width < 900) {
@@ -31,8 +32,8 @@ const navigate = async (name) => {
     await trigger.click();
   } else await page.locator(".navigation-panel").waitFor();
   await (
-    (await page.locator("dialog[open]").count())
-      ? page.locator("dialog[open]")
+    (await page.locator('[role="dialog"][data-state="open"]').count())
+      ? page.locator('[role="dialog"][data-state="open"]')
       : page
   )
     .getByRole("button", { name, exact: true })
@@ -1134,18 +1135,26 @@ try {
       .getByRole("button", { name: "继续到所选会话", exact: true })
       .click();
     await panel.locator(".composer textarea").waitFor();
+    await panel
+      .getByRole("region", { name: "待发送资源上下文", exact: true })
+      .waitFor();
     if (width < 1440) {
       await panel.locator(".connection-trigger").click();
-      const connectionMenu = panel.locator(".connection-menu");
+      const connectionMenu = page.getByRole("dialog", {
+        name: "AI 连接选择",
+        exact: true,
+      });
       await connectionMenu.waitFor();
       assert.equal(
-        await connectionMenu.evaluate((el) => !!el.closest("dialog[open]")),
+        await connectionMenu.evaluate((el) =>
+          el.contains(document.activeElement),
+        ),
         true,
-        "connection portal stays inside modal top layer",
+        "connection popover receives focus inside the shared overlay scope",
       );
       await page.keyboard.press("Escape");
       await panel.getByRole("button", { name: "更多", exact: true }).click();
-      await panel
+      await page
         .getByRole("menuitem", { name: "会话详情与诊断", exact: true })
         .click();
       await page
@@ -1154,7 +1163,9 @@ try {
       await page.keyboard.press("Tab");
       assert.equal(
         await page.evaluate(() =>
-          document.activeElement.closest("dialog").getAttribute("aria-label"),
+          document.activeElement
+            .closest('[role="dialog"]')
+            .getAttribute("aria-label"),
         ),
         "会话详情与诊断",
       );
@@ -1271,6 +1282,7 @@ try {
     }
   }
   await page.getByLabel("显示操作模板", { exact: true }).uncheck();
+  await checkFoundations(browser, fixture.url);
   assert.deepEqual(errors, []);
   console.log(
     "PASS assistant product navigation, caller pagination, busy queue/steer, multi-window questions, permission abort, A2UI lifecycle, trusted execution and reconnect",

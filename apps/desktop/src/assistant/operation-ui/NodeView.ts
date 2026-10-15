@@ -3,6 +3,7 @@ import {
   defineComponent,
   h,
   inject,
+  provide,
   nextTick,
   onBeforeUnmount,
   ref,
@@ -25,7 +26,33 @@ import type {
   NodeMount,
 } from "@rss-mdm-agent/ai-ui-bridge";
 import type { OperationValue } from "@rss-mdm-agent/ai-contract/operations";
+import {
+  UiProvider,
+  UiText,
+  UiStack,
+  UiButton,
+  UiField,
+  UiTextInput,
+  UiNumberInput,
+  UiSelect,
+  UiCheckbox,
+  UiSwitch,
+  UiRadioGroup,
+  UiDateTimeInput,
+  UiTabs,
+  UiCollapsible,
+  UiTable,
+  UiProgress,
+  UiSteps,
+  UiMessage,
+  type UiFocusable,
+  type UiConfiguration,
+} from "@rss-mdm-agent/ui";
 import "./style.css";
+const focusRegistry: InjectionKey<Map<string, () => Promise<void>>> =
+  Symbol("operation-focus");
+const revealContext: InjectionKey<(child: string) => Promise<void>> =
+  Symbol("operation-reveal");
 export const operationContext: InjectionKey<OperationController> =
   Symbol("operation");
 const valueOf = (v: unknown): unknown =>
@@ -55,6 +82,26 @@ export const NodeView = defineComponent({
   props: { node: { type: Object as PropType<ComponentNode>, required: true } },
   setup(props) {
     const c = inject(operationContext, undefined);
+    const focuses = inject(
+      focusRegistry,
+      new Map<string, () => Promise<void>>(),
+    );
+    provide(focusRegistry, focuses);
+    const fieldControl = ref<UiFocusable>();
+    const disclosureOpen = ref(props.node.type === "Disclosure");
+    const revealParent = inject(revealContext, async (_child: string) => {});
+    const fieldId = props.node.componentId.startsWith("field-")
+      ? props.node.componentId.slice(6)
+      : "";
+    const focusField = async () => {
+      await revealParent(props.node.instanceId);
+      await nextTick();
+      fieldControl.value?.focus();
+    };
+    if (fieldId) focuses.set(fieldId, focusField);
+    onBeforeUnmount(() => {
+      if (focuses.get(fieldId) === focusField) focuses.delete(fieldId);
+    });
     const p = shallowRef(getValue(props.node.props));
     let stop = () => {};
     watch(
@@ -70,6 +117,17 @@ export const NodeView = defineComponent({
     onBeforeUnmount(() => stop());
     const domId = `op-${useId()}`,
       selectedTab = ref(0);
+    provide(revealContext, async (childId) => {
+      await revealParent(props.node.instanceId);
+      if (props.node.type === "Disclosure") disclosureOpen.value = true;
+      if (props.node.type === "Tabs") {
+        const index = ((p.value.children ?? []) as ComponentNode[]).findIndex(
+          (node) => node.instanceId === childId,
+        );
+        if (index >= 0) selectedTab.value = index;
+      }
+      await nextTick();
+    });
     watch(
       () => c?.state.step,
       () => {
@@ -91,7 +149,7 @@ export const NodeView = defineComponent({
     const children = () =>
       ((p.value.children ?? []) as ComponentNode[]).map(child);
     const button = (label: string, action: () => void, disabled = false) =>
-      h("button", { type: "button", disabled, onClick: action }, label);
+      h(UiButton, { disabled, onClick: action }, () => label);
     async function focusError(ids?: string[]) {
       if (!c) return;
       const id = Object.keys(c.state.errors).find(
@@ -104,33 +162,10 @@ export const NodeView = defineComponent({
         );
         if (step !== undefined && step >= 0) c.state.step = step;
       }
-      // ref: Vue nextTick flushes the step/container update before locating controls.
       await nextTick();
-      const card = document.getElementById(domId)?.closest(".operation-card");
-      const field = Array.from(
-        card?.querySelectorAll<HTMLElement>("[data-operation-field]") ?? [],
-      ).find((field) => field.getAttribute("data-operation-field") === id);
-      if (!field) return;
-      for (
-        let parent = field.parentElement;
-        parent && parent !== card;
-        parent = parent.parentElement
-      ) {
-        if (parent.tagName === "DETAILS") parent.setAttribute("open", "");
-        if (parent.getAttribute("role") === "tabpanel") {
-          const tab = Array.from(
-            card?.querySelectorAll<HTMLElement>('[role="tab"]') ?? [],
-          ).find((tab) => tab.getAttribute("aria-controls") === parent?.id);
-          tab?.click();
-        }
-      }
-      await nextTick();
-      field
-        .querySelector<HTMLElement>(
-          'input:not([disabled]),textarea:not([disabled]),select:not([disabled]),[role="radiogroup"]',
-        )
-        ?.focus();
+      await focuses.get(id)?.();
     }
+
     function action(
       kind: "submit" | "cancel" | "refresh" | "answer",
       answer?: string,
@@ -144,7 +179,7 @@ export const NodeView = defineComponent({
       const type = n.type,
         s = c?.state;
       if (type === "Text")
-        return h("span", {}, display(valueOf(propsValue.text)));
+        return h(UiText, {}, () => display(valueOf(propsValue.text)));
       if (type === "Column" || type === "FieldGroup")
         return h(
           type === "FieldGroup" ? "fieldset" : "div",
@@ -153,7 +188,7 @@ export const NodeView = defineComponent({
         );
       if (type === "Button")
         return h(
-          "button",
+          UiButton,
           {
             type: "button",
             onClick: () => (propsValue.action as () => void)?.(),
@@ -174,68 +209,36 @@ export const NodeView = defineComponent({
           ...children(),
         ]);
       if (type === "Disclosure")
-        return h("details", { open: true }, [
-          h("summary", display(propsValue.label)),
-          ...children(),
-        ]);
+        return h(
+          UiCollapsible,
+          {
+            open: disclosureOpen.value,
+            label: display(propsValue.label),
+            "onUpdate:open": (open: boolean) => (disclosureOpen.value = open),
+          },
+          children,
+        );
       if (type === "Tabs") {
         const nodes = (propsValue.children ?? []) as ComponentNode[];
-        const choose = (index: number) => {
-          selectedTab.value = index;
-          document.getElementById(`${domId}-tab-${index}`)?.focus();
-        };
-        return h("div", [
-          h(
-            "div",
-            {
-              role: "tablist",
-              "aria-label": "设置分组",
-              onKeydown: (e: KeyboardEvent) => {
-                if (
-                  ["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)
-                ) {
-                  e.preventDefault();
-                  choose(
-                    e.key === "Home"
-                      ? 0
-                      : e.key === "End"
-                        ? nodes.length - 1
-                        : (selectedTab.value +
-                            (e.key === "ArrowRight" ? 1 : nodes.length - 1)) %
-                          nodes.length,
-                  );
-                }
-              },
-            },
-            nodes.map((node, i) =>
-              h(
-                "button",
-                {
-                  id: `${domId}-tab-${i}`,
-                  type: "button",
-                  role: "tab",
-                  "aria-selected": i === selectedTab.value,
-                  "aria-controls": `${domId}-panel-${i}`,
-                  tabindex: i === selectedTab.value ? 0 : -1,
-                  onClick: () => choose(i),
-                },
-                display(getValue(node.props).label),
-              ),
-            ),
-          ),
-          ...nodes.map((node, i) =>
-            h(
-              "div",
-              {
-                id: `${domId}-panel-${i}`,
-                role: "tabpanel",
-                "aria-labelledby": `${domId}-tab-${i}`,
-                hidden: i !== selectedTab.value,
-              },
-              [child(node)],
-            ),
-          ),
-        ]);
+        return h(
+          UiTabs,
+          {
+            modelValue: nodes[selectedTab.value]?.instanceId ?? "",
+            label: "设置分组",
+            items: nodes.map((node) => ({
+              id: node.instanceId,
+              label: display(getValue(node.props).label),
+            })),
+            "onUpdate:modelValue": (id: string) =>
+              (selectedTab.value = nodes.findIndex(
+                (node) => node.instanceId === id,
+              )),
+          },
+          {
+            default: ({ item }: { item: { id: string } }) =>
+              child(nodes.find((node) => node.instanceId === item.id)!),
+          },
+        );
       }
       if (
         [
@@ -275,106 +278,120 @@ export const NodeView = defineComponent({
           if (binding instanceof WritableBinding) binding.set(value);
           if (c) c.edit(fieldId, value);
         };
-        const attrs = {
-          id: domId,
-          disabled,
-          "aria-invalid": !!error,
-          "aria-describedby": `${domId}-hint`,
-          required: !!field?.required,
-        };
+        const attrs = { disabled, required: !!field?.required };
         const label = field?.label ?? display(valueOf(propsValue.label));
+        const options = (field?.options ?? []).map((o) => ({
+          value: o.id,
+          label: o.disabledReason
+            ? `${o.label}（${o.disabledReason}）`
+            : o.label,
+          disabled: !!o.disabledReason,
+        }));
         let input: VNodeChild;
         if (type === "RadioGroup")
-          input = h(
-            "div",
-            { ...attrs, role: "radiogroup", "aria-label": label, tabindex: -1 },
-            field?.options?.map((o) =>
-              h("label", [
-                h("input", {
-                  type: "radio",
-                  name: domId,
-                  value: o.id,
-                  checked: current === o.id,
-                  disabled: disabled || !!o.disabledReason,
-                  onChange: () => write(o.id),
-                  "aria-describedby": `${domId}-hint`,
-                }),
-                o.label,
-                o.disabledReason ? `（${o.disabledReason}）` : "",
-              ]),
-            ),
-          );
-        else if (type === "SelectField")
-          input = h(
-            "select",
-            {
-              ...attrs,
-              value: current,
-              onChange: (e: Event) =>
-                write((e.target as HTMLSelectElement).value),
-            },
-            [
-              h("option", { value: "" }, "请选择"),
-              ...(field?.options ?? []).map((o) =>
-                h(
-                  "option",
-                  { value: o.id, disabled: !!o.disabledReason },
-                  o.label,
-                ),
-              ),
-            ],
-          );
-        else if (["Switch", "Checkbox"].includes(type))
-          input = h("input", {
+          input = h(UiRadioGroup, {
             ...attrs,
-            type: "checkbox",
-            role: type === "Switch" ? "switch" : undefined,
-            checked: current === true,
-            onChange: (e: Event) =>
-              write((e.target as HTMLInputElement).checked),
+            label,
+            options,
+            modelValue: String(current ?? ""),
+            "onUpdate:modelValue": write,
           });
-        else
-          input = h(variant === "longText" ? "textarea" : "input", {
+        else if (type === "SelectField")
+          input = h(UiSelect, {
             ...attrs,
-            type:
-              secret || variant === "obscured"
-                ? "password"
-                : type === "NumberField" || variant === "number"
-                  ? "number"
-                  : type === "DateTimeField"
-                    ? "datetime-local"
-                    : "text",
-            value: secret ? undefined : (current ?? ""),
-            autocomplete: secret ? "off" : undefined,
+            options,
+            modelValue: String(current ?? ""),
+            "onUpdate:modelValue": write,
+          });
+        else if (type === "Checkbox")
+          input = h(UiCheckbox, {
+            ...attrs,
+            modelValue: current === true,
+            "onUpdate:modelValue": (value: boolean | "indeterminate") =>
+              write(value === true),
+          });
+        else if (type === "Switch")
+          input = h(UiSwitch, {
+            ...attrs,
+            modelValue: current === true,
+            "onUpdate:modelValue": write,
+          });
+        else if (type === "NumberField" || variant === "number")
+          input = h(UiNumberInput, {
+            ...attrs,
+            modelValue:
+              typeof current === "number"
+                ? current
+                : current !== "" && Number.isFinite(Number(current))
+                  ? Number(current)
+                  : null,
             min: field?.min,
             max: field?.max,
+            "onUpdate:modelValue": (value: number | null) =>
+              write(
+                type === "NumberField"
+                  ? value
+                  : value === null
+                    ? ""
+                    : String(value),
+              ),
+          });
+        else if (type === "DateTimeField")
+          input = h(UiDateTimeInput, {
+            ...attrs,
+            modelValue: String(current ?? ""),
+            "onUpdate:modelValue": write,
+          });
+        else
+          input = h(UiTextInput, {
+            ...attrs,
+            modelValue: secret ? "" : String(current ?? ""),
+            multiline: variant === "longText",
+            type: secret || variant === "obscured" ? "password" : "text",
+            autocomplete: secret ? "off" : undefined,
             maxlength: field?.maxLength ?? 8192,
-            onInput: (e: Event) => {
-              if (!secret) {
-                const el = e.target as HTMLInputElement;
-                write(
-                  type === "NumberField"
-                    ? el.value === ""
-                      ? null
-                      : el.valueAsNumber
-                    : el.value,
-                );
-              }
+            "onUpdate:modelValue": (value: string) => {
+              if (!secret) write(value);
             },
             onChange: secret
-              ? (e: Event) => {
-                  const el = e.target as HTMLInputElement;
+              ? (event: Event) => {
+                  const el = event.target as HTMLInputElement;
                   const value = el.value;
                   el.value = "";
                   void c?.secret(fieldId, value);
                 }
               : undefined,
           });
+        const description =
+          field?.reason ||
+          (field?.readonly
+            ? "只读"
+            : secret
+              ? s?.secrets[fieldId]
+                ? "已安全接收，内容不回显"
+                : c?.secretAvailable
+                  ? "输入离开此卡片即清除"
+                  : "秘密输入服务不可用"
+              : type === "PathPicker"
+                ? "选择路径不授予访问权限"
+                : type === "Switch"
+                  ? field?.submitMode === "immediate"
+                    ? "更改后立即提交"
+                    : "保存时提交"
+                  : "");
         return h(
-          "div",
-          { class: "operation-field", "data-operation-field": field?.id },
-          [
-            h("label", { for: domId }, label),
+          UiField,
+          {
+            ref: fieldControl,
+            id: domId,
+            class: "operation-field",
+            "data-operation-field": field?.id,
+            label,
+            error,
+            description,
+            required: !!field?.required,
+          },
+          () => [
             input,
             type === "PathPicker"
               ? button(
@@ -385,31 +402,6 @@ export const NodeView = defineComponent({
                   disabled || !c?.pathAvailable,
                 )
               : null,
-            h(
-              "p",
-              {
-                id: `${domId}-hint`,
-                role: error ? "alert" : undefined,
-                class: error ? "operation-error" : "operation-hint",
-              },
-              error ||
-                field?.reason ||
-                (field?.readonly
-                  ? "只读"
-                  : secret
-                    ? s?.secrets[fieldId]
-                      ? "已安全接收，内容不回显"
-                      : c?.secretAvailable
-                        ? "输入离开此卡片即清除"
-                        : "秘密输入服务不可用"
-                    : type === "PathPicker"
-                      ? "选择路径不授予访问权限"
-                      : type === "Switch"
-                        ? field?.submitMode === "immediate"
-                          ? "更改后立即提交"
-                          : "保存时提交"
-                        : ""),
-            ),
           ],
         );
       }
@@ -450,61 +442,47 @@ export const NodeView = defineComponent({
           h("dd", snapshot.approval.elevation),
         ]);
       if (type === "ObjectList" || type === "SelectableTable")
-        return h("table", { class: "operation-table" }, [
-          h("caption", "操作对象"),
-          h("thead", [
-            h("tr", [
-              h("th", "选择"),
-              h("th", "对象"),
-              h("th", "详情"),
-              h("th", "状态"),
-            ]),
-          ]),
-          h(
-            "tbody",
-            snapshot.objects.map((o) =>
-              h("tr", { key: o.id }, [
-                h("td", [
-                  h("input", {
-                    type:
-                      c.presentation.selection === "single"
-                        ? "radio"
-                        : "checkbox",
-                    name: domId,
-                    "aria-label": `选择 ${o.label}`,
-                    checked: s.draft.selection.includes(o.id),
-                    disabled: !c.can("submit") || !!o.disabledReason,
-                    onChange: () => c.select(o.id),
-                  }),
-                ]),
-                h("th", { scope: "row" }, o.label),
-                h("td", o.detail),
-                h("td", o.disabledReason || o.status || "可用"),
-              ]),
-            ),
-          ),
-        ]);
+        return h(UiTable, {
+          label: "操作对象",
+          columns: [
+            { key: "label", label: "对象" },
+            { key: "detail", label: "详情" },
+            { key: "status", label: "状态" },
+          ],
+          rows: snapshot.objects.map((o) => ({
+            ...o,
+            disabled: !!o.disabledReason,
+            status: o.disabledReason || o.status || "可用",
+          })),
+          selection:
+            c.presentation.selection === "single" ? "single" : "multiple",
+          modelValue: s.draft.selection,
+          disabled: !c.can("submit"),
+          "onUpdate:modelValue": (ids: string[]) => {
+            const changed = [...new Set([...ids, ...s.draft.selection])].find(
+              (id) => ids.includes(id) !== s.draft.selection.includes(id),
+            );
+            if (changed)
+              c.select(
+                c.presentation.selection === "single" ? ids[0] : changed,
+              );
+          },
+        });
       if (type === "ChangePreview")
-        return h("table", { class: "operation-table" }, [
-          h("caption", "修改预览"),
-          h("thead", [
-            h("tr", [h("th", "参数"), h("th", "当前"), h("th", "提交值")]),
-          ]),
-          h(
-            "tbody",
-            Object.entries(s.draft.values).map(([id, value]) =>
-              h("tr", { key: id }, [
-                h(
-                  "th",
-                  { scope: "row" },
-                  c.presentation.fields.find((f) => f.id === id)?.label ?? id,
-                ),
-                h("td", display(snapshot.current[id])),
-                h("td", display(value)),
-              ]),
-            ),
-          ),
-        ]);
+        return h(UiTable, {
+          label: "修改预览",
+          columns: [
+            { key: "label", label: "参数" },
+            { key: "before", label: "当前" },
+            { key: "after", label: "提交值" },
+          ],
+          rows: Object.entries(s.draft.values).map(([id, value]) => ({
+            id,
+            label: c.presentation.fields.find((f) => f.id === id)?.label ?? id,
+            before: display(snapshot.current[id]),
+            after: display(value),
+          })),
+        });
       if (type === "ConfirmationPanel")
         return h(
           "aside",
@@ -522,10 +500,10 @@ export const NodeView = defineComponent({
                 : phaseLabels[snapshot.phase],
           ),
           snapshot.progress
-            ? h("progress", {
+            ? h(UiProgress, {
                 value: snapshot.progress.completed,
                 max: snapshot.progress.total,
-                "aria-label": "任务进度",
+                label: "任务进度",
               })
             : null,
         ]);
@@ -534,14 +512,20 @@ export const NodeView = defineComponent({
           ? h("p", { role: "status" }, snapshot.result)
           : null;
       if (type === "LogView")
-        return h("details", [
-          h("summary", "操作日志"),
-          h(
-            "pre",
-            { role: "log", "aria-label": "操作日志" },
-            snapshot.logs.join("\n"),
-          ),
-        ]);
+        return h(
+          UiCollapsible,
+          {
+            open: disclosureOpen.value,
+            label: "操作日志",
+            "onUpdate:open": (open: boolean) => (disclosureOpen.value = open),
+          },
+          () =>
+            h(
+              "pre",
+              { role: "log", "aria-label": "操作日志" },
+              snapshot.logs.join("\n"),
+            ),
+        );
       if (type === "PendingInteraction")
         return snapshot.interaction
           ? h("fieldset", [
@@ -553,16 +537,11 @@ export const NodeView = defineComponent({
           : null;
       if (type === "StepFlow")
         return h("nav", { "aria-label": "操作步骤", id: domId }, [
-          h(
-            "ol",
-            c.presentation.steps?.map((step, i) =>
-              h(
-                "li",
-                { "aria-current": i === s.step ? "step" : undefined },
-                step.label,
-              ),
-            ),
-          ),
+          h(UiSteps, {
+            items: c.presentation.steps ?? [],
+            current: c.presentation.steps?.[s.step]?.id ?? "",
+            label: "操作步骤",
+          }),
           button("上一步", c.previous, s.step === 0),
           button(
             "下一步",
@@ -596,20 +575,24 @@ export const NodeView = defineComponent({
     };
   },
 });
-export const mountNode: NodeMount = (container, root, enabled) => {
-  const app = createApp(
-    defineComponent({
-      setup() {
-        return () =>
-          h("div", { class: "rss-a2ui-surface", inert: !enabled }, [
-            h(NodeView, { node: root }),
-          ]);
-      },
-    }),
-  );
-  app.config.errorHandler = (error) => {
-    throw error;
+export const createNodeMount =
+  (configuration: Readonly<UiConfiguration>): NodeMount =>
+  (container, root, enabled) => {
+    const app = createApp(
+      defineComponent({
+        setup() {
+          return () =>
+            h(UiProvider, configuration, () =>
+              h("div", { class: "rss-a2ui-surface", inert: !enabled }, [
+                h(NodeView, { node: root }),
+              ]),
+            );
+        },
+      }),
+    );
+    app.config.errorHandler = (error) => {
+      throw error;
+    };
+    app.mount(container);
+    return () => app.unmount();
   };
-  app.mount(container);
-  return () => app.unmount();
-};

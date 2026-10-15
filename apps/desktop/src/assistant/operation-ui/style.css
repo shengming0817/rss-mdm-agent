@@ -26,48 +26,6 @@
   margin: 0;
   padding: 0;
 }
-.operation-field {
-  display: grid;
-  gap: 0.35rem;
-  min-width: 0;
-}
-.operation-field input:not([type="checkbox"]):not([type="radio"]),
-.operation-field select {
-  width: 100%;
-  min-width: 0;
-  box-sizing: border-box;
-}
-.operation-card input,
-.operation-card select,
-.operation-card button {
-  font: inherit;
-  color: inherit;
-  background: transparent;
-  border: 1px solid #8888;
-  border-radius: 6px;
-  padding: 0.45rem 0.65rem;
-}
-.operation-card button {
-  cursor: pointer;
-}
-.operation-card :disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
-.operation-card :focus-visible,
-.rss-a2ui-surface :focus-visible {
-  outline: 2px solid #548cff;
-  outline-offset: 3px;
-}
-.operation-hint {
-  margin: 0;
-  font-size: 0.85rem;
-  opacity: 0.8;
-}
-.operation-error {
-  color: #d33;
-  margin: 0;
-}
 .operation-summary {
   display: grid;
   grid-template-columns: minmax(5rem, 1fr) minmax(0, 3fr);
@@ -77,32 +35,16 @@
 .operation-summary dd {
   margin: 0;
 }
-.operation-actions,
-[role="tablist"] {
+.operation-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
-}
-.operation-table {
-  width: 100%;
-  table-layout: fixed;
-  border-collapse: collapse;
-}
-.operation-table th,
-.operation-table td {
-  padding: 0.5rem;
-  border-bottom: 1px solid #8885;
-  text-align: left;
-  overflow-wrap: anywhere;
 }
 .operation-card pre {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   max-height: 12rem;
   overflow: auto;
-}
-.operation-card [aria-selected="true"] {
-  border-color: #548cff;
 }
 @media (max-width: 600px) {
   .operation-card {

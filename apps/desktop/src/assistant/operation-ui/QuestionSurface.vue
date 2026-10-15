@@ -7,7 +7,9 @@ defineProps<{
   instanceId: string;
 }>();
 defineEmits(["error", "receipt"]);
-import { mountNode } from "./NodeView";
+import { createNodeMount } from "./NodeView";
+import { useUiContext } from "@rss-mdm-agent/ui";
+const mountNode = createNodeMount(useUiContext().configuration);
 </script>
 <template>
   <RuntimeSurface
