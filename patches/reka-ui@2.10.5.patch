@@ -172,6 +172,90 @@ index 3018c4b7297e116f80e0b2c635e7528521c20217..63c824aec706f57e6d8144f6a4f363c5
    /** The value of the tree when initially rendered. Use when you do not need to control the state of the tree */
    defaultValue?: M extends true ? U[] : U;
    /** List of items */
+diff --git a/dist/shared/useHideOthers.cjs b/dist/shared/useHideOthers.cjs
+index d0296758178968a6e2b57f8916a9f6a01967ed8c..eef77dd1b3acce6124e6d73dfb0c38d4dd97d86d 100644
+--- a/dist/shared/useHideOthers.cjs
++++ b/dist/shared/useHideOthers.cjs
+@@ -13,16 +13,28 @@ const aria_hidden = require_rolldown_runtime.__toESM(require("aria-hidden"));
+ */
+ function useHideOthers(target) {
+ 	let undo;
+-	(0, vue.watch)(() => (0, __vueuse_core.unrefElement)(target), (el) => {
++	(0, vue.watch)(() => (0, __vueuse_core.unrefElement)(target), (el, _previous, onCleanup) => {
++        undo?.();
++        undo = undefined;
+ 		let isInsideClosedPopover = false;
+ 		try {
+ 			isInsideClosedPopover = !!el?.closest("[popover]:not(:popover-open)");
+ 		} catch {}
+-		if (el && !isInsideClosedPopover) undo = (0, aria_hidden.hideOthers)(el);
+-		else if (undo) undo();
+-	});
+-	(0, vue.onUnmounted)(() => {
+-		if (undo) undo();
++        if (el && !isInsideClosedPopover) {
++            const refresh = () => {
++                if (!el.isConnected || el.closest('[aria-hidden="true"]')) return;
++                undo?.();
++                undo = (0, aria_hidden.hideOthers)(el);
++            };
++            refresh();
++            const observer = new MutationObserver((records) => {
++                if (records.some(record => record.type === 'childList'
++                    ? [...record.addedNodes, ...record.removedNodes].some(node => node.nodeType === 1)
++                    : record.target === el && !el.hasAttribute('aria-hidden'))) refresh();
++            });
++            observer.observe(el, { childList: true, subtree: true, attributes: true, attributeFilter: ['aria-hidden'] });
++            onCleanup(() => { observer.disconnect(); undo?.(); undo = undefined; });
++        }
+ 	});
+ }
+ 
+diff --git a/dist/shared/useHideOthers.js b/dist/shared/useHideOthers.js
+index c9e22b713d75fb94b81264cf2ae99d1c09e66dbb..262784053699b9f68ab536014dd8fba0c6d63f6f 100644
+--- a/dist/shared/useHideOthers.js
++++ b/dist/shared/useHideOthers.js
+@@ -1,4 +1,4 @@
+-import { onUnmounted, watch } from "vue";
++import { watch } from "vue";
+ import { unrefElement } from "@vueuse/core";
+ import { hideOthers } from "aria-hidden";
+ 
+@@ -12,16 +12,28 @@ import { hideOthers } from "aria-hidden";
+ */
+ function useHideOthers(target) {
+ 	let undo;
+-	watch(() => unrefElement(target), (el) => {
++	watch(() => unrefElement(target), (el, _previous, onCleanup) => {
++        undo?.();
++        undo = undefined;
+ 		let isInsideClosedPopover = false;
+ 		try {
+ 			isInsideClosedPopover = !!el?.closest("[popover]:not(:popover-open)");
+ 		} catch {}
+-		if (el && !isInsideClosedPopover) undo = hideOthers(el);
+-		else if (undo) undo();
+-	});
+-	onUnmounted(() => {
+-		if (undo) undo();
++        if (el && !isInsideClosedPopover) {
++            const refresh = () => {
++                if (!el.isConnected || el.closest('[aria-hidden="true"]')) return;
++                undo?.();
++                undo = hideOthers(el);
++            };
++            refresh();
++            const observer = new MutationObserver((records) => {
++                if (records.some(record => record.type === 'childList'
++                    ? [...record.addedNodes, ...record.removedNodes].some(node => node.nodeType === 1)
++                    : record.target === el && !el.hasAttribute('aria-hidden'))) refresh();
++            });
++            observer.observe(el, { childList: true, subtree: true, attributes: true, attributeFilter: ['aria-hidden'] });
++            onCleanup(() => { observer.disconnect(); undo?.(); undo = undefined; });
++        }
+ 	});
+ }
+ 
 diff --git a/src/DateField/DateFieldRoot.vue b/src/DateField/DateFieldRoot.vue
 index cab8aeb3283448ac8e8bb6b350b36a6188caec2d..4d7f3bfdcf5aaa4d9397b568273631a2ec65954a 100644
 --- a/src/DateField/DateFieldRoot.vue
@@ -257,3 +341,69 @@ index 36fd2ad4073676bc9eac34e3a6f31fd18d6fb786..c27e753b14f0eb99d16034fc70d1543d
    deep: true,
  }) as Ref<U | U[]>
  
+diff --git a/src/shared/useHideOthers.ts b/src/shared/useHideOthers.ts
+index 1c906781199b1449ca72fb6b5c3c8b64980d7ab2..af3eaa13148f3a8ba92ed1e932e3a2e5058c5e68 100644
+--- a/src/shared/useHideOthers.ts
++++ b/src/shared/useHideOthers.ts
+@@ -1,7 +1,7 @@
+ import type { MaybeElementRef } from '@vueuse/core'
+ import { unrefElement } from '@vueuse/core'
+ import { hideOthers } from 'aria-hidden'
+-import { onUnmounted, watch } from 'vue'
++import { watch } from 'vue'
+ 
+ /**
+  * The `useHideOthers` function is a TypeScript function that takes a target element reference and
+@@ -11,8 +11,10 @@ import { onUnmounted, watch } from 'vue'
+  * to hide other elements when it is clicked or focused.
+  */
+ export function useHideOthers(target: MaybeElementRef) {
+-  let undo: ReturnType<typeof hideOthers>
+-  watch(() => unrefElement(target), (el) => {
++  let undo: ReturnType<typeof hideOthers> | undefined
++  watch(() => unrefElement(target), (el, _previous, onCleanup) => {
++    undo?.()
++    undo = undefined
+     // disable hideOthers on test mode
+     if (import.meta.env.MODE === 'test')
+       return
+@@ -23,14 +25,31 @@ export function useHideOthers(target: MaybeElementRef) {
+       isInsideClosedPopover = !!el?.closest('[popover]:not(:popover-open)')
+     }
+     catch {}
+-    if (el && !isInsideClosedPopover)
+-      undo = hideOthers(el)
+-    else if (undo)
+-      undo()
++    if (el && !isInsideClosedPopover) {
++      // Teleported live content can carry previous aria-hidden markings into
++      // this scope. Refresh only this target's subtree, and pause while a
++      // nested modal owns accessibility visibility.
++      const refresh = () => {
++        if (!el.isConnected || el.closest('[aria-hidden="true"]')) return
++        undo?.()
++        undo = hideOthers(el)
++      }
++      refresh()
++      const observer = new MutationObserver((records) => {
++        // Portal comment anchors do not change this scope's DOM ownership.
++        // Re-hiding on those anchors could hide a sibling modal before its
++        // own visibility scope is mounted.
++        if (records.some(record => record.type === 'childList'
++          ? [...record.addedNodes, ...record.removedNodes].some(node => node.nodeType === 1)
++          : record.target === el && !el.hasAttribute('aria-hidden'))) refresh()
++      })
++      observer.observe(el, { childList: true, subtree: true, attributes: true, attributeFilter: ['aria-hidden'] })
++      onCleanup(() => {
++        observer.disconnect()
++        undo?.()
++        undo = undefined
++      })
++    }
+   })
+ 
+-  onUnmounted(() => {
+-    if (undo)
+-      undo()
+-  })
+ }

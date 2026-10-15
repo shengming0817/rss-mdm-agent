@@ -23,6 +23,8 @@ close timer on unmount and reconciles completed DateField/TimeField segment
 edits with the caller's controlled value after an update event. Source, ESM
 and CommonJS outputs receive the same corrections. TreeRoot also honors supplied
 controlled selections (including explicit empty selection), and PopoverContent
-honors a caller-supplied accessible name before its default trigger name. Existing focus, pause and
+honors a caller-supplied accessible name before its default trigger name.
+The accessibility hiding hook refreshes its target subtree after live DOM
+relocation, pauses under nested modals, and disconnects its observer on disposal. Existing focus, pause and
 incomplete-segment behavior stays owned by Reka; no parallel implementation
 is shipped. Component regression tests cover rejection/reset and early disposal.

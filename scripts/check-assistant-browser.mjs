@@ -1135,6 +1135,9 @@ try {
       .getByRole("button", { name: "继续到所选会话", exact: true })
       .click();
     await panel.locator(".composer textarea").waitFor();
+    await panel
+      .getByRole("region", { name: "待发送资源上下文", exact: true })
+      .waitFor();
     if (width < 1440) {
       await panel.locator(".connection-trigger").click();
       const connectionMenu = page.getByRole("dialog", {
