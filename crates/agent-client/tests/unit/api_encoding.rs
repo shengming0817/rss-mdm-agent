@@ -181,37 +181,40 @@ fn native_vectors_bind_independent_signing_domains_and_result_identity() {
     use rss_mdm_agent_wire::runtime::*;
     let vectors: serde_json::Value =
         serde_json::from_str(include_str!("../fixtures/native-v2-vectors.json")).unwrap();
-    let plan: NativeCollectionPlan = serde_json::from_value(vectors["plan"].clone()).unwrap();
-    let result: NativeCollectionResult = serde_json::from_value(vectors["result"].clone()).unwrap();
-    assert_eq!(
-        serde_json::to_value(plan.digest()).unwrap(),
-        vectors["planDigest"]
-    );
-    assert_eq!(
-        serde_json::to_value(result.digest()).unwrap(),
-        vectors["resultDigest"]
-    );
-    let pair = ring::signature::Ed25519KeyPair::from_seed_unchecked(&[42; 32]).unwrap();
-    use ring::signature::KeyPair;
-    for task in vectors["tasks"].as_array().unwrap() {
-        let payload: TaskPayload =
-            serde_json::from_str(task["payloadJson"].as_str().unwrap()).unwrap();
+    for vectors in vectors.as_array().unwrap() {
+        let plan: NativeCollectionPlan = serde_json::from_value(vectors["plan"].clone()).unwrap();
+        let result: NativeCollectionResult =
+            serde_json::from_value(vectors["result"].clone()).unwrap();
         assert_eq!(
-            serde_json::to_string(&payload).unwrap(),
-            task["payloadJson"]
+            serde_json::to_value(plan.digest()).unwrap(),
+            vectors["planDigest"]
         );
-        let bytes = payload.signing_bytes("vector-key").unwrap();
-        let signature = base64::engine::general_purpose::URL_SAFE_NO_PAD
-            .decode(task["signature"].as_str().unwrap())
+        assert_eq!(
+            serde_json::to_value(result.digest()).unwrap(),
+            vectors["resultDigest"]
+        );
+        let pair = ring::signature::Ed25519KeyPair::from_seed_unchecked(&[42; 32]).unwrap();
+        use ring::signature::KeyPair;
+        for task in vectors["tasks"].as_array().unwrap() {
+            let payload: TaskPayload =
+                serde_json::from_str(task["payloadJson"].as_str().unwrap()).unwrap();
+            assert_eq!(
+                serde_json::to_string(&payload).unwrap(),
+                task["payloadJson"]
+            );
+            let bytes = payload.signing_bytes("vector-key").unwrap();
+            let signature = base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .decode(task["signature"].as_str().unwrap())
+                .unwrap();
+            ring::signature::UnparsedPublicKey::new(
+                &ring::signature::ED25519,
+                pair.public_key().as_ref(),
+            )
+            .verify(&bytes, &signature)
             .unwrap();
-        ring::signature::UnparsedPublicKey::new(
-            &ring::signature::ED25519,
-            pair.public_key().as_ref(),
-        )
-        .verify(&bytes, &signature)
-        .unwrap();
-        let raw: serde_json::Value =
-            serde_json::from_str(task["payloadJson"].as_str().unwrap()).unwrap();
-        assert!(serde_json::from_value::<TaskPayload>(raw["task"].clone()).is_err());
+            let raw: serde_json::Value =
+                serde_json::from_str(task["payloadJson"].as_str().unwrap()).unwrap();
+            assert!(serde_json::from_value::<TaskPayload>(raw["task"].clone()).is_err());
+        }
     }
 }
