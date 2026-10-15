@@ -189,20 +189,16 @@ Agent 部署生成使用 `.env` 的 RSS_AGENT_ORIGIN、必填 RSS_AGENT_CA_FILE�
 
 旧 Deployment 4 / Candidate 1 保持原样并被拒绝；本仓不提供历史格式转换、兼容读取或重试入口。当前格式的安装与 apply/refresh 只处理当前候选及当前部署，沿用既有候选、代码身份、持久状态与设备归属校验。拒绝旧格式不停止原 owner、不覆盖配置或 retained manifest、不转换通信库，也不重建注册、凭据或执行 journal。管理员应保留旧部署及持久材料，不通过改写版本号、删除状态或重新注册绕过拒绝。
 
-## Windows 标准硬件与软件采集资源
+## Windows 原生声明式采集
 
-Agent 的 `apps/agent-service/collectors/windows/export.py --output <目录>` 生成两份独立 PowerShell 文件及内容摘要 manifest。服务端 Windows 平台项消费固定 Agent revision 的这些资源，以既有 Resource/Script Task 发布；导出不注册模板、不访问服务端，也不修改租户配置。硬件资源的 `-Section` 从资源声明的组中选择，电池与其它硬件组分别执行。软件资源一次扫描设备及冻结用户集合；执行身份为 System，解释器沿用受保护 PowerShell7 的绝对路径及摘要。
+标准采集使用 rss-mdm 发布的原生 Resource 与独立 Collection 任务。Agent 固定消费唯一 wire，按当前实现上报原生引擎及版本；没有 PowerShell 也可以领取原生任务。新字段通过服务端 WMI/Registry 定义和资产映射发布，不在 Agent 维护字段目录。
 
-模板参数必须与同一签名任务的预算一致：`-MaxItems` 不超过模板行数预算，`-MaxBytes` 小于输出字节预算（预留换行及 envelope），`-TimeoutSeconds` 小于任务执行时限。列表字段通过 `/fields/<字段名>` 映射到 M01 标准字段；软件的 installations 与 packages 分别表示安装实例和设备预配。`manifest.json` 只描述资源内容，不是 Agent wire 或服务端模板定义。Agent 直接通过 Cargo 固定 revision 消费 `rss-mdm-agent-wire`，不复制协议 schema。
+原生采集由同一受保护服务镜像的固定内部 worker 执行。WMI 只读本机已有类的声明属性；Registry 只读明确 hive/SID 和 32/64 位视图，不展开 EXPAND_SZ，不加载离线 hive，不执行卸载命令。CPU、网络、电池和软件使用协议规定的固定 collector。软件覆盖所有既存用户，来源缺失、未加载 hive、用户集合变化及非完整包注册均不能作为完整设备清单。
 
-只有所有预期来源完成，资源才退出 0 并填充 `fields`；合法空清单仍为完整结果。未加载的用户 hive 不挂载，读取失败、用户集合变化、非 Installed 的包注册状态及预算超限均阻止完整替换。非完整运行退出 2，`fields` 为空，已采集数据和各来源状态保留在 `evidence`/`coverage`；超出输出预算时省略证据并明确标记截断。上次完整软件资产继续保留，当前 M01 不提供按 SID 局部更新，也不把这些证据状态自动投影成相同名称的资产质量。Appx/Dism 使用系统目录模块与本地 Windows PowerShell 5.1 兼容会话，不提供任意模块或命令选择。
+查询结果与传输完成分别判断。完整空列表可以替换旧清单，缺失、拒绝、超时及截断不伪装完整；完整查询不因另一个查询失败而丢失。完整结果固定持久化后再分块传输，丢失 ACK 或重启只补传原字节，不重新采集。worker 中断且没有完整结果时保留失败/未知证据。固定候选升级前须完成旧版未决操作；旧任务包络、签名或持久格式明确拒绝，不提供兼容解码，也不能清 journal 或重注册绕过。
 
-Win32 身份绑定来源、SID、注册表视图和卸载子键；MSIX 身份绑定包全名、SID 和来源，保留并存版本及 provisioning 区别。采集不执行卸载字符串、不查询 Win32_Product、不把 WinGet 名称相似当成身份匹配。磁盘、卷及网卡采用原生身份；占位序列号/UUID 不用于生成设备身份。内存字段遵循 OS 可见 physical_memory 语义；电池无实例或多个实例无法解释为单个百分比时报告 unsupported。
+旧标准 PowerShell 采集资源与导出器已退役；企业显式发布和授权的 Script 执行仍可使用，原生失败不会自动转成脚本。
 
-签入环境来自当前 EditionID 和已校验工具版本。完整 `TaskClaimRequest` 持久冻结，网络重试不刷新其 environment；后续新请求才使用新观察值。升级到 M01 前须完成旧候选的未决操作；本候选拒绝旧 claim/collection 格式，不进行兼容解码或自动清空 journal。
+本次按 #2739 冻结契约迁移，不承诺与旧脚本字段完全等价：身份来源、磁盘/卷身份及名称、异构 CPU 型号和电池汇总以新契约为准；电池采用可验证能量加权，容量不可靠时报告缺失或无效。旧 edition/architecture 映射、标准占位序列号/UUID 过滤和独立 provisioning 字段的缺口由服务端 owner 跟踪，Agent 不改写通用 WMI 原始值补偿。具体差异和后续项留在 #2740 交付记录。
 
-### 宿主纯逻辑验证
-
-使用官方 [PowerShell 7.4.13 release](https://github.com/PowerShell/PowerShell/releases/tag/v7.4.13) 的当前宿主原生候选，核对 release 校验和并解压到临时目录；不需要安装 Windows 工具链。macOS arm64 tar.gz SHA-256 为 `a65060c521317f4f8873b5fdda8cb8981f5310462248e82f824b219505ddc3a7`。设置 `COLLECTION_PWSH=<绝对 pwsh 路径>` 后运行 `python3 apps/agent-service/collectors/windows/verify.py`；本仓 CI 对受影响 Agent service 执行同一检查，缺少工具时失败，不当作通过。该检查执行真实 PowerShell AST 解析与纯函数断言，不调用 Windows API。
-
-真实 LocalSystem 枚举、两个注册表视图、多用户、Appx/Dism 会话、安装/升级/卸载及 Windows 架构支持由独立 T3 验证。开发机纯逻辑和协议恢复通过不等于 Windows 原生验证通过。
+开发机使用本仓 Rust 纯逻辑、SQLite/协议接缝及本地 CI，不再需要 COLLECTION_PWSH 或 PowerShell 5.1 兼容会话。纯逻辑 fixture 不证明 Windows 原生读取；Windows 编译、运行、LocalSystem、多用户、x64/ARM64 和性能必须以目标环境证据另行声明。

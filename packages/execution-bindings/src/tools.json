@@ -102,6 +102,15 @@
           "oneOf": [
             {
               "additionalProperties": false,
+              "description": "Native device collection; definitions remain backend-owned.",
+              "properties": {
+                "kind": { "const": "collection", "type": "string" }
+              },
+              "required": ["kind"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
               "description": "Fixed backend script; executable input is not exposed to the UI.",
               "properties": {
                 "identity": {
@@ -681,6 +690,15 @@
         "BackendTaskSummary": {
           "description": "Safe preview bound to the complete signed offer revision.",
           "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "Native device collection; definitions remain backend-owned.",
+              "properties": {
+                "kind": { "const": "collection", "type": "string" }
+              },
+              "required": ["kind"],
+              "type": "object"
+            },
             {
               "additionalProperties": false,
               "description": "Fixed backend script; executable input is not exposed to the UI.",
@@ -2163,6 +2181,15 @@
         "BackendTaskSummary": {
           "description": "Safe preview bound to the complete signed offer revision.",
           "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "Native device collection; definitions remain backend-owned.",
+              "properties": {
+                "kind": { "const": "collection", "type": "string" }
+              },
+              "required": ["kind"],
+              "type": "object"
+            },
             {
               "additionalProperties": false,
               "description": "Fixed backend script; executable input is not exposed to the UI.",
