@@ -34,17 +34,10 @@ impl Scan<'_, '_> {
     fn entries(&mut self, parts: &[String]) -> Result<Vec<String>> {
         let dir = self.open(parts, true)?;
         let mut names = Vec::new();
-        for item in std::fs::read_dir(format!("/dev/fd/{}", dir.as_raw_fd()))? {
-            self.context.check()?;
-            let name = item?
-                .file_name()
-                .into_string()
-                .map_err(|_| Status::Invalid)?;
+        for name in directory_names(self.context, &dir)? {
+            let name = name.into_string().map_err(|_| Status::Invalid)?;
             component(&name)?;
             names.push(name);
-            if names.len() >= MAX_ENTRIES {
-                return Err(Status::Truncated.into());
-            }
         }
         names.sort();
         Ok(names)

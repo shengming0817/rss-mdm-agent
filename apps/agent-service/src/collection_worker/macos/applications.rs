@@ -81,19 +81,30 @@ fn walk(
     rows: &mut Rows<'_>,
 ) -> Result<()> {
     let before = dir.metadata()?;
-    // read_dir opens the held descriptor, never a mutable ancestor path.
-    let entries = std::fs::read_dir(format!("/dev/fd/{}", dir.as_raw_fd()))?;
-    for entry in entries {
+    for name in directory_names(c, dir)? {
         c.check()?;
-        let entry = entry?;
-        let name = entry.file_name();
-        let kind = entry.file_type()?;
+        let native_name = CString::new(name.as_bytes()).map_err(|_| Status::Invalid)?;
+        let mut metadata = std::mem::MaybeUninit::<libc::stat>::uninit();
+        // SAFETY: the directory descriptor and NUL-terminated name remain live; fstatat
+        // initializes metadata only on success and never follows the entry's link.
+        if unsafe {
+            libc::fstatat(
+                dir.as_raw_fd(),
+                native_name.as_ptr(),
+                metadata.as_mut_ptr(),
+                libc::AT_SYMLINK_NOFOLLOW,
+            )
+        } != 0
+        {
+            return Err(std::io::Error::last_os_error().into());
+        }
+        let kind = unsafe { metadata.assume_init() }.st_mode & libc::S_IFMT;
         // A directory alias is not an application bundle inside this approved root.
         // In particular Safari's Cryptex alias must not broaden /Applications into Preboot.
-        if kind.is_symlink() {
+        if kind == libc::S_IFLNK {
             continue;
         }
-        if !kind.is_dir() {
+        if kind != libc::S_IFDIR {
             continue;
         }
         let child = openat(dir, &name, true)?;

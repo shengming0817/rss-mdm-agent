@@ -580,8 +580,13 @@ fn run_tool(
         });
     }
     let mut command = Command::new(&sandbox.path);
+    command.args(["-p", LEAF_PROFILE, &tool.path]);
+    if name == "system_profiler" {
+        // Its default dispatcher forks a reporter and silently omits _items when fork
+        // is denied. Run that fixed reporter in the broker-owned leaf process instead.
+        command.arg("-nospawn");
+    }
     command
-        .args(["-p", LEAF_PROFILE, &tool.path])
         .args(args)
         .env_clear()
         .env("LC_ALL", "C")
@@ -944,6 +949,7 @@ mod tests {
                 "-p",
                 LEAF_PROFILE,
                 "/usr/sbin/system_profiler",
+                "-nospawn",
                 "-xml",
                 "SPHardwareDataType",
                 "-detailLevel",
@@ -965,10 +971,14 @@ mod tests {
         )
         .unwrap();
         assert_eq!(reply.status, w::NativeQueryStatus::Complete);
-        assert!(plist::Value::from_reader(std::io::Cursor::new(reply.bytes))
-            .unwrap()
-            .as_array()
-            .is_some());
+        let value = plist::Value::from_reader(std::io::Cursor::new(reply.bytes)).unwrap();
+        assert!(value.as_array().unwrap().iter().any(|block| {
+            block
+                .as_dictionary()
+                .and_then(|d| d.get("_items"))
+                .and_then(plist::Value::as_array)
+                .is_some_and(|items| !items.is_empty())
+        }));
         assert_eq!(
             raw.load(std::sync::atomic::Ordering::Relaxed),
             reply.observed as u64

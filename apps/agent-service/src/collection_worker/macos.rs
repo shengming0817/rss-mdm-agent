@@ -224,6 +224,59 @@ pub(super) fn execute(
     }
     Ok(result)
 }
+// fdopendir owns an independently opened directory description. macOS /dev/fd
+// cannot be reopened by std::fs::read_dir, and dup would share its scan offset.
+fn directory_names(c: &Context<'_>, dir: &std::fs::File) -> Result<Vec<std::ffi::OsString>> {
+    use std::os::{fd::AsRawFd, unix::ffi::OsStrExt};
+    struct Directory(*mut libc::DIR);
+    impl Drop for Directory {
+        fn drop(&mut self) {
+            unsafe { libc::closedir(self.0) };
+        }
+    }
+    c.check()?;
+    // SAFETY: live directory fd and a fixed NUL-terminated relative component.
+    let fd = unsafe {
+        libc::openat(
+            dir.as_raw_fd(),
+            c".".as_ptr(),
+            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+        )
+    };
+    if fd < 0 {
+        return Err(std::io::Error::last_os_error().into());
+    }
+    let stream = unsafe { libc::fdopendir(fd) };
+    if stream.is_null() {
+        let error = std::io::Error::last_os_error();
+        unsafe { libc::close(fd) };
+        return Err(error.into());
+    }
+    let stream = Directory(stream);
+    let mut names = Vec::new();
+    loop {
+        c.check()?;
+        // SAFETY: this module is macOS-only. errno distinguishes EOF from failure;
+        // readdir's borrowed name is copied before the next call.
+        unsafe { *libc::__error() = 0 };
+        let entry = unsafe { libc::readdir(stream.0) };
+        if entry.is_null() {
+            let error = std::io::Error::last_os_error();
+            if error.raw_os_error() != Some(0) {
+                return Err(error.into());
+            }
+            return Ok(names);
+        }
+        let name = unsafe { std::ffi::CStr::from_ptr((*entry).d_name.as_ptr()) }.to_bytes();
+        if matches!(name, b"." | b"..") {
+            continue;
+        }
+        names.push(std::ffi::OsStr::from_bytes(name).to_owned());
+        if names.len() >= 10_000 {
+            return Err(Status::Truncated.into());
+        }
+    }
+}
 fn object(v: &plist::Value) -> Result<&plist::Dictionary> {
     v.as_dictionary().ok_or(Status::Invalid.into())
 }
