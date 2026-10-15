@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 pub(super) type Row = BTreeMap<String, Value>;
 pub(super) type Status = w::NativeQueryStatus;
 
+#[cfg(any(windows, test))]
 pub(super) fn select(definition: &w::NativeQueryDefinition) -> Result<String, Status> {
     definition.validate().map_err(|_| Status::Invalid)?;
     let w::NativeQueryDefinition::WindowsWmi {
@@ -26,6 +27,7 @@ pub(super) fn select(definition: &w::NativeQueryDefinition) -> Result<String, St
     }
     Ok(text)
 }
+#[cfg(any(windows, test))]
 fn predicate(
     f: &w::WmiFilter,
     properties: &BTreeMap<String, w::WmiProperty>,
@@ -83,6 +85,7 @@ fn predicate(
         }
     })
 }
+#[cfg(any(windows, test))]
 pub(super) fn cim_time(value: &str) -> bool {
     let b = value.as_bytes();
     if b.len() != 25 || b[14] != b'.' || !matches!(b[21], b'+' | b'-' | b':') {
@@ -117,6 +120,7 @@ pub(super) fn cim_time(value: &str) -> bool {
     }
     true // Preserve CIM text; unspecified offsets never acquire an invented UTC value.
 }
+#[cfg(any(windows, test))]
 pub(super) fn registry(kind: w::RegistryType, actual: u32, bytes: &[u8]) -> Result<Value, Status> {
     use w::RegistryType::*;
     let expected = match kind {
@@ -247,6 +251,7 @@ impl<'a> Rows<'a> {
     }
 }
 
+#[cfg(any(windows, test))]
 pub(super) enum CimValue {
     Text(String),
     I16(i16),
@@ -259,6 +264,7 @@ pub(super) enum CimValue {
     F64(f64),
     Bool(i16),
 }
+#[cfg(any(windows, test))]
 pub(super) fn cim_value(c: w::CimType, raw: CimValue) -> Result<Value, Status> {
     use w::CimType as C;
     use CimValue as V;
@@ -295,6 +301,7 @@ pub(super) fn cim_value(c: w::CimType, raw: CimValue) -> Result<Value, Status> {
 
 /// Address enrichment is bounded by the completely enumerated adapter set.
 /// IP-only interfaces (notably loopback) are not missing adapter evidence.
+#[cfg(any(windows, test))]
 pub(super) fn adapter_addresses(
     adapters: &[Row],
     addresses: Vec<Row>,

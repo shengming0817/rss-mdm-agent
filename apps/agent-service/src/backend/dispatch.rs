@@ -27,7 +27,9 @@ pub(crate) async fn submit<S: IdentityProvider>(
     }
     service.core.available = None;
     let needs_user = match offer.payload() {
-        wire::TaskPayload::Collection(_) => false,
+        wire::TaskPayload::Collection(p) => {
+            p.execution.identity == wire::ExecutionIdentity::LoggedInUser
+        }
         wire::TaskPayload::Enrollment(_) => return Err(Error::Unsupported),
         wire::TaskPayload::Script(p) => p.run_as == wire::ExecutionIdentity::LoggedInUser,
         wire::TaskPayload::Software(p) => p
@@ -268,6 +270,7 @@ fn compile(
             &core.host.actor,
             &core.config,
             &mut core.material_root,
+            delegate,
         ),
         wire::TaskPayload::Enrollment(_) => Err(Error::Unsupported),
         wire::TaskPayload::Software(payload) => crate::backend::software::compile(

@@ -2,7 +2,6 @@
 #![cfg(target_os = "macos")]
 use super::support::{create_app, reopen_app};
 use super::*;
-use sha2::{Digest as _, Sha256};
 use std::{os::unix::fs::PermissionsExt, path::PathBuf, sync::atomic::AtomicU64};
 static NEXT: AtomicU64 = AtomicU64::new(0);
 struct Fixture {

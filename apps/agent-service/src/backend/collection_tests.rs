@@ -15,9 +15,20 @@ use std::sync::{Arc, Mutex};
 
 #[tokio::test]
 async fn native_capture_survives_lost_ack_and_restart_without_recollection() {
+    capture_recovery(false).await;
+}
+#[tokio::test]
+async fn macos_capture_survives_lost_ack_and_restart_without_recollection() {
+    capture_recovery(true).await;
+}
+async fn capture_recovery(macos: bool) {
     let _budget = crate::scenario_budget::enter();
     let server = Server::new().await;
-    server.data.lock().unwrap().native_collection();
+    if macos {
+        server.data.lock().unwrap().native_macos_collection();
+    } else {
+        server.data.lock().unwrap().native_collection();
+    }
     let root = Root::new();
     let mut client = server.client(&root, OpenMode::Create);
     server.register(&mut client).await;
@@ -43,8 +54,14 @@ async fn native_capture_survives_lost_ack_and_restart_without_recollection() {
                 enumeration_complete: false,
                 row_count: 1,
                 rows: vec![([
-                    ("Id".into(), serde_json::json!("stable")),
-                    ("Name".into(), serde_json::json!("partial evidence")),
+                    (
+                        if macos { "id" } else { "Id" }.into(),
+                        serde_json::json!("stable"),
+                    ),
+                    (
+                        if macos { "name" } else { "Name" }.into(),
+                        serde_json::json!("partial evidence"),
+                    ),
                 ])
                 .into()],
                 users: None,
@@ -53,11 +70,20 @@ async fn native_capture_survives_lost_ack_and_restart_without_recollection() {
         .into(),
     };
     let mut input = adapted_plan(false, "device-1", &offer).spec().clone();
-    input.request.target.platform = Platform::Windows;
+    input.request.target.platform = if macos {
+        Platform::Macos
+    } else {
+        Platform::Windows
+    };
     input.constraints = IsolationPolicy::OsIdentity {};
-    input.launch.cwd = r"C:\ProgramData\RSS".into();
+    input.launch.cwd = if macos {
+        "/Library/RSS"
+    } else {
+        r"C:\ProgramData\RSS"
+    }
+    .into();
     input.run_as = RunAs::System {
-        platform: Platform::Windows,
+        platform: input.request.target.platform,
     };
     input.launch.interpreter.profile =
         super::plan::reference(crate::collection_worker::PROFILE, "1").unwrap();
@@ -66,10 +92,20 @@ async fn native_capture_survives_lost_ack_and_restart_without_recollection() {
             .unwrap();
     input.validity.expires_at_unix_ms =
         task.expires_at as u64 * 1000 + input.budget.total_timeout_ms;
+    input.request.parameters.insert(
+        "collection-tools".into(),
+        InputValue::Literal {
+            value: serde_json::json!({}),
+        },
+    );
     let bytes = serde_json::to_vec(&crate::collection_worker::Input {
         task: (**task).clone(),
         finish_by_unix_ms: input.validity.not_before_unix_ms + input.budget.total_timeout_ms,
         image_sha256: input.launch.interpreter.artifact.sha256.clone(),
+        run_as: input.run_as.clone(),
+        session: input.session_requirement.clone(),
+        tools: Default::default(),
+        observed: Default::default(),
     })
     .unwrap();
     use sha2::{Digest as _, Sha256};

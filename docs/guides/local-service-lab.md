@@ -202,3 +202,21 @@ Agent 部署生成使用 `.env` 的 RSS_AGENT_ORIGIN、必填 RSS_AGENT_CA_FILE�
 本次按 #2739 冻结契约迁移，不承诺与旧脚本字段完全等价：身份来源、磁盘/卷身份及名称、异构 CPU 型号和电池汇总以新契约为准；电池采用可验证能量加权，容量不可靠时报告缺失或无效。旧 edition/architecture 映射、标准占位序列号/UUID 过滤和独立 provisioning 字段的缺口由服务端 owner 跟踪，Agent 不改写通用 WMI 原始值补偿。具体差异和后续项留在 #2740 交付记录。
 
 开发机使用本仓 Rust 纯逻辑、SQLite/协议接缝及本地 CI，不再需要 COLLECTION_PWSH 或 PowerShell 5.1 兼容会话。纯逻辑 fixture 不证明 Windows 原生读取；Windows 编译、运行、LocalSystem、多用户、x64/ARM64 和性能必须以目标环境证据另行声明。
+
+
+## macOS 原生采集
+
+macOS 硬件、Applications、PKG receipts 和 Homebrew 使用同一 Collection 任务、journal 与补传链。
+设备读取由 System broker 执行，用户 Applications 与 Brew 必须经过当前登录用户的认证 helper；
+会话改变后原授权不可继续使用，不以 root 或离线账号切换兜底。应用存在、PKG 收据和 Brew 记录分别保存，
+单个根或 prefix 的结果不能解释为设备全量软件快照；用户/prefix 的资产范围投影由服务端提供。
+
+Brew 仅使用 deployment 中已有 `execution.managers` 的 `brew` 工具配置，prefix 不是可执行文件来源。
+当前适配器验证 Homebrew 7.0.7 的 installed JSON v2；配置必须指向管理员保护的真实工具文件，
+安装代码与加载的 formula/cask 材料也须管理员保护。普通用户可修改的 Homebrew 安装不满足这一执行边界。
+查询核对当前非 root 用户及实际 prefix，在只读、禁网沙箱内执行；缺失工具、版本不匹配或权限不足明确失败，
+Agent 不安装、更新或修复 Homebrew。不同 prefix 可配置不同可信 manager，不能让一个 prefix 的结果覆盖另一个。
+
+原生查询、清理和诊断共享任务预算。完整传输不等于完整采集，进程退出也不等于所有工作已收尾。
+固定 worker 的本地收尾控制消息只记录执行事实；服务端结果仍直接使用唯一 wire DTO。
+升级前完成旧版未决操作；已固定结果继续补传，未得到完整结果的执行保持未知，不能通过重启重新采集。

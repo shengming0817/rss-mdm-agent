@@ -1,19 +1,22 @@
 //! Fixed native collection worker. The service alone owns authorization and persistence.
 //! ref: microsoft/windows-rs@0.61.0 Win32/System/Wmi and Management/Deployment.
 use agent_client::Error;
-use execution_contract::{Digest, Platform, RunAs, SessionRequirement};
+use execution_contract::{
+    CollectionCompletion, Digest, RunAs, SessionRequirement, SoftwareMaterial,
+};
 use rss_mdm_agent_wire::runtime as w;
 use serde::{Deserialize, Serialize};
-#[cfg(any(windows, test))]
+use sha2::{Digest as _, Sha256};
 use std::collections::BTreeMap;
-#[cfg(windows)]
 use std::io::Write;
 use std::path::Path;
+#[cfg(target_os = "macos")]
+mod macos;
 #[cfg(windows)]
 mod supervisor;
 #[cfg(test)]
 mod tests;
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "macos", test))]
 mod values;
 #[cfg(windows)]
 mod windows;
@@ -25,6 +28,11 @@ pub(crate) struct Input {
     pub task: w::CollectionTaskSpec,
     pub finish_by_unix_ms: u64,
     pub image_sha256: Digest,
+    pub run_as: RunAs,
+    pub session: SessionRequirement,
+    pub tools: BTreeMap<String, SoftwareMaterial>,
+    #[serde(skip)]
+    pub observed: std::sync::Arc<std::sync::atomic::AtomicU64>,
 }
 pub(crate) fn engines() -> w::NativeEngines {
     #[cfg(windows)]
@@ -42,7 +50,19 @@ pub(crate) fn engines() -> w::NativeEngines {
         .map(|e| (e, 1))
         .collect()
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        [
+            w::NativeEngine::MacosHardware,
+            w::NativeEngine::MacosApplications,
+            w::NativeEngine::MacosPkgReceipts,
+            w::NativeEngine::MacosBrew,
+        ]
+        .into_iter()
+        .map(|e| (e, 1))
+        .collect()
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         Default::default()
     }
@@ -71,7 +91,7 @@ pub(crate) fn failure(
     }
 }
 fn diagnostic_limit(p: &w::NativeCollectionPlan) -> usize {
-    p.spec().queries.len() * 128
+    512 + p.spec().queries.len() * 128
 }
 fn empty_result(p: &w::NativeCollectionPlan, time: i64) -> w::NativeCollectionResult {
     w::NativeCollectionResult {
@@ -122,51 +142,126 @@ pub fn run(path: &Path, query: Option<&str>) -> Result<i32, Error> {
     if !input.task.plan.supported_by(&engines()) {
         return Err(Error::Unsupported);
     }
-    execution_runner::staging::verify_worker_identity(
-        &RunAs::System {
-            platform: Platform::Windows,
-        },
-        &SessionRequirement::NotRequired {},
-    )
-    .map_err(crate::error::app_error)?;
+    verify_identity(&input)?;
     let image = std::env::current_exe()?;
     let _lease = execution_runner::staging::verify_retained(&image, &input.image_sha256)
         .map_err(crate::error::app_error)?;
     if input.task.permit != w::TaskPermit::Start || now()? >= input.task.deadline {
         return Err(Error::Expired);
     }
-    #[cfg(windows)]
-    let output = if let Some(id) = query {
-        let q = input
-            .task
-            .plan
-            .spec()
-            .queries
-            .get(id)
-            .ok_or(Error::Untrusted)?;
-        let result = windows::execute(q, input.task.deadline);
-        serde_json::to_vec(&result).map_err(|_| Error::Protocol)?
-    } else {
-        let result = collect(
-            &input.task.plan,
-            input.task.deadline,
-            input.finish_by_unix_ms,
-            |id, q, remaining| supervisor::query(path, &input, id, q, remaining),
-        )?;
-        serde_json::to_vec(&result).map_err(|_| Error::Protocol)?
-    };
-    #[cfg(not(windows))]
+    #[cfg(any(windows, target_os = "macos"))]
+    {
+        let output = if let Some(id) = query {
+            let q = input
+                .task
+                .plan
+                .spec()
+                .queries
+                .get(id)
+                .ok_or(Error::Untrusted)?;
+            #[cfg(windows)]
+            let result = windows::execute(q, input.task.deadline);
+            #[cfg(target_os = "macos")]
+            let result = macos::execute(&input, q)?;
+            serde_json::to_vec(&result).map_err(|_| Error::Protocol)?
+        } else {
+            let result = collect(
+                &input.task.plan,
+                input.task.deadline,
+                input.finish_by_unix_ms,
+                |id, q, remaining| {
+                    #[cfg(windows)]
+                    {
+                        supervisor::query(path, &input, id, q, remaining)
+                    }
+                    #[cfg(target_os = "macos")]
+                    {
+                        let _ = (id, remaining);
+                        macos::execute(&input, q)
+                    }
+                },
+            )?;
+            serde_json::to_vec(&result).map_err(|_| Error::Protocol)?
+        };
+        verify_identity(&input)?;
+        let completion = CollectionCompletion {
+            input_sha256: hex(&bytes),
+            output_sha256: hex(&output),
+            closed: true,
+            native_output_bytes: input.observed.load(std::sync::atomic::Ordering::Relaxed),
+        };
+        let control = serde_json::to_vec(&completion).map_err(|_| Error::Protocol)?;
+        if output
+            .len()
+            .saturating_add(control.len())
+            .saturating_add(completion.native_output_bytes as usize)
+            > input.task.plan.spec().budget.output_bytes as usize
+        {
+            return Err(Error::Capacity);
+        }
+        std::io::stdout().lock().write_all(&output)?;
+        std::io::stderr().lock().write_all(&control)?;
+        Ok(0)
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         let _ = query;
         Err(Error::Unsupported)
     }
-    #[cfg(windows)]
+}
+fn hex(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
+}
+fn verify_identity(input: &Input) -> Result<(), Error> {
+    let valid = match (&input.task.execution.target, &input.run_as, &input.session) {
+        (
+            w::SoftwareExecutionTarget::Device,
+            RunAs::System { platform },
+            SessionRequirement::NotRequired {},
+        ) => matches!(
+            (input.task.platform, platform),
+            (w::TaskPlatform::Macos, execution_contract::Platform::Macos)
+                | (
+                    w::TaskPlatform::Windows,
+                    execution_contract::Platform::Windows
+                )
+        ),
+        (
+            w::SoftwareExecutionTarget::User { identity, .. },
+            RunAs::User { account },
+            SessionRequirement::ActiveUser {
+                account: active, ..
+            },
+        ) => {
+            account == active
+                && account.subject.as_str() == identity
+                && account.platform == execution_contract::Platform::Macos
+                && identity != "0"
+        }
+        _ => false,
+    };
+    if !valid {
+        return Err(Error::Untrusted);
+    }
+    execution_runner::staging::verify_worker_identity(&input.run_as, &input.session)
+        .map_err(crate::error::app_error)
+}
+pub(crate) fn tools(
+    config: &crate::ExecutionConfig,
+    plan: &w::NativeCollectionPlan,
+) -> Result<BTreeMap<String, SoftwareMaterial>, Error> {
+    #[cfg(target_os = "macos")]
     {
-        std::io::stdout().lock().write_all(&output)?;
-        Ok(0)
+        macos::tools(config, plan)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (config, plan);
+        Ok(BTreeMap::new())
     }
 }
-#[cfg(any(windows, test))]
+
+#[cfg(any(windows, target_os = "macos", test))]
 fn collect(
     plan: &w::NativeCollectionPlan,
     deadline: i64,
