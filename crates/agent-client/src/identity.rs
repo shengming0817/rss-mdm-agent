@@ -105,6 +105,7 @@ pub(crate) fn enrollment_error(code: enroll::ErrorCode) -> Error {
         C::OperationConflict => Error::Conflict,
         C::RegistrationLimit => Error::Capacity,
         C::ServiceUnavailable => Error::Unavailable,
+        C::EnrollmentPaused => Error::EnrollmentPaused,
         C::InvalidIdentity => Error::Identity,
         C::MalformedRequest => Error::Protocol,
     }

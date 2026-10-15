@@ -90,6 +90,9 @@ onMounted(refresh);
       >
         注册结果待核实，请保留本机状态并由管理员恢复原请求。
       </p>
+      <p v-else-if="registration.phase === 'paused'">
+        组织已暂停新注册。请保留原请求和密钥；恢复后在原有效期内继续。
+      </p>
       <p v-else-if="registration.phase === 'rejected'">
         原注册请求或证书不可用，请由管理员检查。
       </p>

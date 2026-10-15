@@ -1371,3 +1371,69 @@ async fn employee_self_service_uses_device_mtls_and_recovers_the_original_uuid()
         .unwrap()
         .contains(&secret));
 }
+
+#[tokio::test]
+async fn paused_activation_preserves_original_key_candidate_and_expiry_across_restart() {
+    let server = Server::tls().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.data.lock().unwrap().enrollment_paused = true;
+    assert_eq!(
+        client
+            .request_authorization(vec![
+                Capability::InventoryCollectionV1,
+                Capability::TaskExecuteV1
+            ])
+            .await
+            .unwrap_err(),
+        Error::EnrollmentPaused
+    );
+    let status = client.enrollment_status().unwrap();
+    assert_eq!(status.phase, agent_client::EnrollmentPhase::Paused);
+    assert!(!status.registered);
+    let secrets = server.secrets.0.lock().unwrap().clone();
+    drop(client);
+    let mut client = server.client(&root, OpenMode::Existing);
+    assert_eq!(
+        client.enrollment_status().unwrap().expires_at,
+        status.expires_at
+    );
+    assert_eq!(
+        client.drive_enrollment().await,
+        Err(Error::EnrollmentPaused)
+    );
+    server.data.lock().unwrap().enrollment_paused = false;
+    client.drive_enrollment().await.unwrap();
+    assert_eq!(
+        client.enrollment_status().unwrap().phase,
+        agent_client::EnrollmentPhase::Active
+    );
+    assert_eq!(server.secrets.0.lock().unwrap().clone(), secrets);
+    let data = server.data.lock().unwrap();
+    assert_eq!(data.certificate_calls.len(), 1);
+    assert_eq!(data.activation_calls.len(), 3);
+    assert!(data
+        .activation_calls
+        .iter()
+        .all(|call| call == &data.activation_calls[0]));
+}
+
+#[tokio::test]
+async fn native_start_rejects_a_changed_execution_context() {
+    let server = Server::new().await;
+    server.data.lock().unwrap().native_collection();
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    let offer = client.claim().await.unwrap().offer.unwrap();
+    client.received(&offer).await.unwrap();
+    let material = client.prepare(&offer).await.unwrap();
+    let mut context = client.execution_context().unwrap();
+    context.system_broker = false;
+    client.set_execution_context(context).unwrap();
+    assert!(matches!(
+        client.request_start(&offer, &material).await,
+        Err(Error::Untrusted)
+    ));
+    assert!(server.data.lock().unwrap().start_ops.is_empty());
+}

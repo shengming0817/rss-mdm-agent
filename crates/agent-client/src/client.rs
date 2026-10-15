@@ -383,6 +383,12 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         )
         .map_err(|_| Error::Untrusted)?;
         if let wire::TaskPayload::Collection(v) = p {
+            if !v
+                .execution
+                .matches_context(&v.plan, &self.execution_context()?)
+            {
+                return Err(Error::Untrusted);
+            }
             if !v.plan.supported_by(&self.environment.native_engines) {
                 return Err(Error::Unsupported);
             }

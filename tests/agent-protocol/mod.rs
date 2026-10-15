@@ -238,6 +238,7 @@ pub struct Data {
     pub registration_failure: bool,
     pub certificate_failure: bool,
     pub activation_failure: bool,
+    pub enrollment_paused: bool,
     pub issuance_unknown: bool,
     pub certificate_calls: Vec<Value>,
     pub activation_calls: Vec<Value>,
@@ -331,7 +332,7 @@ impl Data {
         })
         .unwrap();
         let task = CollectionTaskSpec {
-            wire_version: 1,
+            wire_version: 2,
             tenant_id: self.tenant,
             device_id: "device-1".into(),
             platform: TaskPlatform::Windows,
@@ -354,6 +355,11 @@ impl Data {
             },
             deadline: self.time.now().unwrap() + 300,
             plan_digest: plan.digest(),
+            execution: rss_mdm_agent_wire::runtime::NativeExecutionBinding::bind(
+                &plan,
+                &execution_context(),
+            )
+            .unwrap(),
             plan,
         };
         self.offer = Some(self.signed(TaskPayload::Collection(Box::new(task))));
@@ -570,6 +576,7 @@ impl Server {
             registration_failure: false,
             certificate_failure: false,
             activation_failure: false,
+            enrollment_paused: false,
             issuance_unknown: false,
             certificate_calls: vec![],
             activation_calls: vec![],
@@ -985,43 +992,54 @@ fn enrollment_response(d: &mut Data, action: &str, value: Value, peer: Option<&[
             })
             .into_response()
         }
-        "activate" => {
-            if d.tls_required && (peer.is_none() || peer != d.candidate_leaf.as_deref()) {
-                return (
-                    StatusCode::UNAUTHORIZED,
-                    axum::Json(enroll::ErrorBody {
-                        code: enroll::ErrorCode::InvalidIdentity,
-                        issuance_id: Some(d.issuance),
-                    }),
-                )
-                    .into_response();
-            }
-            d.activation_calls.push(value.clone());
-            let request: enroll::ActivationRequest = serde_json::from_value(value).unwrap();
-            assert_eq!(request.issuance_id, d.issuance);
-            let profile: BindingProfile = d.binding.clone().unwrap_or_else(|| serde_json::from_value(json!({"wireVersion":1,"operationId":d.operation,"deviceId":"device-1","registrationId":d.registration,"generation":1,"source":"agent.builtin","epoch":d.epoch,"capabilities":d.profile.as_ref().unwrap().capabilities,"collections":collections()})).unwrap());
-            d.binding = Some(profile.clone());
-            let receipt = enroll::ActivationReceipt {
-                wire_version: 1,
-                issuance_id: d.issuance,
-                operation_id: request.operation_id,
-                runtime: profile,
-            };
-            d.activation = Some(receipt.clone());
-            if std::mem::take(&mut d.activation_failure) {
-                return (
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    axum::Json(enroll::ErrorBody {
-                        code: enroll::ErrorCode::ActivationUnknown,
-                        issuance_id: Some(d.issuance),
-                    }),
-                )
-                    .into_response();
-            }
-            axum::Json(receipt).into_response()
-        }
+        "activate" => activation_response(d, value, peer),
         _ => StatusCode::NOT_FOUND.into_response(),
     }
+}
+fn activation_response(d: &mut Data, value: Value, peer: Option<&[u8]>) -> Response {
+    if d.tls_required && (peer.is_none() || peer != d.candidate_leaf.as_deref()) {
+        return (
+            StatusCode::UNAUTHORIZED,
+            axum::Json(enroll::ErrorBody {
+                code: enroll::ErrorCode::InvalidIdentity,
+                issuance_id: Some(d.issuance),
+            }),
+        )
+            .into_response();
+    }
+    d.activation_calls.push(value.clone());
+    if d.enrollment_paused {
+        return (
+            StatusCode::CONFLICT,
+            axum::Json(enroll::ErrorBody {
+                code: enroll::ErrorCode::EnrollmentPaused,
+                issuance_id: None,
+            }),
+        )
+            .into_response();
+    }
+    let request: enroll::ActivationRequest = serde_json::from_value(value).unwrap();
+    assert_eq!(request.issuance_id, d.issuance);
+    let profile: BindingProfile = d.binding.clone().unwrap_or_else(|| serde_json::from_value(json!({"wireVersion":1,"operationId":d.operation,"deviceId":"device-1","registrationId":d.registration,"generation":1,"source":"agent.builtin","epoch":d.epoch,"capabilities":d.profile.as_ref().unwrap().capabilities,"collections":collections()})).unwrap());
+    d.binding = Some(profile.clone());
+    let receipt = enroll::ActivationReceipt {
+        wire_version: 1,
+        issuance_id: d.issuance,
+        operation_id: request.operation_id,
+        runtime: profile,
+    };
+    d.activation = Some(receipt.clone());
+    if std::mem::take(&mut d.activation_failure) {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            axum::Json(enroll::ErrorBody {
+                code: enroll::ErrorCode::ActivationUnknown,
+                issuance_id: Some(d.issuance),
+            }),
+        )
+            .into_response();
+    }
+    axum::Json(receipt).into_response()
 }
 fn report_response(d: &mut Data, value: Value) -> Response {
     let id = value["reportId"].as_str().unwrap().to_owned();
