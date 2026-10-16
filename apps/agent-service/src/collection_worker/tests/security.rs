@@ -54,11 +54,17 @@ fn sample(q: &w::NativeQuery, input: &[Row]) -> w::NativeQueryResult {
     })
     .unwrap();
     let time = now().unwrap();
-    let mut result = collect(&p, time + 30, (time as u64 + 30) * 1000, |_, q, _| {
-        let mut rows = Rows::new(q, time);
-        let end = input.iter().cloned().try_for_each(|row| rows.push(row));
-        Ok(rows.finish(end))
-    })
+    let mut result = collect(
+        &p,
+        time + 30,
+        (time as u64 + 30) * 1000,
+        &std::sync::atomic::AtomicU64::new(0),
+        |_, q, _, _| {
+            let mut rows = Rows::new(q, time);
+            let end = input.iter().cloned().try_for_each(|row| rows.push(row));
+            Ok(rows.finish(end))
+        },
+    )
     .unwrap();
     let result = result.queries.remove("sample").unwrap();
     assert_eq!(result.query_digest, q.digest());

@@ -2,6 +2,7 @@ use crate::{materialize::Materialized, output, platform, Artifacts};
 use execution_app::{AuthorizedDispatch, DispatchOutcome, Error, ObservationStage, RunnerPort};
 use execution_contract::*;
 use execution_lifecycle::{DispatchAllowance, ExecutionMode, Observation, ObservationFacts};
+use sha2::{Digest as _, Sha256};
 #[cfg(all(test, target_os = "macos"))]
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{
@@ -1255,6 +1256,26 @@ async fn run(
             }
         }
     }
+    let collection = recipe.launch.interpreter.profile.id.as_str() == "native-collection-worker";
+    if collection {
+        if let Ok(receipt) = serde_json::from_slice::<CollectionCompletion>(&facts.stderr) {
+            facts.total_output_bytes = facts
+                .total_output_bytes
+                .saturating_add(receipt.native_output_bytes);
+            if facts.total_output_bytes > cap {
+                facts.end = ProcessEnd::OutputLimit;
+            }
+        }
+    }
+    let collection_closed = collection
+        && facts.end == ProcessEnd::Exited
+        && facts.failure_kind == ProcessFailureKind::None
+        && facts.exit_code == Some(0)
+        && serde_json::from_slice::<CollectionCompletion>(&facts.stderr).is_ok_and(|r| {
+            r.closed
+                && r.input_sha256 == recipe.launch.artifact.sha256.as_str()
+                && r.output_sha256 == format!("{:x}", Sha256::digest(&facts.stdout))
+        });
     let operation_closed = native_worker
         && facts.end == ProcessEnd::Exited
         && facts.failure_kind == ProcessFailureKind::None
@@ -1262,8 +1283,10 @@ async fn run(
     facts.quiescent = exited
         && out_done
         && err_done
-        && ((owner.quiescent() && (!native_worker || operation_closed))
-            || (cfg!(target_os = "macos") && operation_closed));
+        && ((owner.quiescent()
+            && (!native_worker || operation_closed)
+            && (!collection || collection_closed))
+            || (cfg!(target_os = "macos") && (operation_closed || collection_closed)));
     facts.quality = if facts.total_output_bytes > cap || facts.end == ProcessEnd::OutputLimit {
         OutputQuality::Truncated
     } else if !out_done || !err_done {

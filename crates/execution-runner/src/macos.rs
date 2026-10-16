@@ -157,8 +157,12 @@ pub(crate) fn profile(profile: &VersionedRef) -> Result<(), Error> {
         && (matches!(
             ScriptProfile::from_reference(profile),
             Ok(ScriptProfile::PosixSh | ScriptProfile::Bash)
-        ) || ["native-osquery-template", "native-software-worker"]
-            .contains(&profile.id.as_str()))
+        ) || [
+            "native-osquery-template",
+            "native-software-worker",
+            "native-collection-worker",
+        ]
+        .contains(&profile.id.as_str()))
     {
         Ok(())
     } else {
@@ -179,6 +183,13 @@ pub(crate) fn arguments(
         };
     }
     let path = script.to_str().ok_or(Error::InvalidInput)?;
+    if profile.id.as_str() == "native-collection-worker" {
+        return if args == ["--collection-worker", path] {
+            Ok(())
+        } else {
+            Err(Error::Denied)
+        };
+    }
     if profile.id.as_str() == "native-software-worker" {
         return if args == ["--software-worker", path] {
             Ok(())

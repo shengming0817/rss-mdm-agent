@@ -177,3 +177,18 @@ impl ProcessEvidence {
         }
     }
 }
+
+/// A fixed collection worker's terminal control frame, never remote collection data.
+/// Only the protected worker may emit it, after all of its owned work has ended.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CollectionCompletion {
+    /// Bytes observed from native providers before typed projection.
+    pub native_output_bytes: u64,
+    /// SHA-256 of the exact staged worker input.
+    pub input_sha256: String,
+    /// SHA-256 of the exact producer-owned stdout bytes.
+    pub output_sha256: String,
+    /// All provider work and output readers ended under the live owner.
+    pub closed: bool,
+}

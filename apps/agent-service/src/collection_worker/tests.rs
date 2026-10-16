@@ -179,7 +179,8 @@ fn task_reuses_identical_queries_and_keeps_independent_failures() {
         &p,
         now().unwrap() + 30,
         (now().unwrap() as u64 + 30) * 1000,
-        |_, q, _| {
+        &std::sync::atomic::AtomicU64::new(0),
+        |_, q, _, _| {
             calls += 1;
             Ok(Rows::new(q, now().unwrap()).finish(Ok(())))
         },
@@ -194,7 +195,8 @@ fn task_reuses_identical_queries_and_keeps_independent_failures() {
         &p,
         now().unwrap() + 30,
         (now().unwrap() as u64 + 30) * 1000,
-        |id, q, _| {
+        &std::sync::atomic::AtomicU64::new(0),
+        |id, q, _, _| {
             Ok(if id == "a" {
                 failure(q, Status::Denied, now().unwrap())
             } else {
@@ -220,19 +222,29 @@ fn insufficient_envelope_budget_is_rejected_before_execution() {
 #[test]
 fn common_cutoff_accounts_for_initialization_and_preserves_timeout_evidence() {
     let p = plan();
-    let result = collect(&p, now().unwrap() + 30, 1, |_, _, _| {
-        panic!("expired budget must not dispatch")
-    })
+    let result = collect(
+        &p,
+        now().unwrap() + 30,
+        1,
+        &std::sync::atomic::AtomicU64::new(0),
+        |_, _, _, _| panic!("expired budget must not dispatch"),
+    )
     .unwrap();
     assert!(result.queries.values().all(|r| r.status == Status::Timeout));
     let wall = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_millis() as u64;
-    collect(&p, now().unwrap() + 30, wall + 2000, |_, q, remaining| {
-        assert!(remaining <= std::time::Duration::from_millis(1750));
-        Ok(failure(q, Status::Timeout, now().unwrap()))
-    })
+    collect(
+        &p,
+        now().unwrap() + 30,
+        wall + 2000,
+        &std::sync::atomic::AtomicU64::new(0),
+        |_, q, remaining, _| {
+            assert!(remaining <= std::time::Duration::from_millis(1750));
+            Ok(failure(q, Status::Timeout, now().unwrap()))
+        },
+    )
     .unwrap();
 }
 #[test]
@@ -244,7 +256,8 @@ fn malformed_quiescent_query_output_does_not_discard_other_queries() {
         &p,
         now().unwrap() + 30,
         (now().unwrap() as u64 + 30) * 1000,
-        |id, q, _| {
+        &std::sync::atomic::AtomicU64::new(0),
+        |id, q, _, _| {
             Ok(if id == "a" {
                 decode_query(q, b"not-json", now().unwrap())
             } else {
@@ -259,7 +272,8 @@ fn malformed_quiescent_query_output_does_not_discard_other_queries() {
         &p,
         now().unwrap() + 30,
         (now().unwrap() as u64 + 30) * 1000,
-        |_, _, _| Err(Error::Unavailable)
+        &std::sync::atomic::AtomicU64::new(0),
+        |_, _, _, _| Err(Error::Unavailable)
     )
     .is_err());
 }
@@ -292,4 +306,102 @@ fn adapter_inventory_joins_addresses_without_requiring_a_loopback_adapter() {
         adapter_addresses(&[adapters[0].clone(), adapters[0].clone()], vec![]),
         Err(Status::Invalid)
     );
+}
+
+#[test]
+fn cumulative_native_budget_keeps_prior_success_and_bounds_the_next_query() {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    let mut spec = plan().spec().clone();
+    spec.queries.get_mut("b").unwrap().budget.max_rows = 1;
+    let p = w::NativeCollectionPlan::new(spec).unwrap();
+    let observed = AtomicU64::new(0);
+    let mut allowances = Vec::new();
+    let result = collect(
+        &p,
+        now().unwrap() + 30,
+        (now().unwrap() as u64 + 30) * 1000,
+        &observed,
+        |id, q, _, allowance| {
+            allowances.push(allowance);
+            let read = allowance.min(1200);
+            observed.fetch_add(read as u64, Ordering::Relaxed);
+            if read < 1200 {
+                return Ok(failure(q, Status::Truncated, now().unwrap()));
+            }
+            let mut rows = Rows::new(q, now().unwrap());
+            rows.push(
+                [
+                    ("Id".into(), json!(format!("{id}{}", "x".repeat(999)))),
+                    ("Count".into(), json!("1")),
+                ]
+                .into(),
+            )
+            .unwrap();
+            Ok(rows.finish(Ok(())))
+        },
+    )
+    .unwrap();
+    assert_eq!(allowances.len(), 2);
+    assert!(allowances[0] >= 1200);
+    assert!(allowances[1] < 1200);
+    assert_eq!(result.queries["a"].status, Status::Complete);
+    assert_eq!(result.queries["b"].status, Status::Truncated);
+    assert!(
+        serde_json::to_vec(&result).unwrap().len() + (observed.load(Ordering::Relaxed) as usize)
+            < p.spec().budget.output_bytes as usize
+    );
+}
+
+#[test]
+fn native_budget_boundary_retains_failure_evidence() {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    let mut spec = plan().spec().clone();
+    spec.queries.get_mut("b").unwrap().budget.max_rows = 1;
+    let p = w::NativeCollectionPlan::new(spec).unwrap();
+    let observed = AtomicU64::new(0);
+    let mut calls = 0;
+    let result = collect(
+        &p,
+        now().unwrap() + 30,
+        (now().unwrap() as u64 + 30) * 1000,
+        &observed,
+        |_, q, _, allowance| {
+            calls += 1;
+            observed.fetch_add(allowance as u64, Ordering::Relaxed);
+            Ok(failure(q, Status::Truncated, now().unwrap()))
+        },
+    )
+    .unwrap();
+    assert_eq!(calls, 2);
+    assert!(result
+        .queries
+        .values()
+        .all(|r| r.status == Status::Truncated));
+    assert!(
+        serde_json::to_vec(&result).unwrap().len() + (observed.load(Ordering::Relaxed) as usize)
+            < p.spec().budget.output_bytes as usize
+    );
+}
+
+#[test]
+fn no_raw_allowance_emits_truncated_without_starting_a_provider() {
+    let mut spec = plan().spec().clone();
+    spec.queries.remove("b");
+    let p = w::NativeCollectionPlan::new(spec).unwrap();
+    let time = now().unwrap();
+    let mut reserve = empty_result(&p, time);
+    reserve.queries.get_mut("a").unwrap().status = Status::Unsupported;
+    let raw = p.spec().budget.output_bytes as usize
+        - diagnostic_limit(&p)
+        - serde_json::to_vec(&reserve).unwrap().len();
+    let observed = std::sync::atomic::AtomicU64::new(raw as u64);
+    let result = collect(
+        &p,
+        time + 30,
+        (time as u64 + 30) * 1000,
+        &observed,
+        |_, _, _, _| panic!("zero raw allowance must not dispatch"),
+    )
+    .unwrap();
+    assert_eq!(result.queries["a"].status, Status::Truncated);
 }

@@ -150,7 +150,7 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
                 (
                     &v.device_id,
                     v.platform,
-                    wire::ExecutionIdentity::System,
+                    v.execution.identity,
                     u64::from(v.plan.spec().budget.timeout_seconds) * 1000,
                     u64::from(v.plan.spec().budget.output_bytes),
                 )

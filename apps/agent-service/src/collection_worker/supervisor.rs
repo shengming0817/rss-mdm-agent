@@ -50,7 +50,7 @@ pub(super) fn query(
             if n == 0 {
                 break;
             }
-            let keep = n.min(128usize.saturating_sub(retained.len()));
+            let keep = n.min(512usize.saturating_sub(retained.len()));
             retained.extend_from_slice(&buffer[..keep]);
         }
         Ok::<_, std::io::Error>(retained)
@@ -82,8 +82,8 @@ pub(super) fn query(
     child.wait()?;
     let bytes = reader.join().map_err(|_| Error::Unavailable)??;
     let diagnostics = diagnostics.join().map_err(|_| Error::Unavailable)??;
-    std::io::stderr().lock().write_all(&diagnostics)?;
     let time = now()?;
+    // Forced termination has no completion receipt. The Job already proves cleanup.
     if timed_out {
         return Ok(failure(q, w::NativeQueryStatus::Timeout, time));
     }
@@ -92,6 +92,19 @@ pub(super) fn query(
     }
     if exit.is_none_or(|v| !v.success()) {
         return Ok(failure(q, w::NativeQueryStatus::Invalid, time));
+    }
+    let control: CollectionCompletion =
+        serde_json::from_slice(&diagnostics).map_err(|_| Error::Unavailable)?;
+    input.observed.fetch_add(
+        control.native_output_bytes,
+        std::sync::atomic::Ordering::Relaxed,
+    );
+    let material = serde_json::to_vec(input).map_err(|_| Error::Protocol)?;
+    if !control.closed
+        || control.input_sha256 != hex(&material)
+        || control.output_sha256 != hex(&bytes)
+    {
+        return Err(Error::Unavailable);
     }
     Ok(decode_query(q, &bytes, time))
 }

@@ -2,7 +2,6 @@
 #![cfg(target_os = "macos")]
 use super::support::{create_app, reopen_app};
 use super::*;
-use sha2::{Digest as _, Sha256};
 use std::{os::unix::fs::PermissionsExt, path::PathBuf, sync::atomic::AtomicU64};
 static NEXT: AtomicU64 = AtomicU64::new(0);
 struct Fixture {
@@ -955,6 +954,7 @@ fn repeated_supervision_errors_do_not_renew_shutdown_time_or_overwrite_first_rea
     assert_eq!(facts.failure_kind, ProcessFailureKind::Capture);
 }
 
+mod collection_tests;
 mod software_tests;
 
 #[test]
