@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import {
   Monitor,
   UserRound,
+  UiPopover,
   Package,
   Terminal,
   Settings,
@@ -29,6 +30,7 @@ const software = computed(
       (item) => item.summary.kind === "software",
     ) ?? [],
 );
+const addressesOpen = ref(false);
 const shortcuts = [
   {
     page: "settings",
@@ -97,14 +99,28 @@ const shortcuts = [
                 (device?.ipAddresses ? '无可用地址' : 'IP 地址未读取')
               "
             >
-              <Activity :size="14" aria-hidden="true" /><span
-                >{{ device?.ipAddresses?.[0] ?? "—"
-                }}<small
-                  v-if="device?.ipAddresses && device.ipAddresses.length > 1"
-                >
-                  +{{ device.ipAddresses.length - 1 }}</small
-                ></span
+              <Activity :size="14" aria-hidden="true" />
+              <span>{{ device?.ipAddresses?.[0] ?? "—" }}</span>
+              <UiPopover
+                v-if="device?.ipAddresses && device.ipAddresses.length > 1"
+                v-model:open="addressesOpen"
+                label="全部 IP 地址"
               >
+                <template #trigger
+                  ><button
+                    class="ip-more"
+                    type="button"
+                    aria-label="查看所有 IP 地址"
+                  >
+                    +{{ device.ipAddresses.length - 1 }}
+                  </button></template
+                >
+                <ul class="ip-list">
+                  <li v-for="address in device.ipAddresses" :key="address">
+                    {{ address }}
+                  </li>
+                </ul>
+              </UiPopover>
             </span>
             <span
               :aria-label="`系统登录用户：${device?.loginUser ?? '未读取'}`"
@@ -135,7 +151,7 @@ const shortcuts = [
         /></span>
         <div>
           <strong>{{
-            controller.state.error ? "执行服务暂不可用" : "每一次操作，都有记录"
+            controller.state.error ? "任务需要关注" : "每一次操作，都有记录"
           }}</strong>
           <p>
             {{ controller.state.error || "查看请求进度、确认事项和执行结果。" }}
@@ -286,6 +302,21 @@ const shortcuts = [
   background: var(--rss-color-border);
 }
 
+.ip-more {
+  border: 0;
+  padding: 2px 5px;
+  border-radius: 4px;
+  color: var(--rss-color-accent);
+  background: var(--rss-color-accent-bg);
+  font-size: 10px;
+}
+.ip-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px;
+  font-size: 12px;
+  line-height: 1.8;
+}
 .computer-model {
   position: relative;
   width: 100%;
