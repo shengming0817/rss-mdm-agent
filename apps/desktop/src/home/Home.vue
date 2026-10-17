@@ -47,10 +47,6 @@ const shortcuts = [
 <template>
   <div class="computer-home">
     <div class="home-main">
-      <div class="home-heading">
-        <h2>我的电脑</h2>
-        <span>{{ preview ? "只读预览" : "设备工作区" }}</span>
-      </div>
       <section class="device-card" aria-label="我的电脑概览">
         <div class="device-heading">
           <div>
@@ -215,7 +211,6 @@ const shortcuts = [
   padding: 24px;
   background: color-mix(in srgb, var(--home-bg) 94%, #b7b9d9);
 }
-.home-heading,
 .device-heading,
 .model-toolbar,
 .assistant-title,
@@ -225,20 +220,11 @@ const shortcuts = [
   justify-content: space-between;
   gap: 12px;
 }
-.home-heading {
-  margin-bottom: 18px;
-}
-.home-heading h2 {
-  margin: 0;
-  font-size: 25px;
-  letter-spacing: -0.7px;
-}
-.home-heading > span {
-  color: var(--home-muted);
-  font-size: 11px;
-}
 .device-card {
+  border: 1px solid var(--rss-color-border);
+  border-radius: 16px;
   padding: 20px 20px 12px;
+  background: color-mix(in srgb, var(--home-bg) 92%, #b7b9d9);
 }
 .device-heading h3 {
   margin: 0;
@@ -646,9 +632,6 @@ button:not(:disabled):hover {
 @media (max-width: 500px) {
   .home-main {
     padding: 18px 12px;
-  }
-  .home-heading h2 {
-    font-size: 22px;
   }
   .home-shortcuts {
     grid-template-columns: 1fr;
