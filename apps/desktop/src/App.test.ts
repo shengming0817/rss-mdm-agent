@@ -133,3 +133,40 @@ it("keeps settings and diagnostics reachable without an AI connection", async ()
   expect(wrapper.find('input[type="password"]').exists()).toBe(false);
   wrapper.unmount();
 });
+
+it("shares the home draft with the assistant without sending or replacing it", async () => {
+  const bounds = vi
+    .spyOn(HTMLElement.prototype, "getBoundingClientRect")
+    .mockReturnValue(new DOMRect(0, 0, 1100, 760));
+  const wrapper = mount(App, { attachTo: document.body });
+  const navigate = async (label: string) => {
+    await wrapper
+      .findAll("button")
+      .find((button) => button.text() === label)!
+      .trigger("click");
+  };
+  try {
+    await navigate("首页");
+    expect(wrapper.find(".computer-home").isVisible()).toBe(true);
+    await wrapper.get("#home-question").setValue("检查应用连接");
+    expect(
+      wrapper.get(".home-prompts button").attributes("disabled"),
+    ).toBeDefined();
+    await wrapper.get(".home-composer").trigger("submit");
+    const assistant = wrapper
+      .findComponent(Assistant)
+      .props("controller") as AssistantController;
+    expect(assistant.draft.value).toBe("检查应用连接");
+    expect(assistant.state.sessions.size).toBe(0);
+    await navigate("首页");
+    expect(
+      (wrapper.get("#home-question").element as HTMLTextAreaElement).value,
+    ).toBe("检查应用连接");
+    await wrapper.findAll(".home-shortcuts button")[1].trigger("click");
+    expect(wrapper.find(".computer-home").exists()).toBe(false);
+    expect(wrapper.get(".resource-content").isVisible()).toBe(true);
+  } finally {
+    wrapper.unmount();
+    bounds.mockRestore();
+  }
+});

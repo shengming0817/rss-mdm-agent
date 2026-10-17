@@ -38,6 +38,7 @@ import {
   type AssistantServices,
 } from "./assistant/controller";
 import SelfService from "./self-service/SelfService.vue";
+import Home from "./home/Home.vue";
 import { createController } from "./self-service/controller";
 import { nativePort } from "./self-service/native";
 import preview from "./self-service/preview";
@@ -356,11 +357,13 @@ onBeforeUnmount(() => {
       <div
         class="resource-content"
         v-if="controller"
-        v-show="page !== 'assistant' && page !== 'settings'"
+        v-show="page !== 'assistant' && page !== 'settings' && page !== 'home'"
       >
         <SelfService
           v-if="controller"
-          v-show="page !== 'assistant' && page !== 'settings'"
+          v-show="
+            page !== 'assistant' && page !== 'settings' && page !== 'home'
+          "
           :controller="controller"
           :context-key="candidate?.key ?? assistant?.context.value?.key"
           :source="
@@ -371,6 +374,20 @@ onBeforeUnmount(() => {
                 : 'preview'
           "
           @ask-ai="askAi"
+        />
+      </div>
+      <div v-if="controller && page === 'home'" class="home-content">
+        <Home
+          :controller="controller"
+          :preview="!controller.interactive || !!fixture"
+          :draft="assistant?.draft.value ?? ''"
+          :connected="assistant?.state.connection === 'connected'"
+          @navigate="emit('navigate', $event)"
+          @update:draft="
+            (text) => {
+              if (assistant) assistant.draft.value = text;
+            }
+          "
         />
       </div>
       <Teleport :to="target ?? 'body'" :disabled="!target"
@@ -460,6 +477,13 @@ onBeforeUnmount(() => {
   </AppShell>
 </template>
 <style scoped>
+.home-content {
+  height: 100%;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
 .workspace-brand {
   display: flex;
   align-items: center;
