@@ -893,7 +893,24 @@ mod tests {
     #[ignore = "explicit read-only host provider evidence; no personal keychain"]
     fn host_system_queries_through_confined_broker() {
         use w::{MacosSecuritySection as S, NativeSystemQuery as Q};
+        let current =
+            crate::account_identity::generated_uid(&unsafe { libc::geteuid() }.to_string())
+                .unwrap()
+                .unwrap();
         for query in [
+            Q::MacosApplication {
+                target: w::MacosApplicationTarget::Signed {
+                    bundle_id: "org.example.rss-absent".into(),
+                    team_id: "ABCDE12345".into(),
+                },
+                permissions: Default::default(),
+            },
+            Q::MacosAccounts {
+                section: w::AccountSection::Accounts,
+                selection: w::AccountSelection::Selected {
+                    identities: [current].into(),
+                },
+            },
             Q::MacosSecurity {
                 section: S::Gatekeeper,
             },
@@ -939,14 +956,22 @@ mod tests {
             let (result, observed) = broker_input("broker", 1024 * 1024, input).unwrap();
             eprintln!(
                 "host {:?}: {:?}; rows={}; raw={observed}",
-                query, result.status, result.row_count
+                query.engine(),
+                result.status,
+                result.row_count
             );
             assert!(result.evidence_matches(&q));
             let expected = match query {
-                Q::MacosAccounts { .. } | Q::MacosUpdates { .. } => w::NativeQueryStatus::Partial,
+                Q::MacosAccounts {
+                    selection: w::AccountSelection::Selected { ref identities },
+                    ..
+                } if identities.contains("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa") => {
+                    w::NativeQueryStatus::Partial
+                }
+                Q::MacosUpdates { .. } => w::NativeQueryStatus::Partial,
                 _ => w::NativeQueryStatus::Complete,
             };
-            assert_eq!(result.status, expected, "{query:?}");
+            assert_eq!(result.status, expected, "{:?}", query.engine());
             if expected == w::NativeQueryStatus::Complete {
                 assert!(result.complete_for(&q, now().unwrap()));
             }

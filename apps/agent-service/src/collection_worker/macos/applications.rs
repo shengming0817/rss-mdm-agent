@@ -134,7 +134,9 @@ fn application(
     owner: &str,
     rows: &mut Rows<'_>,
 ) -> Result<()> {
-    application_inspecting(c, dir, path, owner, rows, signature::inspect)
+    application_inspecting(c, dir, path, owner, rows, |path| {
+        signature::inspect(path, None)
+    })
 }
 fn application_inspecting(
     c: &Context<'_>,

@@ -108,3 +108,23 @@ pub(super) fn app_paths(
         rss_macos_app_paths(bundle.as_ptr(), emit, state)
     })
 }
+
+#[cfg(test)]
+mod tests {
+    unsafe extern "C" {
+        fn rss_macos_console_account(name: *const libc::c_char) -> i32;
+    }
+    #[test]
+    fn root_console_is_observation_not_root_user_execution() {
+        assert_eq!(unsafe { rss_macos_console_account(c"root".as_ptr()) }, 1);
+        assert_eq!(
+            unsafe { rss_macos_console_account(c"loginwindow".as_ptr()) },
+            0
+        );
+        assert_eq!(
+            unsafe { rss_macos_console_account(c"_mbsetupuser".as_ptr()) },
+            0
+        );
+        assert_eq!(unsafe { rss_macos_console_account(std::ptr::null()) }, 0);
+    }
+}

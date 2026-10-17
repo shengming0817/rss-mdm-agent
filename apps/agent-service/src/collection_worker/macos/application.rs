@@ -14,7 +14,7 @@ pub(super) fn collect(
     let (identity, signer, presence, signature, running) = match target {
         w::MacosApplicationTarget::Agent => {
             let image = std::env::current_exe()?;
-            let evidence = signature::inspect(&image)?;
+            let evidence = signature::inspect(&image, None)?;
             c.check()?;
             let running = match (&evidence.identifier, &evidence.team) {
                 (Some(id), Some(team))
@@ -37,7 +37,7 @@ pub(super) fn collect(
             let mut invalid = false;
             native::app_paths(c, bundle_id, |bytes| {
                 let path = Path::new(std::str::from_utf8(bytes).map_err(|_| Status::Invalid)?);
-                let evidence = signature::inspect(path)?;
+                let evidence = signature::inspect(path, Some((bundle_id, team_id)))?;
                 c.check()?;
                 if evidence.identifier.as_ref() == Some(bundle_id)
                     && evidence.team.as_ref() == Some(team_id)
@@ -106,12 +106,22 @@ fn state(status: &str) -> &'static str {
 }
 fn running(c: &Context<'_>, bundle: &str, team: &str) -> Result<bool> {
     c.check()?;
-    let mut pids = vec![0i32; 16384];
-    let count = unsafe { proc_listallpids(pids.as_mut_ptr().cast(), (pids.len() * 4) as i32) };
-    if count <= 0 {
-        return Err(Status::Failed.into());
+    let remaining = c.cap.saturating_sub(c.bytes.get());
+    let capacity = (remaining / std::mem::size_of::<i32>()).min(16384);
+    if capacity == 0 {
+        return Err(Status::Truncated.into());
     }
-    c.consume((count as usize).min(pids.len()) * 4)?;
+    let mut pids = vec![0i32; capacity];
+    super::super::macos_supervisor::begin_read().map_err(|_| Fault::Unclosed)?;
+    let count = unsafe { proc_listallpids(pids.as_mut_ptr().cast(), (pids.len() * 4) as i32) };
+    let accounted = if count > 0 {
+        c.consume((count as usize).min(pids.len()) * 4)
+    } else {
+        Err(Status::Failed.into())
+    };
+    let ended = super::super::macos_supervisor::end_read().map_err(|_| Fault::Unclosed);
+    accounted?;
+    ended?;
     if count as usize >= pids.len() {
         return Err(Status::Truncated.into());
     }

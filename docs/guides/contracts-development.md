@@ -66,6 +66,6 @@ macOS 沿用上述 V3 wire、inline 结果、journal 与用户 helper，新增 s
 
 宿主 provider 验证可显式运行
 `cargo test -p agent-service host_system_queries_through_confined_broker -- --ignored --nocapture`。
-该入口读取机器安全状态、系统根证书、一个不存在的指定账户和本地更新缓存，日志只记录状态与计数，
+该入口读取机器安全状态、系统根证书、当前调用账户/一个不存在的指定账户、指定应用基础状态和本地更新缓存，日志只记录状态与计数，
 不访问个人 Login keychain。纯解析样本标记真实无身份输出与合成边界；开发机通过不代表其他架构、
 企业身份/TCC/用户钥匙串或完整部署链验收，后者由独立 T3 持有。

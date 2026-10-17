@@ -23,6 +23,11 @@ static NSString *guid(ODRecord *r) {
     NSUUID *uuid = value ? [[NSUUID alloc] initWithUUIDString:value] : nil;
     return uuid ? uuid.UUIDString.lowercaseString : nil;
 }
+int rss_macos_console_account(const char *name) {
+    if (!name) return 0;
+    NSString *value = [NSString stringWithUTF8String:name];
+    return value.length && ![value isEqual:@"loginwindow"] && ![value isEqual:@"_mbsetupuser"];
+}
 int rss_macos_accounts(uint32_t section, const uint8_t *selection, size_t length, size_t maximum, Emitter emit, void *state) {
     @autoreleasepool {
         if (maximum == 0 || maximum > 4096 || length > 16384) return -1;
@@ -94,7 +99,7 @@ int rss_macos_accounts(uint32_t section, const uint8_t *selection, size_t length
         if (section == 2) {
             uid_t uid = 0; gid_t gid = 0;
             NSString *name = CFBridgingRelease(SCDynamicStoreCopyConsoleUser(NULL, &uid, &gid));
-            if (name && uid != 0 && ![name isEqual:@"loginwindow"]) {
+            if (rss_macos_console_account(name.UTF8String)) {
                 NSArray *r = query(node, kODRecordTypeUsers, kODAttributeTypeUniqueID, kODMatchEqualTo, [NSString stringWithFormat:@"%u",uid], attrs, 2, &error);
                 NSString *identity = !error && r.count == 1 ? guid(r[0]) : nil;
                 if (!identity) return 1;

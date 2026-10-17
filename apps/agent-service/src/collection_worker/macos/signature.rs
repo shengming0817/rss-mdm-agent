@@ -13,6 +13,7 @@ unsafe extern "C" {
         directory: u8,
     ) -> Ref;
     fn CFRelease(value: Ref);
+    fn CFStringCreateWithCString(allocator: Ref, text: *const c_char, encoding: u32) -> Ref;
     fn CFDictionaryGetValue(value: Ref, key: Ref) -> Ref;
     fn CFStringGetCString(value: Ref, buffer: *mut c_char, size: isize, encoding: u32) -> u8;
     fn CFGetTypeID(value: Ref) -> usize;
@@ -20,6 +21,7 @@ unsafe extern "C" {
 }
 #[link(name = "Security", kind = "framework")]
 unsafe extern "C" {
+    fn SecRequirementCreateWithString(text: Ref, flags: u32, requirement: *mut Ref) -> i32;
     fn SecStaticCodeCreateWithPath(url: Ref, flags: u32, code: *mut Ref) -> i32;
     fn SecStaticCodeCheckValidity(code: Ref, flags: u32, requirement: Ref) -> i32;
     fn SecCodeCopySigningInformation(code: Ref, flags: u32, info: *mut Ref) -> i32;
@@ -47,7 +49,10 @@ pub(super) struct Evidence {
     pub team: Option<String>,
     pub identifier: Option<String>,
 }
-pub(super) fn inspect(path: &Path) -> Result<Evidence> {
+pub(super) fn inspect(path: &Path, approved: Option<(&str, &str)>) -> Result<Evidence> {
+    let requirement = approved
+        .map(|(bundle, team)| requirement(bundle, team))
+        .transpose()?;
     let bytes = path.as_os_str().as_bytes();
     let url = Owned(unsafe {
         CFURLCreateFromFileSystemRepresentation(
@@ -70,7 +75,13 @@ pub(super) fn inspect(path: &Path) -> Result<Evidence> {
         });
     }
     let code = Owned(code);
-    let status = match unsafe { SecStaticCodeCheckValidity(code.0, 0, std::ptr::null()) } {
+    let status = match unsafe {
+        SecStaticCodeCheckValidity(
+            code.0,
+            0,
+            requirement.as_ref().map_or(std::ptr::null(), |r| r.0),
+        )
+    } {
         0 => "signed",
         -67062 => "unsigned",
         _ => "invalid",
@@ -127,6 +138,7 @@ unsafe extern "C" {
     ) -> Ref;
 }
 pub(super) fn process_matches(pid: i32, bundle: &str, team: &str) -> Result<bool> {
+    let requirement = requirement(bundle, team)?;
     let number = Owned(unsafe { CFNumberCreate(std::ptr::null(), 3, (&pid as *const i32).cast()) });
     if number.0.is_null() {
         return Err(Status::Failed.into());
@@ -152,7 +164,7 @@ pub(super) fn process_matches(pid: i32, bundle: &str, team: &str) -> Result<bool
         return Ok(false);
     }
     let code = Owned(code);
-    if unsafe { SecCodeCheckValidity(code.0, 0, std::ptr::null()) } != 0 {
+    if unsafe { SecCodeCheckValidity(code.0, 0, requirement.0) } != 0 {
         return Ok(false);
     }
     let mut info = std::ptr::null();
@@ -164,4 +176,50 @@ pub(super) fn process_matches(pid: i32, bundle: &str, team: &str) -> Result<bool
         string(info.0, unsafe { kSecCodeInfoIdentifier })?.as_deref() == Some(bundle)
             && string(info.0, unsafe { kSecCodeInfoTeamIdentifier })?.as_deref() == Some(team),
     )
+}
+
+fn requirement(bundle: &str, team: &str) -> Result<Owned> {
+    // A closed identity is escaped by construction, never interpolated from an arbitrary requirement.
+    if bundle.is_empty()
+        || bundle.len() > 255
+        || !bundle
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
+        || team.len() != 10
+        || !team
+            .bytes()
+            .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit())
+    {
+        return Err(Status::Invalid.into());
+    }
+    let expression = CString::new(format!("anchor apple generic and identifier \"{bundle}\" and certificate leaf[subject.OU] = \"{team}\"")).map_err(|_| Status::Invalid)?;
+    let text = Owned(unsafe {
+        CFStringCreateWithCString(std::ptr::null(), expression.as_ptr(), 0x08000100)
+    });
+    if text.0.is_null() {
+        return Err(Status::Failed.into());
+    }
+    let mut value = std::ptr::null();
+    if unsafe { SecRequirementCreateWithString(text.0, 0, &mut value) } != 0 {
+        return Err(Status::Invalid.into());
+    }
+    Ok(Owned(value))
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn untrusted_code_cannot_satisfy_an_approved_apple_team() {
+        // The developer test image has no approved Apple team certificate.
+        let image = std::env::current_exe().unwrap();
+        let value = inspect(&image, Some(("org.example.fixture", "ABCDE12345"))).unwrap();
+        assert_ne!(value.status, "signed");
+        assert!(!process_matches(
+            std::process::id() as i32,
+            "org.example.fixture",
+            "ABCDE12345"
+        )
+        .unwrap());
+        assert!(requirement("org.example\" or true", "ABCDE12345").is_err());
+    }
 }
