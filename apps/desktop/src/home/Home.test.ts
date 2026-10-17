@@ -30,7 +30,9 @@ it("shows device values as plain text and exposes all addresses without an unava
   expect(wrapper.find(".identity-name img").exists()).toBe(false);
   expect(wrapper.text()).toContain("192.0.2.24");
   expect(wrapper.text()).toContain("+1");
-  expect(wrapper.get('[title="192.0.2.24、2001:db8::24"]').exists()).toBe(true);
+  expect(wrapper.find('[title="192.0.2.24、2001:db8::24"]').exists()).toBe(
+    true,
+  );
   expect(wrapper.text()).toContain("studio");
   await wrapper.get('[aria-label="查看所有 IP 地址"]').trigger("click");
   expect(new DOMWrapper(document.body).get('[role="dialog"]').text()).toContain(
