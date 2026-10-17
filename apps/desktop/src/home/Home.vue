@@ -2,6 +2,7 @@
 import { computed } from "vue";
 import {
   Monitor,
+  UserRound,
   Package,
   Terminal,
   Settings,
@@ -76,20 +77,23 @@ const shortcuts = [
               </div>
             </div>
           </div>
-          <dl class="computer-details" aria-label="本机信息">
-            <div>
-              <dt>计算机名</dt>
-              <dd>未读取</dd>
-            </div>
-            <div>
-              <dt>IP 地址</dt>
-              <dd>未读取</dd>
-            </div>
-            <div>
-              <dt>登录用户</dt>
-              <dd>未读取</dd>
-            </div>
-          </dl>
+          <div class="computer-identity" aria-label="本机信息">
+            <span
+              class="identity-name"
+              aria-label="计算机名未读取"
+              title="计算机名未读取"
+            >
+              <Monitor :size="17" aria-hidden="true" /><span>—</span>
+            </span>
+            <span class="identity-divider" aria-hidden="true" />
+            <span aria-label="IP 地址未读取" title="IP 地址未读取">
+              <Activity :size="14" aria-hidden="true" /><span>—</span>
+            </span>
+            <span aria-label="系统登录用户未读取" title="系统登录用户未读取">
+              <UserRound :size="14" aria-hidden="true" /><span>—</span>
+            </span>
+          </div>
+          <p class="identity-pending">设备信息暂不可用</p>
         </div>
         <div class="model-toolbar">
           <span
@@ -144,7 +148,6 @@ const shortcuts = [
           ><ChevronRight :size="14" aria-hidden="true" />
         </button>
       </nav>
-      <p class="home-footnote">本机信息尚未读取 · 电脑模型仅作界面示意</p>
     </div>
     <aside class="home-assistant" aria-label="电脑助手入口">
       <div class="assistant-title">
@@ -228,23 +231,43 @@ const shortcuts = [
   width: min(720px, 100%);
   margin: 0 auto;
 }
-.computer-details {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 16px;
-  width: 82.5%;
-  margin: 10px auto 24px;
-  text-align: center;
-}
-.computer-details dt {
-  margin-bottom: 6px;
+.computer-identity {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 24px;
+  margin: 10px auto 0;
   color: var(--home-muted);
-  font-size: 11px;
+  font-size: 12px;
+  line-height: 1.4;
 }
-.computer-details dd {
-  margin: 0;
-  font-size: 13px;
-  overflow-wrap: anywhere;
+.computer-identity > span:not(.identity-divider) {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 42px;
+}
+.computer-identity svg {
+  flex: none;
+  opacity: 0.65;
+}
+.computer-identity .identity-name {
+  color: var(--rss-color-text);
+  font-size: 15px;
+  font-weight: 550;
+}
+.identity-divider {
+  height: 13px;
+  width: 1px;
+  background: var(--rss-color-border);
+}
+.identity-pending {
+  margin: 9px 0 24px;
+  text-align: center;
+  color: var(--home-muted);
+  font-size: 10px;
+  opacity: 0.7;
 }
 .computer-model {
   position: relative;
@@ -432,12 +455,7 @@ const shortcuts = [
   flex: none;
   color: var(--home-muted);
 }
-.home-footnote {
-  text-align: center;
-  font-size: 10px;
-  color: var(--home-muted);
-  margin: 16px 0 0;
-}
+
 .home-assistant {
   display: flex;
   flex-direction: column;
