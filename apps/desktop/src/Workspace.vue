@@ -39,6 +39,8 @@ import {
 } from "./assistant/controller";
 import SelfService from "./self-service/SelfService.vue";
 import Home from "./home/Home.vue";
+import { createDeviceOverview, type DeviceOverviewPort } from "./home/device";
+import { nativeDeviceOverview } from "./home/native";
 import { createController } from "./self-service/controller";
 import { nativePort } from "./self-service/native";
 import preview from "./self-service/preview";
@@ -56,10 +58,15 @@ const props = defineProps<{
   host: HostSettings;
   servicePort?: ServicePort;
   fixture?: boolean;
+  devicePort?: DeviceOverviewPort;
 }>();
 const emit = defineEmits<{
   navigate: [id: string];
 }>();
+const device = createDeviceOverview(
+  props.fixture ? props.devicePort : nativeDeviceOverview(),
+);
+let devicePolling: ReturnType<typeof setInterval> | undefined;
 const newIdentity = () => crypto.randomUUID();
 const controller = props.ready
   ? createController(props.selfServicePort ?? nativePort(), preview)
@@ -71,6 +78,7 @@ watch(
   () => props.page,
   (id) => {
     if (id !== "assistant" && id !== "settings") controller?.navigate(id);
+    if (id === "home") void device.refresh();
   },
   { immediate: true },
 );
@@ -205,6 +213,10 @@ const mode = computed(() =>
         : "浏览器只读预览",
 );
 onMounted(() => {
+  void device.refresh();
+  devicePolling = setInterval(() => {
+    if (props.page === "home") void device.refresh();
+  }, 30000);
   void assistant?.connect();
   if (workspaceRoot.value) {
     const resize = () => {
@@ -220,6 +232,8 @@ onMounted(() => {
   }
 });
 onBeforeUnmount(() => {
+  if (devicePolling) clearInterval(devicePolling);
+  device.dispose();
   transition++;
   sizing?.disconnect();
   assistant?.dispose();
@@ -379,6 +393,7 @@ onBeforeUnmount(() => {
       <div v-if="controller && page === 'home'" class="home-content">
         <Home
           :controller="controller"
+          :device="device.state.value"
           :preview="!controller.interactive || !!fixture"
           :draft="assistant?.draft.value ?? ''"
           :connected="assistant?.state.connection === 'connected'"

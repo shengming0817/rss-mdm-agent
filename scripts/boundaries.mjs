@@ -52,9 +52,11 @@ const compositionCommands = [
   ...userCommands,
   ...settingsCommands,
   "appearance_snapshot",
+  "device_overview",
   "development_assembly",
 ];
 const nativeAdapters = new Map([
+  ["apps/desktop/src/home/native.ts", ["device_overview"]],
   ["apps/desktop/src/assembly.ts", ["development_assembly"]],
   ["apps/desktop/src/appearance.ts", ["appearance_snapshot"]],
   ["apps/desktop/src/settings/native.ts", settingsCommands],
@@ -365,7 +367,12 @@ export function checkSource(file, source) {
         "Set",
       ],
       "apps/desktop/src/App.vue": ["setInterval", "clearInterval"],
-      "apps/desktop/src/Workspace.vue": ["HTMLElement", "ResizeObserver"],
+      "apps/desktop/src/Workspace.vue": [
+        "HTMLElement",
+        "ResizeObserver",
+        "setInterval",
+        "clearInterval",
+      ],
       "apps/desktop/src/assistant/resource-context.ts": ["JSON"],
       "apps/desktop/src/self-service/PolicyPreparation.vue": ["JSON"],
       "apps/desktop/src/self-service/PolicySelfService.vue": ["JSON", "crypto"],

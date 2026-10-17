@@ -95,6 +95,15 @@ export function createFixturePorts() {
 
   const environment: FixtureEnvironment = {
     kind: "fixture",
+    device: {
+      async read() {
+        return {
+          computerName: "Studio Mac",
+          ipAddresses: ["192.0.2.24"],
+          loginUser: "studio",
+        };
+      },
+    },
     identity: { read: () => rpc<UserContext>("identity") },
     host: {
       read: () => rpc<HostStatus>("host"),

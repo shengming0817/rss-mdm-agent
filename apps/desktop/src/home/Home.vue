@@ -11,11 +11,13 @@ import {
   ChevronRight,
 } from "@rss-mdm-agent/ui";
 import type { Controller } from "../self-service/controller";
+import type { DeviceOverview } from "../self-service/types";
 const props = defineProps<{
   controller: Controller;
   preview: boolean;
   draft: string;
   connected: boolean;
+  device?: DeviceOverview | null;
 }>();
 const emit = defineEmits<{
   navigate: [page: string];
@@ -80,20 +82,39 @@ const shortcuts = [
           <div class="computer-identity" aria-label="本机信息">
             <span
               class="identity-name"
-              aria-label="计算机名未读取"
-              title="计算机名未读取"
+              :aria-label="`计算机名：${device?.computerName ?? '未读取'}`"
+              :title="device?.computerName ?? '计算机名未读取'"
             >
-              <Monitor :size="17" aria-hidden="true" /><span>—</span>
+              <Monitor :size="17" aria-hidden="true" /><span>{{
+                device?.computerName ?? "—"
+              }}</span>
             </span>
             <span class="identity-divider" aria-hidden="true" />
-            <span aria-label="IP 地址未读取" title="IP 地址未读取">
-              <Activity :size="14" aria-hidden="true" /><span>—</span>
+            <span
+              :aria-label="`IP 地址：${device?.ipAddresses?.join('、') || (device?.ipAddresses ? '无可用地址' : '未读取')}`"
+              :title="
+                device?.ipAddresses?.join('、') ||
+                (device?.ipAddresses ? '无可用地址' : 'IP 地址未读取')
+              "
+            >
+              <Activity :size="14" aria-hidden="true" /><span
+                >{{ device?.ipAddresses?.[0] ?? "—"
+                }}<small
+                  v-if="device?.ipAddresses && device.ipAddresses.length > 1"
+                >
+                  +{{ device.ipAddresses.length - 1 }}</small
+                ></span
+              >
             </span>
-            <span aria-label="系统登录用户未读取" title="系统登录用户未读取">
-              <UserRound :size="14" aria-hidden="true" /><span>—</span>
+            <span
+              :aria-label="`系统登录用户：${device?.loginUser ?? '未读取'}`"
+              :title="device?.loginUser ?? '系统登录用户未读取'"
+            >
+              <UserRound :size="14" aria-hidden="true" /><span>{{
+                device?.loginUser ?? "—"
+              }}</span>
             </span>
           </div>
-          <p class="identity-pending">设备信息暂不可用</p>
         </div>
         <div class="model-toolbar">
           <span
@@ -237,7 +258,7 @@ const shortcuts = [
   justify-content: center;
   flex-wrap: wrap;
   gap: 24px;
-  margin: 10px auto 0;
+  margin: 10px auto 24px;
   color: var(--home-muted);
   font-size: 12px;
   line-height: 1.4;
@@ -247,6 +268,8 @@ const shortcuts = [
   align-items: center;
   gap: 8px;
   min-width: 42px;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 .computer-identity svg {
   flex: none;
@@ -262,13 +285,7 @@ const shortcuts = [
   width: 1px;
   background: var(--rss-color-border);
 }
-.identity-pending {
-  margin: 9px 0 24px;
-  text-align: center;
-  color: var(--home-muted);
-  font-size: 10px;
-  opacity: 0.7;
-}
+
 .computer-model {
   position: relative;
   width: 100%;

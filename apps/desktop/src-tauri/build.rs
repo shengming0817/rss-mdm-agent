@@ -113,6 +113,7 @@ fn main() {
             "agent_registration_status",
             "agent_request_registration",
             "appearance_snapshot",
+            "device_overview",
             "development_assembly",
             "ai_host_status",
             "ai_restart_host",

@@ -941,6 +941,7 @@ export type TaskExecution =
 export interface SelfServiceCommands {
   ai_operation_submit: Command4;
   appearance_snapshot: Command10;
+  device_overview: Command11;
   self_service_cancel: Command9;
   self_service_confirm: Command8;
   self_service_execute: Command8;
@@ -1431,6 +1432,34 @@ export interface AppearanceSnapshot {
   highContrast: boolean;
   materialEnabled: boolean;
   reducedMotion: boolean;
+}
+/**
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "Command11".
+ */
+export interface Command11 {
+  input: null;
+  output: DeviceOverview;
+}
+/**
+ * Bounded local device facts for the authenticated desktop session; never an execution grant.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "DeviceOverview".
+ */
+export interface DeviceOverview {
+  /**
+   * OS computer name, absent when the platform read failed.
+   */
+  computerName: string | null;
+  /**
+   * Up-interface unicast addresses; empty means no address, absent means read failed.
+   */
+  ipAddresses: string[] | null;
+  /**
+   * OS login name of the requesting interactive session, never a product account.
+   */
+  loginUser: string | null;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema

@@ -174,6 +174,7 @@ onBeforeUnmount(() => {
         :page="page"
         :host="host"
         :service-port="environment?.service"
+        :device-port="environment?.device"
         :fixture="!!environment"
         @navigate="navigate"
       >
