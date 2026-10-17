@@ -11,7 +11,6 @@ use std::{
         },
     },
 };
-mod signature;
 pub(super) fn collect(
     c: &Context<'_>,
     root: w::MacosApplicationRoot,
@@ -143,7 +142,7 @@ fn application_inspecting(
     path: &Path,
     owner: &str,
     rows: &mut Rows<'_>,
-    inspect: impl FnOnce(&Path) -> Result<(&'static str, Option<String>)>,
+    inspect: impl FnOnce(&Path) -> Result<signature::Evidence>,
 ) -> Result<()> {
     let app_before = dir.metadata()?;
     let contents = openat(dir, std::ffi::OsStr::new("Contents"), true)?;
@@ -156,7 +155,7 @@ fn application_inspecting(
     let d = object(&value)?;
     let location = path.to_str().ok_or(Status::Invalid)?;
     let mut r = decode(d, location, owner)?;
-    let (status, team) = inspect(path)?;
+    let signature::Evidence { status, team, .. } = inspect(path)?;
     r.insert("signature_status".into(), status.into());
     if let Some(team) = team {
         r.insert("team_id".into(), team.into());
@@ -265,7 +264,11 @@ mod tests {
                 path.join("old-contents/Info.plist"),
                 path.join("Contents/Info.plist"),
             )?;
-            Ok(("signed", None))
+            Ok(signature::Evidence {
+                status: "signed",
+                team: None,
+                identifier: None,
+            })
         });
         assert!(matches!(changed, Err(Fault::Query(Status::Invalid))));
         assert!(changed_rows.finish(Ok(())).rows.is_empty());

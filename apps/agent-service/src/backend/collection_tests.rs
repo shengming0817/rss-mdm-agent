@@ -29,11 +29,34 @@ async fn system_scan_evidence_survives_lost_ack_without_chunks() {
 async fn certificate_metadata_survives_lost_ack() {
     capture_recovery(3).await;
 }
+#[tokio::test]
+async fn macos_local_scan_evidence_survives_lost_ack_without_recollection() {
+    capture_recovery(4).await;
+}
+#[tokio::test]
+async fn macos_certificate_metadata_survives_lost_ack_without_recollection() {
+    capture_recovery(5).await;
+}
 async fn capture_recovery(case: u8) {
-    let macos = case == 1;
+    let macos = matches!(case, 1 | 4 | 5);
     let _budget = crate::scenario_budget::enter();
     let server = Server::new().await;
-    if macos {
+    if case == 4 {
+        server
+            .data
+            .lock()
+            .unwrap()
+            .native_system_collection(w::NativeSystemQuery::MacosUpdates {
+                section: w::UpdateSection::Available,
+                mode: w::UpdateScanMode::Local,
+            });
+    } else if case == 5 {
+        server.data.lock().unwrap().native_system_collection(
+            w::NativeSystemQuery::MacosCertificates {
+                store: w::MacosCertificateStore::SystemRoots,
+            },
+        );
+    } else if macos {
         server.data.lock().unwrap().native_macos_collection();
     } else if case == 2 {
         server.data.lock().unwrap().native_system_collection(
@@ -95,10 +118,17 @@ async fn capture_recovery(case: u8) {
     };
     if case >= 2 {
         let value = result.queries.get_mut("items").unwrap();
-        if case == 2 {
+        if matches!(case, 2 | 4) {
             value.scan = Some(w::NativeScanEvidence {
                 mode: w::UpdateScanMode::Local,
-                source: Some("wua-source".into()),
+                source: Some(
+                    if macos {
+                        "apple_softwareupdate_cache"
+                    } else {
+                        "wua-source"
+                    }
+                    .into(),
+                ),
                 started_at: None,
                 finished_at: None,
             });
@@ -111,7 +141,14 @@ async fn capture_recovery(case: u8) {
                             serde_json::json!("retained update observation"),
                         ),
                         ("version".into(), serde_json::json!("1")),
-                        ("origin".into(), serde_json::json!("wua-source")),
+                        (
+                            "origin".into(),
+                            serde_json::json!(if macos {
+                                "apple_softwareupdate_cache"
+                            } else {
+                                "wua-source"
+                            }),
+                        ),
                         ("state".into(), serde_json::json!("available")),
                     ]
                     .into()
@@ -124,7 +161,10 @@ async fn capture_recovery(case: u8) {
                 ("issuer".into(), serde_json::json!("test issuer")),
                 ("scope".into(), serde_json::json!("device")),
                 ("owner".into(), serde_json::json!("")),
-                ("store".into(), serde_json::json!("my")),
+                (
+                    "store".into(),
+                    serde_json::json!(if macos { "system_roots" } else { "my" }),
+                ),
                 ("not_before".into(), serde_json::json!(1)),
                 ("not_after".into(), serde_json::json!(time + 100)),
             ]
@@ -240,10 +280,14 @@ async fn capture_recovery(case: u8) {
         received["event"]["queries"]["items"]["enumerationComplete"],
         false
     );
-    if case == 2 {
+    if matches!(case, 2 | 4) {
         assert_eq!(
             received["event"]["queries"]["items"]["scan"]["source"],
-            "wua-source"
+            if macos {
+                "apple_softwareupdate_cache"
+            } else {
+                "wua-source"
+            }
         );
     }
     drop(data);

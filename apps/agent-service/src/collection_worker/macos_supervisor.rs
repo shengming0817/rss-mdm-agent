@@ -34,6 +34,7 @@ enum Request {
 pub(super) struct Reply {
     pub status: w::NativeQueryStatus,
     pub bytes: Vec<u8>,
+    pub diagnostics: Vec<u8>,
     pub observed: usize,
 }
 #[link(name = "sandbox")]
@@ -407,7 +408,7 @@ fn supervise(
                         return Err(Error::Protocol);
                     }
                     let remaining = raw_remaining(input, observed_before, raw_cap);
-                    let reply = run_tool(input, &name, &args, remaining, work_until, until)?;
+                    let reply = run_tool(input, q, &name, &args, remaining, work_until, until)?;
                     if send(&mut channel, &frame(&reply)?, work_until).is_err() {
                         stopped = Some(w::NativeQueryStatus::Timeout);
                         break;
@@ -511,28 +512,9 @@ fn raw_remaining(input: &Input, before: u64, cap: usize) -> usize {
         .unwrap_or(usize::MAX),
     )
 }
-fn allowed(name: &str, args: &[String]) -> bool {
-    let a = args.iter().map(String::as_str).collect::<Vec<_>>();
-    match (name, a.as_slice()) {
-        ("system_profiler", ["-xml", "SPHardwareDataType", "-detailLevel", "basic"])
-        | ("ioreg", ["-a", "-r", "-c", "AppleSmartBattery"])
-        | (
-            "diskutil",
-            ["list", "-plist", "physical"] | ["list", "-plist"] | ["apfs", "list", "-plist"],
-        )
-        | ("pkgutil", ["--pkgs-plist"]) => true,
-        ("diskutil", ["info", "-plist", device]) => {
-            *device == "/"
-                || (device.starts_with("disk") && device.bytes().all(|b| b.is_ascii_alphanumeric()))
-        }
-        ("pkgutil", ["--pkg-info-plist", id]) => {
-            !id.starts_with('-') && !id.is_empty() && id.len() <= 4096 && !id.contains('\0')
-        }
-        _ => false,
-    }
-}
 fn run_tool(
     input: &Input,
+    query: &w::NativeQuery,
     name: &str,
     args: &[String],
     cap: usize,
@@ -543,6 +525,7 @@ fn run_tool(
         return Ok(Reply {
             status: w::NativeQueryStatus::Timeout,
             bytes: Vec::new(),
+            diagnostics: Vec::new(),
             observed: 0,
         });
     }
@@ -550,14 +533,15 @@ fn run_tool(
         return Ok(Reply {
             status: w::NativeQueryStatus::Truncated,
             bytes: Vec::new(),
+            diagnostics: Vec::new(),
             observed: 0,
         });
     }
-    if !allowed(name, args) {
+    if !super::macos::tool::allowed(&query.definition, name, args, &input.task.execution) {
         return Err(Error::Untrusted);
     }
     let tool = input.tools.get(name).ok_or(Error::Unavailable)?;
-    if tool.path != format!("/usr/sbin/{name}") {
+    if Some(tool.path.as_str()) != super::macos::tool::path(name) {
         return Err(Error::Untrusted);
     }
     let sandbox = input.tools.get("sandbox-exec").ok_or(Error::Unavailable)?;
@@ -576,6 +560,7 @@ fn run_tool(
         return Ok(Reply {
             status: w::NativeQueryStatus::Timeout,
             bytes: Vec::new(),
+            diagnostics: Vec::new(),
             observed: 0,
         });
     }
@@ -653,7 +638,7 @@ fn capture(
         let (err, err_eof) = read_native(
             &mut stderr,
             &mut discarded,
-            false,
+            true,
             cap.saturating_sub(observed),
         )?;
         observed += err;
@@ -665,7 +650,15 @@ fn capture(
         }
         if let Some(exit) = owner.poll()? {
             if !exit.success() {
-                status = w::NativeQueryStatus::Invalid;
+                status = if std::str::from_utf8(&discarded).is_ok_and(|s| {
+                    s.contains("Must be running as root")
+                        || s.contains("Operation not permitted")
+                        || s.contains("Permission denied")
+                }) {
+                    w::NativeQueryStatus::Denied
+                } else {
+                    w::NativeQueryStatus::Invalid
+                };
                 break;
             }
             if out_eof && err_eof {
@@ -687,6 +680,7 @@ fn capture(
     Ok(Reply {
         status,
         bytes,
+        diagnostics: discarded,
         observed,
     })
 }
@@ -788,6 +782,13 @@ mod tests {
                 crate::backend::plan::pin(Path::new(path)).unwrap(),
             );
         }
+        broker_input(mode, raw_allowance, input)
+    }
+    fn broker_input(
+        mode: &str,
+        raw_allowance: usize,
+        input: Input,
+    ) -> Result<(w::NativeQueryResult, u64), Error> {
         let material = serde_json::to_vec(&input).unwrap();
         let (channel, remote) = UnixStream::pair().unwrap();
         let (stdout, out_writer) = UnixStream::pair().unwrap();
@@ -888,6 +889,69 @@ mod tests {
         assert_eq!(result.status, w::NativeQueryStatus::Truncated);
         assert_eq!(observed, 1024);
     }
+    #[test]
+    #[ignore = "explicit read-only host provider evidence; no personal keychain"]
+    fn host_system_queries_through_confined_broker() {
+        use w::{MacosSecuritySection as S, NativeSystemQuery as Q};
+        for query in [
+            Q::MacosSecurity {
+                section: S::Gatekeeper,
+            },
+            Q::MacosSecurity {
+                section: S::Xprotect,
+            },
+            Q::MacosSecurity {
+                section: S::SystemExtensions,
+            },
+            Q::MacosSecurity {
+                section: S::Filevault,
+            },
+            Q::MacosSecurity {
+                section: S::Firewall,
+            },
+            Q::MacosSecurity { section: S::Sip },
+            Q::MacosCertificates {
+                store: w::MacosCertificateStore::SystemRoots,
+            },
+            Q::MacosAccounts {
+                section: w::AccountSection::Accounts,
+                selection: w::AccountSelection::Selected {
+                    identities: ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa".into()].into(),
+                },
+            },
+            Q::MacosUpdates {
+                section: w::UpdateSection::Available,
+                mode: w::UpdateScanMode::Local,
+            },
+        ] {
+            let mut input = macos::test_input(w::NativeQueryDefinition::System {
+                query: query.clone(),
+            });
+            for name in macos::tool::required(&input.task.plan) {
+                let path = Path::new(macos::tool::path(name).unwrap());
+                if path.exists() {
+                    input
+                        .tools
+                        .insert(name.into(), crate::backend::plan::pin(path).unwrap());
+                }
+            }
+            let q = input.task.plan.spec().queries["items"].clone();
+            let (result, observed) = broker_input("broker", 1024 * 1024, input).unwrap();
+            eprintln!(
+                "host {:?}: {:?}; rows={}; raw={observed}",
+                query, result.status, result.row_count
+            );
+            assert!(result.evidence_matches(&q));
+            let expected = match query {
+                Q::MacosAccounts { .. } | Q::MacosUpdates { .. } => w::NativeQueryStatus::Partial,
+                _ => w::NativeQueryStatus::Complete,
+            };
+            assert_eq!(result.status, expected, "{query:?}");
+            if expected == w::NativeQueryStatus::Complete {
+                assert!(result.complete_for(&q, now().unwrap()));
+            }
+        }
+    }
     fn fixture(mode: &str, cap: usize) -> (Reply, u64, Duration) {
         let mut command = Command::new(std::env::current_exe().unwrap());
         command
@@ -986,15 +1050,31 @@ mod tests {
     }
     #[test]
     fn broker_rejects_non_recipe_commands() {
-        assert!(!allowed("sh", &["-c".into(), "true".into()]));
-        assert!(!allowed("pkgutil", &["--forget".into(), "package".into()]));
+        use super::macos::tool::allowed;
+        let input = macos::test_input(w::NativeQueryDefinition::MacosHardware {
+            section: w::MacosHardwareSection::Disks,
+        });
+        let d = &input.task.plan.spec().queries["items"].definition;
+        let binding = &input.task.execution;
+        assert!(!allowed(d, "sh", &["-c".into(), "true".into()], binding));
         assert!(!allowed(
+            d,
+            "pkgutil",
+            &["--forget".into(), "package".into()],
+            binding
+        ));
+        assert!(!allowed(
+            d,
             "diskutil",
-            &["info".into(), "-plist".into(), "--help".into()]
+            &["info".into(), "-plist".into(), "--help".into()],
+            binding
         ));
         assert!(allowed(
+            d,
             "diskutil",
-            &["info".into(), "-plist".into(), "disk1s1".into()]
+            &["info".into(), "-plist".into(), "disk1s1".into()],
+            binding
         ));
+        assert!(!allowed(d, "spctl", &["--status".into()], binding));
     }
 }

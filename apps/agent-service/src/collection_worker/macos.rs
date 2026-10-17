@@ -9,42 +9,28 @@ use std::{
     path::PathBuf,
     time::{Duration, Instant},
 };
+mod accounts;
+mod application;
 mod applications;
 mod brew;
+mod certificates;
 mod hardware;
+mod native;
 mod receipts;
+mod security;
+mod signature;
 #[cfg(test)]
 mod tests;
-mod tool;
+pub(super) mod tool;
+mod updates;
 
 pub(super) fn tools(
     _config: &crate::ExecutionConfig,
     plan: &w::NativeCollectionPlan,
 ) -> std::result::Result<BTreeMap<String, SoftwareMaterial>, Error> {
-    let mut names = std::collections::BTreeSet::from(["sandbox-exec"]);
-    for q in plan.spec().queries.values() {
-        use w::NativeQueryDefinition::*;
-        match q.definition {
-            MacosHardware { .. } => {
-                names.extend(["ioreg", "system_profiler", "diskutil"]);
-            }
-            MacosPkgReceipts {} => {
-                names.insert("pkgutil");
-            }
-            MacosApplications { .. } => {}
-            MacosBrew { .. } => {}
-            _ => return Err(Error::Unsupported),
-        }
-    }
     let mut result = BTreeMap::new();
-    for name in names {
-        let dir = if name != "sandbox-exec" {
-            "/usr/sbin"
-        } else {
-            "/usr/bin"
-        };
-        let path = PathBuf::from(dir).join(name);
-        // Missing tools are recorded by the query, never interpreted as an empty inventory.
+    for name in tool::required(plan) {
+        let path = PathBuf::from(tool::path(name).ok_or(Error::Unsupported)?);
         if path.try_exists()? {
             result.insert(name.into(), crate::backend::plan::pin(&path)?);
         }
@@ -203,6 +189,25 @@ pub(super) fn execute(
                 package,
                 taps,
             } => brew::collect(&context, prefix, *package, taps, &mut rows),
+            System { query } => match query {
+                w::NativeSystemQuery::MacosSecurity { section } => {
+                    security::collect(&context, *section, &mut rows)
+                }
+                w::NativeSystemQuery::MacosAccounts { section, selection } => {
+                    accounts::collect(&context, *section, selection, &mut rows)
+                }
+                w::NativeSystemQuery::MacosCertificates { store } => {
+                    certificates::collect(&context, *store, &mut rows)
+                }
+                w::NativeSystemQuery::MacosUpdates { section, mode } => {
+                    updates::collect(&context, *section, *mode, &mut rows)
+                }
+                w::NativeSystemQuery::MacosApplication {
+                    target,
+                    permissions,
+                } => application::collect(&context, target, permissions, &mut rows),
+                _ => Err(Status::Unsupported.into()),
+            },
             _ => Err(Status::Unsupported.into()),
         }?;
         context.check()
@@ -212,17 +217,30 @@ pub(super) fn execute(
         Err(Fault::Query(s)) => Err(s),
         Err(Fault::Unclosed) => return Err(Error::Unavailable),
     };
+    rows.result.collected_at = now()?;
     let result = rows.finish(status);
-    if let w::SoftwareExecutionTarget::User { identity, .. } = &input.task.execution.target {
-        if result
-            .rows
-            .iter()
-            .any(|r| r.get("owner").and_then(serde_json::Value::as_str) != Some(identity.as_str()))
-        {
-            return Ok(failure(q, Status::Denied, time));
-        }
+    if !owner_matches(input, q, &result) {
+        return Ok(failure(q, Status::Denied, now()?));
     }
     Ok(result)
+}
+fn owner_matches(input: &Input, q: &w::NativeQuery, result: &w::NativeQueryResult) -> bool {
+    let w::SoftwareExecutionTarget::User { identity, .. } = &input.task.execution.target else {
+        return true;
+    };
+    let expected = match &q.definition {
+        w::NativeQueryDefinition::System {
+            query: w::NativeSystemQuery::MacosApplication { .. },
+        } => return true,
+        w::NativeQueryDefinition::System { .. } => input.task.execution.generated_uid.as_deref(),
+        _ => Some(identity.as_str()),
+    };
+    expected.is_some_and(|owner| {
+        result
+            .rows
+            .iter()
+            .all(|r| r.get("owner").and_then(serde_json::Value::as_str) == Some(owner))
+    })
 }
 // fdopendir owns an independently opened directory description. macOS /dev/fd
 // cannot be reopened by std::fs::read_dir, and dup would share its scan offset.
@@ -335,4 +353,34 @@ fn home(uid: u32) -> Result<PathBuf> {
 #[cfg(test)]
 pub(super) fn test_input(definition: w::NativeQueryDefinition) -> Input {
     tests::input(tests::query(definition))
+}
+
+fn account_name(identity: &str) -> Result<String> {
+    let uid = identity.parse::<u32>().map_err(|_| Status::Denied)?;
+    if uid == 0 {
+        return Err(Status::Denied.into());
+    }
+    let mut storage = vec![0u8; 16384];
+    let mut entry = std::mem::MaybeUninit::<libc::passwd>::uninit();
+    let mut found = std::ptr::null_mut();
+    // SAFETY: owned writable buffers; strings copied before storage is released.
+    let rc = unsafe {
+        libc::getpwuid_r(
+            uid,
+            entry.as_mut_ptr(),
+            storage.as_mut_ptr().cast(),
+            storage.len(),
+            &mut found,
+        )
+    };
+    if rc != 0 || found.is_null() {
+        return Err(Status::Denied.into());
+    }
+    let name = unsafe { std::ffi::CStr::from_ptr((*found).pw_name) }
+        .to_str()
+        .map_err(|_| Status::Invalid)?;
+    if name.is_empty() || name.starts_with('-') {
+        return Err(Status::Invalid.into());
+    }
+    Ok(name.into())
 }
