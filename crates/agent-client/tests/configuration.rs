@@ -208,3 +208,35 @@ async fn signed_foreign_expired_and_wrong_target_files_are_rejected_before_machi
         .unwrap();
     assert_eq!(state(&root)["pending"]["csr"], original["pending"]["csr"]);
 }
+
+#[tokio::test]
+async fn explicit_first_exchange_refusal_allows_login_with_the_same_machine_key() {
+    for code in [
+        rss_mdm_agent_wire::enroll::ErrorCode::PermissionDenied,
+        rss_mdm_agent_wire::enroll::ErrorCode::RegistrationLimit,
+        rss_mdm_agent_wire::enroll::ErrorCode::GrantExpired,
+        rss_mdm_agent_wire::enroll::ErrorCode::GrantRevoked,
+    ] {
+        let server = Server::tls().await;
+        let root = Root::new();
+        let file = server.configuration([4; 32]);
+        let mut client = server.client(&root, OpenMode::Create);
+        let caps = vec![Capability::InventoryCollectionV1, Capability::TaskExecuteV1];
+        client
+            .prepare_configuration(file, [4; 32], caps.clone())
+            .unwrap();
+        server.data.lock().unwrap().configuration_rejection = Some(code);
+        assert!(client.drive_pki().await.is_err());
+        let rejected = state(&root);
+        assert!(!rejected["pending"]["configuration"]["rejection"].is_null());
+        drop(client);
+        let mut client = server.client(&root, OpenMode::Existing);
+        client.prepare_authorization(caps).unwrap();
+        assert_eq!(state(&root)["pending"]["csr"], rejected["pending"]["csr"]);
+        assert_eq!(
+            state(&root)["pending"]["operation"],
+            rejected["pending"]["operation"]
+        );
+        assert!(server.data.lock().unwrap().grant.is_none());
+    }
+}

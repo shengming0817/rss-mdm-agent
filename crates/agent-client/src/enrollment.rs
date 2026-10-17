@@ -81,6 +81,15 @@ impl GrantImport {
         Ok(())
     }
 }
+pub(crate) enum EnrollmentFailure {
+    Local(Error),
+    Rejected(enroll::ErrorCode),
+}
+impl From<Error> for EnrollmentFailure {
+    fn from(error: Error) -> Self {
+        Self::Local(error)
+    }
+}
 impl<S: IdentityProvider, C: Clock> Client<S, C> {
     /// Whether an original certificate operation remains to be recovered.
     pub fn has_pending_enrollment(&self) -> Result<bool, Error> {
@@ -120,31 +129,41 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                 .map(|_| enroll::ErrorCode::CertificateExpired)
         });
         let operation_failure = state.pending.as_ref().and_then(|p| p.failure);
-        let phase = match operation_failure.or(failure) {
-            Some(enroll::ErrorCode::EnrollmentPaused) => EnrollmentPhase::Paused,
-            Some(enroll::ErrorCode::IssuanceUnknown) => EnrollmentPhase::IssuanceUnknown,
-            Some(enroll::ErrorCode::ActivationUnknown) => EnrollmentPhase::ActivationUnknown,
-            Some(code) if code != enroll::ErrorCode::ServiceUnavailable => {
-                EnrollmentPhase::Rejected
+        let unknown_configuration = state.pending.as_ref().is_some_and(|p| {
+            p.grant.is_none()
+                && p.configuration
+                    .as_ref()
+                    .is_some_and(|c| c.submitted && c.rejection.is_none())
+        });
+        let phase = if unknown_configuration {
+            EnrollmentPhase::ConfigurationUnknown
+        } else {
+            match operation_failure.or(failure) {
+                Some(enroll::ErrorCode::EnrollmentPaused) => EnrollmentPhase::Paused,
+                Some(enroll::ErrorCode::IssuanceUnknown) => EnrollmentPhase::IssuanceUnknown,
+                Some(enroll::ErrorCode::ActivationUnknown) => EnrollmentPhase::ActivationUnknown,
+                Some(code) if code != enroll::ErrorCode::ServiceUnavailable => {
+                    EnrollmentPhase::Rejected
+                }
+                _ => match &state.pending {
+                    Some(p) if p.candidate.is_some() => EnrollmentPhase::Activating,
+                    Some(p)
+                        if p.grant.as_ref().is_some_and(|g| {
+                            g.state == enroll::GrantState::Available
+                                || g.state == enroll::GrantState::Consumed
+                        }) =>
+                    {
+                        EnrollmentPhase::Authorized
+                    }
+                    Some(p) if p.grant.is_some() => EnrollmentPhase::AwaitingAuthorization,
+                    Some(p) if p.configuration.as_ref().is_some_and(|c| c.submitted) => {
+                        EnrollmentPhase::ConfigurationUnknown
+                    }
+                    Some(_) => EnrollmentPhase::Preparing,
+                    None if state.active.is_some() => EnrollmentPhase::Active,
+                    None => EnrollmentPhase::Unregistered,
+                },
             }
-            _ => match &state.pending {
-                Some(p) if p.candidate.is_some() => EnrollmentPhase::Activating,
-                Some(p)
-                    if p.grant.as_ref().is_some_and(|g| {
-                        g.state == enroll::GrantState::Available
-                            || g.state == enroll::GrantState::Consumed
-                    }) =>
-                {
-                    EnrollmentPhase::Authorized
-                }
-                Some(p) if p.grant.is_some() => EnrollmentPhase::AwaitingAuthorization,
-                Some(p) if p.configuration.as_ref().is_some_and(|c| c.submitted) => {
-                    EnrollmentPhase::ConfigurationUnknown
-                }
-                Some(_) => EnrollmentPhase::Preparing,
-                None if state.active.is_some() => EnrollmentPhase::Active,
-                None => EnrollmentPhase::Unregistered,
-            },
         };
         let fingerprint = state
             .pending
@@ -286,7 +305,9 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             if let Some(configuration) = &pending.configuration {
                 // Before the first allocation request, explicit user login may reuse this
                 // machine key/operation. Unknown settlement can never take this path.
-                if configuration.submitted || pending.grant.is_some() || pending.candidate.is_some()
+                if (configuration.submitted && configuration.rejection.is_none())
+                    || pending.grant.is_some()
+                    || pending.candidate.is_some()
                 {
                     return Err(Error::Conflict);
                 }
@@ -403,6 +424,23 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         body: &impl Serialize,
         record_failure: bool,
     ) -> Result<T, Error> {
+        match self.enrollment_outcome(http, path, body).await {
+            Ok(value) => Ok(value),
+            Err(EnrollmentFailure::Local(error)) => Err(error),
+            Err(EnrollmentFailure::Rejected(code)) => {
+                if record_failure {
+                    self.identity_failure(code)?;
+                }
+                Err(crate::identity::enrollment_error(code))
+            }
+        }
+    }
+    pub(crate) async fn enrollment_outcome<T: serde::de::DeserializeOwned>(
+        &self,
+        http: &reqwest::Client,
+        path: &str,
+        body: &impl Serialize,
+    ) -> Result<T, EnrollmentFailure> {
         let url = self
             .store
             .cfg
@@ -417,12 +455,9 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         let (status, bytes) = json_transport(request, self.store.cfg.limits.response_bytes).await?;
         if !status.is_success() {
             let error: enroll::ErrorBody = decode(&bytes)?;
-            if record_failure {
-                self.identity_failure(error.code)?;
-            }
-            return Err(crate::identity::enrollment_error(error.code));
+            return Err(EnrollmentFailure::Rejected(error.code));
         }
-        decode(&bytes)
+        decode(&bytes).map_err(Into::into)
     }
     /// Drive one retained registration operation. No retry creates a new operation or key.
     pub async fn drive_enrollment(&mut self) -> Result<(), Error> {

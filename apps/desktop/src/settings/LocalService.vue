@@ -6,6 +6,7 @@ import type { ServiceView, RegistrationStatus } from "./service-contract";
 const props = defineProps<{ port?: ServicePort; fixture?: boolean }>();
 const view = ref<ServiceView>();
 const pending = ref(false);
+const registering = ref(false);
 const registration = ref<RegistrationStatus>();
 const registrationError = ref("");
 const showLogin = ref(false);
@@ -49,6 +50,7 @@ async function refresh() {
 async function requestRegistration(organizationId?: string, login?: string) {
   if (!native || pending.value) return;
   pending.value = true;
+  registering.value = true;
   try {
     registration.value = await native.requestRegistration(
       organizationId,
@@ -60,6 +62,7 @@ async function requestRegistration(organizationId?: string, login?: string) {
     failure(error);
   } finally {
     pending.value = false;
+    registering.value = false;
   }
 }
 async function importRegistration() {
@@ -84,13 +87,25 @@ onMounted(() => {
     if (registration.value && !registration.value.registered) void refresh();
   }, 2000);
 });
-onUnmounted(() => clearInterval(timer));
+onUnmounted(() => {
+  clearInterval(timer);
+  if (registering.value) void native?.cancelRegistration();
+});
 </script>
 <template>
   <section class="settings-card" aria-label="本机执行服务">
     <h2>本机执行服务</h2>
     <p v-if="!native">请在桌面应用中查询本机服务。</p>
-    <p v-else-if="pending">正在验证服务连接…</p>
+    <p v-else-if="pending">
+      {{
+        registering
+          ? "正在继续原注册请求，网络恢复后将自动授权…"
+          : "正在验证服务连接…"
+      }}
+    </p>
+    <button v-if="registering" @click="native?.cancelRegistration()">
+      停止注册等待
+    </button>
     <p v-else-if="view?.phase === 'notInstalled'">
       尚未安装，请由管理员安装匹配的执行服务。
     </p>

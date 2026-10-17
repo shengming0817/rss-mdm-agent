@@ -277,6 +277,11 @@ pub async fn agent_request_registration<R: tauri::Runtime>(
     state.register_device(app, organization_id, login).await
 }
 #[tauri::command]
+pub async fn agent_cancel_registration(state: State<'_, DesktopRuntime>) -> Result<()> {
+    state.cancel_registration_wait().await;
+    Ok(())
+}
+#[tauri::command]
 pub async fn agent_import_registration<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
 ) -> Result<Option<execution_ipc::host::RegistrationStatus>> {
@@ -353,6 +358,7 @@ pub fn register<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder
         agent_registration_status,
         agent_request_registration,
         agent_import_registration,
+        agent_cancel_registration,
         ai_host_status,
         ai_restart_host,
         ai_export_diagnostics,
@@ -476,6 +482,7 @@ mod tests {
             "agent_registration_status",
             "agent_request_registration",
             "agent_import_registration",
+            "agent_cancel_registration",
             "appearance_snapshot",
             "ai_host_status",
             "ai_restart_host",

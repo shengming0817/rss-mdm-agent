@@ -53,6 +53,7 @@ pub(crate) struct ConfigurationExchange {
     pub installation: Option<wire::Installation>,
     // Written before HTTP. Once set, expiry never skips the read-only recovery lookup.
     pub submitted: bool,
+    pub rejection: Option<enroll::ErrorCode>,
 }
 impl<S: IdentityProvider, C: Clock> Client<S, C> {
     /// Admit one complete signed file without replacing an active or pending machine identity.
@@ -100,6 +101,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                 candidate_sha256,
                 installation: None,
                 submitted: false,
+                rejection: None,
             }),
         )?;
         Ok(())
@@ -110,6 +112,10 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         http: &reqwest::Client,
     ) -> Result<enroll::GrantReceipt, Error> {
         let mut c = p.configuration.clone().ok_or(Error::Storage)?;
+        if let Some(code) = c.rejection {
+            return Err(crate::identity::enrollment_error(code));
+        }
+        let had_uncertain_submission = c.submitted;
         if c.submitted {
             // A lost response must never mint a new operation, even after configuration expiry/revocation.
             let status = wire::ExchangeStatus {
@@ -172,18 +178,44 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         let mut state = self.identity_state()?;
         state.pending = Some(p.clone());
         self.store.put("identity", &state)?;
-        self.enrollment_json(
-            http,
-            "configurations/exchange",
-            &wire::Exchange {
-                file,
-                operation_id: p.operation,
-                secret: self.secrets.resolve(&p.secret_reference)?,
-                csr: p.csr.clone().ok_or(Error::Storage)?,
-                runtime: p.profile.clone(),
-                installation: c.installation.ok_or(Error::Storage)?,
-            },
-        )
-        .await
+        let outcome = self
+            .enrollment_outcome(
+                http,
+                "configurations/exchange",
+                &wire::Exchange {
+                    file,
+                    operation_id: p.operation,
+                    secret: self.secrets.resolve(&p.secret_reference)?,
+                    csr: p.csr.clone().ok_or(Error::Storage)?,
+                    runtime: p.profile.clone(),
+                    installation: c.installation.clone().ok_or(Error::Storage)?,
+                },
+            )
+            .await;
+        match outcome {
+            Ok(grant) => Ok(grant),
+            Err(crate::enrollment::EnrollmentFailure::Local(error)) => Err(error),
+            Err(crate::enrollment::EnrollmentFailure::Rejected(code)) => {
+                // Only an explicit first-attempt business refusal proves no allocation. A
+                // timeout, malformed response, local budget failure or retry after Unknown does not.
+                if !had_uncertain_submission
+                    && matches!(
+                        code,
+                        enroll::ErrorCode::PermissionDenied
+                            | enroll::ErrorCode::RegistrationLimit
+                            | enroll::ErrorCode::GrantExpired
+                            | enroll::ErrorCode::GrantRevoked
+                    )
+                {
+                    c.rejection = Some(code);
+                    p.configuration = Some(c);
+                }
+                p.failure = Some(code);
+                let mut state = self.identity_state()?;
+                state.pending = Some(p.clone());
+                self.store.put("identity", &state)?;
+                Err(crate::identity::enrollment_error(code))
+            }
+        }
     }
 }

@@ -35,6 +35,7 @@ export type ServicePort = {
     organizationId?: string,
     login?: string,
   ): Promise<RegistrationStatus>;
+  cancelRegistration(): Promise<void>;
   importRegistration(): Promise<RegistrationStatus | null>;
 };
 export function nativeService(): ServicePort | undefined {
@@ -52,6 +53,7 @@ export function nativeService(): ServicePort | undefined {
         await refreshAccount();
       }
     },
+    cancelRegistration: () => invoke<void>("agent_cancel_registration"),
     importRegistration: () =>
       invoke<RegistrationStatus | null>("agent_import_registration"),
   };

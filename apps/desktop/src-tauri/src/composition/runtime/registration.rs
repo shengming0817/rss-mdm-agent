@@ -88,18 +88,36 @@ impl DesktopRuntime {
         }
         let mut account = account.ok_or_else(unavailable)?;
         account.verify().await?;
-        match exchange(Request::RequestRegistration {}).await? {
-            Reply::RegistrationStatus { .. } => (),
-            Reply::Rejected => return Err(error("registration_denied", "本机注册请求被拒绝")),
-            _ => {
+        let intent = self.registration_epoch.fetch_add(1, Ordering::AcqRel) + 1;
+        drop(_switch);
+        let mut prepared = false;
+        loop {
+            if self.closed() || self.registration_epoch.load(Ordering::Acquire) != intent {
                 return Err(error(
-                    "service_unavailable",
-                    "本机注册请求未确认，请查询原操作",
-                ))
+                    "registration_cancelled",
+                    "已停止注册等待；已提交的原请求仍保留",
+                ));
             }
-        }
-        for _ in 0..24 {
-            let current = context().await?;
+            if !prepared {
+                match exchange(Request::RequestRegistration {}).await {
+                    Ok(Reply::RegistrationStatus { .. }) => prepared = true,
+                    Ok(Reply::Rejected) => {
+                        return Err(error("registration_denied", "本机注册请求被拒绝"))
+                    }
+                    _ => {
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                        continue;
+                    }
+                }
+            }
+            let current = match context().await {
+                Ok(current) => current,
+                Err(e) if e.code == "service_unavailable" => {
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    continue;
+                }
+                Err(e) => return Err(e),
+            };
             if current.origin != initial.origin || current.tenant_id != initial.tenant_id {
                 return Err(error(
                     "registration_organization_mismatch",
@@ -107,6 +125,10 @@ impl DesktopRuntime {
                 ));
             }
             if current.status.phase == RegistrationPhase::AwaitingAuthorization {
+                let _switch = self.switching.lock().await;
+                if self.registration_epoch.load(Ordering::Acquire) != intent {
+                    continue;
+                }
                 let id = current
                     .status
                     .grant_id
@@ -117,25 +139,39 @@ impl DesktopRuntime {
                     .status
                     .public_key_fingerprint
                     .as_ref()
-                    .is_none_or(|v| v.len() != 64)
+                    .is_none_or(|v| v.len() != 64 || !v.bytes().all(|b| b.is_ascii_hexdigit()))
                 {
                     return Err(error("registration_contract", "本机公钥摘要不可用"));
                 }
-                account.authorize_registration(id).await?;
-                self.identity.set_session(Some(account))?;
-                return Ok(context().await?.status);
-            }
-            if !matches!(
+                match account.authorize_registration(id).await {
+                    Ok(()) => {
+                        self.identity.set_session(Some(account))?;
+                        return Ok(context().await?.status);
+                    }
+                    Err(e)
+                        if super::super::account::failure_snapshot(&e).is_some_and(|f| {
+                            matches!(
+                                f.reason,
+                                ai_session_contract::AccountFailureKind::Unavailable
+                                    | ai_session_contract::AccountFailureKind::RateLimited
+                            )
+                        }) =>
+                    {
+                        ()
+                    }
+                    Err(e) => return Err(e),
+                }
+            } else if !matches!(
                 current.status.phase,
                 RegistrationPhase::Unregistered | RegistrationPhase::Preparing
             ) {
                 return Ok(current.status);
             }
-            tokio::time::sleep(Duration::from_millis(250)).await;
+            tokio::time::sleep(Duration::from_secs(1)).await;
         }
-        Err(error(
-            "registration_pending",
-            "本机请求仍在准备，请继续原注册操作",
-        ))
+    }
+    pub async fn cancel_registration_wait(&self) {
+        let _switch = self.switching.lock().await;
+        self.registration_epoch.fetch_add(1, Ordering::AcqRel);
     }
 }

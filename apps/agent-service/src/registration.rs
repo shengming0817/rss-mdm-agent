@@ -62,7 +62,9 @@ struct Snapshot {
     readiness: Readiness,
 }
 enum Command {
-    Request,
+    Request {
+        prepared: Option<mpsc::SyncSender<Result<(), Error>>>,
+    },
     Configuration {
         file: rss_mdm_agent_wire::enroll::configuration::ConfigurationFile,
         candidate_sha256: [u8; 32],
@@ -203,15 +205,25 @@ fn run<S: agent_client::IdentityProvider, C: agent_client::Clock, O>(
                     client = Some(open()?);
                 }
                 let value = client.as_mut().ok_or(Error::Storage)?;
-                let prepared = match command {
-                    Command::Request => value
-                        .prepare_authorization(capabilities.clone())
-                        .map(|_| ()),
+                let (prepared, acknowledgement) = match command {
+                    Command::Request { prepared } => (
+                        value
+                            .prepare_authorization(capabilities.clone())
+                            .map(|_| ()),
+                        prepared,
+                    ),
                     Command::Configuration {
                         file,
                         candidate_sha256,
-                    } => value.prepare_configuration(file, candidate_sha256, capabilities.clone()),
+                    } => (
+                        value.prepare_configuration(file, candidate_sha256, capabilities.clone()),
+                        None,
+                    ),
                 };
+                record_result(prepared, value, &shared)?;
+                if let Some(reply) = acknowledgement {
+                    let _ = reply.send(prepared);
+                }
                 let result = match prepared {
                     Ok(()) => runtime.block_on(until_stopped(value.drive_pki(), &stopping)),
                     Err(error) => Err(error),
@@ -362,7 +374,22 @@ impl Handler for RegistrationOwner {
                     if self.owner.is_some() || self.failed {
                         return Reply::Rejected;
                     }
-                    if self.commands.try_send(Command::Request).is_err() {
+                    let (prepared, completion) = mpsc::sync_channel(1);
+                    if self
+                        .commands
+                        .try_send(Command::Request {
+                            prepared: Some(prepared),
+                        })
+                        .is_err()
+                    {
+                        return Reply::Unavailable;
+                    }
+                    // Acknowledge durable local preparation before the caller interprets a stale failure.
+                    // HTTP/PKI continues on the communication owner, outside this callback.
+                    if completion
+                        .recv_timeout(std::time::Duration::from_secs(2))
+                        .is_err()
+                    {
                         return Reply::Unavailable;
                     }
                 }
@@ -687,7 +714,7 @@ mod tests {
                     let _ = completed.send(result);
                 });
                 if !restart {
-                    sender.send(Command::Request).unwrap();
+                    sender.send(Command::Request { prepared: None }).unwrap();
                 }
                 let result = tokio::task::spawn_blocking(move || {
                     completion.recv_timeout(std::time::Duration::from_secs(8))
@@ -773,15 +800,24 @@ mod tests {
             failed: false,
             stopping,
         };
-        owner.commands.send(Command::Request).unwrap();
+        owner
+            .commands
+            .send(Command::Request { prepared: None })
+            .unwrap();
         tokio::task::spawn_blocking(move || start.recv_timeout(std::time::Duration::from_secs(3)))
             .await
             .unwrap()
             .unwrap();
         for _ in 0..8 {
-            owner.commands.try_send(Command::Request).unwrap();
+            owner
+                .commands
+                .try_send(Command::Request { prepared: None })
+                .unwrap();
         }
-        assert!(owner.commands.try_send(Command::Request).is_err());
+        assert!(owner
+            .commands
+            .try_send(Command::Request { prepared: None })
+            .is_err());
         let observed = owner.stopping.clone();
         let shutdown = tokio::task::spawn_blocking(move || owner.stop());
         tokio::time::timeout(std::time::Duration::from_secs(2), async {

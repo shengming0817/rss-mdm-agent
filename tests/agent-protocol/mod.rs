@@ -216,6 +216,7 @@ pub struct Data {
     pub invocation_reply_lost: bool,
     pub invocation_unaccepted: bool,
     pub response_override: Option<(String, Value)>,
+    pub configuration_rejection: Option<enroll::ErrorCode>,
     pub configuration_file: Option<enroll::configuration::ConfigurationFile>,
     pub packages: Vec<enroll::configuration::Package>,
     pub configuration_calls: Vec<Value>,
@@ -624,6 +625,7 @@ impl Server {
             invocation_reply_lost: false,
             invocation_unaccepted: false,
             response_override: None,
+            configuration_rejection: None,
             configuration_file: None,
             packages: vec![],
             configuration_calls: vec![],
@@ -1001,6 +1003,16 @@ fn enrollment_response(d: &mut Data, action: &str, value: Value, peer: Option<&[
         }
         "configurations/exchange" => {
             d.configuration_calls.push(value.clone());
+            if let Some(code) = d.configuration_rejection {
+                return (
+                    StatusCode::FORBIDDEN,
+                    axum::Json(enroll::ErrorBody {
+                        code,
+                        issuance_id: None,
+                    }),
+                )
+                    .into_response();
+            }
             let request: enroll::configuration::Exchange = serde_json::from_value(value).unwrap();
             assert_eq!(
                 serde_json::to_value(&request.file).unwrap(),
