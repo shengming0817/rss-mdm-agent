@@ -239,22 +239,25 @@ const shortcuts = [
 }
 .computer-model {
   position: relative;
-  width: min(400px, 100%);
-  aspect-ratio: 1508/1043;
+  width: min(90%, 720px, max(280px, calc((100dvh - 450px) * 1.933333)));
+  aspect-ratio: 1508/780;
+  container-type: inline-size;
   margin: 0 auto;
 }
 .computer-chassis {
   position: absolute;
   inset: 0;
-  background: url("./model-a.png") center / contain no-repeat;
+  /* Crop only the source's empty top/bottom margins; keep its image ratio. */
+  background: url("./model-a.png") center / 100% auto no-repeat;
   mix-blend-mode: darken;
 }
 .computer-screen {
   position: absolute;
   left: 17.25%;
-  top: 18.6%;
+  /* Original 1508 × 1043 image, centered in the 1508 × 780 viewport. */
+  top: 8.013%;
   width: 65.45%;
-  height: 59.2%;
+  height: 79.162%;
   overflow: auto;
   background:
     radial-gradient(ellipse at 110% 20%, #f9d2c5, transparent 70%),
@@ -264,20 +267,20 @@ const shortcuts = [
 .screen-apps {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  padding: 12px 8px;
-  gap: 4px;
+  padding: 3cqw 2cqw;
+  gap: 1cqw;
 }
 .screen-apps button {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 7px;
+  gap: 1.75cqw;
   border: 1px solid transparent;
-  border-radius: 6px;
-  padding: 7px 3px;
+  border-radius: 1.5cqw;
+  padding: 1.75cqw 0.75cqw;
   background: transparent;
   color: #243347;
-  font-size: 9px;
+  font-size: 2.25cqw;
   min-width: 0;
 }
 .screen-apps button:hover {
@@ -293,12 +296,16 @@ const shortcuts = [
 .app-tile {
   display: grid;
   place-items: center;
-  width: 34px;
-  height: 34px;
-  border-radius: 9px;
+  width: 8.5cqw;
+  height: 8.5cqw;
+  border-radius: 2.25cqw;
   color: white;
   background: linear-gradient(145deg, #b296ea, #7052b9);
   box-shadow: 0 4px 9px #45537025;
+}
+.app-tile svg {
+  width: 5.5cqw;
+  height: 5.5cqw;
 }
 .tile-1 {
   background: linear-gradient(145deg, #efcc88, #d69a43);
@@ -313,14 +320,18 @@ const shortcuts = [
   display: flex;
   height: 100%;
   flex-direction: column;
-  gap: 10px;
+  gap: 2.5cqw;
   align-items: center;
   justify-content: center;
   color: #35415a;
-  font-size: 12px;
+  font-size: 3cqw;
 }
 .screen-welcome span {
-  font-size: 10px;
+  font-size: 2.5cqw;
+}
+.screen-welcome > svg {
+  width: 7.5cqw;
+  height: 7.5cqw;
 }
 .model-toolbar {
   margin: 4px 0 14px;
@@ -627,6 +638,9 @@ button:not(:disabled):hover {
   }
 }
 @media (max-width: 500px) {
+  .computer-model {
+    width: 100%;
+  }
   .home-main {
     padding: 18px 12px;
   }
@@ -650,19 +664,6 @@ button:not(:disabled):hover {
   }
   .model-toolbar {
     flex-wrap: wrap;
-  }
-  .screen-apps {
-    padding: 5px;
-  }
-  .app-tile {
-    width: 25px;
-    height: 25px;
-  }
-  .screen-apps button {
-    padding: 4px 0;
-  }
-  .app-tile svg {
-    width: 17px;
   }
   .home-notice {
     padding: 12px 10px;
