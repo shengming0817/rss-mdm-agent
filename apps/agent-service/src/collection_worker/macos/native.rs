@@ -72,7 +72,7 @@ pub(super) fn accounts(
     c: &Context<'_>,
     section: u32,
     selection: &w::AccountSelection,
-    maximum: usize,
+    source_limit: usize,
     visit: impl FnMut(&[u8]) -> Result<()>,
 ) -> Result<()> {
     let selected: Vec<&str> = match selection {
@@ -83,7 +83,14 @@ pub(super) fn accounts(
     };
     let bytes = serde_json::to_vec(&selected).map_err(|_| Status::Invalid)?;
     invoke(c, visit, |emit, state| unsafe {
-        rss_macos_accounts(section, bytes.as_ptr(), bytes.len(), maximum, emit, state)
+        rss_macos_accounts(
+            section,
+            bytes.as_ptr(),
+            bytes.len(),
+            source_limit,
+            emit,
+            state,
+        )
     })
 }
 pub(super) fn certificates(

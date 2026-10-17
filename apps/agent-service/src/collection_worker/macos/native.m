@@ -28,9 +28,9 @@ int rss_macos_console_account(const char *name) {
     NSString *value = [NSString stringWithUTF8String:name];
     return value.length && ![value isEqual:@"loginwindow"] && ![value isEqual:@"_mbsetupuser"];
 }
-int rss_macos_accounts(uint32_t section, const uint8_t *selection, size_t length, size_t maximum, Emitter emit, void *state) {
+int rss_macos_accounts(uint32_t section, const uint8_t *selection, size_t length, size_t source_limit, Emitter emit, void *state) {
     @autoreleasepool {
-        if (maximum == 0 || maximum > 4096 || length > 16384) return -1;
+        if (source_limit == 0 || source_limit > 4096 || length > 16384) return -1;
         NSArray *selected = [NSJSONSerialization JSONObjectWithData:[NSData dataWithBytes:selection length:length] options:0 error:NULL];
         if (![selected isKindOfClass:NSArray.class]) return -1;
         NSSet *approved = [NSSet setWithArray:selected];
@@ -42,9 +42,9 @@ int rss_macos_accounts(uint32_t section, const uint8_t *selection, size_t length
         NSArray *attrs = @[kODAttributeTypeGUID, kODAttributeTypeUniqueID, kODAttributeTypeRecordName];
         if (section == 0) {
             NSArray *records = query(node, kODRecordTypeUsers, selected.count ? kODAttributeTypeGUID : kODAttributeTypeRecordName,
-                selected.count ? kODMatchEqualTo : kODMatchAny, selected.count ? directoryIDs : nil, attrs, maximum + 1, &error);
+                selected.count ? kODMatchEqualTo : kODMatchAny, selected.count ? directoryIDs : nil, attrs, source_limit + 1, &error);
             if (!records || error) return 2;
-            if (records.count > maximum) return 4;
+            if (records.count > source_limit) return 4;
             BOOL partial = NO;
             NSMutableSet *seen = [NSMutableSet set];
             for (ODRecord *r in records) {
@@ -68,7 +68,7 @@ int rss_macos_accounts(uint32_t section, const uint8_t *selection, size_t length
             for (NSString *attribute in @[kODAttributeTypeGroupMembers, kODAttributeTypeNestedGroups]) {
                 NSArray *values = [admin valuesForAttribute:attribute error:&error];
                 if (error) return 2;
-                if (values.count > maximum) return 4;
+                if (values.count > source_limit) return 4;
                 for (NSString *value in values) {
                     NSUUID *uuid = [value isKindOfClass:NSString.class] ? [[NSUUID alloc] initWithUUIDString:value] : nil;
                     if (!uuid) return -1;
@@ -77,7 +77,7 @@ int rss_macos_accounts(uint32_t section, const uint8_t *selection, size_t length
             }
             // Legacy direct name membership is resolved locally, without recursive groups.
             NSArray *names = [admin valuesForAttribute:kODAttributeTypeGroupMembership error:&error];
-            if (error || names.count > maximum) return error ? 2 : 4;
+            if (error || names.count > source_limit) return error ? 2 : 4;
             BOOL partial = NO;
             for (NSString *name in names) {
                 NSArray *r = query(node, kODRecordTypeUsers, kODAttributeTypeRecordName, kODMatchEqualTo, name, attrs, 2, &error);
@@ -85,7 +85,7 @@ int rss_macos_accounts(uint32_t section, const uint8_t *selection, size_t length
                 NSString *identity = r.count == 1 ? guid(r[0]) : nil;
                 if (identity) members[identity] = @"user"; else partial = YES;
             }
-            if (members.count > maximum) return 4;
+            if (members.count > source_limit) return 4;
             for (NSString *identity in [[members allKeys] sortedArrayUsingSelector:@selector(compare:)]) {
                 if (selected.count && ![approved containsObject:identity]) continue;
                 NSString *type = members[identity];
