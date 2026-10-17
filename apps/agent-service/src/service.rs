@@ -461,16 +461,16 @@ impl<S: IdentityProvider> DeviceService<S> {
         network(self.client.flush_reports(reports), &mut self.core, commands).await?;
         let mut context = self.client.execution_context()?;
         context.os_version = crate::os_version::current()?;
-        context.interactive_user =
-            self.core
-                .helpers
-                .connect(None)
-                .ok()
-                .map(|helper| wire::SoftwareInteractiveUser {
-                    identity: helper.context().subject.clone(),
-                    session_id: login_id(helper.context()),
-                    administrator: false,
-                });
+        context.interactive_user = self.core.helpers.connect(None).ok().and_then(|helper| {
+            let generated_uid =
+                crate::account_identity::generated_uid(&helper.context().subject).ok()?;
+            Some(wire::SoftwareInteractiveUser {
+                identity: helper.context().subject.clone(),
+                session_id: login_id(helper.context()),
+                administrator: false,
+                generated_uid,
+            })
+        });
         self.client.set_execution_context(context)?;
         let interpreters = self.core.config.interpreters.clone();
         let environment = network(

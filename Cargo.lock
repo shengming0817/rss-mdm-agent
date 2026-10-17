@@ -85,6 +85,7 @@ dependencies = [
  "agent-client",
  "axum",
  "base64 0.23.1",
+ "cc",
  "der",
  "execution-admission",
  "execution-app",
@@ -3934,7 +3935,7 @@ dependencies = [
 [[package]]
 name = "rss-mdm-agent-wire"
 version = "1.0.0"
-source = "git+https://dev.azure.com/shengming0923/rss/_git/rss-mdm?rev=9872076cb49e329703b4212cd521dd7ad08ddd2e#9872076cb49e329703b4212cd521dd7ad08ddd2e"
+source = "git+https://dev.azure.com/shengming0923/rss/_git/rss-mdm?rev=49bd28b6f9bfb29a793ba0d88171764980632bff#49bd28b6f9bfb29a793ba0d88171764980632bff"
 dependencies = [
  "base64 0.22.1",
  "ordered-float",

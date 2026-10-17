@@ -10,9 +10,9 @@ use ::windows::{
         Wmi::*,
     },
 };
-struct Apartment;
+pub(super) struct Apartment;
 impl Apartment {
-    fn open() -> Result<Self, Status> {
+    pub(super) fn open() -> Result<Self, Status> {
         // SAFETY: the query runs on its own synchronous process thread; balanced by Drop.
         unsafe {
             CoInitializeEx(None, COINIT_MULTITHREADED)
@@ -55,45 +55,7 @@ pub(super) fn read(
     let _apartment = Apartment::open()?;
     // SAFETY: process-private COM apartment, local namespace and validated fixed WQL only.
     unsafe {
-        static SECURITY: std::sync::OnceLock<Result<(), Status>> = std::sync::OnceLock::new();
-        (*SECURITY.get_or_init(|| {
-            CoInitializeSecurity(
-                None,
-                -1,
-                None,
-                None,
-                RPC_C_AUTHN_LEVEL_DEFAULT,
-                RPC_C_IMP_LEVEL_IMPERSONATE,
-                None,
-                EOAC_NONE,
-                None,
-            )
-            .map_err(error)
-        }))?;
-        let locator: IWbemLocator =
-            CoCreateInstance(&WbemLocator, None, CLSCTX_INPROC_SERVER).map_err(error)?;
-        let services = locator
-            .ConnectServer(
-                &BSTR::from(namespace.as_str()),
-                &BSTR::new(),
-                &BSTR::new(),
-                &BSTR::new(),
-                WBEM_FLAG_CONNECT_USE_MAX_WAIT.0,
-                &BSTR::new(),
-                None,
-            )
-            .map_err(error)?;
-        CoSetProxyBlanket(
-            &services,
-            RPC_C_AUTHN_WINNT,
-            RPC_C_AUTHZ_NONE,
-            None,
-            RPC_C_AUTHN_LEVEL_CALL,
-            RPC_C_IMP_LEVEL_IMPERSONATE,
-            None,
-            EOAC_NONE,
-        )
-        .map_err(error)?;
+        let services = connect(namespace)?;
         budget.check()?;
         let iter = services
             .ExecQuery(
@@ -268,5 +230,173 @@ unsafe fn scalar(raw: &VARIANT, c: w::CimType) -> Result<serde_json::Value, Stat
             _ => return Err(Status::Invalid),
         };
         cim_value(c, raw)
+    }
+}
+
+fn connect(namespace: &str) -> Result<IWbemServices, Status> {
+    unsafe {
+        static SECURITY: std::sync::OnceLock<Result<(), Status>> = std::sync::OnceLock::new();
+        (*SECURITY.get_or_init(|| {
+            CoInitializeSecurity(
+                None,
+                -1,
+                None,
+                None,
+                RPC_C_AUTHN_LEVEL_DEFAULT,
+                RPC_C_IMP_LEVEL_IMPERSONATE,
+                None,
+                EOAC_NONE,
+                None,
+            )
+            .map_err(error)
+        }))?;
+        let locator: IWbemLocator =
+            CoCreateInstance(&WbemLocator, None, CLSCTX_INPROC_SERVER).map_err(error)?;
+        let services = locator
+            .ConnectServer(
+                &BSTR::from(namespace.as_str()),
+                &BSTR::new(),
+                &BSTR::new(),
+                &BSTR::new(),
+                WBEM_FLAG_CONNECT_USE_MAX_WAIT.0,
+                &BSTR::new(),
+                None,
+            )
+            .map_err(error)?;
+        CoSetProxyBlanket(
+            &services,
+            RPC_C_AUTHN_WINNT,
+            RPC_C_AUTHZ_NONE,
+            None,
+            RPC_C_AUTHN_LEVEL_CALL,
+            RPC_C_IMP_LEVEL_IMPERSONATE,
+            None,
+            EOAC_NONE,
+        )
+        .map_err(error)?;
+        Ok(services)
+    }
+}
+
+/// Fixed BitLocker observation methods only. Caller cannot supply a method or WMI path.
+pub(super) fn bitlocker(budget: &Budget, rows: &mut Rows<'_>) -> Result<(), Status> {
+    let _apartment = Apartment::open()?;
+    unsafe {
+        let services = connect("root\\cimv2\\Security\\MicrosoftVolumeEncryption")?;
+        let iter = services
+            .ExecQuery(
+                &BSTR::from("WQL"),
+                &BSTR::from("SELECT DeviceID FROM Win32_EncryptableVolume"),
+                WBEM_FLAG_FORWARD_ONLY | WBEM_FLAG_RETURN_IMMEDIATELY,
+                None,
+            )
+            .map_err(error)?;
+        let mut partial = false;
+        loop {
+            budget.check()?;
+            let mut objects = [None];
+            let mut count = 0;
+            let status = iter.Next(250, &mut objects, &mut count);
+            if status.is_err() {
+                return Err(error(::windows::core::Error::from_hresult(status)));
+            }
+            if count == 1 {
+                let object = objects[0].take().ok_or(Status::Invalid)?;
+                let get = |object: &IWbemClassObject,
+                           name: &str,
+                           typ: w::CimType|
+                 -> Result<Option<serde_json::Value>, Status> {
+                    let name: Vec<u16> = name.encode_utf16().chain(Some(0)).collect();
+                    let mut raw = Variant(VARIANT::default());
+                    object
+                        .Get(PCWSTR(name.as_ptr()), 0, &mut raw.0, None, None)
+                        .map_err(error)?;
+                    convert(
+                        &raw.0,
+                        &w::WmiProperty {
+                            cim_type: typ,
+                            array: false,
+                        },
+                        budget.output,
+                    )
+                };
+                let path = get(&object, "__PATH", w::CimType::String)?
+                    .and_then(|v| v.as_str().map(str::to_owned))
+                    .ok_or(Status::Invalid)?;
+                let id = get(&object, "DeviceID", w::CimType::String)?.ok_or(Status::Invalid)?;
+                let mut row = Row::from([("id".into(), id)]);
+                for (method, fields) in [
+                    (
+                        "GetConversionStatus",
+                        &[
+                            ("ConversionStatus", "conversion"),
+                            ("EncryptionPercentage", "encrypted_percent"),
+                        ][..],
+                    ),
+                    (
+                        "GetProtectionStatus",
+                        &[("ProtectionStatus", "protection")][..],
+                    ),
+                    ("GetLockStatus", &[("LockStatus", "lock")][..]),
+                    (
+                        "GetEncryptionMethod",
+                        &[("EncryptionMethod", "algorithm")][..],
+                    ),
+                ] {
+                    budget.check()?;
+                    let mut output = None;
+                    if services
+                        .ExecMethod(
+                            &BSTR::from(path.as_str()),
+                            &BSTR::from(method),
+                            WBEM_GENERIC_FLAG_TYPE(0),
+                            None,
+                            None,
+                            Some(&mut output),
+                            None,
+                        )
+                        .is_err()
+                    {
+                        partial = true;
+                        continue;
+                    }
+                    let Some(output) = output else {
+                        partial = true;
+                        continue;
+                    };
+                    if get(&output, "ReturnValue", w::CimType::Uint32)?.and_then(|v| v.as_u64())
+                        != Some(0)
+                    {
+                        partial = true;
+                        continue;
+                    }
+                    for (property, key) in fields {
+                        let value =
+                            get(&output, property, w::CimType::Uint32)?.and_then(|v| v.as_u64());
+                        if let Some(value) =
+                            value.and_then(|v| super::super::system_values::bitlocker(key, v))
+                        {
+                            row.insert((*key).into(), value);
+                        } else {
+                            partial = true;
+                        }
+                    }
+                }
+                rows.push(row)?;
+            } else if count > 1 {
+                return Err(Status::Invalid);
+            }
+            if status.0 == WBEM_S_FALSE.0 {
+                break;
+            }
+            if status.0 != WBEM_S_NO_ERROR.0 && status.0 != WBEM_S_TIMEDOUT.0 {
+                return Err(Status::Failed);
+            }
+        }
+        if partial {
+            Err(Status::Partial)
+        } else {
+            Ok(())
+        }
     }
 }

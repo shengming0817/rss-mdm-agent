@@ -16,6 +16,8 @@ mod macos;
 mod macos_supervisor;
 #[cfg(windows)]
 mod supervisor;
+#[cfg(any(windows, test))]
+mod system_values;
 #[cfg(test)]
 mod tests;
 #[cfg(any(windows, target_os = "macos", test))]
@@ -41,6 +43,10 @@ pub(crate) fn engines() -> w::NativeEngines {
     {
         use w::NativeEngine::*;
         [
+            WindowsSecurity,
+            WindowsAccounts,
+            WindowsCertificates,
+            WindowsUpdates,
             WindowsWmi,
             WindowsRegistry,
             WindowsCpu,
@@ -90,6 +96,17 @@ pub(crate) fn failure(
         row_count: 0,
         rows: vec![],
         users: None,
+        scan: match &q.definition {
+            w::NativeQueryDefinition::System { query } => {
+                query.scan_mode().map(|mode| w::NativeScanEvidence {
+                    mode,
+                    source: None,
+                    started_at: None,
+                    finished_at: None,
+                })
+            }
+            _ => None,
+        },
     }
 }
 fn diagnostic_limit(p: &w::NativeCollectionPlan) -> usize {
@@ -166,7 +183,7 @@ pub fn run(path: &Path, query: Option<&str>) -> Result<i32, Error> {
                 .get(id)
                 .ok_or(Error::Untrusted)?;
             #[cfg(windows)]
-            let result = windows::execute(q, input.task.deadline);
+            let result = windows::execute(&input, q, input.task.deadline);
             #[cfg(target_os = "macos")]
             let result = macos::execute(&input, q)?;
             serde_json::to_vec(&result).map_err(|_| Error::Protocol)?
@@ -221,6 +238,7 @@ fn hex(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 fn verify_identity(input: &Input) -> Result<(), Error> {
+    input.task.execution.validate(&input.task.plan)?;
     let valid = match (&input.task.execution.target, &input.run_as, &input.session) {
         (
             w::SoftwareExecutionTarget::Device,
@@ -243,8 +261,19 @@ fn verify_identity(input: &Input) -> Result<(), Error> {
         ) => {
             account == active
                 && account.subject.as_str() == identity
-                && account.platform == execution_contract::Platform::Macos
-                && identity != "0"
+                && match (input.task.platform, account.platform) {
+                    (w::TaskPlatform::Windows, execution_contract::Platform::Windows) => {
+                        !matches!(identity.as_str(), "S-1-5-18" | "S-1-5-19" | "S-1-5-20")
+                    }
+                    (w::TaskPlatform::Macos, execution_contract::Platform::Macos) => {
+                        identity != "0"
+                            && crate::account_identity::generated_uid(identity)
+                                .ok()
+                                .flatten()
+                                == input.task.execution.generated_uid
+                    }
+                    _ => false,
+                }
         }
         _ => false,
     };

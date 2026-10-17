@@ -15,17 +15,40 @@ use std::sync::{Arc, Mutex};
 
 #[tokio::test]
 async fn native_capture_survives_lost_ack_and_restart_without_recollection() {
-    capture_recovery(false).await;
+    capture_recovery(0).await;
 }
 #[tokio::test]
 async fn macos_capture_survives_lost_ack_and_restart_without_recollection() {
-    capture_recovery(true).await;
+    capture_recovery(1).await;
 }
-async fn capture_recovery(macos: bool) {
+#[tokio::test]
+async fn system_scan_evidence_survives_lost_ack_without_chunks() {
+    capture_recovery(2).await;
+}
+#[tokio::test]
+async fn certificate_metadata_survives_lost_ack() {
+    capture_recovery(3).await;
+}
+async fn capture_recovery(case: u8) {
+    let macos = case == 1;
     let _budget = crate::scenario_budget::enter();
     let server = Server::new().await;
     if macos {
         server.data.lock().unwrap().native_macos_collection();
+    } else if case == 2 {
+        server.data.lock().unwrap().native_system_collection(
+            w::NativeSystemQuery::WindowsUpdates {
+                section: w::UpdateSection::Available,
+                mode: w::UpdateScanMode::Local,
+            },
+        );
+    } else if case == 3 {
+        server.data.lock().unwrap().native_system_collection(
+            w::NativeSystemQuery::WindowsCertificates {
+                store: w::WindowsCertificateStore::My,
+                user: false,
+            },
+        );
     } else {
         server.data.lock().unwrap().native_collection();
     }
@@ -42,7 +65,7 @@ async fn capture_recovery(macos: bool) {
     };
     let time = server.time.now().unwrap();
     let q = &task.plan.spec().queries["items"];
-    let result = w::NativeCollectionResult {
+    let mut result = w::NativeCollectionResult {
         plan_digest: task.plan_digest,
         collected_at: time,
         queries: [(
@@ -65,10 +88,48 @@ async fn capture_recovery(macos: bool) {
                 ])
                 .into()],
                 users: None,
+                scan: None,
             },
         )]
         .into(),
     };
+    if case >= 2 {
+        let value = result.queries.get_mut("items").unwrap();
+        if case == 2 {
+            value.scan = Some(w::NativeScanEvidence {
+                mode: w::UpdateScanMode::Local,
+                source: Some("wua-source".into()),
+                started_at: None,
+                finished_at: None,
+            });
+            value.rows = (0..4)
+                .map(|i| {
+                    [
+                        ("id".into(), serde_json::json!(format!("update-{i}"))),
+                        ("title".into(), serde_json::json!("x".repeat(65536))),
+                        ("version".into(), serde_json::json!("1")),
+                        ("origin".into(), serde_json::json!("wua-source")),
+                        ("state".into(), serde_json::json!("available")),
+                    ]
+                    .into()
+                })
+                .collect();
+        } else {
+            value.rows = vec![[
+                ("id".into(), serde_json::json!("a".repeat(64))),
+                ("subject".into(), serde_json::json!("device certificate")),
+                ("issuer".into(), serde_json::json!("test issuer")),
+                ("scope".into(), serde_json::json!("device")),
+                ("owner".into(), serde_json::json!("")),
+                ("store".into(), serde_json::json!("my")),
+                ("not_before".into(), serde_json::json!(1)),
+                ("not_after".into(), serde_json::json!(time + 100)),
+            ]
+            .into()];
+        }
+        value.row_count = value.rows.len() as u32;
+        result.validate_for(&task.plan, time).unwrap();
+    }
     let mut input = adapted_plan(false, "device-1", &offer).spec().clone();
     input.request.target.platform = if macos {
         Platform::Macos
@@ -176,6 +237,13 @@ async fn capture_recovery(macos: bool) {
         received["event"]["queries"]["items"]["enumerationComplete"],
         false
     );
+    if case == 2 {
+        assert_eq!(
+            received["event"]["queries"]["items"]["scan"]["source"],
+            "wua-source"
+        );
+        assert!(serde_json::to_vec(received).unwrap().len() > w::OUTPUT_CHUNK_BYTES);
+    }
     drop(data);
     bridge
         .finish(&mut client, offer.task_id(), &app, &caller)

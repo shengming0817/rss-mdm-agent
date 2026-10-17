@@ -68,7 +68,7 @@ pub(super) fn input(q: w::NativeQuery) -> Input {
         }
     };
     let task = w::CollectionTaskSpec {
-        wire_version: 2,
+        wire_version: 3,
         tenant_id: id,
         device_id: "fixture-device".into(),
         platform: w::TaskPlatform::Macos,
@@ -92,6 +92,11 @@ pub(super) fn input(q: w::NativeQuery) -> Input {
         deadline: time + 60,
         plan_digest: plan.digest(),
         execution: w::NativeExecutionBinding {
+            generated_uid: if identity == w::ExecutionIdentity::LoggedInUser {
+                Some("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa".into())
+            } else {
+                None
+            },
             identity,
             context_revision: 1,
             target,

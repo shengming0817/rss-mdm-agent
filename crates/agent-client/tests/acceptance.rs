@@ -401,7 +401,7 @@ fn unsupported_database_and_changed_namespace_are_preserved() {
     let root = Root::new();
     drop(server.client(&root, OpenMode::Create));
     let path = root.path.join("communication.sqlite");
-    for version in [1, 2, 3, 4, 5, 7] {
+    for version in [1, 2, 3, 4, 5, 6, 8] {
         let db = rusqlite::Connection::open(&path).unwrap();
         db.pragma_update(None, "user_version", version).unwrap();
         drop(db);
@@ -466,7 +466,7 @@ async fn prior_communication_schema_preserves_registration_pending_delivery_and_
     drop(client);
     let path = root.path.join("communication.sqlite");
     let db = rusqlite::Connection::open(&path).unwrap();
-    db.pragma_update(None, "user_version", 4).unwrap();
+    db.pragma_update(None, "user_version", 6).unwrap();
     drop(db);
     // Snapshot all existing entries; rejection must not initialize a lock or sidecar.
     let entries = || {

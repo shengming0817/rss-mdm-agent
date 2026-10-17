@@ -106,6 +106,7 @@ async fn native_result_replays_original_chunks_and_rejects_missing_or_conflictin
                 row_count: rows.len() as u32,
                 rows,
                 users: None,
+                scan: None,
             },
         )]
         .into(),

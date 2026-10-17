@@ -561,7 +561,12 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             wire::TaskEvent::CollectionResult(result) => {
                 use sha2::{Digest, Sha256};
                 let bytes = serde_json::to_vec(&result).map_err(|_| Error::Protocol)?;
-                if bytes.len() > wire::OUTPUT_CHUNK_BYTES {
+                let offer = self.stored_offer(task)?;
+                let wire::TaskPayload::Collection(spec) = offer.payload() else {
+                    return Err(Error::Protocol);
+                };
+                result.validate_for(&spec.plan, self.now()?)?;
+                if bytes.len() > wire::OUTPUT_CHUNK_BYTES && !spec.plan.requires_inline() {
                     let manifest = wire::OutputManifest::new(
                         bytes.len().try_into().map_err(|_| Error::Capacity)?,
                         Sha256::digest(&bytes).into(),
