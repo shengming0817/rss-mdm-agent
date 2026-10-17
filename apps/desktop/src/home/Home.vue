@@ -48,58 +48,60 @@ const shortcuts = [
   <div class="computer-home">
     <div class="home-main">
       <section class="device-card" aria-label="我的电脑概览">
-        <div class="device-heading">
-          <div>
-            <h3>工作设备</h3>
-            <p>让日常工作，简单一点。</p>
-          </div>
-          <span class="catalog-count">{{ software.length }} 项软件资源</span>
-        </div>
-        <div class="computer-model">
-          <div
-            class="computer-chassis"
-            role="img"
-            aria-label="银色笔记本电脑示意图"
-          />
-          <div class="computer-screen">
-            <div v-if="software.length" class="screen-apps">
-              <button
-                v-for="(item, index) in software.slice(0, 4)"
-                :key="item.task"
-                type="button"
-                :title="`在软件中心查看 ${item.title}`"
-                @click="emit('navigate', 'software')"
-              >
-                <span class="app-tile" :class="`tile-${index}`"
-                  ><Package :size="22" aria-hidden="true" /></span
-                ><span>{{ item.title }}</span>
-              </button>
-            </div>
-            <div v-else class="screen-welcome">
-              <Monitor :size="30" aria-hidden="true" /><strong
-                >你的工作，从这里开始</strong
-              ><span>软件与工具，触手可及</span>
+        <div class="computer-overview">
+          <div class="computer-model">
+            <div
+              class="computer-chassis"
+              role="img"
+              aria-label="银色笔记本电脑示意图"
+            />
+            <div class="computer-screen">
+              <div v-if="software.length" class="screen-apps">
+                <button
+                  v-for="(item, index) in software.slice(0, 4)"
+                  :key="item.task"
+                  type="button"
+                  :title="`在软件中心查看 ${item.title}`"
+                  @click="emit('navigate', 'software')"
+                >
+                  <span class="app-tile" :class="`tile-${index}`"
+                    ><Package :size="22" aria-hidden="true" /></span
+                  ><span>{{ item.title }}</span>
+                </button>
+              </div>
+              <div v-else class="screen-welcome">
+                <Monitor :size="30" aria-hidden="true" /><strong
+                  >你的工作，从这里开始</strong
+                ><span>软件与工具，触手可及</span>
+              </div>
             </div>
           </div>
+          <dl class="computer-details" aria-label="本机信息">
+            <div>
+              <dt>计算机名</dt>
+              <dd>未读取</dd>
+            </div>
+            <div>
+              <dt>IP 地址</dt>
+              <dd>未读取</dd>
+            </div>
+            <div>
+              <dt>登录用户</dt>
+              <dd>未读取</dd>
+            </div>
+          </dl>
         </div>
         <div class="model-toolbar">
-          <span>{{
-            preview
-              ? "样本目录 · 不代表本机已安装软件"
-              : "可用目录 · 不代表本机已安装软件"
-          }}</span
+          <span
+            >{{ software.length }} 项软件资源 ·
+            {{
+              preview
+                ? "样本目录 · 不代表本机已安装软件"
+                : "可用目录 · 不代表本机已安装软件"
+            }}</span
           ><button type="button" @click="emit('navigate', 'software')">
             管理软件 <ChevronRight :size="13" aria-hidden="true" />
           </button>
-        </div>
-        <div class="device-stats" aria-label="设备信息">
-          <span><i>⌁</i>网络 <small>未读取</small></span
-          ><span><i>▱</i>电池 <small>未读取</small></span
-          ><span><i>▤</i>存储 <small>未读取</small></span
-          ><span
-            ><Monitor :size="14" aria-hidden="true" />显示器
-            <small>未读取</small></span
-          >
         </div>
       </section>
       <section class="home-notice" aria-label="设备状态">
@@ -142,7 +144,7 @@ const shortcuts = [
           ><ChevronRight :size="14" aria-hidden="true" />
         </button>
       </nav>
-      <p class="home-footnote">设备概况尚未接入 · 电脑模型仅作界面示意</p>
+      <p class="home-footnote">本机信息尚未读取 · 电脑模型仅作界面示意</p>
     </div>
     <aside class="home-assistant" aria-label="电脑助手入口">
       <div class="assistant-title">
@@ -211,7 +213,6 @@ const shortcuts = [
   padding: 24px;
   background: color-mix(in srgb, var(--home-bg) 94%, #b7b9d9);
 }
-.device-heading,
 .model-toolbar,
 .assistant-title,
 .assistant-context {
@@ -223,23 +224,31 @@ const shortcuts = [
 .device-card {
   padding: 20px 20px 12px;
 }
-.device-heading h3 {
-  margin: 0;
-  font-size: 17px;
+.computer-overview {
+  width: min(720px, 100%);
+  margin: 0 auto;
 }
-.device-heading p {
-  margin: 6px 0 0;
+.computer-details {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  width: 82.5%;
+  margin: 10px auto 24px;
+  text-align: center;
+}
+.computer-details dt {
+  margin-bottom: 6px;
+  color: var(--home-muted);
   font-size: 11px;
-  color: var(--home-muted);
 }
-.catalog-count {
-  font-size: 10px;
-  color: var(--home-muted);
-  white-space: nowrap;
+.computer-details dd {
+  margin: 0;
+  font-size: 13px;
+  overflow-wrap: anywhere;
 }
 .computer-model {
   position: relative;
-  width: min(90%, 720px, max(280px, calc((100dvh - 450px) * 1.933333)));
+  width: 100%;
   aspect-ratio: 1508/780;
   container-type: inline-size;
   margin: 0 auto;
@@ -350,30 +359,6 @@ const shortcuts = [
   color: var(--rss-color-text);
   padding: 6px 9px;
   font-size: 10px;
-}
-.device-stats {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
-  border-top: 1px solid var(--rss-color-border);
-  padding-top: 13px;
-  color: var(--home-muted);
-}
-.device-stats > span {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 5px;
-  font-size: 10px;
-}
-.device-stats i {
-  font-style: normal;
-  font-size: 17px;
-  color: #819fbd;
-}
-.device-stats small {
-  font-size: 9px;
-  opacity: 0.8;
 }
 .home-notice {
   display: flex;
@@ -638,9 +623,6 @@ button:not(:disabled):hover {
   }
 }
 @media (max-width: 500px) {
-  .computer-model {
-    width: 100%;
-  }
   .home-main {
     padding: 18px 12px;
   }
@@ -655,9 +637,6 @@ button:not(:disabled):hover {
   }
   .home-shortcuts small {
     font-size: 10px;
-  }
-  .device-stats {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .home-prompts {
     grid-template-columns: 1fr;
