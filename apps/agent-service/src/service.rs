@@ -1126,6 +1126,10 @@ impl Core {
                     | Request::ConfirmPolicy { .. }
                     | Request::PolicyStatus { .. },
                 ) => Err(Error::Denied),
+                Some(Request::DeviceOverview {}) => Ok(crate::device_overview::read(
+                    &command.subject,
+                    command.session,
+                )),
                 Some(Request::ServiceStatus {}) => {
                     let readiness = if !self.host.identity_ready() {
                         execution_ipc::host::Readiness::NotReady

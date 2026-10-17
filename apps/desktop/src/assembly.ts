@@ -16,6 +16,7 @@ import type { ServicePort, nativeHost } from "./settings/native";
 import type { AssistantServices } from "./assistant/controller";
 import type { SelfServicePort } from "./self-service/types";
 export type FixtureEnvironment = {
+  device: import("./home/device").DeviceOverviewPort;
   kind: "fixture";
   identity: { read(): Promise<UserContext> };
   host: NonNullable<ReturnType<typeof nativeHost>>;
@@ -36,6 +37,7 @@ export function assertFixtureAssembly(input: {
     !input.selfServicePort.execute ||
     !input.selfServicePort.cancel ||
     !input.environment.identity?.read ||
+    !input.environment.device?.read ||
     !input.environment.host?.read ||
     !input.environment.host.restart ||
     !input.environment.host.export ||

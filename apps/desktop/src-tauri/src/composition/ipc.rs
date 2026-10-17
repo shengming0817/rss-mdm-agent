@@ -49,7 +49,7 @@ macro_rules! commands {
             struct Command<I: schemars::JsonSchema, O: schemars::JsonSchema> { input: I, output: O }
             #[derive(schemars::JsonSchema)]
             #[allow(dead_code)]
-            struct SelfServiceCommands { $($name: Command<$input, $output>),+, appearance_snapshot: Command<(), AppearanceSnapshot> }
+            struct SelfServiceCommands { $($name: Command<$input, $output>),+, appearance_snapshot: Command<(), AppearanceSnapshot>, device_overview: Command<(), execution_ipc::host::DeviceOverview> }
             schemars::generate::SchemaSettings::draft07().for_serialize().into_generator().into_root_schema_for::<SelfServiceCommands>()
         }
     }
@@ -339,6 +339,26 @@ pub async fn agent_import_registration<R: tauri::Runtime>(
         .map(Some)
 }
 #[tauri::command]
+pub async fn device_overview() -> Result<execution_ipc::host::DeviceOverview> {
+    static READING: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
+    let permit = READING
+        .try_acquire()
+        .map_err(|_| error("device_busy", "设备信息读取中"))?;
+    let read = tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        let client = execution_ipc::host::ServiceClient::installed()
+            .map_err(|_| error("service_unavailable", "本机服务不可用"))?;
+        match client.request(execution_ipc::host::Request::DeviceOverview {}) {
+            Ok(execution_ipc::host::Reply::DeviceOverview { value }) => Ok(value),
+            _ => Err(error("device_unavailable", "设备信息读取失败")),
+        }
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(5), read)
+        .await
+        .map_err(|_| error("device_timeout", "设备信息读取超时"))?
+        .map_err(|_| error("device_unavailable", "设备信息读取失败"))?
+}
+#[tauri::command]
 pub async fn appearance_snapshot<R: tauri::Runtime>(
     window: tauri::WebviewWindow<R>,
 ) -> Result<AppearanceSnapshot> {
@@ -346,6 +366,7 @@ pub async fn appearance_snapshot<R: tauri::Runtime>(
 }
 pub fn register<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
     builder.invoke_handler(tauri::generate_handler![
+        device_overview,
         appearance_snapshot,
         development_assembly,
         select_device,
@@ -484,6 +505,7 @@ mod tests {
             "agent_import_registration",
             "agent_cancel_registration",
             "appearance_snapshot",
+            "device_overview",
             "ai_host_status",
             "ai_restart_host",
             "ai_export_diagnostics",

@@ -554,10 +554,13 @@ impl execution_ipc::host::Handler for Diagnostic {
         request: execution_ipc::host::Request,
     ) -> execution_ipc::host::Reply {
         use execution_ipc::host::{Reply, Request, ServiceStatus};
-        if peer.authenticate(&self.policy).is_err() {
+        let Ok(subject) = peer.authenticate(&self.policy) else {
             return Reply::Rejected;
-        }
+        };
         match request {
+            Request::DeviceOverview {} if peer.session_binding().is_ok() => {
+                crate::device_overview::read(&subject, peer.session())
+            }
             Request::ServiceStatus {} => Reply::ServiceStatus {
                 value: ServiceStatus::new(self.readiness.clone()),
             },

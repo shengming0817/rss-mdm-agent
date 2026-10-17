@@ -2,7 +2,7 @@
 use execution_contract::{Digest, Id, RequestId, VersionedRef};
 use serde::{Deserialize, Serialize};
 /// Current desktop/system IPC. No negotiation or legacy parser exists.
-pub const IPC_VERSION: u8 = 15;
+pub const IPC_VERSION: u8 = 16;
 /// Current protected installation document format.
 pub const DEPLOYMENT_VERSION: u32 = 5;
 
@@ -129,6 +129,17 @@ pub struct RegistrationContext {
     pub tenant_id: String,
     /// Safe snapshot of the original machine operation.
     pub status: RegistrationStatus,
+}
+/// Bounded local device facts for the authenticated desktop session; never an execution grant.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, schemars::JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DeviceOverview {
+    /// OS computer name, absent when the platform read failed.
+    pub computer_name: Option<String>,
+    /// Up-interface unicast addresses; empty means no address, absent means read failed.
+    pub ip_addresses: Option<Vec<String>>,
+    /// OS login name of the requesting interactive session, never a product account.
+    pub login_user: Option<String>,
 }
 /// Closed presentation combining local installation checks and authenticated service facts.
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema, PartialEq, Eq)]
@@ -635,6 +646,8 @@ pub enum Request {
     },
     /// Read safe installation and execution readiness; never execution permission.
     ServiceStatus {},
+    /// Read local identity and network facts for the authenticated desktop peer.
+    DeviceOverview {},
     /// Read public machine registration progress.
     RegistrationStatus {},
     /// Read trusted machine coordinates without disclosing credentials.
@@ -701,6 +714,11 @@ struct Envelope {
     rename_all_fields = "camelCase"
 )]
 pub enum Reply {
+    /// Current bounded local facts; no secrets, stable IDs or enterprise identity.
+    DeviceOverview {
+        /// Projection owned by the installed system service.
+        value: DeviceOverview,
+    },
     /// Known pre-submission rejection, distinct from an ambiguous response loss.
     OperationRejected {
         /// Closed, non-sensitive diagnosis.
@@ -1001,6 +1019,28 @@ pub fn run(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn device_overview_request_cannot_supply_a_login_or_network_target() {
+        let request = super::encode(super::Request::DeviceOverview {}).unwrap();
+        let mut value: serde_json::Value = serde_json::from_slice(&request).unwrap();
+        assert_eq!(value["version"], super::IPC_VERSION);
+        for field in ["subject", "session", "address"] {
+            value["request"][field] = serde_json::json!("spoofed");
+            assert!(serde_json::from_value::<super::Envelope>(value.clone()).is_err());
+            value["request"].as_object_mut().unwrap().remove(field);
+        }
+        let overview = super::DeviceOverview {
+            computer_name: Some("Studio Mac".into()),
+            ip_addresses: Some(vec!["192.0.2.24".into()]),
+            login_user: Some("studio".into()),
+        };
+        let bytes = super::encode_reply(super::Reply::DeviceOverview {
+            value: overview.clone(),
+        });
+        assert!(
+            matches!(super::decode_reply(&bytes), Ok(super::Reply::DeviceOverview {value}) if value == overview)
+        );
+    }
     #[test]
     fn native_access_is_closed_and_retirement_does_not_downgrade_user() {
         let base =

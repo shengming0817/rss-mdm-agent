@@ -115,6 +115,7 @@ fn main() {
             "agent_import_registration",
             "agent_cancel_registration",
             "appearance_snapshot",
+            "device_overview",
             "development_assembly",
             "ai_host_status",
             "ai_restart_host",
