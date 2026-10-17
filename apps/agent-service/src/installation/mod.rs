@@ -30,44 +30,12 @@ use windows as platform;
 #[cfg(windows)]
 pub use windows::worker;
 
-#[derive(Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct Bootstrap {
-    #[schemars(range(min = 1, max = 1))]
-    pub version: u8,
-    #[schemars(regex(pattern = "^https://"), length(max = 2048))]
-    pub origin: String,
-    #[schemars(
-        with = "String",
-        regex(
-            pattern = "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
-        )
-    )]
-    pub tenant: uuid::Uuid,
-    pub target: Target,
-    #[schemars(regex(pattern = "^[0-9a-f]{64}$"))]
-    pub installation_artifact: String,
-    pub grant: GrantImport,
-}
-impl Bootstrap {
-    pub fn validate(&self, deployment: &Deployment, now: i64) -> Result<(), Error> {
-        if self.version != 1
-            || self.origin != deployment.origin
-            || self.tenant != deployment.tenant
-            || self.target != Target::current().map_err(|_| Error::Unsupported)?
-            || !digest_valid(&self.installation_artifact)
-            || self.installation_artifact != deployment.installation_artifact
-        {
-            return Err(Error::Identity);
-        }
-        self.grant.validate(deployment.network()?.platform, now)
-    }
-}
 /// Public fixed package identity. No device identity, grant or secret is part of this candidate.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Candidate {
     pub version: u8,
+    pub publication_sha256: String,
     pub product_version: String,
     pub target: Target,
     pub root: PathBuf,
@@ -114,7 +82,7 @@ impl Candidate {
             return Err(Error::Identity);
         }
         let candidate: Self = serde_json::from_slice(&bytes).map_err(|_| Error::Configuration)?;
-        if candidate.version != 2
+        if candidate.version != 3
             || candidate.service.path != deployment.service.path
             || candidate.origin != deployment.origin
             || candidate.tenant != deployment.tenant
@@ -132,12 +100,13 @@ impl Candidate {
         Ok((candidate, hash(&bytes)))
     }
     fn validate(&self) -> Result<(), Error> {
-        if self.version != 2
+        if self.version != 3
             || self.target != Target::current().map_err(|_| Error::Unsupported)?
             || !self.root.is_absolute()
             || self.tenant.is_nil()
             || self.product_version.is_empty()
             || self.product_version.len() > 64
+            || !digest_valid(&self.publication_sha256)
             || !digest_valid(&self.runtime_sha256)
             || !self.service.path.starts_with(&self.root)
             || !self.desktop.path.starts_with(&self.root)
@@ -287,31 +256,34 @@ fn retire_payload(candidate: &Candidate) -> Result<PathBuf, Error> {
     }
     Ok(target)
 }
-pub fn initialize(
-    deployment: &Deployment,
-    envelope: &Path,
-    secret: &rss_mdm_agent_wire::runtime::Secret,
-) -> Result<(), Error> {
-    let value: Bootstrap = serde_json::from_slice(
-        &installation_security::read_protected(envelope).map_err(|_| Error::Configuration)?,
-    )
-    .map_err(|_| Error::Configuration)?;
-    value.validate(deployment, SystemClock::new()?.now()?)?;
-    tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|_| Error::Unavailable)?
-        .block_on(deployment.initialize(value.grant, secret))
-}
-pub fn stdin_secret() -> Result<rss_mdm_agent_wire::runtime::Secret, Error> {
-    let mut bytes = zeroize::Zeroizing::new(Vec::new());
-    std::io::stdin().take(65).read_to_end(&mut bytes)?;
-    rss_mdm_agent_wire::runtime::Secret::parse(
-        std::str::from_utf8(&bytes)
-            .map_err(|_| Error::Identity)?
-            .trim(),
-    )
-    .map_err(|_| Error::Identity)
+/// Immutable publication identity retained in the protected local installation manifest.
+pub(crate) fn publication_digest(deployment: &Deployment) -> Result<[u8; 32], Error> {
+    let path = deployment
+        .service
+        .path
+        .parent()
+        .ok_or(Error::Configuration)?
+        .join("candidate.json");
+    let manifest = installation_security::read_protected(&path).map_err(|_| Error::Identity)?;
+    if hash(&manifest) != deployment.installation_artifact {
+        return Err(Error::Identity);
+    }
+    let candidate: Candidate =
+        serde_json::from_slice(&manifest).map_err(|_| Error::Configuration)?;
+    if candidate.version != 3
+        || candidate.origin != deployment.origin
+        || candidate.tenant != deployment.tenant
+        || candidate.service.path != deployment.service.path
+        || !digest_valid(&candidate.publication_sha256)
+    {
+        return Err(Error::Identity);
+    }
+    let bytes = installation_security::read_protected(&candidate.root.join("publication.json"))
+        .map_err(|_| Error::Identity)?;
+    if hash(&bytes) != candidate.publication_sha256 {
+        return Err(Error::Identity);
+    }
+    Ok(Sha256::digest(&bytes).into())
 }
 /// Every native utility uses a fixed absolute path and bounded execution; output is never logged.
 fn utility(path: &Path, args: &[OsString]) -> Result<(std::process::ExitStatus, Vec<u8>), Error> {
@@ -489,14 +461,4 @@ fn verify_runtime_files(root: &Path, target: Target) -> Result<(), Error> {
         }
     }
     Ok(())
-}
-
-/// Local envelope schema derived from the decoder and the protocol owner's receipt definition.
-pub fn bootstrap_schema() -> Result<serde_json::Value, Error> {
-    let mut value =
-        serde_json::to_value(schemars::schema_for!(Bootstrap)).map_err(|_| Error::Configuration)?;
-    value["$id"] = "urn:rss-mdm-agent:installation-bootstrap:1".into();
-    value["x-rss-enroll-schema-fingerprint"] =
-        rss_mdm_agent_wire::enroll::SCHEMA_FINGERPRINT.into();
-    Ok(value)
 }

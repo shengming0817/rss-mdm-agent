@@ -31,14 +31,28 @@ export function nativeHost() {
 export type ServicePort = {
   read(): Promise<ServiceView>;
   registration(): Promise<RegistrationStatus>;
-  requestRegistration(): Promise<RegistrationStatus>;
+  requestRegistration(
+    organizationId?: string,
+    login?: string,
+  ): Promise<RegistrationStatus>;
+  importRegistration(): Promise<RegistrationStatus | null>;
 };
 export function nativeService(): ServicePort | undefined {
   if (!isTauri()) return undefined;
   return {
     read: () => invoke<ServiceView>("execution_service_status"),
     registration: () => invoke<RegistrationStatus>("agent_registration_status"),
-    requestRegistration: () =>
-      invoke<RegistrationStatus>("agent_request_registration"),
+    async requestRegistration(organizationId, login) {
+      try {
+        return await invoke<RegistrationStatus>("agent_request_registration", {
+          organizationId,
+          login,
+        });
+      } finally {
+        await refreshAccount();
+      }
+    },
+    importRegistration: () =>
+      invoke<RegistrationStatus | null>("agent_import_registration"),
   };
 }

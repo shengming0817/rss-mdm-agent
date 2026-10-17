@@ -24,14 +24,15 @@ it("requests one fixed machine registration and refreshes its original public pr
       structuredClone(serviceViews.registrationRequired) as ServiceView,
     registration: async () => state,
     requestRegistration: request,
+    importRegistration: async () => null,
   };
   const wrapper = mount(LocalService, { props: { port, fixture: true } });
   await flushPromises();
   const button = (text: string) =>
     wrapper.findAll("button").find((b) => b.text() === text)!;
-  await button("发起设备注册").trigger("click");
+  await button("登录并注册此设备").trigger("click");
   await flushPromises();
-  expect(request.mock.calls).toEqual([[]]);
+  expect(request.mock.calls).toEqual([[undefined, undefined]]);
   expect(wrapper.text()).toContain("public-grant");
   state = { phase: "rejected", registered: true, credential: "retired" };
   await button("重新查询").trigger("click");

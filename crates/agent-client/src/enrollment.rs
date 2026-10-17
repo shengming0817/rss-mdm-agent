@@ -15,6 +15,8 @@ pub enum EnrollmentPhase {
     Unregistered,
     /// Exact request preparation or grant submission is pending.
     Preparing,
+    /// Original configuration allocation must be queried or exactly replayed.
+    ConfigurationUnknown,
     /// Waiting for server-held user authorization.
     AwaitingAuthorization,
     /// Authorized grant can be consumed by its original certificate operation.
@@ -38,7 +40,7 @@ pub enum EnrollmentPhase {
 pub struct EnrollmentStatus {
     /// Closed progress phase.
     pub phase: EnrollmentPhase,
-    /// Exact grant/request identity for browser authorization.
+    /// Exact grant/request identity for native user authorization.
     pub grant_id: Option<Uuid>,
     /// Original authorization deadline, when known.
     pub expires_at: Option<i64>,
@@ -136,6 +138,9 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                     EnrollmentPhase::Authorized
                 }
                 Some(p) if p.grant.is_some() => EnrollmentPhase::AwaitingAuthorization,
+                Some(p) if p.configuration.as_ref().is_some_and(|c| c.submitted) => {
+                    EnrollmentPhase::ConfigurationUnknown
+                }
                 Some(_) => EnrollmentPhase::Preparing,
                 None if state.active.is_some() => EnrollmentPhase::Active,
                 None => EnrollmentPhase::Unregistered,
@@ -177,12 +182,13 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             public_key_fingerprint: fingerprint,
         })
     }
-    fn prepare_enrollment(
+    pub(crate) fn prepare_enrollment(
         &mut self,
         purpose: Purpose,
         operation: Uuid,
         secret: String,
         capabilities: Vec<runtime::Capability>,
+        configuration: Option<crate::configuration::ConfigurationExchange>,
     ) -> Result<(), Error> {
         if operation.is_nil()
             || secret.is_empty()
@@ -202,7 +208,9 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             }
             return self.prepare_key();
         }
-        if purpose == Purpose::Authorization && state.active.is_some() {
+        if matches!(purpose, Purpose::Authorization | Purpose::Configuration)
+            && state.active.is_some()
+        {
             return Err(Error::Conflict);
         }
         let profile = enroll::RuntimeProfile {
@@ -226,6 +234,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             candidate: None,
             failure: None,
             expected: state.active.as_ref().map(|a| a.receipt.runtime.clone()),
+            configuration,
         });
         self.store.put("identity", &state)?;
         self.prepare_key()
@@ -258,7 +267,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         }
         Ok(Some(pending))
     }
-    /// Start or resume a fixed machine-owned browser authorization request.
+    /// Start or resume a fixed machine-owned native user authorization request.
     pub async fn request_authorization(
         &mut self,
         capabilities: Vec<runtime::Capability>,
@@ -272,7 +281,21 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         &mut self,
         capabilities: Vec<runtime::Capability>,
     ) -> Result<EnrollmentStatus, Error> {
-        let state = self.identity_state()?;
+        let mut state = self.identity_state()?;
+        if let Some(pending) = &mut state.pending {
+            if let Some(configuration) = &pending.configuration {
+                // Before the first allocation request, explicit user login may reuse this
+                // machine key/operation. Unknown settlement can never take this path.
+                if configuration.submitted || pending.grant.is_some() || pending.candidate.is_some()
+                {
+                    return Err(Error::Conflict);
+                }
+                pending.configuration = None;
+                pending.purpose = Purpose::Authorization;
+                pending.failure = None;
+                self.store.put("identity", &state)?;
+            }
+        }
         let operation = state
             .pending
             .as_ref()
@@ -283,56 +306,10 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             operation,
             reference.clone(),
             capabilities,
+            None,
         )?;
         self.secrets.create_secret(&reference)?;
         self.enrollment_status()
-    }
-    /// Read-only admission before importing any bootstrap secret or creating a key.
-    pub fn validate_grant_import(
-        &self,
-        material: &GrantImport,
-        secret_reference: &str,
-        capabilities: &[runtime::Capability],
-    ) -> Result<(), Error> {
-        material.validate(self.store.cfg.platform, self.clock.now()?)?;
-        let state = self.identity_state()?;
-        if state.active.is_some() {
-            return Err(Error::Conflict);
-        }
-        if let Some(p) = state.pending {
-            if p.purpose != Purpose::Import
-                || p.operation != material.operation_id
-                || p.secret_reference != secret_reference
-                || p.profile.capabilities != capabilities
-                || p.grant.as_ref().is_some_and(|g| g != &material.grant)
-            {
-                return Err(Error::Conflict);
-            }
-        }
-        Ok(())
-    }
-    /// Import an explicit grant without replacing existing identity or unknown operations.
-    pub fn import_grant(
-        &mut self,
-        material: GrantImport,
-        secret_reference: &str,
-        capabilities: Vec<runtime::Capability>,
-    ) -> Result<(), Error> {
-        self.validate_grant_import(&material, secret_reference, &capabilities)?;
-        self.secrets.resolve(secret_reference)?;
-        self.prepare_enrollment(
-            Purpose::Import,
-            material.operation_id,
-            secret_reference.into(),
-            capabilities,
-        )?;
-        let mut state = self.identity_state()?;
-        let p = state.pending.as_mut().ok_or(Error::Identity)?;
-        if p.grant.as_ref().is_some_and(|g| *g != material.grant) {
-            return Err(Error::Conflict);
-        }
-        p.grant = Some(material.grant);
-        self.store.put("identity", &state)
     }
     /// Admit an explicit administrator recovery grant without discarding registration or pending intent.
     pub fn validate_recovery_import(
@@ -369,6 +346,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             material.operation_id,
             reference.into(),
             capabilities,
+            None,
         )?;
         let mut state = self.identity_state()?;
         state.pending.as_mut().ok_or(Error::Storage)?.grant = Some(material.grant);
@@ -399,16 +377,31 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             .as_ref()
             .map_or_else(Uuid::new_v4, |p| p.operation);
         let reference = format!("bootstrap-{operation}");
-        self.prepare_enrollment(Purpose::Renewal, operation, reference.clone(), capabilities)?;
+        self.prepare_enrollment(
+            Purpose::Renewal,
+            operation,
+            reference.clone(),
+            capabilities,
+            None,
+        )?;
         self.secrets.create_secret(&reference)?;
         self.drive_enrollment().await?;
         self.enrollment_status()
     }
-    async fn enrollment_json<T: serde::de::DeserializeOwned>(
+    pub(crate) async fn enrollment_json<T: serde::de::DeserializeOwned>(
         &self,
         http: &reqwest::Client,
         path: &str,
         body: &impl Serialize,
+    ) -> Result<T, Error> {
+        self.enrollment_response(http, path, body, true).await
+    }
+    pub(crate) async fn enrollment_response<T: serde::de::DeserializeOwned>(
+        &self,
+        http: &reqwest::Client,
+        path: &str,
+        body: &impl Serialize,
+        record_failure: bool,
     ) -> Result<T, Error> {
         let url = self
             .store
@@ -424,7 +417,9 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         let (status, bytes) = json_transport(request, self.store.cfg.limits.response_bytes).await?;
         if !status.is_success() {
             let error: enroll::ErrorBody = decode(&bytes)?;
-            self.identity_failure(error.code)?;
+            if record_failure {
+                self.identity_failure(error.code)?;
+            }
             return Err(crate::identity::enrollment_error(error.code));
         }
         decode(&bytes)
@@ -445,7 +440,9 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                 platform: self.store.cfg.platform,
                 csr: p.csr.clone().ok_or(Error::Storage)?,
             };
-            let grant: enroll::GrantReceipt = if p.purpose == Purpose::Renewal {
+            let grant: enroll::GrantReceipt = if p.purpose == Purpose::Configuration {
+                self.exchange_configuration(&mut p, &bootstrap).await?
+            } else if p.purpose == Purpose::Renewal {
                 if self.restore_runtime_transport().is_ok() {
                     self.enrollment_json(&self.http, "renewal-grants", &request)
                         .await?

@@ -1140,9 +1140,12 @@ impl Core {
                     self.stopping = true;
                     Ok(Reply::Unavailable)
                 }
-                Some(Request::RegistrationStatus {} | Request::RequestRegistration {}) => {
-                    Ok(Reply::Rejected)
-                }
+                Some(
+                    Request::RegistrationStatus {}
+                    | Request::RequestRegistration {}
+                    | Request::RegistrationContext {}
+                    | Request::ImportRegistration { .. },
+                ) => Ok(Reply::Rejected),
                 Some(Request::Tasks { after }) => {
                     let mut value = self
                         .app

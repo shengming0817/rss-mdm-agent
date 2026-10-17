@@ -312,6 +312,52 @@ impl EnterpriseSession {
         })
     }
 
+    pub(super) fn matches_registration(&self, origin: &str, tenant: &str) -> bool {
+        self.organization.origin == origin && self.organization.tenant_id == tenant
+    }
+    /// Authorize only a machine request obtained through authenticated local IPC.
+    pub(super) async fn authorize_registration(&mut self, id: uuid::Uuid) -> Result<()> {
+        self.verify().await?;
+        if id.is_nil() {
+            return Err(invalid());
+        }
+        let response = self
+            .client
+            .post(format!(
+                "{}/api/v1/agent-requests/{id}/authorize",
+                self.organization.origin
+            ))
+            .header(header::COOKIE, &self.cookie)
+            .header(header::ORIGIN, &self.organization.origin)
+            .header("x-identity-request", "1")
+            .header("x-csrf-token", &self.csrf)
+            // Stable per-request authorization intent; retries never invent another operation.
+            .json(&json!({"operationId": id}))
+            .send()
+            .await
+            .map_err(|_| failure(Stage::Authorization, Reason::Unavailable))?;
+        let status = response.status().as_u16();
+        if !response.status().is_success() {
+            return Err(if status == 401 {
+                error(
+                    "registration_authentication_required",
+                    "企业会话已失效，请重新登录",
+                )
+            } else if status == 403 {
+                error("registration_forbidden", "当前账号没有注册资格或额度")
+            } else {
+                status_error(Stage::Authorization, status)
+            });
+        }
+        let grant: rss_mdm_agent_wire::enroll::GrantReceipt =
+            serde_json::from_value(body(response, Stage::Authorization).await?)
+                .map_err(|_| failure(Stage::Authorization, Reason::Contract))?;
+        if grant.grant_id != id {
+            return Err(failure(Stage::Authorization, Reason::Contract));
+        }
+        Ok(())
+    }
+
     pub async fn login(organization: Organization, login: &str, password: String) -> Result<Self> {
         if login.is_empty() || login.len() > 256 || password.is_empty() || password.len() > 16384 {
             return Err(failure(Stage::Login, Reason::Denied));
@@ -970,6 +1016,78 @@ pub(super) mod http_tests {
             "POST /api/v1/identity/tenants/{TENANT}/session/logout "
         )));
         assert!(requests[3].contains("csrf-canary"));
+    }
+    #[tokio::test]
+    async fn native_registration_authorization_sends_stable_intent_only_to_the_user_api() {
+        let id = Uuid::new_v4();
+        let grant = json!({"wireVersion":1,"grantId":id,"state":"available","platform":"macos","expiresAt":9999999999i64});
+        let (organization, task) = server(vec![
+            (200, identity()),
+            (200, identity()),
+            (200, access()),
+            (200, identity()),
+            (200, access()),
+            (200, grant),
+        ])
+        .await;
+        let mut session = EnterpriseSession::login_with_client(
+            Client::new(),
+            organization.clone(),
+            "Alice",
+            "password-canary".into(),
+        )
+        .await
+        .unwrap();
+        assert!(session.matches_registration(&organization.origin, TENANT));
+        assert!(!session.matches_registration("https://foreign.example", TENANT));
+        session.authorize_registration(id).await.unwrap();
+        let requests = task.await.unwrap();
+        let request = &requests[5];
+        assert!(request.starts_with(&format!("POST /api/v1/agent-requests/{id}/authorize ")));
+        assert!(request.contains(&format!("\"operationId\":\"{id}\"")));
+        assert!(request.contains("csrf-canary"));
+        for forbidden in [
+            "password-canary",
+            "lifetimeSeconds",
+            "quantity",
+            "unlimited",
+        ] {
+            assert!(!request.contains(forbidden));
+        }
+    }
+    #[tokio::test]
+    async fn registration_denial_is_not_reported_as_successful_device_activation() {
+        for (status, code) in [
+            (401, "registration_authentication_required"),
+            (403, "registration_forbidden"),
+        ] {
+            let (organization, task) = server(vec![
+                (200, identity()),
+                (200, identity()),
+                (200, access()),
+                (200, identity()),
+                (200, access()),
+                (status, json!({})),
+            ])
+            .await;
+            let mut session = EnterpriseSession::login_with_client(
+                Client::new(),
+                organization,
+                "Alice",
+                "password-canary".into(),
+            )
+            .await
+            .unwrap();
+            assert_eq!(
+                session
+                    .authorize_registration(Uuid::new_v4())
+                    .await
+                    .unwrap_err()
+                    .code,
+                code
+            );
+            assert_eq!(task.await.unwrap().len(), 6);
+        }
     }
     #[tokio::test]
     async fn authentication_rejects_wrong_tenant_or_principal() {

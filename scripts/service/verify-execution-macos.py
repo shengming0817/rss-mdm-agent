@@ -1361,7 +1361,11 @@ def main():
         if not info['origin'].startswith('https://'):
             raise RuntimeError('controlled participant must provide direct TLS, without an HTTP proxy')
         (lab / 'tls.pem').write_text(info['caPem'])
-        grant = command('grant')
+        publication = dict(wireVersion=1, tenantId=info['tenant'], target=dict(platform='macos', architecture='aarch64'),
+                           version='controlled', origin=info['origin'].rstrip('/'), signingKeys={'test':info['key']},
+                           packaging=dict(kind='macos_pkg',team='controlled-development',notarization_evidence='not-notarized-controlled-test'))
+        publication_bytes = (json.dumps(publication,sort_keys=True)+'\n').encode()
+        grant = command('configuration',candidateSha256=list(hashlib.sha256(publication_bytes).digest()))
         tag = uuid.uuid4().hex
         protected = Path('/Library/Application Support/RSS MDM Agent') / ('verification-' + tag)
         binary, config = protected / 'rss-execution-service', protected / 'execution.json'
@@ -1401,13 +1405,19 @@ config['execution']['interpreters']=[dict(profile='posix_sh',image=artifact('/bi
 config['execution']['managers']=[dict(executor='package_installer',image=artifact('/usr/sbin/installer'))]
 (root/'ca.pem').write_bytes(%r); os.chmod(root/'ca.pem',0o644)
 grant=json.loads(%r)
-envelope=dict(version=1,origin=config['origin'],tenant=config['tenant'],target='macos-arm64',installation_artifact=config['installation_artifact'],grant=grant)
-(root/'grant.json').write_text(json.dumps(envelope)); os.chmod(root/'grant.json',0o600)
+publication=%r
+(root/'publication.json').write_bytes(publication);os.chmod(root/'publication.json',0o644)
+candidate=dict(version=3,publication_sha256=hashlib.sha256(publication).hexdigest(),product_version='controlled',target='macos-arm64',
+    root=str(root),service=config['service'],desktop=config['service'],runtime_root=str(root/'runtime'),runtime_sha256='0'*64,
+    origin=config['origin'],tenant=config['tenant'],signing_keys=config['signing_keys'],ca_pem=%r,signing_mode='development')
+manifest=(json.dumps(candidate,sort_keys=True)+'\\n').encode();(root/'candidate.json').write_bytes(manifest);os.chmod(root/'candidate.json',0o644)
+config['installation_artifact']=hashlib.sha256(manifest).hexdigest()
+(root/'grant.json').write_text(json.dumps(grant)); os.chmod(root/'grant.json',0o600)
 path=root/'execution.json';path.write_text(json.dumps(config));os.chmod(path,0o644)
-subprocess.run([str(binary),'--config',str(path),'--initialize',str(root/'grant.json')],input='AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',text=True,check=True)
+subprocess.run([str(binary),'--installation','import','--config',str(path),'--configuration',str(root/'grant.json')],text=True,check=True)
 subprocess.run(%r,check=True)
 instrument_service_diagnostics(root,binary,path)
-''' % (str(protected), str(args.binary.resolve()), hashlib.sha256(args.binary.read_bytes()).hexdigest(), deployment, str(os.geteuid()), str(os.geteuid()), (lab / 'tls.pem').read_bytes(), json.dumps(grant), frozen_installer(system_installer_source, ['install','--scope','system','--binary',str(binary),'--config',str(config)])))
+''' % (str(protected), str(args.binary.resolve()), hashlib.sha256(args.binary.read_bytes()).hexdigest(), deployment, str(os.geteuid()), str(os.geteuid()), (lab / 'tls.pem').read_bytes(), json.dumps(grant), publication_bytes, info['caPem'], frozen_installer(system_installer_source, ['install','--scope','system','--binary',str(binary),'--config',str(config)])))
         if args.desktop:
             # Extend this same installation owner, retaining its protected binary/config checks.
             contents = setup.read_text()
@@ -1423,7 +1433,7 @@ config['registration_clients']['images']=[artifact(desktop)]
 fd=os.open(default,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o644)
 with os.fdopen(fd,'w') as stream: json.dump(config,stream); stream.flush(); os.fsync(stream.fileno())
 """ % str(default_config)
-            initializer = "subprocess.run([str(binary),'--config',str(path),'--initialize',str(root/'grant.json')],input='AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',text=True,check=True)\n"
+            initializer = "subprocess.run([str(binary),'--installation','import','--config',str(path),'--configuration',str(root/'grant.json')],text=True,check=True)\n"
             contents = contents.replace(initializer, '')
             setup.write_text(contents)
         security = refresh = diagnostics = refresh_preflight = None
@@ -1523,7 +1533,7 @@ from pathlib import Path
 p=plistlib.loads(Path('/Library/LaunchDaemons/com.rss-mdm.agent.execution.plist').read_bytes())
 assert p['ProgramArguments']==%r, 'initialization registration owner mismatch'
 try:
-    subprocess.run(%r,input='AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',text=True,check=True,capture_output=True)
+    subprocess.run(%r,text=True,check=True,capture_output=True)
 except subprocess.CalledProcessError as error:
     root=Path(%r); diagnostic={'phase':'initialize','error':error.stderr.strip(),'entries':[],'databases':{}}
     for leaf in ['','identity-binding','execution-initialized','communication','communication/communication.sqlite','execution.sqlite','secrets']:
@@ -1540,7 +1550,7 @@ except subprocess.CalledProcessError as error:
             db.close()
     print(json.dumps(diagnostic));raise
 subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.execution'],check=True)
-""" % ([str(binary),'--config',str(config)],[str(binary),'--config',str(config),'--initialize',str(protected/'grant.json')],str(protected/'state')))
+""" % ([str(binary),'--config',str(config)],[str(binary),'--installation','import','--config',str(config),'--configuration',str(protected/'grant.json')],str(protected/'state')))
         restart = lab/'restart.py'
         restart.write_text("""import os,plistlib,subprocess
 from pathlib import Path

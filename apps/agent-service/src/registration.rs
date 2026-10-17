@@ -14,6 +14,7 @@ pub(crate) fn project(value: EnrollmentStatus) -> RegistrationStatus {
     let phase = match value.phase {
         EnrollmentPhase::Unregistered => RegistrationPhase::Unregistered,
         EnrollmentPhase::Preparing => RegistrationPhase::Preparing,
+        EnrollmentPhase::ConfigurationUnknown => RegistrationPhase::ConfigurationUnknown,
         EnrollmentPhase::AwaitingAuthorization => RegistrationPhase::AwaitingAuthorization,
         EnrollmentPhase::Authorized => RegistrationPhase::Authorized,
         EnrollmentPhase::Activating => RegistrationPhase::Activating,
@@ -33,6 +34,21 @@ pub(crate) fn project(value: EnrollmentStatus) -> RegistrationStatus {
         _ => CredentialStatus::Absent,
     };
     RegistrationStatus {
+        failure: value.failure.map(|code| match code {
+            rss_mdm_agent_wire::enroll::ErrorCode::GrantExpired => {
+                execution_ipc::host::RegistrationFailure::Expired
+            }
+            rss_mdm_agent_wire::enroll::ErrorCode::RegistrationLimit => {
+                execution_ipc::host::RegistrationFailure::Capacity
+            }
+            rss_mdm_agent_wire::enroll::ErrorCode::ServiceUnavailable => {
+                execution_ipc::host::RegistrationFailure::Unavailable
+            }
+            rss_mdm_agent_wire::enroll::ErrorCode::OperationConflict => {
+                execution_ipc::host::RegistrationFailure::Conflict
+            }
+            _ => execution_ipc::host::RegistrationFailure::Denied,
+        }),
         phase,
         grant_id: value.grant_id.map(|id| id.to_string()),
         expires_at: value.expires_at,
@@ -47,9 +63,17 @@ struct Snapshot {
 }
 enum Command {
     Request,
+    Configuration {
+        file: rss_mdm_agent_wire::enroll::configuration::ConfigurationFile,
+        candidate_sha256: [u8; 32],
+    },
 }
 /// Native callbacks read a public snapshot and enqueue an explicit fixed-context request.
 pub(crate) struct RegistrationOwner {
+    network: agent_client::Config,
+    candidate_sha256: Option<[u8; 32]>,
+    origin: String,
+    tenant_id: String,
     policy: PeerPolicy,
     registration_policy: PeerPolicy,
     snapshot: Arc<Mutex<Snapshot>>,
@@ -64,6 +88,7 @@ impl RegistrationOwner {
     pub(crate) fn new(deployment: Deployment) -> Result<Self, Error> {
         let snapshot = Arc::new(Mutex::new(Snapshot {
             status: RegistrationStatus {
+                failure: None,
                 phase: RegistrationPhase::Unregistered,
                 grant_id: None,
                 expires_at: None,
@@ -78,6 +103,10 @@ impl RegistrationOwner {
         let stopping = Arc::new(AtomicBool::new(false));
         let stop = stopping.clone();
         let shared = snapshot.clone();
+        let network = deployment.network()?;
+        let candidate_sha256 = crate::installation::publication_digest(&deployment).ok();
+        let origin = deployment.origin.clone();
+        let tenant_id = deployment.tenant.to_string();
         let policy = deployment.clients.clone();
         let registration_policy = deployment.registration_clients.clone();
         let thread = std::thread::Builder::new()
@@ -96,6 +125,10 @@ impl RegistrationOwner {
                 let _ = completed.send(result);
             })?;
         Ok(Self {
+            network,
+            candidate_sha256,
+            origin,
+            tenant_id,
             policy,
             registration_policy,
             snapshot,
@@ -150,7 +183,11 @@ fn run<S: agent_client::IdentityProvider, C: agent_client::Clock, O>(
         if let Some(value) = &client {
             let status = value.enrollment_status()?;
             let mut snapshot = shared.lock().map_err(|_| Error::Unavailable)?;
+            let previous_failure = snapshot.status.failure;
             snapshot.status = project(status);
+            if snapshot.status.failure.is_none() {
+                snapshot.status.failure = previous_failure;
+            }
             if snapshot.status.registered {
                 drop(snapshot);
                 let owner = activate(client.take().ok_or(Error::Storage)?)?;
@@ -161,18 +198,19 @@ fn run<S: agent_client::IdentityProvider, C: agent_client::Clock, O>(
         let command = requests.recv_timeout(std::time::Duration::from_secs(2));
         match command {
             Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(None),
-            Ok(Command::Request) => {
+            Ok(command) => {
                 if client.is_none() {
                     client = Some(open()?);
                 }
                 let value = client.as_mut().ok_or(Error::Storage)?;
-                let status = value.enrollment_status()?;
-                let prepared = if status.phase == EnrollmentPhase::Unregistered {
-                    value
+                let prepared = match command {
+                    Command::Request => value
                         .prepare_authorization(capabilities.clone())
-                        .map(|_| ())
-                } else {
-                    Ok(())
+                        .map(|_| ()),
+                    Command::Configuration {
+                        file,
+                        candidate_sha256,
+                    } => value.prepare_configuration(file, candidate_sha256, capabilities.clone()),
                 };
                 let result = match prepared {
                     Ok(()) => runtime.block_on(until_stopped(value.drive_pki(), &stopping)),
@@ -204,6 +242,19 @@ async fn until_stopped<T>(
         } => Err(Error::Unavailable),
     }
 }
+fn failure(error: Error) -> execution_ipc::host::RegistrationFailure {
+    use execution_ipc::host::RegistrationFailure as F;
+    match error {
+        Error::Conflict => F::Conflict,
+        Error::Denied => F::Denied,
+        Error::Expired => F::Expired,
+        Error::Capacity => F::Capacity,
+        Error::Untrusted | Error::Identity | Error::Configuration | Error::Protocol => {
+            F::InvalidConfiguration
+        }
+        _ => F::Unavailable,
+    }
+}
 fn record_result<S: agent_client::IdentityProvider, C: agent_client::Clock>(
     result: Result<(), Error>,
     client: &Client<S, C>,
@@ -212,7 +263,9 @@ fn record_result<S: agent_client::IdentityProvider, C: agent_client::Clock>(
     if let Err(error) = result {
         eprintln!("agent_enrollment: {error}");
     }
-    shared.lock().map_err(|_| Error::Unavailable)?.status = project(client.enrollment_status()?);
+    let mut status = project(client.enrollment_status()?);
+    status.failure = result.err().map(failure).or(status.failure);
+    shared.lock().map_err(|_| Error::Unavailable)?.status = status;
     Ok(())
 }
 impl Handler for RegistrationOwner {
@@ -244,6 +297,63 @@ impl Handler for RegistrationOwner {
     }
     fn handle(&mut self, peer: &Peer, request: Request) -> Reply {
         match request {
+            Request::ImportRegistration { file } => {
+                use agent_client::Clock;
+                if peer.authenticate(&self.registration_policy).is_err()
+                    || self.owner.is_some()
+                    || self.failed
+                {
+                    return Reply::Rejected;
+                }
+                let Some(candidate_sha256) = self.candidate_sha256 else {
+                    return Reply::Rejected;
+                };
+                let valid = SystemClock::new()
+                    .and_then(|clock| clock.now())
+                    .and_then(|now| agent_client::verify_configuration(&file, &self.network, now));
+                if valid.is_err() {
+                    return Reply::Rejected;
+                }
+                if self
+                    .commands
+                    .try_send(Command::Configuration {
+                        file,
+                        candidate_sha256,
+                    })
+                    .is_err()
+                {
+                    return Reply::Unavailable;
+                }
+                match self.snapshot.lock() {
+                    Ok(v) => Reply::RegistrationStatus {
+                        value: v.status.clone(),
+                    },
+                    Err(_) => Reply::Unavailable,
+                }
+            }
+            Request::RegistrationContext {} => {
+                if peer.authenticate(&self.registration_policy).is_err() {
+                    return Reply::Rejected;
+                }
+                let status = if let Some(owner) = &self.owner {
+                    match owner.registration_status() {
+                        Reply::RegistrationStatus { value } => value,
+                        reply => return reply,
+                    }
+                } else {
+                    match self.snapshot.lock() {
+                        Ok(value) => value.status.clone(),
+                        Err(_) => return Reply::Unavailable,
+                    }
+                };
+                Reply::RegistrationContext {
+                    value: execution_ipc::host::RegistrationContext {
+                        origin: self.origin.clone(),
+                        tenant_id: self.tenant_id.clone(),
+                        status,
+                    },
+                }
+            }
             Request::RegistrationStatus {} | Request::RequestRegistration {} => {
                 if peer.authenticate(&self.registration_policy).is_err() {
                     return Reply::Rejected;
@@ -649,6 +759,10 @@ mod tests {
             interactive: true,
         };
         let mut owner = RegistrationOwner {
+            network: server.config(),
+            candidate_sha256: None,
+            origin: server.url.origin().ascii_serialization(),
+            tenant_id: server.config().tenant.to_string(),
             policy: policy.clone(),
             registration_policy: policy,
             snapshot: shared,

@@ -256,8 +256,49 @@ function image(path) {
   }
   return result;
 }
+// Public publication metadata is separate from the local executable/runtime manifest.
+// The evidence reference resolves to this build's final package-manifest.json; development
+// candidates explicitly carry no production signing/notarization claim.
+const evidence = `package-manifest:${id}`;
+const publication = {
+  wireVersion: 1,
+  tenantId: organization.tenant,
+  target: {
+    platform: windows ? "windows" : "macos",
+    architecture: process.arch === "x64" ? "x86_64" : "aarch64",
+  },
+  version,
+  origin: organization.origin,
+  signingKeys: organization.signing_keys,
+  packaging: windows
+    ? {
+        kind: "nsis_exe",
+        publisher: release
+          ? `certificate-sha1:${process.env.RSS_WINDOWS_SIGNING_THUMBPRINT}`
+          : "development-unsigned",
+        signature_evidence: release ? evidence : `development-only:${evidence}`,
+      }
+    : {
+        kind: "macos_pkg",
+        team: release
+          ? (/^TeamIdentifier=(.+)$/m.exec(
+              spawnSync("/usr/bin/codesign", ["-d", "--verbose=4", desktop], {
+                encoding: "utf8",
+              }).stderr,
+            )?.[1] ??
+            (() => {
+              throw Error("Release team identity missing");
+            })())
+          : "development-ad-hoc",
+        notarization_evidence: release ? evidence : `not-notarized:${evidence}`,
+      },
+};
+const publicationBytes = JSON.stringify(publication, null, 2) + "\n";
+writeFileSync(join(payload, "publication.json"), publicationBytes);
+writeFileSync(join(output, "publication.json"), publicationBytes);
 const candidate = {
-  version: 2,
+  version: 3,
+  publication_sha256: hash(publicationBytes),
   product_version: version,
   target,
   root: installed,
@@ -298,7 +339,7 @@ if (windows) {
 } else {
   const scripts = join(output, "scripts");
   mkdirSync(scripts);
-  const postinstall = `#!/bin/sh\nset -eu\nprofile="/Library/Application Support/RSS MDM Agent/install-profile.json"\nif [ -f "$profile" ]; then\n  "${installed}/rss-execution-service" --installation apply --candidate "${installed}/candidate.json" --profile "$profile"\nelse\n  "${installed}/rss-execution-service" --installation apply --candidate "${installed}/candidate.json"\nfi\n`;
+  const postinstall = `#!/bin/sh\nset -eu\nprofile="/Library/Application Support/RSS MDM Agent/install-profile.json"\nif [ -f "$profile" ]; then\n  "${installed}/rss-execution-service" --installation apply --candidate "${installed}/candidate.json" --profile "$profile" --package-path "$1"\nelse\n  "${installed}/rss-execution-service" --installation apply --candidate "${installed}/candidate.json" --package-path "$1"\nfi\n`;
   writeFileSync(join(scripts, "postinstall"), postinstall, { mode: 0o755 });
   const component = join(output, "component.pkg");
   // A fixed version must never relocate to a discovered development/previous app bundle.
@@ -387,7 +428,9 @@ writeFileSync(
       productVersion: version,
       signingMode: candidate.signing_mode,
       source,
-      candidateSha256: hash(candidateBytes),
+      candidateSha256: hash(publicationBytes),
+      installationManifestSha256: hash(candidateBytes),
+      evidenceId: evidence,
       packageSha256: hash(readFileSync(packagePath)),
       package: packagePath,
     },

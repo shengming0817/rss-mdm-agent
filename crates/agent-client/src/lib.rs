@@ -9,7 +9,9 @@ mod redaction;
 pub use delivery::{AbandonmentAck, Association, FrozenAbandonment, FrozenResult, ResultAck};
 pub use redaction::CredentialRedactor;
 mod client;
+mod configuration;
 mod enrollment;
+pub use configuration::{verify_configuration, CONFIGURATION_BYTES, CONFIGURATION_FILENAME};
 mod identity;
 mod pki;
 

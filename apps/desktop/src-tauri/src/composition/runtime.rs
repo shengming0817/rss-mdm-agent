@@ -1,4 +1,5 @@
 //! Stable desktop owners and one replaceable AI Host incarnation.
+mod registration;
 use super::{
     credentials::{KeyBackend, MasterKey},
     execution::ExecutionHandle,

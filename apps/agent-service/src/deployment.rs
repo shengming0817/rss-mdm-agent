@@ -291,24 +291,6 @@ impl Deployment {
             SystemClock::new()?,
         )
     }
-    /// Import protected grant metadata and its secret, then drive the original certificate lifecycle.
-    pub async fn initialize(
-        &self,
-        grant: agent_client::GrantImport,
-        secret: &rss_mdm_agent_wire::runtime::Secret,
-    ) -> Result<(), Error> {
-        grant.validate(
-            self.network()?.platform,
-            agent_client::Clock::now(&SystemClock::new()?)?,
-        )?;
-        let mut client = self.communication(true)?;
-        let reference = format!("bootstrap-{}", grant.operation_id);
-        client.validate_grant_import(&grant, &reference, &self.capabilities())?;
-        client.import_bootstrap_secret(&reference, secret)?;
-        client.import_grant(grant, &reference, self.capabilities())?;
-        client.drive_pki().await?;
-        self.device_service(client).map(drop)
-    }
     /// Explicit offline administrator recovery; the communication lease excludes a running daemon.
     pub async fn recover(
         &self,

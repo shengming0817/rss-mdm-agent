@@ -51,7 +51,8 @@ impl Options {
                 "--candidate-config",
                 "--candidate",
                 "--profile",
-                "--envelope",
+                "--configuration",
+                "--package-path",
                 "--grant",
                 "--secret-file",
                 "--operation",
@@ -105,13 +106,6 @@ pub(super) fn run(args: &[OsString]) -> Result<(), Error> {
             "{}",
             serde_json::to_string(&Target::current().map_err(|_| Error::Unsupported)?)
                 .map_err(|_| Error::Configuration)?
-        );
-        return Ok(());
-    }
-    if action == "schema" {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&bootstrap_schema()?).map_err(|_| Error::Configuration)?
         );
         return Ok(());
     }
@@ -216,6 +210,14 @@ pub(super) fn run(args: &[OsString]) -> Result<(), Error> {
                 opts.values.get("--profile"),
                 &opts.config()?,
             )?;
+            if let Some(package) = opts.values.get("--package-path") {
+                // Installation succeeds independently of registration. Invalid material is reported,
+                // never trusted or silently replaced with another identity.
+                let result = discover_configuration(package, &opts.config()?);
+                if let Err(error) = result {
+                    eprintln!("agent_configuration_import: {error}");
+                }
+            }
         }
         Action::Recover => {
             if !opts.system()? {
@@ -247,28 +249,7 @@ pub(super) fn run(args: &[OsString]) -> Result<(), Error> {
             if !opts.system()? {
                 return Err(Error::Identity);
             }
-            let config = opts.config()?;
-            let deployment = Deployment::load(&config)?;
-            let envelope = opts.path("--envelope")?;
-            let metadata: Bootstrap = serde_json::from_slice(
-                &installation_security::read_protected(&envelope)
-                    .map_err(|_| Error::Configuration)?,
-            )
-            .map_err(|_| Error::Configuration)?;
-            metadata.validate(&deployment, SystemClock::new()?.now()?)?;
-            let bytes =
-                zeroize::Zeroizing::new(platform::read_secret(&opts.path("--secret-file")?)?);
-            let secret = rss_mdm_agent_wire::runtime::Secret::parse(
-                std::str::from_utf8(&bytes)
-                    .map_err(|_| Error::Identity)?
-                    .trim(),
-            )
-            .map_err(|_| Error::Identity)?;
-            platform::stop(true, &deployment.service.path, &config)?;
-            let result = initialize(&deployment, &envelope, &secret);
-            let restart = platform::register(true, &deployment.service.path, &config);
-            result?;
-            restart?;
+            import_configuration(&opts.path("--configuration")?, &opts.config()?)?;
         }
     }
     println!(
@@ -389,6 +370,51 @@ fn transition(mut perform: impl FnMut(Step) -> Result<(), Error>) -> Result<(), 
         return Err(error);
     }
     Ok(())
+}
+
+fn discover_configuration(package: &Path, config: &Path) -> Result<(), Error> {
+    if !package.is_absolute()
+        || package.components().any(|v| {
+            matches!(
+                v,
+                std::path::Component::ParentDir | std::path::Component::CurDir
+            )
+        })
+        || package.extension().and_then(|v| v.to_str())
+            != Some(if cfg!(windows) { "exe" } else { "pkg" })
+    {
+        return Err(Error::Configuration);
+    }
+    let path = package
+        .parent()
+        .ok_or(Error::Configuration)?
+        .join(agent_client::CONFIGURATION_FILENAME);
+    match std::fs::symlink_metadata(&path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(_) => Err(Error::Configuration),
+        Ok(_) => import_configuration(&path, config),
+    }
+}
+fn import_configuration(path: &Path, config: &Path) -> Result<(), Error> {
+    let deployment = Deployment::load(config)?;
+    let bytes = zeroize::Zeroizing::new(installation_security::read_external(
+        path,
+        agent_client::CONFIGURATION_BYTES,
+    )?);
+    let file: rss_mdm_agent_wire::enroll::configuration::ConfigurationFile =
+        serde_json::from_slice(&bytes).map_err(|_| Error::Protocol)?;
+    agent_client::verify_configuration(&file, &deployment.network()?, SystemClock::new()?.now()?)?;
+    let candidate_sha256 = publication_digest(&deployment)?;
+    platform::stop(true, &deployment.service.path, config)?;
+    let result = (|| {
+        let mut client = deployment.communication(true)?;
+        if client.enrollment_status()?.registered {
+            return Ok(());
+        }
+        client.prepare_configuration(file, candidate_sha256, deployment.capabilities())
+    })();
+    let restart = platform::register(true, &deployment.service.path, config);
+    result.and(restart)
 }
 
 fn apply(candidate_path: &Path, profile: Option<&PathBuf>, config: &Path) -> Result<(), Error> {

@@ -22,7 +22,7 @@ Offer 最长 60 秒，Received 不续租；Start 最长 15 秒。下载中断保
 
 client 的 CredentialRedactor 从受保护身份 provider 获取实际一次性授权秘密；backend 在结果进入网络前调用其脱敏能力，秘密列表不对外暴露。stdout/stderr 分别严格消费冻结计划的 UTF-8/UTF-16LE 编码；非法编码和字符截断保持原始 journal 证据，网络诊断使用明确的解码失败标记，质量为 Failed/Truncated，不能阻塞结果交付或补成成功。生产身份、凭据保护和企业装配复用 #2564 的 agent-service；管理员授权的后台任务不增加本地企业审批。缓存文件与原始证据仅供可信 Rust 宿主，不投影到 UI/AI。
 
-首次注册由显式 browser request 或受保护的 GrantImport 元数据及单独秘密驱动。保存原 grant、CSR、公钥引用、证书/激活操作与候选；响应丢失只查询或重放原操作。IssuanceUnknown 保留原 CA 意图等待管理员恢复；ActivationUnknown 保留原候选与激活操作。人工换证保持完整 runtime binding 和 execution journal。撤销、过期、退休证书分别报告，不以新的注册或 Bearer 回退。
+首次注册由原生企业会话授权的机器请求或完整签名 ConfigurationFile 驱动；配置交换使用本机独立 operation、秘密和 CSR，取得 grant 后汇入同一签发链路。GrantImport 仅用于已有身份的管理员恢复。保存原 grant、CSR、公钥引用、证书/激活操作与候选；响应丢失只查询或重放原操作。IssuanceUnknown 保留原 CA 意图等待管理员恢复；ActivationUnknown 保留原候选与激活操作。人工换证保持完整 runtime binding 和 execution journal。撤销、过期、退休证书分别报告，不以新的注册或 Bearer 回退。
 
 ## 验证
 

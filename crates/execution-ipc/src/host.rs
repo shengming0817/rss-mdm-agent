@@ -2,7 +2,7 @@
 use execution_contract::{Digest, Id, RequestId, VersionedRef};
 use serde::{Deserialize, Serialize};
 /// Current desktop/system IPC. No negotiation or legacy parser exists.
-pub const IPC_VERSION: u8 = 14;
+pub const IPC_VERSION: u8 = 15;
 /// Current protected installation document format.
 pub const DEPLOYMENT_VERSION: u32 = 5;
 
@@ -49,6 +49,8 @@ pub enum RegistrationPhase {
     Unregistered,
     /// Preparing the exact persisted request.
     Preparing,
+    /// The original configuration allocation is not yet confirmed.
+    ConfigurationUnknown,
     /// User authorization is pending.
     AwaitingAuthorization,
     /// Original grant is authorized.
@@ -81,10 +83,29 @@ pub enum CredentialStatus {
     /// A later activation retired the certificate.
     Retired,
 }
+/// Closed, credential-free registration diagnostics.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, schemars::JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum RegistrationFailure {
+    /// Signed file or installed coordinates do not match.
+    InvalidConfiguration,
+    /// An existing operation must be resumed instead of replaced.
+    Conflict,
+    /// Authorization is denied or revoked.
+    Denied,
+    /// Frozen authorization expired.
+    Expired,
+    /// Server-side registration capacity is exhausted.
+    Capacity,
+    /// Transport or native storage is temporarily unavailable.
+    Unavailable,
+}
 /// A bounded machine request preview; contains no key handles, secrets or certificate bodies.
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RegistrationStatus {
+    /// Classified failure without untrusted server text or secrets.
+    pub failure: Option<RegistrationFailure>,
     /// Closed lifecycle phase.
     pub phase: RegistrationPhase,
     /// Server grant selected by the machine owner.
@@ -97,6 +118,17 @@ pub struct RegistrationStatus {
     pub registered: bool,
     /// Exact retained credential state, independent of a pending authorization.
     pub credential: CredentialStatus,
+}
+/// Authenticated machine-owned coordinates for native user authorization.
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RegistrationContext {
+    /// Installed, trusted HTTPS origin; never supplied by the renderer.
+    pub origin: String,
+    /// Installed tenant UUID.
+    pub tenant_id: String,
+    /// Safe snapshot of the original machine operation.
+    pub status: RegistrationStatus,
 }
 /// Closed presentation combining local installation checks and authenticated service facts.
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema, PartialEq, Eq)]
@@ -605,6 +637,13 @@ pub enum Request {
     ServiceStatus {},
     /// Read public machine registration progress.
     RegistrationStatus {},
+    /// Read trusted machine coordinates without disclosing credentials.
+    RegistrationContext {},
+    /// Native-only complete signed configuration; secrets never cross the renderer.
+    ImportRegistration {
+        /// Current server-owned complete configuration format.
+        file: rss_mdm_agent_wire::enroll::configuration::ConfigurationFile,
+    },
     /// Explicitly request browser authorization for this configured installation.
     RequestRegistration {},
     /// List authorized local projections and the current offered task.
@@ -697,6 +736,11 @@ pub enum Reply {
         value: ServiceStatus,
     },
     /// Public registration projection, with no credentials or device key references.
+    RegistrationContext {
+        /// Trusted machine coordinates and progress.
+        value: RegistrationContext,
+    },
+    /// Safe registration progress.
     RegistrationStatus {
         /// Closed public progress.
         value: RegistrationStatus,

@@ -113,6 +113,7 @@ export function createFixturePorts() {
         rpc<
           import("../../apps/desktop/src/settings/service-contract").RegistrationStatus
         >("registration"),
+      importRegistration: async () => null,
       requestRegistration: () =>
         rpc<
           import("../../apps/desktop/src/settings/service-contract").RegistrationStatus

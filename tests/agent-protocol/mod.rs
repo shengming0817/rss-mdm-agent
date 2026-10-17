@@ -216,6 +216,10 @@ pub struct Data {
     pub invocation_reply_lost: bool,
     pub invocation_unaccepted: bool,
     pub response_override: Option<(String, Value)>,
+    pub configuration_file: Option<enroll::configuration::ConfigurationFile>,
+    pub packages: Vec<enroll::configuration::Package>,
+    pub configuration_calls: Vec<Value>,
+    pub configuration_status_calls: Vec<Value>,
     pub grant: Option<enroll::GrantReceipt>,
     pub issuance: Uuid,
     pub candidate_leaf: Option<Vec<u8>>,
@@ -620,6 +624,10 @@ impl Server {
             invocation_reply_lost: false,
             invocation_unaccepted: false,
             response_override: None,
+            configuration_file: None,
+            packages: vec![],
+            configuration_calls: vec![],
+            configuration_status_calls: vec![],
             grant: None,
             issuance: Uuid::new_v4(),
             candidate_leaf: None,
@@ -770,6 +778,62 @@ impl Server {
             ca_pem: data.tls_required.then(pki::ca),
         }
     }
+    pub fn configuration(&self, candidate: [u8; 32]) -> enroll::configuration::ConfigurationFile {
+        use enroll::configuration as w;
+        let cfg = self.config();
+        let mut data = self.data.lock().unwrap();
+        let configuration = w::Configuration {
+            wire_version: 1,
+            configuration_id: Uuid::new_v4(),
+            tenant_id: cfg.tenant,
+            origin: cfg.origin.origin().ascii_serialization(),
+            targets: vec![w::Target {
+                platform: cfg.platform,
+                architecture: cfg.architecture,
+            }],
+            channels: vec![w::Channel::Test],
+            expires_at: cfg!(test)
+                .then_some(100)
+                .unwrap_or(data.time.now().unwrap() + 3600),
+            quantity: w::Quantity::Finite {
+                count: std::num::NonZeroU32::new(2).unwrap(),
+            },
+            key_id: "test".into(),
+        };
+        let secret = Secret::parse("AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE").unwrap();
+        let signature = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(
+            data.signer
+                .sign(&configuration.signing_bytes(&secret).unwrap())
+                .as_ref(),
+        );
+        let file = w::ConfigurationFile {
+            configuration,
+            secret,
+            signature,
+        };
+        data.packages = vec![w::Package {
+            release_id: Uuid::new_v4(),
+            tenant_id: cfg.tenant,
+            channel: w::Channel::Test,
+            target: w::Target {
+                platform: cfg.platform,
+                architecture: cfg.architecture,
+            },
+            version: "test".into(),
+            filename: "fixture.pkg".into(),
+            length: 1,
+            installer_sha256: [9; 32],
+            candidate_sha256: candidate,
+            origin: cfg.origin.origin().ascii_serialization(),
+            signing_keys: BTreeMap::from([(
+                "test".into(),
+                base64::engine::general_purpose::URL_SAFE_NO_PAD
+                    .encode(data.signer.public_key().as_ref()),
+            )]),
+        }];
+        data.configuration_file = Some(file.clone());
+        file
+    }
     pub fn client(&self, root: &Root, mode: OpenMode) -> Client<Secrets, Time> {
         let mut client = Client::open(
             &root.path,
@@ -916,6 +980,72 @@ fn runtime_error(status: StatusCode, code: ErrorCode) -> Response {
 }
 fn enrollment_response(d: &mut Data, action: &str, value: Value, peer: Option<&[u8]>) -> Response {
     match action {
+        "packages" => axum::Json(d.packages.clone()).into_response(),
+        "configurations/status" => {
+            d.configuration_status_calls.push(value.clone());
+            let request: enroll::configuration::ExchangeStatus =
+                serde_json::from_value(value).unwrap();
+            if d.operation != Some(request.operation_id)
+                || d.bootstrap.as_deref() != Some(request.secret.expose())
+            {
+                return (
+                    StatusCode::UNAUTHORIZED,
+                    axum::Json(enroll::ErrorBody {
+                        code: enroll::ErrorCode::InvalidIdentity,
+                        issuance_id: None,
+                    }),
+                )
+                    .into_response();
+            }
+            axum::Json(d.grant.clone().unwrap()).into_response()
+        }
+        "configurations/exchange" => {
+            d.configuration_calls.push(value.clone());
+            let request: enroll::configuration::Exchange = serde_json::from_value(value).unwrap();
+            assert_eq!(
+                serde_json::to_value(&request.file).unwrap(),
+                serde_json::to_value(d.configuration_file.as_ref().unwrap()).unwrap()
+            );
+            assert_eq!(
+                request.installation.candidate_sha256,
+                d.packages[0].candidate_sha256
+            );
+            assert_ne!(request.secret.expose(), request.file.secret.expose());
+            if d.operation.is_some_and(|v| v != request.operation_id) {
+                return (
+                    StatusCode::CONFLICT,
+                    axum::Json(enroll::ErrorBody {
+                        code: enroll::ErrorCode::OperationConflict,
+                        issuance_id: None,
+                    }),
+                )
+                    .into_response();
+            }
+            d.operation = Some(request.operation_id);
+            d.bootstrap = Some(request.secret.expose().into());
+            let grant = d
+                .grant
+                .get_or_insert_with(|| enroll::GrantReceipt {
+                    wire_version: 1,
+                    grant_id: Uuid::new_v4(),
+                    state: enroll::GrantState::Available,
+                    platform: request.runtime.platform,
+                    expires_at: d.time.now().unwrap() + 300,
+                })
+                .clone();
+            if std::mem::take(&mut d.registration_failure) {
+                return (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    axum::Json(enroll::ErrorBody {
+                        code: enroll::ErrorCode::ServiceUnavailable,
+                        issuance_id: None,
+                    }),
+                )
+                    .into_response();
+            }
+            axum::Json(grant).into_response()
+        }
+
         "trust" => {
             d.trust_calls += 1;
             if std::mem::take(&mut d.trust_failure) {

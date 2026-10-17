@@ -5,7 +5,9 @@ const MAX_FRAME: usize = 65536;
 mod macos;
 #[cfg(target_os = "macos")]
 pub use macos::applications_directory;
+mod external;
 mod policy;
+pub use external::read_external;
 mod target;
 pub use target::Target;
 #[cfg(any(windows, test))]

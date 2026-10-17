@@ -9,7 +9,11 @@ import {
   saveOrganization,
   type Organization,
 } from "../test-users";
-const props = defineProps<{ loading: boolean; message?: string }>();
+const props = defineProps<{
+  loading: boolean;
+  message?: string;
+  registration?: boolean;
+}>();
 const emit = defineEmits<{
   guest: [];
   logout: [];
@@ -56,7 +60,7 @@ onMounted(load);
 </script>
 <template>
   <section aria-label="企业账户" class="account">
-    <h3>企业登录</h3>
+    <h3>{{ registration ? "登录并注册此设备" : "企业登录" }}</h3>
     <p v-if="props.message" role="alert">{{ props.message }}</p>
     <p v-if="currentUser?.identity?.mode === 'user_device'">
       当前组织：{{ currentUser.user.displayName }} ·
@@ -101,7 +105,7 @@ onMounted(load);
       <button
         :disabled="loading || !nativeTestMode || !selected || !login.trim()"
       >
-        登录所选组织
+        {{ registration ? "登录并注册此设备" : "登录所选组织" }}
       </button>
     </form>
     <details>
@@ -137,10 +141,18 @@ onMounted(load);
         <button :disabled="loading || !nativeTestMode">保存组织连接</button>
       </form>
     </details>
-    <button :disabled="loading || !nativeTestMode" @click="emit('guest')">
+    <button
+      v-if="!registration"
+      :disabled="loading || !nativeTestMode"
+      @click="emit('guest')"
+    >
       不登录使用
     </button>
-    <button v-if="currentUser" :disabled="loading" @click="emit('logout')">
+    <button
+      v-if="currentUser && !registration"
+      :disabled="loading"
+      @click="emit('logout')"
+    >
       退出当前账户
     </button>
     <p>访客与测试用户使用独立本地数据。企业账号不自动认领这些数据。</p>

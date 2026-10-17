@@ -14,17 +14,22 @@
 
 每次构建安装到独立版本目录，升级先核对完整候选、原生架构、签名及持久状态，再停旧服务和原子发布当前格式部署配置。失败保留可核实的注册与状态；候选活动未确认停止时不切回旧配置。ad-hoc 服务更换代码身份后无法读取旧 Keychain 项，会在停机前拒绝升级，不重建凭据或放宽 ACL。旧格式配置不会迁移或兼容读取。
 
-普通安装不创建 Enrollment、设备密钥或 journal；桌面通过认证 IPC 发起机器注册。管理员也可导入独立的安装材料：公开 envelope schema 由实际 Rust decoder 生成，位于 `apps/agent-service/schema/install-bootstrap-v1.schema.json`，GrantReceipt 定义直接从固定协议包派生，公开 schema 可独立解析；服务端保持唯一协议来源。envelope 的 `origin`、`tenant`、`target`、`installation_artifact` 必须与已安装候选完全相同；后者取 `package-manifest.json` 的 `candidateSha256`。材料还含原始 `operationId` 与服务端 GrantReceipt，secret 单独置于 root / LocalSystem 私有文件或标准输入中，不进入包、argv、日志或 URL。
+无配置的固定安装包可以匿名下载并保持未注册。安装后在 Agent 中选择“登录并注册此设备”，复用已有企业会话或通过原生密码输入登录；注册授权不经过网页，也不向系统服务传递用户会话。
+
+管理员提供的完整签名文件命名为 `rss-agent-enrollment.json`，与原始 EXE／PKG 放在同一目录。Windows 从原始 EXE 路径、macOS 从 Installer 传入的外层 PKG 路径发现文件。文件使用后端公开 `ConfigurationFile` 格式，包含配置交换秘密；不需要第三个秘密文件。已安装客户端也可通过原生“导入注册配置”选文件。
+
+系统服务验证配置签名、组织、原生目标、期限和发布候选，为本机生成独立密钥/CSR/操作和设备秘密；服务端交换独立 grant 后复用现有签发、mTLS 激活流程。多台设备可以复用同一管理员文件，但不能共享机器私钥或设备 grant。配置到期不退管已激活设备。
 
 ```sh
-# 管理员准备受保护的 envelope；secret-file 及其直接父目录都须由系统账号私有持有。
-# macOS：root 所有，父目录 0700、文件 0600；Windows：仅 SYSTEM / Administrators 可访问。
-<受保护的服务程序> --installation import --envelope /absolute/bootstrap.json --secret-file /absolute/private-secret
-# 服务已停止时，也可通过受控私有 stdin 初始化。
-<受保护的服务程序> --initialize /absolute/bootstrap.json < /absolute/private-secret
+# 管理员部署的补充入口；只传路径，不能把 JSON/secret 放进 argv。
+<受保护的服务程序> --installation import --configuration /absolute/rss-agent-enrollment.json
 ```
 
-导入先验证组织、目标原生架构、候选摘要、有效期和原操作，之后停止匹配服务、提交原操作并恢复服务。网络结果不确定时保留同一操作恢复，不自动重新注册。完成后由材料 owner 删除本次私有输入；安装器不删除共享凭据。安装成功与认证 readiness 分开核实，使用获准的普通用户运行已安装桌面的 `--service-probe`。
+旧 Bootstrap envelope、双文件首次注册和 `--initialize` 已退出，不提供兼容解析。安装器发现无效配置时保留安装并报告注册失败，可改用 Agent 登录；结果未知时保留原操作恢复，不通过换身份重试。已有设备身份不因登录、重复导入或重装而替换。
+
+构建同时输出可发布的 `publication.json` 和本地 `candidate.json`。`package-manifest.json` 的 `candidateSha256` 标识 publication 原始字节，`installationManifestSha256` 标识本机清单，`packageSha256` 标识最终安装包，不可混用。公开 manifest 的签名/公证证据引用对应构建回执；开发候选明确标注未正式签名/公证，不能作为正式发行信任证据。
+
+安装成功与认证 readiness 分开核实，使用获准的普通用户运行已安装桌面的 `--service-probe`。共享注册文件仍由管理员负责保管和清理，安装器不删除它。
 
 初装从实际互动登录发现主体及 helper 路径；无人登录的静默初装必须提供管理员保护的 profile（`subjects` 与 `helper_work_roots`）。Windows EXE 接受 `/S /PROFILE=绝对路径`；macOS 可先固定 profile 于 `/Library/Application Support/RSS MDM Agent/install-profile.json` 再运行 `installer -pkg ... -target /`。桌面启动请求 Rust owner 注册当前配置用户的 helper，AI Host 随该桌面运行。
 
@@ -46,7 +51,7 @@ node scripts/agent-organization.mjs --config /private/execution-template.json --
 
 `--ca-output` 是 CA 在设备上的最终绝对路径，生成器写入同一公共证书并记录该路径；Agent 必须提供该参数。输出配置与 CA 为 0644（公开信息），安装后的父目录须允许用户 helper 遍历、文件由管理员持有且普通用户不可写；凭据和状态目录保持原有保护。输出文件必须不存在，不覆盖既有部署；保持模板的其它字段，仅替换组织地址、租户和 CA。按原安装要求将配置与证书置于管理员保护的最终路径，再进行首次注册。部署不同设备时使用目标设备对应的绝对路径。现有设备不要通过生成新身份或重新注册来更新 CA；沿用原身份，按受控刷新流程发布新配置。更新 CA 后桌面重新构建、Agent 重新加载；HTTPS bootstrap 配置不改系统信任；设备 CA 的机器安装由 PKI owner 驱动。CA 私钥不分发，任务签名公钥与组织 HTTPS CA 分开管理。
 
-首次注册可由固定桌面在本机服务设置中发起授权请求，再在组织网页核对请求编号及公钥指纹并批准。导入网页生成的材料时，使用上文「固定安装包与首次注册」的 Bootstrap envelope、实际 decoder schema 和私有 secret-file 导入入口；材料必须绑定当前组织、原生架构和已安装候选摘要。采用受控私有 stdin 的 `--initialize` 路径时，先停止原服务 owner，再由系统账号运行；秘密不得放入 argv、JSON、日志或 shell 历史。注册重试使用同一配置、原 grant/CSR/签发/激活操作和 OS 密钥。人工换证先停止原 owner，再运行 `--renew-certificate`；保持原 Registration、存储位置和 journal。初始化遇到已有不支持的数据库或缺失的原注册状态时拒绝，保留原文件；不能换目录、清库或重新注册来绕过未决任务。
+首次注册使用上文的 Agent 内企业登录或完整签名配置。机器请求、CSR、公钥引用与签发/激活操作由系统服务持久保存；重试使用原操作。人工换证仍保持原 Registration、存储位置和 journal。初始化遇到不支持的数据库或缺失的原状态时保留原文件并拒绝，不通过清库或换目录绕过未决任务。
 
 macOS 系统注册：`python3 scripts/service/execution-macos.py install --scope system --binary <root 拥有的绝对产物路径> --config <受保护配置>`，需要管理员执行。用户在自己的 GUI 登录中运行同一安装脚本，改为 `--scope user`；程序参数固定为 `--user-helper`，只注册当前实际 OS 会话。`--config` 可省略以使用默认部署路径。状态查询用 `rss-execution-service --config <配置> --query`，客户端和服务必须互相匹配真实 OS 身份与程序 pin。
 
@@ -185,7 +190,7 @@ Agent 部署生成使用 `.env` 的 RSS_AGENT_ORIGIN、必填 RSS_AGENT_CA_FILE�
 
 服务每五分钟刷新 trust，并提前检查 CRL 到期；设备凭证进入 `min(20% 生命周期, 30 天)` 窗口后自动续签。恢复沿用持久化操作、CSR、密钥和注册；创建 renewal grant 的响应丢失后，可通过 bootstrap HTTPS 查询原 grant。过期、吊销或无法验证的 trust 会关闭执行准入并停止已有工作，执行日志和副作用证据保留。
 
-管理员恢复需要停止系统服务，准备服务端为**同一注册**签发的受保护 `GrantImport` JSON（`operationId`、`grant`），通过 `rss-execution-service --installation recover --scope system --config <部署路径> --grant <JSON路径> --secret-file <私有secret路径>` 交给原 installation owner。Windows 沿既有 SCM worker 转为 LocalSystem，macOS 使用系统管理员执行；secret 文件由原私有输入规则保护，不把 secret 放入 argv。此入口不替换未决操作，也不创建新注册；成功激活只恢复新任务准入。owner 尝试重新启动原服务；核对认证 IPC readiness，并按既有私有材料处理方式清理输入 secret。初始 Bootstrap envelope 保持版本 1。
+管理员恢复需要停止系统服务，准备服务端为**同一注册**签发的受保护 `GrantImport` JSON（`operationId`、`grant`），通过 `rss-execution-service --installation recover --scope system --config <部署路径> --grant <JSON路径> --secret-file <私有secret路径>` 交给原 installation owner。Windows 沿既有 SCM worker 转为 LocalSystem，macOS 使用系统管理员执行；secret 文件由原私有输入规则保护，不把 secret 放入 argv。此入口不替换未决操作，也不创建新注册；成功激活只恢复新任务准入。owner 尝试重新启动原服务；核对认证 IPC readiness，并按既有私有材料处理方式清理输入 secret。此同身份恢复入口不属于首次注册配置导入。
 
 旧 Deployment 4 / Candidate 1 保持原样并被拒绝；本仓不提供历史格式转换、兼容读取或重试入口。当前格式的安装与 apply/refresh 只处理当前候选及当前部署，沿用既有候选、代码身份、持久状态与设备归属校验。拒绝旧格式不停止原 owner、不覆盖配置或 retained manifest、不转换通信库，也不重建注册、凭据或执行 journal。管理员应保留旧部署及持久材料，不通过改写版本号、删除状态或重新注册绕过拒绝。
 

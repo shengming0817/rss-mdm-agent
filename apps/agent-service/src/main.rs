@@ -72,14 +72,6 @@ fn run() -> Result<(), Error> {
     if args.len() == 1 && args[0] == "--user-helper" {
         return serve(Box::new(deployment.user_helper()?), false);
     }
-    if args.len() == 2 && args[0] == "--initialize" {
-        let secret = agent_service::installation::stdin_secret()?;
-        return agent_service::installation::initialize(
-            &deployment,
-            std::path::Path::new(&args[1]),
-            &secret,
-        );
-    }
     if args.len() == 1 && args[0] == "--renew-certificate" {
         return tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
