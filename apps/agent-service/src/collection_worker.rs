@@ -61,6 +61,10 @@ pub(crate) fn engines() -> w::NativeEngines {
     #[cfg(target_os = "macos")]
     {
         [
+            w::NativeEngine::MacosSecurity,
+            w::NativeEngine::MacosAccounts,
+            w::NativeEngine::MacosCertificates,
+            w::NativeEngine::MacosUpdates,
             w::NativeEngine::MacosHardware,
             w::NativeEngine::MacosApplications,
             w::NativeEngine::MacosPkgReceipts,

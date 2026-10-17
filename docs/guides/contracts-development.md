@@ -41,3 +41,31 @@ WUA Local 不联网，Online 仅用于明确批准的 Scan/Available，始终禁
 本仓 V3 签名向量来自固定协议候选，仅证明 wire。正式标准包冻结任务样本必须来自生产者的
 实际蓝图/任务路径，不能以手写同形 fixture 替代。宿主恢复测试也不证明 Windows 原生 API 支持；
 Windows 编译、真机及正式包 Collection 结果由 #2728 独立平台验收记录。
+
+## macOS 系统采集
+
+macOS 沿用上述 V3 wire、inline 结果、journal 与用户 helper，新增 security/accounts/certificates/updates
+四类原生 engine。工具由同一固定路径/参数定义持有，broker 按当前 query 校验；没有脚本兜底或通用命令入口。
+
+- Gatekeeper/XProtect/系统扩展分别报告配置、存在和可观察运行状态。XProtect 的版本、扩展
+  `activated enabled` 不证明实时防护在运行。FileVault、SIP、防火墙及本地 token 独立解释；
+  Bootstrap Token 输出只表示本机 `profiles` 的声明，不证明服务端实际托管。
+- 账户仅查询本地 OpenDirectory，按批准 Local/Selected GeneratedUID 过滤；管理员仅直接成员，
+  不递归组、不读凭据属性来推断 enabled。会话只覆盖当前 console，因此结果为 Partial。
+- 证书仅指定 System/SystemRoots/Login 库的公开元数据；Login 绑定当前用户 GeneratedUID，
+  不解锁、不提示、不读私钥、不联网验证信任。证书原始编码仅在进程内解析和计费。
+- 指定软件只观察匹配 bundle/team 的注册应用与签名进程，不启动目标软件。Agent 指当前固定
+  agent-service 可执行身份，不表示桌面应用；health 保持 unknown。公开 TCC preflight 只查调用方，
+  不能证明目标软件权限，因此请求的权限均明确 unknown，不读 TCC 数据库或个人文件探测权限。
+- 更新只读已有 SoftwareUpdate 缓存、InstallHistory 与当前 OS/build，Online 明确 Unsupported。
+  缓存不证明最新适用集合，历史不证明当前安装全集；当前 OS 是已安装状态的部分证据。
+  当前已核实的缓存只有 LastSuccessfulDate，没有扫描开始时间；固定协议不允许仅 finishedAt，
+  因此不制造区间，scan 时间为空且结果 Partial。缺缓存/权限/格式错误不得变成 Complete 空清单。
+- 当前批准的来源没有独立、可靠的硬件加密状态或全局待重启读取接口，这两项返回 unknown +
+  Unsupported；不以 CPU/FileVault 或更新条目的 restart 要求替代。未知系统格式不走历史兼容解析。
+
+宿主 provider 验证可显式运行
+`cargo test -p agent-service host_system_queries_through_confined_broker -- --ignored --nocapture`。
+该入口读取机器安全状态、系统根证书、当前调用账户/一个不存在的指定账户、指定应用基础状态和本地更新缓存，日志只记录状态与计数，
+不访问个人 Login keychain。纯解析样本标记真实无身份输出与合成边界；开发机通过不代表其他架构、
+企业身份/TCC/用户钥匙串或完整部署链验收，后者由独立 T3 持有。

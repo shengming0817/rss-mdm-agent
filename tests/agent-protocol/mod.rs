@@ -366,6 +366,7 @@ impl Data {
     }
     pub fn native_system_collection(&mut self, query: NativeSystemQuery) {
         self.native_collection();
+        let platform = query.platform();
         let TaskPayload::Collection(mut task) = self.offer.as_ref().unwrap().payload.clone() else {
             unreachable!()
         };
@@ -390,6 +391,13 @@ impl Data {
             queries: [("items".into(), query)].into(),
         })
         .unwrap();
+        task.platform = platform;
+        task.resource.variant = if platform == TaskPlatform::Macos {
+            "macos"
+        } else {
+            "windows"
+        }
+        .into();
         task.plan_digest = task.plan.digest();
         task.execution = NativeExecutionBinding::bind(&task.plan, &execution_context()).unwrap();
         self.offer = Some(self.signed(TaskPayload::Collection(task)));
@@ -791,7 +799,16 @@ impl Server {
                 .set_collection_environment(rss_mdm_agent_wire::CollectionEnvironment {
                     edition: None,
                     tools: Default::default(),
-                    native_engines: [(NativeEngine::MacosHardware, 1)].into(),
+                    native_engines: [
+                        NativeEngine::MacosHardware,
+                        NativeEngine::MacosSecurity,
+                        NativeEngine::MacosAccounts,
+                        NativeEngine::MacosCertificates,
+                        NativeEngine::MacosUpdates,
+                    ]
+                    .into_iter()
+                    .map(|engine| (engine, engine.contract_version()))
+                    .collect(),
                 })
                 .unwrap();
         }
