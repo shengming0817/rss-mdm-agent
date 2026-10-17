@@ -66,7 +66,6 @@ pub(super) fn execute(input: &Input, q: &w::NativeQuery, deadline: i64) -> w::Na
     rows.finish(status)
 }
 fn error(e: ::windows::core::Error) -> Status {
-    eprintln!("native-provider HRESULT={:#010x}", e.code().0 as u32);
     match e.code().0 as u32 {
         0x80070005 | 0x80041003 => Status::Denied,
         0x80041002 => Status::Missing,

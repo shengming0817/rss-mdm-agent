@@ -238,6 +238,11 @@ fn hex(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 fn verify_identity(input: &Input) -> Result<(), Error> {
+    verify_identity_binding(input)?;
+    execution_runner::staging::verify_worker_identity(&input.run_as, &input.session)
+        .map_err(crate::error::app_error)
+}
+fn verify_identity_binding(input: &Input) -> Result<(), Error> {
     input.task.execution.validate(&input.task.plan)?;
     let valid = match (&input.task.execution.target, &input.run_as, &input.session) {
         (
@@ -280,8 +285,7 @@ fn verify_identity(input: &Input) -> Result<(), Error> {
     if !valid {
         return Err(Error::Untrusted);
     }
-    execution_runner::staging::verify_worker_identity(&input.run_as, &input.session)
-        .map_err(crate::error::app_error)
+    Ok(())
 }
 pub(crate) fn tools(
     config: &crate::ExecutionConfig,

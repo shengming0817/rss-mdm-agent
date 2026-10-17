@@ -179,3 +179,44 @@ fn selected_accounts_and_user_certificates_bind_exact_identity() {
     context.interactive_user.as_mut().unwrap().identity = "S-1-5-18".into();
     assert!(w::NativeExecutionBinding::bind(&plan, &context).is_err());
 }
+
+#[test]
+fn provider_failure_stays_query_local_and_retains_a_single_control_receipt() {
+    let p = plan();
+    let until = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64
+        + 10_000;
+    let result = collect(
+        &p,
+        now().unwrap() + 10,
+        until,
+        &Default::default(),
+        |id, q, _, _| {
+            Ok(failure(
+                q,
+                if id == "a" {
+                    Status::Denied
+                } else {
+                    Status::Unsupported
+                },
+                now().unwrap(),
+            ))
+        },
+    )
+    .unwrap();
+    assert_eq!(result.queries["a"].status, Status::Denied);
+    assert_eq!(result.queries["b"].status, Status::Unsupported);
+    let bytes = serde_json::to_vec(&result).unwrap();
+    let completion = CollectionCompletion {
+        input_sha256: hex(b"input"),
+        output_sha256: hex(&bytes),
+        closed: true,
+        native_output_bytes: 0,
+    };
+    let control = serde_json::to_vec(&completion).unwrap();
+    let decoded: CollectionCompletion = serde_json::from_slice(&control).unwrap();
+    assert!(decoded.closed);
+    assert_eq!(decoded.output_sha256, hex(&bytes));
+}

@@ -26,7 +26,7 @@ impl Drop for Certificate {
 fn name(context: *const CERT_CONTEXT, issuer: bool) -> Result<String, Status> {
     unsafe {
         let flags = if issuer { CERT_NAME_ISSUER_FLAG } else { 0 };
-        let count = CertGetNameStringW(context, CERT_NAME_SIMPLE_DISPLAY_TYPE, flags, None, None);
+        let count = CertGetNameStringW(context, CERT_NAME_RDN_TYPE, flags, None, None);
         if count == 0 {
             return Err(Status::Failed);
         }
@@ -34,14 +34,7 @@ fn name(context: *const CERT_CONTEXT, issuer: bool) -> Result<String, Status> {
             return Err(Status::Truncated);
         }
         let mut value = vec![0u16; count as usize];
-        if CertGetNameStringW(
-            context,
-            CERT_NAME_SIMPLE_DISPLAY_TYPE,
-            flags,
-            None,
-            Some(&mut value),
-        ) != count
-        {
+        if CertGetNameStringW(context, CERT_NAME_RDN_TYPE, flags, None, Some(&mut value)) != count {
             return Err(Status::Failed);
         }
         if value.pop() != Some(0) {

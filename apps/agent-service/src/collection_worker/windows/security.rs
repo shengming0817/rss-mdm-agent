@@ -141,15 +141,8 @@ fn application(
                 Err(Status::Missing) => return Err(Status::Missing),
                 Err(e) => return Err(e),
             };
-            let command = command.trim();
-            // Do not guess Windows' ambiguous unquoted executable resolution or expand environment.
-            let path = if let Some(rest) = command.strip_prefix('"') {
-                rest.split_once('"').map(|v| v.0).ok_or(Status::Invalid)?
-            } else if command.to_ascii_lowercase().ends_with(".exe") {
-                command
-            } else {
-                return Err(Status::Partial);
-            };
+            let path =
+                super::super::system_values::service_image(&command).ok_or(Status::Partial)?;
             let path = std::path::PathBuf::from(path);
             if !path.is_absolute() || path.as_os_str().to_string_lossy().contains('%') {
                 return Err(Status::Partial);

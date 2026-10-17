@@ -47,7 +47,7 @@ fn source_id(value: BSTR) -> Result<String, Status> {
         .map(|id| id.to_string())
         .map_err(|_| Status::Partial)
 }
-unsafe fn source() -> Result<String, Status> {
+unsafe fn source(searcher: &IUpdateSearcher) -> Result<String, Status> {
     unsafe {
         let manager: IUpdateServiceManager =
             CoCreateInstance(&UpdateServiceManager, None, CLSCTX_INPROC_SERVER).map_err(failure)?;
@@ -56,21 +56,23 @@ unsafe fn source() -> Result<String, Status> {
         if !(0..=256).contains(&count) {
             return Err(Status::Invalid);
         }
-        let mut found = None;
+        let mut observed = Vec::new();
         for i in 0..count {
-            let service: IUpdateService2 = services
-                .get_Item(i)
-                .map_err(failure)?
-                .cast()
-                .map_err(failure)?;
-            if service.IsDefaultAUService().map_err(failure)?.as_bool() {
-                if found.is_some() {
-                    return Err(Status::Partial);
-                }
-                found = Some(source_id(service.ServiceID().map_err(failure)?)?);
-            }
+            let service = services.get_Item(i).map_err(failure)?;
+            observed.push((
+                source_id(service.ServiceID().map_err(failure)?)?,
+                service.IsManaged().map_err(failure)?.as_bool(),
+                service.IsRegisteredWithAU().map_err(failure)?.as_bool(),
+            ));
         }
-        found.ok_or(Status::SourceUnavailable)
+        let selection = searcher.ServerSelection().map_err(failure)?;
+        let explicit = if selection == ssOthers {
+            Some(source_id(searcher.ServiceID().map_err(failure)?)?)
+        } else {
+            None
+        };
+        super::super::system_values::update_source(selection.0, explicit.as_deref(), &observed)
+            .ok_or(Status::SourceUnavailable)
     }
 }
 unsafe fn search(
@@ -152,8 +154,6 @@ pub(super) fn read(
                 0
             }))
             .map_err(failure)?;
-        let origin = source()?;
-        rows.result.scan.as_mut().ok_or(Status::Invalid)?.source = Some(origin.clone());
         if *section == w::UpdateSection::History {
             let count = searcher.GetTotalHistoryCount().map_err(failure)?;
             if count < 0 {
@@ -172,10 +172,23 @@ pub(super) fn read(
                 for i in 0..n {
                     budget.check()?;
                     let entry = entries.get_Item(i).map_err(failure)?;
-                    // A historical source is evidence in its own right, never the default rewritten.
-                    if source_id(entry.ServiceID().map_err(failure)?)? != origin {
-                        return Err(Status::Partial);
+                    let selection = entry.ServerSelection().map_err(failure)?;
+                    let explicit = if selection == ssOthers {
+                        entry.ServiceID().ok().map(|v| v.to_string())
+                    } else {
+                        None
+                    };
+                    let Some(origin) = super::super::system_values::history_source(
+                        selection.0,
+                        explicit.as_deref(),
+                    ) else {
+                        continue;
+                    };
+                    let scan = rows.result.scan.as_mut().ok_or(Status::Invalid)?;
+                    if scan.source.as_ref().is_some_and(|source| source != &origin) {
+                        continue;
                     }
+                    scan.source = Some(origin.clone());
                     let state = match (
                         entry.Operation().map_err(failure)?,
                         entry.ResultCode().map_err(failure)?,
@@ -189,7 +202,11 @@ pub(super) fn read(
                         entry.Title().map_err(failure)?,
                         &origin,
                         state,
-                        &format!(".history.{}", offset + i),
+                        &format!(
+                            ".history.{:016x}.{}",
+                            entry.Date().map_err(failure)?.to_bits(),
+                            entry.Operation().map_err(failure)?.0
+                        ),
                     )?)?;
                 }
                 offset += n;
@@ -200,6 +217,8 @@ pub(super) fn read(
                 Status::Partial
             });
         }
+        let origin = source(&searcher)?;
+        rows.result.scan.as_mut().ok_or(Status::Invalid)?.source = Some(origin.clone());
         if *mode == w::UpdateScanMode::Online {
             rows.result.scan.as_mut().ok_or(Status::Invalid)?.started_at =
                 Some(now().map_err(|_| Status::Failed)?);
@@ -223,7 +242,7 @@ pub(super) fn read(
                 .finished_at = Some(finished);
         }
         // Reject source drift during the operation; no cached or mixed-source completeness claim.
-        if source()? != origin {
+        if source(&searcher)? != origin {
             return Err(Status::Partial);
         }
         let complete = result.ResultCode().map_err(failure)? == orcSucceeded;
