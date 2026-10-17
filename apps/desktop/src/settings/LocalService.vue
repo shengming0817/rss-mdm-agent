@@ -23,6 +23,24 @@ function failure(error: unknown) {
   registrationError.value =
     value?.message ?? "注册操作未确认，请查询原请求后重试。";
 }
+function registrationFailure(code: RegistrationStatus["failure"]): string {
+  switch (code) {
+    case "invalidConfiguration":
+      return "配置签名、组织或候选不匹配，请使用有效配置。";
+    case "conflict":
+      return "配置或原注册操作存在冲突，请核实原操作，不能覆盖机器身份。";
+    case "denied":
+      return "服务端拒绝注册，请检查资格或配置撤销状态。";
+    case "expired":
+      return "注册授权已过期，请核实原操作。";
+    case "capacity":
+      return "注册名额不足，请联系管理员。";
+    case "unavailable":
+      return "操作未确认，请保留原请求等待恢复。";
+    default:
+      return "";
+  }
+}
 const native = props.fixture ? props.port : (props.port ?? nativeService());
 async function refresh() {
   if (!native || pending.value) return;
@@ -103,9 +121,6 @@ onUnmounted(() => {
           : "正在验证服务连接…"
       }}
     </p>
-    <button v-if="registering" @click="native?.cancelRegistration()">
-      停止注册等待
-    </button>
     <p v-else-if="view?.phase === 'notInstalled'">
       尚未安装，请由管理员安装匹配的执行服务。
     </p>
@@ -128,20 +143,12 @@ onUnmounted(() => {
       }}
     </p>
     <p v-else>服务不可用或对端认证未通过，请检查服务状态与访问许可。</p>
+    <button v-if="registering" @click="native?.cancelRegistration()">
+      停止注册等待
+    </button>
     <div v-if="registration">
       <p v-if="registration.failure" role="alert">
-        {{
-          {
-            invalidConfiguration:
-              "配置签名、组织或候选不匹配，请使用有效配置。",
-            conflict:
-              "配置或原注册操作存在冲突，请核实原操作，不能覆盖机器身份。",
-            denied: "服务端拒绝注册，请检查资格或配置撤销状态。",
-            expired: "注册授权已过期，请核实原操作。",
-            capacity: "注册名额不足，请联系管理员。",
-            unavailable: "操作未确认，请保留原请求等待恢复。",
-          }[registration.failure]
-        }}
+        {{ registrationFailure(registration.failure) }}
       </p>
       <p v-if="registration.credential === 'expired'">
         设备证书已过期，请由管理员为原注册恢复证书。

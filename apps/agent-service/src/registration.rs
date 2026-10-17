@@ -66,7 +66,7 @@ enum Command {
         prepared: Option<mpsc::SyncSender<Result<(), Error>>>,
     },
     Configuration {
-        file: rss_mdm_agent_wire::enroll::configuration::ConfigurationFile,
+        file: Box<rss_mdm_agent_wire::enroll::configuration::ConfigurationFile>,
         candidate_sha256: [u8; 32],
     },
 }
@@ -216,7 +216,7 @@ fn run<S: agent_client::IdentityProvider, C: agent_client::Clock, O>(
                         file,
                         candidate_sha256,
                     } => (
-                        value.prepare_configuration(file, candidate_sha256, capabilities.clone()),
+                        value.prepare_configuration(*file, candidate_sha256, capabilities.clone()),
                         None,
                     ),
                 };
@@ -329,7 +329,7 @@ impl Handler for RegistrationOwner {
                 if self
                     .commands
                     .try_send(Command::Configuration {
-                        file,
+                        file: Box::new(file),
                         candidate_sha256,
                     })
                     .is_err()

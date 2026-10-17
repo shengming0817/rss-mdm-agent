@@ -980,7 +980,7 @@ fn response_pause(d: &mut Data, path: &str) -> Option<Arc<tokio::sync::Notify>> 
 fn runtime_error(status: StatusCode, code: ErrorCode) -> Response {
     (status, axum::Json(ErrorBody { code })).into_response()
 }
-fn enrollment_response(d: &mut Data, action: &str, value: Value, peer: Option<&[u8]>) -> Response {
+fn configuration_response(d: &mut Data, action: &str, value: Value) -> Response {
     match action {
         "packages" => axum::Json(d.packages.clone()).into_response(),
         "configurations/status" => {
@@ -1058,6 +1058,14 @@ fn enrollment_response(d: &mut Data, action: &str, value: Value, peer: Option<&[
             axum::Json(grant).into_response()
         }
 
+        _ => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+fn enrollment_response(d: &mut Data, action: &str, value: Value, peer: Option<&[u8]>) -> Response {
+    match action {
+        "packages" | "configurations/status" | "configurations/exchange" => {
+            configuration_response(d, action, value)
+        }
         "trust" => {
             d.trust_calls += 1;
             if std::mem::take(&mut d.trust_failure) {

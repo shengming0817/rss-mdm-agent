@@ -155,10 +155,7 @@ impl DesktopRuntime {
                                 ai_session_contract::AccountFailureKind::Unavailable
                                     | ai_session_contract::AccountFailureKind::RateLimited
                             )
-                        }) =>
-                    {
-                        ()
-                    }
+                        }) => {}
                     Err(e) => return Err(e),
                 }
             } else if !matches!(

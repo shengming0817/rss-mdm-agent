@@ -650,3 +650,44 @@ test("operation recovery admits only fixed presentation modules and data indexin
     ).length,
   );
 });
+
+test("registration adapters admit only fixed native actions and scoped status polling", () => {
+  const native = "apps/desktop/src/settings/native.ts";
+  for (const command of [
+    "agent_import_registration",
+    "agent_cancel_registration",
+  ]) {
+    assert.deepEqual(
+      checkSource(
+        native,
+        `import { invoke } from '@tauri-apps/api/core'; invoke('${command}')`,
+      ),
+      [],
+    );
+    assert.ok(
+      checkSource(
+        "apps/desktop/src/settings/LocalService.vue",
+        `<script setup>import { invoke } from '@tauri-apps/api/core'; invoke('${command}')</script>`,
+      ).length,
+    );
+  }
+  assert.ok(
+    checkSource(
+      native,
+      `import { invoke } from '@tauri-apps/api/core'; const command = 'agent_import_registration'; invoke(command)`,
+    ).length,
+  );
+  assert.deepEqual(
+    checkSource(
+      "apps/desktop/src/settings/LocalService.vue",
+      "<script setup>const timer = setInterval(() => {}, 2000); clearInterval(timer);</script>",
+    ),
+    [],
+  );
+  assert.ok(
+    checkSource(
+      "apps/desktop/src/settings/LocalService.vue",
+      "<script setup>fetch('https://example.test');</script>",
+    ).length,
+  );
+});

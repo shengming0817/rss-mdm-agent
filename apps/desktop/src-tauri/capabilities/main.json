@@ -27,6 +27,8 @@
     "allow-execution-service-status",
     "allow-agent-registration-status",
     "allow-agent-request-registration",
+    "allow-agent-import-registration",
+    "allow-agent-cancel-registration",
     "allow-select-device",
     "allow-account-logout",
     "allow-account-status",
