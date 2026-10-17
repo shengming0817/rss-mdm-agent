@@ -34,6 +34,7 @@
     "allow-account-save-organization",
     "allow-account-login",
     "allow-appearance-snapshot",
+    "allow-device-overview",
     "allow-development-assembly"
   ]
 }

@@ -5,6 +5,7 @@ mod backend;
 mod collection_environment;
 pub mod collection_worker;
 pub mod deployment;
+mod device_overview;
 mod error;
 mod material_gc;
 mod recovery;

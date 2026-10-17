@@ -244,6 +244,18 @@ impl Handler for RegistrationOwner {
     }
     fn handle(&mut self, peer: &Peer, request: Request) -> Reply {
         match request {
+            Request::DeviceOverview {} => {
+                let Ok(subject) = peer
+                    .authenticate(&self.policy)
+                    .or_else(|_| peer.authenticate(&self.registration_policy))
+                else {
+                    return Reply::Rejected;
+                };
+                if peer.session_binding().is_err() {
+                    return Reply::Rejected;
+                }
+                crate::device_overview::read(&subject, peer.session())
+            }
             Request::RegistrationStatus {} | Request::RequestRegistration {} => {
                 if peer.authenticate(&self.registration_policy).is_err() {
                     return Reply::Rejected;
