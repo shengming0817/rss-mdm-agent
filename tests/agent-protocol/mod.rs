@@ -332,7 +332,7 @@ impl Data {
         })
         .unwrap();
         let task = CollectionTaskSpec {
-            wire_version: 2,
+            wire_version: 3,
             tenant_id: self.tenant,
             device_id: "device-1".into(),
             platform: TaskPlatform::Windows,
@@ -363,6 +363,36 @@ impl Data {
             plan,
         };
         self.offer = Some(self.signed(TaskPayload::Collection(Box::new(task))));
+    }
+    pub fn native_system_collection(&mut self, query: NativeSystemQuery) {
+        self.native_collection();
+        let TaskPayload::Collection(mut task) = self.offer.as_ref().unwrap().payload.clone() else {
+            unreachable!()
+        };
+        let definition = NativeQueryDefinition::System {
+            query: query.clone(),
+        };
+        let query = NativeQuery {
+            version: query.engine().contract_version(),
+            cardinality: query.cardinality(),
+            instance_keys: if query.cardinality() == NativeCardinality::List {
+                vec!["id".into()]
+            } else {
+                vec![]
+            },
+            definition,
+            budget: task.plan.spec().budget,
+        };
+        task.plan = NativeCollectionPlan::new(NativePlanSpec {
+            version: 1,
+            scope: rss_mdm_agent_wire::CollectionScope::Device,
+            budget: query.budget,
+            queries: [("items".into(), query)].into(),
+        })
+        .unwrap();
+        task.plan_digest = task.plan.digest();
+        task.execution = NativeExecutionBinding::bind(&task.plan, &execution_context()).unwrap();
+        self.offer = Some(self.signed(TaskPayload::Collection(task)));
     }
     pub fn native_macos_collection(&mut self) {
         self.native_collection();
@@ -747,7 +777,12 @@ impl Server {
                 .set_collection_environment(rss_mdm_agent_wire::CollectionEnvironment {
                     edition: None,
                     tools: Default::default(),
-                    native_engines: [(NativeEngine::WindowsWmi, 1)].into(),
+                    native_engines: [
+                        (NativeEngine::WindowsWmi, 1),
+                        (NativeEngine::WindowsUpdates, 1),
+                        (NativeEngine::WindowsCertificates, 1),
+                    ]
+                    .into(),
                 })
                 .unwrap();
         } else {

@@ -68,7 +68,7 @@ pub(super) fn input(q: w::NativeQuery) -> Input {
         }
     };
     let task = w::CollectionTaskSpec {
-        wire_version: 2,
+        wire_version: 3,
         tenant_id: id,
         device_id: "fixture-device".into(),
         platform: w::TaskPlatform::Macos,
@@ -92,6 +92,11 @@ pub(super) fn input(q: w::NativeQuery) -> Input {
         deadline: time + 60,
         plan_digest: plan.digest(),
         execution: w::NativeExecutionBinding {
+            generated_uid: if identity == w::ExecutionIdentity::LoggedInUser {
+                Some("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa".into())
+            } else {
+                None
+            },
             identity,
             context_revision: 1,
             target,
@@ -245,4 +250,37 @@ fn apfs_boot_snapshot_is_not_a_logical_volume_or_a_new_identity() {
             .unwrap()["system_volume"],
         false
     );
+}
+
+#[test]
+fn signed_generated_uid_is_checked_against_the_local_directory() {
+    use execution_contract::{Id, OsAccountRef, Platform};
+    let subject = unsafe { libc::geteuid() }.to_string();
+    let observed = crate::account_identity::generated_uid(&subject)
+        .unwrap()
+        .unwrap();
+    let q = query(w::NativeQueryDefinition::MacosApplications {
+        root: w::MacosApplicationRoot::UserApplications,
+        max_depth: 1,
+    });
+    let mut input = input(q);
+    let account = OsAccountRef {
+        platform: Platform::Macos,
+        subject: Id::new(subject.clone()).unwrap(),
+    };
+    input.run_as = RunAs::User {
+        account: account.clone(),
+    };
+    input.session = SessionRequirement::ActiveUser {
+        account,
+        session: Id::new("identity-boundary-test").unwrap(),
+    };
+    input.task.execution.generated_uid = Some(observed);
+    super::super::verify_identity_binding(&input).unwrap();
+    input.task.execution.generated_uid = Some(uuid::Uuid::new_v4().to_string());
+    assert_eq!(
+        super::super::verify_identity_binding(&input),
+        Err(Error::Untrusted)
+    );
+    assert!(crate::account_identity::generated_uid("4294967295").is_err());
 }

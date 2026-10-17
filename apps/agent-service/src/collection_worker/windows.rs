@@ -4,9 +4,13 @@ use super::{
     *,
 };
 use std::time::{Duration, Instant};
+mod accounts;
+mod certificates;
 mod registry;
+mod security;
 mod software;
 mod standard;
+mod updates;
 mod wmi;
 struct Budget {
     start: Instant,
@@ -22,7 +26,7 @@ impl Budget {
         }
     }
 }
-pub(super) fn execute(q: &w::NativeQuery, deadline: i64) -> w::NativeQueryResult {
+pub(super) fn execute(input: &Input, q: &w::NativeQuery, deadline: i64) -> w::NativeQueryResult {
     let time = now().unwrap_or(1);
     let budget = Budget {
         output: q.budget.output_bytes as usize,
@@ -37,6 +41,17 @@ pub(super) fn execute(q: &w::NativeQuery, deadline: i64) -> w::NativeQueryResult
         q.validate().map_err(|_| Status::Invalid)?;
         budget.check()?;
         match &q.definition {
+            w::NativeQueryDefinition::System { query } => match query {
+                w::NativeSystemQuery::WindowsAccounts { .. }
+                | w::NativeSystemQuery::WindowsJoin => accounts::read(query, &mut rows, &budget),
+                w::NativeSystemQuery::WindowsCertificates { .. } => {
+                    certificates::read(input, query, &mut rows, &budget)
+                }
+                w::NativeSystemQuery::WindowsUpdates { .. } => {
+                    updates::read(query, &mut rows, &budget)
+                }
+                _ => security::read(query, &mut rows, &budget),
+            },
             w::NativeQueryDefinition::WindowsWmi { .. } => {
                 wmi::read(&q.definition, &budget, |row| rows.push(row))
             }
@@ -48,10 +63,10 @@ pub(super) fn execute(q: &w::NativeQuery, deadline: i64) -> w::NativeQueryResult
         }?;
         budget.check()
     })();
+    rows.result.collected_at = now().unwrap_or(time);
     rows.finish(status)
 }
 fn error(e: ::windows::core::Error) -> Status {
-    eprintln!("native-provider HRESULT={:#010x}", e.code().0 as u32);
     match e.code().0 as u32 {
         0x80070005 | 0x80041003 => Status::Denied,
         0x80041002 => Status::Missing,

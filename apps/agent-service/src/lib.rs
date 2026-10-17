@@ -1,5 +1,6 @@
 //! Backend-authorized execution through the existing admission and journal owners.
 //! No local enterprise approver, source catalog or policy-signing authority is introduced.
+mod account_identity;
 mod backend;
 mod collection_environment;
 pub mod collection_worker;

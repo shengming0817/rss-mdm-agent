@@ -64,6 +64,8 @@ pub(crate) fn compile(
             let helper = delegate.as_ref().ok_or(Error::Unavailable)?;
             if identity != &helper.context().subject
                 || *session_id != crate::service::login_id(helper.context())
+                || payload.execution.generated_uid
+                    != crate::account_identity::generated_uid(identity)?
             {
                 return Err(Error::Untrusted);
             }
