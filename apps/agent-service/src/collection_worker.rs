@@ -109,6 +109,24 @@ pub(crate) fn failure(
         },
     }
 }
+/// Worst-case failure envelope used only to reserve capacity, never as observed evidence.
+fn failure_reserve(q: &w::NativeQuery, time: i64) -> w::NativeQueryResult {
+    let mut result = failure(q, w::NativeQueryStatus::SourceUnavailable, time);
+    if let Some(scan) = &mut result.scan {
+        scan.source = Some("s".repeat(255));
+        scan.started_at = Some(time);
+        scan.finished_at = Some(time);
+    }
+    result
+}
+#[cfg(any(windows, target_os = "macos", test))]
+fn truncated(q: &w::NativeQuery, original: &w::NativeQueryResult) -> w::NativeQueryResult {
+    let mut result = failure(q, w::NativeQueryStatus::Truncated, original.collected_at);
+    if original.evidence_matches(q) {
+        result.scan = original.scan.clone();
+    }
+    result
+}
 fn diagnostic_limit(p: &w::NativeCollectionPlan) -> usize {
     512 + p.spec().queries.len() * 128
 }
@@ -127,10 +145,11 @@ fn empty_result(p: &w::NativeCollectionPlan, time: i64) -> w::NativeCollectionRe
 /// Reserve enough room for every query's bounded failure evidence before accepting Start.
 pub(crate) fn preflight(p: &w::NativeCollectionPlan) -> Result<(), Error> {
     let result = empty_result(p, i64::MAX);
-    // Unsupported is the longest status name; row_count can grow to five digits.
     let mut reserve = result;
-    for r in reserve.queries.values_mut() {
-        r.status = w::NativeQueryStatus::Unsupported;
+    for (id, q) in &p.spec().queries {
+        reserve
+            .queries
+            .insert(id.clone(), failure_reserve(q, i64::MAX));
     }
     if serde_json::to_vec(&reserve)
         .map_err(|_| Error::Protocol)?
@@ -351,10 +370,9 @@ fn collect(
             .unwrap_or(usize::MAX);
         let mut reserve = result.clone();
         for (pending_id, pending_query) in plan.spec().queries.range(id.clone()..) {
-            reserve.queries.insert(
-                pending_id.clone(),
-                failure(pending_query, w::NativeQueryStatus::Unsupported, time),
-            );
+            reserve
+                .queries
+                .insert(pending_id.clone(), failure_reserve(pending_query, i64::MAX));
         }
         let raw_allowance = (plan.spec().budget.output_bytes as usize)
             .saturating_sub(
@@ -384,7 +402,7 @@ fn collect(
             .len()
             > q.budget.output_bytes as usize
         {
-            value = failure(q, w::NativeQueryStatus::Truncated, time);
+            value = truncated(q, &value);
         }
         result.collected_at = now()?;
         result.queries.insert(id.clone(), value);
@@ -400,10 +418,8 @@ fn collect(
                 .saturating_add(diagnostic_limit(plan))
                 > plan.spec().budget.output_bytes as usize
         {
-            result.queries.insert(
-                id.clone(),
-                failure(q, w::NativeQueryStatus::Truncated, time),
-            );
+            let failure = truncated(q, &result.queries[id]);
+            result.queries.insert(id.clone(), failure);
         }
         // Retain only accepted, bounded evidence: cached providers share the task output budget.
         cache.insert(q.digest(), result.queries[id].clone());

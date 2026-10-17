@@ -63,6 +63,7 @@ pub(super) fn execute(input: &Input, q: &w::NativeQuery, deadline: i64) -> w::Na
         }?;
         budget.check()
     })();
+    rows.result.collected_at = now().unwrap_or(time);
     rows.finish(status)
 }
 fn error(e: ::windows::core::Error) -> Status {

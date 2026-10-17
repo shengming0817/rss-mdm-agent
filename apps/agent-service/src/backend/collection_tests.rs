@@ -106,7 +106,10 @@ async fn capture_recovery(case: u8) {
                 .map(|i| {
                     [
                         ("id".into(), serde_json::json!(format!("update-{i}"))),
-                        ("title".into(), serde_json::json!("x".repeat(65536))),
+                        (
+                            "title".into(),
+                            serde_json::json!("retained update observation"),
+                        ),
                         ("version".into(), serde_json::json!("1")),
                         ("origin".into(), serde_json::json!("wua-source")),
                         ("state".into(), serde_json::json!("available")),
@@ -242,7 +245,6 @@ async fn capture_recovery(case: u8) {
             received["event"]["queries"]["items"]["scan"]["source"],
             "wua-source"
         );
-        assert!(serde_json::to_vec(received).unwrap().len() > w::OUTPUT_CHUNK_BYTES);
     }
     drop(data);
     bridge

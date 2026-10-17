@@ -182,7 +182,9 @@ fn selected_accounts_and_user_certificates_bind_exact_identity() {
 
 #[test]
 fn provider_failure_stays_query_local_and_retains_a_single_control_receipt() {
-    let p = plan();
+    let mut spec = plan().spec().clone();
+    spec.queries.get_mut("b").unwrap().budget.timeout_seconds = 9;
+    let p = w::NativeCollectionPlan::new(spec).unwrap();
     let until = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -219,4 +221,32 @@ fn provider_failure_stays_query_local_and_retains_a_single_control_receipt() {
     let decoded: CollectionCompletion = serde_json::from_slice(&control).unwrap();
     assert!(decoded.closed);
     assert_eq!(decoded.output_sha256, hex(&bytes));
+}
+
+#[test]
+fn truncation_preserves_observed_scan_and_failure_capacity_is_reserved() {
+    let mut q = system(w::NativeSystemQuery::WindowsUpdates {
+        section: w::UpdateSection::Available,
+        mode: w::UpdateScanMode::Online,
+    });
+    q.budget.output_bytes = 1024;
+    let mut rows = Rows::new(&q, 100);
+    rows.result.scan = Some(w::NativeScanEvidence {
+        mode: w::UpdateScanMode::Online,
+        source: Some("s".repeat(255)),
+        started_at: Some(99),
+        finished_at: Some(100),
+    });
+    let scan = rows.result.scan.clone();
+    let value = rows.finish(Err(Status::Truncated));
+    assert_eq!(value.scan, scan);
+    let reduced = truncated(&q, &value);
+    assert_eq!(reduced.scan, scan);
+    assert!(serde_json::to_vec(&reduced).unwrap().len() <= q.budget.output_bytes as usize);
+    assert!(
+        serde_json::to_vec(&failure_reserve(&q, i64::MAX))
+            .unwrap()
+            .len()
+            >= serde_json::to_vec(&reduced).unwrap().len()
+    );
 }

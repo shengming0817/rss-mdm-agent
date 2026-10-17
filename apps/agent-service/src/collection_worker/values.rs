@@ -256,7 +256,7 @@ impl<'a> Rows<'a> {
         if serde_json::to_vec(&self.result)
             .map_or(true, |b| b.len() > self.query.budget.output_bytes as usize)
         {
-            self.result = super::failure(self.query, Status::Truncated, self.result.collected_at);
+            self.result = super::truncated(self.query, &self.result);
         }
         self.result
     }
