@@ -799,7 +799,16 @@ impl Server {
                 .set_collection_environment(rss_mdm_agent_wire::CollectionEnvironment {
                     edition: None,
                     tools: Default::default(),
-                    native_engines: [(NativeEngine::MacosHardware, 1)].into(),
+                    native_engines: [
+                        NativeEngine::MacosHardware,
+                        NativeEngine::MacosSecurity,
+                        NativeEngine::MacosAccounts,
+                        NativeEngine::MacosCertificates,
+                        NativeEngine::MacosUpdates,
+                    ]
+                    .into_iter()
+                    .map(|engine| (engine, engine.contract_version()))
+                    .collect(),
                 })
                 .unwrap();
         }
