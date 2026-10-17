@@ -238,10 +238,7 @@ const shortcuts = [
   font-size: 11px;
 }
 .device-card {
-  border: 1px solid var(--rss-color-border);
-  border-radius: 16px;
   padding: 20px 20px 12px;
-  background: color-mix(in srgb, var(--home-bg) 92%, #b7b9d9);
 }
 .device-heading h3 {
   margin: 0;
