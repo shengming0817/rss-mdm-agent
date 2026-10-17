@@ -51,6 +51,8 @@ windows = { version = "=0.61.3", features = ["ApplicationModel", "Storage", "Fou
 
 [target.'cfg(target_os = "macos")'.dependencies]
 plist = "=1.10.1"
+x509-cert.workspace = true
+der.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 libc = "=0.2.189"
