@@ -1520,6 +1520,7 @@ fn start_event(d: &mut Data, operation: String) -> Response {
         let mut payload = d.offer.as_ref().unwrap().payload.clone();
         let expiry = d.time.now().unwrap() + d.start_validity_seconds;
         match &mut payload {
+            TaskPayload::Credential(_) => return StatusCode::NOT_IMPLEMENTED.into_response(),
             TaskPayload::Collection(v) => {
                 v.permit = TaskPermit::Start;
                 v.expires_at = expiry;

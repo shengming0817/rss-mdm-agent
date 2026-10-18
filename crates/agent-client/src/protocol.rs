@@ -47,6 +47,7 @@ pub fn verify_task<'a>(
 ) -> Result<VerifiedTask<'a>, Error> {
     let p = &signed.payload;
     let (tenant, device, registration, generation) = match p {
+        TaskPayload::Credential(_) => return Err(Error::Unsupported),
         TaskPayload::Collection(v) => (
             v.tenant_id,
             v.device_id.as_str(),
