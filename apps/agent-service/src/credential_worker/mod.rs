@@ -47,7 +47,6 @@ pub(crate) trait Native {
         volume: &str,
         protector: uuid::Uuid,
     ) -> Result<Material, w::CredentialFailure>;
-    fn check_account(&mut self, sid: &str) -> Result<(), w::CredentialFailure>;
     fn apply(
         &mut self,
         operation: &w::CredentialOperation,
@@ -161,32 +160,64 @@ pub(crate) fn plan_root(plan: &execution_contract::FrozenExecution) -> Result<Pa
     }
 }
 
+pub(crate) fn stored_result(
+    root: &Path,
+    task: &w::CredentialTaskSpec,
+) -> Result<Option<w::CredentialResult>, Error> {
+    let value: Option<w::CredentialResult> =
+        state::read_optional(root, &state::name(task, "result"))?;
+    if let Some(value) = &value {
+        value.validate()?;
+        if value.definition_digest != task.definition_digest {
+            return Err(Error::Untrusted);
+        }
+    }
+    Ok(value)
+}
+pub(crate) fn assessment(result: &w::CredentialResult) -> execution_lifecycle::EffectAssessment {
+    use execution_lifecycle::EffectAssessment as A;
+    if result.complete && result.failure.is_none() {
+        if result.recovery == Some(w::CredentialRecoveryOutcome::NotAttempted)
+            && result.items.is_empty()
+        {
+            return A::NoEffect;
+        }
+        if !result.items.is_empty()
+            && result
+                .items
+                .iter()
+                .all(|i| i.outcome == w::CredentialOutcome::Verified)
+        {
+            return A::Satisfied;
+        }
+    }
+    if result.items.is_empty()
+        && matches!(
+            result.failure,
+            Some(
+                w::CredentialFailure::NoMaterials
+                    | w::CredentialFailure::Unsupported
+                    | w::CredentialFailure::PermissionDenied
+                    | w::CredentialFailure::OwnerConflict
+                    | w::CredentialFailure::TargetMissing
+            )
+        )
+    {
+        return A::NoEffect;
+    }
+    A::Unknown
+}
+
 /// Called only after the execution is quiescent and its terminal result durably acknowledged.
 pub(crate) fn retire(root: &Path, task: &w::CredentialTaskSpec) -> Result<(), Error> {
     let _lock = state::lock(root)?;
-    let result = state::read_optional::<w::CredentialResult>(root, &state::name(task, "result"))?;
-    let success = result.as_ref().is_some_and(|r| {
-        r.definition_digest == task.definition_digest
-            && r.complete
-            && r.failure.is_none()
-            && r.items
-                .iter()
-                .all(|i| i.outcome == w::CredentialOutcome::Verified)
-    });
-    let no_effect = result.as_ref().is_some_and(|r| {
-        r.definition_digest == task.definition_digest
-            && r.items.is_empty()
-            && matches!(
-                r.failure,
-                Some(
-                    w::CredentialFailure::NoMaterials
-                        | w::CredentialFailure::Unsupported
-                        | w::CredentialFailure::PermissionDenied
-                        | w::CredentialFailure::OwnerConflict
-                        | w::CredentialFailure::TargetMissing
-                )
-            )
-    });
+    let result = stored_result(root, task)?;
+    let effect = result.as_ref().map(assessment);
+    let success = effect == Some(execution_lifecycle::EffectAssessment::Satisfied)
+        || result.as_ref().is_some_and(|r| {
+            r.complete && r.recovery == Some(w::CredentialRecoveryOutcome::NotAttempted)
+        });
+    let no_effect = effect == Some(execution_lifecycle::EffectAssessment::NoEffect);
     // Uncertain mutations retain only the protected original, for a future signed recovery.
     // Current account material is independently retained in the registration-bound .account.
     if success || no_effect {

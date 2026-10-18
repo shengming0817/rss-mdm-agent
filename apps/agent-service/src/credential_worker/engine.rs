@@ -4,6 +4,17 @@ use w::{CredentialFailure as Failure, CredentialOperation as Op, CredentialSubje
 fn native<T>(value: Result<T, Failure>) -> Result<T, Error> {
     value.map_err(|_| Error::Unavailable)
 }
+// An issued account candidate has a stable SID before authentication. Escrow it even
+// when local logon policy prevents verification; only locate after ACK proves the effect.
+// BitLocker must still discover the newly created protector before it can name material.
+fn candidate(n: &mut impl Native, op: &Op, secret: &str) -> Result<Option<Subject>, Error> {
+    match op {
+        Op::RotateLocalAdministrator { sid } => {
+            Ok(Some(Subject::LocalAdministrator { sid: sid.clone() }))
+        }
+        _ => native(n.locate(op, secret)),
+    }
+}
 fn save(input: &Input, record: &Record) -> Result<(), Error> {
     state::write(&input.root, &state::name(&record.task, "state"), record)
 }
@@ -67,13 +78,6 @@ pub(super) fn execute(
 }
 fn execute_inner(input: &Input, n: &mut impl Native) -> Result<w::CredentialResult, Error> {
     let task = &input.task;
-    if let Op::RotateLocalAdministrator { sid } | Op::VerifyLocalAdministrator { sid } =
-        &task.operation
-    {
-        if let Err(failure) = n.check_account(sid) {
-            return Ok(failed(task, failure));
-        }
-    }
     let mut recovery = None;
     let mut record: Option<Record> = None;
     let mut failure = None;
@@ -115,7 +119,7 @@ fn execute_inner(input: &Input, n: &mut impl Native) -> Result<w::CredentialResu
             });
         }
         let secret = state::secret(n, &old)?;
-        let Some(subject) = native(n.locate(&old.task.operation, &secret))? else {
+        let Some(subject) = candidate(n, &old.task.operation, &secret)? else {
             return Ok(failed(task, Failure::RecoveryState));
         };
         recovery = Some(w::CredentialRecoveryOutcome::Applied);
@@ -200,7 +204,7 @@ fn execute_inner(input: &Input, n: &mut impl Native) -> Result<w::CredentialResu
                         return Ok(failed(task, failure));
                     }
                 }
-                let Some(subject) = native(n.locate(&task.operation, &secret))? else {
+                let Some(subject) = candidate(n, &task.operation, &secret)? else {
                     let failure = match rejected {
                         Some(
                             value @ (Failure::PermissionDenied

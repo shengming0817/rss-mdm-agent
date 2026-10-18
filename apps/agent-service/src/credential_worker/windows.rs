@@ -17,9 +17,6 @@ impl Native for NativeWindows {
     fn bitlocker(&mut self, volume: &str, protector: uuid::Uuid) -> Result<Material, F> {
         bitlocker::read_exact(volume, protector)
     }
-    fn check_account(&mut self, sid: &str) -> Result<(), F> {
-        account::check(sid).map(|_| ())
-    }
     fn apply(&mut self, op: &Op, secret: &str) -> Result<(), F> {
         match op {
             Op::RotateBitlocker { volume, .. } => bitlocker::create(volume, secret),

@@ -157,6 +157,11 @@ impl execution_app::RunnerPort for CapturingRunner {
         {
             return Ok(None);
         }
+        if p.spec().launch.interpreter.profile.id.as_str() == crate::credential_worker::PROFILE
+            && s == execution_app::ObservationStage::Assessment
+        {
+            return Ok(None);
+        }
         let mut value = self.inner.observe(p, a, s, n)?;
         if let Some(facts) = &mut value {
             if let execution_lifecycle::Observation::Exited {

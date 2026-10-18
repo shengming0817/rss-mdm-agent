@@ -84,3 +84,6 @@ mod tests;
 
 #[cfg(test)]
 mod collection_tests;
+
+#[cfg(test)]
+mod credential_tests;

@@ -489,6 +489,27 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
             return Err(Error::Conflict);
         }
         let binding = client.association(task)?.ok_or(Error::Conflict)?;
+        let retained = client.retained_offer(task)?;
+        if let (wire::TaskPayload::Credential(spec), Some(attempt)) =
+            (retained.payload(), binding.local_attempt())
+        {
+            let plan = app
+                .service_frozen_input(binding.request())
+                .map_err(map_app_error)?;
+            let root = crate::credential_worker::plan_root(&plan)?;
+            if crate::credential_worker::stored_result(&root, spec)?.is_some() {
+                app.service_assess(
+                    binding.request(),
+                    attempt,
+                    super::plan::reference(spec.task_id.to_string(), "credential-result")?,
+                    &super::credential::EffectEvidence {
+                        task: spec,
+                        attempt,
+                    },
+                )
+                .map_err(map_app_error)?;
+            }
+        }
         if let Some(result) = client.pending_result(&binding)? {
             if let Some(ack) = client.frozen_result_ack(&result)? {
                 return Ok(Some(PendingDelivery {
@@ -658,24 +679,19 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
             return Ok(Some(wire::TaskEvent::Cancelled));
         }
         if let wire::TaskPayload::Credential(spec) = payload {
-            let result = if process.end == ProcessEnd::Exited
-                && process.quiescent
-                && process.quality == OutputQuality::Complete
-                && process.exit_code == Some(0)
-            {
-                let value: wire::CredentialResult =
-                    serde_json::from_slice(&process.stdout).map_err(|_| Error::Protocol)?;
-                value.validate()?;
-                if value.definition_digest != spec.definition_digest {
-                    return Err(Error::Untrusted);
-                }
-                value
+            let root = crate::credential_worker::plan_root(&evidence.input)?;
+            let result = if process.quiescent {
+                crate::credential_worker::stored_result(&root, spec)?
             } else {
-                crate::credential_worker::failure_with_materials(
-                    &crate::credential_worker::plan_root(&evidence.input)?,
+                None
+            };
+            let result = match result {
+                Some(value) => value,
+                None => crate::credential_worker::failure_with_materials(
+                    &root,
                     spec,
                     wire::CredentialFailure::RecoveryState,
-                )?
+                )?,
             };
             return Ok(Some(wire::TaskEvent::CredentialResult(result)));
         }

@@ -198,3 +198,69 @@ pub(crate) fn verify_input(
     }
     Ok(())
 }
+
+/// Proof comes from the system worker's protected result, never stdout or its exit code.
+/// ref: tokio/tokio-1.47.1 tokio/src/process/mod.rs (wait only establishes ExitStatus).
+pub(super) struct EffectEvidence<'a> {
+    pub task: &'a w::CredentialTaskSpec,
+    pub attempt: &'a AttemptId,
+}
+impl execution_lifecycle::ObservationVerifier for EffectEvidence<'_> {
+    fn verify(
+        &self,
+        plan: &FrozenExecution,
+        attempt: &AttemptId,
+        evidence: &EvidenceRef,
+        now: u64,
+    ) -> Result<execution_lifecycle::ObservationFacts, execution_lifecycle::ObservationError> {
+        use execution_lifecycle::{
+            EffectAssessment, Observation, ObservationError as E, ObservationFacts,
+        };
+        if attempt != self.attempt
+            || evidence.reference.id.as_str() != self.task.task_id.to_string()
+            || evidence.reference.revision.as_str() != "credential-result"
+        {
+            return Err(E::Untrusted);
+        }
+        let mut started = self.task.clone();
+        started.permit = w::TaskPermit::Start;
+        let expires = plan
+            .spec()
+            .validity
+            .expires_at_unix_ms
+            .checked_sub(plan.spec().budget.total_timeout_ms)
+            .ok_or(E::Untrusted)?;
+        if !expires.is_multiple_of(1000) {
+            return Err(E::Untrusted);
+        }
+        started.expires_at = i64::try_from(expires / 1000).map_err(|_| E::Untrusted)?;
+        verify_input(plan, &started).map_err(|_| E::Untrusted)?;
+        let root = crate::credential_worker::plan_root(plan).map_err(|_| E::Untrusted)?;
+        let result = crate::credential_worker::stored_result(&root, self.task)
+            .map_err(|_| E::Untrusted)?
+            .ok_or(E::Unavailable)?;
+        let assessment = crate::credential_worker::assessment(&result);
+        if assessment == EffectAssessment::Satisfied {
+            let escrow = crate::credential_worker::pending(&root, self.task)
+                .map_err(|_| E::Untrusted)?
+                .ok_or(E::Untrusted)?;
+            if escrow.definition_digest != self.task.definition_digest
+                || escrow.materials.len() != result.items.len()
+                || escrow
+                    .materials
+                    .iter()
+                    .any(|m| !result.items.iter().any(|i| i.subject == m.subject))
+            {
+                return Err(E::Untrusted);
+            }
+        }
+        Ok(ObservationFacts {
+            request_id: plan.spec().request.request_id.clone(),
+            content_digest: plan.digest().clone(),
+            attempt_id: attempt.clone(),
+            evidence: evidence.clone(),
+            observed_at_unix_ms: now,
+            observation: Observation::Effect { assessment },
+        })
+    }
+}

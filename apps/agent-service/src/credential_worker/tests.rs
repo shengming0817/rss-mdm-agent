@@ -35,6 +35,7 @@ struct Fake {
     ambiguous: bool,
     remove_failed: bool,
     collect_failure: bool,
+    logon_denied: bool,
 }
 impl Fake {
     fn new() -> Self {
@@ -45,6 +46,7 @@ impl Fake {
             ambiguous: false,
             remove_failed: false,
             collect_failure: false,
+            logon_denied: false,
         }
     }
 }
@@ -98,14 +100,10 @@ impl Native for Fake {
             })
             .ok_or(Failure::TargetMissing)
     }
-    fn check_account(&mut self, _: &str) -> Result<(), Failure> {
-        if self.conflict {
-            Err(Failure::OwnerConflict)
-        } else {
-            Ok(())
-        }
-    }
     fn apply(&mut self, op: &Op, secret: &str) -> Result<(), Failure> {
+        if self.conflict {
+            return Err(Failure::OwnerConflict);
+        }
         let mut s = self.state.lock().unwrap();
         s.changes += 1;
         s.secret = Some(secret.into());
@@ -126,6 +124,12 @@ impl Native for Fake {
         }
     }
     fn locate(&mut self, _: &Op, secret: &str) -> Result<Option<Subject>, Failure> {
+        if self.conflict {
+            return Err(Failure::OwnerConflict);
+        }
+        if self.logon_denied {
+            return Err(Failure::PermissionDenied);
+        }
         let s = self.state.lock().unwrap();
         Ok((s.secret.as_deref() == Some(secret))
             .then(|| s.subject.clone())
@@ -512,4 +516,57 @@ fn acknowledged_no_effect_retires_candidate_but_unknown_keeps_it() {
             .unwrap()
             .is_none()
     );
+}
+
+#[test]
+fn denied_logon_still_escrows_changed_password_and_recovery_never_resets_again() {
+    let root = Root::new();
+    let original = input(&root, rotate());
+    let mut n = Fake::new();
+    n.logon_denied = true;
+    let a = ack(&original);
+    let result = engine::result(&original, &mut n).unwrap();
+    a.join().unwrap();
+    assert_eq!(n.state.lock().unwrap().changes, 1);
+    assert!(!result.complete);
+    assert_eq!(result.failure, Some(Failure::NativeFailure));
+    assert_eq!(result.items.len(), 1);
+    assert_eq!(result.items[0].outcome, w::CredentialOutcome::Unknown);
+    assert!(pending(&root.0, &original.task).unwrap().is_some());
+    let mut recovery = input(
+        &root,
+        Op::VerifyLocalAdministrator {
+            sid: "S-1-5-21-1-2-3-1001".into(),
+        },
+    );
+    recovery.task.recovery = Some(w::CredentialRecovery {
+        task_id: original.task.task_id,
+        attempt_id: original.task.attempt_id,
+    });
+    recovery.task.definition_digest = w::CredentialTaskSpec::digest(
+        &recovery.task.operation,
+        &recovery.task.recipient,
+        &recovery.task.expected,
+        &recovery.task.recovery,
+    )
+    .unwrap();
+    let a = ack(&recovery);
+    let denied = engine::result(&recovery, &mut n).unwrap();
+    a.join().unwrap();
+    assert_eq!(denied.items[0].outcome, w::CredentialOutcome::Unknown);
+    assert_eq!(n.state.lock().unwrap().changes, 1);
+    n.logon_denied = false;
+    n.conflict = true; // Ownership changes after the mutation cannot become a NoEffect proof.
+    let conflict = engine::result(&recovery, &mut n).unwrap();
+    assert_eq!(conflict.items[0].outcome, w::CredentialOutcome::Unknown);
+    assert_eq!(n.state.lock().unwrap().changes, 1);
+    n.conflict = false;
+    let recovered = engine::result(&recovery, &mut n).unwrap();
+    assert!(recovered.complete);
+    assert_eq!(
+        recovered.recovery,
+        Some(w::CredentialRecoveryOutcome::Applied)
+    );
+    assert_eq!(recovered.items[0].outcome, w::CredentialOutcome::Verified);
+    assert_eq!(n.state.lock().unwrap().changes, 1);
 }
