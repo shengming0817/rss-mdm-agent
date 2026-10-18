@@ -1412,6 +1412,10 @@ pub(super) fn finish_unmanage(deployment: &Deployment, task: uuid::Uuid) -> Resu
     }
     .verify(&binary)
     .map_err(|_| Error::Identity)?;
+    // SAFETY: Schedule only the exact verified current carrier. Registration is not deletion proof.
+    if unsafe { MoveFileExW(wide(&binary).as_ptr(), null(), MOVEFILE_DELAY_UNTIL_REBOOT) } == 0 {
+        return Err(Error::Unavailable);
+    }
     let name = format!("RssExecution-Install-{task}");
     if let Some(handle) = service(&name)? {
         worker_owned(
@@ -1423,10 +1427,6 @@ pub(super) fn finish_unmanage(deployment: &Deployment, task: uuid::Uuid) -> Resu
         if unsafe { DeleteService(handle.0) } == 0 {
             return Err(Error::Unavailable);
         }
-    }
-    // SAFETY: Schedule only the exact verified current carrier. Registration is not deletion proof.
-    if unsafe { MoveFileExW(wide(&binary).as_ptr(), null(), MOVEFILE_DELAY_UNTIL_REBOOT) } == 0 {
-        return Err(Error::Unavailable);
     }
     Ok(false)
 }

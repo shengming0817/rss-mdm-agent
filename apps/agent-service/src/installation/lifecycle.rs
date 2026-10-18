@@ -3,6 +3,7 @@ use super::*;
 enum Action {
     Install,
     Remove,
+    RemoveLabRegistration,
     Uninstall,
     Status,
     Refresh,
@@ -27,6 +28,7 @@ impl Action {
             "msi-commit" => Ok(Self::MsiCommit),
             "install" => Ok(Self::Install),
             "remove" => Ok(Self::Remove),
+            "remove-lab-registration" => Ok(Self::RemoveLabRegistration),
             "uninstall" => Ok(Self::Uninstall),
             "status" => Ok(Self::Status),
             "refresh" => Ok(Self::Refresh),
@@ -159,6 +161,25 @@ pub(super) fn run(args: &[OsString]) -> Result<(), Error> {
                 return Err(Error::Identity);
             }
             platform::register(opts.system()?, &binary, &config)?;
+        }
+        Action::RemoveLabRegistration => {
+            if !opts.system()? {
+                return Err(Error::Identity);
+            }
+            let config = opts.config()?;
+            let binary = opts.path("--binary")?;
+            let deployment = Deployment::metadata(&config)?;
+            if config == Deployment::default_path()?
+                || config.canonicalize()? == Deployment::default_path()?
+                || deployment.service.path != binary
+            {
+                return Err(Error::Identity);
+            }
+            // This only removes a custom lab registration whose native arguments
+            // bind the exact config and image. The default production registration
+            // cannot match; credentials, payload and journal are retained.
+            platform::quiescent(&deployment, &config)?;
+            platform::remove(true, &binary, &config)?;
         }
         Action::Remove => {
             let binary = opts.path("--binary")?;

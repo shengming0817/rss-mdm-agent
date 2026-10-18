@@ -22,6 +22,8 @@ struct Recovery {
     phase: Phase,
     outcome: Option<UnmanageOutcome>,
     acknowledged: bool,
+    credentials_complete: Option<bool>,
+    carrier_released: bool,
 }
 fn root() -> Result<PathBuf, Error> {
     Ok(Deployment::default_path()?
@@ -71,7 +73,7 @@ pub(crate) fn supported(d: &Deployment) -> bool {
     Deployment::default_path()
         .and_then(|p| Candidate::retained(&p, d))
         .and_then(|c| c.format())
-        .is_ok_and(|f| matches!(f.as_str(), "macos_pkg" | "nsis_exe" | "windows_msi"))
+        .is_ok_and(|f| matches!(f.as_str(), "macos_pkg" | "nsis_exe"))
 }
 fn prepare(d: &Deployment, permit: &UnmanagePermit, package_managed: bool) -> Result<(), Error> {
     if path(permit.task().task_id)?.exists() {
@@ -83,7 +85,7 @@ fn prepare(d: &Deployment, permit: &UnmanagePermit, package_managed: bool) -> Re
         }
         return Ok(());
     }
-    if !supported(d) {
+    if !package_managed && !supported(d) {
         return Err(Error::Unsupported);
     }
     let current = Deployment::metadata(&Deployment::default_path()?)?;
@@ -111,6 +113,8 @@ fn prepare(d: &Deployment, permit: &UnmanagePermit, package_managed: bool) -> Re
         phase: Phase::Prepared,
         outcome: None,
         acknowledged: false,
+        credentials_complete: None,
+        carrier_released: false,
     };
     validate(&record, permit.task().task_id)?;
     platform::public_directory(&root()?)?;
@@ -142,7 +146,7 @@ fn prepare(d: &Deployment, permit: &UnmanagePermit, package_managed: bool) -> Re
 }
 pub(crate) fn launch(d: &Deployment, permit: &UnmanagePermit) -> Result<(), Error> {
     prepare(d, permit, false)?;
-    if load(permit.task().task_id)?.phase != Phase::Finished {
+    if !load(permit.task().task_id)?.carrier_released {
         platform::launch_unmanage(d, permit.task().task_id)?;
     }
     Ok(())
@@ -214,7 +218,7 @@ fn cleanup(
 }
 fn execute(task: uuid::Uuid, package_entry: bool) -> Result<(), Error> {
     let mut r = load(task)?;
-    if r.phase == Phase::Finished {
+    if r.phase == Phase::Finished && r.carrier_released {
         return Ok(());
     }
     if package_entry && !r.package_managed {
@@ -249,8 +253,10 @@ fn execute(task: uuid::Uuid, package_entry: bool) -> Result<(), Error> {
         Err(e) => return Err(e.into()),
     }
     if r.phase == Phase::Prepared {
+        outcome::phase("retirement-quiescence")?;
         // A blocked desktop is a retryable precondition, not a completed worker.
         platform::quiescent(d, &config)?;
+        outcome::phase("retirement-stop")?;
         platform::stop(true, &d.service.path, &config)?;
         advance(&mut r, Phase::Stopped)?;
     }
@@ -273,26 +279,28 @@ fn execute(task: uuid::Uuid, package_entry: bool) -> Result<(), Error> {
     let candidate = r.candidate.clone();
     let permit = r.permit.clone();
     let package_managed = r.package_managed;
+    let complete = std::cell::Cell::new(r.credentials_complete);
     cleanup(
         r.phase,
         |phase| {
             match phase {
                 Phase::Stopped => {
+                    outcome::phase("retirement-payload")?;
                     platform::remove(true, &deployment.service.path, &config)?;
                     if !package_managed {
                         platform::uninstall_payload(&candidate)?;
                     }
                 }
                 Phase::PayloadRemoved => {
+                    outcome::phase("retirement-credentials")?;
                     let secrets = crate::DeviceSecrets::open(
                         &deployment.state_root.join("secrets"),
                         &deployment.namespace()?,
                     )?;
-                    if !secrets.0.retire(permit.credentials())? {
-                        return Err(Error::Conflict);
-                    }
+                    complete.set(Some(secrets.0.retire(permit.credentials())?));
                 }
                 Phase::CredentialsRemoved => {
+                    outcome::phase("retirement-state")?;
                     let mut roots = vec![
                         &deployment.state_root,
                         &deployment.execution.material_root,
@@ -311,27 +319,35 @@ fn execute(task: uuid::Uuid, package_entry: bool) -> Result<(), Error> {
             Ok(None)
         },
         |next, observation| {
+            r.credentials_complete = complete.get();
             if let Some(observation) = observation {
                 r.outcome = Some(observation);
             }
             advance(&mut r, next)
         },
     )?;
-    // All recoverable product cleanup is durably terminal Unknown before relinquishing
-    // the recovery carrier. A failure here is terminal uncertainty, never a queued retry
-    // without an executable. Only positively verified reclamation upgrades the result.
-    let gone = platform::finish_unmanage(&deployment, task).unwrap_or(false);
-    if gone && !package_managed {
+    // Subject cleanup is terminal independently of carrier reclamation. A restart
+    // after its checkpoint must still retry the exact carrier, never repeat deletion.
+    outcome::phase("retirement-carrier")?;
+    let reclaimed = platform::finish_unmanage(&deployment, task);
+    r.carrier_released = reclaimed.is_ok();
+    if reclaimed.as_ref().is_ok_and(|gone| *gone)
+        && !package_managed
+        && r.credentials_complete == Some(true)
+    {
         r.outcome = Some(UnmanageOutcome::Completed);
-        persist(&r)?;
     }
+    persist(&r)?;
     if let Some(transport) = transport {
+        if reclaimed.is_ok() {
+            outcome::phase("retirement-result")?;
+        }
         r.acknowledged = crate::service::owner_runtime()?
             .block_on(transport.report(r.outcome.ok_or(Error::Conflict)?))
             .is_ok();
         persist(&r)?;
     }
-    Ok(())
+    reclaimed.map(|_| ())
 }
 pub(super) fn run(task: uuid::Uuid, binary: &Path) -> Result<(), Error> {
     if !path(task)?.exists() {

@@ -1507,7 +1507,7 @@ if journal.exists():
     diagnostic=journal.parent.parent/'service-stderr.log'
     if diagnostic.exists(): proof['driverDiagnostics']=diagnostic.read_text()[-32768:]
     print(json.dumps(proof))
-""" % (frozen_installer(installer_source, ['remove', '--scope', 'system', '--binary', str(binary), '--config', str(config)]), str(protected / 'state/execution.sqlite')))
+""" % (frozen_installer(installer_source, ['remove-lab-registration', '--scope', 'system', '--binary', str(binary), '--config', str(config)]), str(protected / 'state/execution.sqlite')))
         if args.security:
             cleanup.write_text("""import plistlib,subprocess
 from pathlib import Path

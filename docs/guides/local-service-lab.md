@@ -35,7 +35,7 @@
 
 设备退管由服务端普通 Policy `unmanage_device` 发起。Agent 验证绑定当前租户、注册、设备和任务的签名 Start，持久接受后关闭新执行准入，读取 journal 的真实静止证明，再将卸载交给独立安装 worker。离线、证书故障和 MDM Profile 消失不构成卸载授权。产品 `uninstall` 和 system `remove` 入口必须携带 `--operation <已接受任务 UUID>`；仅传 UUID 不授予权限，缺少原 Start 或排空证明均拒绝。Windows NSIS 可传 `/RETIREMENT=<任务 UUID>`，MSI 对应 `RSSRETIREMENTTASK`；普通系统卸载入口不会隐式申请退管。
 
-受控卸载移除本安装服务和程序，按本安装凭据创建记录清理精确 Keychain/CNG/DPAPI 引用；首次初始化持有完整目录标记，旧安装缺少此标记时不能证明历史轮换凭据全部清理，保留 Unknown，不自动回填或扩大为全机扫描；升级替换仍保留 installation ID、凭据和原任务。完成清理后删除本安装运行状态、执行材料和 work 目录，重新安装必须经新的注册授权，不继承旧任务。卸载先在 payload 外保留固定摘要的恢复程序及受保护 `install-operations/<任务 UUID>.retirement-work.json` 交接，逐阶段记录停止、程序移除、凭据清理、状态清理和载体最终回收；恢复不依赖已经删除的通信库或程序目录。恢复持有安装锁并核对当前安装身份，不能清理后来复用同一路径的新安装。launchd/SCM 对未完成的同一任务重试；阻塞的桌面应用退出后可继续。主体清理完成后先持久记录，再回收恢复载体；最后回收或回执未确认仍保留 Unknown。OS 历史日志、交接与受保护 `install-operations/<任务 UUID>.retirement.json` 安装结果保留。结果通过删除凭据前保留的内存传输提交，不复制长期凭据；响应丢失仍是未确认。当前固定安装 owner 仅对 macOS PKG、Windows NSIS/MSI 广告退管能力；MSIX 的 Package Manager 卸载不冒充该安装 owner，保留不支持状态。Windows 独立 worker 的精确载体登记重启删除时报告 Unknown，登记成功不等于已经删除；真实平台效果由独立 T3 核实。
+受控卸载移除本安装服务和程序，按本安装凭据创建记录清理精确 Keychain/CNG/DPAPI 引用；首次初始化持有完整目录标记，旧安装缺少此标记时不能证明历史轮换凭据全部清理，删除已知引用后持久记录不完整证明并上报 Unknown，不永久重试，不自动回填或扩大为全机扫描；升级替换仍保留 installation ID、凭据和原任务。完成清理后删除本安装运行状态、执行材料和 work 目录，重新安装必须经新的注册授权，不继承旧任务。卸载先在 payload 外保留固定摘要的恢复程序及受保护 `install-operations/<任务 UUID>.retirement-work.json` 交接，逐阶段记录停止、程序移除、凭据清理、状态清理和载体最终回收；恢复不依赖已经删除的通信库或程序目录。恢复持有安装锁并核对当前安装身份，不能清理后来复用同一路径的新安装。launchd/SCM 对未完成的同一任务重试；阻塞的桌面应用退出后可继续。主体清理完成后先持久记录，再回收恢复载体；两者有独立完成判据，主体终态落盘后的恢复仍会回收载体。macOS 最终回收由固定参数的系统 shell launchd job 完成，Windows 先登记精确载体的重启删除再移除 worker；回收或回执未确认仍保留 Unknown。OS 历史日志、交接与受保护 `install-operations/<任务 UUID>.retirement.json` 安装结果保留。结果通过删除凭据前保留的内存传输提交，不复制长期凭据；响应丢失仍是未确认。当前固定安装 owner 仅对 macOS PKG、Windows NSIS 广告远程退管能力；MSI 缺少固定产品身份的远程包管理器接线，不广告该能力，已有授权的 MSI Remove 仍进入同一清理 owner；MSIX 的 Package Manager 卸载不冒充该安装 owner，保留不支持状态。Windows 独立 worker 的精确载体登记重启删除时报告 Unknown，登记成功不等于已经删除；真实平台效果由独立 T3 核实。
 
 Windows 安装操作返回 UUID 和不含输入内容的阶段回执。等待超时表示结果未知，worker 可能仍在运行；使用 `--installation operation-status --operation <UUID>` 核实，确认进程退出后回收该 worker。回执保留失败阶段、闭合错误、可得的原生退出码和补偿结果；超时后不要据命令退出自行删除正在使用的程序。
 
@@ -59,7 +59,7 @@ macOS 系统注册：`python3 scripts/service/execution-macos.py install --scope
 
 Windows 使用 PowerShell 7 运行 `scripts/service/execution-windows.ps1 -Action Install -Scope System -Binary <绝对 exe 路径> -Config <受保护配置>`，SCM 使用 LocalSystem。用户 helper 用 `-Scope User`，调度任务以实际登录账号启动。跨会话不继承系统进程句柄，使用认证命名管道派发。
 
-用户 helper 的 remove 只移除该用户自己的匹配注册；生产 system remove 必须消费上述已接受退管任务，不能作为产品卸载的未授权旁路。安装升级内部的服务替换与补偿不使用产品退管入口。install 仍拒绝已有注册。生产桌面读取默认受保护部署 pin；自定义配置仅用于显式部署和隔离验收。
+隔离验收使用 `remove-lab-registration`（PowerShell wrapper 为 `RemoveLabRegistration`），只允许非默认配置且原生注册参数精确匹配本次 config/binary；保留凭据、程序和 journal，不授予生产退管能力。用户 helper 的 remove 只移除该用户自己的匹配注册；生产 system remove 必须消费上述已接受退管任务，不能作为产品卸载的未授权旁路。安装升级内部的服务替换与补偿不使用产品退管入口。install 仍拒绝已有注册。生产桌面读取默认受保护部署 pin；自定义配置仅用于显式部署和隔离验收。
 
 自助目录的准入主体由后端返回：设备准入任务无需企业登录，企业用户准入任务需要当前有效企业会话。企业登录不授予本机管理员权限；系统账户与本机登录用户的执行身份另行核验。退出或切换企业账号后，目录、参数表单和旧 AI 入口失效；已接受的设备请求保持原 UUID、OS 会话、AI 来源和人工确认，可继续查询或恢复，企业用户请求不能沿用已撤销的企业会话。OS 会话变化仍禁止向另一会话派发。
 

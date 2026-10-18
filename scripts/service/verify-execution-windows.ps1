@@ -61,7 +61,7 @@ try {
             $Receipt.scenarios.refresh='existing owner verified persistent LocalSystem identity before publication'
         }
         RemoveSystem {
-            & $Owner -Action Remove -Scope System -Binary $Binary -Config $Config
+            & $Owner -Action RemoveLabRegistration -Scope System -Binary $Binary -Config $Config
             $Receipt.scenarios.remove='registration removed; persistent state retained by installation owner'
         }
     }

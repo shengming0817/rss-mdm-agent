@@ -7,7 +7,7 @@ import subprocess
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=['install', 'refresh', 'remove', 'status', 'apply', 'import'])
+    parser.add_argument('action', choices=['install', 'refresh', 'remove', 'remove-lab-registration', 'status', 'apply', 'import'])
     parser.add_argument('--scope', choices=['system', 'user'], default='system')
     parser.add_argument('--binary', type=Path, required=True)
     for name in ['config', 'candidate-binary', 'candidate-config', 'candidate', 'profile', 'configuration', 'package-path']:
