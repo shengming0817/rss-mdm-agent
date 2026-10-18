@@ -3703,8 +3703,7 @@ async fn full_report_queue_after_restart_drains_before_retrying_native_observati
     let config = case.service.core.config.clone();
     let helpers = case.service.core.helpers.clone();
     drop(case.service);
-    case._server.data.lock().unwrap().software(1, true);
-    let next_task = case._server.data.lock().unwrap().task;
+    case._server.data.lock().unwrap().offer = None;
     let clock = SystemClock::new().unwrap();
     let client = Client::open(
         &case._root.path,
@@ -3729,6 +3728,15 @@ async fn full_report_queue_after_restart_drains_before_retrying_native_observati
         service.next_network = std::time::Instant::now();
         service.drive(&mut commands).await.unwrap();
     }
+    let next_task = {
+        let mut data = case._server.data.lock().unwrap();
+        data.task = uuid::Uuid::new_v4();
+        data.attempt = uuid::Uuid::new_v4();
+        data.software(1, true);
+        data.task
+    };
+    service.next_network = std::time::Instant::now();
+    service.drive(&mut commands).await.unwrap();
     assert_eq!(
         service.waiting.as_ref().unwrap().0.task_id(),
         next_task,
