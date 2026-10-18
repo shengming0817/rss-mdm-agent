@@ -268,8 +268,75 @@ pub async fn agent_registration_status() -> Result<execution_ipc::host::Registra
     registration_request(execution_ipc::host::Request::RegistrationStatus {}).await
 }
 #[tauri::command]
-pub async fn agent_request_registration() -> Result<execution_ipc::host::RegistrationStatus> {
-    registration_request(execution_ipc::host::Request::RequestRegistration {}).await
+pub async fn agent_request_registration<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: State<'_, DesktopRuntime>,
+    organization_id: Option<String>,
+    login: Option<String>,
+) -> Result<execution_ipc::host::RegistrationStatus> {
+    state.register_device(app, organization_id, login).await
+}
+#[tauri::command]
+pub async fn agent_cancel_registration(state: State<'_, DesktopRuntime>) -> Result<()> {
+    state.cancel_registration_wait().await;
+    Ok(())
+}
+#[tauri::command]
+pub async fn agent_import_registration<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> Result<Option<execution_ipc::host::RegistrationStatus>> {
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    app.run_on_main_thread(move || {
+        #[cfg(target_os = "macos")]
+        let selected = (|| -> std::io::Result<Option<std::path::PathBuf>> {
+            use objc2::MainThreadMarker;
+            use objc2_app_kit::{NSModalResponseOK, NSOpenPanel};
+            let panel =
+                NSOpenPanel::openPanel(MainThreadMarker::new().ok_or(std::io::ErrorKind::Other)?);
+            panel.setCanChooseDirectories(false);
+            panel.setCanChooseFiles(true);
+            panel.setAllowsMultipleSelection(false);
+            if panel.runModal() != NSModalResponseOK {
+                return Ok(None);
+            }
+            Ok(Some(std::path::PathBuf::from(
+                panel
+                    .URL()
+                    .and_then(|v| v.path())
+                    .ok_or(std::io::ErrorKind::InvalidData)?
+                    .to_string(),
+            )))
+        })();
+        #[cfg(windows)]
+        let selected = super::windows_dialogs::configuration_dialog();
+        #[cfg(not(any(target_os = "macos", windows)))]
+        let selected: std::io::Result<Option<std::path::PathBuf>> =
+            Err(std::io::ErrorKind::Unsupported.into());
+        let _ = sender.send(selected);
+    })
+    .map_err(|_| error("configuration_unavailable", "无法打开配置选择器"))?;
+    let Some(path) = receiver
+        .await
+        .map_err(|_| error("configuration_unavailable", "配置选择未完成"))?
+        .map_err(|_| error("configuration_unavailable", "配置选择未完成"))?
+    else {
+        return Ok(None);
+    };
+    let file = tokio::task::spawn_blocking(move || {
+        let bytes = zeroize::Zeroizing::new(
+            installation_security::read_external(&path, 65536)
+                .map_err(|_| error("configuration_invalid", "配置文件不可读或不安全"))?,
+        );
+        serde_json::from_slice::<rss_mdm_agent_wire::enroll::configuration::ConfigurationFile>(
+            &bytes,
+        )
+        .map_err(|_| error("configuration_invalid", "请选择当前版本的完整签名注册配置"))
+    })
+    .await
+    .map_err(|_| error("configuration_unavailable", "读取配置未完成"))??;
+    registration_request(execution_ipc::host::Request::ImportRegistration { file })
+        .await
+        .map(Some)
 }
 #[tauri::command]
 pub async fn device_overview() -> Result<execution_ipc::host::DeviceOverview> {
@@ -311,6 +378,8 @@ pub fn register<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder
         execution_service_status,
         agent_registration_status,
         agent_request_registration,
+        agent_import_registration,
+        agent_cancel_registration,
         ai_host_status,
         ai_restart_host,
         ai_export_diagnostics,
@@ -433,6 +502,8 @@ mod tests {
             "execution_service_status",
             "agent_registration_status",
             "agent_request_registration",
+            "agent_import_registration",
+            "agent_cancel_registration",
             "appearance_snapshot",
             "device_overview",
             "ai_host_status",

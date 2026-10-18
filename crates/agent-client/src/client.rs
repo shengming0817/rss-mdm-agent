@@ -124,6 +124,9 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         }
         if let Some(pending) = &state.pending {
             secrets.push(self.secrets.resolve(&pending.secret_reference)?);
+            if let Some(configuration) = &pending.configuration {
+                secrets.push(self.secrets.resolve(&configuration.secret_reference)?);
+            }
         }
         Ok(crate::CredentialRedactor {
             device: secrets,

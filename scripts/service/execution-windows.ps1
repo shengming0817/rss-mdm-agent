@@ -9,14 +9,14 @@ param(
     [string]$CandidateConfig,
     [string]$Candidate,
     [string]$Profile,
-    [string]$Envelope,
-    [string]$SecretFile
+    [string]$Configuration,
+    [string]$PackagePath
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 if (![IO.Path]::IsPathFullyQualified($Binary)) { throw 'Absolute service path required' }
 $Arguments = @('--installation', $Action.ToLowerInvariant(), '--scope', $Scope.ToLowerInvariant(), '--binary', $Binary)
-foreach ($Pair in @(@('config',$Config),@('candidate-binary',$CandidateBinary),@('candidate-config',$CandidateConfig),@('candidate',$Candidate),@('profile',$Profile),@('envelope',$Envelope),@('secret-file',$SecretFile))) {
+foreach ($Pair in @(@('config',$Config),@('candidate-binary',$CandidateBinary),@('candidate-config',$CandidateConfig),@('candidate',$Candidate),@('profile',$Profile),@('configuration',$Configuration),@('package-path',$PackagePath))) {
     if ($Pair[1]) { $Arguments += @('--' + $Pair[0], $Pair[1]) }
 }
 & $Binary @Arguments

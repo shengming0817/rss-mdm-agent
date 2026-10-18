@@ -284,7 +284,7 @@ Section "Install"
   Push "$INSTDIR\versions\@ID@\rss-execution-service.exe"
   Call PinnedImage
   Pop $ImagePin
-  StrCpy $Invocation '"$INSTDIR\versions\@ID@\rss-execution-service.exe" --installation apply --candidate "$INSTDIR\versions\@ID@\candidate.json"'
+  StrCpy $Invocation '"$INSTDIR\versions\@ID@\rss-execution-service.exe" --installation apply --package-path "$EXEPATH" --candidate "$INSTDIR\versions\@ID@\candidate.json"'
   ${If} $Profile != ""
     StrCpy $Invocation '$Invocation --profile "$Profile"'
   ${EndIf}

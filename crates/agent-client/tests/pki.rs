@@ -385,7 +385,11 @@ async fn administrator_recovery_rejects_foreign_registration_and_retains_origina
         };
         assert_eq!(
             client
-                .validate_grant_import(&material, "recovery", &binding.capabilities)
+                .prepare_configuration(
+                    server.configuration([4; 32]),
+                    [4; 32],
+                    binding.capabilities.clone()
+                )
                 .unwrap_err(),
             Error::Conflict
         );

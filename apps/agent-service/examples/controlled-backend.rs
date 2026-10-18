@@ -2,7 +2,6 @@
 //! Only test targets include this fixture; it is never a production transport mode.
 #[path = "../../../tests/agent-protocol/mod.rs"]
 mod protocol;
-use agent_client::Clock;
 use base64::Engine;
 use ring::signature::KeyPair;
 use rss_mdm_agent_wire::runtime as wire;
@@ -41,28 +40,14 @@ async fn main() {
             line = rx.recv() => {
                 let Some(line) = line else { break };
                 let command: serde_json::Value = serde_json::from_str(&line).unwrap();
+                if command["kind"] == "configuration" {
+                    let candidate: [u8;32] = serde_json::from_value(command["candidateSha256"].clone()).unwrap();
+                    println!("{}", serde_json::to_string(&server.configuration(candidate)).unwrap());
+                    std::io::stdout().flush().unwrap();
+                    continue;
+                }
                 let mut data = server.data.lock().unwrap();
                 match command["kind"].as_str().unwrap() {
-                    "grant" => {
-                        assert!(data.grant.is_none(), "the fixture never replaces an existing grant");
-                        let operation = uuid::Uuid::new_v4();
-                        let grant = rss_mdm_agent_wire::enroll::GrantReceipt {
-                            wire_version:1, grant_id:uuid::Uuid::new_v4(),
-                            state:rss_mdm_agent_wire::enroll::GrantState::Available,
-                            platform:wire::TaskPlatform::Macos,
-                            expires_at:data.time.now().unwrap() + 3600,
-                        };
-                        data.operation = Some(operation);
-                        // Public fixture secret only. The installed service owns its real native key.
-                        data.bootstrap = Some("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".into());
-                        data.grant = Some(grant.clone());
-                        println!("{}", serde_json::to_string(&agent_client::GrantImport {
-                            operation_id:operation, grant,
-                        }).unwrap());
-                        std::io::stdout().flush().unwrap();
-                        continue;
-                    }
-
                     "script" => {
                         data.task = uuid::Uuid::new_v4();
                         data.bytes = command["body"].as_str().unwrap().as_bytes().to_vec();

@@ -112,6 +112,8 @@ fn main() {
             "execution_service_status",
             "agent_registration_status",
             "agent_request_registration",
+            "agent_import_registration",
+            "agent_cancel_registration",
             "appearance_snapshot",
             "device_overview",
             "development_assembly",

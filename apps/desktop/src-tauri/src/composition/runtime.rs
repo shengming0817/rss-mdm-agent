@@ -1,4 +1,5 @@
 //! Stable desktop owners and one replaceable AI Host incarnation.
+mod registration;
 use super::{
     credentials::{KeyBackend, MasterKey},
     execution::ExecutionHandle,
@@ -8,7 +9,7 @@ use serde_json::Value;
 use std::{
     path::Path,
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc,
     },
     time::Duration,
@@ -21,6 +22,7 @@ pub struct DesktopRuntime {
     pub execution: ExecutionHandle,
     pub users: Arc<std::sync::Mutex<super::users::Users>>,
     switching: Mutex<()>,
+    registration_epoch: AtomicU64,
     pub organizations: std::sync::Mutex<super::account::Organizations>,
     identity: super::identity::IdentityOwner,
     cleanup_pending: AtomicBool,
@@ -64,6 +66,7 @@ impl DesktopRuntime {
             identity: super::identity::IdentityOwner::new(users.clone()),
             users,
             switching: Mutex::new(()),
+            registration_epoch: AtomicU64::new(0),
             organizations: std::sync::Mutex::new(
                 super::account::Organizations::open(root, super::account::bundled_organization()?)
                     .map_err(|_| "organization settings unavailable")?,
@@ -171,6 +174,7 @@ impl DesktopRuntime {
     // ref: tokio sync/mutex.rs@tokio-1.53.1 — one serialized I/O owner.
     // Every identity transition attempts remote retirement even after local persistence fails.
     async fn retire_locked(&self) -> ui::Result<()> {
+        self.registration_epoch.fetch_add(1, Ordering::AcqRel);
         let local = self.revoke_locked().await;
         let remote = self.logout_remote().await;
         self.account_result(local.and(remote))

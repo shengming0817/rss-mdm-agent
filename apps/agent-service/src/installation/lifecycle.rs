@@ -51,7 +51,8 @@ impl Options {
                 "--candidate-config",
                 "--candidate",
                 "--profile",
-                "--envelope",
+                "--configuration",
+                "--package-path",
                 "--grant",
                 "--secret-file",
                 "--operation",
@@ -105,13 +106,6 @@ pub(super) fn run(args: &[OsString]) -> Result<(), Error> {
             "{}",
             serde_json::to_string(&Target::current().map_err(|_| Error::Unsupported)?)
                 .map_err(|_| Error::Configuration)?
-        );
-        return Ok(());
-    }
-    if action == "schema" {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&bootstrap_schema()?).map_err(|_| Error::Configuration)?
         );
         return Ok(());
     }
@@ -216,6 +210,18 @@ pub(super) fn run(args: &[OsString]) -> Result<(), Error> {
                 opts.values.get("--profile"),
                 &opts.config()?,
             )?;
+            if let Some(package) = opts.values.get("--package-path") {
+                // Installation succeeds independently of registration. Invalid material is reported,
+                // never trusted or silently replaced with another identity.
+                let result = discover_configuration(package, &opts.config()?);
+                match result {
+                    Ok(()) => (),
+                    Err(ImportFailure::Configuration(error)) => {
+                        eprintln!("agent_configuration_import: {error}")
+                    }
+                    Err(ImportFailure::Lifecycle(error)) => return Err(error),
+                }
+            }
         }
         Action::Recover => {
             if !opts.system()? {
@@ -247,28 +253,8 @@ pub(super) fn run(args: &[OsString]) -> Result<(), Error> {
             if !opts.system()? {
                 return Err(Error::Identity);
             }
-            let config = opts.config()?;
-            let deployment = Deployment::load(&config)?;
-            let envelope = opts.path("--envelope")?;
-            let metadata: Bootstrap = serde_json::from_slice(
-                &installation_security::read_protected(&envelope)
-                    .map_err(|_| Error::Configuration)?,
-            )
-            .map_err(|_| Error::Configuration)?;
-            metadata.validate(&deployment, SystemClock::new()?.now()?)?;
-            let bytes =
-                zeroize::Zeroizing::new(platform::read_secret(&opts.path("--secret-file")?)?);
-            let secret = rss_mdm_agent_wire::runtime::Secret::parse(
-                std::str::from_utf8(&bytes)
-                    .map_err(|_| Error::Identity)?
-                    .trim(),
-            )
-            .map_err(|_| Error::Identity)?;
-            platform::stop(true, &deployment.service.path, &config)?;
-            let result = initialize(&deployment, &envelope, &secret);
-            let restart = platform::register(true, &deployment.service.path, &config);
-            result?;
-            restart?;
+            import_configuration(&opts.path("--configuration")?, &opts.config()?)
+                .map_err(ImportFailure::error)?;
         }
     }
     println!(
@@ -389,6 +375,128 @@ fn transition(mut perform: impl FnMut(Step) -> Result<(), Error>) -> Result<(), 
         return Err(error);
     }
     Ok(())
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum ImportFailure {
+    Configuration(Error),
+    Lifecycle(Error),
+}
+impl ImportFailure {
+    fn error(self) -> Error {
+        match self {
+            Self::Configuration(e) | Self::Lifecycle(e) => e,
+        }
+    }
+}
+impl From<Error> for ImportFailure {
+    fn from(e: Error) -> Self {
+        Self::Configuration(e)
+    }
+}
+impl From<std::io::Error> for ImportFailure {
+    fn from(_: std::io::Error) -> Self {
+        Self::Configuration(Error::Storage)
+    }
+}
+fn discover_configuration(package: &Path, config: &Path) -> Result<(), ImportFailure> {
+    if !package.is_absolute()
+        || package.components().any(|v| {
+            matches!(
+                v,
+                std::path::Component::ParentDir | std::path::Component::CurDir
+            )
+        })
+        || package.extension().and_then(|v| v.to_str())
+            != Some(if cfg!(windows) { "exe" } else { "pkg" })
+    {
+        return Err(Error::Configuration.into());
+    }
+    let path = package
+        .parent()
+        .ok_or(Error::Configuration)?
+        .join(agent_client::CONFIGURATION_FILENAME);
+    match std::fs::symlink_metadata(&path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e.into()),
+        Ok(_) => import_configuration(&path, config),
+    }
+}
+fn restore_registration(
+    stop: impl FnOnce() -> Result<(), Error>,
+    import: impl FnOnce() -> Result<(), Error>,
+    restart: impl FnOnce() -> Result<(), Error>,
+) -> Result<(), ImportFailure> {
+    let stopped = stop();
+    let imported = match stopped {
+        Ok(()) => import(),
+        Err(error) => Err(error),
+    };
+    if let Err(error) = imported {
+        eprintln!("agent_configuration_prepare: {error}");
+    }
+    // Even a failed stop may have already deregistered the job. Restore its same owner;
+    // the communication lease still excludes any overlapping execution owner.
+    let restarted = restart();
+    if let Err(error) = restarted {
+        return Err(ImportFailure::Lifecycle(error));
+    }
+    stopped.map_err(ImportFailure::Lifecycle)?;
+    imported.map_err(ImportFailure::Configuration)
+}
+fn import_configuration(path: &Path, config: &Path) -> Result<(), ImportFailure> {
+    let deployment = Deployment::load(config).map_err(ImportFailure::Lifecycle)?;
+    let bytes = zeroize::Zeroizing::new(installation_security::read_external(
+        path,
+        agent_client::CONFIGURATION_BYTES,
+    )?);
+    let file: rss_mdm_agent_wire::enroll::configuration::ConfigurationFile =
+        serde_json::from_slice(&bytes).map_err(|_| Error::Protocol)?;
+    agent_client::verify_configuration(&file, &deployment.network()?, SystemClock::new()?.now()?)?;
+    let candidate_sha256 = publication_digest(&deployment).map_err(ImportFailure::Lifecycle)?;
+    restore_registration(
+        || platform::stop(true, &deployment.service.path, config),
+        || {
+            let mut client = deployment.communication(true)?;
+            if client.enrollment_status()?.registered {
+                return Ok(());
+            }
+            client.prepare_configuration(file, candidate_sha256, deployment.capabilities())
+        },
+        || platform::register(true, &deployment.service.path, config),
+    )
+}
+#[cfg(test)]
+mod configuration_restart_tests {
+    use super::*;
+    #[test]
+    fn stop_and_restart_failures_never_become_configuration_only_failures() {
+        use std::cell::Cell;
+        let imported = Cell::new(false);
+        let restarted = Cell::new(false);
+        let result = restore_registration(
+            || Err(Error::Unavailable),
+            || {
+                imported.set(true);
+                Ok(())
+            },
+            || {
+                restarted.set(true);
+                Ok(())
+            },
+        );
+        assert_eq!(result, Err(ImportFailure::Lifecycle(Error::Unavailable)));
+        assert!(!imported.get());
+        assert!(restarted.get());
+        assert_eq!(
+            restore_registration(|| Ok(()), || Err(Error::Denied), || Err(Error::Storage)),
+            Err(ImportFailure::Lifecycle(Error::Storage))
+        );
+        assert_eq!(
+            restore_registration(|| Ok(()), || Err(Error::Denied), || Ok(())),
+            Err(ImportFailure::Configuration(Error::Denied))
+        );
+    }
 }
 
 fn apply(candidate_path: &Path, profile: Option<&PathBuf>, config: &Path) -> Result<(), Error> {

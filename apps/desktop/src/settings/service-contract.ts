@@ -56,6 +56,17 @@ export interface ServiceStatus {
 }
 
 /**
+ * Closed, credential-free registration diagnostics.
+ */
+export type RegistrationFailure =
+  | "invalidConfiguration"
+  | "conflict"
+  | "denied"
+  | "expired"
+  | "capacity"
+  | "unavailable";
+
+/**
  * A bounded machine request preview; contains no key handles, secrets or certificate bodies.
  */
 export interface RegistrationStatus {
@@ -68,6 +79,10 @@ export interface RegistrationStatus {
    */
   expiresAt?: number | null;
   /**
+   * Classified failure without untrusted server text or secrets.
+   */
+  failure?: RegistrationFailure | null;
+  /**
    * Server grant selected by the machine owner.
    */
   grantId?: string | null;
@@ -77,6 +92,7 @@ export interface RegistrationStatus {
   phase:
     | "unregistered"
     | "preparing"
+    | "configurationUnknown"
     | "awaitingAuthorization"
     | "authorized"
     | "activating"

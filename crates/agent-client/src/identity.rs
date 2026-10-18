@@ -64,6 +64,7 @@ pub(crate) struct Active {
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum Purpose {
     Authorization,
+    Configuration,
     Import,
     Renewal,
     Recovery,
@@ -83,6 +84,7 @@ pub(crate) struct Pending {
     pub candidate: Option<enroll::Candidate>,
     pub failure: Option<enroll::ErrorCode>,
     pub expected: Option<runtime::BindingProfile>,
+    pub configuration: Option<crate::configuration::ConfigurationExchange>,
 }
 pub(crate) fn blocks_runtime(code: enroll::ErrorCode) -> bool {
     matches!(
