@@ -13,9 +13,14 @@ struct Record {
     start: wire::SignedTask,
     accepted_at: i64,
     drained: bool,
-    outcome: Option<wire::UnmanageOutcome>,
+    binding: wire::BindingProfile,
+    context: wire::SoftwareExecutionContext,
+    result_operation: Uuid,
+    references: Vec<(String, bool)>,
 }
 /// An accepted original Start, never a caller-created uninstall capability.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct UnmanagePermit(Record);
 impl UnmanagePermit {
     /// Exact installation selected by the protected product owner.
@@ -33,9 +38,16 @@ impl UnmanagePermit {
     pub fn drained(&self) -> bool {
         self.0.drained
     }
-    /// A prior terminal local observation; it never authorizes running cleanup again.
-    pub fn outcome(&self) -> Option<wire::UnmanageOutcome> {
-        self.0.outcome
+    /// Exact current enrollment references captured before the installation handoff.
+    pub fn credentials(&self) -> &[(String, bool)] {
+        &self.0.references
+    }
+    /// Validate a protected installation-owner handoff after the communication store was removed.
+    pub fn verify_handoff(&self, cfg: &crate::Config, installation: Uuid) -> Result<(), Error> {
+        if !self.drained() {
+            return Err(Error::Denied);
+        }
+        validate_record(&self.0, cfg, installation, &self.0.binding)
     }
 }
 /// An in-memory transport for the original retirement, retained before deleting keys.
@@ -45,8 +57,9 @@ pub struct UnmanageTransport {
     url: url::Url,
     max: usize,
     timeout: std::time::Duration,
-    task: Uuid,
     attempt: Uuid,
+    operation: Uuid,
+    context: wire::SoftwareExecutionContext,
 }
 impl<S: IdentityProvider, C: Clock> Client<S, C> {
     /// Use the ordinary Received/Start exchange, including its immutable restart replay.
@@ -94,7 +107,10 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             start: start.signed.clone(),
             accepted_at: self.now()?,
             drained: false,
-            outcome: None,
+            binding: self.store.registration()?,
+            context: self.execution_context()?,
+            result_operation: Uuid::new_v4(),
+            references: self.current_credential_references()?,
         };
         self.store.put("unmanage", &record)?;
         Ok(UnmanagePermit(record))
@@ -124,9 +140,6 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
     /// Record the installation owner's quiescence handoff without changing task identity.
     pub fn unmanage_drained(&mut self, permit: UnmanagePermit) -> Result<UnmanagePermit, Error> {
         self.current_unmanage(&permit)?;
-        if permit.0.outcome.is_some() {
-            return Err(Error::Conflict);
-        }
         let mut record = permit.0;
         record.drained = true;
         self.store.put("unmanage", &record)?;
@@ -144,69 +157,12 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             url: self.url(&format!("tasks/{}/events", permit.task().task_id))?,
             max: self.store.cfg.limits.response_bytes,
             timeout: self.store.cfg.limits.request_timeout,
-            task: permit.task().task_id,
             attempt: permit.task().attempt_id,
+            operation: permit.0.result_operation,
+            context: permit.0.context.clone(),
         })
     }
-    /// Freeze and send the installation owner's observed result through the existing requests table.
-    /// No active-key check is repeated after destruction; only this pre-bound transport is usable.
-    pub async fn finish_unmanage(
-        &mut self,
-        permit: &UnmanagePermit,
-        transport: UnmanageTransport,
-        outcome: wire::UnmanageOutcome,
-    ) -> Result<(), Error> {
-        self.current_unmanage(permit)?;
-        if !permit.drained()
-            || transport.task != permit.task().task_id
-            || transport.attempt != permit.task().attempt_id
-            || permit.outcome().is_some_and(|old| old != outcome)
-        {
-            return Err(Error::Conflict);
-        }
-        let mut record = permit.0.clone();
-        record.outcome = Some(outcome);
-        let key = format!("unmanage-result/{}", transport.task);
-        let request = self.event_request(
-            &key,
-            transport.task,
-            transport.attempt,
-            wire::TaskEvent::UnmanageResult { outcome },
-            None,
-        )?;
-        self.store.put("unmanage", &record)?;
-        let (status, body) = crate::client::json_transport(
-            transport
-                .http
-                .post(transport.url)
-                .timeout(transport.timeout)
-                .header("content-type", "application/json")
-                .body(encode(&request)?),
-            transport.max,
-        )
-        .await?;
-        if !status.is_success() {
-            return Err(Error::Unavailable);
-        }
-        let ack: wire::TaskEventAck = decode(&body)?;
-        if ack.permit().is_some() {
-            return Err(Error::Protocol);
-        }
-        self.store
-            .conn
-            .execute("UPDATE requests SET accepted=1 WHERE key=?1", [key])?;
-        Ok(())
-    }
-    /// Enumerate only credentials referenced by this installation's current enrollment state.
-    /// The protected credential owner also retains its own complete creation catalog.
-    pub fn unmanage_credentials(
-        &self,
-        permit: &UnmanagePermit,
-    ) -> Result<Vec<(String, bool)>, Error> {
-        self.current_unmanage(permit)?;
-        if !permit.drained() {
-            return Err(Error::Conflict);
-        }
+    fn current_credential_references(&self) -> Result<Vec<(String, bool)>, Error> {
         let state = self.identity_state()?;
         let mut refs = Vec::new();
         if let Some(v) = state.active {
@@ -293,4 +249,35 @@ pub fn inspect_unmanage(
         return Err(Error::Denied);
     }
     Ok(permit)
+}
+
+impl UnmanageTransport {
+    /// Send only a terminal observation already persisted by the protected installation owner.
+    /// The exact operation, attempt and execution context were frozen before credential removal.
+    /// Consuming the transport cannot recreate credentials or authorize additional work.
+    pub async fn report(self, outcome: wire::UnmanageOutcome) -> Result<(), Error> {
+        let request = wire::TaskEventRequest::new(
+            self.operation,
+            self.attempt,
+            wire::TaskEvent::UnmanageResult { outcome },
+            self.context,
+        )?;
+        let (status, body) = crate::client::json_transport(
+            self.http
+                .post(self.url)
+                .timeout(self.timeout)
+                .header("content-type", "application/json")
+                .body(encode(&request)?),
+            self.max,
+        )
+        .await?;
+        if !status.is_success() {
+            return Err(Error::Unavailable);
+        }
+        let ack: wire::TaskEventAck = decode(&body)?;
+        if ack.permit().is_some() {
+            return Err(Error::Protocol);
+        }
+        Ok(())
+    }
 }

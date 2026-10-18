@@ -348,7 +348,6 @@ fn command(path: &Path, args: &[OsString]) -> Result<Vec<u8>, Error> {
     }
     Ok(bytes)
 }
-#[cfg(any(windows, test))]
 fn read_image(path: &Path, digest: &str) -> Result<Vec<u8>, Error> {
     const IMAGE_BYTES: u64 = 256 * 1024 * 1024;
     let file = std::fs::File::open(path)?;

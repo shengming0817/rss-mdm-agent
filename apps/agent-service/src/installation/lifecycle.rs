@@ -164,48 +164,22 @@ pub(super) fn run(args: &[OsString]) -> Result<(), Error> {
             let binary = opts.path("--binary")?;
             let config = opts.config()?;
             if opts.system()? {
-                let deployment = Deployment::metadata(&config)?;
                 let task = opts
                     .values
                     .get("--operation")
                     .and_then(|v| v.to_str())
                     .ok_or(Error::Denied)?;
-                unmanage::authorize(
-                    &deployment,
+                unmanage::package_remove(
+                    &config,
+                    &binary,
                     uuid::Uuid::parse_str(task).map_err(|_| Error::Denied)?,
                 )?;
-                platform::quiescent(&deployment, &config)?;
+            } else {
+                platform::remove(false, &binary, &config)?;
             }
-            platform::remove(opts.system()?, &binary, &config)?;
         }
         Action::Uninstall => {
-            if !opts.system()? {
-                return Err(Error::Identity);
-            }
-            let config = opts.config()?;
-            if config != Deployment::default_path()? {
-                return Err(Error::Configuration);
-            }
-            let deployment = Deployment::metadata(&config)?;
-            let root = deployment
-                .service
-                .path
-                .parent()
-                .ok_or(Error::Configuration)?;
-            if opts.path("--binary")? != deployment.service.path
-                || root.parent() != Some(platform::payload_parent()?.as_path())
-                || [
-                    &deployment.state_root,
-                    &deployment.execution.material_root,
-                    &deployment.execution.work_root,
-                ]
-                .iter()
-                .any(|p| p.starts_with(root))
-            {
-                return Err(Error::Identity);
-            }
-            let candidate = Candidate::retained(&config, &deployment)?;
-            if candidate.root != root {
+            if !opts.system()? || opts.config()? != Deployment::default_path()? {
                 return Err(Error::Identity);
             }
             let task = opts
@@ -214,10 +188,8 @@ pub(super) fn run(args: &[OsString]) -> Result<(), Error> {
                 .and_then(|v| v.to_str())
                 .ok_or(Error::Denied)?;
             unmanage::run(
-                &deployment,
-                &config,
-                &candidate,
                 uuid::Uuid::parse_str(task).map_err(|_| Error::Denied)?,
+                &opts.path("--binary")?,
             )?;
         }
         Action::Status => {

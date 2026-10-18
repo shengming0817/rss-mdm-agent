@@ -1540,22 +1540,19 @@ async fn signed_retirement_requires_start_drain_and_exact_installation_and_repla
     let transport = client.unmanage_transport(&permit).unwrap();
     server.data.lock().unwrap().result_failure = true;
     assert_eq!(
-        client
-            .finish_unmanage(&permit, transport, UnmanageOutcome::Unknown)
-            .await,
+        transport.report(UnmanageOutcome::Unknown).await,
         Err(Error::Unavailable)
     );
     drop(client);
-    let mut client = server.client(&root, OpenMode::Existing);
+    let client = server.client(&root, OpenMode::Existing);
     let permit = client.accepted_unmanage(install).unwrap().unwrap();
-    assert_eq!(permit.outcome(), Some(UnmanageOutcome::Unknown));
-    assert!(client.unmanage_drained(permit).is_err());
+    permit.verify_handoff(&cfg, install).unwrap();
+    assert!(permit.verify_handoff(&cfg, Uuid::new_v4()).is_err());
     let permit = client.accepted_unmanage(install).unwrap().unwrap();
     let transport = client.unmanage_transport(&permit).unwrap();
-    client
-        .finish_unmanage(&permit, transport, UnmanageOutcome::Unknown)
-        .await
-        .unwrap();
+    drop(client);
+    std::fs::remove_dir_all(&root.path).unwrap();
+    transport.report(UnmanageOutcome::Unknown).await.unwrap();
     let data = server.data.lock().unwrap();
     assert_eq!(data.start_ops.len(), 2);
     assert_eq!(data.start_ops[0], data.start_ops[1]);

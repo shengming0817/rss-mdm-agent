@@ -518,11 +518,14 @@ fn retained_image(path: &Path, desktop: bool) -> Result<(), Error> {
     Err(Error::Identity)
 }
 pub(super) fn preflight_desktop_entry(candidate: &Candidate) -> Result<(), Error> {
+    preflight_entry(candidate, false)
+}
+fn preflight_entry(candidate: &Candidate, retirement: bool) -> Result<(), Error> {
     use ::windows::{
         core::{Interface, PCWSTR},
         Win32::System::Com::{IPersistFile, STGM_READ},
     };
-    if candidate.format()? == "windows_msix" {
+    if !retirement && candidate.format()? == "windows_msix" {
         return if super::msix::root()? == candidate.root {
             Ok(())
         } else {
@@ -533,7 +536,13 @@ pub(super) fn preflight_desktop_entry(candidate: &Candidate) -> Result<(), Error
         return Err(Error::Identity);
     }
     if let Some(image) = registry_value("ServiceImage")? {
-        retained_image(Path::new(&image), false)?;
+        if retirement {
+            if Path::new(&image) != candidate.service.path {
+                return Err(Error::Identity);
+            }
+        } else {
+            retained_image(Path::new(&image), false)?;
+        }
     } else if registry_value("DisplayName")?.is_some() {
         return Err(Error::Identity);
     }
@@ -550,7 +559,14 @@ pub(super) fn preflight_desktop_entry(candidate: &Candidate) -> Result<(), Error
             link.GetPath(&mut buffer, null_mut(), 0)
                 .map_err(|_| Error::Unavailable)?;
         }
-        retained_image(Path::new(&unsafe { text(buffer.as_ptr()) }?), true)?;
+        let target = PathBuf::from(unsafe { text(buffer.as_ptr()) }?);
+        if retirement {
+            if target != candidate.desktop.path {
+                return Err(Error::Identity);
+            }
+        } else {
+            retained_image(&target, true)?;
+        }
     }
     Ok(())
 }
@@ -1002,10 +1018,21 @@ pub fn worker(name: String, path: PathBuf) -> Result<(), Error> {
         .map_err(|_| Error::Conflict)?;
     // Publish actual process identity before entering the dispatcher or doing any
     // installation work. A crash/final-result write failure cannot erase this proof.
-    write_new(
-        &path.with_extension("worker.json"),
-        &json(&WorkerEvidence::process(std::process::id()))?,
-    )?;
+    let evidence_path = path.with_extension("worker.json");
+    if path.with_extension("retirement-work.json").exists() {
+        if let Some(old) = read_worker_evidence(&path)? {
+            worker_exited(old.process_id.ok_or(Error::Conflict)?)?;
+        }
+        publish(
+            &evidence_path,
+            &json(&WorkerEvidence::process(std::process::id()))?,
+        )?;
+    } else {
+        write_new(
+            &evidence_path,
+            &json(&WorkerEvidence::process(std::process::id()))?,
+        )?;
+    }
     let mut name = wide(name);
     let table = [
         SERVICE_TABLE_ENTRYW {
@@ -1233,7 +1260,7 @@ impl Drop for ComApartment {
 
 pub(super) fn uninstall_payload(candidate: &Candidate) -> Result<(), Error> {
     use windows_sys::Win32::System::Registry::*;
-    preflight_desktop_entry(candidate)?;
+    preflight_entry(candidate, true)?;
     if let Some(image) = registry_value("ServiceImage")? {
         if Path::new(&image) != candidate.service.path {
             return Err(Error::Identity);
@@ -1277,12 +1304,6 @@ pub(super) fn launch_unmanage(deployment: &Deployment, task: uuid::Uuid) -> Resu
     let root = operation_root()?;
     public_directory(&root)?;
     let binary = unmanage_binary(deployment, task)?;
-    deployment
-        .service
-        .verify(&deployment.service.path)
-        .map_err(|_| Error::Identity)?;
-    let bytes = read_image(&deployment.service.path, &deployment.service.sha256)?;
-    retain_public(&binary, &bytes)?;
     Artifact {
         path: binary.clone(),
         ..deployment.service.clone()
@@ -1304,6 +1325,11 @@ pub(super) fn launch_unmanage(deployment: &Deployment, task: uuid::Uuid) -> Resu
     let name = format!("RssExecution-Install-{task}");
     if let Some(handle) = service(&name)? {
         worker_owned(&handle, &name, &path)?;
+        if state(&handle)?.dwCurrentState == SERVICE_STOPPED {
+            if unsafe { StartServiceW(handle.0, 0, null()) } == 0 {
+                return Err(Error::Unavailable);
+            }
+        }
         return Ok(());
     }
     let image = wide(format!(
@@ -1319,9 +1345,9 @@ pub(super) fn launch_unmanage(deployment: &Deployment, task: uuid::Uuid) -> Resu
             manager.0,
             wide(&name).as_ptr(),
             wide(&name).as_ptr(),
-            SERVICE_QUERY_STATUS | SERVICE_START | SERVICE_STOP | DELETE,
+            SERVICE_QUERY_STATUS | SERVICE_START | SERVICE_STOP | SERVICE_CHANGE_CONFIG | DELETE,
             SERVICE_WIN32_OWN_PROCESS,
-            SERVICE_DEMAND_START,
+            SERVICE_AUTO_START,
             SERVICE_ERROR_NORMAL,
             image.as_ptr(),
             null(),
@@ -1335,6 +1361,42 @@ pub(super) fn launch_unmanage(deployment: &Deployment, task: uuid::Uuid) -> Resu
         return Err(Error::Unavailable);
     }
     let handle = Sc(raw);
+    // ref: windows-sys Win32/System/Services: SERVICE_FAILURE_ACTIONSW.
+    // SCM owns recovery across process crashes and machine restarts for this fixed task.
+    let mut action = SC_ACTION {
+        Type: SC_ACTION_RESTART,
+        Delay: 30_000,
+    };
+    let actions = SERVICE_FAILURE_ACTIONSW {
+        dwResetPeriod: 86400,
+        lpRebootMsg: null_mut(),
+        lpCommand: null_mut(),
+        cActions: 1,
+        lpsaActions: &mut action,
+    };
+    let flag = SERVICE_FAILURE_ACTIONS_FLAG {
+        fFailureActionsOnNonCrashFailures: 1,
+    };
+    if unsafe {
+        ChangeServiceConfig2W(
+            handle.0,
+            SERVICE_CONFIG_FAILURE_ACTIONS,
+            (&actions as *const SERVICE_FAILURE_ACTIONSW).cast(),
+        )
+    } == 0
+        || unsafe {
+            ChangeServiceConfig2W(
+                handle.0,
+                SERVICE_CONFIG_FAILURE_ACTIONS_FLAG,
+                (&flag as *const SERVICE_FAILURE_ACTIONS_FLAG).cast(),
+            )
+        } == 0
+    {
+        unsafe {
+            DeleteService(handle.0);
+        }
+        return Err(Error::Unavailable);
+    }
     // SAFETY: Valid owned service handle with no extra arguments. Return without waiting for self-stop.
     if unsafe { StartServiceW(handle.0, 0, null()) } == 0 {
         return Err(Error::Unavailable);

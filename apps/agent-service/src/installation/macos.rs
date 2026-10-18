@@ -439,7 +439,9 @@ pub(super) fn launch_unmanage(deployment: &Deployment, task: uuid::Uuid) -> Resu
     let label = format!("{LABEL}.unmanage.{task}");
     let path = unmanage_job(task);
     let args = vec![
-        deployment.service.path.to_string_lossy().into_owned(),
+        unmanage_binary(deployment, task)?
+            .to_string_lossy()
+            .into_owned(),
         "--installation".into(),
         "uninstall".into(),
         "--config".into(),
@@ -456,7 +458,10 @@ pub(super) fn launch_unmanage(deployment: &Deployment, task: uuid::Uuid) -> Resu
         plist::Value::Array(args.into_iter().map(plist::Value::String).collect()),
     );
     dict.insert("RunAtLoad".into(), true.into());
-    dict.insert("KeepAlive".into(), false.into());
+    let mut restart = plist::Dictionary::new();
+    restart.insert("SuccessfulExit".into(), false.into());
+    dict.insert("KeepAlive".into(), plist::Value::Dictionary(restart));
+    dict.insert("ThrottleInterval".into(), 30.into());
     let mut bytes = Vec::new();
     plist::Value::Dictionary(dict)
         .to_writer_xml(&mut bytes)
@@ -470,14 +475,23 @@ pub(super) fn launch_unmanage(deployment: &Deployment, task: uuid::Uuid) -> Resu
     }
     Ok(())
 }
-pub(super) fn finish_unmanage(_: &Deployment, task: uuid::Uuid) -> Result<bool, Error> {
-    let path = unmanage_job(task);
-    installation_security::protected(&path).map_err(|_| Error::Identity)?;
-    std::fs::remove_file(path)?;
-    // The one-shot worker can exit normally after its payload and durable launch entry are removed.
+pub(super) fn finish_unmanage(deployment: &Deployment, task: uuid::Uuid) -> Result<bool, Error> {
+    for path in [unmanage_job(task), unmanage_binary(deployment, task)?] {
+        match std::fs::symlink_metadata(&path) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e.into()),
+            Ok(_) => {
+                installation_security::protected(&path).map_err(|_| Error::Identity)?;
+                std::fs::remove_file(path)?;
+            }
+        }
+    }
     Ok(true)
 }
-
-pub(super) fn unmanage_binary(deployment: &Deployment, _: uuid::Uuid) -> Result<PathBuf, Error> {
-    Ok(deployment.service.path.clone())
+pub(super) fn unmanage_binary(_: &Deployment, task: uuid::Uuid) -> Result<PathBuf, Error> {
+    Ok(Deployment::default_path()?
+        .parent()
+        .ok_or(Error::Configuration)?
+        .join("install-operations")
+        .join(format!("{task}.retirement")))
 }
