@@ -11,6 +11,8 @@ pub use msix::initialize as initialize_packaged;
 mod macos;
 mod outcome;
 #[cfg(any(windows, test))]
+mod retirement_carrier;
+#[cfg(any(windows, test))]
 mod task_document;
 #[cfg(windows)]
 mod windows;

@@ -1404,7 +1404,7 @@ pub(super) fn launch_unmanage(deployment: &Deployment, task: uuid::Uuid) -> Resu
     Ok(())
 }
 pub(super) fn finish_unmanage(deployment: &Deployment, task: uuid::Uuid) -> Result<bool, Error> {
-    use windows_sys::Win32::Storage::FileSystem::{MoveFileExW, MOVEFILE_DELAY_UNTIL_REBOOT};
+    use ::windows::Win32::System::{TaskScheduler::*, Variant::VARIANT};
     let binary = unmanage_binary(deployment, task)?;
     Artifact {
         path: binary.clone(),
@@ -1412,21 +1412,51 @@ pub(super) fn finish_unmanage(deployment: &Deployment, task: uuid::Uuid) -> Resu
     }
     .verify(&binary)
     .map_err(|_| Error::Identity)?;
-    // SAFETY: Schedule only the exact verified current carrier. Registration is not deletion proof.
-    if unsafe { MoveFileExW(wide(&binary).as_ptr(), null(), MOVEFILE_DELAY_UNTIL_REBOOT) } == 0 {
-        return Err(Error::Unavailable);
-    }
-    let name = format!("RssExecution-Install-{task}");
-    if let Some(handle) = service(&name)? {
+    let worker = format!("RssExecution-Install-{task}");
+    if let Some(handle) = service(&worker)? {
         worker_owned(
             &handle,
-            &name,
+            &worker,
             &operation_root()?.join(format!("{task}.json")),
         )?;
-        // SAFETY: Delete only this one-shot SCM worker registration; its current process may exit normally.
-        if unsafe { DeleteService(handle.0) } == 0 {
-            return Err(Error::Unavailable);
-        }
     }
+    let system =
+        PathBuf::from(std::env::var_os("SystemRoot").ok_or(Error::Configuration)?).join("System32");
+    for name in ["cmd.exe", "sc.exe", "schtasks.exe"] {
+        installation_security::protected(&system.join(name)).map_err(|_| Error::Identity)?;
+    }
+    let script = operation_root()?.join(format!("{task}.cleanup.cmd"));
+    let definition = super::retirement_carrier::definition(
+        task,
+        binary.to_str().ok_or(Error::Configuration)?,
+        script.to_str().ok_or(Error::Configuration)?,
+        system.to_str().ok_or(Error::Configuration)?,
+    )?;
+    retain_public(&script, definition.script.as_bytes())?;
+    let folder = task_folder()?;
+    let scheduled = match unsafe { folder.GetTask(&definition.name.clone().into()) } {
+        Ok(task) => task,
+        Err(e) if e.code().0 as u32 == 0x80070002 => unsafe {
+            folder.RegisterTask(
+                &definition.name.clone().into(),
+                &definition.xml.into(),
+                TASK_CREATE.0,
+                &VARIANT::from("SYSTEM"),
+                &VARIANT::default(),
+                TASK_LOGON_SERVICE_ACCOUNT,
+                &VARIANT::from("D:P(A;;FA;;;SY)(A;;FA;;;BA)"),
+            )
+        }
+        .map_err(|_| Error::Unavailable)?,
+        Err(_) => return Err(Error::Unavailable),
+    };
+    let xml = unsafe { scheduled.Xml() }
+        .map_err(|_| Error::Unavailable)?
+        .to_string();
+    super::task_document::retirement_owned(&xml, &definition.command, &definition.arguments)?;
+    // Durable OS task is the independent final owner before any SCM/EXE removal.
+    // Run failures remain recoverable by the boot/repetition trigger; no pending
+    // reboot deletion can destroy the program before the SCM registration is gone.
+    unsafe { scheduled.Run(&VARIANT::default()) }.map_err(|_| Error::Unavailable)?;
     Ok(false)
 }
