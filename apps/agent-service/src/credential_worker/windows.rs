@@ -14,6 +14,9 @@ impl Native for NativeWindows {
     fn collect(&mut self) -> Result<Inventory, F> {
         bitlocker::collect()
     }
+    fn bitlocker(&mut self, volume: &str, protector: uuid::Uuid) -> Result<Material, F> {
+        bitlocker::read_exact(volume, protector)
+    }
     fn check_account(&mut self, sid: &str) -> Result<(), F> {
         account::check(sid).map(|_| ())
     }
@@ -27,7 +30,7 @@ impl Native for NativeWindows {
     fn locate(&mut self, op: &Op, secret: &str) -> Result<Option<Subject>, F> {
         match op {
             Op::RotateBitlocker { volume, .. } | Op::VerifyBitlocker { volume, .. } => {
-                let values = bitlocker::collect()?;
+                let values = bitlocker::collect_volume(Some(volume))?;
                 let matches = values
                     .materials
                     .into_iter()

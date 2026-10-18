@@ -40,7 +40,25 @@ pub(super) fn execute(
         }
         return Ok(result);
     }
-    let outcome = execute_inner(input, native_os);
+    let outcome = execute_inner(input, native_os).and_then(|mut result| {
+        if let Some(escrow) = pending(&input.root, task)? {
+            for material in escrow.materials {
+                if !result
+                    .items
+                    .iter()
+                    .any(|item| item.subject == material.subject)
+                {
+                    result.items.push(w::CredentialItemResult {
+                        subject: material.subject,
+                        outcome: w::CredentialOutcome::Unknown,
+                    });
+                    result.complete = false;
+                    result.failure = Some(Failure::NativeFailure);
+                }
+            }
+        }
+        Ok(result)
+    });
     // Only complete evidence is frozen. Unexpected failure retains the protected original state.
     if let Ok(result) = &outcome {
         state::write(&input.root, &state::name(task, "result"), result)?;
@@ -105,31 +123,18 @@ fn execute_inner(input: &Input, n: &mut impl Native) -> Result<w::CredentialResu
         vec![Material { subject, secret }]
     } else {
         match &task.operation {
-            Op::CollectBitlocker | Op::VerifyBitlocker { .. } => {
+            Op::CollectBitlocker => {
                 let inventory = match n.collect() {
-                    Ok(v) => v,
-                    Err(e) => return Ok(failed(task, e)),
+                    Ok(value) => value,
+                    Err(error) => return Ok(failed(task, error)),
                 };
                 failure = inventory.failure;
-                inventory
-                    .materials
-                    .into_iter()
-                    .filter(|m| match (&task.operation, &m.subject) {
-                        (Op::CollectBitlocker, Subject::Bitlocker { .. }) => true,
-                        (
-                            Op::VerifyBitlocker {
-                                volume: a,
-                                protector: b,
-                            },
-                            Subject::Bitlocker {
-                                volume: c,
-                                protector: d,
-                            },
-                        ) => a == c && b == d,
-                        _ => false,
-                    })
-                    .collect()
+                inventory.materials
             }
+            Op::VerifyBitlocker { volume, protector } => match n.bitlocker(volume, *protector) {
+                Ok(value) => vec![value],
+                Err(error) => return Ok(failed(task, error)),
+            },
             Op::VerifyLocalAdministrator { sid } => {
                 let Some(old) =
                     state::read_optional::<Record>(&input.root, &account_key(task, sid))?
@@ -160,21 +165,8 @@ fn execute_inner(input: &Input, n: &mut impl Native) -> Result<w::CredentialResu
                     None => {
                         // Validate the selected old protector before allocating mutation state.
                         if let Op::RotateBitlocker { volume, protector } = &task.operation {
-                            let inventory = match n.collect() {
-                                Ok(v) => v,
-                                Err(e) => return Ok(failed(task, e)),
-                            };
-                            if !inventory.materials.iter().any(|m| {
-                                m.subject
-                                    == Subject::Bitlocker {
-                                        volume: volume.clone(),
-                                        protector: *protector,
-                                    }
-                            }) {
-                                return Ok(failed(
-                                    task,
-                                    inventory.failure.unwrap_or(Failure::TargetMissing),
-                                ));
+                            if let Err(error) = n.bitlocker(volume, *protector) {
+                                return Ok(failed(task, error));
                             }
                         }
                         let secret = envelope::password(matches!(
@@ -192,14 +184,33 @@ fn execute_inner(input: &Input, n: &mut impl Native) -> Result<w::CredentialResu
                     }
                 };
                 let secret = state::secret(n, &current)?;
+                let mut rejected = None;
                 if current.phase == Phase::Prepared {
                     current.phase = Phase::Issued;
                     save(input, &current)?;
                     // Once Issued is durable, even an ambiguous native failure can only be observed.
-                    let _ = n.apply(&task.operation, &secret);
+                    rejected = n.apply(&task.operation, &secret).err();
+                    if let Some(
+                        failure @ (Failure::PermissionDenied
+                        | Failure::OwnerConflict
+                        | Failure::TargetMissing
+                        | Failure::Unsupported),
+                    ) = rejected
+                    {
+                        return Ok(failed(task, failure));
+                    }
                 }
                 let Some(subject) = native(n.locate(&task.operation, &secret))? else {
-                    return Ok(failed(task, Failure::NativeFailure));
+                    let failure = match rejected {
+                        Some(
+                            value @ (Failure::PermissionDenied
+                            | Failure::OwnerConflict
+                            | Failure::TargetMissing
+                            | Failure::Unsupported),
+                        ) => value,
+                        _ => Failure::NativeFailure,
+                    };
+                    return Ok(failed(task, failure));
                 };
                 current.subject = Some(subject.clone());
                 save(input, &current)?;
@@ -258,7 +269,7 @@ fn execute_inner(input: &Input, n: &mut impl Native) -> Result<w::CredentialResu
         let secret = state::secret(n, current)?;
         let actual = native(n.locate(&current.task.operation, &secret))?;
         if actual.as_ref() != Some(&materials[0].subject) {
-            return Ok(failed(task, Failure::NativeFailure));
+            return failure_with_materials(&input.root, task, Failure::NativeFailure);
         }
         if let Op::RotateBitlocker { volume, protector } = &current.task.operation {
             if actual
@@ -281,7 +292,7 @@ fn execute_inner(input: &Input, n: &mut impl Native) -> Result<w::CredentialResu
             if let Some(mut previous) = previous.filter(|p| p.task.task_id != current.task.task_id)
             {
                 previous.protected.clear();
-                save(input, &previous)?;
+                state::remove(&input.root, &state::name(&previous.task, "state"))?;
             }
         }
     }
@@ -298,4 +309,22 @@ fn execute_inner(input: &Input, n: &mut impl Native) -> Result<w::CredentialResu
             })
             .collect(),
     })
+}
+
+pub(super) fn result(
+    input: &Input,
+    native_os: &mut impl Native,
+) -> Result<w::CredentialResult, Error> {
+    match execute(input, native_os) {
+        Ok(result) => Ok(result),
+        Err(error) => failure_with_materials(
+            &input.root,
+            &input.task,
+            if error == Error::Unavailable {
+                Failure::NativeFailure
+            } else {
+                Failure::RecoveryState
+            },
+        ),
+    }
 }

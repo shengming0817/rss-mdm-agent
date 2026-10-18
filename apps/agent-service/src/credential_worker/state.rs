@@ -1,5 +1,4 @@
 use super::*;
-#[cfg(any(windows, test))]
 use fs2::FileExt;
 use serde::de::DeserializeOwned;
 #[cfg(any(windows, test))]
@@ -24,16 +23,18 @@ pub(super) fn name(task: &w::CredentialTaskSpec, suffix: &str) -> String {
         task.registration_id, task.generation, task.task_id, task.attempt_id, suffix
     )
 }
-#[cfg(any(windows, test))]
 pub(super) fn lock(root: &Path) -> Result<std::fs::File, Error> {
     let dir = platform_private_storage::PrivateDirectory::open(root)?;
-    let file = match dir.create_file(Path::new("owner.lock")) {
-        Ok(f) => f,
-        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-            dir.open_file(Path::new("owner.lock"))?
+    match dir.create_file(Path::new("owner.lock")) {
+        Ok(file) => {
+            file.sync_all()?;
+            drop(file);
+            dir.sync()?;
         }
-        Err(e) => return Err(e.into()),
-    };
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => (),
+        Err(error) => return Err(error.into()),
+    }
+    let file = dir.open_file(Path::new("owner.lock"))?;
     file.try_lock_exclusive().map_err(|_| Error::Unavailable)?;
     Ok(file)
 }
@@ -85,4 +86,18 @@ pub(super) fn seal(
 ) -> Result<Vec<u8>, Error> {
     let bytes = Zeroizing::new(serde_json::to_vec(&(task, secret)).map_err(|_| Error::Protocol)?);
     native.protect(&bytes)
+}
+
+pub(super) fn remove(root: &Path, name: &str) -> Result<(), Error> {
+    let dir = platform_private_storage::PrivateDirectory::open(root)?;
+    match dir.open_file(Path::new(name)) {
+        Ok(file) => {
+            drop(file);
+            std::fs::remove_file(root.join(name))?;
+            dir.sync()?;
+            Ok(())
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+    }
 }

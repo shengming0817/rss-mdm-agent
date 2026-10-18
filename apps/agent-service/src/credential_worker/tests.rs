@@ -33,6 +33,8 @@ struct Fake {
     conflict: bool,
     protect_failed: bool,
     ambiguous: bool,
+    remove_failed: bool,
+    collect_failure: bool,
 }
 impl Fake {
     fn new() -> Self {
@@ -41,6 +43,8 @@ impl Fake {
             conflict: false,
             protect_failed: false,
             ambiguous: false,
+            remove_failed: false,
+            collect_failure: false,
         }
     }
 }
@@ -78,8 +82,21 @@ impl Native for Fake {
                 },
                 secret: Zeroizing::new("old numerical password".into()),
             }],
-            failure: None,
+            failure: self.collect_failure.then_some(Failure::NativeFailure),
         })
+    }
+    fn bitlocker(&mut self, volume: &str, protector: uuid::Uuid) -> Result<Material, Failure> {
+        self.collect()?
+            .materials
+            .into_iter()
+            .find(|m| {
+                m.subject
+                    == Subject::Bitlocker {
+                        volume: volume.into(),
+                        protector,
+                    }
+            })
+            .ok_or(Failure::TargetMissing)
     }
     fn check_account(&mut self, _: &str) -> Result<(), Failure> {
         if self.conflict {
@@ -115,6 +132,9 @@ impl Native for Fake {
             .flatten())
     }
     fn remove(&mut self, _: &str, protector: uuid::Uuid) -> Result<(), Failure> {
+        if self.remove_failed {
+            return Err(Failure::PermissionDenied);
+        }
         assert_eq!(protector, uuid::Uuid::from_u128(10));
         self.state.lock().unwrap().removals += 1;
         Ok(())
@@ -247,7 +267,11 @@ fn bitlocker_cleanup_waits_for_exact_escrow_ack() {
         let mut n = n;
         engine::execute(&input, &mut n)
     });
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     let escrow = loop {
+        if worker.is_finished() || std::time::Instant::now() >= deadline {
+            panic!("worker stopped before escrow: {:?}", worker.join());
+        }
         if let Some(value) = pending(&root_path, &task).unwrap() {
             break value;
         }
@@ -384,4 +408,82 @@ fn envelope_uses_wire_aad_and_roundtrips_only_with_matching_subject() {
         )
         .unwrap();
     assert_eq!(plain, material.secret.as_bytes());
+}
+
+#[test]
+fn cleanup_failure_retains_escrow_subject_and_unknown_effect() {
+    let root = Root::new();
+    let input = input(
+        &root,
+        Op::RotateBitlocker {
+            volume: "volume".into(),
+            protector: uuid::Uuid::from_u128(10),
+        },
+    );
+    let mut n = Fake::new();
+    n.remove_failed = true;
+    let a = ack(&input);
+    let result = engine::result(&input, &mut n).unwrap();
+    a.join().unwrap();
+    assert_eq!(result.failure, Some(Failure::NativeFailure));
+    assert_eq!(result.items.len(), 1);
+    assert_eq!(result.items[0].outcome, w::CredentialOutcome::Unknown);
+    let interrupted = failure_with_materials(&root.0, &input.task, Failure::RecoveryState).unwrap();
+    assert_eq!(interrupted.items, result.items);
+    retire(&root.0, &input.task).unwrap();
+    assert!(
+        state::read_optional::<state::Record>(&root.0, &state::name(&input.task, "state"))
+            .unwrap()
+            .is_some()
+    );
+    assert!(pending(&root.0, &input.task).unwrap().is_none());
+}
+#[test]
+fn exact_verification_ignores_unrelated_volume_failure_and_retires_files() {
+    let root = Root::new();
+    let input = input(
+        &root,
+        Op::VerifyBitlocker {
+            volume: "volume".into(),
+            protector: uuid::Uuid::from_u128(10),
+        },
+    );
+    let mut n = Fake::new();
+    n.collect_failure = true;
+    let a = ack(&input);
+    let result = engine::execute(&input, &mut n).unwrap();
+    a.join().unwrap();
+    assert!(result.complete);
+    assert!(result.failure.is_none());
+    state::write(
+        &root.0,
+        &format!("{}.tmp", uuid::Uuid::new_v4()),
+        &"interrupted write",
+    )
+    .unwrap();
+    retire(&root.0, &input.task).unwrap();
+    retire(&root.0, &input.task).unwrap();
+    assert_eq!(std::fs::read_dir(&root.0).unwrap().count(), 1);
+}
+#[test]
+fn account_current_survives_retirement_and_later_rotation_does_not_accumulate_state() {
+    let root = Root::new();
+    let mut n = Fake::new();
+    for _ in 0..2 {
+        let input = input(&root, rotate());
+        let a = ack(&input);
+        engine::execute(&input, &mut n).unwrap();
+        a.join().unwrap();
+        retire(&root.0, &input.task).unwrap();
+    }
+    assert_eq!(std::fs::read_dir(&root.0).unwrap().count(), 2); // owner lock and current account
+    let input = input(
+        &root,
+        Op::VerifyLocalAdministrator {
+            sid: "S-1-5-21-1-2-3-1001".into(),
+        },
+    );
+    let a = ack(&input);
+    assert!(engine::execute(&input, &mut n).unwrap().failure.is_none());
+    a.join().unwrap();
 }

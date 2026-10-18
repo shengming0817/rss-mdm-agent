@@ -240,6 +240,9 @@ fn ids(s: &IWbemServices, v: &IWbemClassObject) -> Result<Vec<String>, F> {
     )
 }
 pub(super) fn collect() -> Result<Inventory, F> {
+    collect_volume(None)
+}
+pub(super) fn collect_volume(selected_volume: Option<&str>) -> Result<Inventory, F> {
     let (_apartment, s) = connect()?;
     let mut materials = vec![];
     let mut failure = None;
@@ -249,6 +252,9 @@ pub(super) fn collect() -> Result<Inventory, F> {
             continue;
         }
         let volume = text(&v, "DeviceID")?;
+        if selected_volume.is_some_and(|selected| selected != volume.as_str()) {
+            continue;
+        }
         let result = (|| {
             if number(&method(&s, &v, "GetLockStatus", &[])?, "LockStatus")? != 0 {
                 return Err(F::NativeFailure);
@@ -330,4 +336,26 @@ pub(super) fn remove(volume: &str, protector: uuid::Uuid) -> Result<(), F> {
         return Err(F::NativeFailure);
     }
     Ok(())
+}
+
+pub(super) fn read_exact(volume: &str, protector: uuid::Uuid) -> Result<Material, F> {
+    let (_a, s) = connect()?;
+    let v = selected(&s, volume)?;
+    let id = ids(&s, &v)?
+        .into_iter()
+        .find(|id| uuid::Uuid::parse_str(id.trim_matches(['{', '}'])).ok() == Some(protector))
+        .ok_or(F::TargetMissing)?;
+    let output = method(
+        &s,
+        &v,
+        "GetKeyProtectorNumericalPassword",
+        &[("VolumeKeyProtectorID", string_value(&id))],
+    )?;
+    Ok(Material {
+        subject: Subject::Bitlocker {
+            volume: volume.into(),
+            protector,
+        },
+        secret: text(&output, "NumericalPassword")?,
+    })
 }

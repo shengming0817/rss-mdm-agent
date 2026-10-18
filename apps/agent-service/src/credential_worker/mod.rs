@@ -42,6 +42,11 @@ pub(crate) struct Inventory {
 #[cfg(any(windows, test))]
 pub(crate) trait Native {
     fn collect(&mut self) -> Result<Inventory, w::CredentialFailure>;
+    fn bitlocker(
+        &mut self,
+        volume: &str,
+        protector: uuid::Uuid,
+    ) -> Result<Material, w::CredentialFailure>;
     fn check_account(&mut self, sid: &str) -> Result<(), w::CredentialFailure>;
     fn apply(
         &mut self,
@@ -94,8 +99,7 @@ pub fn run(path: &Path) -> Result<i32, Error> {
     #[cfg(windows)]
     let result = {
         let mut native = windows::NativeWindows::open().map_err(|_| Error::Unavailable)?;
-        engine::execute(&input, &mut native)
-            .unwrap_or_else(|_| failed(&input.task, w::CredentialFailure::RecoveryState))
+        engine::result(&input, &mut native)?
     };
     #[cfg(not(windows))]
     let result = failed(&input.task, w::CredentialFailure::Unsupported);
@@ -123,4 +127,81 @@ pub(crate) fn acknowledge(
     escrow: &w::CredentialEscrow,
 ) -> Result<(), Error> {
     state::write(root, &state::name(task, "ack"), &envelope::digest(escrow)?)
+}
+
+// Once escrow has been published, every failure must retain its subjects. The service may
+// have committed it even when the worker did not observe the local acknowledgement.
+pub(crate) fn failure_with_materials(
+    root: &Path,
+    task: &w::CredentialTaskSpec,
+    failure: w::CredentialFailure,
+) -> Result<w::CredentialResult, Error> {
+    let mut result = failed(task, failure);
+    if let Some(escrow) = pending(root, task)? {
+        if escrow.definition_digest != task.definition_digest {
+            return Err(Error::Untrusted);
+        }
+        result.items = escrow
+            .materials
+            .into_iter()
+            .map(|m| w::CredentialItemResult {
+                subject: m.subject,
+                outcome: w::CredentialOutcome::Unknown,
+            })
+            .collect();
+    }
+    Ok(result)
+}
+pub(crate) fn plan_root(plan: &execution_contract::FrozenExecution) -> Result<PathBuf, Error> {
+    match plan.spec().request.parameters.get("credential-root") {
+        Some(execution_contract::InputValue::Literal { value }) => {
+            serde_json::from_value(value.clone()).map_err(|_| Error::Untrusted)
+        }
+        _ => Err(Error::Untrusted),
+    }
+}
+
+/// Called only after the execution is quiescent and its terminal result durably acknowledged.
+pub(crate) fn retire(root: &Path, task: &w::CredentialTaskSpec) -> Result<(), Error> {
+    let _lock = state::lock(root)?;
+    let result = state::read_optional::<w::CredentialResult>(root, &state::name(task, "result"))?;
+    let success = result.as_ref().is_some_and(|r| {
+        r.definition_digest == task.definition_digest
+            && r.complete
+            && r.failure.is_none()
+            && r.items
+                .iter()
+                .all(|i| i.outcome == w::CredentialOutcome::Verified)
+    });
+    // Uncertain mutations retain only the protected original, for a future signed recovery.
+    // Current account material is independently retained in the registration-bound .account.
+    if success {
+        state::remove(root, &state::name(task, "state"))?;
+        if let Some(reference) = &task.recovery {
+            let mut original = task.clone();
+            original.task_id = reference.task_id;
+            original.attempt_id = reference.attempt_id;
+            for suffix in ["state", "escrow", "ack", "result"] {
+                state::remove(root, &state::name(&original, suffix))?;
+            }
+        }
+    }
+    for suffix in ["escrow", "ack", "result"] {
+        state::remove(root, &state::name(task, suffix))?;
+    }
+    // A held owner lock proves no worker is staging a write; the service owner is sequential.
+    for entry in std::fs::read_dir(root)?.take(32769) {
+        let entry = entry?;
+        let name = entry.file_name();
+        if let Some(name) = name.to_str() {
+            if name
+                .strip_suffix(".tmp")
+                .is_some_and(|stem| uuid::Uuid::parse_str(stem).is_ok())
+            {
+                state::remove(root, name)?;
+            }
+        }
+    }
+    platform_private_storage::PrivateDirectory::open(root)?.sync()?;
+    Ok(())
 }

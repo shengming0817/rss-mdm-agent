@@ -1507,7 +1507,7 @@ async fn managed_identity_arrives_later_and_grant_response_loss_preserves_daily_
 async fn credential_escrow_lost_ack_replays_ciphertext_after_sqlite_reopen() {
     use base64::{engine::general_purpose::STANDARD, Engine};
     use execution_contract::{ActorId, Digest, RequestId};
-    let server = Server::new().await;
+    let server = Server::tls().await;
     {
         let mut data = server.data.lock().unwrap();
         let mut task = CredentialTaskSpec {
