@@ -52,7 +52,7 @@ exit /b 0
     )
     .replace('\n', "\r\n");
     let xml = format!(
-        r#"<?xml version="1.0"?><Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task"><Triggers><BootTrigger><Repetition><Interval>PT1M</Interval><StopAtDurationEnd>false</StopAtDurationEnd></Repetition><Enabled>true</Enabled><Delay>PT30S</Delay></BootTrigger><RegistrationTrigger><Repetition><Interval>PT1M</Interval><StopAtDurationEnd>false</StopAtDurationEnd></Repetition><Enabled>true</Enabled><Delay>PT30S</Delay></RegistrationTrigger></Triggers><Principals><Principal id="System"><UserId>S-1-5-18</UserId><LogonType>ServiceAccount</LogonType><RunLevel>HighestAvailable</RunLevel></Principal></Principals><Settings><DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries><StopIfGoingOnBatteries>false</StopIfGoingOnBatteries><Enabled>true</Enabled><StartWhenAvailable>true</StartWhenAvailable><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><ExecutionTimeLimit>PT2M</ExecutionTimeLimit></Settings><Actions Context="System"><Exec><Command>{}</Command><Arguments>{}</Arguments></Exec></Actions></Task>"#,
+        r#"<?xml version="1.0"?><Task version="1.3" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task"><Triggers><BootTrigger><Enabled>true</Enabled><Repetition><Interval>PT1M</Interval><StopAtDurationEnd>false</StopAtDurationEnd></Repetition><Delay>PT30S</Delay></BootTrigger><RegistrationTrigger><Enabled>true</Enabled><Repetition><Interval>PT1M</Interval><StopAtDurationEnd>false</StopAtDurationEnd></Repetition><Delay>PT30S</Delay></RegistrationTrigger></Triggers><Principals><Principal id="System"><UserId>S-1-5-18</UserId><RunLevel>HighestAvailable</RunLevel></Principal></Principals><Settings><DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries><StopIfGoingOnBatteries>false</StopIfGoingOnBatteries><Enabled>true</Enabled><StartWhenAvailable>true</StartWhenAvailable><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><ExecutionTimeLimit>PT2M</ExecutionTimeLimit></Settings><Actions Context="System"><Exec><Command>{}</Command><Arguments>{}</Arguments></Exec></Actions></Task>"#,
         quick_xml::escape::escape(&command),
         quick_xml::escape::escape(&arguments)
     );
@@ -67,6 +67,73 @@ exit /b 0
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn retirement_task_matches_official_schema_not_just_local_deserialization() {
+        let plan = definition(
+            uuid::Uuid::new_v4(),
+            r"C:\RSS\task.exe",
+            r"C:\RSS\task.cmd",
+            r"C:\Windows\System32",
+        )
+        .unwrap();
+        let schema =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/task-scheduler.xsd");
+        let validate = |xml: &str| {
+            use std::io::Write;
+            let mut child = Command::new("/usr/bin/xmllint")
+                .args(["--nonet", "--noout", "--schema"])
+                .arg(&schema)
+                .arg("-")
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .expect("macOS contract tests require system xmllint");
+            child
+                .stdin
+                .take()
+                .unwrap()
+                .write_all(xml.as_bytes())
+                .unwrap();
+            child.wait_with_output().unwrap()
+        };
+        let result = validate(&plan.xml);
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        for trigger in ["BootTrigger", "RegistrationTrigger"] {
+            let bad = plan
+                .xml
+                .replace(
+                    &format!("<{trigger}><Enabled>true</Enabled><Repetition>"),
+                    &format!("<{trigger}><Repetition>"),
+                )
+                .replace(
+                    &format!("</Repetition><Delay>PT30S</Delay></{trigger}>"),
+                    &format!(
+                        "</Repetition><Enabled>true</Enabled><Delay>PT30S</Delay></{trigger}>"
+                    ),
+                );
+            // Serde ignores XML sequence order: this is the independent contract gap.
+            super::super::task_document::retirement_owned(&bad, &plan.command, &plan.arguments)
+                .unwrap();
+            assert!(!validate(&bad).status.success());
+        }
+        let bad = plan.xml.replace(
+            "<RunLevel>",
+            "<LogonType>ServiceAccount</LogonType><RunLevel>",
+        );
+        assert!(!validate(&bad).status.success());
+        assert!(super::super::task_document::retirement_owned(
+            &bad,
+            &plan.command,
+            &plan.arguments
+        )
+        .is_err());
+    }
     #[test]
     fn retirement_system_task_binds_exact_owner_image_and_arguments() {
         let task = uuid::Uuid::new_v4();

@@ -143,10 +143,7 @@ pub(super) fn retirement_owned(xml: &str, binary: &str, arguments: &str) -> Resu
             && !trigger.repetition.stop_at_duration_end
     };
     if principal.user_id != "S-1-5-18"
-        || principal
-            .logon_type
-            .as_deref()
-            .is_some_and(|v| v != "ServiceAccount")
+        || principal.logon_type.is_some()
         || principal.run_level != "HighestAvailable"
         || task.actions.context != "System"
         || action.command != binary
