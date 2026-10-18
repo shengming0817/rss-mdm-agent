@@ -31,7 +31,7 @@
 
 安装成功与认证 readiness 分开核实，使用获准的普通用户运行已安装桌面的 `--service-probe`。共享注册文件仍由管理员负责保管和清理，安装器不删除它。
 
-初装从实际互动登录发现主体及 helper 路径；无人登录的静默初装必须提供管理员保护的 profile（`subjects` 与 `helper_work_roots`）。Windows EXE 接受 `/S /PROFILE=绝对路径`；macOS 可先固定 profile 于 `/Library/Application Support/RSS MDM Agent/install-profile.json` 再运行 `installer -pkg ... -target /`。桌面启动请求 Rust owner 注册当前配置用户的 helper，AI Host 随该桌面运行。
+初装从实际互动登录发现主体及 helper 路径；无人登录的静默初装可省略 profile，以空 IPC 用户集合启动机器注册；管理员需要预设桌面访问主体时提供受保护的 profile（`subjects` 与 `helper_work_roots`）。Windows EXE 接受 `/S /PROFILE=绝对路径`；macOS 可先固定 profile 于 `/Library/Application Support/RSS MDM Agent/install-profile.json` 再运行 `installer -pkg ... -target /`。桌面启动请求 Rust owner 注册当前配置用户的 helper，AI Host 随该桌面运行。
 
 卸载只移除匹配注册与程序；设备身份、Keychain / DPAPI 引用、通信库、journal、材料及用户数据保留。Windows 使用系统卸载入口或 `uninstall.exe /S`；macOS 管理员使用 `<受保护的服务程序> --installation uninstall --binary <当前配置的服务程序>`。重装核对 retained 当前格式上下文并复用安装 ID，原程序已移除时由新候选只读检查 retained 密钥与日志。没有隐式清库、换库或共享凭据删除入口。程序先从 versions 退役到精确版本的 retired 目录；删除失败可用同一版本入口重试，不清理其它版本。
 

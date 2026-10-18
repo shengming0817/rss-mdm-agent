@@ -16,8 +16,15 @@ const props = defineProps<{
   records: BackendRequest[];
   kind?: "enrollment";
   allowNewRequests?: boolean;
+  allowConfirm?: boolean;
 }>();
 const emit = defineEmits<{ changed: [] }>();
+watch(() => props.allowNewRequests, allowed => {
+  if (allowed === false && !request.value) {
+    selected.value = undefined;
+    choice.value = undefined;
+  }
+});
 const directory = ref<SelfServiceDirectoryItem[]>([]),
   selected = ref<SelfServiceDirectoryItem>(),
   inputs = ref<Record<string, string>>({}),
@@ -113,7 +120,7 @@ async function refresh() {
       if (!after) break;
     }
     directory.value = items.filter(
-      (item) => !props.kind || item.task.kind === props.kind,
+      (item) => props.kind ? item.task.kind === props.kind : item.task.kind !== "enrollment",
     );
     error.value = "";
     if (
@@ -153,7 +160,7 @@ function options(schema: any): unknown[] | undefined {
   );
 }
 function preview() {
-  if (!selected.value || busy.value || request.value) return;
+  if (!selected.value || busy.value || request.value || props.allowNewRequests === false) return;
   try {
     fieldErrors.value = new Map();
     const parameters = new Map<string, unknown>();
@@ -223,7 +230,7 @@ async function query(id?: string) {
   }
 }
 async function invoke() {
-  if (!props.port || !choice.value || busy.value || request.value) return;
+  if (!props.port || !choice.value || busy.value || request.value || props.allowNewRequests === false) return;
   request.value = choice.value.request;
   busy.value = true;
   const current = epoch;
@@ -240,7 +247,7 @@ async function invoke() {
   }
 }
 async function confirm(id: string) {
-  if (!props.port || busy.value) return;
+  if (!props.port || busy.value || props.allowConfirm === false) return;
   busy.value = true;
   request.value = id;
   const current = epoch;
@@ -338,7 +345,7 @@ watch(
         <p>{{ item.selfService.allowAi ? "允许 AI 请求" : "仅供人工操作" }}</p>
       </article>
     </div>
-    <form v-if="selected && !choice" @submit.prevent="preview">
+    <form v-if="selected && !choice && allowNewRequests !== false" @submit.prevent="preview">
       <h3>{{ selected.selfService.displayName }}</h3>
       <label v-for="field in fields" :key="field.name"
         >{{ field.schema.title ?? field.name
@@ -383,7 +390,7 @@ watch(
         }}</span></label
       ><button :disabled="busy">核对执行参数</button>
     </form>
-    <section v-if="choice && !request" aria-label="人工执行确认">
+    <section v-if="choice && !request && allowNewRequests !== false" aria-label="人工执行确认">
       <h3>确认 {{ selected?.selfService.displayName }}</h3>
       <p>
         准入主体：{{
@@ -427,6 +434,7 @@ watch(
       ><PolicyPreparation
         v-if="status?.kind === 'preparation'"
         :record="status.value"
+        :confirm-disabled="allowConfirm === false"
         :disabled="busy"
         @confirm="confirm"
         @cancel="cancel"
@@ -477,10 +485,11 @@ watch(
         (r) =>
           r.action.kind === 'policy' &&
           r.action.choice.request !== request &&
-          (!kind || r.action.directory.task.kind === kind),
+          (kind ? r.action.directory.task.kind === kind : r.action.directory.task.kind !== "enrollment"),
       )"
       :key="record.action.kind === 'policy' ? record.action.choice.request : ''"
       :record="record"
+      :confirm-disabled="allowConfirm === false"
       :disabled="busy"
       @confirm="confirm"
       @cancel="cancel"

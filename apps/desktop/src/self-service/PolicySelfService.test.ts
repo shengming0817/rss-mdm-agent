@@ -391,7 +391,12 @@ test("MDM settings expose only an authorized enrollment and do not auto invoke",
   expect(wrapper.findAll(".resource-card")).toHaveLength(1);
   expect(wrapper.text()).toContain("注册 MDM");
   expect(policy_invoke).not.toHaveBeenCalled();
-  await wrapper.setProps({ allowNewRequests: false });
+  await wrapper.find(".resource-card button").trigger("click");
+  await wrapper.find("form").trigger("submit");
+  expect(wrapper.find('[aria-label="人工执行确认"]').exists()).toBe(true);
+  await wrapper.setProps({ allowNewRequests: false, allowConfirm: false });
+  expect(wrapper.find('[aria-label="人工执行确认"]').exists()).toBe(false);
+  expect(policy_invoke).not.toHaveBeenCalled();
   expect(wrapper.findAll(".resource-card")).toHaveLength(0);
   wrapper.unmount();
   const closed = mount(PolicySelfService, {

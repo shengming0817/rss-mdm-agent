@@ -169,6 +169,25 @@ pub(super) fn register(system: bool, binary: &Path, config: &Path) -> Result<(),
     if deployment.service.path != binary {
         return Err(Error::Identity);
     }
+    register_verified(binary, config)
+}
+/// Compensation only: the retained executable validates its own persistent format.
+pub(super) fn restore_registration(binary: &Path, config: &Path) -> Result<(), Error> {
+    let deployment = Deployment::load_persistent(config)?;
+    if deployment.service.path != binary {
+        return Err(Error::Identity);
+    }
+    super::command(
+        binary,
+        &[
+            "--config".into(),
+            config.into(),
+            "--validate-persistent".into(),
+        ],
+    )?;
+    register_verified(binary, config)
+}
+fn register_verified(binary: &Path, config: &Path) -> Result<(), Error> {
     let handle = if let Some(handle) = service(NAME)? {
         owned(&handle, binary, config)?;
         handle

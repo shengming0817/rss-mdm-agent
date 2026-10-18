@@ -705,6 +705,11 @@ impl<S: IdentityProvider> DeviceService<S> {
                     {
                         return Err(Error::Denied);
                     }
+                    if matches!(directory.task, wire::SelfServiceTask::Enrollment { .. })
+                        && self.core.mdm.state != wire::MdmEnrollmentState::Unenrolled
+                    {
+                        return Err(Error::Denied);
+                    }
                     if draft {
                         operation_parameters_supported(&directory)?;
                     }
@@ -1093,6 +1098,11 @@ impl<S: IdentityProvider> DeviceService<S> {
         };
         if run_id.is_some() {
             return Ok(record);
+        }
+        if matches!(directory.task, wire::SelfServiceTask::Enrollment { .. })
+            && self.core.mdm.state != wire::MdmEnrollmentState::Unenrolled
+        {
+            return Err(Error::Denied);
         }
         let secret = match &directory.subject {
             wire::SelfServiceSubject::Device {} => None,

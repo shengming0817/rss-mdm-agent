@@ -1,7 +1,11 @@
 <script setup lang="ts">
 import type { BackendRequest } from "./types";
 import PolicyExecutionContext from "./PolicyExecutionContext.vue";
-const props = defineProps<{ record: BackendRequest; disabled?: boolean }>();
+const props = defineProps<{
+  record: BackendRequest;
+  disabled?: boolean;
+  confirmDisabled?: boolean;
+}>();
 const emit = defineEmits<{
   confirm: [request: string];
   cancel: [request: string];
@@ -102,7 +106,7 @@ function resolved() {
       </p>
       <button
         v-if="record.state === 'awaitingConfirmation'"
-        :disabled="disabled"
+        :disabled="disabled || confirmDisabled"
         @click="emit('confirm', request())"
       >
         确认上述操作

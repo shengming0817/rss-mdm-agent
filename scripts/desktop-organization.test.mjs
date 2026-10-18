@@ -279,6 +279,16 @@ test("managed package formats use explicit machine service owners and escaped fi
   assert.ok(msi.includes('Execute="deferred" Impersonate="no"'));
   assert.ok(msi.includes("C:/build&amp;sign/payload"));
   assert.ok(msi.includes("--installation apply"));
+  assert.ok(msi.includes('Execute="rollback"'));
+  assert.ok(msi.includes("--installation msi-rollback"));
+  assert.ok(msi.includes('Schedule="afterInstallExecute"'));
+  assert.ok(
+    msi.includes(
+      'Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE"',
+    ),
+  );
+  assert.ok(msi.includes('BinaryRef="InstallationOwner"'));
+
   const msix = msixManifest({
     version: "1.2.3",
     architecture: "arm64",

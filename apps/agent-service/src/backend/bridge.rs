@@ -190,8 +190,8 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
                     &v.device_id,
                     v.platform,
                     wire::ExecutionIdentity::LoggedInUser,
-                    60_000,
-                    4096,
+                    crate::enrollment_worker::TIMEOUT_MS,
+                    crate::enrollment_worker::OUTPUT_BYTES,
                 )
             }
             wire::TaskPayload::Script(_) => return Err(Error::Untrusted),

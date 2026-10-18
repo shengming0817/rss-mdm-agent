@@ -25,6 +25,11 @@ pub(crate) async fn submit<S: IdentityProvider>(
             return Err(Error::Conflict);
         }
     }
+    if matches!(offer.payload(), wire::TaskPayload::Enrollment(_))
+        && service.core.mdm.state != wire::MdmEnrollmentState::Unenrolled
+    {
+        return Err(Error::Denied);
+    }
     service.core.available = None;
     let needs_user = match offer.payload() {
         wire::TaskPayload::Collection(p) => {

@@ -5,6 +5,8 @@ use execution_contract::{Digest, RunAs, SessionRequirement};
 use rss_mdm_agent_wire::runtime as w;
 use serde::{Deserialize, Serialize};
 use std::{io::Write, path::Path};
+pub(crate) const TIMEOUT_MS: u64 = 600_000;
+pub(crate) const OUTPUT_BYTES: u64 = 4096;
 pub(crate) const PROFILE: &str = "native-enrollment-worker";
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
