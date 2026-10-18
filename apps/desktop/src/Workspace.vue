@@ -39,6 +39,7 @@ import {
 } from "./assistant/controller";
 import SelfService from "./self-service/SelfService.vue";
 import Home from "./home/Home.vue";
+import SystemSettings from "./system-settings/SystemSettings.vue";
 import { createDeviceOverview, type DeviceOverviewPort } from "./home/device";
 import { nativeDeviceOverview } from "./home/native";
 import { createController } from "./self-service/controller";
@@ -77,7 +78,8 @@ const assistant = props.ready
 watch(
   () => props.page,
   (id) => {
-    if (id !== "assistant" && id !== "settings") controller?.navigate(id);
+    if (["home", "software", "tools", "tasks"].includes(id))
+      controller?.navigate(id);
     if (id === "home") void device.refresh();
   },
   { immediate: true },
@@ -243,7 +245,11 @@ onBeforeUnmount(() => {
   <AppShell
     :navigation-enabled="ready"
     :navigation-key="page"
-    :content-mode="ready && page !== 'settings' ? 'conversation' : 'page'"
+    :content-mode="
+      ready && !['settings', 'system-settings'].includes(page)
+        ? 'conversation'
+        : 'page'
+    "
   >
     <template #navigation-brand>
       <div class="workspace-brand">
@@ -265,15 +271,17 @@ onBeforeUnmount(() => {
           {{
             !ready || page === "settings"
               ? "设置"
-              : page === "tasks"
-                ? "请求与任务"
-                : page === "software"
-                  ? "软件中心"
-                  : page === "tools"
-                    ? "工具中心"
-                    : page === "help"
-                      ? "设备与帮助"
-                      : "首页"
+              : page === "system-settings"
+                ? "系统设置"
+                : page === "tasks"
+                  ? "请求与任务"
+                  : page === "software"
+                    ? "软件中心"
+                    : page === "tools"
+                      ? "工具中心"
+                      : page === "help"
+                        ? "设备与帮助"
+                        : "首页"
           }}
         </h1>
       </div>
@@ -287,6 +295,7 @@ onBeforeUnmount(() => {
             label: 'AI 助手',
           },
           { id: 'home', label: '首页' },
+          { id: 'system-settings', label: '系统设置' },
           { id: 'software', label: '软件中心' },
           { id: 'tools', label: '工具中心' },
           { id: 'tasks', label: '请求与任务' },
@@ -307,7 +316,8 @@ onBeforeUnmount(() => {
         <template #icon="{ item }"
           ><UiIcon
             ><Sparkles v-if="item.id === 'assistant'" /><House
-              v-else-if="item.id === 'home'" /><Package
+              v-else-if="item.id === 'home'" /><SettingsIcon
+              v-else-if="item.id === 'system-settings'" /><Package
               v-else-if="item.id === 'software'" /><Terminal
               v-else-if="item.id === 'tools'" /><Activity
               v-else-if="item.id === 'tasks'" /><Monitor v-else /></UiIcon
@@ -371,12 +381,14 @@ onBeforeUnmount(() => {
       <div
         class="resource-content"
         v-if="controller"
-        v-show="page !== 'assistant' && page !== 'settings' && page !== 'home'"
+        v-show="
+          !['assistant', 'settings', 'home', 'system-settings'].includes(page)
+        "
       >
         <SelfService
           v-if="controller"
           v-show="
-            page !== 'assistant' && page !== 'settings' && page !== 'home'
+            !['assistant', 'settings', 'home', 'system-settings'].includes(page)
           "
           :controller="controller"
           :context-key="candidate?.key ?? assistant?.context.value?.key"
@@ -390,6 +402,12 @@ onBeforeUnmount(() => {
           @ask-ai="askAi"
         />
       </div>
+      <SystemSettings
+        v-if="ready"
+        v-show="page === 'system-settings'"
+        :device-name="device.state.value?.computerName"
+        @home="emit('navigate', 'home')"
+      />
       <div v-if="controller && page === 'home'" class="home-content">
         <Home
           :controller="controller"

@@ -33,9 +33,9 @@ const software = computed(
 const addressesOpen = ref(false);
 const shortcuts = [
   {
-    page: "settings",
-    title: "应用设置",
-    description: "账户、连接与偏好",
+    page: "system-settings",
+    title: "系统设置",
+    description: "网络、显示与电源",
   },
   {
     page: "software",
@@ -170,7 +170,7 @@ const shortcuts = [
         >
           <span class="shortcut-icon"
             ><Settings
-              v-if="item.page === 'settings'"
+              v-if="item.page === 'system-settings'"
               :size="20"
               aria-hidden="true" /><Package
               v-else-if="item.page === 'software'"

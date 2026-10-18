@@ -186,3 +186,33 @@ it("changes the same assistant to compact resource presentation and stages sugge
     w.unmount();
   }
 });
+
+it("opens system settings separately from application settings and preserves assistant drafts", async () => {
+  const w = mount(Workspace, {
+    props: {
+      ready: true,
+      busy: false,
+      page: "assistant",
+      host: createHostSettings(undefined),
+    },
+  });
+  await flushPromises();
+  const assistant = w.getComponent(Assistant).props("controller");
+  assistant.draft.value = "保留这个问题";
+  const entry = w
+    .findAll("button")
+    .find((button) => button.text() === "系统设置")!;
+  await entry.trigger("click");
+  expect(w.emitted("navigate")?.at(-1)).toEqual(["system-settings"]);
+  await w.setProps({ page: "system-settings" });
+  expect(w.get(".shell-header h1").text()).toBe("系统设置");
+  expect(w.get(".resource-content").isVisible()).toBe(false);
+  expect(w.get(".system-settings").isVisible()).toBe(true);
+  expect(w.getComponent(SelfService).props("controller").state.page).not.toBe(
+    "system-settings",
+  );
+  await w.setProps({ page: "assistant" });
+  expect(w.getComponent(Assistant).props("controller")).toBe(assistant);
+  expect(assistant.draft.value).toBe("保留这个问题");
+  w.unmount();
+});
