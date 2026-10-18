@@ -5,6 +5,7 @@ use sha2::Digest as _;
 mod bridge;
 mod collection;
 pub(crate) mod commands;
+mod credential;
 mod dispatch;
 mod enrollment;
 pub(crate) mod gate;
@@ -25,9 +26,8 @@ pub(crate) fn request_id(offer: &Offer) -> Result<execution_contract::RequestId,
         serde_json_canonicalizer::to_vec(value).map_err(|_| Error::Protocol)
     }
     let authorization = match offer.payload() {
-        wire::TaskPayload::Credential(_) | wire::TaskPayload::Unmanage(_) => {
-            return Err(Error::Unsupported)
-        }
+        wire::TaskPayload::Unmanage(_) => return Err(Error::Unsupported),
+        wire::TaskPayload::Credential(v) => Some(&v.authorization),
         wire::TaskPayload::Collection(v) => Some(&v.authorization),
         wire::TaskPayload::Script(v) => Some(&v.authorization),
         wire::TaskPayload::Software(v) => Some(&v.authorization),
@@ -38,9 +38,14 @@ pub(crate) fn request_id(offer: &Offer) -> Result<execution_contract::RequestId,
             .map_err(|_| Error::Protocol);
     }
     let bytes = match offer.payload() {
-        wire::TaskPayload::Credential(_) | wire::TaskPayload::Unmanage(_) => {
-            return Err(Error::Unsupported)
-        }
+        wire::TaskPayload::Unmanage(_) => return Err(Error::Unsupported),
+        wire::TaskPayload::Credential(v) => encode(&(
+            v.tenant_id,
+            &v.device_id,
+            v.registration_id,
+            v.generation,
+            v.task_id,
+        ))?,
         wire::TaskPayload::Collection(v) => encode(&(
             v.tenant_id,
             &v.device_id,
@@ -81,3 +86,6 @@ mod tests;
 
 #[cfg(test)]
 mod collection_tests;
+
+#[cfg(test)]
+mod credential_tests;

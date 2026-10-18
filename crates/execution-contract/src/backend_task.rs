@@ -299,6 +299,8 @@ pub struct BackendConfirmation {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
 pub enum BackendTaskSummary {
+    /// Closed system recovery credential operation; never exposes material.
+    Credential {},
     /// Native MDM registration; opening the OS flow does not establish registration.
     Enrollment {},
     /// Native device collection; definitions remain backend-owned.

@@ -1620,3 +1620,109 @@ async fn retirement_signature_binds_every_target_and_cannot_use_an_offer_as_star
         }
     }
 }
+
+#[tokio::test]
+async fn credential_escrow_lost_ack_replays_ciphertext_after_sqlite_reopen() {
+    use base64::{engine::general_purpose::STANDARD, Engine};
+    use execution_contract::{ActorId, Digest, RequestId};
+    let server = Server::tls().await;
+    {
+        let mut data = server.data.lock().unwrap();
+        let mut task = CredentialTaskSpec {
+            wire_version: 1,
+            tenant_id: data.tenant,
+            device_id: "device-1".into(),
+            platform: TaskPlatform::Windows,
+            architecture: TaskArchitecture::Aarch64,
+            registration_id: data.registration,
+            generation: 1,
+            task_id: data.task,
+            attempt_id: data.attempt,
+            permit: TaskPermit::Offer,
+            expires_at: 60,
+            deadline: 300,
+            authorization: TaskAuthorization::Policy {
+                policy_id: Uuid::new_v4(),
+                policy_version: Uuid::new_v4(),
+            },
+            operation: CredentialOperation::RotateLocalAdministrator {
+                sid: "S-1-5-21-1-2-3-1001".into(),
+            },
+            recipient: CredentialRecipient {
+                key_id: "a".repeat(64),
+                public_key: STANDARD.encode([1; 32]),
+            },
+            expected: vec![],
+            recovery: None,
+            definition_digest: [0; 32],
+        };
+        task.definition_digest = CredentialTaskSpec::digest(
+            &task.operation,
+            &task.recipient,
+            &task.expected,
+            &task.recovery,
+        )
+        .unwrap();
+        data.offer = Some(data.signed(TaskPayload::Credential(Box::new(task))));
+    }
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    let offer = client.claim().await.unwrap().offer.unwrap();
+    client.received(&offer).await.unwrap();
+    let materials = client.prepare(&offer).await.unwrap();
+    assert!(materials.files().is_empty());
+    let start = client.request_start(&offer, &materials).await.unwrap();
+    client
+        .reserve_association(
+            &start,
+            &RequestId::new("credential-request").unwrap(),
+            &Digest::new("a".repeat(64)).unwrap(),
+            &ActorId::new("system-service").unwrap(),
+        )
+        .unwrap();
+    let TaskPayload::Credential(spec) = start.payload() else {
+        unreachable!()
+    };
+    let escrow = CredentialEscrow {
+        definition_digest: spec.definition_digest,
+        materials: vec![CredentialEnvelope {
+            subject: CredentialSubject::LocalAdministrator {
+                sid: "S-1-5-21-1-2-3-1001".into(),
+            },
+            expected_revision: 0,
+            wrapped_key: STANDARD.encode([7; 256]),
+            nonce: [9; 12],
+            ciphertext: STANDARD.encode([3; 32]),
+        }],
+    };
+    let task = offer.task_id();
+    server.data.lock().unwrap().escrow_reply_lost = true;
+    assert!(client
+        .escrow_credentials(task, escrow.clone())
+        .await
+        .is_err());
+    drop(materials);
+    drop(client);
+    let mut client = server.client(&root, OpenMode::Existing);
+    client
+        .escrow_credentials(task, escrow.clone())
+        .await
+        .unwrap();
+    assert!(client.association(task).unwrap().is_some());
+    client
+        .escrow_credentials(task, escrow.clone())
+        .await
+        .unwrap();
+    {
+        let data = server.data.lock().unwrap();
+        assert_eq!(data.credential_escrows.len(), 2);
+        assert_eq!(data.credential_escrows[0], data.credential_escrows[1]);
+    }
+    let mut tampered = escrow;
+    tampered.materials[0].ciphertext = STANDARD.encode([4; 32]);
+    assert_eq!(
+        client.escrow_credentials(task, tampered).await,
+        Err(Error::Conflict)
+    );
+}

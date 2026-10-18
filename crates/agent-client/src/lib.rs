@@ -4,6 +4,7 @@
 pub mod protocol;
 
 use rss_mdm_agent_wire::runtime::Secret;
+mod credential_escrow;
 mod delivery;
 mod unmanage;
 pub use unmanage::{inspect_unmanage, UnmanagePermit, UnmanageTransport};

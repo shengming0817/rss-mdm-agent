@@ -322,6 +322,9 @@ export interface BackendTask {
    */
   summary:
     | {
+        kind: "credential";
+      }
+    | {
         kind: "enrollment";
       }
     | {
@@ -633,6 +636,9 @@ export interface BackendTask1 {
    * Complete safe action preview, immutable with the offer revision.
    */
   summary:
+    | {
+        kind: "credential";
+      }
     | {
         kind: "enrollment";
       }

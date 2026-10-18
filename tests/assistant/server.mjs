@@ -533,6 +533,9 @@ export async function createFixture() {
             ],
           },
           id,
+          // This surface spans renderer lifecycle and multi-page browser scenarios.
+          // Deadline boundary cases use an injected clock in the dedicated renderer fixture.
+          id === "surface-question" ? 600_000 : 10_000,
         ),
       );
     },

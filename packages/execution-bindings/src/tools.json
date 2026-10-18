@@ -102,6 +102,15 @@
           "oneOf": [
             {
               "additionalProperties": false,
+              "description": "Closed system recovery credential operation; never exposes material.",
+              "properties": {
+                "kind": { "const": "credential", "type": "string" }
+              },
+              "required": ["kind"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
               "description": "Native MDM registration; opening the OS flow does not establish registration.",
               "properties": {
                 "kind": { "const": "enrollment", "type": "string" }
@@ -699,6 +708,15 @@
         "BackendTaskSummary": {
           "description": "Safe preview bound to the complete signed offer revision.",
           "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "Closed system recovery credential operation; never exposes material.",
+              "properties": {
+                "kind": { "const": "credential", "type": "string" }
+              },
+              "required": ["kind"],
+              "type": "object"
+            },
             {
               "additionalProperties": false,
               "description": "Native MDM registration; opening the OS flow does not establish registration.",
@@ -2252,6 +2270,15 @@
         "BackendTaskSummary": {
           "description": "Safe preview bound to the complete signed offer revision.",
           "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "Closed system recovery credential operation; never exposes material.",
+              "properties": {
+                "kind": { "const": "credential", "type": "string" }
+              },
+              "required": ["kind"],
+              "type": "object"
+            },
             {
               "additionalProperties": false,
               "description": "Native MDM registration; opening the OS flow does not establish registration.",

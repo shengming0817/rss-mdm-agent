@@ -212,3 +212,6 @@ mod secrets;
 mod production_storage;
 
 pub mod installation;
+
+/// Fixed recovery credential worker entry.
+pub mod credential_worker;

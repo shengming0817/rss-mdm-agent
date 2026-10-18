@@ -381,6 +381,19 @@ impl<S: IdentityProvider> DeviceService<S> {
                     self.abandon(task, commands).await?;
                     continue;
                 }
+                let retained = self.client.retained_offer(task)?;
+                if let wire::TaskPayload::Credential(spec) = retained.payload() {
+                    let root = crate::credential_worker::root(&self.core.config);
+                    if let Some(escrow) = crate::credential_worker::pending(&root, spec)? {
+                        network(
+                            self.client.escrow_credentials(task, escrow.clone()),
+                            &mut self.core,
+                            commands,
+                        )
+                        .await?;
+                        crate::credential_worker::acknowledge(&root, spec, &escrow)?;
+                    }
+                }
                 if let Some(mut pending) =
                     self.bridge
                         .prepare_delivery(&mut self.client, task, &mut self.core.app, 64)?

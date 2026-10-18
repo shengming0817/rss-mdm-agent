@@ -122,8 +122,22 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
     ) -> Result<PreparedExecution, Error> {
         materials.validate_offer(offer)?;
         let (device, platform, run_as, timeout, output) = match offer.payload() {
-            wire::TaskPayload::Credential(_) | wire::TaskPayload::Unmanage(_) => {
-                return Err(Error::Unsupported)
+            wire::TaskPayload::Unmanage(_) => return Err(Error::Unsupported),
+            wire::TaskPayload::Credential(v) => {
+                if plan.spec().launch.interpreter.profile.id.as_str()
+                    != crate::credential_worker::PROFILE
+                    || plan.spec().request.operation.resource.revision.as_str()
+                        != super::plan::hex(&v.definition_digest)
+                {
+                    return Err(Error::Untrusted);
+                }
+                (
+                    &v.device_id,
+                    v.platform,
+                    wire::ExecutionIdentity::System,
+                    3_600_000,
+                    crate::credential_worker::OUTPUT_BYTES,
+                )
             }
             wire::TaskPayload::Script(v)
                 if matches!(
@@ -256,6 +270,9 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
         let plan = &plan;
         let caller = &caller;
         client.validate_start(&start)?;
+        if let wire::TaskPayload::Credential(task) = start.payload() {
+            super::credential::verify_input(plan, task)?;
+        }
         if let wire::TaskPayload::Collection(task) = start.payload() {
             super::collection::verify_input(plan, task)?;
         }
@@ -473,6 +490,27 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
             return Err(Error::Conflict);
         }
         let binding = client.association(task)?.ok_or(Error::Conflict)?;
+        let retained = client.retained_offer(task)?;
+        if let (wire::TaskPayload::Credential(spec), Some(attempt)) =
+            (retained.payload(), binding.local_attempt())
+        {
+            let plan = app
+                .service_frozen_input(binding.request())
+                .map_err(map_app_error)?;
+            let root = crate::credential_worker::plan_root(&plan)?;
+            if crate::credential_worker::stored_result(&root, spec)?.is_some() {
+                app.service_assess(
+                    binding.request(),
+                    attempt,
+                    super::plan::reference(spec.task_id.to_string(), "credential-result")?,
+                    &super::credential::EffectEvidence {
+                        task: spec,
+                        attempt,
+                    },
+                )
+                .map_err(map_app_error)?;
+            }
+        }
         if let Some(result) = client.pending_result(&binding)? {
             if let Some(ack) = client.frozen_result_ack(&result)? {
                 return Ok(Some(PendingDelivery {
@@ -582,6 +620,15 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
         evidence: &execution_app::DeliveryEvidence,
     ) -> Result<Option<wire::TaskEvent>, Error> {
         if let Some(terminal) = evidence.terminal {
+            if let wire::TaskPayload::Credential(spec) = payload {
+                return Ok(Some(wire::TaskEvent::CredentialResult(
+                    crate::credential_worker::failure_with_materials(
+                        &crate::credential_worker::plan_root(&evidence.input)?,
+                        spec,
+                        wire::CredentialFailure::RecoveryState,
+                    )?,
+                )));
+            }
             if terminal == execution_app::DeliveryTerminal::Cancelled {
                 return Ok(Some(wire::TaskEvent::Cancelled));
             }
@@ -626,8 +673,28 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
         if !process.finished {
             return Ok(None);
         }
-        if process.end == ProcessEnd::Cancelled && process.quiescent {
+        if !matches!(payload, wire::TaskPayload::Credential(_))
+            && process.end == ProcessEnd::Cancelled
+            && process.quiescent
+        {
             return Ok(Some(wire::TaskEvent::Cancelled));
+        }
+        if let wire::TaskPayload::Credential(spec) = payload {
+            let root = crate::credential_worker::plan_root(&evidence.input)?;
+            let result = if process.quiescent {
+                crate::credential_worker::stored_result(&root, spec)?
+            } else {
+                None
+            };
+            let result = match result {
+                Some(value) => value,
+                None => crate::credential_worker::failure_with_materials(
+                    &root,
+                    spec,
+                    wire::CredentialFailure::RecoveryState,
+                )?,
+            };
+            return Ok(Some(wire::TaskEvent::CredentialResult(result)));
         }
         if let wire::TaskPayload::Software(spec) = payload {
             let Some(progress) = evidence.software_progress.as_ref() else {
@@ -755,6 +822,12 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
         let ack = client
             .acknowledged_result(&binding)?
             .ok_or(Error::Conflict)?;
+        if let wire::TaskPayload::Credential(spec) = client.retained_offer(task)?.payload() {
+            let input = app
+                .frozen_input(caller, binding.request())
+                .map_err(map_app_error)?;
+            crate::credential_worker::retire(&crate::credential_worker::plan_root(&input)?, spec)?;
+        }
         client.release_result(ack)
     }
 }

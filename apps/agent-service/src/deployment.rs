@@ -423,6 +423,9 @@ impl Deployment {
         if crate::installation::unmanage_supported(self) {
             values.push(C::DeviceUnmanageV1);
         }
+        if cfg!(windows) {
+            values.push(C::CredentialsWindowsV1);
+        }
         let has = |profile| {
             self.execution
                 .interpreters
