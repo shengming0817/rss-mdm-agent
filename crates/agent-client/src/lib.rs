@@ -4,6 +4,7 @@
 pub mod protocol;
 
 use rss_mdm_agent_wire::runtime::Secret;
+mod credential_escrow;
 mod delivery;
 mod redaction;
 pub use delivery::{AbandonmentAck, Association, FrozenAbandonment, FrozenResult, ResultAck};

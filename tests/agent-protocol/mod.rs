@@ -280,6 +280,8 @@ pub struct Data {
     pub reports: BTreeMap<String, Value>,
     pub collections: Option<Vec<CollectionDefinition>>,
     pub results: BTreeMap<String, Value>,
+    pub credential_escrows: Vec<Value>,
+    pub escrow_reply_lost: bool,
     pub start_ops: Vec<String>,
     pub forged_start: bool,
     pub start_permit: Option<SignedTask>,
@@ -724,6 +726,8 @@ impl Server {
             reports: BTreeMap::new(),
             collections: None,
             results: BTreeMap::new(),
+            credential_escrows: vec![],
+            escrow_reply_lost: false,
             start_ops: vec![],
             forged_start: false,
             start_permit: None,
@@ -1482,6 +1486,16 @@ fn event_response(d: &mut Data, value: Value) -> Response {
             axum::Json(TaskEventAck::new(None, false)).into_response()
         }
         TaskEvent::Start => start_event(d, operation),
+        TaskEvent::CredentialEscrow(_) => {
+            if d.credential_escrows.iter().any(|old| old != &value) {
+                return StatusCode::CONFLICT.into_response();
+            }
+            d.credential_escrows.push(value);
+            if std::mem::take(&mut d.escrow_reply_lost) {
+                return StatusCode::SERVICE_UNAVAILABLE.into_response();
+            }
+            axum::Json(TaskEventAck::new(None, false)).into_response()
+        }
         TaskEvent::OutputChunk(chunk) => {
             d.chunk_calls.push(value);
             if d.chunks.get(&chunk.index()).is_some_and(|v| v != chunk) {
@@ -1520,7 +1534,10 @@ fn start_event(d: &mut Data, operation: String) -> Response {
         let mut payload = d.offer.as_ref().unwrap().payload.clone();
         let expiry = d.time.now().unwrap() + d.start_validity_seconds;
         match &mut payload {
-            TaskPayload::Credential(_) => return StatusCode::NOT_IMPLEMENTED.into_response(),
+            TaskPayload::Credential(v) => {
+                v.permit = TaskPermit::Start;
+                v.expires_at = expiry;
+            }
             TaskPayload::Collection(v) => {
                 v.permit = TaskPermit::Start;
                 v.expires_at = expiry;

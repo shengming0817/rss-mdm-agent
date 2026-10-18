@@ -27,6 +27,8 @@ mod platform;
 
 #[cfg(any(windows, test))]
 mod windows_argv;
+#[cfg(any(windows, test))]
+mod windows_profile;
 
 #[cfg(windows)]
 mod windows;

@@ -797,6 +797,77 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
         }
         self.request_execution(&caller, input)
     }
+    /// Record product-owned effect evidence for the exact quiescent attempt. This trusted
+    /// service port is not exposed to IPC/UI; the verifier must authenticate independent
+    /// business evidence. It cannot replace termination or manufacture a new attempt.
+    pub fn service_assess(
+        &mut self,
+        request: &RequestId,
+        attempt: &AttemptId,
+        reference: execution_contract::VersionedRef,
+        verifier: &impl execution_lifecycle::ObservationVerifier,
+    ) -> Result<bool, Error> {
+        let execution = self.load(None, request, ExecutionAccess::RunnerFact)?;
+        let active = execution
+            .snapshot()
+            .attempt
+            .as_ref()
+            .ok_or(Error::Conflict)?;
+        if &active.id != attempt {
+            return Err(Error::Conflict);
+        }
+        if active.termination.is_none() {
+            return Ok(false);
+        }
+        if active.assessment.as_ref().is_some_and(|o| {
+            matches!(
+                o.observation,
+                Observation::Effect {
+                    assessment: execution_lifecycle::EffectAssessment::Satisfied
+                        | execution_lifecycle::EffectAssessment::NoEffect
+                }
+            )
+        }) {
+            return Ok(false);
+        }
+        self.authorize_runner(execution.input(), Access::RunnerFact)?;
+        let evidence = execution_contract::EvidenceRef {
+            reference,
+            runner: active.runner.clone(),
+            kind: if active.mode == ExecutionMode::Real {
+                execution_contract::EvidenceKind::StateObserved
+            } else {
+                execution_contract::EvidenceKind::TestResult
+            },
+        };
+        let now = self.host.reliable_now()?;
+        let facts = verifier
+            .verify(execution.input(), attempt, &evidence, now)
+            .map_err(|_| Error::Unavailable)?;
+        execution_lifecycle::ObservationVerifier::verify(
+            &ObservationEvidence(&facts),
+            execution.input(),
+            attempt,
+            &evidence,
+            now,
+        )
+        .map_err(|_| Error::InvalidInput)?;
+        if !matches!(facts.observation, Observation::Effect { .. }) {
+            return Err(Error::InvalidInput);
+        }
+        if active
+            .assessment
+            .as_ref()
+            .is_some_and(|old| old.observation == facts.observation)
+        {
+            return Ok(false);
+        }
+        let result = self.observation(&execution, attempt, &facts)?;
+        if result.receipt().outcome == Outcome::Rejected {
+            return Err(Error::InvalidInput);
+        }
+        Ok(true)
+    }
     /// Reconcile facts only, at most termination plus assessment. Missing runner memory stays
     /// uncertain and never produces a new attempt or a synthetic successful observation.
     pub fn reconcile(&mut self, request: &RequestId) -> Result<ExecutionStatus, Error> {

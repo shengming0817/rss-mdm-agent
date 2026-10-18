@@ -591,6 +591,7 @@ export class FakeHost implements HostPort {
     commandId: string,
     request: Interaction["request"],
     interactionId = crypto.randomUUID(),
+    lifetimeMs = 10_000,
   ): Promise<Result<Interaction>> {
     const started = await this.advance(caller, sessionId, commandId, []);
     if (!started.ok) return started;
@@ -610,7 +611,7 @@ export class FakeHost implements HostPort {
       nativeCallbackId: `callback-${interactionId}`,
       status: "pending",
       callbackLifetime: "generation_bound",
-      expiresAtMs: this.clock.now() + 10000,
+      expiresAtMs: this.clock.now() + lifetimeMs,
       request,
     };
     const result = await this.store.commit({

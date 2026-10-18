@@ -11,6 +11,8 @@ name = "rss-execution-service"
 path = "src/main.rs"
 
 [dependencies]
+ring = "=0.17.14"
+rsa = { version = "=0.9.10", features = ["sha2"] }
 jsonschema.workspace = true
 rss-mdm-agent-wire.workspace = true
 rustls.workspace = true

@@ -805,6 +805,12 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
 }
 pub(crate) fn same_input(a: &wire::TaskPayload, b: &wire::TaskPayload) -> bool {
     match (a, b) {
+        (wire::TaskPayload::Credential(a), wire::TaskPayload::Credential(b)) => {
+            let mut b = b.clone();
+            b.permit = a.permit;
+            b.expires_at = a.expires_at;
+            &b == a
+        }
         (wire::TaskPayload::Enrollment(a), wire::TaskPayload::Enrollment(b)) => {
             let mut b = b.clone();
             b.permit = a.permit;
