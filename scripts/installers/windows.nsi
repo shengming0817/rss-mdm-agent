@@ -226,9 +226,12 @@ FunctionEnd
 !macroend
 !insertmacro Guards "" 1
 !insertmacro Guards "un." 0
+Var RetirementTask
 Function un.onInit
   SetRegView 64
   SetShellVarContext all
+  ${GetParameters} $R0
+  ${GetOptions} $R0 "/RETIREMENT=" $RetirementTask
   ; NSIS initializes uninstall $INSTDIR to the version containing uninstall.exe.
   StrCpy $INSTDIR "$PROGRAMFILES64\RSS MDM Agent"
 FunctionEnd
@@ -317,7 +320,7 @@ Section "Uninstall"
     Call un.ProtectedDirectory
     Pop $VersionsPin
   ${EndIf}
-  StrCpy $Invocation '"$ImagePath" --installation uninstall --binary "$INSTDIR\versions\@ID@\rss-execution-service.exe"'
+  StrCpy $Invocation '"$ImagePath" --installation uninstall --binary "$INSTDIR\versions\@ID@\rss-execution-service.exe" --operation "$RetirementTask"'
   ${GetParent} "$ImagePath" $R0
   Push $R0
   Call un.ProtectedDirectory

@@ -46,11 +46,9 @@ pub(super) fn failed(error: Error) {
 pub(super) fn compensation(state: &'static str) {
     REPORT.with(|value| value.borrow_mut().compensation = state.into());
 }
-#[cfg(windows)]
 pub(super) fn succeeded() {
     REPORT.with(|value| value.borrow_mut().state = "succeeded".into());
 }
-#[cfg(windows)]
 pub(super) fn terminal() {
     REPORT.with(|value| value.borrow_mut().terminal = true);
 }

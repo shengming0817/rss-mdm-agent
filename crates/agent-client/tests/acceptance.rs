@@ -1504,6 +1504,124 @@ async fn managed_identity_arrives_later_and_grant_response_loss_preserves_daily_
 }
 
 #[tokio::test]
+async fn signed_retirement_requires_start_drain_and_exact_installation_and_replays_lost_result() {
+    let server = Server::tls().await;
+    server.data.lock().unwrap().unmanage();
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    let install = Uuid::new_v4();
+    let offer = client.claim().await.unwrap().offer.unwrap();
+    let cfg = client.configuration().clone();
+    assert!(agent_client::inspect_unmanage(&root.path, &cfg, install, offer.task_id()).is_err());
+    server.data.lock().unwrap().start_failure = true;
+    assert!(matches!(
+        client.authorize_unmanage(&offer, install).await,
+        Err(Error::Unavailable)
+    ));
+    assert!(client.accepted_unmanage(install).unwrap().is_none());
+    drop(client);
+    let mut client = server.client(&root, OpenMode::Existing);
+    let permit = client.authorize_unmanage(&offer, install).await.unwrap();
+    assert!(!permit.drained());
+    assert!(client.unmanage_transport(&permit).is_err());
+    assert!(client.accepted_unmanage(Uuid::new_v4()).is_err());
+    assert!(agent_client::inspect_unmanage(&root.path, &cfg, install, offer.task_id()).is_err());
+    assert!(matches!(
+        client.claim().await,
+        Err(Error::CredentialRetired)
+    ));
+    let permit = client.unmanage_drained(permit).unwrap();
+    assert!(
+        agent_client::inspect_unmanage(&root.path, &cfg, install, offer.task_id())
+            .unwrap()
+            .drained()
+    );
+    let transport = client.unmanage_transport(&permit).unwrap();
+    server.data.lock().unwrap().result_failure = true;
+    assert_eq!(
+        transport.report(UnmanageOutcome::Unknown).await,
+        Err(Error::Unavailable)
+    );
+    drop(client);
+    let client = server.client(&root, OpenMode::Existing);
+    let permit = client.accepted_unmanage(install).unwrap().unwrap();
+    permit.verify_handoff(&cfg, install).unwrap();
+    assert!(permit.verify_handoff(&cfg, Uuid::new_v4()).is_err());
+    let permit = client.accepted_unmanage(install).unwrap().unwrap();
+    let transport = client.unmanage_transport(&permit).unwrap();
+    drop(client);
+    std::fs::remove_dir_all(&root.path).unwrap();
+    transport.report(UnmanageOutcome::Unknown).await.unwrap();
+    let data = server.data.lock().unwrap();
+    assert_eq!(data.start_ops.len(), 2);
+    assert_eq!(data.start_ops[0], data.start_ops[1]);
+    assert_eq!(data.results.len(), 1);
+    assert_eq!(data.result_calls, 2);
+}
+
+#[tokio::test]
+async fn retirement_signature_binds_every_target_and_cannot_use_an_offer_as_start() {
+    use agent_client::protocol::{verify_task, TaskVerification};
+    let server = Server::new().await;
+    let cfg = server.config();
+    let mut data = server.data.lock().unwrap();
+    data.unmanage();
+    let signed = data.offer.clone().unwrap();
+    let context = TaskVerification {
+        key_id: "test",
+        public_key: cfg.keys.get("test").unwrap(),
+        tenant_id: data.tenant,
+        device_id: "device-1",
+        platform: TaskPlatform::Windows,
+        architecture: TaskArchitecture::Aarch64,
+        registration_id: data.registration,
+        generation: 1,
+        task_id: data.task,
+        attempt_id: data.attempt,
+        permit: TaskPermit::Offer,
+        now: 1,
+    };
+    verify_task(&signed, &context).unwrap();
+    let wrong = TaskVerification {
+        permit: TaskPermit::Start,
+        ..context
+    };
+    assert!(verify_task(&signed, &wrong).is_err());
+    for field in [
+        "retirementId",
+        "registrationId",
+        "taskId",
+        "attemptId",
+        "generation",
+        "deadline",
+        "tenantId",
+    ] {
+        let mut payload = serde_json::to_value(&signed.payload).unwrap();
+        let changed = if field == "generation" || field == "deadline" {
+            serde_json::json!(999)
+        } else {
+            serde_json::json!(Uuid::new_v4())
+        };
+        // Use the unique wire variant's serialized envelope; no parallel protocol DTO.
+        payload["task"][field] = changed;
+        if let Ok(payload) = serde_json::from_value(payload) {
+            let tampered = SignedTask {
+                payload,
+                ..signed.clone()
+            };
+            let offer_context = TaskVerification {
+                permit: TaskPermit::Offer,
+                ..wrong
+            };
+            assert!(verify_task(&tampered, &offer_context).is_err(), "{field}");
+        } else {
+            panic!("fixture must remain structurally valid for {field}");
+        }
+    }
+}
+
+#[tokio::test]
 async fn credential_escrow_lost_ack_replays_ciphertext_after_sqlite_reopen() {
     use base64::{engine::general_purpose::STANDARD, Engine};
     use execution_contract::{ActorId, Digest, RequestId};

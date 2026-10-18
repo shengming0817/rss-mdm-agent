@@ -73,6 +73,18 @@ impl Keychain {
                 }
             })
     }
+    /// Delete exactly one caller-selected generic credential and confirm absence.
+    pub fn delete(&self, service: &str, account: &str) -> io::Result<()> {
+        match self.0.find_generic_password(service, account) {
+            Ok((_, item)) => item.delete(),
+            Err(e) if e.code() == -25300 => return Ok(()),
+            Err(e) => return Err(io::Error::other(e)),
+        }
+        match self.read(service, account) {
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+            _ => Err(io::Error::other("credential deletion unconfirmed")),
+        }
+    }
     /// Add only: a duplicate never replaces an existing credential.
     pub fn create_new(&self, service: &str, account: &str, bytes: &[u8]) -> io::Result<()> {
         self.0

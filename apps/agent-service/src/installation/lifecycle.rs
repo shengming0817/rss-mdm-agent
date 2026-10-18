@@ -3,6 +3,7 @@ use super::*;
 enum Action {
     Install,
     Remove,
+    RemoveLabRegistration,
     Uninstall,
     Status,
     Refresh,
@@ -27,6 +28,7 @@ impl Action {
             "msi-commit" => Ok(Self::MsiCommit),
             "install" => Ok(Self::Install),
             "remove" => Ok(Self::Remove),
+            "remove-lab-registration" => Ok(Self::RemoveLabRegistration),
             "uninstall" => Ok(Self::Uninstall),
             "status" => Ok(Self::Status),
             "refresh" => Ok(Self::Refresh),
@@ -160,51 +162,56 @@ pub(super) fn run(args: &[OsString]) -> Result<(), Error> {
             }
             platform::register(opts.system()?, &binary, &config)?;
         }
-        Action::Remove => {
-            let binary = opts.path("--binary")?;
-            let config = opts.config()?;
-            if opts.system()? {
-                let deployment = Deployment::load(&config)?;
-                platform::quiescent(&deployment, &config)?;
-            }
-            platform::remove(opts.system()?, &binary, &config)?;
-        }
-        Action::Uninstall => {
+        Action::RemoveLabRegistration => {
             if !opts.system()? {
                 return Err(Error::Identity);
             }
             let config = opts.config()?;
-            if config != Deployment::default_path()? {
-                return Err(Error::Configuration);
-            }
+            let binary = opts.path("--binary")?;
             let deployment = Deployment::metadata(&config)?;
-            let root = deployment
-                .service
-                .path
-                .parent()
-                .ok_or(Error::Configuration)?;
-            if opts.path("--binary")? != deployment.service.path
-                || root.parent() != Some(platform::payload_parent()?.as_path())
-                || [
-                    &deployment.state_root,
-                    &deployment.execution.material_root,
-                    &deployment.execution.work_root,
-                ]
-                .iter()
-                .any(|p| p.starts_with(root))
+            if config == Deployment::default_path()?
+                || config.canonicalize()? == Deployment::default_path()?
+                || deployment.service.path != binary
             {
                 return Err(Error::Identity);
             }
-            let candidate = Candidate::retained(&config, &deployment)?;
-            if candidate.root != root {
+            // This only removes a custom lab registration whose native arguments
+            // bind the exact config and image. The default production registration
+            // cannot match; credentials, payload and journal are retained.
+            platform::quiescent(&deployment, &config)?;
+            platform::remove(true, &binary, &config)?;
+        }
+        Action::Remove => {
+            let binary = opts.path("--binary")?;
+            let config = opts.config()?;
+            if opts.system()? {
+                let task = opts
+                    .values
+                    .get("--operation")
+                    .and_then(|v| v.to_str())
+                    .ok_or(Error::Denied)?;
+                unmanage::package_remove(
+                    &config,
+                    &binary,
+                    uuid::Uuid::parse_str(task).map_err(|_| Error::Denied)?,
+                )?;
+            } else {
+                platform::remove(false, &binary, &config)?;
+            }
+        }
+        Action::Uninstall => {
+            if !opts.system()? || opts.config()? != Deployment::default_path()? {
                 return Err(Error::Identity);
             }
-            outcome::phase("uninstall-quiescence")?;
-            platform::quiescent(&deployment, &config)?;
-            outcome::phase("uninstall-registration")?;
-            platform::remove(true, &deployment.service.path, &config)?;
-            outcome::phase("uninstall-payload")?;
-            platform::uninstall_payload(&candidate)?;
+            let task = opts
+                .values
+                .get("--operation")
+                .and_then(|v| v.to_str())
+                .ok_or(Error::Denied)?;
+            unmanage::run(
+                uuid::Uuid::parse_str(task).map_err(|_| Error::Denied)?,
+                &opts.path("--binary")?,
+            )?;
         }
         Action::Status => {
             platform::status(opts.system()?)?;

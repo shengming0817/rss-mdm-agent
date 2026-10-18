@@ -43,3 +43,22 @@ fn candidate_rejects_previous_version_and_retired_fields() {
     assert!(serde_json::from_value::<Candidate>(old_field).is_err());
     assert_eq!(std::fs::read_dir(&root.path).unwrap().count(), 0);
 }
+
+#[test]
+fn installation_image_reader_is_not_the_small_configuration_reader() {
+    let root = crate::protocol_test_support::Root::new();
+    let path = root.path.join("worker-image");
+    let bytes = vec![42; 128 * 1024];
+    std::fs::write(&path, &bytes).unwrap();
+    assert_eq!(read_image(&path, &hash(&bytes)).unwrap(), bytes);
+    assert_eq!(read_image(&path, &"0".repeat(64)), Err(Error::Identity));
+    assert!(read_image(&root.path, &hash(&bytes)).is_err());
+    // Native administrator path protection remains a separate mandatory outer check.
+    assert!(Artifact {
+        path: path.clone(),
+        sha256: hash(&bytes),
+        cdhash: None
+    }
+    .verify(&path)
+    .is_err());
+}

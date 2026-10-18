@@ -430,3 +430,144 @@ pub(super) fn payload_parent() -> Result<PathBuf, Error> {
         .ok_or(Error::Configuration)?
         .join("versions"))
 }
+
+fn unmanage_job(task: uuid::Uuid) -> PathBuf {
+    Path::new("/Library/LaunchDaemons").join(format!("{LABEL}.unmanage.{task}.plist"))
+}
+pub(super) fn launch_unmanage(deployment: &Deployment, task: uuid::Uuid) -> Result<(), Error> {
+    let config = Deployment::default_path()?;
+    let label = format!("{LABEL}.unmanage.{task}");
+    let path = unmanage_job(task);
+    let args = vec![
+        unmanage_binary(deployment, task)?
+            .to_string_lossy()
+            .into_owned(),
+        "--installation".into(),
+        "uninstall".into(),
+        "--config".into(),
+        config.to_string_lossy().into_owned(),
+        "--binary".into(),
+        deployment.service.path.to_string_lossy().into_owned(),
+        "--operation".into(),
+        task.to_string(),
+    ];
+    let mut dict = plist::Dictionary::new();
+    dict.insert("Label".into(), label.clone().into());
+    dict.insert(
+        "ProgramArguments".into(),
+        plist::Value::Array(args.into_iter().map(plist::Value::String).collect()),
+    );
+    dict.insert("RunAtLoad".into(), true.into());
+    let mut restart = plist::Dictionary::new();
+    restart.insert("SuccessfulExit".into(), false.into());
+    dict.insert("KeepAlive".into(), plist::Value::Dictionary(restart));
+    dict.insert("ThrottleInterval".into(), 30.into());
+    let mut bytes = Vec::new();
+    plist::Value::Dictionary(dict)
+        .to_writer_xml(&mut bytes)
+        .map_err(|_| Error::Configuration)?;
+    retain_public(&path, &bytes)?;
+    if registered(&format!("system/{label}"))?.is_none() {
+        command(
+            Path::new("/bin/launchctl"),
+            &["bootstrap".into(), "system".into(), path.into()],
+        )?;
+    }
+    Ok(())
+}
+pub(super) fn finish_unmanage(deployment: &Deployment, task: uuid::Uuid) -> Result<bool, Error> {
+    let carrier = unmanage_binary(deployment, task)?;
+    let original = unmanage_job(task);
+    let label = format!("{LABEL}.unmanage.{task}.cleanup");
+    let cleanup = Path::new("/Library/LaunchDaemons").join(format!("{label}.plist"));
+    let absent = |p: &Path| matches!(std::fs::symlink_metadata(p),Err(e) if e.kind()==std::io::ErrorKind::NotFound);
+    if absent(&carrier) && absent(&original) && absent(&cleanup) {
+        return Ok(true);
+    }
+    // ref: launchd.plist(5) ProgramArguments / KeepAlive SuccessfulExit.
+    // The finalizer uses the OS image, so deleting our last executable cannot
+    // remove its own recovery entry. Fixed script + separate exact UUID paths;
+    // each deletion must succeed before the finalizer removes its durable plist.
+    let args = cleanup_arguments(&carrier, &original, &cleanup);
+    let mut dict = plist::Dictionary::new();
+    dict.insert("Label".into(), label.clone().into());
+    dict.insert(
+        "ProgramArguments".into(),
+        plist::Value::Array(args.into_iter().map(plist::Value::String).collect()),
+    );
+    dict.insert("RunAtLoad".into(), true.into());
+    let mut restart = plist::Dictionary::new();
+    restart.insert("SuccessfulExit".into(), false.into());
+    dict.insert("KeepAlive".into(), plist::Value::Dictionary(restart));
+    dict.insert("ThrottleInterval".into(), 30.into());
+    let mut bytes = Vec::new();
+    plist::Value::Dictionary(dict)
+        .to_writer_xml(&mut bytes)
+        .map_err(|_| Error::Configuration)?;
+    retain_public(&cleanup, &bytes)?;
+    if registered(&format!("system/{label}"))?.is_none() {
+        command(
+            Path::new("/bin/launchctl"),
+            &["bootstrap".into(), "system".into(), cleanup.clone().into()],
+        )?;
+    }
+    for _ in 0..10 {
+        if absent(&carrier) && absent(&original) && absent(&cleanup) {
+            return Ok(true);
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    // Durable OS finalizer owns the remaining exact files; registration is not proof.
+    Ok(false)
+}
+pub(super) fn unmanage_binary(_: &Deployment, task: uuid::Uuid) -> Result<PathBuf, Error> {
+    Ok(Deployment::default_path()?
+        .parent()
+        .ok_or(Error::Configuration)?
+        .join("install-operations")
+        .join(format!("{task}.retirement")))
+}
+
+fn cleanup_arguments(carrier: &Path, original: &Path, cleanup: &Path) -> Vec<String> {
+    vec![
+        "/bin/sh".to_owned(),
+        "-c".into(),
+        r#"/bin/rm -f -- "$1" && /bin/rm -f -- "$2" && /bin/rm -f -- "$3""#.into(),
+        "rss-retirement-cleanup".into(),
+        carrier.to_string_lossy().into_owned(),
+        original.to_string_lossy().into_owned(),
+        cleanup.to_string_lossy().into_owned(),
+    ]
+}
+#[cfg(test)]
+mod retirement_tests {
+    use super::*;
+    #[test]
+    fn retirement_finalizer_retains_retry_entry_on_failure_and_uses_exact_paths() {
+        let root = std::env::temp_dir().join(format!("carrier-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&root).unwrap();
+        let carrier = root.join("carrier $(touch escaped) with spaces");
+        let original = root.join("original.plist");
+        let cleanup = root.join("cleanup.plist");
+        std::fs::create_dir(&carrier).unwrap();
+        std::fs::write(&original, b"original").unwrap();
+        std::fs::write(&cleanup, b"retry").unwrap();
+        let args = cleanup_arguments(&carrier, &original, &cleanup);
+        let run = || {
+            Command::new(&args[0])
+                .args(&args[1..])
+                .current_dir(&root)
+                .output()
+                .unwrap()
+        };
+        assert!(!run().status.success());
+        assert!(original.exists() && cleanup.exists());
+        assert!(!root.join("escaped").exists());
+        std::fs::remove_dir(&carrier).unwrap();
+        std::fs::write(&carrier, b"image").unwrap();
+        assert!(run().status.success());
+        assert!(!carrier.exists() && !original.exists() && !cleanup.exists());
+        assert!(run().status.success());
+        std::fs::remove_dir(&root).unwrap();
+    }
+}

@@ -122,6 +122,7 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
     ) -> Result<PreparedExecution, Error> {
         materials.validate_offer(offer)?;
         let (device, platform, run_as, timeout, output) = match offer.payload() {
+            wire::TaskPayload::Unmanage(_) => return Err(Error::Unsupported),
             wire::TaskPayload::Credential(v) => {
                 if plan.spec().launch.interpreter.profile.id.as_str()
                     != crate::credential_worker::PROFILE

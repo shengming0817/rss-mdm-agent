@@ -34,6 +34,7 @@ impl DeviceSecrets {
     /// Bind the OS credential namespace to its sole journal location on first initialization.
     /// A new configured directory cannot reuse the same registration to discard old attempts.
     pub(crate) fn bind_storage(&self, root: &Path) -> Result<(), Error> {
+        self.0.initialize_catalog()?;
         self.0
             .import("journal-location", &Self::storage_binding(root)?)?;
         Ok(())

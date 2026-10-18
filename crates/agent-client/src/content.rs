@@ -416,7 +416,9 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
 fn artifacts(payload: &wire::TaskPayload) -> Result<Vec<(String, u64, [u8; 32])>, Error> {
     Ok(match payload {
         wire::TaskPayload::Credential(_) => vec![],
-        wire::TaskPayload::Collection(_) | wire::TaskPayload::Enrollment(_) => vec![],
+        wire::TaskPayload::Collection(_)
+        | wire::TaskPayload::Enrollment(_)
+        | wire::TaskPayload::Unmanage(_) => vec![],
         wire::TaskPayload::Script(v) => {
             vec![("script".into(), v.content.length, v.content.sha256)]
         }

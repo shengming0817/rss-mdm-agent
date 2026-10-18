@@ -1,6 +1,8 @@
 //! One installation owner; packages and lab harnesses only invoke this boundary.
 //! ref: tauri tauri-cli-v2.11.2 crates/tauri-bundler/src/bundle/windows/nsis/installer.nsi.
 mod lifecycle;
+mod unmanage;
+pub(crate) use unmanage::{launch as launch_unmanage, supported as unmanage_supported};
 #[cfg(windows)]
 mod msix;
 #[cfg(windows)]
@@ -8,6 +10,8 @@ pub use msix::initialize as initialize_packaged;
 #[cfg(target_os = "macos")]
 mod macos;
 mod outcome;
+#[cfg(any(windows, test))]
+mod retirement_carrier;
 #[cfg(any(windows, test))]
 mod task_document;
 #[cfg(windows)]
@@ -177,7 +181,6 @@ impl Candidate {
         platform::verify_signatures(self)?;
         Ok(())
     }
-    #[cfg(windows)]
     fn format(&self) -> Result<String, Error> {
         let bytes = installation_security::read_protected(&self.root.join("publication.json"))
             .map_err(|_| Error::Identity)?;
@@ -344,6 +347,23 @@ fn command(path: &Path, args: &[OsString]) -> Result<Vec<u8>, Error> {
     if !status.success() {
         outcome::native_failure(status.code());
         return Err(Error::Unavailable);
+    }
+    Ok(bytes)
+}
+fn read_image(path: &Path, digest: &str) -> Result<Vec<u8>, Error> {
+    const IMAGE_BYTES: u64 = 256 * 1024 * 1024;
+    let file = std::fs::File::open(path)?;
+    let metadata = file.metadata()?;
+    if !metadata.is_file() || metadata.len() > IMAGE_BYTES {
+        return Err(Error::Capacity);
+    }
+    let mut bytes = Vec::new();
+    file.take(IMAGE_BYTES + 1).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > IMAGE_BYTES {
+        return Err(Error::Capacity);
+    }
+    if hash(&bytes) != digest {
+        return Err(Error::Identity);
     }
     Ok(bytes)
 }

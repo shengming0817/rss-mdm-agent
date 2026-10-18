@@ -139,6 +139,27 @@ impl Keychain {
             })
         })
     }
+    /// Remove only the exact private key selected by its application tag.
+    pub fn delete_device_key(&self, name: &str) -> io::Result<()> {
+        let key = match self.open_device_key(name) {
+            Ok(key) => key,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
+            Err(e) => return Err(e),
+        };
+        // SAFETY: The key is the live exact persistent item returned by the scoped lookup.
+        let status = unsafe {
+            security_framework_sys::keychain_item::SecKeychainItemDelete(
+                key.0.as_CFTypeRef().cast_mut().cast(),
+            )
+        };
+        if status != 0 && status != -25300 {
+            return Err(denied());
+        }
+        match self.open_device_key(name) {
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+            _ => Err(denied()),
+        }
+    }
     /// Create once with access limited to the current trusted service executable.
     pub fn create_device_key(&self, name: &str) -> io::Result<DeviceKey> {
         match self.open_device_key(name) {

@@ -99,6 +99,7 @@ pub struct DeviceService<S: IdentityProvider = DeviceSecrets> {
     next_enrollment: std::time::Instant,
     recovering: bool,
     pub(crate) material_gc: crate::material_gc::MaterialGc,
+    pub(crate) installation: Option<crate::deployment::Deployment>,
 }
 impl<S: IdentityProvider> DeviceService<S> {
     /// Open an already registered device. Create/open selection never follows an error fallback.
@@ -226,6 +227,7 @@ impl<S: IdentityProvider> DeviceService<S> {
             next_enrollment: std::time::Instant::now(),
             recovering: true,
             material_gc: Default::default(),
+            installation: None,
         })
     }
     /// Reconcile persisted intents and deliver existing evidence before claiming new work.
@@ -233,6 +235,24 @@ impl<S: IdentityProvider> DeviceService<S> {
         &mut self,
         commands: &mut tokio::sync::mpsc::Receiver<Command>,
     ) -> Result<(), Error> {
+        if let Some(deployment) = self.installation.clone() {
+            if let Some(permit) = self.client.accepted_unmanage(deployment.installation_id)? {
+                self.core.host.revoked.store(true, Ordering::Release);
+                self.core.revoke_preparations()?;
+                self.release_waiting();
+                self.stop()?;
+                if self
+                    .core
+                    .app
+                    .all_attempts_quiescent(128)
+                    .map_err(map_app_error)?
+                {
+                    let permit = self.client.unmanage_drained(permit)?;
+                    crate::installation::launch_unmanage(&deployment, &permit)?;
+                }
+                return Ok(());
+            }
+        }
         while let Ok(command) = commands.try_recv() {
             self.core.handle(command);
         }
@@ -346,6 +366,11 @@ impl<S: IdentityProvider> DeviceService<S> {
                 self.core.handle(command);
             }
             if self.core.stopping {
+                return Ok(());
+            }
+            let retained = self.client.retained_offer(task)?;
+            if matches!(retained.payload(), wire::TaskPayload::Unmanage(_)) {
+                self.accept_retirement(&retained, commands).await?;
                 return Ok(());
             }
             if self.client.bound_request(task)?.is_some() {
@@ -577,6 +602,11 @@ impl<S: IdentityProvider> DeviceService<S> {
             }
         }
         if let Some(offer) = claim.offer {
+            if matches!(offer.payload(), wire::TaskPayload::Unmanage(_)) {
+                self.accept_retirement(&offer, commands).await?;
+                return Ok(());
+            }
+
             if self.waiting.as_ref().is_some_and(|(old, _)| {
                 old.task_id() == offer.task_id() && old.attempt_id() == offer.attempt_id()
             }) {
@@ -606,6 +636,25 @@ impl<S: IdentityProvider> DeviceService<S> {
             self.core.available = None;
             self.core.available_risk = None;
         }
+        Ok(())
+    }
+    async fn accept_retirement(
+        &mut self,
+        offer: &Offer,
+        commands: &mut tokio::sync::mpsc::Receiver<Command>,
+    ) -> Result<(), Error> {
+        let installation = self
+            .installation
+            .as_ref()
+            .ok_or(Error::Unsupported)?
+            .installation_id;
+        network(
+            self.client.authorize_unmanage(offer, installation),
+            &mut self.core,
+            commands,
+        )
+        .await?;
+        self.core.host.revoked.store(true, Ordering::Release);
         Ok(())
     }
     fn submission_result(
@@ -760,6 +809,15 @@ impl<S: IdentityProvider> DeviceService<S> {
         })
     }
     fn update_identity_gate(&mut self) {
+        if let Some(deployment) = &self.installation {
+            if !matches!(
+                self.client.accepted_unmanage(deployment.installation_id),
+                Ok(None)
+            ) {
+                self.core.host.revoked.store(true, Ordering::Release);
+                return;
+            }
+        }
         match self.client.runtime_deadline().and_then(|until| {
             if self.core.host.identity_until.expires_at() == Some(until) {
                 Ok(until)

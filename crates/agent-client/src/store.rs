@@ -135,7 +135,7 @@ impl Store {
     }
 }
 
-fn read_existing(root: &Path, cfg: &Config) -> Result<Connection, Error> {
+pub(crate) fn read_existing(root: &Path, cfg: &Config) -> Result<Connection, Error> {
     cfg.validate()?;
     if !root.is_absolute() || root.canonicalize()? != root {
         return Err(Error::Storage);

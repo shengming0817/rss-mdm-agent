@@ -214,7 +214,7 @@ impl Deployment {
             },
         })
     }
-    fn namespace(&self) -> Result<String, Error> {
+    pub(crate) fn namespace(&self) -> Result<String, Error> {
         Ok(format!(
             "{:x}",
             Sha256::digest(
@@ -328,7 +328,7 @@ impl Deployment {
         execution_runner::staging::initialize(&self.execution.material_root)
             .map_err(crate::error::app_error)?;
         let journal = self.state_root.join("execution.sqlite");
-        let service = DeviceService::open(
+        let mut service = DeviceService::open(
             client,
             &journal,
             if journal.exists() {
@@ -340,6 +340,7 @@ impl Deployment {
             SystemClock::new()?,
             self.helpers(),
         )?;
+        service.installation = Some(self.clone());
         let marker = self.state_root.join("execution-initialized");
         if !marker.exists() {
             platform_private_storage::write_new(&marker, self.namespace()?.as_bytes())?;
@@ -419,6 +420,9 @@ impl Deployment {
             C::TaskExecuteV1,
             C::MdmEnrollmentV1,
         ];
+        if crate::installation::unmanage_supported(self) {
+            values.push(C::DeviceUnmanageV1);
+        }
         if cfg!(windows) {
             values.push(C::CredentialsWindowsV1);
         }

@@ -518,11 +518,14 @@ fn retained_image(path: &Path, desktop: bool) -> Result<(), Error> {
     Err(Error::Identity)
 }
 pub(super) fn preflight_desktop_entry(candidate: &Candidate) -> Result<(), Error> {
+    preflight_entry(candidate, false)
+}
+fn preflight_entry(candidate: &Candidate, retirement: bool) -> Result<(), Error> {
     use ::windows::{
         core::{Interface, PCWSTR},
         Win32::System::Com::{IPersistFile, STGM_READ},
     };
-    if candidate.format()? == "windows_msix" {
+    if !retirement && candidate.format()? == "windows_msix" {
         return if super::msix::root()? == candidate.root {
             Ok(())
         } else {
@@ -533,7 +536,13 @@ pub(super) fn preflight_desktop_entry(candidate: &Candidate) -> Result<(), Error
         return Err(Error::Identity);
     }
     if let Some(image) = registry_value("ServiceImage")? {
-        retained_image(Path::new(&image), false)?;
+        if retirement {
+            if Path::new(&image) != candidate.service.path {
+                return Err(Error::Identity);
+            }
+        } else {
+            retained_image(Path::new(&image), false)?;
+        }
     } else if registry_value("DisplayName")?.is_some() {
         return Err(Error::Identity);
     }
@@ -550,7 +559,14 @@ pub(super) fn preflight_desktop_entry(candidate: &Candidate) -> Result<(), Error
             link.GetPath(&mut buffer, null_mut(), 0)
                 .map_err(|_| Error::Unavailable)?;
         }
-        retained_image(Path::new(&unsafe { text(buffer.as_ptr()) }?), true)?;
+        let target = PathBuf::from(unsafe { text(buffer.as_ptr()) }?);
+        if retirement {
+            if target != candidate.desktop.path {
+                return Err(Error::Identity);
+            }
+        } else {
+            retained_image(&target, true)?;
+        }
     }
     Ok(())
 }
@@ -1002,10 +1018,21 @@ pub fn worker(name: String, path: PathBuf) -> Result<(), Error> {
         .map_err(|_| Error::Conflict)?;
     // Publish actual process identity before entering the dispatcher or doing any
     // installation work. A crash/final-result write failure cannot erase this proof.
-    write_new(
-        &path.with_extension("worker.json"),
-        &json(&WorkerEvidence::process(std::process::id()))?,
-    )?;
+    let evidence_path = path.with_extension("worker.json");
+    if path.with_extension("retirement-work.json").exists() {
+        if let Some(old) = read_worker_evidence(&path)? {
+            worker_exited(old.process_id.ok_or(Error::Conflict)?)?;
+        }
+        publish(
+            &evidence_path,
+            &json(&WorkerEvidence::process(std::process::id()))?,
+        )?;
+    } else {
+        write_new(
+            &evidence_path,
+            &json(&WorkerEvidence::process(std::process::id()))?,
+        )?;
+    }
     let mut name = wide(name);
     let table = [
         SERVICE_TABLE_ENTRYW {
@@ -1233,13 +1260,19 @@ impl Drop for ComApartment {
 
 pub(super) fn uninstall_payload(candidate: &Candidate) -> Result<(), Error> {
     use windows_sys::Win32::System::Registry::*;
-    preflight_desktop_entry(candidate)?;
+    preflight_entry(candidate, true)?;
     if let Some(image) = registry_value("ServiceImage")? {
         if Path::new(&image) != candidate.service.path {
             return Err(Error::Identity);
         }
     }
-    retire_payload(candidate)?;
+    let retired = retire_payload(candidate)?;
+    if WORKER.get().is_some_and(|(_, p)| {
+        p.with_extension("exe") == std::env::current_exe().unwrap_or_default()
+    }) && retired.exists()
+    {
+        std::fs::remove_dir_all(retired)?;
+    }
     let path = shortcut()?;
     if path.exists() {
         std::fs::remove_file(path)?;
@@ -1256,4 +1289,174 @@ pub(super) fn uninstall_payload(candidate: &Candidate) -> Result<(), Error> {
         return Err(Error::Unavailable);
     }
     Ok(())
+}
+
+// Remote retirement runs outside the payload it removes. Its only input is the
+// exact task whose signed Start and drain were persisted by the device owner.
+pub(super) fn unmanage_binary(_: &Deployment, task: uuid::Uuid) -> Result<PathBuf, Error> {
+    Ok(operation_root()?.join(format!("{task}.exe")))
+}
+pub(super) fn launch_unmanage(deployment: &Deployment, task: uuid::Uuid) -> Result<(), Error> {
+    let _apartment = ComApartment::new()?;
+    if execution_ipc::host::current_subject().map_err(crate::error::app_error)? != "S-1-5-18" {
+        return Err(Error::Identity);
+    }
+    let root = operation_root()?;
+    public_directory(&root)?;
+    let binary = unmanage_binary(deployment, task)?;
+    Artifact {
+        path: binary.clone(),
+        ..deployment.service.clone()
+    }
+    .verify(&binary)
+    .map_err(|_| Error::Identity)?;
+    let config = Deployment::default_path()?;
+    let path = root.join(format!("{task}.json"));
+    let input = vec![
+        "uninstall".to_owned(),
+        "--config".into(),
+        config.to_string_lossy().into_owned(),
+        "--binary".into(),
+        deployment.service.path.to_string_lossy().into_owned(),
+        "--operation".into(),
+        task.to_string(),
+    ];
+    retain_public(&path, &json(&input)?)?;
+    let name = format!("RssExecution-Install-{task}");
+    if let Some(handle) = service(&name)? {
+        worker_owned(&handle, &name, &path)?;
+        if state(&handle)?.dwCurrentState == SERVICE_STOPPED {
+            if unsafe { StartServiceW(handle.0, 0, null()) } == 0 {
+                return Err(Error::Unavailable);
+            }
+        }
+        return Ok(());
+    }
+    let image = wide(format!(
+        "{} --installation-worker {} {}",
+        quote(&binary)?,
+        name,
+        quote(&path)?
+    ));
+    let manager = manager()?;
+    // SAFETY: Protected fixed image/arguments and LocalSystem worker; no network-selected path.
+    let raw = unsafe {
+        CreateServiceW(
+            manager.0,
+            wide(&name).as_ptr(),
+            wide(&name).as_ptr(),
+            SERVICE_QUERY_STATUS | SERVICE_START | SERVICE_STOP | SERVICE_CHANGE_CONFIG | DELETE,
+            SERVICE_WIN32_OWN_PROCESS,
+            SERVICE_AUTO_START,
+            SERVICE_ERROR_NORMAL,
+            image.as_ptr(),
+            null(),
+            null_mut(),
+            null(),
+            null(),
+            null(),
+        )
+    };
+    if raw.is_null() {
+        return Err(Error::Unavailable);
+    }
+    let handle = Sc(raw);
+    // ref: windows-sys Win32/System/Services: SERVICE_FAILURE_ACTIONSW.
+    // SCM owns recovery across process crashes and machine restarts for this fixed task.
+    let mut action = SC_ACTION {
+        Type: SC_ACTION_RESTART,
+        Delay: 30_000,
+    };
+    let actions = SERVICE_FAILURE_ACTIONSW {
+        dwResetPeriod: 86400,
+        lpRebootMsg: null_mut(),
+        lpCommand: null_mut(),
+        cActions: 1,
+        lpsaActions: &mut action,
+    };
+    let flag = SERVICE_FAILURE_ACTIONS_FLAG {
+        fFailureActionsOnNonCrashFailures: 1,
+    };
+    if unsafe {
+        ChangeServiceConfig2W(
+            handle.0,
+            SERVICE_CONFIG_FAILURE_ACTIONS,
+            (&actions as *const SERVICE_FAILURE_ACTIONSW).cast(),
+        )
+    } == 0
+        || unsafe {
+            ChangeServiceConfig2W(
+                handle.0,
+                SERVICE_CONFIG_FAILURE_ACTIONS_FLAG,
+                (&flag as *const SERVICE_FAILURE_ACTIONS_FLAG).cast(),
+            )
+        } == 0
+    {
+        unsafe {
+            DeleteService(handle.0);
+        }
+        return Err(Error::Unavailable);
+    }
+    // SAFETY: Valid owned service handle with no extra arguments. Return without waiting for self-stop.
+    if unsafe { StartServiceW(handle.0, 0, null()) } == 0 {
+        return Err(Error::Unavailable);
+    }
+    Ok(())
+}
+pub(super) fn finish_unmanage(deployment: &Deployment, task: uuid::Uuid) -> Result<bool, Error> {
+    use ::windows::Win32::System::{TaskScheduler::*, Variant::VARIANT};
+    let binary = unmanage_binary(deployment, task)?;
+    Artifact {
+        path: binary.clone(),
+        ..deployment.service.clone()
+    }
+    .verify(&binary)
+    .map_err(|_| Error::Identity)?;
+    let worker = format!("RssExecution-Install-{task}");
+    if let Some(handle) = service(&worker)? {
+        worker_owned(
+            &handle,
+            &worker,
+            &operation_root()?.join(format!("{task}.json")),
+        )?;
+    }
+    let system =
+        PathBuf::from(std::env::var_os("SystemRoot").ok_or(Error::Configuration)?).join("System32");
+    for name in ["cmd.exe", "sc.exe", "schtasks.exe"] {
+        installation_security::protected(&system.join(name)).map_err(|_| Error::Identity)?;
+    }
+    let script = operation_root()?.join(format!("{task}.cleanup.cmd"));
+    let definition = super::retirement_carrier::definition(
+        task,
+        binary.to_str().ok_or(Error::Configuration)?,
+        script.to_str().ok_or(Error::Configuration)?,
+        system.to_str().ok_or(Error::Configuration)?,
+    )?;
+    retain_public(&script, definition.script.as_bytes())?;
+    let folder = task_folder()?;
+    let scheduled = match unsafe { folder.GetTask(&definition.name.clone().into()) } {
+        Ok(task) => task,
+        Err(e) if e.code().0 as u32 == 0x80070002 => unsafe {
+            folder.RegisterTask(
+                &definition.name.clone().into(),
+                &definition.xml.into(),
+                TASK_CREATE.0,
+                &VARIANT::from("SYSTEM"),
+                &VARIANT::default(),
+                TASK_LOGON_SERVICE_ACCOUNT,
+                &VARIANT::from("D:P(A;;FA;;;SY)(A;;FA;;;BA)"),
+            )
+        }
+        .map_err(|_| Error::Unavailable)?,
+        Err(_) => return Err(Error::Unavailable),
+    };
+    let xml = unsafe { scheduled.Xml() }
+        .map_err(|_| Error::Unavailable)?
+        .to_string();
+    super::task_document::retirement_owned(&xml, &definition.command, &definition.arguments)?;
+    // Durable OS task is the independent final owner before any SCM/EXE removal.
+    // Run failures remain recoverable by the boot/repetition trigger; no pending
+    // reboot deletion can destroy the program before the SCM registration is gone.
+    unsafe { scheduled.Run(&VARIANT::default()) }.map_err(|_| Error::Unavailable)?;
+    Ok(false)
 }

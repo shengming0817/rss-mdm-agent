@@ -10,7 +10,7 @@ rust-version = "1.96"
 license = "MIT"
 
 [workspace.dependencies]
-rss-mdm-agent-wire = { git = "https://dev.azure.com/shengming0923/rss/_git/rss-mdm", rev = "71868f08451de7eddced961d46bb90b187ec898a" }
+rss-mdm-agent-wire = { git = "https://dev.azure.com/shengming0923/rss/_git/rss-mdm", rev = "239cf663656cb5025ef0dddbcd9d0b8e62141864" }
 zeroize = { version = "=1.8.2", features = ["serde"] }
 rustls = { version = "=0.23.45", default-features = false, features = ["std", "ring", "tls12"] }
 x509-cert = "=0.2.5"
