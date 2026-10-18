@@ -173,11 +173,25 @@ pub(crate) fn retire(root: &Path, task: &w::CredentialTaskSpec) -> Result<(), Er
                 .iter()
                 .all(|i| i.outcome == w::CredentialOutcome::Verified)
     });
+    let no_effect = result.as_ref().is_some_and(|r| {
+        r.definition_digest == task.definition_digest
+            && r.items.is_empty()
+            && matches!(
+                r.failure,
+                Some(
+                    w::CredentialFailure::NoMaterials
+                        | w::CredentialFailure::Unsupported
+                        | w::CredentialFailure::PermissionDenied
+                        | w::CredentialFailure::OwnerConflict
+                        | w::CredentialFailure::TargetMissing
+                )
+            )
+    });
     // Uncertain mutations retain only the protected original, for a future signed recovery.
     // Current account material is independently retained in the registration-bound .account.
-    if success {
+    if success || no_effect {
         state::remove(root, &state::name(task, "state"))?;
-        if let Some(reference) = &task.recovery {
+        if let Some(reference) = task.recovery.as_ref().filter(|_| success) {
             let mut original = task.clone();
             original.task_id = reference.task_id;
             original.attempt_id = reference.attempt_id;

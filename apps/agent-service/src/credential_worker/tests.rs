@@ -487,3 +487,29 @@ fn account_current_survives_retirement_and_later_rotation_does_not_accumulate_st
     assert!(engine::execute(&input, &mut n).unwrap().failure.is_none());
     a.join().unwrap();
 }
+
+#[test]
+fn acknowledged_no_effect_retires_candidate_but_unknown_keeps_it() {
+    let root = Root::new();
+    let input = input(&root, rotate());
+    let native = Fake::new();
+    let record = state::Record {
+        task: input.task.clone(),
+        phase: state::Phase::Issued,
+        protected: state::seal(&native, &input.task, "candidate").unwrap(),
+        subject: None,
+    };
+    state::write(&root.0, &state::name(&input.task, "state"), &record).unwrap();
+    state::write(
+        &root.0,
+        &state::name(&input.task, "result"),
+        &failed(&input.task, Failure::PermissionDenied),
+    )
+    .unwrap();
+    retire(&root.0, &input.task).unwrap();
+    assert!(
+        state::read_optional::<state::Record>(&root.0, &state::name(&input.task, "state"))
+            .unwrap()
+            .is_none()
+    );
+}

@@ -138,6 +138,9 @@ export type SoftwareDetectionFailure =
  */
 export type BackendTaskSummary =
   | {
+      kind: "credential";
+    }
+  | {
       kind: "enrollment";
     }
   | {

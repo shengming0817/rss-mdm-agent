@@ -1596,10 +1596,11 @@ async fn credential_escrow_lost_ack_replays_ciphertext_after_sqlite_reopen() {
         .escrow_credentials(task, escrow.clone())
         .await
         .unwrap();
-    let data = server.data.lock().unwrap();
-    assert_eq!(data.credential_escrows.len(), 2);
-    assert_eq!(data.credential_escrows[0], data.credential_escrows[1]);
-    drop(data);
+    {
+        let data = server.data.lock().unwrap();
+        assert_eq!(data.credential_escrows.len(), 2);
+        assert_eq!(data.credential_escrows[0], data.credential_escrows[1]);
+    }
     let mut tampered = escrow;
     tampered.materials[0].ciphertext = STANDARD.encode([4; 32]);
     assert_eq!(
