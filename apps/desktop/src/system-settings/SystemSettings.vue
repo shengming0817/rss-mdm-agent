@@ -239,6 +239,7 @@ async function back() {
 </template>
 <style scoped>
 .system-settings {
+  container: system-settings / inline-size;
   width: 100%;
   min-width: 0;
   padding: 24px 28px 32px;
@@ -575,6 +576,23 @@ button:focus-visible,
 h2:focus-visible {
   outline: 2px solid var(--rss-color-accent, #367be6);
   outline-offset: 3px;
+}
+@container system-settings (max-width: 620px) {
+  .settings-layout,
+  .settings-mac .settings-layout {
+    grid-template-columns: 1fr;
+  }
+  .settings-detail,
+  .has-detail .settings-directory {
+    display: none;
+  }
+  .has-detail .settings-detail {
+    display: block;
+    border-left: 0;
+  }
+  .settings-mac .settings-list small {
+    display: block;
+  }
 }
 @media (max-width: 900px) {
   .system-settings {
