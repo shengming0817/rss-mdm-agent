@@ -41,7 +41,9 @@ pub(crate) fn offered(offer: &Offer) -> Result<execution_contract::BackendTask, 
                     })
                     .collect(),
             },
-            _ => return Err(Error::Unsupported),
+            wire::TaskPayload::Enrollment(_) => {
+                execution_contract::BackendTaskSummary::Enrollment {}
+            }
         },
         request: super::request_id(offer)?,
         task: plan::id(offer.task_id().to_string())?,
@@ -54,11 +56,13 @@ pub(crate) fn offered(offer: &Offer) -> Result<execution_contract::BackendTask, 
                 .last()
                 .map(|s| format!("{} {}", s.action.package, s.action.version))
                 .ok_or(Error::Protocol)?,
+            wire::TaskPayload::Enrollment(_) => "注册 MDM".into(),
             _ => format!("Task {}", offer.task_id()),
         },
         expires_at: offer.payload().expires_at(),
         user_initiated: matches!(offer.payload(),wire::TaskPayload::Software(p) if p.start_mode==wire::SoftwareStartMode::UserInitiated)
-            || matches!(offer.payload(),wire::TaskPayload::Script(p) if matches!(p.authorization,wire::TaskAuthorization::SelfService { .. })),
+            || matches!(offer.payload(),wire::TaskPayload::Script(p) if matches!(p.authorization,wire::TaskAuthorization::SelfService { .. }))
+            || matches!(offer.payload(),wire::TaskPayload::Enrollment(p) if matches!(p.authorization,wire::TaskAuthorization::SelfService { .. })),
     })
 }
 

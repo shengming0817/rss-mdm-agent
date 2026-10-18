@@ -30,7 +30,7 @@ pub(crate) async fn submit<S: IdentityProvider>(
         wire::TaskPayload::Collection(p) => {
             p.execution.identity == wire::ExecutionIdentity::LoggedInUser
         }
-        wire::TaskPayload::Enrollment(_) => return Err(Error::Unsupported),
+        wire::TaskPayload::Enrollment(_) => true,
         wire::TaskPayload::Script(p) => p.run_as == wire::ExecutionIdentity::LoggedInUser,
         wire::TaskPayload::Software(p) => p
             .steps
@@ -49,6 +49,8 @@ pub(crate) async fn submit<S: IdentityProvider>(
         &materials,
         offer.payload(),
         delegate.clone(),
+        None,
+        None,
     )?;
     artifacts
         .inspect(&preview)
@@ -95,7 +97,40 @@ pub(crate) async fn submit<S: IdentityProvider>(
             )
             .map_err(helper_error)?;
     }
-    dispatch_started(service, offer, materials, selection, start, delegate)
+    let material = if matches!(start.payload(), wire::TaskPayload::Enrollment(_)) {
+        Some(
+            network(
+                service.client.native_enrollment(&start),
+                &mut service.core,
+                commands,
+            )
+            .await?,
+        )
+    } else {
+        None
+    };
+    let profile = if matches!(start.payload(), wire::TaskPayload::Enrollment(p) if matches!(p.entry, wire::EnrollmentEntry::Macos { .. }))
+    {
+        let ca = service
+            .client
+            .configuration()
+            .ca_pem
+            .clone()
+            .ok_or(Error::Configuration)?;
+        Some(
+            network(
+                material.as_ref().ok_or(Error::Identity)?.profile(&ca),
+                &mut service.core,
+                commands,
+            )
+            .await?,
+        )
+    } else {
+        None
+    };
+    dispatch_with_material(
+        service, offer, materials, selection, start, delegate, material, profile,
+    )
 }
 
 // Single synchronous delivery boundary after HTTP Start and native helper verification.
@@ -107,6 +142,20 @@ pub(crate) fn dispatch_started<S: IdentityProvider>(
     selection: Option<Selection>,
     start: agent_client::Start,
     delegate: Option<Arc<execution_ipc::helper::Connection>>,
+) -> Result<ExecutionStatus, Error> {
+    dispatch_with_material(
+        service, offer, materials, selection, start, delegate, None, None,
+    )
+}
+fn dispatch_with_material<S: IdentityProvider>(
+    service: &mut DeviceService<S>,
+    offer: Offer,
+    materials: Materials,
+    selection: Option<Selection>,
+    start: agent_client::Start,
+    delegate: Option<Arc<execution_ipc::helper::Connection>>,
+    material: Option<agent_client::NativeEnrollmentMaterial>,
+    profile: Option<Vec<u8>>,
 ) -> Result<ExecutionStatus, Error> {
     if service
         .core
@@ -140,6 +189,8 @@ pub(crate) fn dispatch_started<S: IdentityProvider>(
         &materials,
         start.payload(),
         delegate,
+        material,
+        profile,
     )?;
     if let Some(selection) = selection {
         let mut input = plan.spec().clone();
@@ -254,6 +305,8 @@ fn compile(
     materials: &Materials,
     payload: &wire::TaskPayload,
     delegate: Option<Arc<execution_ipc::helper::Connection>>,
+    material: Option<agent_client::NativeEnrollmentMaterial>,
+    profile: Option<Vec<u8>>,
 ) -> Result<
     (
         execution_contract::FrozenExecution,
@@ -271,7 +324,17 @@ fn compile(
             (&core.config, &mut core.material_root),
             delegate,
         ),
-        wire::TaskPayload::Enrollment(_) => Err(Error::Unsupported),
+        wire::TaskPayload::Enrollment(payload) => super::enrollment::compile(
+            offer,
+            materials,
+            payload,
+            &core.host.binding,
+            &core.host.actor,
+            &mut core.material_root,
+            delegate,
+            material,
+            profile,
+        ),
         wire::TaskPayload::Software(payload) => crate::backend::software::compile(
             offer,
             materials,

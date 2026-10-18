@@ -265,3 +265,38 @@ test("real Agent generator CLI preserves user-readable public inputs under restr
     assert.equal(statSync(ca).mode & 0o777, 0o644);
   }
 });
+
+test("managed package formats use explicit machine service owners and escaped fixed inputs", async () => {
+  const { msiSource, msixManifest } = await import("./windows-packages.mjs");
+  const msi = msiSource({
+    version: "1.2.3",
+    target: "windows-amd64",
+    id: "fixed-id",
+    payload: "C:/build&sign/payload",
+    files: ["rss-execution-service.exe", "candidate.json", "runtime/node.exe"],
+  });
+  assert.ok(msi.includes('Scope="perMachine"'));
+  assert.ok(msi.includes('Execute="deferred" Impersonate="no"'));
+  assert.ok(msi.includes("C:/build&amp;sign/payload"));
+  assert.ok(msi.includes("--installation apply"));
+  const msix = msixManifest({
+    version: "1.2.3",
+    architecture: "arm64",
+    publisher: "CN=RSS & Test",
+  });
+  assert.ok(msix.includes('Publisher="CN=RSS &amp; Test"'));
+  assert.ok(
+    msix.includes(
+      'Name="RssExecution" StartupType="auto" StartAccount="localSystem"',
+    ),
+  );
+  assert.ok(msix.includes('Arguments="--packaged-service"'));
+  assert.ok(!msix.includes("PackageDependency"));
+  assert.throws(() =>
+    msixManifest({
+      version: "latest",
+      architecture: "x64",
+      publisher: "CN=RSS",
+    }),
+  );
+});

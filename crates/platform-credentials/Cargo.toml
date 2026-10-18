@@ -13,7 +13,7 @@ sha2.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation = "=0.10.1"
-security-framework-sys = "=2.17.0"
+security-framework-sys = { version = "=2.17.0", features = ["macos-12"] }
 security-framework = "=3.5.1"
 libc = "=0.2.189"
 
@@ -21,5 +21,6 @@ libc = "=0.2.189"
 windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Cryptography", "Win32_Security_Authorization"] }
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]
+x509-cert.workspace = true
 core-foundation = "=0.10.1"
-security-framework-sys = "=2.17.0"
+security-framework-sys = { version = "=2.17.0", features = ["macos-12"] }

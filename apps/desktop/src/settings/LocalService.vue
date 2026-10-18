@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from "vue";
 import Account from "./Account.vue";
+import MdmRegistration from "./MdmRegistration.vue";
 import { nativeService, type ServicePort } from "./native";
 import type { ServiceView, RegistrationStatus } from "./service-contract";
 const props = defineProps<{ port?: ServicePort; fixture?: boolean }>();
@@ -211,4 +212,5 @@ onUnmounted(() => {
     <p>状态查询不代表任务获准或执行成功。</p>
     <button :disabled="!native || pending" @click="refresh">重新查询</button>
   </section>
+  <MdmRegistration v-if="!fixture && registration?.registered" />
 </template>

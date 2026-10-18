@@ -26,6 +26,7 @@
     "allow-save-connection",
     "allow-execution-service-status",
     "allow-agent-registration-status",
+    "allow-mdm-registration-status",
     "allow-agent-request-registration",
     "allow-agent-import-registration",
     "allow-agent-cancel-registration",

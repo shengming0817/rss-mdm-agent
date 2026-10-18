@@ -342,3 +342,136 @@ impl Drop for DeviceKey {
         }
     }
 }
+
+impl DeviceKey {
+    /// Open matching LocalMachine/My identities using native silent CNG handles.
+    pub fn identities_matching(
+        accept: impl Fn(&[u8]) -> bool,
+    ) -> io::Result<Vec<(Vec<Vec<u8>>, DeviceKey)>> {
+        struct Store(HCERTSTORE);
+        impl Drop for Store {
+            fn drop(&mut self) {
+                unsafe {
+                    CertCloseStore(self.0, 0);
+                }
+            }
+        }
+        struct Certificate(*mut CERT_CONTEXT);
+        impl Drop for Certificate {
+            fn drop(&mut self) {
+                if !self.0.is_null() {
+                    unsafe {
+                        CertFreeCertificateContext(self.0);
+                    }
+                }
+            }
+        }
+        struct Chain(*mut CERT_CHAIN_CONTEXT);
+        impl Drop for Chain {
+            fn drop(&mut self) {
+                unsafe {
+                    CertFreeCertificateChain(self.0);
+                }
+            }
+        }
+        let store = Store(unsafe {
+            CertOpenStore(
+                CERT_STORE_PROV_SYSTEM_REGISTRY_W,
+                0,
+                0,
+                CERT_SYSTEM_STORE_LOCAL_MACHINE
+                    | CERT_STORE_OPEN_EXISTING_FLAG
+                    | CERT_STORE_READONLY_FLAG,
+                wide("My").as_ptr().cast(),
+            )
+        });
+        if store.0.is_null() {
+            return Err(io::Error::last_os_error());
+        }
+        let mut certificate = Certificate(null_mut());
+        let mut identities = Vec::new();
+        loop {
+            certificate.0 = unsafe { CertEnumCertificatesInStore(store.0, certificate.0) };
+            if certificate.0.is_null() {
+                if unsafe { windows_sys::Win32::Foundation::GetLastError() }
+                    != windows_sys::Win32::Foundation::CRYPT_E_NOT_FOUND as u32
+                {
+                    return Err(io::Error::last_os_error());
+                }
+                break;
+            }
+            let bytes = unsafe {
+                std::slice::from_raw_parts(
+                    (*certificate.0).pbCertEncoded,
+                    (*certificate.0).cbCertEncoded as usize,
+                )
+            };
+            if !accept(bytes) {
+                continue;
+            }
+            let mut key = 0;
+            let mut spec = 0;
+            let mut owned = 0;
+            if unsafe {
+                CryptAcquireCertificatePrivateKey(
+                    certificate.0,
+                    CRYPT_ACQUIRE_ONLY_NCRYPT_KEY_FLAG
+                        | CRYPT_ACQUIRE_SILENT_FLAG
+                        | CRYPT_ACQUIRE_COMPARE_KEY_FLAG,
+                    null(),
+                    &mut key,
+                    &mut spec,
+                    &mut owned,
+                )
+            } == 0
+            {
+                return Err(denied());
+            }
+            // No CACHE flag: the returned CNG key must be owned by this adapter.
+            if spec != CERT_NCRYPT_KEY_SPEC || owned == 0 {
+                return Err(denied());
+            }
+            let key = DeviceKey { provider: 0, key };
+            let parameters = CERT_CHAIN_PARA {
+                cbSize: std::mem::size_of::<CERT_CHAIN_PARA>() as u32,
+                ..Default::default()
+            };
+            let mut chain = null_mut();
+            if unsafe {
+                CertGetCertificateChain(
+                    null_mut(),
+                    certificate.0,
+                    null(),
+                    store.0,
+                    &parameters,
+                    CERT_CHAIN_CACHE_ONLY_URL_RETRIEVAL,
+                    null(),
+                    &mut chain,
+                )
+            } == 0
+            {
+                return Err(denied());
+            }
+            let chain = Chain(chain);
+            let mut certificates = Vec::new();
+            unsafe {
+                if (*chain.0).cChain == 0 {
+                    return Err(denied());
+                }
+                let simple = *(*chain.0).rgpChain;
+                for i in 0..(*simple).cElement as usize {
+                    let context = (*(*(*simple).rgpElement.add(i))).pCertContext;
+                    certificates.push(
+                        std::slice::from_raw_parts(
+                            (*context).pbCertEncoded,
+                            (*context).cbCertEncoded as usize,
+                        )
+                        .to_vec(),
+                    );
+                }
+            }
+            identities.push((certificates, key));
+        }
+        Ok(identities)
+    }
+}

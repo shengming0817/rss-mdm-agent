@@ -1189,6 +1189,7 @@ impl<S: IdentityProvider> DeviceService<S> {
         let authorization = match offer.payload() {
             wire::TaskPayload::Script(spec) => &spec.authorization,
             wire::TaskPayload::Software(spec) => &spec.authorization,
+            wire::TaskPayload::Enrollment(spec) => &spec.authorization,
             _ => return Err(Error::Denied),
         };
         let wire::TaskAuthorization::SelfService {
@@ -1241,6 +1242,22 @@ impl<S: IdentityProvider> DeviceService<S> {
             return Err(Error::Untrusted);
         }
         let task_id = match (&directory.task, offer.payload()) {
+            (
+                wire::SelfServiceTask::Enrollment {
+                    organization,
+                    entry,
+                },
+                wire::TaskPayload::Enrollment(spec),
+            ) => {
+                if organization != &spec.organization
+                    || entry != &spec.entry
+                    || !choice.parameters.is_empty()
+                {
+                    return Err(Error::Untrusted);
+                }
+                spec.task_id
+            }
+
             (
                 wire::SelfServiceTask::Script {
                     resource, run_as, ..

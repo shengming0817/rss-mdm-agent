@@ -137,6 +137,11 @@ impl Config {
 /// Platform-owned bootstrap secrets and non-exportable device signing keys.
 /// References are frozen by the communication owner before network operations.
 pub trait IdentityProvider: MachineTrust {
+    /// Enumerate only product bootstrap identities; empty means no managed installation authority.
+    fn native_identities(&self) -> Result<Vec<crate::NativeIdentity>, Error> {
+        Ok(Vec::new())
+    }
+
     /// Resolve an existing protected bootstrap secret.
     fn resolve(&self, reference: &str) -> Result<crate::Secret, Error>;
     /// Import an administrator-provided secret once, without overwriting an existing value.

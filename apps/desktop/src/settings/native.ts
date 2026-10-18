@@ -1,4 +1,8 @@
-import type { ServiceView, RegistrationStatus } from "./service-contract";
+import type {
+  ServiceView,
+  RegistrationStatus,
+  MdmStatus,
+} from "./service-contract";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { boundedJson, decode, accessLimits } from "@rss-mdm-agent/ai-contract";
 import type { HostStatus } from "@rss-mdm-agent/ai-contract/wire";
@@ -57,4 +61,8 @@ export function nativeService(): ServicePort | undefined {
     importRegistration: () =>
       invoke<RegistrationStatus | null>("agent_import_registration"),
   };
+}
+
+export async function readMdmStatus(): Promise<MdmStatus> {
+  return invoke<MdmStatus>("mdm_registration_status");
 }

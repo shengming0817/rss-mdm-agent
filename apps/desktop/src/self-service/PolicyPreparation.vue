@@ -44,10 +44,13 @@ function resolved() {
           {{ record.action.choice.policyVersion }}
         </dd>
         <dt>资源版本</dt>
-        <dd>
+        <dd v-if="record.action.directory.task.kind !== 'enrollment'">
           {{ record.action.directory.task.resource.id }} /
           {{ record.action.directory.task.resource.version }} /
           {{ record.action.directory.task.resource.variant }}
+        </dd>
+        <dd v-else>
+          原生 MDM 注册 · {{ record.action.directory.task.organization }}
         </dd>
         <dt>准入主体</dt>
         <dd>

@@ -3472,6 +3472,7 @@ dependencies = [
  "sha2",
  "spki",
  "windows-sys 0.61.2",
+ "x509-cert",
 ]
 
 [[package]]
@@ -3935,7 +3936,7 @@ dependencies = [
 [[package]]
 name = "rss-mdm-agent-wire"
 version = "1.0.0"
-source = "git+https://dev.azure.com/shengming0923/rss/_git/rss-mdm?rev=49bd28b6f9bfb29a793ba0d88171764980632bff#49bd28b6f9bfb29a793ba0d88171764980632bff"
+source = "git+https://dev.azure.com/shengming0923/rss/_git/rss-mdm?rev=d25ddf1627ea03e5f09299a0ef9de57c4b5450cc#d25ddf1627ea03e5f09299a0ef9de57c4b5450cc"
 dependencies = [
  "base64 0.22.1",
  "ordered-float",

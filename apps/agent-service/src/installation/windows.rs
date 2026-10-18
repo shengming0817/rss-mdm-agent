@@ -503,6 +503,13 @@ pub(super) fn preflight_desktop_entry(candidate: &Candidate) -> Result<(), Error
         core::{Interface, PCWSTR},
         Win32::System::Com::{IPersistFile, STGM_READ},
     };
+    if candidate.format()? == "windows_msix" {
+        return if super::msix::root()? == candidate.root {
+            Ok(())
+        } else {
+            Err(Error::Identity)
+        };
+    }
     if candidate.root.parent() != Some(payload_parent()?.as_path()) {
         return Err(Error::Identity);
     }
@@ -529,12 +536,14 @@ pub(super) fn preflight_desktop_entry(candidate: &Candidate) -> Result<(), Error
     Ok(())
 }
 pub(super) fn desktop_entry(candidate: &Candidate) -> Result<(), Error> {
-    use ::windows::{
-        core::{Interface, PCWSTR},
-        Win32::System::Com::IPersistFile,
-    };
     use windows_sys::Win32::System::Registry::*;
     preflight_desktop_entry(candidate)?;
+    if candidate.format()? == "windows_msix" {
+        return Ok(());
+    }
+    if candidate.format()? == "windows_msi" {
+        return desktop_shortcut(candidate);
+    }
     let mut key = null_mut();
     if unsafe {
         RegCreateKeyExW(
@@ -582,21 +591,28 @@ pub(super) fn desktop_entry(candidate: &Candidate) -> Result<(), Error> {
                 return Err(Error::Unavailable);
             }
         }
-        let path = shortcut()?;
-        public_directory(path.parent().ok_or(Error::Configuration)?)?;
-        let staged = path.with_extension(format!("pending-{}", uuid::Uuid::new_v4()));
-        let link = shell_link()?;
-        unsafe { link.SetPath(PCWSTR(wide(&candidate.desktop.path).as_ptr())) }
-            .map_err(|_| Error::Unavailable)?;
-        let persist: IPersistFile = link.cast().map_err(|_| Error::Unavailable)?;
-        unsafe { persist.Save(PCWSTR(wide(&staged).as_ptr()), true) }
-            .map_err(|_| Error::Unavailable)?;
-        replace(&staged, &path)
+        desktop_shortcut(candidate)
     })();
     unsafe {
         RegCloseKey(key);
     }
     result
+}
+fn desktop_shortcut(candidate: &Candidate) -> Result<(), Error> {
+    use ::windows::{
+        core::{Interface, PCWSTR},
+        Win32::System::Com::IPersistFile,
+    };
+    let path = shortcut()?;
+    public_directory(path.parent().ok_or(Error::Configuration)?)?;
+    let staged = path.with_extension(format!("pending-{}", uuid::Uuid::new_v4()));
+    let link = shell_link()?;
+    unsafe { link.SetPath(PCWSTR(wide(&candidate.desktop.path).as_ptr())) }
+        .map_err(|_| Error::Unavailable)?;
+    let persist: IPersistFile = link.cast().map_err(|_| Error::Unavailable)?;
+    unsafe { persist.Save(PCWSTR(wide(&staged).as_ptr()), true) }
+        .map_err(|_| Error::Unavailable)?;
+    replace(&staged, &path)
 }
 pub(super) fn quiescent(old: &Deployment, config: &Path) -> Result<(), Error> {
     let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };

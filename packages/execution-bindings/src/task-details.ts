@@ -322,6 +322,9 @@ export interface BackendTask {
    */
   summary:
     | {
+        kind: "enrollment";
+      }
+    | {
         kind: "collection";
       }
     | {
@@ -444,6 +447,31 @@ export interface SelfServiceDirectoryItem {
    * Closed task kind and the exact invocation interface.
    */
   task:
+    | {
+        /**
+         * Fixed OS enrollment entry.
+         */
+        entry:
+          | {
+              kind: "windows";
+              /**
+               * Organization's discovery server.
+               */
+              server: string;
+            }
+          | {
+              kind: "macos";
+              /**
+               * Organization's managed enrollment entry.
+               */
+              url: string;
+            };
+        kind: "enrollment";
+        /**
+         * Organization selected by Policy.
+         */
+        organization: string;
+      }
     | {
         kind: "script";
         /**
@@ -605,6 +633,9 @@ export interface BackendTask1 {
    * Complete safe action preview, immutable with the offer revision.
    */
   summary:
+    | {
+        kind: "enrollment";
+      }
     | {
         kind: "collection";
       }

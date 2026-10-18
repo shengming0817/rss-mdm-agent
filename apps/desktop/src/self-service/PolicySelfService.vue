@@ -14,6 +14,8 @@ import PolicyPreparation from "./PolicyPreparation.vue";
 const props = defineProps<{
   port: SelfServicePort | null;
   records: BackendRequest[];
+  kind?: "enrollment";
+  allowNewRequests?: boolean;
 }>();
 const emit = defineEmits<{ changed: [] }>();
 const directory = ref<SelfServiceDirectoryItem[]>([]),
@@ -110,7 +112,9 @@ async function refresh() {
       after = value.nextCursor;
       if (!after) break;
     }
-    directory.value = items;
+    directory.value = items.filter(
+      (item) => !props.kind || item.task.kind === props.kind,
+    );
     error.value = "";
     if (
       selected.value &&
@@ -132,7 +136,7 @@ async function refresh() {
   }
 }
 function select(item: SelfServiceDirectoryItem) {
-  if (request.value) return;
+  if (request.value || props.allowNewRequests === false) return;
   selected.value = item;
   choice.value = undefined;
   inputs.value = {};
@@ -289,18 +293,35 @@ watch(
 <template>
   <section class="policy-self-service" aria-label="企业自助任务">
     <div class="section-heading">
-      <h3>企业自助任务</h3>
+      <h3>{{ kind === "enrollment" ? "MDM 注册" : "企业自助任务" }}</h3>
       <button :disabled="busy" @click="refresh">刷新任务</button>
     </div>
     <p v-if="error" role="status">{{ error }}</p>
-    <div class="catalog-grid">
+    <p
+      v-if="
+        kind === 'enrollment' &&
+        !busy &&
+        !error &&
+        !directory.length &&
+        !records.some(
+          (r) =>
+            r.action.kind === 'policy' &&
+            r.action.directory.task.kind === 'enrollment',
+        )
+      "
+    >
+      当前没有组织授权的 MDM 注册入口。
+    </p>
+    <div class="catalog-grid" v-if="allowNewRequests !== false">
       <article
         v-for="item in directory"
         :key="item.policyId"
         class="resource-card"
       >
         <button :disabled="busy || !!request" @click="select(item)">
-          {{ item.selfService.displayName }}
+          {{
+            kind === "enrollment" ? "注册 MDM" : item.selfService.displayName
+          }}
         </button>
         <p>{{ item.selfService.description }}</p>
         <p>
@@ -381,10 +402,10 @@ watch(
         策略 {{ choice.policyId }} / revision {{ choice.policyRevision }} /
         执行版本 {{ choice.policyVersion }}
       </p>
-      <p>
-        资源 {{ selected?.task.resource.id }} /
-        {{ selected?.task.resource.version }} /
-        {{ selected?.task.resource.variant }}
+      <p v-if="selected && selected.task.kind !== 'enrollment'">
+        资源 {{ selected.task.resource.id }} /
+        {{ selected.task.resource.version }} /
+        {{ selected.task.resource.variant }}
       </p>
       <PolicyExecutionContext v-if="selected" :task="selected.task" />
       <pre v-if="selected?.task.kind === 'script'">{{
@@ -437,6 +458,15 @@ watch(
             / {{ status.value.result.evidence.outputReference.bytes }} 字节
           </p></template
         >
+        <template v-else-if="status.value.result?.kind === 'enrollment'">
+          <p>
+            {{
+              status.value.result.outcome === "opened"
+                ? "已打开系统注册流程，请完成系统确认。最终状态以注册检测为准。"
+                : `注册入口状态：${status.value.result.outcome}`
+            }}
+          </p>
+        </template>
         <template v-else-if="status.value.result?.kind === 'software'">
           <p>软件效果：{{ status.value.result.effect }}</p>
         </template></template
@@ -445,7 +475,9 @@ watch(
     <PolicyPreparation
       v-for="record in records.filter(
         (r) =>
-          r.action.kind === 'policy' && r.action.choice.request !== request,
+          r.action.kind === 'policy' &&
+          r.action.choice.request !== request &&
+          (!kind || r.action.directory.task.kind === kind),
       )"
       :key="record.action.kind === 'policy' ? record.action.choice.request : ''"
       :record="record"

@@ -2,10 +2,19 @@
 use execution_contract::{Digest, Id, RequestId, VersionedRef};
 use serde::{Deserialize, Serialize};
 /// Current desktop/system IPC. No negotiation or legacy parser exists.
-pub const IPC_VERSION: u8 = 16;
+pub const IPC_VERSION: u8 = 17;
 /// Current protected installation document format.
 pub const DEPLOYMENT_VERSION: u32 = 5;
 
+/// Read-only native state, independent from Agent identity and policy authorization.
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MdmStatus {
+    /// Local OS observation; Unknown does not mean absent.
+    pub state: rss_mdm_agent_wire::runtime::MdmEnrollmentState,
+    /// UTC observation time, absent before the first successful owner drive.
+    pub observed_at: Option<i64>,
+}
 /// Safe readiness facts; connecting never grants execution authority.
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema, PartialEq, Eq)]
 #[serde(tag = "phase", rename_all = "camelCase", deny_unknown_fields)]
@@ -442,7 +451,8 @@ impl Peer {
 pub struct PeerPolicy {
     /// Allowed installed image identities.
     pub images: Vec<installation_security::Artifact>,
-    /// Exact allowed OS subjects; these are not enterprise principals.
+    /// Exact allowed OS subjects; empty denies every peer for unattended deployment.
+    /// These are not enterprise principals.
     pub subjects: Vec<String>,
     /// Require a non-system interactive session.
     pub interactive: bool,
@@ -451,7 +461,6 @@ impl PeerPolicy {
     fn validate_shape(&self) -> Result<(), execution_app::Error> {
         if self.images.is_empty()
             || self.images.len() > 8
-            || self.subjects.is_empty()
             || self.subjects.len() > 64
             || self.subjects.iter().any(|s| s.is_empty() || s.len() > 256)
         {
@@ -648,6 +657,8 @@ pub enum Request {
     ServiceStatus {},
     /// Read local identity and network facts for the authenticated desktop peer.
     DeviceOverview {},
+    /// Read the same native MDM state used for Inventory.
+    MdmStatus {},
     /// Read public machine registration progress.
     RegistrationStatus {},
     /// Read trusted machine coordinates without disclosing credentials.
@@ -714,6 +725,11 @@ struct Envelope {
     rename_all_fields = "camelCase"
 )]
 pub enum Reply {
+    /// Read-only native registration observation.
+    MdmStatus {
+        /// Current owner snapshot.
+        value: MdmStatus,
+    },
     /// Current bounded local facts; no secrets, stable IDs or enterprise identity.
     DeviceOverview {
         /// Projection owned by the installed system service.

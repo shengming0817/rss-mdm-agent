@@ -180,7 +180,21 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
                     output.clamp(1024, 1_048_576),
                 )
             }
-            _ => return Err(Error::Unsupported),
+            wire::TaskPayload::Enrollment(v) => {
+                if plan.spec().launch.interpreter.profile.id.as_str()
+                    != crate::enrollment_worker::PROFILE
+                {
+                    return Err(Error::Untrusted);
+                }
+                (
+                    &v.device_id,
+                    v.platform,
+                    wire::ExecutionIdentity::LoggedInUser,
+                    60_000,
+                    4096,
+                )
+            }
+            wire::TaskPayload::Script(_) => return Err(Error::Untrusted),
         };
         let actual_platform = match platform {
             wire::TaskPlatform::Macos => execution_contract::Platform::Macos,
@@ -597,6 +611,9 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
                         evidence.observed_at_unix_ms,
                     )?)
                 }
+                wire::TaskPayload::Enrollment(_) => wire::TaskEvent::EnrollmentResult {
+                    outcome: wire::EnrollmentEntryOutcome::Failed,
+                },
                 _ => return Err(Error::Unsupported),
             }));
         }
@@ -620,6 +637,18 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
                 &self.policy,
                 evidence.observed_at_unix_ms,
             )?)));
+        }
+        if matches!(payload, wire::TaskPayload::Enrollment(_)) {
+            let outcome = if process.end == ProcessEnd::Exited
+                && process.quiescent
+                && process.quality == OutputQuality::Complete
+                && process.exit_code == Some(0)
+            {
+                serde_json::from_slice(&process.stdout).map_err(|_| Error::Protocol)?
+            } else {
+                wire::EnrollmentEntryOutcome::Unknown
+            };
+            return Ok(Some(wire::TaskEvent::EnrollmentResult { outcome }));
         }
         if let wire::TaskPayload::Collection(spec) = payload {
             if process.end != ProcessEnd::Exited

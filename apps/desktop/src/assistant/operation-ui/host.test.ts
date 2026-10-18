@@ -270,6 +270,8 @@ describe("production operation adapter", () => {
               principalId: "enterprise-user",
             },
           };
+      if (f.record.action.directory.task.kind !== "script")
+        throw Error("script fixture");
       f.record.action.directory.task = {
         kind: "software",
         resource: f.record.action.directory.task.resource,

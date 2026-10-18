@@ -415,7 +415,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
 
 fn artifacts(payload: &wire::TaskPayload) -> Result<Vec<(String, u64, [u8; 32])>, Error> {
     Ok(match payload {
-        wire::TaskPayload::Collection(_) => vec![],
+        wire::TaskPayload::Collection(_) | wire::TaskPayload::Enrollment(_) => vec![],
         wire::TaskPayload::Script(v) => {
             vec![("script".into(), v.content.length, v.content.sha256)]
         }
@@ -428,6 +428,5 @@ fn artifacts(payload: &wire::TaskPayload) -> Result<Vec<(String, u64, [u8; 32])>
                     .map(|a| (a.key.clone(), a.length, a.sha256))
             })
             .collect(),
-        _ => return Err(Error::Unsupported),
     })
 }

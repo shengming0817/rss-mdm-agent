@@ -339,6 +339,19 @@ pub async fn agent_import_registration<R: tauri::Runtime>(
         .map(Some)
 }
 #[tauri::command]
+pub async fn mdm_registration_status() -> Result<execution_ipc::host::MdmStatus> {
+    tokio::task::spawn_blocking(|| {
+        let client = execution_ipc::host::ServiceClient::installed()
+            .map_err(|_| error("service_unavailable", "本机服务不可用"))?;
+        match client.request(execution_ipc::host::Request::MdmStatus {}) {
+            Ok(execution_ipc::host::Reply::MdmStatus { value }) => Ok(value),
+            _ => Err(error("mdm_unavailable", "无法读取 MDM 注册状态")),
+        }
+    })
+    .await
+    .map_err(|_| error("service_unavailable", "本机服务不可用"))?
+}
+#[tauri::command]
 pub async fn device_overview() -> Result<execution_ipc::host::DeviceOverview> {
     static READING: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
     let permit = READING
@@ -377,6 +390,7 @@ pub fn register<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder
         account_login,
         execution_service_status,
         agent_registration_status,
+        mdm_registration_status,
         agent_request_registration,
         agent_import_registration,
         agent_cancel_registration,
@@ -501,6 +515,7 @@ mod tests {
             "account_save_organization",
             "execution_service_status",
             "agent_registration_status",
+            "mdm_registration_status",
             "agent_request_registration",
             "agent_import_registration",
             "agent_cancel_registration",

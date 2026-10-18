@@ -6,6 +6,7 @@ mod bridge;
 mod collection;
 pub(crate) mod commands;
 mod dispatch;
+mod enrollment;
 pub(crate) mod gate;
 pub(crate) mod host;
 mod offer;
@@ -27,7 +28,7 @@ pub(crate) fn request_id(offer: &Offer) -> Result<execution_contract::RequestId,
         wire::TaskPayload::Collection(v) => Some(&v.authorization),
         wire::TaskPayload::Script(v) => Some(&v.authorization),
         wire::TaskPayload::Software(v) => Some(&v.authorization),
-        _ => None,
+        wire::TaskPayload::Enrollment(v) => Some(&v.authorization),
     };
     if let Some(wire::TaskAuthorization::SelfService { request_id, .. }) = authorization {
         return execution_contract::RequestId::new(request_id.to_string())
@@ -55,7 +56,13 @@ pub(crate) fn request_id(offer: &Offer) -> Result<execution_contract::RequestId,
             v.generation,
             v.task_id,
         ))?,
-        _ => return Err(Error::Unsupported),
+        wire::TaskPayload::Enrollment(v) => encode(&(
+            v.tenant_id,
+            &v.device_id,
+            v.registration_id,
+            v.generation,
+            v.task_id,
+        ))?,
     };
     execution_contract::RequestId::new(format!("agent-v1-{:x}", sha2::Sha256::digest(&bytes)))
         .map_err(|_| Error::Protocol)

@@ -6,6 +6,8 @@ fn main() {
         execution_ipc::host::RegistrationStatus
     ))
     .unwrap();
+    schema["x-rss-mdm-schema"] =
+        serde_json::to_value(schemars::schema_for!(execution_ipc::host::MdmStatus)).unwrap();
     schema["x-rss-deployment-version"] = execution_ipc::host::DEPLOYMENT_VERSION.into();
     println!("{}", serde_json::to_string_pretty(&schema).unwrap());
 }

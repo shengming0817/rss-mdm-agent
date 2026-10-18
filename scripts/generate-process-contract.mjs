@@ -21,6 +21,8 @@ if (process.argv.includes("--check")) {
 } else writeFileSync(path, text);
 
 const serviceSchema = JSON.parse(await helperOutput("serviceSchema"));
+const mdmSchema = serviceSchema["x-rss-mdm-schema"];
+delete serviceSchema["x-rss-mdm-schema"];
 const registrationSchema = serviceSchema["x-rss-registration-schema"];
 delete serviceSchema["x-rss-registration-schema"];
 const versionPath = "packages/execution-bindings/src/service-version.mjs";
@@ -39,7 +41,9 @@ const serviceText = await format(
     "\n" +
     (await compile(registrationSchema, "RegistrationStatus", {
       bannerComment: "",
-    })),
+    })) +
+    "\n" +
+    (await compile(mdmSchema, "MdmStatus", { bannerComment: "" })),
   { parser: "typescript" },
 );
 if (process.argv.includes("--check")) {

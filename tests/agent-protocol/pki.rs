@@ -371,3 +371,33 @@ pub fn server() -> rustls::ServerConfig {
         )
         .unwrap()
 }
+
+pub fn bootstrap_chain(installation: uuid::Uuid, attempt: uuid::Uuid) -> Vec<Vec<u8>> {
+    let certificate = certificate_until(
+        "CN=Agent fixture CA",
+        &format!(
+            "OU=rss-mdm-agent-bootstrap,CN={}{}",
+            installation.simple(),
+            attempt.simple()
+        ),
+        renewal_key().public_key().unwrap().as_ref().to_vec(),
+        vec![
+            extension(
+                BasicConstraints {
+                    ca: false,
+                    path_len_constraint: None,
+                },
+                true,
+            ),
+            extension(KeyUsage(KeyUsages::DigitalSignature.into()), true),
+            extension(
+                ExtendedKeyUsage(vec![der::asn1::ObjectIdentifier::new_unwrap(
+                    "1.3.6.1.5.5.7.3.2",
+                )]),
+                false,
+            ),
+        ],
+        4_070_908_800,
+    );
+    vec![certificate.to_der().unwrap()]
+}

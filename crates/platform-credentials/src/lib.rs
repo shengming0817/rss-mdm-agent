@@ -238,6 +238,69 @@ mod tests {
                 .unwrap(),
             public
         );
+        // The new native-identity adapter reopens the same non-exportable key by certificate.
+        {
+            use der::{
+                asn1::{Any, BitString, ObjectIdentifier},
+                Decode, Encode,
+            };
+            use std::str::FromStr;
+            use x509_cert::{
+                name::Name,
+                serial_number::SerialNumber,
+                time::{Time, Validity},
+                Certificate, TbsCertificate, Version,
+            };
+            let algorithm = spki::AlgorithmIdentifierOwned {
+                oid: ObjectIdentifier::new_unwrap("1.2.840.113549.1.1.11"),
+                parameters: Some(Any::null()),
+            };
+            let name = Name::from_str("CN=isolated-machine-identity").unwrap();
+            let now = std::time::SystemTime::now();
+            let tbs = TbsCertificate {
+                version: Version::V3,
+                serial_number: SerialNumber::from(1u32),
+                signature: algorithm.clone(),
+                issuer: name.clone(),
+                validity: Validity {
+                    not_before: Time::try_from(now - std::time::Duration::from_secs(60)).unwrap(),
+                    not_after: Time::try_from(now + std::time::Duration::from_secs(3600)).unwrap(),
+                },
+                subject: name,
+                subject_public_key_info: spki::SubjectPublicKeyInfoOwned::from_der(&public)
+                    .unwrap(),
+                issuer_unique_id: None,
+                subject_unique_id: None,
+                extensions: None,
+            };
+            let signed = reopened
+                .sign(SignatureScheme::Pkcs1Sha256, &tbs.to_der().unwrap())
+                .unwrap();
+            let certificate = Certificate {
+                tbs_certificate: tbs,
+                signature_algorithm: algorithm,
+                signature: BitString::from_bytes(&signed).unwrap(),
+            }
+            .to_der()
+            .unwrap();
+            security_framework::certificate::SecCertificate::from_der(&certificate)
+                .unwrap()
+                .add_to_keychain(Some(keychain.0.clone()))
+                .unwrap();
+            let identities = keychain
+                .identities_matching(|der| der == certificate)
+                .unwrap();
+            assert_eq!(identities.len(), 1);
+            assert_eq!(identities[0].1.public_spki().unwrap(), public);
+            assert_eq!(
+                identities[0]
+                    .1
+                    .sign(SignatureScheme::Pkcs1Sha256, b"machine proof")
+                    .unwrap(),
+                signature
+            );
+            assert!(keychain.identities_matching(|_| false).unwrap().is_empty());
+        }
         let executable = root.join("updated-key-test");
         std::fs::copy(std::env::current_exe().unwrap(), &executable).unwrap();
         let child = |denied: bool| {

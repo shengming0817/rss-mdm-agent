@@ -262,7 +262,7 @@ pub(super) fn run(args: &[OsString]) -> Result<(), Error> {
     );
     Ok(())
 }
-fn preserved(old: &Deployment, next: &Deployment) -> Result<(), Error> {
+pub(super) fn preserved(old: &Deployment, next: &Deployment) -> Result<(), Error> {
     if old.origin != next.origin
         || old.tenant != next.tenant
         || old.installation_id != next.installation_id
@@ -499,6 +499,16 @@ mod configuration_restart_tests {
     }
 }
 
+pub(super) fn initial_profile() -> Result<Profile, Error> {
+    if execution_ipc::host::active_user_session().is_err() {
+        // No interactive subject gains IPC access merely because a machine is being enrolled.
+        return Ok(Profile {
+            subjects: vec![],
+            helper_work_roots: BTreeMap::new(),
+        });
+    }
+    platform::interactive_profile()
+}
 fn apply(candidate_path: &Path, profile: Option<&PathBuf>, config: &Path) -> Result<(), Error> {
     outcome::phase("candidate-preflight")?;
     let (candidate, artifact) = Candidate::load(candidate_path)?;
@@ -517,7 +527,7 @@ fn apply(candidate_path: &Path, profile: Option<&PathBuf>, config: &Path) -> Res
                 subjects: d.clients.subjects.clone(),
                 helper_work_roots: d.helper_work_roots.clone(),
             },
-            None => platform::interactive_profile()?,
+            None => initial_profile()?,
         },
     };
     platform::preflight_desktop_entry(&candidate)?;
@@ -579,7 +589,7 @@ fn apply(candidate_path: &Path, profile: Option<&PathBuf>, config: &Path) -> Res
     Ok(())
 }
 
-fn installation_lock(config: &Path, system: bool) -> Result<std::fs::File, Error> {
+pub(super) fn installation_lock(config: &Path, system: bool) -> Result<std::fs::File, Error> {
     let root = config.parent().ok_or(Error::Configuration)?;
     if system {
         platform::public_directory(root)?;

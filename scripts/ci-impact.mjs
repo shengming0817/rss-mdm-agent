@@ -93,6 +93,8 @@ export const sourceEdges = [
 export const testOwners = [
   ["scripts/check-agent-dependencies.mjs", "agent-client"],
   ["scripts/build-installers.mjs", "agent-service"],
+  ["scripts/windows-packages.mjs", "agent-service"],
+  ["scripts/windows-packages.mjs", "rss-mdm-desktop"],
   ["scripts/installers", "agent-service"],
   ["scripts/build-installers.mjs", "rss-mdm-desktop"],
   ["scripts/installers", "rss-mdm-desktop"],

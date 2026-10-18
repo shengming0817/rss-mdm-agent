@@ -209,11 +209,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         capabilities: Vec<runtime::Capability>,
         configuration: Option<crate::configuration::ConfigurationExchange>,
     ) -> Result<(), Error> {
-        if operation.is_nil()
-            || secret.is_empty()
-            || secret.len() > 128
-            || capabilities.contains(&runtime::Capability::MdmEnrollmentV1)
-        {
+        if operation.is_nil() || secret.is_empty() || secret.len() > 128 {
             return Err(Error::Configuration);
         }
         let mut state = self.identity_state()?;
@@ -475,7 +471,9 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                 platform: self.store.cfg.platform,
                 csr: p.csr.clone().ok_or(Error::Storage)?,
             };
-            let grant: enroll::GrantReceipt = if p.purpose == Purpose::Configuration {
+            let grant: enroll::GrantReceipt = if matches!(p.purpose, Purpose::Managed { .. }) {
+                self.exchange_managed(&p).await?
+            } else if p.purpose == Purpose::Configuration {
                 self.exchange_configuration(&mut p, &bootstrap).await?
             } else if p.purpose == Purpose::Renewal {
                 if self.restore_runtime_transport().is_ok() {

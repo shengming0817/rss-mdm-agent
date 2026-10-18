@@ -22,8 +22,12 @@ fn recipe(
     run_as: &RunAs,
     session: &SessionRequirement,
 ) -> Result<Artifacts, Error> {
-    let interpreter = if ["native-software-worker", "native-collection-worker"]
-        .contains(&launch.interpreter.profile.id.as_str())
+    let interpreter = if [
+        "native-software-worker",
+        "native-collection-worker",
+        "native-enrollment-worker",
+    ]
+    .contains(&launch.interpreter.profile.id.as_str())
     {
         let image = std::env::current_exe()?;
         execution_runner::staging::verify_retained(&image, &launch.interpreter.artifact.sha256)
@@ -252,6 +256,19 @@ pub(crate) fn references(
         Ok(())
     };
     let p = plan.spec();
+    if p.launch.interpreter.profile.id.as_str() == crate::enrollment_worker::PROFILE {
+        if let Some(InputValue::Literal { value }) = p.request.parameters.get("nativeProfile") {
+            let digest = Digest::new(value.as_str().ok_or(Error::Untrusted)?)
+                .map_err(|_| Error::Untrusted)?;
+            let source = content(config, &p.run_as, &digest);
+            let native = source
+                .parent()
+                .ok_or(Error::Untrusted)?
+                .join(format!("export-{}", digest.as_str()))
+                .join("enrollment.mobileconfig");
+            insert(native, &digest)?;
+        }
+    }
     if let Some(program) = p.execution.software_program() {
         for step in &program.steps {
             for material in &step.materials {

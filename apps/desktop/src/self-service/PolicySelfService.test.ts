@@ -92,6 +92,7 @@ test.each([
     const original = record("original-request");
     if (original.action.kind !== "policy") throw Error("policy fixture");
     const item = original.action.directory;
+    if (item.task.kind !== "script") throw Error("script fixture");
     item.task = {
       kind: "software",
       runAs,
@@ -363,4 +364,54 @@ test("Device history restores original AI consent independently of enterprise id
   } finally {
     wrapper.unmount();
   }
+});
+
+test("MDM settings expose only an authorized enrollment and do not auto invoke", async () => {
+  const original = record("manual-enrollment");
+  if (original.action.kind !== "policy") throw Error("fixture");
+  const item = structuredClone(original.action.directory);
+  item.task = {
+    kind: "enrollment",
+    organization: "tenant",
+    entry: { kind: "macos", url: "https://mdm.example/enroll" },
+  };
+  const policy_invoke = vi.fn();
+  const port = {
+    policy_directory: async () => ({
+      items: [original.action.directory, item],
+      nextCursor: null,
+      asOf: 1,
+    }),
+    policy_invoke,
+  } as unknown as SelfServicePort;
+  const wrapper = mount(PolicySelfService, {
+    props: { port, records: [], kind: "enrollment", allowNewRequests: true },
+  });
+  await flushPromises();
+  expect(wrapper.findAll(".resource-card")).toHaveLength(1);
+  expect(wrapper.text()).toContain("注册 MDM");
+  expect(policy_invoke).not.toHaveBeenCalled();
+  await wrapper.setProps({ allowNewRequests: false });
+  expect(wrapper.findAll(".resource-card")).toHaveLength(0);
+  wrapper.unmount();
+  const closed = mount(PolicySelfService, {
+    props: {
+      port: {
+        ...port,
+        policy_directory: async () => ({
+          items: [],
+          nextCursor: null,
+          asOf: 1,
+        }),
+      },
+      records: [],
+      kind: "enrollment",
+    },
+  });
+  await flushPromises();
+  expect(closed.text()).toContain("当前没有组织授权的 MDM 注册入口");
+  expect(closed.findAll("button").some((b) => b.text() === "注册 MDM")).toBe(
+    false,
+  );
+  closed.unmount();
 });
