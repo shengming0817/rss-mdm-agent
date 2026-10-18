@@ -2,13 +2,11 @@
 import { computed, nextTick, ref } from "vue";
 import {
   ChevronRight,
-  Monitor,
   Settings,
-  Activity,
-  Terminal,
   UiSearchInput,
   useUiContext,
 } from "@rss-mdm-agent/ui";
+import SettingsGlyph from "./SettingsGlyph.vue";
 defineProps<{ deviceName?: string | null }>();
 const emit = defineEmits<{ home: [] }>();
 const { configuration } = useUiContext();
@@ -23,7 +21,6 @@ const entries = computed(() => [
     id: "network",
     title: mac.value ? "网络" : "网络和 Internet",
     description: "网络连接、服务与代理",
-    icon: Activity,
     color: "blue",
     group: "连接",
     rows: ["当前网络", "连接状态", mac.value ? "网络服务代理" : "当前用户代理"],
@@ -35,7 +32,6 @@ const entries = computed(() => [
     id: "display",
     title: "显示器",
     description: "屏幕排列、分辨率与缩放",
-    icon: Monitor,
     color: "purple",
     group: "设备",
     rows: ["已连接的显示器", "分辨率", "缩放"],
@@ -45,7 +41,6 @@ const entries = computed(() => [
     id: "sound",
     title: "声音",
     description: "输出设备、音量与输入",
-    icon: Activity,
     color: "pink",
     group: "设备",
     rows: ["声音输出", "输出音量", "声音输入"],
@@ -55,7 +50,6 @@ const entries = computed(() => [
     id: "power",
     title: mac.value ? "电池" : "电源和电池",
     description: "电量、节能与供电偏好",
-    icon: Activity,
     color: "green",
     group: "设备",
     rows: ["电池电量", "电源状态", mac.value ? "低电量模式" : "电源模式"],
@@ -65,7 +59,6 @@ const entries = computed(() => [
     id: "lock",
     title: mac.value ? "锁定屏幕" : "屏幕和睡眠",
     description: "屏幕闲置与返回电脑时的行为",
-    icon: Monitor,
     color: "cyan",
     group: "个人与安全",
     rows: ["使用电池时关闭屏幕", "接通电源时关闭屏幕", "返回时要求登录"],
@@ -75,7 +68,6 @@ const entries = computed(() => [
     id: "storage",
     title: "储存空间",
     description: "磁盘容量与空间使用情况",
-    icon: Terminal,
     color: "orange",
     group: "设备",
     rows: ["磁盘容量", "已用空间", "可用空间"],
@@ -85,7 +77,6 @@ const entries = computed(() => [
     id: "security",
     title: mac.value ? "隐私与安全性" : "隐私和安全性",
     description: "系统保护与应用权限",
-    icon: Settings,
     color: "indigo",
     group: "个人与安全",
     rows: [mac.value ? "FileVault" : "设备加密", "防火墙", "应用权限"],
@@ -95,7 +86,6 @@ const entries = computed(() => [
     id: "about",
     title: mac.value ? "通用" : "系统信息",
     description: "了解这台电脑与操作系统",
-    icon: Monitor,
     color: "gray",
     group: "设备",
     rows: ["操作系统版本", "处理器", "内存"],
@@ -110,7 +100,7 @@ const filtered = computed(() =>
 const current = computed(() =>
   entries.value.find((item) => item.id === selected.value),
 );
-async function open(id: string, event: Event) {
+async function selectCategory(id: string, event: Event) {
   origin = event.currentTarget as HTMLElement;
   selected.value = id;
   await nextTick();
@@ -131,7 +121,7 @@ async function back() {
   >
     <div class="settings-topline">
       <button class="computer-return" type="button" @click="emit('home')">
-        <img src="../home/model-a.png" alt="" />
+        <span class="computer-thumbnail" aria-hidden="true" />
         <span
           ><strong>{{ deviceName || "这台电脑" }}</strong
           ><small>返回我的电脑</small></span
@@ -140,7 +130,7 @@ async function back() {
       <span class="preview-label">UI 预览 · 未连接系统设置</span>
     </div>
     <div class="settings-layout" :class="{ 'has-detail': current }">
-      <aside class="settings-directory" aria-label="设置目录">
+      <div class="settings-directory" aria-label="设置目录">
         <div class="directory-heading">
           <h2>系统设置</h2>
           <span>{{ mac ? "macOS" : "Windows" }}</span>
@@ -156,10 +146,10 @@ async function back() {
             :key="item.id"
             type="button"
             :aria-current="selected === item.id ? 'page' : undefined"
-            @click="open(item.id, $event)"
+            @click="selectCategory(item.id, $event)"
           >
             <span class="setting-icon" :class="item.color"
-              ><component :is="item.icon" :size="19" aria-hidden="true"
+              ><SettingsGlyph :kind="item.id" :size="19"
             /></span>
             <span class="entry-copy"
               ><strong>{{ item.title }}</strong
@@ -171,7 +161,7 @@ async function back() {
             没有匹配的设置，请换个关键词。
           </p>
         </nav>
-      </aside>
+      </div>
       <div class="settings-detail">
         <template v-if="current">
           <button class="settings-back" type="button" @click="back">
@@ -180,7 +170,7 @@ async function back() {
           <p class="detail-path">系统设置 / {{ current.group }}</p>
           <div class="detail-title">
             <span class="setting-icon large" :class="current.color"
-              ><component :is="current.icon" :size="27" aria-hidden="true"
+              ><SettingsGlyph :kind="current.id" :size="27"
             /></span>
             <h2 ref="heading" tabindex="-1">{{ current.title }}</h2>
           </div>
@@ -216,13 +206,10 @@ async function back() {
               v-for="item in entries.slice(0, 3)"
               :key="item.id"
               type="button"
-              @click="open(item.id, $event)"
+              @click="selectCategory(item.id, $event)"
             >
               <span class="setting-icon" :class="item.color"
-                ><component
-                  :is="item.icon"
-                  :size="20"
-                  aria-hidden="true" /></span
+                ><SettingsGlyph :kind="item.id" :size="20" /></span
               ><span
                 ><strong>{{ item.title }}</strong
                 ><small>{{ item.description }}</small></span
@@ -264,10 +251,11 @@ async function back() {
   padding: 0;
   min-width: 0;
 }
-.computer-return img {
+.computer-thumbnail {
+  background: url("../home/model-a.png") center / contain no-repeat;
+  flex-shrink: 0;
   width: 66px;
   height: 46px;
-  object-fit: contain;
 }
 .computer-return strong {
   display: block;

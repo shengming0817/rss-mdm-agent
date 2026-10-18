@@ -188,7 +188,12 @@ it("changes the same assistant to compact resource presentation and stages sugge
 });
 
 it("opens system settings separately from application settings and preserves assistant drafts", async () => {
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
+    width: 1100,
+    height: 760,
+  } as DOMRect);
   const w = mount(Workspace, {
+    attachTo: document.body,
     props: {
       ready: true,
       busy: false,
@@ -205,7 +210,7 @@ it("opens system settings separately from application settings and preserves ass
   await entry.trigger("click");
   expect(w.emitted("navigate")?.at(-1)).toEqual(["system-settings"]);
   await w.setProps({ page: "system-settings" });
-  expect(w.get(".shell-header h1").text()).toBe("系统设置");
+  expect(w.get(".workspace-page-header > h1").text()).toBe("系统设置");
   expect(w.get(".resource-content").isVisible()).toBe(false);
   expect(w.get(".system-settings").isVisible()).toBe(true);
   expect(w.getComponent(SelfService).props("controller").state.page).not.toBe(
