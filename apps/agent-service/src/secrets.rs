@@ -122,12 +122,18 @@ mod tests {
         };
         let password = "controlled-keychain-test-password-not-a-device-secret";
         let keychain = Keychain::create_file(&isolated.path, password).unwrap();
+        let own_root = root.join("installation-a");
+        files::directory(&own_root).unwrap();
+        let peer_root = root.join("installation-b");
+        files::directory(&peer_root).unwrap();
         let store = SecretStore {
-            root: root.clone(),
+            root: own_root,
             namespace: "a".repeat(64),
             keychain: keychain.clone(),
             access: Mutex::new(()),
         };
+        store.initialize_catalog().unwrap();
+        store.initialize_catalog().unwrap();
         assert_eq!(
             store.read("credential").unwrap_err().kind(),
             io::ErrorKind::NotFound
@@ -138,7 +144,7 @@ mod tests {
         assert!(store.import("credential", &[42; 32]).is_err());
         assert_eq!(*first, *store.read("credential").unwrap());
         let other = SecretStore {
-            root,
+            root: peer_root,
             namespace: "b".repeat(64),
             keychain,
             access: Mutex::new(()),
@@ -151,8 +157,8 @@ mod tests {
         assert!(store.read("../credential").is_err());
         store.signing_key("retirement-key", true).unwrap();
         other.signing_key("retirement-key", true).unwrap();
-        store.retire(&[]).unwrap();
-        store.retire(&[]).unwrap();
+        assert!(store.retire(&[]).unwrap());
+        assert!(store.retire(&[]).unwrap());
         assert!(store.signing_key("retirement-key", false).is_err());
         assert_eq!(
             store.read("credential").unwrap_err().kind(),
@@ -160,6 +166,20 @@ mod tests {
         );
         assert!(other.signing_key("retirement-key", false).is_ok());
         assert!(other.read("credential").is_ok());
+        let old_account = other.account("legacy-rotated-secret").unwrap();
+        other
+            .keychain
+            .create_new("RSS MDM Agent device", &old_account, &[9; 32])
+            .unwrap();
+        assert!(
+            !other.retire(&[("credential".into(), false)]).unwrap(),
+            "partial new catalog cannot prove cleanup of an upgraded legacy namespace"
+        );
+        assert_eq!(
+            other.read("legacy-rotated-secret").unwrap().as_slice(),
+            &[9; 32]
+        );
+        assert!(!other.root.join("credential-owner").exists());
     }
 }
 fn denied() -> io::Error {
@@ -193,6 +213,28 @@ impl SecretStore {
             access: Mutex::new(()),
         })
     }
+    pub(crate) fn initialize_catalog(&self) -> io::Result<()> {
+        // Only the fresh installation initializer may establish complete ownership.
+        // Discovering a legacy namespace never silently manufactures this proof.
+        if self.catalog_complete()? {
+            return Ok(());
+        }
+        if std::fs::read_dir(&self.root)?.next().is_some() {
+            return Err(denied());
+        }
+        files::write_new(
+            &self.root.join("credential-owner"),
+            self.namespace.as_bytes(),
+        )
+    }
+    fn catalog_complete(&self) -> io::Result<bool> {
+        match files::read(&self.root.join("credential-owner"), 128) {
+            Ok(bytes) if bytes == self.namespace.as_bytes() => Ok(true),
+            Ok(_) => Err(denied()),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(false),
+            Err(e) => Err(e),
+        }
+    }
     fn track(&self, reference: &str, key: bool) -> io::Result<()> {
         self.account(reference)?;
         let bytes = serde_json::to_vec(&(reference, key)).map_err(io::Error::other)?;
@@ -210,8 +252,9 @@ impl SecretStore {
             Err(e) => Err(e),
         }
     }
-    pub(crate) fn retire(&self, references: &[(String, bool)]) -> io::Result<()> {
+    pub(crate) fn retire(&self, references: &[(String, bool)]) -> io::Result<bool> {
         let _guard = self.access.lock().map_err(|_| denied())?;
+        let complete = self.catalog_complete()?;
         for (name, key) in references {
             self.track(name, *key)?;
         }
@@ -261,7 +304,7 @@ impl SecretStore {
             #[cfg(not(any(windows, target_os = "macos")))]
             return Err(io::ErrorKind::Unsupported.into());
         }
-        Ok(())
+        Ok(complete)
     }
     fn account(&self, reference: &str) -> io::Result<String> {
         if reference.is_empty()

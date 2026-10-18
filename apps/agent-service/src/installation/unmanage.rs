@@ -93,7 +93,9 @@ fn execute(
         outcome::phase("uninstall-payload")?;
         platform::uninstall_payload(candidate)?;
         outcome::phase("uninstall-credentials")?;
-        secrets.0.retire(&references)?;
+        if !secrets.0.retire(&references)? {
+            return Err(Error::Conflict);
+        }
         platform::finish_unmanage(deployment, task)
     })();
     let effect = match &removed {

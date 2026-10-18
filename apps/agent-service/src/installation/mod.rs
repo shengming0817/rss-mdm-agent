@@ -179,7 +179,6 @@ impl Candidate {
         platform::verify_signatures(self)?;
         Ok(())
     }
-    #[cfg(windows)]
     fn format(&self) -> Result<String, Error> {
         let bytes = installation_security::read_protected(&self.root.join("publication.json"))
             .map_err(|_| Error::Identity)?;
@@ -346,6 +345,24 @@ fn command(path: &Path, args: &[OsString]) -> Result<Vec<u8>, Error> {
     if !status.success() {
         outcome::native_failure(status.code());
         return Err(Error::Unavailable);
+    }
+    Ok(bytes)
+}
+#[cfg(any(windows, test))]
+fn read_image(path: &Path, digest: &str) -> Result<Vec<u8>, Error> {
+    const IMAGE_BYTES: u64 = 256 * 1024 * 1024;
+    let file = std::fs::File::open(path)?;
+    let metadata = file.metadata()?;
+    if !metadata.is_file() || metadata.len() > IMAGE_BYTES {
+        return Err(Error::Capacity);
+    }
+    let mut bytes = Vec::new();
+    file.take(IMAGE_BYTES + 1).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > IMAGE_BYTES {
+        return Err(Error::Capacity);
+    }
+    if hash(&bytes) != digest {
+        return Err(Error::Identity);
     }
     Ok(bytes)
 }

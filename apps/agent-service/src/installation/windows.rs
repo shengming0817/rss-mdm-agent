@@ -1277,11 +1277,11 @@ pub(super) fn launch_unmanage(deployment: &Deployment, task: uuid::Uuid) -> Resu
     let root = operation_root()?;
     public_directory(&root)?;
     let binary = unmanage_binary(deployment, task)?;
-    let bytes = installation_security::read_protected(&deployment.service.path)
+    deployment
+        .service
+        .verify(&deployment.service.path)
         .map_err(|_| Error::Identity)?;
-    if hash(&bytes) != deployment.service.sha256 {
-        return Err(Error::Identity);
-    }
+    let bytes = read_image(&deployment.service.path, &deployment.service.sha256)?;
     retain_public(&binary, &bytes)?;
     Artifact {
         path: binary.clone(),
