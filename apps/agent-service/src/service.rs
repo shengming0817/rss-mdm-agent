@@ -214,6 +214,7 @@ impl<S: IdentityProvider> DeviceService<S> {
                     state: wire::MdmEnrollmentState::Unknown,
                     observed_at: None,
                 },
+                mdm_reported: None,
                 contexts: Default::default(),
                 fences: Default::default(),
                 credential_leases: Default::default(),
@@ -475,8 +476,13 @@ impl<S: IdentityProvider> DeviceService<S> {
                 commands,
             )
             .await?;
-            let changed = self.core.mdm.observed_at.is_none() || self.core.mdm.state != observed;
-            if changed
+            self.core.mdm = execution_ipc::host::MdmStatus {
+                state: observed,
+                observed_at: Some(now),
+            };
+        }
+        if let Some(observed_at) = self.core.mdm.observed_at {
+            if self.core.mdm_reported != Some(self.core.mdm.state)
                 && self
                     .client
                     .registration()?
@@ -484,14 +490,17 @@ impl<S: IdentityProvider> DeviceService<S> {
                     .iter()
                     .any(|c| c.dataset() == "channel.mdm.enrollment")
             {
-                let body=serde_json::from_value(serde_json::json!({"kind":"snapshot","values":[{"field":"channel.mdm.enrollment","value":{"kind":"value","value":{"kind":"string","value":observed.as_str()}}}]})).map_err(|_|Error::Protocol)?;
-                self.client
-                    .queue_report("channel.mdm.enrollment", body, now)?;
+                let body = serde_json::from_value(serde_json::json!({"kind":"snapshot","values":[{"field":"channel.mdm.enrollment","value":{"kind":"value","value":{"kind":"string","value":self.core.mdm.state.as_str()}}}]})).map_err(|_| Error::Protocol)?;
+                match self
+                    .client
+                    .queue_report("channel.mdm.enrollment", body, observed_at)
+                {
+                    Ok(_) => self.core.mdm_reported = Some(self.core.mdm.state),
+                    // Retain the latest observation, but never make production capacity block ACK consumption.
+                    Err(Error::Capacity) => {}
+                    Err(error) => return Err(error),
+                }
             }
-            self.core.mdm = execution_ipc::host::MdmStatus {
-                state: observed,
-                observed_at: Some(now),
-            };
         }
         let reports = 16.min(self.client.configuration().limits.pending_reports);
         network(self.client.flush_reports(reports), &mut self.core, commands).await?;
@@ -802,6 +811,7 @@ pub(crate) struct Core {
     pub(crate) stopping: bool,
     pub(crate) recovery_cursor: Option<RequestId>,
     pub(crate) mdm: execution_ipc::host::MdmStatus,
+    mdm_reported: Option<wire::MdmEnrollmentState>,
     contexts: policy::Contexts,
     fences: Arc<policy::Fences>,
     credential_leases: std::collections::BTreeMap<RequestId, Arc<zeroize::Zeroizing<String>>>,

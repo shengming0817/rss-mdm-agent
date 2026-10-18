@@ -1,4 +1,5 @@
 // ref: wixtoolset/wix WixToolset.Sdk v4 schema; Microsoft desktop6:Service manifest.
+// ref: microsoft/accessibility-insights-windows src/MSI/Product.wxs ApplicationShortcut.
 import { createHash } from "node:crypto";
 const xml = (value) =>
   String(value)
@@ -40,8 +41,13 @@ export function msiSource({ version, target, id, payload, files }) {
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"><Package Name="RSS MDM Agent" Manufacturer="RSS" Version="${xml(version)}" UpgradeCode="${target === "windows-arm64" ? "E7A59295-D81E-4C06-99F4-B74A3B73C3DA" : "85C84C72-1836-42C3-8E51-9D14302B98AD"}" Scope="perMachine">
 <MajorUpgrade DowngradeErrorMessage="A newer RSS MDM Agent is installed." Schedule="afterInstallExecute"/><MediaTemplate EmbedCab="yes"/>
 <StandardDirectory Id="ProgramFiles64Folder"><Directory Id="PRODUCTROOT" Name="RSS MDM Agent"><Directory Id="VERSIONS" Name="versions"><Directory Id="INSTALLROOT" Name="${xml(id)}">${tree("")}</Directory></Directory></Directory></StandardDirectory>
+<StandardDirectory Id="ProgramMenuFolder"/>
+<Component Id="AgentShortcut" Directory="ProgramMenuFolder" Guid="*">
+<Shortcut Id="AgentStartMenu" Name="RSS MDM Agent" Target="[#${key("rss-mdm-desktop.exe")}]" WorkingDirectory="INSTALLROOT"/>
+<RegistryValue Root="HKLM" Key="Software\\RSS\\MDM Agent" Name="StartMenuShortcut" Type="integer" Value="1" KeyPath="yes"/>
+</Component>
 <Binary Id="InstallationOwner" SourceFile="${xml(`${payload}/rss-execution-service.exe`)}"/>
-${components}<Feature Id="Agent" Level="1">${files.map((file) => `<ComponentRef Id="c${key(file)}"/>`).join("")}</Feature>
+${components}<Feature Id="Agent" Level="1"><ComponentRef Id="AgentShortcut"/>${files.map((file) => `<ComponentRef Id="c${key(file)}"/>`).join("")}</Feature>
 <CustomAction Id="SaveAgent" BinaryRef="InstallationOwner" ExeCommand="--installation msi-save" Execute="deferred" Impersonate="no" Return="check"/>
 <CustomAction Id="RollbackAgent" BinaryRef="InstallationOwner" ExeCommand="--installation msi-rollback" Execute="rollback" Impersonate="no" Return="check"/>
 <CustomAction Id="CommitAgent" BinaryRef="InstallationOwner" ExeCommand="--installation msi-commit" Execute="commit" Impersonate="no" Return="check"/>

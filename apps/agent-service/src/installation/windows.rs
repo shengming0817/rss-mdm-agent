@@ -557,11 +557,9 @@ pub(super) fn preflight_desktop_entry(candidate: &Candidate) -> Result<(), Error
 pub(super) fn desktop_entry(candidate: &Candidate) -> Result<(), Error> {
     use windows_sys::Win32::System::Registry::*;
     preflight_desktop_entry(candidate)?;
-    if candidate.format()? == "windows_msix" {
+    if matches!(candidate.format()?.as_str(), "windows_msix" | "windows_msi") {
+        // The package manager owns its shortcut lifecycle, including uninstall and rollback.
         return Ok(());
-    }
-    if candidate.format()? == "windows_msi" {
-        return desktop_shortcut(candidate);
     }
     let mut key = null_mut();
     if unsafe {

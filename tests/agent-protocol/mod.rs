@@ -278,6 +278,7 @@ pub struct Data {
     pub received: bool,
     pub content_calls: Vec<Option<String>>,
     pub reports: BTreeMap<String, Value>,
+    pub collections: Option<Vec<CollectionDefinition>>,
     pub results: BTreeMap<String, Value>,
     pub start_ops: Vec<String>,
     pub forged_start: bool,
@@ -721,6 +722,7 @@ impl Server {
             received: false,
             content_calls: vec![],
             reports: BTreeMap::new(),
+            collections: None,
             results: BTreeMap::new(),
             start_ops: vec![],
             forged_start: false,
@@ -1377,7 +1379,7 @@ fn activation_response(d: &mut Data, value: Value, peer: Option<&[u8]>) -> Respo
     }
     let request: enroll::ActivationRequest = serde_json::from_value(value).unwrap();
     assert_eq!(request.issuance_id, d.issuance);
-    let profile: BindingProfile = d.binding.clone().unwrap_or_else(|| serde_json::from_value(json!({"wireVersion":1,"operationId":d.operation,"deviceId":"device-1","registrationId":d.registration,"generation":1,"source":"agent.builtin","epoch":d.epoch,"capabilities":d.profile.as_ref().unwrap().capabilities,"collections":collections()})).unwrap());
+    let profile: BindingProfile = d.binding.clone().unwrap_or_else(|| serde_json::from_value(json!({"wireVersion":1,"operationId":d.operation,"deviceId":"device-1","registrationId":d.registration,"generation":1,"source":"agent.builtin","epoch":d.epoch,"capabilities":d.profile.as_ref().unwrap().capabilities,"collections":d.collections.clone().unwrap_or_else(collections)})).unwrap());
     d.binding = Some(profile.clone());
     let receipt = enroll::ActivationReceipt {
         wire_version: 1,

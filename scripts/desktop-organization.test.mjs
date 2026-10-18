@@ -273,9 +273,31 @@ test("managed package formats use explicit machine service owners and escaped fi
     target: "windows-amd64",
     id: "fixed-id",
     payload: "C:/build&sign/payload",
-    files: ["rss-execution-service.exe", "candidate.json", "runtime/node.exe"],
+    files: [
+      "rss-execution-service.exe",
+      "rss-mdm-desktop.exe",
+      "candidate.json",
+      "runtime/node.exe",
+    ],
   });
   assert.ok(msi.includes('Scope="perMachine"'));
+  assert.ok(
+    msi.includes(
+      '<Component Id="AgentShortcut" Directory="ProgramMenuFolder" Guid="*">',
+    ),
+  );
+  assert.ok(
+    msi.includes(
+      '<Shortcut Id="AgentStartMenu" Name="RSS MDM Agent" Target="[#',
+    ),
+  );
+  assert.ok(msi.includes('<ComponentRef Id="AgentShortcut"/>'));
+  assert.ok(
+    msi.includes(
+      'Name="StartMenuShortcut" Type="integer" Value="1" KeyPath="yes"',
+    ),
+  );
+
   assert.ok(msi.includes('Execute="deferred" Impersonate="no"'));
   assert.ok(msi.includes("C:/build&amp;sign/payload"));
   assert.ok(msi.includes("--installation apply"));
