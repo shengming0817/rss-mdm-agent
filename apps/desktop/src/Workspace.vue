@@ -405,7 +405,6 @@ onBeforeUnmount(() => {
       <SystemSettings
         v-if="ready"
         v-show="page === 'system-settings'"
-        :device-name="device.state.value?.computerName"
         @home="emit('navigate', 'home')"
       />
       <div v-if="controller && page === 'home'" class="home-content">

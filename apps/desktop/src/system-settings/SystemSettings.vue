@@ -7,7 +7,6 @@ import {
   useUiContext,
 } from "@rss-mdm-agent/ui";
 import SettingsGlyph from "./SettingsGlyph.vue";
-defineProps<{ deviceName?: string | null }>();
 const emit = defineEmits<{ home: [] }>();
 const { configuration } = useUiContext();
 const mac = computed(() => configuration.platform === "macos");
@@ -119,16 +118,6 @@ async function back() {
     :class="{ 'settings-mac': mac }"
     aria-label="系统设置工作区"
   >
-    <div class="settings-topline">
-      <button class="computer-return" type="button" @click="emit('home')">
-        <span class="computer-thumbnail" aria-hidden="true" />
-        <span
-          ><strong>{{ deviceName || "这台电脑" }}</strong
-          ><small>返回我的电脑</small></span
-        >
-      </button>
-      <span class="preview-label">UI 预览 · 未连接系统设置</span>
-    </div>
     <div class="settings-layout" :class="{ 'has-detail': current }">
       <div class="settings-directory" aria-label="设置目录">
         <div class="directory-heading">
@@ -161,6 +150,12 @@ async function back() {
             没有匹配的设置，请换个关键词。
           </p>
         </nav>
+        <footer class="settings-directory-footer">
+          <button class="computer-return" type="button" @click="emit('home')">
+            ‹ 返回我的电脑
+          </button>
+          <span class="preview-label">UI 预览 · 未连接系统设置</span>
+        </footer>
       </div>
       <div class="settings-detail">
         <template v-if="current">
@@ -232,60 +227,33 @@ async function back() {
   padding: 24px 28px 32px;
   color: var(--rss-color-text);
 }
-.settings-topline {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 16px;
-  margin-bottom: 24px;
+.settings-directory-footer {
+  display: grid;
+  gap: 14px;
+  margin-top: auto;
+  padding: 28px 8px 0;
 }
 .computer-return {
-  display: flex;
-  align-items: center;
-  gap: 10px;
   border: 0;
   background: transparent;
   text-align: left;
   cursor: pointer;
-  color: inherit;
+  color: var(--rss-color-text);
   padding: 0;
-  min-width: 0;
-}
-.computer-thumbnail {
-  background: url("../home/model-a.png") center / contain no-repeat;
-  flex-shrink: 0;
-  width: 66px;
-  height: 46px;
-}
-.computer-return strong {
-  display: block;
-  max-width: 240px;
-  overflow-wrap: anywhere;
-  font-size: 13px;
-}
-.computer-return small {
-  display: block;
-  margin-top: 5px;
-  font-size: 11px;
-  color: var(--rss-color-text-muted);
+  font-size: 12px;
 }
 .preview-label {
   color: var(--rss-color-text-muted);
-  background: var(--rss-color-surface);
-  padding: 6px 10px;
-  border: 1px solid var(--rss-color-border);
-  border-radius: 6px;
   font-size: 11px;
 }
 .settings-layout {
   display: grid;
   grid-template-columns: minmax(240px, 1fr) minmax(280px, 1.2fr);
-  border: 1px solid var(--rss-color-border);
-  border-radius: 12px;
-  overflow: hidden;
-  background: var(--rss-color-bg);
+  min-height: 560px;
 }
 .settings-directory {
+  display: flex;
+  flex-direction: column;
   min-width: 0;
   padding: 22px 18px;
 }
@@ -388,11 +356,6 @@ async function back() {
   min-width: 0;
   padding: 28px;
   border-left: 1px solid var(--rss-color-border);
-  background: color-mix(
-    in srgb,
-    var(--rss-color-surface) 55%,
-    var(--rss-color-bg)
-  );
 }
 .settings-welcome {
   text-align: center;
@@ -512,7 +475,6 @@ async function back() {
   grid-template-columns: 216px minmax(0, 1fr);
 }
 .settings-mac .settings-directory {
-  background: var(--rss-color-surface);
   padding: 20px 12px;
 }
 .settings-mac .directory-heading {
@@ -608,18 +570,9 @@ h2:focus-visible {
   .system-settings {
     padding: 12px;
   }
-  .settings-topline {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 12px;
-    margin-bottom: 16px;
-  }
   .settings-detail,
   .settings-mac .settings-detail {
     padding: 20px 16px;
-  }
-  .computer-return strong {
-    max-width: 220px;
   }
 }
 @media (forced-colors: active) {
