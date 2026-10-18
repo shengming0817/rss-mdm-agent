@@ -213,11 +213,18 @@ it("opens system settings separately from application settings and preserves ass
   expect(w.get(".workspace-page-header > h1").text()).toBe("系统设置");
   expect(w.get(".resource-content").isVisible()).toBe(false);
   expect(w.get(".system-settings").isVisible()).toBe(true);
+  const settingsAssistant = w.get(".system-settings .home-assistant");
+  expect(settingsAssistant.get("textarea").element.value).toBe("保留这个问题");
+  await settingsAssistant.get("textarea").setValue("从系统设置继续提问");
+  expect(assistant.draft.value).toBe("从系统设置继续提问");
+  await settingsAssistant.get("form").trigger("submit");
+  expect(w.emitted("navigate")?.at(-1)).toEqual(["assistant"]);
+
   expect(w.getComponent(SelfService).props("controller").state.page).not.toBe(
     "system-settings",
   );
   await w.setProps({ page: "assistant" });
   expect(w.getComponent(Assistant).props("controller")).toBe(assistant);
-  expect(assistant.draft.value).toBe("保留这个问题");
+  expect(assistant.draft.value).toBe("从系统设置继续提问");
   w.unmount();
 });

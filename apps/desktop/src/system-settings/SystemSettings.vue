@@ -14,7 +14,9 @@ const search = ref("");
 const selected = ref("");
 const heading = ref<HTMLElement>();
 const list = ref<HTMLElement>();
-let origin: HTMLElement | undefined;
+const featured = ref<HTMLElement>();
+const searchInput = ref<InstanceType<typeof UiSearchInput>>();
+let origin: { area: "directory" | "featured"; id: string } | undefined;
 const entries = computed(() => [
   {
     id: "network",
@@ -99,8 +101,8 @@ const filtered = computed(() =>
 const current = computed(() =>
   entries.value.find((item) => item.id === selected.value),
 );
-async function selectCategory(id: string, event: Event) {
-  origin = event.currentTarget as HTMLElement;
+async function selectCategory(id: string, area: "directory" | "featured") {
+  origin = { area, id };
   selected.value = id;
   await nextTick();
   heading.value?.focus();
@@ -108,8 +110,12 @@ async function selectCategory(id: string, event: Event) {
 async function back() {
   selected.value = "";
   await nextTick();
-  if (origin?.isConnected) origin.focus();
-  else list.value?.querySelector<HTMLButtonElement>("button")?.focus();
+  const region = origin?.area === "featured" ? featured.value : list.value;
+  const target = Array.from(
+    region?.querySelectorAll<HTMLButtonElement>("button") ?? [],
+  ).find((button) => button.dataset.setting === origin?.id);
+  if (target) target.focus();
+  else searchInput.value?.focus();
 }
 </script>
 <template>
@@ -118,114 +124,126 @@ async function back() {
     :class="{ 'settings-mac': mac }"
     aria-label="系统设置工作区"
   >
-    <div class="settings-layout" :class="{ 'has-detail': current }">
-      <div class="settings-directory" aria-label="设置目录">
-        <div class="directory-heading">
-          <h2>系统设置</h2>
-          <span>{{ mac ? "macOS" : "Windows" }}</span>
-        </div>
-        <UiSearchInput
-          v-model="search"
-          aria-label="搜索系统设置"
-          placeholder="搜索系统设置"
-        />
-        <nav ref="list" class="settings-list" aria-label="系统设置分类">
-          <button
-            v-for="item in filtered"
-            :key="item.id"
-            type="button"
-            :aria-current="selected === item.id ? 'page' : undefined"
-            @click="selectCategory(item.id, $event)"
-          >
-            <span class="setting-icon" :class="item.color"
-              ><SettingsGlyph :kind="item.id" :size="19"
-            /></span>
-            <span class="entry-copy"
-              ><strong>{{ item.title }}</strong
-              ><small>{{ item.description }}</small></span
-            >
-            <ChevronRight :size="15" aria-hidden="true" />
-          </button>
-          <p v-if="!filtered.length" role="status" class="empty-search">
-            没有匹配的设置，请换个关键词。
-          </p>
-        </nav>
-        <footer class="settings-directory-footer">
-          <button class="computer-return" type="button" @click="emit('home')">
-            ‹ 返回我的电脑
-          </button>
-          <span class="preview-label">UI 预览 · 未连接系统设置</span>
-        </footer>
-      </div>
-      <div class="settings-detail">
-        <template v-if="current">
-          <button class="settings-back" type="button" @click="back">
-            ‹ 返回设置概览
-          </button>
-          <p class="detail-path">系统设置 / {{ current.group }}</p>
-          <div class="detail-title">
-            <span class="setting-icon large" :class="current.color"
-              ><SettingsGlyph :kind="current.id" :size="27"
-            /></span>
-            <h2 ref="heading" tabindex="-1">{{ current.title }}</h2>
+    <div class="settings-main">
+      <div class="settings-layout" :class="{ 'has-detail': current }">
+        <div class="settings-directory" aria-label="设置目录">
+          <div class="directory-heading">
+            <h2>系统设置</h2>
+            <span>{{ mac ? "macOS" : "Windows" }}</span>
           </div>
-          <p class="detail-description">{{ current.description }}</p>
-          <div class="setting-rows">
-            <div v-for="row in current.rows" :key="row" class="setting-row">
-              <strong>{{ row }}</strong
-              ><span>未读取</span>
-            </div>
-          </div>
-          <p class="setting-note">{{ current.note }}</p>
-          <div class="connection-note">
-            <Settings :size="20" aria-hidden="true" />
-            <div>
-              <strong>系统设置尚未接入</strong>
-              <p>
-                当前可浏览设置目录和页面布局。此处不会读取或修改你的系统配置。
-              </p>
-            </div>
-          </div>
-        </template>
-        <template v-else>
-          <div class="settings-welcome">
-            <span class="welcome-icon"
-              ><Settings :size="34" aria-hidden="true"
-            /></span>
-            <h2>让电脑更适合你</h2>
-            <p>从网络连接到屏幕显示，<br />在这里找到你需要的系统设置。</p>
-          </div>
-          <div class="settings-featured">
-            <h3>常用设置</h3>
+          <UiSearchInput
+            ref="searchInput"
+            v-model="search"
+            aria-label="搜索系统设置"
+            placeholder="搜索系统设置"
+          />
+          <nav ref="list" class="settings-list" aria-label="系统设置分类">
             <button
-              v-for="item in entries.slice(0, 3)"
+              v-for="item in filtered"
               :key="item.id"
               type="button"
-              @click="selectCategory(item.id, $event)"
+              :aria-current="selected === item.id ? 'page' : undefined"
+              :data-setting="item.id"
+              @click="selectCategory(item.id, 'directory')"
             >
               <span class="setting-icon" :class="item.color"
-                ><SettingsGlyph :kind="item.id" :size="20" /></span
-              ><span
+                ><SettingsGlyph :kind="item.id" :size="19"
+              /></span>
+              <span class="entry-copy"
                 ><strong>{{ item.title }}</strong
                 ><small>{{ item.description }}</small></span
-              ><ChevronRight :size="16" aria-hidden="true" />
+              >
+              <ChevronRight :size="15" aria-hidden="true" />
             </button>
-          </div>
-          <p class="overview-note">
-            先选择一个分类。实际状态与可用操作将在连接系统设置后提供。
-          </p>
-        </template>
+            <p v-if="!filtered.length" role="status" class="empty-search">
+              没有匹配的设置，请换个关键词。
+            </p>
+          </nav>
+          <footer class="settings-directory-footer">
+            <button class="computer-return" type="button" @click="emit('home')">
+              ‹ 返回我的电脑
+            </button>
+            <span class="preview-label">UI 预览 · 未连接系统设置</span>
+          </footer>
+        </div>
+        <div class="settings-detail">
+          <template v-if="current">
+            <button class="settings-back" type="button" @click="back">
+              ‹ 返回设置概览
+            </button>
+            <p class="detail-path">系统设置 / {{ current.group }}</p>
+            <div class="detail-title">
+              <span class="setting-icon large" :class="current.color"
+                ><SettingsGlyph :kind="current.id" :size="27"
+              /></span>
+              <h2 ref="heading" tabindex="-1">{{ current.title }}</h2>
+            </div>
+            <p class="detail-description">{{ current.description }}</p>
+            <div class="setting-rows">
+              <div v-for="row in current.rows" :key="row" class="setting-row">
+                <strong>{{ row }}</strong
+                ><span>未读取</span>
+              </div>
+            </div>
+            <p class="setting-note">{{ current.note }}</p>
+            <div class="connection-note">
+              <Settings :size="20" aria-hidden="true" />
+              <div>
+                <strong>系统设置尚未接入</strong>
+                <p>
+                  当前可浏览设置目录和页面布局。此处不会读取或修改你的系统配置。
+                </p>
+              </div>
+            </div>
+          </template>
+          <template v-else>
+            <div class="settings-welcome">
+              <span class="welcome-icon"
+                ><Settings :size="34" aria-hidden="true"
+              /></span>
+              <h2>让电脑更适合你</h2>
+              <p>从网络连接到屏幕显示，<br />在这里找到你需要的系统设置。</p>
+            </div>
+            <div ref="featured" class="settings-featured">
+              <h3>常用设置</h3>
+              <button
+                v-for="item in entries.slice(0, 3)"
+                :key="item.id"
+                type="button"
+                :data-setting="item.id"
+                @click="selectCategory(item.id, 'featured')"
+              >
+                <span class="setting-icon" :class="item.color"
+                  ><SettingsGlyph :kind="item.id" :size="20" /></span
+                ><span
+                  ><strong>{{ item.title }}</strong
+                  ><small>{{ item.description }}</small></span
+                ><ChevronRight :size="16" aria-hidden="true" />
+              </button>
+            </div>
+            <p class="overview-note">
+              先选择一个分类。实际状态与可用操作将在连接系统设置后提供。
+            </p>
+          </template>
+        </div>
       </div>
     </div>
+    <slot name="assistant" />
   </section>
 </template>
 <style scoped>
 .system-settings {
-  container: system-settings / inline-size;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 220px;
+  gap: 16px;
   width: 100%;
   min-width: 0;
   padding: 24px 28px 32px;
   color: var(--rss-color-text);
+}
+.settings-main {
+  container: system-settings / inline-size;
+  min-width: 0;
 }
 .settings-directory-footer {
   display: grid;
@@ -248,7 +266,11 @@ async function back() {
 }
 .settings-layout {
   display: grid;
-  grid-template-columns: minmax(240px, 1fr) minmax(280px, 1.2fr);
+  grid-template-columns: minmax(180px, 0.8fr) minmax(240px, 1.2fr);
+  border: 1px solid var(--rss-color-border);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--rss-color-bg);
   min-height: 560px;
 }
 .settings-directory {
@@ -472,7 +494,7 @@ async function back() {
   color: var(--rss-color-text-muted);
 }
 .settings-mac .settings-layout {
-  grid-template-columns: 216px minmax(0, 1fr);
+  grid-template-columns: 204px minmax(0, 1fr);
 }
 .settings-mac .settings-directory {
   padding: 20px 12px;
@@ -527,7 +549,7 @@ h2:focus-visible {
   outline: 2px solid var(--rss-color-accent, #367be6);
   outline-offset: 3px;
 }
-@container system-settings (max-width: 620px) {
+@container system-settings (max-width: 480px) {
   .settings-layout,
   .settings-mac .settings-layout {
     grid-template-columns: 1fr;
@@ -542,6 +564,11 @@ h2:focus-visible {
   }
   .settings-mac .settings-list small {
     display: block;
+  }
+}
+@media (max-width: 1050px) {
+  .system-settings {
+    grid-template-columns: 1fr;
   }
 }
 @media (max-width: 900px) {

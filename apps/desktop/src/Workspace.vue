@@ -39,6 +39,7 @@ import {
 } from "./assistant/controller";
 import SelfService from "./self-service/SelfService.vue";
 import Home from "./home/Home.vue";
+import HomeAssistant from "./home/HomeAssistant.vue";
 import SystemSettings from "./system-settings/SystemSettings.vue";
 import { createDeviceOverview, type DeviceOverviewPort } from "./home/device";
 import { nativeDeviceOverview } from "./home/native";
@@ -406,7 +407,19 @@ onBeforeUnmount(() => {
         v-if="ready"
         v-show="page === 'system-settings'"
         @home="emit('navigate', 'home')"
-      />
+        ><template #assistant>
+          <HomeAssistant
+            :draft="assistant?.draft.value ?? ''"
+            :connected="assistant?.state.connection === 'connected'"
+            context="系统设置"
+            @navigate="emit('navigate', $event)"
+            @update:draft="
+              (text) => {
+                if (assistant) assistant.draft.value = text;
+              }
+            "
+          /> </template
+      ></SystemSettings>
       <div v-if="controller && page === 'home'" class="home-content">
         <Home
           :controller="controller"

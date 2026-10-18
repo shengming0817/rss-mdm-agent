@@ -28,3 +28,29 @@ describe("system settings preview", () => {
     wrapper.unmount();
   });
 });
+
+it.each(["", "没有这个分类"])(
+  "restores the recreated featured entry with search %s",
+  async (search) => {
+    const wrapper = mount(SystemSettings, { attachTo: document.body });
+    await wrapper.get("input").setValue(search);
+    await wrapper
+      .get('.settings-featured [data-setting="sound"]')
+      .trigger("click");
+    await wrapper.get(".settings-back").trigger("click");
+    expect(document.activeElement).toBe(
+      wrapper.get('.settings-featured [data-setting="sound"]').element,
+    );
+    expect(wrapper.get("input").element.value).toBe(search);
+    wrapper.unmount();
+  },
+);
+
+it("falls back to search when the original category is filtered out", async () => {
+  const wrapper = mount(SystemSettings, { attachTo: document.body });
+  await wrapper.get('.settings-list [data-setting="sound"]').trigger("click");
+  await wrapper.get("input").setValue("没有这个分类");
+  await wrapper.get(".settings-back").trigger("click");
+  expect(document.activeElement).toBe(wrapper.get("input").element);
+  wrapper.unmount();
+});
