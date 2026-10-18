@@ -54,8 +54,7 @@ pub(crate) async fn submit<S: IdentityProvider>(
         &materials,
         offer.payload(),
         delegate.clone(),
-        None,
-        None,
+        super::enrollment::NativeMaterials::default(),
     )?;
     artifacts
         .inspect(&preview)
@@ -134,12 +133,22 @@ pub(crate) async fn submit<S: IdentityProvider>(
         None
     };
     dispatch_with_material(
-        service, offer, materials, selection, start, delegate, material, profile,
+        service,
+        offer,
+        materials,
+        selection,
+        start,
+        delegate,
+        super::enrollment::NativeMaterials {
+            material,
+            profile_bytes: profile,
+        },
     )
 }
 
 // Single synchronous delivery boundary after HTTP Start and native helper verification.
 // Explicit gate fixtures may exercise this boundary without claiming native OS authentication.
+#[cfg(test)]
 pub(crate) fn dispatch_started<S: IdentityProvider>(
     service: &mut DeviceService<S>,
     offer: Offer,
@@ -149,7 +158,13 @@ pub(crate) fn dispatch_started<S: IdentityProvider>(
     delegate: Option<Arc<execution_ipc::helper::Connection>>,
 ) -> Result<ExecutionStatus, Error> {
     dispatch_with_material(
-        service, offer, materials, selection, start, delegate, None, None,
+        service,
+        offer,
+        materials,
+        selection,
+        start,
+        delegate,
+        super::enrollment::NativeMaterials::default(),
     )
 }
 fn dispatch_with_material<S: IdentityProvider>(
@@ -159,8 +174,7 @@ fn dispatch_with_material<S: IdentityProvider>(
     selection: Option<Selection>,
     start: agent_client::Start,
     delegate: Option<Arc<execution_ipc::helper::Connection>>,
-    material: Option<agent_client::NativeEnrollmentMaterial>,
-    profile: Option<Vec<u8>>,
+    native: super::enrollment::NativeMaterials,
 ) -> Result<ExecutionStatus, Error> {
     if service
         .core
@@ -194,8 +208,7 @@ fn dispatch_with_material<S: IdentityProvider>(
         &materials,
         start.payload(),
         delegate,
-        material,
-        profile,
+        native,
     )?;
     if let Some(selection) = selection {
         let mut input = plan.spec().clone();
@@ -310,8 +323,7 @@ fn compile(
     materials: &Materials,
     payload: &wire::TaskPayload,
     delegate: Option<Arc<execution_ipc::helper::Connection>>,
-    material: Option<agent_client::NativeEnrollmentMaterial>,
-    profile: Option<Vec<u8>>,
+    native: super::enrollment::NativeMaterials,
 ) -> Result<
     (
         execution_contract::FrozenExecution,
@@ -333,12 +345,13 @@ fn compile(
             offer,
             materials,
             payload,
-            &core.host.binding,
-            &core.host.actor,
-            &mut core.material_root,
+            (
+                &core.host.binding,
+                &core.host.actor,
+                &mut core.material_root,
+            ),
             delegate,
-            material,
-            profile,
+            native,
         ),
         wire::TaskPayload::Software(payload) => crate::backend::software::compile(
             offer,

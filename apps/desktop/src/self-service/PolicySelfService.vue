@@ -11,20 +11,26 @@ import type {
 } from "./types";
 import { currentUser } from "../test-users";
 import PolicyPreparation from "./PolicyPreparation.vue";
-const props = defineProps<{
-  port: SelfServicePort | null;
-  records: BackendRequest[];
-  kind?: "enrollment";
-  allowNewRequests?: boolean;
-  allowConfirm?: boolean;
-}>();
+const props = withDefaults(
+  defineProps<{
+    port: SelfServicePort | null;
+    records: BackendRequest[];
+    kind?: "enrollment";
+    allowNewRequests?: boolean;
+    allowConfirm?: boolean;
+  }>(),
+  { allowNewRequests: true, allowConfirm: true },
+);
 const emit = defineEmits<{ changed: [] }>();
-watch(() => props.allowNewRequests, allowed => {
-  if (allowed === false && !request.value) {
-    selected.value = undefined;
-    choice.value = undefined;
-  }
-});
+watch(
+  () => props.allowNewRequests,
+  (allowed) => {
+    if (allowed === false && !request.value) {
+      selected.value = undefined;
+      choice.value = undefined;
+    }
+  },
+);
 const directory = ref<SelfServiceDirectoryItem[]>([]),
   selected = ref<SelfServiceDirectoryItem>(),
   inputs = ref<Record<string, string>>({}),
@@ -119,8 +125,10 @@ async function refresh() {
       after = value.nextCursor;
       if (!after) break;
     }
-    directory.value = items.filter(
-      (item) => props.kind ? item.task.kind === props.kind : item.task.kind !== "enrollment",
+    directory.value = items.filter((item) =>
+      props.kind
+        ? item.task.kind === props.kind
+        : item.task.kind !== "enrollment",
     );
     error.value = "";
     if (
@@ -160,7 +168,13 @@ function options(schema: any): unknown[] | undefined {
   );
 }
 function preview() {
-  if (!selected.value || busy.value || request.value || props.allowNewRequests === false) return;
+  if (
+    !selected.value ||
+    busy.value ||
+    request.value ||
+    props.allowNewRequests === false
+  )
+    return;
   try {
     fieldErrors.value = new Map();
     const parameters = new Map<string, unknown>();
@@ -230,7 +244,14 @@ async function query(id?: string) {
   }
 }
 async function invoke() {
-  if (!props.port || !choice.value || busy.value || request.value || props.allowNewRequests === false) return;
+  if (
+    !props.port ||
+    !choice.value ||
+    busy.value ||
+    request.value ||
+    props.allowNewRequests === false
+  )
+    return;
   request.value = choice.value.request;
   busy.value = true;
   const current = epoch;
@@ -345,7 +366,10 @@ watch(
         <p>{{ item.selfService.allowAi ? "允许 AI 请求" : "仅供人工操作" }}</p>
       </article>
     </div>
-    <form v-if="selected && !choice && allowNewRequests !== false" @submit.prevent="preview">
+    <form
+      v-if="selected && !choice && allowNewRequests !== false"
+      @submit.prevent="preview"
+    >
       <h3>{{ selected.selfService.displayName }}</h3>
       <label v-for="field in fields" :key="field.name"
         >{{ field.schema.title ?? field.name
@@ -390,7 +414,10 @@ watch(
         }}</span></label
       ><button :disabled="busy">核对执行参数</button>
     </form>
-    <section v-if="choice && !request && allowNewRequests !== false" aria-label="人工执行确认">
+    <section
+      v-if="choice && !request && allowNewRequests !== false"
+      aria-label="人工执行确认"
+    >
       <h3>确认 {{ selected?.selfService.displayName }}</h3>
       <p>
         准入主体：{{
@@ -485,7 +512,9 @@ watch(
         (r) =>
           r.action.kind === 'policy' &&
           r.action.choice.request !== request &&
-          (kind ? r.action.directory.task.kind === kind : r.action.directory.task.kind !== "enrollment"),
+          (kind
+            ? r.action.directory.task.kind === kind
+            : r.action.directory.task.kind !== 'enrollment'),
       )"
       :key="record.action.kind === 'policy' ? record.action.choice.request : ''"
       :record="record"

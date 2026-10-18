@@ -1,4 +1,4 @@
-//! Fixed task vectors updated to the explicit envelope at c34e292f; signature domains are unchanged.
+//! Fixed task vectors; Enrollment now includes administrator/invocation authorization in its signature.
 //! These fixtures are independent of regenerated Rust serialization and signers.
 
 use rss_mdm_agent_wire::runtime::TaskPayload;
@@ -16,7 +16,7 @@ fn preserves_task_signatures_and_step_digest() {
         ),
         (
             include_bytes!("../fixtures/enrollment-task-v1.json").as_slice(),
-            "44df350a55b6aecb293a326c1086687aa1102acf73ebdde86aec53f4c77f6f8d",
+            "339725f5ba4c5f37e2f00279595e7b7b3c9622c4266598d86dce799f3787d849",
         ),
     ] {
         let task: TaskPayload = serde_json::from_slice(body).unwrap();

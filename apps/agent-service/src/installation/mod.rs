@@ -177,6 +177,7 @@ impl Candidate {
         platform::verify_signatures(self)?;
         Ok(())
     }
+    #[cfg(windows)]
     fn format(&self) -> Result<String, Error> {
         let bytes = installation_security::read_protected(&self.root.join("publication.json"))
             .map_err(|_| Error::Identity)?;

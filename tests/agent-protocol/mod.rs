@@ -946,6 +946,39 @@ impl Server {
         client.registration().unwrap()
     }
 }
+fn native_enrollment_response(d: &mut Data, value: Value) -> Response {
+    if !d.started {
+        return runtime_error(StatusCode::FORBIDDEN, ErrorCode::PermissionDenied);
+    }
+    let request: enroll::NativeEnrollmentRequest = serde_json::from_value(value.clone()).unwrap();
+    if request.attempt_id != d.attempt || d.native_inputs.first().is_some_and(|old| old != &value) {
+        return runtime_error(StatusCode::CONFLICT, ErrorCode::OperationConflict);
+    }
+    d.native_inputs.push(value);
+    if d.native_receipt.is_none() {
+        let TaskPayload::Enrollment(task) = &d.offer.as_ref().unwrap().payload else {
+            panic!("enrollment task");
+        };
+        let id = Uuid::new_v4();
+        d.native_receipt = Some(enroll::NativeEnrollmentReceipt {
+            enrollment_id: id,
+            expires_at: d.time.now().unwrap() + 300,
+            entry: task.entry.clone(),
+            username: None,
+            profile_url: Some(format!(
+                "https://enroll.example.test/api/v1/enrollments/{id}/profile"
+            )),
+        });
+    }
+    if std::mem::take(&mut d.native_failure) {
+        return runtime_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            ErrorCode::ServiceUnavailable,
+        );
+    }
+    axum::Json(d.native_receipt.clone().unwrap()).into_response()
+}
+
 async fn handler(
     State(data): State<Arc<Mutex<Data>>>,
     uri: Uri,
@@ -996,39 +1029,7 @@ async fn handler(
         return runtime_error(StatusCode::UNAUTHORIZED, ErrorCode::InvalidIdentity);
     }
     let response = if path.ends_with("/enrollment") {
-        if !d.started {
-            return runtime_error(StatusCode::FORBIDDEN, ErrorCode::PermissionDenied);
-        }
-        let request: enroll::NativeEnrollmentRequest =
-            serde_json::from_value(value.clone()).unwrap();
-        if request.attempt_id != d.attempt
-            || d.native_inputs.first().is_some_and(|old| old != &value)
-        {
-            return runtime_error(StatusCode::CONFLICT, ErrorCode::OperationConflict);
-        }
-        d.native_inputs.push(value);
-        if d.native_receipt.is_none() {
-            let TaskPayload::Enrollment(task) = &d.offer.as_ref().unwrap().payload else {
-                panic!("enrollment task");
-            };
-            let id = Uuid::new_v4();
-            d.native_receipt = Some(enroll::NativeEnrollmentReceipt {
-                enrollment_id: id,
-                expires_at: d.time.now().unwrap() + 300,
-                entry: task.entry.clone(),
-                username: None,
-                profile_url: Some(format!(
-                    "https://enroll.example.test/api/v1/enrollments/{id}/profile"
-                )),
-            });
-        }
-        if std::mem::take(&mut d.native_failure) {
-            return runtime_error(
-                StatusCode::SERVICE_UNAVAILABLE,
-                ErrorCode::ServiceUnavailable,
-            );
-        }
-        axum::Json(d.native_receipt.clone().unwrap()).into_response()
+        native_enrollment_response(&mut d, value)
     } else if path.ends_with("/reports") {
         report_response(&mut d, value)
     } else if path.ends_with("/claim") {

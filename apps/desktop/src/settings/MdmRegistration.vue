@@ -2,8 +2,13 @@
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { currentUser } from "../test-users";
 import { nativePort } from "../self-service/native";
+import TaskDetail from "../self-service/TaskDetail.vue";
 import PolicySelfService from "../self-service/PolicySelfService.vue";
-import type { BackendRequest, BackendTask } from "../self-service/types";
+import type {
+  BackendRequest,
+  BackendTask,
+  ExecutionTaskDetails,
+} from "../self-service/types";
 import type { MdmStatus } from "./service-contract";
 import { readMdmStatus } from "./native";
 const status = ref<MdmStatus>(),
@@ -11,18 +16,22 @@ const status = ref<MdmStatus>(),
   busy = ref(false),
   pending = ref(true);
 const records = ref<BackendRequest[]>([]),
-  available = ref<BackendTask[]>([]);
+  available = ref<BackendTask[]>([]),
+  executions = ref<ExecutionTaskDetails[]>([]);
 const port = ref(nativePort());
 let timer: ReturnType<typeof setInterval> | undefined;
-const text = computed(
-  () =>
-    ({
-      unenrolled: "本机尚未注册 MDM。",
-      this_organization: "本机检测到本组织的 MDM 注册。",
-      other_organization: "本机已由其他组织管理，不会自动替换。",
-      unknown: "无法确定本机 MDM 注册状态。",
-    })[status.value?.state ?? "unknown"],
-);
+const text = computed(() => {
+  switch (status.value?.state) {
+    case "unenrolled":
+      return "本机尚未注册 MDM。";
+    case "this_organization":
+      return "本机检测到本组织的 MDM 注册。";
+    case "other_organization":
+      return "本机已由其他组织管理，不会自动替换。";
+    default:
+      return "无法确定本机 MDM 注册状态。";
+  }
+});
 async function refresh() {
   if (busy.value) return;
   busy.value = true;
@@ -34,6 +43,9 @@ async function refresh() {
         selected: null,
       });
       records.value = snapshot.preparations;
+      executions.value = snapshot.requests.filter(
+        (t) => t.action.operation.action === "backend-enrollment",
+      );
       const statuses = await Promise.all(
         snapshot.preparations
           .filter(
@@ -62,7 +74,17 @@ async function refresh() {
           }),
       );
       pending.value =
-        statuses.some(Boolean) ||
+        statuses.some((value) => value) ||
+        executions.value.some(
+          (t) =>
+            ![
+              "verified",
+              "executionEnded",
+              "failedBeforeDispatch",
+              "cancelled",
+              "admissionDenied",
+            ].includes(t.status.phase),
+        ) ||
         snapshot.available.some((t) => t.summary.kind === "enrollment");
       available.value = snapshot.available.filter(
         (t) => t.summary.kind === "enrollment",
@@ -75,6 +97,7 @@ async function refresh() {
     pending.value = true;
     records.value = [];
     available.value = [];
+    executions.value = [];
   } finally {
     busy.value = false;
   }
@@ -103,6 +126,13 @@ onUnmounted(() => clearInterval(timer));
       组织已下发 MDM 注册任务，等待当前登录会话完成系统操作。
     </p>
     <p v-if="pending && !error">已有注册流程，请查询或继续原请求。</p>
+    <TaskDetail
+      v-for="task in executions"
+      :key="task.action.requestId"
+      :task="task"
+      :disabled="busy"
+      @cancel="port?.cancel({ requestId: task.action.requestId }).then(refresh)"
+    />
     <PolicySelfService
       v-if="status"
       :port="port"

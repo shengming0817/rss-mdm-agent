@@ -7,16 +7,18 @@ use rss_mdm_agent_wire::runtime as w;
 use sha2::{Digest as _, Sha256};
 use std::sync::Arc;
 
+#[derive(Default)]
+pub(crate) struct NativeMaterials {
+    pub material: Option<NativeEnrollmentMaterial>,
+    pub profile_bytes: Option<Vec<u8>>,
+}
 pub(crate) fn compile(
     offer: &Offer,
     materials: &Materials,
     payload: &w::EnrollmentTaskSpec,
-    binding: &execution_app::ServiceBinding,
-    actor: &ActorId,
-    root: &mut MaterialRoot,
+    host: (&execution_app::ServiceBinding, &ActorId, &mut MaterialRoot),
     delegate: Option<Arc<execution_ipc::helper::Connection>>,
-    material: Option<NativeEnrollmentMaterial>,
-    profile_bytes: Option<Vec<u8>>,
+    native: NativeMaterials,
 ) -> Result<(FrozenExecution, Artifacts), Error> {
     let context = delegate
         .as_ref()
@@ -27,34 +29,37 @@ pub(crate) fn compile(
         offer,
         materials,
         payload,
-        binding,
-        actor,
-        root,
-        delegate,
-        &context,
-        material,
-        profile_bytes,
+        host,
+        (delegate, &context),
+        plan::pin(&std::env::current_exe()?)?,
+        native,
     )
 }
 fn compile_bound(
     offer: &Offer,
     materials: &Materials,
     payload: &w::EnrollmentTaskSpec,
-    binding: &execution_app::ServiceBinding,
-    actor: &ActorId,
-    root: &mut MaterialRoot,
-    delegate: Option<Arc<execution_ipc::helper::Connection>>,
-    context: &execution_ipc::helper::UserContext,
-    material: Option<NativeEnrollmentMaterial>,
-    profile_bytes: Option<Vec<u8>>,
+    host: (&execution_app::ServiceBinding, &ActorId, &mut MaterialRoot),
+    helper: (
+        Option<Arc<execution_ipc::helper::Connection>>,
+        &execution_ipc::helper::UserContext,
+    ),
+    image: SoftwareMaterial,
+    native: NativeMaterials,
 ) -> Result<(FrozenExecution, Artifacts), Error> {
+    let (binding, actor, root) = host;
+    let (delegate, context) = helper;
+    let NativeMaterials {
+        material,
+        profile_bytes,
+    } = native;
     let w::TaskPayload::Enrollment(original) = offer.payload() else {
         return Err(Error::Untrusted);
     };
     let mut compared = payload.clone();
     compared.permit = original.permit;
     compared.expires_at = original.expires_at;
-    if compared != *original
+    if compared != **original
         || payload.device_id != binding.device.as_str()
         || !materials.files().is_empty()
     {
@@ -74,7 +79,6 @@ fn compile_bound(
         session: context.binding.clone(),
     };
     let work_root = context.work_root.clone();
-    let image = plan::pin(&std::env::current_exe()?)?;
     let profile = profile_bytes
         .map(|bytes| {
             let digest = Digest::new(hex(&Sha256::digest(&bytes))).map_err(|_| Error::Protocol)?;
@@ -128,11 +132,62 @@ fn compile_bound(
             bytes.len() as u64,
         )
         .map_err(crate::error::app_error)?;
+    let interpreter = image.path.clone();
+    let frozen = freeze(
+        offer,
+        payload,
+        (binding, actor),
+        NativeLaunch {
+            run_as,
+            session,
+            work_root: work_root.clone(),
+            image,
+            artifact,
+            parameters,
+        },
+    )?;
+    Ok((
+        frozen,
+        Artifacts {
+            program: vec![],
+            delegate,
+            interpreter: interpreter.into(),
+            content,
+            work_root,
+            controlled_input: None,
+        },
+    ))
+}
+
+struct NativeLaunch {
+    run_as: RunAs,
+    session: SessionRequirement,
+    work_root: std::path::PathBuf,
+    image: SoftwareMaterial,
+    artifact: ExactArtifactRef,
+    parameters: std::collections::BTreeMap<String, InputValue>,
+}
+fn freeze(
+    offer: &Offer,
+    payload: &w::EnrollmentTaskSpec,
+    authority: (&execution_app::ServiceBinding, &ActorId),
+    launch: NativeLaunch,
+) -> Result<FrozenExecution, Error> {
+    let (binding, actor) = authority;
+    let platform = plan::platform()?;
+    let NativeLaunch {
+        run_as,
+        session,
+        work_root,
+        image,
+        artifact,
+        parameters,
+    } = launch;
     let now = crate::wall()?;
     let task_hash = hex(&Sha256::digest(
         serde_json::to_vec(payload).map_err(|_| Error::Protocol)?,
     ));
-    let frozen = FrozenExecution::freeze(
+    FrozenExecution::freeze(
         ExecutionInput {
             schema_version: V8,
             execution: ExecutionSpec::Process {},
@@ -203,21 +258,10 @@ fn compile_bound(
         },
         &plan::storage_limits().input,
     )
-    .map_err(|_| Error::Untrusted)?;
-    Ok((
-        frozen,
-        Artifacts {
-            program: vec![],
-            delegate,
-            interpreter: image.path.into(),
-            content,
-            work_root,
-            controlled_input: None,
-        },
-    ))
+    .map_err(|_| Error::Untrusted)
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::*;
     use crate::backend::{
@@ -240,48 +284,52 @@ mod tests {
         let w::TaskPayload::Enrollment(payload) = offer.payload() else {
             panic!("enrollment")
         };
-        let mut payload = payload.clone();
+        let mut payload = (**payload).clone();
         payload.expires_at = (crate::wall().unwrap() / 1000 + 60) as i64;
-        let root = Root::new();
-        let journal = root.path.join("journal");
-        std::fs::write(&journal, b"fixture").unwrap();
-        let directory = root.path.join("materials");
-        std::fs::create_dir(&directory).unwrap();
-        let mut material_root =
-            MaterialRoot::open_fixture(&directory, &Digest::new("a".repeat(64)).unwrap(), &journal)
-                .unwrap();
         let mut host = local::TestHost::new();
         let binding = ServiceBinding {
             authority: host.template.spec().request.authority.clone(),
-            device: id("device-1").unwrap(),
+            device: DeviceId::new("device-1").unwrap(),
         };
         let actor = host.template.spec().request.actor.clone();
-        let context = execution_ipc::helper::UserContext {
-            subject: execution_ipc::host::current_subject().unwrap(),
-            session: 1,
-            binding: id("fixture-session").unwrap(),
-            work_root: root.path.clone(),
+        let account = OsAccountRef {
+            platform: Platform::Macos,
+            subject: id("501").unwrap(),
         };
-        // Exercise the production compiler after helper authentication; no native session/OS launch is claimed.
-        let (plan, _) = compile_bound(
+        let image = plan::pin(std::path::Path::new("/usr/bin/true")).unwrap();
+        // Exercise the production plan builder after staging; no native helper/ACL/OS launch is claimed.
+        let plan = freeze(
             &offer,
-            &materials,
             &payload,
-            &binding,
-            &actor,
-            &mut material_root,
-            None,
-            &context,
-            None,
-            Some(b"fixture-profile".to_vec()),
+            (&binding, &actor),
+            NativeLaunch {
+                run_as: RunAs::User {
+                    account: account.clone(),
+                },
+                session: SessionRequirement::ActiveUser {
+                    account,
+                    session: id("fixture-session").unwrap(),
+                },
+                work_root: transport.path.clone(),
+                artifact: image.artifact.clone(),
+                image,
+                parameters: Default::default(),
+            },
         )
         .unwrap();
         host.template = plan.clone();
-        host.state.lock().unwrap().now = crate::wall().unwrap();
         let db = local::Database::new();
         let runner =
             DeterministicTestRunner::new(local::id("test-runner"), TestScenario::Wait, 16).unwrap();
-        let app = local::create_app(&db.path, host, runner, AppConfig::test_defaults(1)).unwrap();
+        let store = execution_sqlite::Store::initialize_test(
+            &db.path,
+            binding.authority,
+            plan::storage_limits(),
+        )
+        .unwrap();
+        let mut config = AppConfig::test_defaults(1);
+        config.max_timeout_ms = plan::storage_limits().input.max_timeout_ms;
+        let app = ExecutionApp::new(store, host, runner, config).unwrap();
         let caller = RequestContext { actor };
         let bridge = ExecutionBridge::new(local::id("agent-consumer"), FixtureOutput);
         bridge
@@ -292,7 +340,7 @@ mod tests {
         let oversized = FrozenExecution::freeze(oversized, &plan::storage_limits().input).unwrap();
         assert!(matches!(
             bridge.prepare(&offer, &materials, &app, &caller, &oversized),
-            Err(Error::Untrusted)
+            Err(agent_client::Error::Untrusted)
         ));
     }
 }

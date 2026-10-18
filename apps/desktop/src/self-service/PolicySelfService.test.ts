@@ -369,7 +369,8 @@ test("Device history restores original AI consent independently of enterprise id
 test("MDM settings expose only an authorized enrollment and do not auto invoke", async () => {
   const original = record("manual-enrollment");
   if (original.action.kind !== "policy") throw Error("fixture");
-  const item = structuredClone(original.action.directory);
+  const originalDirectory = original.action.directory;
+  const item = structuredClone(originalDirectory);
   item.task = {
     kind: "enrollment",
     organization: "tenant",
@@ -378,7 +379,7 @@ test("MDM settings expose only an authorized enrollment and do not auto invoke",
   const policy_invoke = vi.fn();
   const port = {
     policy_directory: async () => ({
-      items: [original.action.directory, item],
+      items: [originalDirectory, item],
       nextCursor: null,
       asOf: 1,
     }),
