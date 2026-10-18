@@ -5,6 +5,8 @@ pub mod protocol;
 
 use rss_mdm_agent_wire::runtime::Secret;
 mod delivery;
+mod unmanage;
+pub use unmanage::{inspect_unmanage, UnmanagePermit, UnmanageTransport};
 mod redaction;
 pub use delivery::{AbandonmentAck, Association, FrozenAbandonment, FrozenResult, ResultAck};
 pub use redaction::CredentialRedactor;

@@ -50,6 +50,23 @@ impl DeviceKey {
         value.validate()?;
         Ok(value)
     }
+    /// Remove an exact persisted machine key; never enumerate other installations.
+    pub fn delete(name: &str) -> io::Result<()> {
+        let mut key = match Self::open(name) {
+            Ok(key) => key,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
+            Err(e) => return Err(e),
+        };
+        // SAFETY: The exact live key handle is consumed by successful NCryptDeleteKey.
+        if unsafe { NCryptDeleteKey(key.key, NCRYPT_SILENT_FLAG) } != 0 {
+            return Err(denied());
+        }
+        key.key = 0;
+        match Self::open(name) {
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+            _ => Err(denied()),
+        }
+    }
     /// Create once with export disabled and LocalSystem-only key access.
     pub fn create(name: &str) -> io::Result<Self> {
         match Self::open(name) {

@@ -210,7 +210,8 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                 .any(|(i, v)| events[..i].contains(v))
             || !matches!(
                 event,
-                wire::TaskEvent::EnrollmentResult { .. }
+                wire::TaskEvent::UnmanageResult { .. }
+                    | wire::TaskEvent::EnrollmentResult { .. }
                     | wire::TaskEvent::CollectionResult(_)
                     | wire::TaskEvent::Result(_)
                     | wire::TaskEvent::SoftwareResult(_)

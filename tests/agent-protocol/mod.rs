@@ -313,6 +313,30 @@ impl Data {
             key_id: "test".into(),
         }
     }
+    pub fn unmanage(&mut self) {
+        self.reset_current_task();
+        self.offer = Some(
+            self.signed(TaskPayload::Unmanage(Box::new(UnmanageTaskSpec {
+                wire_version: 1,
+                tenant_id: self.tenant,
+                device_id: "device-1".into(),
+                registration_id: self.registration,
+                generation: 1,
+                retirement_id: Uuid::new_v4(),
+                task_id: self.task,
+                attempt_id: self.attempt,
+                permit: TaskPermit::Offer,
+                expires_at: self.time.now().unwrap() + 60,
+                deadline: self.time.now().unwrap() + 300,
+                platform: TaskPlatform::Windows,
+                architecture: TaskArchitecture::Aarch64,
+                authorization: TaskAuthorization::Policy {
+                    policy_id: self.task,
+                    policy_version: self.task,
+                },
+            }))),
+        );
+    }
     pub fn native_enrollment(&mut self) {
         self.reset_current_task();
         self.offer = Some(
@@ -1521,6 +1545,10 @@ fn start_event(d: &mut Data, operation: String) -> Response {
         let expiry = d.time.now().unwrap() + d.start_validity_seconds;
         match &mut payload {
             TaskPayload::Credential(_) => return StatusCode::NOT_IMPLEMENTED.into_response(),
+            TaskPayload::Unmanage(v) => {
+                v.permit = TaskPermit::Start;
+                v.expires_at = expiry;
+            }
             TaskPayload::Collection(v) => {
                 v.permit = TaskPermit::Start;
                 v.expires_at = expiry;

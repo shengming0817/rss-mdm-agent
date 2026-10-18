@@ -149,6 +149,17 @@ mod tests {
         );
         assert_ne!(*first, *other.credential("credential").unwrap());
         assert!(store.read("../credential").is_err());
+        store.signing_key("retirement-key", true).unwrap();
+        other.signing_key("retirement-key", true).unwrap();
+        store.retire(&[]).unwrap();
+        store.retire(&[]).unwrap();
+        assert!(store.signing_key("retirement-key", false).is_err());
+        assert_eq!(
+            store.read("credential").unwrap_err().kind(),
+            io::ErrorKind::NotFound
+        );
+        assert!(other.signing_key("retirement-key", false).is_ok());
+        assert!(other.read("credential").is_ok());
     }
 }
 fn denied() -> io::Error {
@@ -181,6 +192,76 @@ impl SecretStore {
             keychain,
             access: Mutex::new(()),
         })
+    }
+    fn track(&self, reference: &str, key: bool) -> io::Result<()> {
+        self.account(reference)?;
+        let bytes = serde_json::to_vec(&(reference, key)).map_err(io::Error::other)?;
+        let path = self
+            .root
+            .join(format!("{:x}.credential.json", Sha256::digest(&bytes)));
+        match files::write_new(&path, &bytes) {
+            Ok(()) => Ok(()),
+            Err(e)
+                if e.kind() == io::ErrorKind::AlreadyExists
+                    && files::read(&path, 1024)? == bytes =>
+            {
+                Ok(())
+            }
+            Err(e) => Err(e),
+        }
+    }
+    pub(crate) fn retire(&self, references: &[(String, bool)]) -> io::Result<()> {
+        let _guard = self.access.lock().map_err(|_| denied())?;
+        for (name, key) in references {
+            self.track(name, *key)?;
+        }
+        self.track("journal-location", false)?;
+        for entry in std::fs::read_dir(&self.root)? {
+            let path = entry?.path();
+            if !path
+                .file_name()
+                .and_then(|v| v.to_str())
+                .is_some_and(|v| v.ends_with(".credential.json"))
+            {
+                continue;
+            }
+            let bytes = files::read(&path, 1024)?;
+            if path.file_name()
+                != Some(std::ffi::OsStr::new(&format!(
+                    "{:x}.credential.json",
+                    Sha256::digest(&bytes)
+                )))
+            {
+                return Err(denied());
+            }
+            let (reference, key): (String, bool) =
+                serde_json::from_slice(&bytes).map_err(io::Error::other)?;
+            let account = self.account(&reference)?;
+            #[cfg(target_os = "macos")]
+            self.keychain.without_interaction(|| {
+                if key {
+                    self.keychain.delete_device_key(&account)
+                } else {
+                    self.keychain.delete("RSS MDM Agent device", &account)
+                }
+            })?;
+            #[cfg(windows)]
+            if key {
+                platform_credentials::DeviceKey::delete(&account)?;
+            } else {
+                let secret = self
+                    .root
+                    .join(format!("{:x}.dpapi", Sha256::digest(account.as_bytes())));
+                match std::fs::remove_file(secret) {
+                    Ok(()) => (),
+                    Err(e) if e.kind() == io::ErrorKind::NotFound => (),
+                    Err(e) => return Err(e),
+                }
+            }
+            #[cfg(not(any(windows, target_os = "macos")))]
+            return Err(io::ErrorKind::Unsupported.into());
+        }
+        Ok(())
     }
     fn account(&self, reference: &str) -> io::Result<String> {
         if reference.is_empty()
@@ -265,6 +346,9 @@ impl SecretStore {
         create: bool,
     ) -> Result<std::sync::Arc<dyn rustls::sign::SigningKey>, agent_client::Error> {
         let name = self.account(reference)?;
+        if create {
+            self.track(reference, true)?;
+        }
         #[cfg(target_os = "macos")]
         let key = if create {
             self.keychain.create_device_key(&name)?
@@ -317,6 +401,7 @@ impl SecretStore {
     pub fn import(&self, reference: &str, secret: &[u8]) -> io::Result<()> {
         let _guard = self.access.lock().map_err(|_| denied())?;
         let account = self.account(reference)?;
+        self.track(reference, false)?;
         match self.read_inner(&account) {
             Ok(existing) if existing.as_slice() == secret => Ok(()),
             Err(e) if e.kind() == io::ErrorKind::NotFound => self.add(&account, secret),
@@ -328,6 +413,7 @@ impl SecretStore {
         use fs2::FileExt;
         let _guard = self.access.lock().map_err(|_| denied())?;
         let account = self.account(reference)?;
+        self.track(reference, false)?;
         let path = self
             .root
             .join(format!("{:x}.lock", Sha256::digest(account.as_bytes())));

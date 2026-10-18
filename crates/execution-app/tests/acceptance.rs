@@ -536,12 +536,14 @@ fn unknown_dispatch_and_lost_runner_memory_never_synthesize_success() {
         TaskPhase::OutcomeUnknown
     );
     assert_eq!(app.reconcile(r).unwrap().phase, TaskPhase::OutcomeUnknown);
+    assert!(!app.all_attempts_quiescent(1).unwrap());
     drop(app);
     let fresh =
         DeterministicTestRunner::new(id("test-runner"), TestScenario::Complete, 16).unwrap();
     let mut app = open(&db, host, fresh.clone(), true);
     assert_eq!(app.reconcile(r).unwrap().phase, TaskPhase::OutcomeUnknown);
     app.request_execution(&caller(), &p).unwrap();
+    assert!(!app.all_attempts_quiescent(1).unwrap());
     assert_eq!(fresh.dispatch_count(), 0);
     assert_eq!(runner.dispatch_count(), 1);
 }
@@ -2924,4 +2926,26 @@ fn external_mutation_of_already_scanned_material_row_invalidates_the_delete_fenc
     assert!(app
         .service_material_page(None, 1, &id("agent-delivery"))
         .is_err());
+}
+
+#[test]
+fn retirement_drain_requires_quiescence_and_survives_lost_runner_memory() {
+    let db = Database::new();
+    let host = TestHost::new();
+    let p = plan();
+    let runner = DeterministicTestRunner::new(id("test-runner"), TestScenario::Wait, 16).unwrap();
+    let mut app = open(&db, host.clone(), runner.clone(), false);
+    assert!(app.all_attempts_quiescent(1).unwrap());
+    app.request_execution(&caller(), &p).unwrap();
+    assert!(!app.all_attempts_quiescent(1).unwrap());
+    app.stop_active(1).unwrap();
+    assert!(app.all_attempts_quiescent(1).unwrap());
+    drop(app);
+    let fresh = DeterministicTestRunner::new(id("test-runner"), TestScenario::Unknown, 16).unwrap();
+    let app = open(&db, host, fresh, true);
+    assert!(
+        app.all_attempts_quiescent(1).unwrap(),
+        "durable termination outlives runner memory"
+    );
+    assert!(app.all_attempts_quiescent(0).is_err());
 }

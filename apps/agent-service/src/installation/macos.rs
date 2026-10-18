@@ -430,3 +430,54 @@ pub(super) fn payload_parent() -> Result<PathBuf, Error> {
         .ok_or(Error::Configuration)?
         .join("versions"))
 }
+
+fn unmanage_job(task: uuid::Uuid) -> PathBuf {
+    Path::new("/Library/LaunchDaemons").join(format!("{LABEL}.unmanage.{task}.plist"))
+}
+pub(super) fn launch_unmanage(deployment: &Deployment, task: uuid::Uuid) -> Result<(), Error> {
+    let config = Deployment::default_path()?;
+    let label = format!("{LABEL}.unmanage.{task}");
+    let path = unmanage_job(task);
+    let args = vec![
+        deployment.service.path.to_string_lossy().into_owned(),
+        "--installation".into(),
+        "uninstall".into(),
+        "--config".into(),
+        config.to_string_lossy().into_owned(),
+        "--binary".into(),
+        deployment.service.path.to_string_lossy().into_owned(),
+        "--operation".into(),
+        task.to_string(),
+    ];
+    let mut dict = plist::Dictionary::new();
+    dict.insert("Label".into(), label.clone().into());
+    dict.insert(
+        "ProgramArguments".into(),
+        plist::Value::Array(args.into_iter().map(plist::Value::String).collect()),
+    );
+    dict.insert("RunAtLoad".into(), true.into());
+    dict.insert("KeepAlive".into(), false.into());
+    let mut bytes = Vec::new();
+    plist::Value::Dictionary(dict)
+        .to_writer_xml(&mut bytes)
+        .map_err(|_| Error::Configuration)?;
+    retain_public(&path, &bytes)?;
+    if registered(&format!("system/{label}"))?.is_none() {
+        command(
+            Path::new("/bin/launchctl"),
+            &["bootstrap".into(), "system".into(), path.into()],
+        )?;
+    }
+    Ok(())
+}
+pub(super) fn finish_unmanage(_: &Deployment, task: uuid::Uuid) -> Result<bool, Error> {
+    let path = unmanage_job(task);
+    installation_security::protected(&path).map_err(|_| Error::Identity)?;
+    std::fs::remove_file(path)?;
+    // The one-shot worker can exit normally after its payload and durable launch entry are removed.
+    Ok(true)
+}
+
+pub(super) fn unmanage_binary(deployment: &Deployment, _: uuid::Uuid) -> Result<PathBuf, Error> {
+    Ok(deployment.service.path.clone())
+}

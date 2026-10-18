@@ -164,7 +164,16 @@ pub(super) fn run(args: &[OsString]) -> Result<(), Error> {
             let binary = opts.path("--binary")?;
             let config = opts.config()?;
             if opts.system()? {
-                let deployment = Deployment::load(&config)?;
+                let deployment = Deployment::metadata(&config)?;
+                let task = opts
+                    .values
+                    .get("--operation")
+                    .and_then(|v| v.to_str())
+                    .ok_or(Error::Denied)?;
+                unmanage::authorize(
+                    &deployment,
+                    uuid::Uuid::parse_str(task).map_err(|_| Error::Denied)?,
+                )?;
                 platform::quiescent(&deployment, &config)?;
             }
             platform::remove(opts.system()?, &binary, &config)?;
@@ -199,12 +208,17 @@ pub(super) fn run(args: &[OsString]) -> Result<(), Error> {
             if candidate.root != root {
                 return Err(Error::Identity);
             }
-            outcome::phase("uninstall-quiescence")?;
-            platform::quiescent(&deployment, &config)?;
-            outcome::phase("uninstall-registration")?;
-            platform::remove(true, &deployment.service.path, &config)?;
-            outcome::phase("uninstall-payload")?;
-            platform::uninstall_payload(&candidate)?;
+            let task = opts
+                .values
+                .get("--operation")
+                .and_then(|v| v.to_str())
+                .ok_or(Error::Denied)?;
+            unmanage::run(
+                &deployment,
+                &config,
+                &candidate,
+                uuid::Uuid::parse_str(task).map_err(|_| Error::Denied)?,
+            )?;
         }
         Action::Status => {
             platform::status(opts.system()?)?;

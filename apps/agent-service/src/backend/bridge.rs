@@ -122,7 +122,9 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
     ) -> Result<PreparedExecution, Error> {
         materials.validate_offer(offer)?;
         let (device, platform, run_as, timeout, output) = match offer.payload() {
-            wire::TaskPayload::Credential(_) => return Err(Error::Unsupported),
+            wire::TaskPayload::Credential(_) | wire::TaskPayload::Unmanage(_) => {
+                return Err(Error::Unsupported)
+            }
             wire::TaskPayload::Script(v)
                 if matches!(
                     plan.spec().execution,

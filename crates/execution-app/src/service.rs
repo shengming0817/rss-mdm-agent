@@ -1347,6 +1347,47 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
             None
         })
     }
+    /// Read durable proof that every accepted attempt is quiescent. Callers must
+    /// fence all new dispatch while checking; an unknown effect is not a live process.
+    pub fn all_attempts_quiescent(&self, limit: usize) -> Result<bool, Error> {
+        if limit == 0 || limit > 128 {
+            return Err(Error::InvalidInput);
+        }
+        let mut after = None;
+        loop {
+            let requests =
+                self.journal
+                    .service_requests(after.as_ref(), limit, &self.adapter(None, None))?;
+            for request in &requests {
+                let execution = self.load(None, request, ExecutionAccess::RunnerFact)?;
+                if let Some(attempt) = execution
+                    .snapshot()
+                    .attempt
+                    .as_ref()
+                    .filter(|a| a.termination.is_none())
+                {
+                    let facts = self.journal.runner_evidence(
+                        &Scope::from_input(execution.input()),
+                        &attempt.id,
+                        &self.adapter(None, Some(execution.input())),
+                    )?;
+                    if !facts.is_some_and(|f| {
+                        f.finished
+                            && f.quiescent
+                            && f.attempt_id == attempt.id
+                            && f.runner == attempt.runner
+                            && &f.content_digest == execution.input().digest()
+                    }) {
+                        return Ok(false);
+                    }
+                }
+            }
+            if requests.len() < limit {
+                return Ok(true);
+            }
+            after = requests.last().cloned();
+        }
+    }
     /// Stop live runners on service shutdown. Missing proof remains Unknown in the same journal.
     pub fn stop_active(&mut self, limit: usize) -> Result<(), Error> {
         let until = std::time::Instant::now() + std::time::Duration::from_secs(3);

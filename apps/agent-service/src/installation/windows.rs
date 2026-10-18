@@ -1239,7 +1239,13 @@ pub(super) fn uninstall_payload(candidate: &Candidate) -> Result<(), Error> {
             return Err(Error::Identity);
         }
     }
-    retire_payload(candidate)?;
+    let retired = retire_payload(candidate)?;
+    if WORKER.get().is_some_and(|(_, p)| {
+        p.with_extension("exe") == std::env::current_exe().unwrap_or_default()
+    }) && retired.exists()
+    {
+        std::fs::remove_dir_all(retired)?;
+    }
     let path = shortcut()?;
     if path.exists() {
         std::fs::remove_file(path)?;
@@ -1256,4 +1262,109 @@ pub(super) fn uninstall_payload(candidate: &Candidate) -> Result<(), Error> {
         return Err(Error::Unavailable);
     }
     Ok(())
+}
+
+// Remote retirement runs outside the payload it removes. Its only input is the
+// exact task whose signed Start and drain were persisted by the device owner.
+pub(super) fn unmanage_binary(_: &Deployment, task: uuid::Uuid) -> Result<PathBuf, Error> {
+    Ok(operation_root()?.join(format!("{task}.exe")))
+}
+pub(super) fn launch_unmanage(deployment: &Deployment, task: uuid::Uuid) -> Result<(), Error> {
+    let _apartment = ComApartment::new()?;
+    if execution_ipc::host::current_subject().map_err(crate::error::app_error)? != "S-1-5-18" {
+        return Err(Error::Identity);
+    }
+    let root = operation_root()?;
+    public_directory(&root)?;
+    let binary = unmanage_binary(deployment, task)?;
+    let bytes = installation_security::read_protected(&deployment.service.path)
+        .map_err(|_| Error::Identity)?;
+    if hash(&bytes) != deployment.service.sha256 {
+        return Err(Error::Identity);
+    }
+    retain_public(&binary, &bytes)?;
+    Artifact {
+        path: binary.clone(),
+        ..deployment.service.clone()
+    }
+    .verify(&binary)
+    .map_err(|_| Error::Identity)?;
+    let config = Deployment::default_path()?;
+    let path = root.join(format!("{task}.json"));
+    let input = vec![
+        "uninstall".to_owned(),
+        "--config".into(),
+        config.to_string_lossy().into_owned(),
+        "--binary".into(),
+        deployment.service.path.to_string_lossy().into_owned(),
+        "--operation".into(),
+        task.to_string(),
+    ];
+    retain_public(&path, &json(&input)?)?;
+    let name = format!("RssExecution-Install-{task}");
+    if let Some(handle) = service(&name)? {
+        worker_owned(&handle, &name, &path)?;
+        return Ok(());
+    }
+    let image = wide(format!(
+        "{} --installation-worker {} {}",
+        quote(&binary)?,
+        name,
+        quote(&path)?
+    ));
+    let manager = manager()?;
+    // SAFETY: Protected fixed image/arguments and LocalSystem worker; no network-selected path.
+    let raw = unsafe {
+        CreateServiceW(
+            manager.0,
+            wide(&name).as_ptr(),
+            wide(&name).as_ptr(),
+            SERVICE_QUERY_STATUS | SERVICE_START | SERVICE_STOP | DELETE,
+            SERVICE_WIN32_OWN_PROCESS,
+            SERVICE_DEMAND_START,
+            SERVICE_ERROR_NORMAL,
+            image.as_ptr(),
+            null(),
+            null_mut(),
+            null(),
+            null(),
+            null(),
+        )
+    };
+    if raw.is_null() {
+        return Err(Error::Unavailable);
+    }
+    let handle = Sc(raw);
+    // SAFETY: Valid owned service handle with no extra arguments. Return without waiting for self-stop.
+    if unsafe { StartServiceW(handle.0, 0, null()) } == 0 {
+        return Err(Error::Unavailable);
+    }
+    Ok(())
+}
+pub(super) fn finish_unmanage(deployment: &Deployment, task: uuid::Uuid) -> Result<bool, Error> {
+    use windows_sys::Win32::Storage::FileSystem::{MoveFileExW, MOVEFILE_DELAY_UNTIL_REBOOT};
+    let binary = unmanage_binary(deployment, task)?;
+    Artifact {
+        path: binary.clone(),
+        ..deployment.service.clone()
+    }
+    .verify(&binary)
+    .map_err(|_| Error::Identity)?;
+    let name = format!("RssExecution-Install-{task}");
+    if let Some(handle) = service(&name)? {
+        worker_owned(
+            &handle,
+            &name,
+            &operation_root()?.join(format!("{task}.json")),
+        )?;
+        // SAFETY: Delete only this one-shot SCM worker registration; its current process may exit normally.
+        if unsafe { DeleteService(handle.0) } == 0 {
+            return Err(Error::Unavailable);
+        }
+    }
+    // SAFETY: Schedule only the exact verified current carrier. Registration is not deletion proof.
+    if unsafe { MoveFileExW(wide(&binary).as_ptr(), null(), MOVEFILE_DELAY_UNTIL_REBOOT) } == 0 {
+        return Err(Error::Unavailable);
+    }
+    Ok(false)
 }

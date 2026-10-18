@@ -401,6 +401,9 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
     /// Receive one offer and cancellation page. Transport failures retain the exact claim;
     /// a verified response durably completes it independently of execution settlement.
     pub async fn claim(&mut self) -> Result<Claim, Error> {
+        if self.retiring()? {
+            return Err(Error::CredentialRetired);
+        }
         let now = self.now()?;
         let mut state = self.store.get::<ClaimState>("claim")?;
         if state.as_ref().is_some_and(|v| now >= v.recover_until) {
@@ -805,6 +808,12 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
 }
 pub(crate) fn same_input(a: &wire::TaskPayload, b: &wire::TaskPayload) -> bool {
     match (a, b) {
+        (wire::TaskPayload::Unmanage(a), wire::TaskPayload::Unmanage(b)) => {
+            let mut b = b.clone();
+            b.permit = a.permit;
+            b.expires_at = a.expires_at;
+            &b == a
+        }
         (wire::TaskPayload::Enrollment(a), wire::TaskPayload::Enrollment(b)) => {
             let mut b = b.clone();
             b.permit = a.permit;
