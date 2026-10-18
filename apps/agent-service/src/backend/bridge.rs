@@ -122,7 +122,22 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
     ) -> Result<PreparedExecution, Error> {
         materials.validate_offer(offer)?;
         let (device, platform, run_as, timeout, output) = match offer.payload() {
-            wire::TaskPayload::Credential(_) => return Err(Error::Unsupported),
+            wire::TaskPayload::Credential(v) => {
+                if plan.spec().launch.interpreter.profile.id.as_str()
+                    != crate::credential_worker::PROFILE
+                    || plan.spec().request.operation.resource.revision.as_str()
+                        != super::plan::hex(&v.definition_digest)
+                {
+                    return Err(Error::Untrusted);
+                }
+                (
+                    &v.device_id,
+                    v.platform,
+                    wire::ExecutionIdentity::System,
+                    3_600_000,
+                    crate::credential_worker::OUTPUT_BYTES,
+                )
+            }
             wire::TaskPayload::Script(v)
                 if matches!(
                     plan.spec().execution,
@@ -254,6 +269,9 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
         let plan = &plan;
         let caller = &caller;
         client.validate_start(&start)?;
+        if let wire::TaskPayload::Credential(task) = start.payload() {
+            super::credential::verify_input(plan, task)?;
+        }
         if let wire::TaskPayload::Collection(task) = start.payload() {
             super::collection::verify_input(plan, task)?;
         }
@@ -586,6 +604,11 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
             if matches!(payload, wire::TaskPayload::Collection(_)) {
                 return Ok(None);
             }
+            if let wire::TaskPayload::Credential(spec) = payload {
+                return Ok(Some(wire::TaskEvent::CredentialResult(
+                    crate::credential_worker::failed(spec, wire::CredentialFailure::RecoveryState),
+                )));
+            }
             let diagnostics = wire::TaskDiagnostics::new(
                 String::new(),
                 String::new(),
@@ -626,6 +649,24 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
         }
         if process.end == ProcessEnd::Cancelled && process.quiescent {
             return Ok(Some(wire::TaskEvent::Cancelled));
+        }
+        if let wire::TaskPayload::Credential(spec) = payload {
+            let result = if process.end == ProcessEnd::Exited
+                && process.quiescent
+                && process.quality == OutputQuality::Complete
+                && process.exit_code == Some(0)
+            {
+                let value: wire::CredentialResult =
+                    serde_json::from_slice(&process.stdout).map_err(|_| Error::Protocol)?;
+                value.validate()?;
+                if value.definition_digest != spec.definition_digest {
+                    return Err(Error::Untrusted);
+                }
+                value
+            } else {
+                crate::credential_worker::failed(spec, wire::CredentialFailure::RecoveryState)
+            };
+            return Ok(Some(wire::TaskEvent::CredentialResult(result)));
         }
         if let wire::TaskPayload::Software(spec) = payload {
             let Some(progress) = evidence.software_progress.as_ref() else {

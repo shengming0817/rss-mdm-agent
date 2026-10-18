@@ -211,6 +211,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             || !matches!(
                 event,
                 wire::TaskEvent::EnrollmentResult { .. }
+                    | wire::TaskEvent::CredentialResult(_)
                     | wire::TaskEvent::CollectionResult(_)
                     | wire::TaskEvent::Result(_)
                     | wire::TaskEvent::SoftwareResult(_)

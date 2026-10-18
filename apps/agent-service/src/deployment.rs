@@ -419,6 +419,9 @@ impl Deployment {
             C::TaskExecuteV1,
             C::MdmEnrollmentV1,
         ];
+        if cfg!(windows) {
+            values.push(C::CredentialsWindowsV1);
+        }
         let has = |profile| {
             self.execution
                 .interpreters
