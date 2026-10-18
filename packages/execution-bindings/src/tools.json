@@ -102,6 +102,15 @@
           "oneOf": [
             {
               "additionalProperties": false,
+              "description": "Native MDM registration; opening the OS flow does not establish registration.",
+              "properties": {
+                "kind": { "const": "enrollment", "type": "string" }
+              },
+              "required": ["kind"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
               "description": "Native device collection; definitions remain backend-owned.",
               "properties": {
                 "kind": { "const": "collection", "type": "string" }
@@ -692,6 +701,15 @@
           "oneOf": [
             {
               "additionalProperties": false,
+              "description": "Native MDM registration; opening the OS flow does not establish registration.",
+              "properties": {
+                "kind": { "const": "enrollment", "type": "string" }
+              },
+              "required": ["kind"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
               "description": "Native device collection; definitions remain backend-owned.",
               "properties": {
                 "kind": { "const": "collection", "type": "string" }
@@ -808,6 +826,41 @@
           "minLength": 64,
           "pattern": "^[0-9a-f]{64}$",
           "type": "string"
+        },
+        "EnrollmentEntry": {
+          "description": "Platform-owned enrollment entry; opening it never proves enrollment completed.",
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "Open Windows' standard device-enrollment UI for this HTTPS discovery authority.",
+              "properties": {
+                "kind": { "const": "windows", "type": "string" },
+                "server": {
+                  "description": "Organization's discovery server.",
+                  "maxLength": 2048,
+                  "pattern": "^https://[^/@?#\\s]+/?$",
+                  "type": "string"
+                }
+              },
+              "required": ["kind", "server"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Open the organization's HTTPS profile enrollment page; user/system approval remains required.",
+              "properties": {
+                "kind": { "const": "macos", "type": "string" },
+                "url": {
+                  "description": "Organization's managed enrollment entry.",
+                  "maxLength": 2048,
+                  "pattern": "^https://[^/@?#\\s]+(?:/[^#\\s]*)?$",
+                  "type": "string"
+                }
+              },
+              "required": ["kind", "url"],
+              "type": "object"
+            }
+          ]
         },
         "ErrorView": {
           "description": "Protocol error payload; optional catalog diagnostic is produced only from static C03 errors.",
@@ -1337,6 +1390,24 @@
         "SelfServiceTask": {
           "description": "One directory interface; software does not inherit script parameter semantics.",
           "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "Administrator-published native MDM enrollment; no caller-supplied parameters.",
+              "properties": {
+                "entry": {
+                  "$ref": "#/$defs/EnrollmentEntry",
+                  "description": "Fixed OS enrollment entry."
+                },
+                "kind": { "const": "enrollment", "type": "string" },
+                "organization": {
+                  "description": "Organization selected by Policy.",
+                  "format": "uuid",
+                  "type": "string"
+                }
+              },
+              "required": ["kind", "organization", "entry"],
+              "type": "object"
+            },
             {
               "additionalProperties": false,
               "description": "Resource-owned script execution interface.",
@@ -2183,6 +2254,15 @@
           "oneOf": [
             {
               "additionalProperties": false,
+              "description": "Native MDM registration; opening the OS flow does not establish registration.",
+              "properties": {
+                "kind": { "const": "enrollment", "type": "string" }
+              },
+              "required": ["kind"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
               "description": "Native device collection; definitions remain backend-owned.",
               "properties": {
                 "kind": { "const": "collection", "type": "string" }
@@ -2299,6 +2379,41 @@
           "minLength": 64,
           "pattern": "^[0-9a-f]{64}$",
           "type": "string"
+        },
+        "EnrollmentEntry": {
+          "description": "Platform-owned enrollment entry; opening it never proves enrollment completed.",
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "Open Windows' standard device-enrollment UI for this HTTPS discovery authority.",
+              "properties": {
+                "kind": { "const": "windows", "type": "string" },
+                "server": {
+                  "description": "Organization's discovery server.",
+                  "maxLength": 2048,
+                  "pattern": "^https://[^/@?#\\s]+/?$",
+                  "type": "string"
+                }
+              },
+              "required": ["kind", "server"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Open the organization's HTTPS profile enrollment page; user/system approval remains required.",
+              "properties": {
+                "kind": { "const": "macos", "type": "string" },
+                "url": {
+                  "description": "Organization's managed enrollment entry.",
+                  "maxLength": 2048,
+                  "pattern": "^https://[^/@?#\\s]+(?:/[^#\\s]*)?$",
+                  "type": "string"
+                }
+              },
+              "required": ["kind", "url"],
+              "type": "object"
+            }
+          ]
         },
         "ErrorView": {
           "description": "Protocol error payload; optional catalog diagnostic is produced only from static C03 errors.",
@@ -2828,6 +2943,24 @@
         "SelfServiceTask": {
           "description": "One directory interface; software does not inherit script parameter semantics.",
           "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "Administrator-published native MDM enrollment; no caller-supplied parameters.",
+              "properties": {
+                "entry": {
+                  "$ref": "#/$defs/EnrollmentEntry",
+                  "description": "Fixed OS enrollment entry."
+                },
+                "kind": { "const": "enrollment", "type": "string" },
+                "organization": {
+                  "description": "Organization selected by Policy.",
+                  "format": "uuid",
+                  "type": "string"
+                }
+              },
+              "required": ["kind", "organization", "entry"],
+              "type": "object"
+            },
             {
               "additionalProperties": false,
               "description": "Resource-owned script execution interface.",

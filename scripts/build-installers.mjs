@@ -16,13 +16,22 @@ import { createHash, randomUUID, X509Certificate } from "node:crypto";
 import { cargoTargetDir } from "./cargo-target.mjs";
 import { runtimeTreeSha256 } from "./ai-host-artifacts.mjs";
 import { sourceEvidence } from "./native-evidence.mjs";
+import { msiSource, msixManifest } from "./windows-packages.mjs";
 const root = fileURLToPath(new URL("../", import.meta.url));
 const args = process.argv.slice(2);
 const input = args.indexOf("--organization");
+const formatIndex = args.indexOf("--format");
 if (
   input < 0 ||
   !args[input + 1] ||
-  args.some((arg, i) => i !== input && i !== input + 1 && arg !== "--release")
+  args.some(
+    (arg, i) =>
+      i !== input &&
+      i !== input + 1 &&
+      i !== formatIndex &&
+      !(formatIndex >= 0 && i === formatIndex + 1) &&
+      arg !== "--release",
+  )
 )
   throw Error(
     "Use --organization /absolute/public-organization.json [--release]",
@@ -34,6 +43,22 @@ if (
 )
   throw Error("Build on native macOS arm64 or Windows amd64/arm64");
 const release = args.includes("--release");
+const format =
+  formatIndex >= 0 ? args[formatIndex + 1] : windows ? "nsis_exe" : "macos_pkg";
+if (
+  !(
+    windows ? ["nsis_exe", "windows_msi", "windows_msix"] : ["macos_pkg"]
+  ).includes(format)
+)
+  throw Error("Unsupported native installer format");
+if (
+  format === "windows_msix" &&
+  (!process.env.RSS_WINDOWS_PUBLISHER ||
+    !process.env.RSS_WINDOWS_SIGNING_THUMBPRINT)
+)
+  throw Error(
+    "MSIX requires a matching Publisher and signing certificate, including development builds",
+  );
 const organization = JSON.parse(readFileSync(resolve(args[input + 1]), "utf8"));
 const allowed = ["origin", "tenant", "label", "signing_keys", "ca_pem"];
 if (Object.keys(organization).some((key) => !allowed.includes(key)))
@@ -103,7 +128,7 @@ mkdirSync(output, { recursive: true });
 const suffix = windows ? ".exe" : "";
 const sign = (file) => {
   if (windows) {
-    if (release)
+    if (release || format === "windows_msix")
       run(process.env.RSS_SIGNTOOL ?? "signtool.exe", [
         "sign",
         "/sha1",
@@ -272,10 +297,11 @@ const publication = {
   signingKeys: organization.signing_keys,
   packaging: windows
     ? {
-        kind: "nsis_exe",
-        publisher: release
-          ? `certificate-sha1:${process.env.RSS_WINDOWS_SIGNING_THUMBPRINT}`
-          : "development-unsigned",
+        kind: format,
+        publisher:
+          release || format === "windows_msix"
+            ? `certificate-sha1:${process.env.RSS_WINDOWS_SIGNING_THUMBPRINT}`
+            : "development-unsigned",
         signature_evidence: release ? evidence : `development-only:${evidence}`,
       }
     : {
@@ -315,7 +341,69 @@ const candidate = {
 const candidateBytes = JSON.stringify(candidate, null, 2) + "\n";
 writeFileSync(join(payload, "candidate.json"), candidateBytes);
 let packagePath;
-if (windows) {
+if (windows && format === "windows_msi") {
+  const files = [];
+  function walk(relative = "") {
+    for (const entry of readdirSync(join(payload, relative), {
+      withFileTypes: true,
+    })) {
+      const path = relative ? `${relative}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) walk(path);
+      else if (entry.isFile()) files.push(path);
+      else throw Error("Installer payload cannot contain links");
+    }
+  }
+  walk();
+  const source = join(output, "installer.wxs");
+  writeFileSync(source, msiSource({ version, target, id, payload, files }));
+  packagePath = join(output, `rss-mdm-agent-${version}-${target}.msi`);
+  run(process.env.RSS_WIX ?? "wix.exe", [
+    "build",
+    "-arch",
+    process.arch,
+    "-o",
+    packagePath,
+    source,
+  ]);
+  sign(packagePath);
+} else if (windows && format === "windows_msix") {
+  writeFileSync(
+    join(payload, "AppxManifest.xml"),
+    msixManifest({
+      version,
+      architecture: process.arch,
+      publisher: process.env.RSS_WINDOWS_PUBLISHER,
+    }),
+  );
+  mkdirSync(join(payload, "Assets"));
+  pnpm([
+    "--filter",
+    "@rss-mdm-agent/desktop",
+    "exec",
+    "tauri",
+    "icon",
+    join(root, "apps/desktop/src-tauri/icons/icon.svg"),
+    "--output",
+    join(output, "icons"),
+  ]);
+  for (const [source, dest] of [
+    ["StoreLogo.png", "StoreLogo.png"],
+    ["Square150x150Logo.png", "Logo.png"],
+    ["Square44x44Logo.png", "SmallLogo.png"],
+  ]) {
+    cpSync(join(output, "icons", source), join(payload, "Assets", dest));
+  }
+  packagePath = join(output, `rss-mdm-agent-${version}-${target}.msix`);
+  run(process.env.RSS_MAKEAPPX ?? "makeappx.exe", [
+    "pack",
+    "/d",
+    payload,
+    "/p",
+    packagePath,
+    "/o",
+  ]);
+  sign(packagePath);
+} else if (windows) {
   packagePath = join(output, `rss-mdm-agent-${version}-${target}.exe`);
   const template = readFileSync(
     join(root, "scripts/installers/windows.nsi"),

@@ -138,6 +138,9 @@ export type SoftwareDetectionFailure =
  */
 export type BackendTaskSummary =
   | {
+      kind: "enrollment";
+    }
+  | {
       kind: "collection";
     }
   | {
@@ -215,6 +218,17 @@ export type SelfServiceSubject =
  */
 export type SelfServiceTask =
   | {
+      /**
+       * Fixed OS enrollment entry.
+       */
+      entry: EnrollmentEntry;
+      kind: "enrollment";
+      /**
+       * Organization selected by Policy.
+       */
+      organization: string;
+    }
+  | {
       kind: "script";
       /**
        * Full resolved parameter constraints owned by Resource.
@@ -249,6 +263,27 @@ export type SelfServiceTask =
        * Exact effect target, distinct from enterprise login.
        */
       target: SoftwareExecutionTarget;
+    };
+/**
+ * Platform-owned enrollment entry; opening it never proves enrollment completed.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "EnrollmentEntry".
+ */
+export type EnrollmentEntry =
+  | {
+      kind: "windows";
+      /**
+       * Organization's discovery server.
+       */
+      server: string;
+    }
+  | {
+      kind: "macos";
+      /**
+       * Organization's managed enrollment entry.
+       */
+      url: string;
     };
 /**
  * Public source of one Resource-declared parameter.
@@ -841,6 +876,13 @@ export type PolicyStatus =
  */
 export type SelfServiceResult =
   | {
+      kind: "enrollment";
+      /**
+       * Observed entry outcome.
+       */
+      outcome: EnrollmentEntryOutcome;
+    }
+  | {
       /**
        * Original bounded script evidence.
        */
@@ -854,6 +896,19 @@ export type SelfServiceResult =
       effect: SelfServiceSoftwareEffect;
       kind: "software";
     };
+/**
+ * Outcome of asking the OS to open its enrollment UI; never a claim of active MDM authority.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "EnrollmentEntryOutcome".
+ */
+export type EnrollmentEntryOutcome =
+  | "opened"
+  | "user_required"
+  | "third_party_conflict"
+  | "unsupported"
+  | "failed"
+  | "unknown";
 /**
  * Closed executor failure classification.
  *

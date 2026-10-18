@@ -1,5 +1,5 @@
 //! Registration runs on one communication owner before the execution owner is assembled.
-use crate::{deployment::Deployment, DeviceSecrets, SystemClock};
+use crate::{deployment::Deployment, SystemClock};
 use agent_client::{Client, EnrollmentPhase, EnrollmentStatus, Error};
 use execution_ipc::host::{
     CredentialStatus, Handler, Peer, PeerPolicy, Readiness, RegistrationPhase, RegistrationStatus,
@@ -153,11 +153,7 @@ fn drive(
         .state_root
         .join("communication/communication.sqlite")
         .exists();
-    let client: Option<Client<DeviceSecrets, SystemClock>> = if exists {
-        Some(deployment.communication(false)?)
-    } else {
-        None
-    };
+    let client = Some(deployment.communication(!exists)?);
     run(
         client,
         deployment.capabilities(),
@@ -232,6 +228,10 @@ fn run<S: agent_client::IdentityProvider, C: agent_client::Clock, O>(
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 if let Some(value) = &mut client {
+                    let prepared = value.prepare_managed_enrollment(capabilities.clone());
+                    if let Err(error) = prepared {
+                        record_result(Err(error), value, &shared)?;
+                    }
                     if value.has_pending_enrollment()? {
                         let result = runtime.block_on(until_stopped(value.drive_pki(), &stopping));
                         record_result(result, value, &shared)?;

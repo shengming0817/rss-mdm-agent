@@ -169,6 +169,25 @@ pub(super) fn register(system: bool, binary: &Path, config: &Path) -> Result<(),
     if deployment.service.path != binary {
         return Err(Error::Identity);
     }
+    register_verified(binary, config)
+}
+/// Compensation only: the retained executable validates its own persistent format.
+pub(super) fn restore_registration(binary: &Path, config: &Path) -> Result<(), Error> {
+    let deployment = Deployment::load_persistent(config)?;
+    if deployment.service.path != binary {
+        return Err(Error::Identity);
+    }
+    super::command(
+        binary,
+        &[
+            "--config".into(),
+            config.into(),
+            "--validate-persistent".into(),
+        ],
+    )?;
+    register_verified(binary, config)
+}
+fn register_verified(binary: &Path, config: &Path) -> Result<(), Error> {
     let handle = if let Some(handle) = service(NAME)? {
         owned(&handle, binary, config)?;
         handle
@@ -503,6 +522,13 @@ pub(super) fn preflight_desktop_entry(candidate: &Candidate) -> Result<(), Error
         core::{Interface, PCWSTR},
         Win32::System::Com::{IPersistFile, STGM_READ},
     };
+    if candidate.format()? == "windows_msix" {
+        return if super::msix::root()? == candidate.root {
+            Ok(())
+        } else {
+            Err(Error::Identity)
+        };
+    }
     if candidate.root.parent() != Some(payload_parent()?.as_path()) {
         return Err(Error::Identity);
     }
@@ -529,12 +555,12 @@ pub(super) fn preflight_desktop_entry(candidate: &Candidate) -> Result<(), Error
     Ok(())
 }
 pub(super) fn desktop_entry(candidate: &Candidate) -> Result<(), Error> {
-    use ::windows::{
-        core::{Interface, PCWSTR},
-        Win32::System::Com::IPersistFile,
-    };
     use windows_sys::Win32::System::Registry::*;
     preflight_desktop_entry(candidate)?;
+    if matches!(candidate.format()?.as_str(), "windows_msix" | "windows_msi") {
+        // The package manager owns its shortcut lifecycle, including uninstall and rollback.
+        return Ok(());
+    }
     let mut key = null_mut();
     if unsafe {
         RegCreateKeyExW(
@@ -582,21 +608,28 @@ pub(super) fn desktop_entry(candidate: &Candidate) -> Result<(), Error> {
                 return Err(Error::Unavailable);
             }
         }
-        let path = shortcut()?;
-        public_directory(path.parent().ok_or(Error::Configuration)?)?;
-        let staged = path.with_extension(format!("pending-{}", uuid::Uuid::new_v4()));
-        let link = shell_link()?;
-        unsafe { link.SetPath(PCWSTR(wide(&candidate.desktop.path).as_ptr())) }
-            .map_err(|_| Error::Unavailable)?;
-        let persist: IPersistFile = link.cast().map_err(|_| Error::Unavailable)?;
-        unsafe { persist.Save(PCWSTR(wide(&staged).as_ptr()), true) }
-            .map_err(|_| Error::Unavailable)?;
-        replace(&staged, &path)
+        desktop_shortcut(candidate)
     })();
     unsafe {
         RegCloseKey(key);
     }
     result
+}
+fn desktop_shortcut(candidate: &Candidate) -> Result<(), Error> {
+    use ::windows::{
+        core::{Interface, PCWSTR},
+        Win32::System::Com::IPersistFile,
+    };
+    let path = shortcut()?;
+    public_directory(path.parent().ok_or(Error::Configuration)?)?;
+    let staged = path.with_extension(format!("pending-{}", uuid::Uuid::new_v4()));
+    let link = shell_link()?;
+    unsafe { link.SetPath(PCWSTR(wide(&candidate.desktop.path).as_ptr())) }
+        .map_err(|_| Error::Unavailable)?;
+    let persist: IPersistFile = link.cast().map_err(|_| Error::Unavailable)?;
+    unsafe { persist.Save(PCWSTR(wide(&staged).as_ptr()), true) }
+        .map_err(|_| Error::Unavailable)?;
+    replace(&staged, &path)
 }
 pub(super) fn quiescent(old: &Deployment, config: &Path) -> Result<(), Error> {
     let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };

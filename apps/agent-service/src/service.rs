@@ -210,6 +210,11 @@ impl<S: IdentityProvider> DeviceService<S> {
                 selected: None,
                 stopping: false,
                 recovery_cursor: None,
+                mdm: execution_ipc::host::MdmStatus {
+                    state: wire::MdmEnrollmentState::Unknown,
+                    observed_at: None,
+                },
+                mdm_reported: None,
                 contexts: Default::default(),
                 fences: Default::default(),
                 credential_leases: Default::default(),
@@ -457,6 +462,46 @@ impl<S: IdentityProvider> DeviceService<S> {
             }
         }
         self.recovering = false;
+        let now = i64::try_from(crate::wall()? / 1000).map_err(|_| Error::Clock)?;
+        if self
+            .core
+            .mdm
+            .observed_at
+            .is_none_or(|at| now.saturating_sub(at) >= 30)
+        {
+            let expected = self.client.native_enrollment_origin()?;
+            let observed = network(
+                async { Ok(crate::mdm_state::observe(expected.as_deref()).await) },
+                &mut self.core,
+                commands,
+            )
+            .await?;
+            self.core.mdm = execution_ipc::host::MdmStatus {
+                state: observed,
+                observed_at: Some(now),
+            };
+        }
+        if let Some(observed_at) = self.core.mdm.observed_at {
+            if self.core.mdm_reported != Some(self.core.mdm.state)
+                && self
+                    .client
+                    .registration()?
+                    .collections
+                    .iter()
+                    .any(|c| c.dataset() == "channel.mdm.enrollment")
+            {
+                let body = serde_json::from_value(serde_json::json!({"kind":"snapshot","values":[{"field":"channel.mdm.enrollment","value":{"kind":"value","value":{"kind":"string","value":self.core.mdm.state.as_str()}}}]})).map_err(|_| Error::Protocol)?;
+                match self
+                    .client
+                    .queue_report("channel.mdm.enrollment", body, observed_at)
+                {
+                    Ok(_) => self.core.mdm_reported = Some(self.core.mdm.state),
+                    // Retain the latest observation, but never make production capacity block ACK consumption.
+                    Err(Error::Capacity) => {}
+                    Err(error) => return Err(error),
+                }
+            }
+        }
         let reports = 16.min(self.client.configuration().limits.pending_reports);
         network(self.client.flush_reports(reports), &mut self.core, commands).await?;
         let mut context = self.client.execution_context()?;
@@ -765,6 +810,8 @@ pub(crate) struct Core {
     pub(crate) selected: Option<Selection>,
     pub(crate) stopping: bool,
     pub(crate) recovery_cursor: Option<RequestId>,
+    pub(crate) mdm: execution_ipc::host::MdmStatus,
+    mdm_reported: Option<wire::MdmEnrollmentState>,
     contexts: policy::Contexts,
     fences: Arc<policy::Fences>,
     credential_leases: std::collections::BTreeMap<RequestId, Arc<zeroize::Zeroizing<String>>>,
@@ -1126,6 +1173,9 @@ impl Core {
                     | Request::ConfirmPolicy { .. }
                     | Request::PolicyStatus { .. },
                 ) => Err(Error::Denied),
+                Some(Request::MdmStatus {}) => Ok(Reply::MdmStatus {
+                    value: self.mdm.clone(),
+                }),
                 Some(Request::DeviceOverview {}) => Ok(crate::device_overview::read(
                     &command.subject,
                     command.session,
@@ -1735,7 +1785,9 @@ pub(crate) fn assemble_journal<H: execution_app::AppHost, R: execution_app::Runn
 mod product_gate_tests;
 
 fn is_policy_offer(offer: &Offer) -> bool {
-    matches!(offer.payload(), wire::TaskPayload::Script(p)
+    matches!(offer.payload(), wire::TaskPayload::Enrollment(p)
+        if matches!(p.authorization, wire::TaskAuthorization::SelfService { .. }))
+        || matches!(offer.payload(), wire::TaskPayload::Script(p)
         if matches!(p.authorization, wire::TaskAuthorization::SelfService { .. }))
         || matches!(offer.payload(), wire::TaskPayload::Software(p)
             if matches!(p.authorization, wire::TaskAuthorization::SelfService { .. }))

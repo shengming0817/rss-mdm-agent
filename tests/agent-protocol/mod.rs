@@ -77,6 +77,20 @@ impl Secrets {
     }
 }
 impl IdentityProvider for Secrets {
+    fn native_identities(&self) -> Result<Vec<agent_client::NativeIdentity>, Error> {
+        let values = self.0.lock().unwrap();
+        let Some(installation) = values.get("managed-installation") else {
+            return Ok(vec![]);
+        };
+        let installation = Uuid::parse_str(installation).map_err(|_| Error::Identity)?;
+        let attempt = Uuid::parse_str(values.get("managed-attempt").ok_or(Error::Identity)?)
+            .map_err(|_| Error::Identity)?;
+        Ok(vec![agent_client::NativeIdentity {
+            chain: pki::bootstrap_chain(installation, attempt),
+            key: pki::renewal_key(),
+        }])
+    }
+
     fn resolve(&self, id: &str) -> Result<Secret, Error> {
         Secret::parse(self.0.lock().unwrap().get(id).ok_or(Error::Identity)?)
             .map_err(|_| Error::Identity)
@@ -240,6 +254,10 @@ pub struct Data {
     pub signer: Ed25519KeyPair,
     pub offer: Option<SignedTask>,
     pub time: Time,
+    pub native_inputs: Vec<Value>,
+    pub native_receipt: Option<enroll::NativeEnrollmentReceipt>,
+    pub native_failure: bool,
+    pub managed_installation: Option<Uuid>,
     pub registration_failure: bool,
     pub certificate_failure: bool,
     pub activation_failure: bool,
@@ -260,6 +278,7 @@ pub struct Data {
     pub received: bool,
     pub content_calls: Vec<Option<String>>,
     pub reports: BTreeMap<String, Value>,
+    pub collections: Option<Vec<CollectionDefinition>>,
     pub results: BTreeMap<String, Value>,
     pub start_ops: Vec<String>,
     pub forged_start: bool,
@@ -293,6 +312,36 @@ impl Data {
             payload,
             key_id: "test".into(),
         }
+    }
+    pub fn native_enrollment(&mut self) {
+        self.reset_current_task();
+        self.offer = Some(
+            self.signed(
+                EnrollmentTaskSpec {
+                    wire_version: 1,
+                    tenant_id: self.tenant,
+                    device_id: "device-1".into(),
+                    platform: TaskPlatform::Macos,
+                    architecture: TaskArchitecture::Aarch64,
+                    registration_id: self.registration,
+                    generation: 1,
+                    task_id: self.task,
+                    attempt_id: self.attempt,
+                    permit: TaskPermit::Offer,
+                    expires_at: self.time.now().unwrap() + 60,
+                    organization: self.tenant,
+                    authorization: TaskAuthorization::Policy {
+                        policy_id: self.task,
+                        policy_version: self.task,
+                    },
+                    entry: EnrollmentEntry::Macos {
+                        url: "https://enroll.example.test/".into(),
+                    },
+                }
+                .try_into()
+                .unwrap(),
+            ),
+        );
     }
     pub fn native_collection(&mut self) {
         self.reset_current_task();
@@ -649,6 +698,10 @@ impl Server {
             signer,
             offer: None,
             time: time.clone(),
+            native_inputs: vec![],
+            native_receipt: None,
+            native_failure: false,
+            managed_installation: None,
             registration_failure: false,
             certificate_failure: false,
             activation_failure: false,
@@ -669,6 +722,7 @@ impl Server {
             received: false,
             content_calls: vec![],
             reports: BTreeMap::new(),
+            collections: None,
             results: BTreeMap::new(),
             start_ops: vec![],
             forged_start: false,
@@ -815,6 +869,7 @@ impl Server {
         };
         data.packages = vec![w::Package {
             release_id: Uuid::new_v4(),
+            format: w::InstallerFormat::MacosPkg,
             tenant_id: cfg.tenant,
             channel: w::Channel::Test,
             target: w::Target {
@@ -893,6 +948,39 @@ impl Server {
         client.registration().unwrap()
     }
 }
+fn native_enrollment_response(d: &mut Data, value: Value) -> Response {
+    if !d.started {
+        return runtime_error(StatusCode::FORBIDDEN, ErrorCode::PermissionDenied);
+    }
+    let request: enroll::NativeEnrollmentRequest = serde_json::from_value(value.clone()).unwrap();
+    if request.attempt_id != d.attempt || d.native_inputs.first().is_some_and(|old| old != &value) {
+        return runtime_error(StatusCode::CONFLICT, ErrorCode::OperationConflict);
+    }
+    d.native_inputs.push(value);
+    if d.native_receipt.is_none() {
+        let TaskPayload::Enrollment(task) = &d.offer.as_ref().unwrap().payload else {
+            panic!("enrollment task");
+        };
+        let id = Uuid::new_v4();
+        d.native_receipt = Some(enroll::NativeEnrollmentReceipt {
+            enrollment_id: id,
+            expires_at: d.time.now().unwrap() + 300,
+            entry: task.entry.clone(),
+            username: None,
+            profile_url: Some(format!(
+                "https://enroll.example.test/api/v1/enrollments/{id}/profile"
+            )),
+        });
+    }
+    if std::mem::take(&mut d.native_failure) {
+        return runtime_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            ErrorCode::ServiceUnavailable,
+        );
+    }
+    axum::Json(d.native_receipt.clone().unwrap()).into_response()
+}
+
 async fn handler(
     State(data): State<Arc<Mutex<Data>>>,
     uri: Uri,
@@ -910,6 +998,7 @@ async fn handler(
     let authenticated = peer_leaf.is_some();
     if d.tls_required
         && (path.ends_with("/activate")
+            || path.ends_with("/native-grants")
             || path.ends_with("/renewal-grants")
             || path.ends_with("/trust/acknowledgements")
             || path.starts_with("/api/v1/agent/runtime/"))
@@ -941,7 +1030,9 @@ async fn handler(
     if d.activation.is_none() {
         return runtime_error(StatusCode::UNAUTHORIZED, ErrorCode::InvalidIdentity);
     }
-    let response = if path.ends_with("/reports") {
+    let response = if path.ends_with("/enrollment") {
+        native_enrollment_response(&mut d, value)
+    } else if path.ends_with("/reports") {
         report_response(&mut d, value)
     } else if path.ends_with("/claim") {
         claim_response(&mut d, value)
@@ -1112,6 +1203,37 @@ fn enrollment_response(d: &mut Data, action: &str, value: Value, peer: Option<&[
             }
             axum::Json(d.grant.clone().unwrap()).into_response()
         }
+        "native-grants" => {
+            let request: enroll::NativeGrantRequest =
+                serde_json::from_value(value.clone()).unwrap();
+            let coordinates = peer.and_then(|der| agent_client::bootstrap_coordinates(der).ok());
+            if coordinates.map(|c| c.0) != d.managed_installation
+                || coordinates.map(|c| c.0) != Some(request.installation_operation)
+            {
+                return (
+                    StatusCode::FORBIDDEN,
+                    axum::Json(enroll::ErrorBody {
+                        code: enroll::ErrorCode::PermissionDenied,
+                        issuance_id: None,
+                    }),
+                )
+                    .into_response();
+            }
+            d.native_inputs.push(value);
+            enrollment_response(
+                d,
+                "requests",
+                serde_json::to_value(enroll::GrantRequest {
+                    wire_version: 1,
+                    operation_id: request.operation_id,
+                    secret: request.secret,
+                    platform: request.runtime.platform,
+                    csr: request.csr,
+                })
+                .unwrap(),
+                None,
+            )
+        }
         "requests" | "renewal-grants" => {
             let request: enroll::GrantRequest = serde_json::from_value(value).unwrap();
             if action == "renewal-grants" && d.operation != Some(request.operation_id) {
@@ -1257,7 +1379,7 @@ fn activation_response(d: &mut Data, value: Value, peer: Option<&[u8]>) -> Respo
     }
     let request: enroll::ActivationRequest = serde_json::from_value(value).unwrap();
     assert_eq!(request.issuance_id, d.issuance);
-    let profile: BindingProfile = d.binding.clone().unwrap_or_else(|| serde_json::from_value(json!({"wireVersion":1,"operationId":d.operation,"deviceId":"device-1","registrationId":d.registration,"generation":1,"source":"agent.builtin","epoch":d.epoch,"capabilities":d.profile.as_ref().unwrap().capabilities,"collections":collections()})).unwrap());
+    let profile: BindingProfile = d.binding.clone().unwrap_or_else(|| serde_json::from_value(json!({"wireVersion":1,"operationId":d.operation,"deviceId":"device-1","registrationId":d.registration,"generation":1,"source":"agent.builtin","epoch":d.epoch,"capabilities":d.profile.as_ref().unwrap().capabilities,"collections":d.collections.clone().unwrap_or_else(collections)})).unwrap());
     d.binding = Some(profile.clone());
     let receipt = enroll::ActivationReceipt {
         wire_version: 1,
@@ -1398,6 +1520,7 @@ fn start_event(d: &mut Data, operation: String) -> Response {
         let mut payload = d.offer.as_ref().unwrap().payload.clone();
         let expiry = d.time.now().unwrap() + d.start_validity_seconds;
         match &mut payload {
+            TaskPayload::Credential(_) => return StatusCode::NOT_IMPLEMENTED.into_response(),
             TaskPayload::Collection(v) => {
                 v.permit = TaskPermit::Start;
                 v.expires_at = expiry;
@@ -1410,7 +1533,10 @@ fn start_event(d: &mut Data, operation: String) -> Response {
                 v.permit = TaskPermit::Start;
                 v.expires_at = expiry;
             }
-            _ => unreachable!(),
+            TaskPayload::Enrollment(v) => {
+                v.permit = TaskPermit::Start;
+                v.expires_at = expiry;
+            }
         }
         d.start_permit = Some(d.signed(payload));
     }

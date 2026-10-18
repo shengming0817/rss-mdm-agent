@@ -1,7 +1,11 @@
 <script setup lang="ts">
 import type { BackendRequest } from "./types";
 import PolicyExecutionContext from "./PolicyExecutionContext.vue";
-const props = defineProps<{ record: BackendRequest; disabled?: boolean }>();
+const props = defineProps<{
+  record: BackendRequest;
+  disabled?: boolean;
+  confirmDisabled?: boolean;
+}>();
 const emit = defineEmits<{
   confirm: [request: string];
   cancel: [request: string];
@@ -44,10 +48,13 @@ function resolved() {
           {{ record.action.choice.policyVersion }}
         </dd>
         <dt>资源版本</dt>
-        <dd>
+        <dd v-if="record.action.directory.task.kind !== 'enrollment'">
           {{ record.action.directory.task.resource.id }} /
           {{ record.action.directory.task.resource.version }} /
           {{ record.action.directory.task.resource.variant }}
+        </dd>
+        <dd v-else>
+          原生 MDM 注册 · {{ record.action.directory.task.organization }}
         </dd>
         <dt>准入主体</dt>
         <dd>
@@ -99,7 +106,7 @@ function resolved() {
       </p>
       <button
         v-if="record.state === 'awaitingConfirmation'"
-        :disabled="disabled"
+        :disabled="disabled || confirmDisabled"
         @click="emit('confirm', request())"
       >
         确认上述操作

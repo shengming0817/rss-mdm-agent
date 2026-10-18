@@ -58,7 +58,6 @@ impl Deployment {
     fn decode_metadata(bytes: &[u8]) -> Result<Self, Error> {
         let value: Self = serde_json::from_slice(bytes).map_err(|_| Error::Configuration)?;
         if value.version != execution_ipc::host::DEPLOYMENT_VERSION
-            || value.ipc_version != execution_ipc::host::IPC_VERSION
             || value.installation_id.is_nil()
             || !crate::installation::digest_valid(&value.installation_artifact)
             || !value.state_root.is_absolute()
@@ -76,6 +75,9 @@ impl Deployment {
     }
     pub fn load(path: &Path) -> Result<Self, Error> {
         let value = Self::metadata(path)?;
+        if value.ipc_version != execution_ipc::host::IPC_VERSION {
+            return Err(Error::Configuration);
+        }
         value
             .registration_clients
             .validate()
@@ -412,7 +414,11 @@ impl Deployment {
     pub(crate) fn capabilities(&self) -> Vec<wire::Capability> {
         use crate::SoftwareManagerKind as M;
         use wire::Capability as C;
-        let mut values = vec![C::InventoryCollectionV1, C::TaskExecuteV1];
+        let mut values = vec![
+            C::InventoryCollectionV1,
+            C::TaskExecuteV1,
+            C::MdmEnrollmentV1,
+        ];
         let has = |profile| {
             self.execution
                 .interpreters

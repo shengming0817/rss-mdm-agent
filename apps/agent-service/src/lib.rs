@@ -6,8 +6,10 @@ mod collection_environment;
 pub mod collection_worker;
 pub mod deployment;
 mod device_overview;
+pub mod enrollment_worker;
 mod error;
 mod material_gc;
+mod mdm_state;
 mod recovery;
 mod registration;
 mod service;
@@ -62,6 +64,9 @@ impl DeviceSecrets {
     }
 }
 impl IdentityProvider for DeviceSecrets {
+    fn native_identities(&self) -> Result<Vec<agent_client::NativeIdentity>, Error> {
+        self.0.native_identities()
+    }
     fn import_secret(
         &self,
         reference: &str,

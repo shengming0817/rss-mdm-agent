@@ -288,6 +288,31 @@ impl SecretStore {
             }))
         }
     }
+    pub(crate) fn native_identities(
+        &self,
+    ) -> Result<Vec<agent_client::NativeIdentity>, agent_client::Error> {
+        let accept = |der: &[u8]| agent_client::bootstrap_coordinates(der).is_ok();
+        #[cfg(target_os = "macos")]
+        let identities = self.keychain.identities_matching(accept)?;
+        #[cfg(windows)]
+        let identities = platform_credentials::DeviceKey::identities_matching(accept)?;
+        #[cfg(not(any(windows, target_os = "macos")))]
+        return Ok(Vec::new());
+        #[cfg(any(windows, target_os = "macos"))]
+        identities
+            .into_iter()
+            .map(|(chain, key)| {
+                let public = key.public_spki()?;
+                Ok(agent_client::NativeIdentity {
+                    chain,
+                    key: std::sync::Arc::new(NativeSigningKey {
+                        key: std::sync::Arc::new(std::sync::Mutex::new(key)),
+                        public,
+                    }),
+                })
+            })
+            .collect()
+    }
     /// Import an enrollment secret once. Conflicting existing values never get overwritten.
     pub fn import(&self, reference: &str, secret: &[u8]) -> io::Result<()> {
         let _guard = self.access.lock().map_err(|_| denied())?;

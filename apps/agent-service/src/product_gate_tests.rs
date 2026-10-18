@@ -38,7 +38,24 @@ impl Case {
         Self::with_offer_mode(level, seconds, true).await
     }
     async fn with_offer_mode(level: Option<RiskLevel>, seconds: i64, user: bool) -> Self {
+        Self::with_report_collection(level, seconds, user, false).await
+    }
+    async fn with_report_collection(
+        level: Option<RiskLevel>,
+        seconds: i64,
+        user: bool,
+        mdm: bool,
+    ) -> Self {
         let server = protocol::Server::new().await;
+        if mdm {
+            let mut collections = protocol::collections();
+            let mut definition = serde_json::to_value(&collections[0]).unwrap();
+            definition["dataset"] = serde_json::json!("channel.mdm.enrollment");
+            definition["fields"] = serde_json::json!([definition["fields"][0].clone()]);
+            definition["fields"][0]["key"] = serde_json::json!("channel.mdm.enrollment");
+            collections.push(serde_json::from_value(definition).unwrap());
+            server.data.lock().unwrap().collections = Some(collections);
+        }
         let root = protocol::Root::new();
         let clock = SystemClock::new().unwrap();
         server.time.set(clock.now().unwrap());
@@ -3653,4 +3670,93 @@ async fn operation_draft_rejects_secret_and_unresolved_schemas_before_persistenc
             .is_none());
         assert!(c._server.data.lock().unwrap().invocations.is_empty());
     }
+}
+
+#[tokio::test]
+async fn full_report_queue_after_restart_drains_before_retrying_native_observation() {
+    let _budget = crate::scenario_budget::enter();
+    let mut case = Case::with_report_collection(None, 600, true, true).await;
+    let (_sender, mut commands) = tokio::sync::mpsc::channel(1);
+    case.service.release_waiting();
+    case.service
+        .abandon(case.offer.task_id(), &mut commands)
+        .await
+        .unwrap();
+    let limit = case.service.client.configuration().limits.pending_reports;
+    for _ in 0..limit {
+        case.service
+            .client
+            .queue_report(
+                "inventory",
+                wire::ReportBody::Failed {
+                    code: wire::FailureCode::CollectionFailed,
+                },
+                1,
+            )
+            .unwrap();
+    }
+    case._server.data.lock().unwrap().report_failure = true;
+    assert_eq!(
+        case.service.client.flush_reports(1).await,
+        Err(Error::Unavailable)
+    );
+    let config = case.service.core.config.clone();
+    let helpers = case.service.core.helpers.clone();
+    drop(case.service);
+    case._server.data.lock().unwrap().offer = None;
+    let clock = SystemClock::new().unwrap();
+    let client = Client::open(
+        &case._root.path,
+        case._server.config(),
+        OpenMode::Existing,
+        case._server.secrets.clone(),
+        clock.clone(),
+    )
+    .unwrap();
+    let mut service = DeviceService::assemble(
+        client,
+        &case._root.path.join("execution.sqlite"),
+        ProductionStartup::Open,
+        config,
+        clock,
+        helpers,
+        execution_runner::staging::MaterialRoot::open_fixture,
+    )
+    .unwrap();
+    assert!(service.core.mdm.observed_at.is_none());
+    for _ in 0..limit.div_ceil(16) + 1 {
+        service.next_network = std::time::Instant::now();
+        service.drive(&mut commands).await.unwrap();
+    }
+    let next_task = {
+        let mut data = case._server.data.lock().unwrap();
+        data.task = uuid::Uuid::new_v4();
+        data.attempt = uuid::Uuid::new_v4();
+        data.software(1, true);
+        data.task
+    };
+    service.next_network = std::time::Instant::now();
+    service.drive(&mut commands).await.unwrap();
+    assert_eq!(
+        service.waiting.as_ref().unwrap().0.task_id(),
+        next_task,
+        "report capacity must not starve task claims"
+    );
+    assert_eq!(
+        service.client.flush_reports(1).await.unwrap(),
+        0,
+        "the owner must already have ACKed the backlog"
+    );
+    let data = case._server.data.lock().unwrap();
+    assert_eq!(data.reports.len(), limit + 1);
+    let latest = data
+        .reports
+        .values()
+        .find(|r| r["collection"]["dataset"] == "channel.mdm.enrollment")
+        .unwrap();
+    assert_eq!(
+        latest["body"]["values"][0]["value"]["value"]["value"],
+        service.core.mdm.state.as_str()
+    );
+    assert_eq!(service.core.mdm_reported, Some(service.core.mdm.state));
 }

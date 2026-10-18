@@ -127,7 +127,8 @@ pub fn policy_tool(
             parameter_sources,
             ..
         } => (parameter_schema.clone(), parameter_sources.clone()),
-        rss_mdm_agent_wire::runtime::SelfServiceTask::Software { .. } => (
+        rss_mdm_agent_wire::runtime::SelfServiceTask::Software { .. }
+        | rss_mdm_agent_wire::runtime::SelfServiceTask::Enrollment { .. } => (
             serde_json::json!({"type":"object","properties":{},"required":[],"additionalProperties":false}),
             std::collections::BTreeMap::new(),
         ),

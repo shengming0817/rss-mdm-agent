@@ -110,3 +110,17 @@ export interface RegistrationStatus {
    */
   registered: boolean;
 }
+
+/**
+ * Read-only native state, independent from Agent identity and policy authorization.
+ */
+export interface MdmStatus {
+  /**
+   * UTC observation time, absent before the first successful owner drive.
+   */
+  observedAt?: number | null;
+  /**
+   * Local OS observation; Unknown does not mean absent.
+   */
+  state: "unenrolled" | "this_organization" | "other_organization" | "unknown";
+}

@@ -40,6 +40,22 @@ pub(crate) fn client(
     identity: Option<(&String, &[String])>,
     provider: &impl IdentityProvider,
 ) -> Result<reqwest::Client, Error> {
+    let identity = identity
+        .map(|(reference, chain)| {
+            let key = Arc::new(CertifiedKey::new(
+                certificates(chain)?,
+                provider.key(reference)?,
+            ));
+            key.keys_match().map_err(|_| Error::Identity)?;
+            Ok::<_, Error>(key)
+        })
+        .transpose()?;
+    client_identity(cfg, identity)
+}
+pub(crate) fn client_identity(
+    cfg: &Config,
+    identity: Option<Arc<CertifiedKey>>,
+) -> Result<reqwest::Client, Error> {
     let mut builder = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .no_proxy()
@@ -63,14 +79,7 @@ pub(crate) fn client(
         .map_err(|_| Error::Configuration)?
         .with_root_certificates(roots);
     let config = match identity {
-        Some((reference, chain)) => {
-            let key = Arc::new(CertifiedKey::new(
-                certificates(chain)?,
-                provider.key(reference)?,
-            ));
-            key.keys_match().map_err(|_| Error::Identity)?;
-            config.with_client_cert_resolver(Arc::new(Resolver(key)))
-        }
+        Some(key) => config.with_client_cert_resolver(Arc::new(Resolver(key))),
         None => config.with_no_client_auth(),
     };
     // ref: reqwest v0.13.5 src/async_impl/client.rs (ClientConfig Any downcast).

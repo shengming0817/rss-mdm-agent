@@ -361,3 +361,77 @@ impl DeviceKey {
             .map_err(|_| denied())
     }
 }
+
+impl Keychain {
+    /// Read matching native identities without exporting or changing their private keys/ACLs.
+    pub fn identities_matching(
+        &self,
+        accept: impl Fn(&[u8]) -> bool,
+    ) -> io::Result<Vec<(Vec<Vec<u8>>, DeviceKey)>> {
+        use security_framework::{
+            item::{ItemClass, ItemSearchOptions, Limit, Reference, SearchResult},
+            policy::SecPolicy,
+            trust::SecTrust,
+        };
+        let _guard = Keychain::disable_interaction()?;
+        let results = match ItemSearchOptions::new()
+            .class(ItemClass::identity())
+            .keychains(std::slice::from_ref(&self.0))
+            .load_refs(true)
+            .limit(Limit::All)
+            .search()
+        {
+            Ok(results) => results,
+            Err(error) if error.code() == -25300 => return Ok(Vec::new()),
+            Err(error) => return Err(io::Error::other(error)),
+        };
+        let mut identities = Vec::new();
+        for result in results {
+            let SearchResult::Ref(Reference::Identity(identity)) = result else {
+                continue;
+            };
+            let certificate = identity.certificate().map_err(io::Error::other)?;
+            if !accept(&certificate.to_der()) {
+                continue;
+            }
+            let mut trust = SecTrust::create_with_certificates(
+                std::slice::from_ref(&certificate),
+                &[SecPolicy::create_x509()],
+            )
+            .map_err(io::Error::other)?;
+            trust
+                .set_network_fetch_allowed(false)
+                .map_err(io::Error::other)?;
+            // Assemble the OS-known chain; authority is checked by the authenticated server.
+            // A locally installed certificate is never itself authorization to register.
+            let _ = trust.evaluate_with_error();
+            // SAFETY: Copy returns an owned CFArray of SecCertificate objects.
+            let raw = unsafe {
+                security_framework_sys::trust::SecTrustCopyCertificateChain(
+                    trust.as_concrete_TypeRef(),
+                )
+            };
+            let chain = if raw.is_null() {
+                Vec::new()
+            } else {
+                let certificates = unsafe {
+                    CFArray::<security_framework::certificate::SecCertificate>::wrap_under_create_rule(raw)
+                };
+                certificates
+                    .iter()
+                    .map(|certificate| certificate.to_der())
+                    .collect::<Vec<_>>()
+            };
+            let key = identity.private_key().map_err(io::Error::other)?;
+            identities.push((
+                if chain.is_empty() {
+                    vec![certificate.to_der()]
+                } else {
+                    chain
+                },
+                DeviceKey(key),
+            ));
+        }
+        Ok(identities)
+    }
+}

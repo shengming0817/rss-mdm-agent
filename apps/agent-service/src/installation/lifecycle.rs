@@ -9,10 +9,22 @@ enum Action {
     Apply,
     Recover,
     Import,
+    #[cfg(windows)]
+    MsiSave,
+    #[cfg(windows)]
+    MsiRollback,
+    #[cfg(windows)]
+    MsiCommit,
 }
 impl Action {
     fn parse(value: &str) -> Result<Self, Error> {
         match value {
+            #[cfg(windows)]
+            "msi-save" => Ok(Self::MsiSave),
+            #[cfg(windows)]
+            "msi-rollback" => Ok(Self::MsiRollback),
+            #[cfg(windows)]
+            "msi-commit" => Ok(Self::MsiCommit),
             "install" => Ok(Self::Install),
             "remove" => Ok(Self::Remove),
             "uninstall" => Ok(Self::Uninstall),
@@ -132,6 +144,13 @@ pub(super) fn run(args: &[OsString]) -> Result<(), Error> {
     let _lock = installation_lock(&opts.config()?, opts.system()?)?;
     outcome::phase("locked-preflight")?;
     match action {
+        #[cfg(windows)]
+        Action::MsiSave | Action::MsiRollback | Action::MsiCommit => {
+            if !opts.system()? || opts.config()? != Deployment::default_path()? {
+                return Err(Error::Identity);
+            }
+            msi_transaction(action, &opts.config()?)?;
+        }
         Action::Install => {
             let binary = opts.path("--binary")?;
             let config = opts.config()?;
@@ -262,7 +281,7 @@ pub(super) fn run(args: &[OsString]) -> Result<(), Error> {
     );
     Ok(())
 }
-fn preserved(old: &Deployment, next: &Deployment) -> Result<(), Error> {
+pub(super) fn preserved(old: &Deployment, next: &Deployment) -> Result<(), Error> {
     if old.origin != next.origin
         || old.tenant != next.tenant
         || old.installation_id != next.installation_id
@@ -499,6 +518,16 @@ mod configuration_restart_tests {
     }
 }
 
+pub(super) fn initial_profile() -> Result<Profile, Error> {
+    if execution_ipc::host::active_user_session().is_err() {
+        // No interactive subject gains IPC access merely because a machine is being enrolled.
+        return Ok(Profile {
+            subjects: vec![],
+            helper_work_roots: BTreeMap::new(),
+        });
+    }
+    platform::interactive_profile()
+}
 fn apply(candidate_path: &Path, profile: Option<&PathBuf>, config: &Path) -> Result<(), Error> {
     outcome::phase("candidate-preflight")?;
     let (candidate, artifact) = Candidate::load(candidate_path)?;
@@ -517,7 +546,7 @@ fn apply(candidate_path: &Path, profile: Option<&PathBuf>, config: &Path) -> Res
                 subjects: d.clients.subjects.clone(),
                 helper_work_roots: d.helper_work_roots.clone(),
             },
-            None => platform::interactive_profile()?,
+            None => initial_profile()?,
         },
     };
     platform::preflight_desktop_entry(&candidate)?;
@@ -579,7 +608,7 @@ fn apply(candidate_path: &Path, profile: Option<&PathBuf>, config: &Path) -> Res
     Ok(())
 }
 
-fn installation_lock(config: &Path, system: bool) -> Result<std::fs::File, Error> {
+pub(super) fn installation_lock(config: &Path, system: bool) -> Result<std::fs::File, Error> {
     let root = config.parent().ok_or(Error::Configuration)?;
     if system {
         platform::public_directory(root)?;
@@ -694,4 +723,60 @@ mod tests {
             Options::parse(&["apply".into(), "--config".into(), "/a/../b".into()]).unwrap();
         assert!(opts.config().is_err());
     }
+}
+
+// MSI owns file rollback; the installation owner owns service/configuration compensation.
+#[cfg(windows)]
+fn msi_transaction(action: Action, config: &Path) -> Result<(), Error> {
+    let snapshot = config.with_extension("msi-rollback");
+    match action {
+        Action::MsiSave => {
+            let old = match std::fs::symlink_metadata(config) {
+                Ok(_) => Some(Deployment::metadata(config)?),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                Err(error) => return Err(error.into()),
+            };
+            write_new(&snapshot, &json(&old)?)?;
+        }
+        Action::MsiRollback => {
+            let bytes = match installation_security::read_protected(&snapshot) {
+                Ok(bytes) => bytes,
+                Err(_) if !snapshot.exists() => return Ok(()),
+                Err(_) => return Err(Error::Identity),
+            };
+            let old: Option<Deployment> =
+                serde_json::from_slice(&bytes).map_err(|_| Error::Configuration)?;
+            let current = match std::fs::symlink_metadata(config) {
+                Ok(_) => Some(Deployment::metadata(config)?),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                Err(error) => return Err(error.into()),
+            };
+            if let Some(old) = old {
+                old.service
+                    .verify(&old.service.path)
+                    .map_err(|_| Error::Identity)?;
+                validate_native_artifact(&old.service)?;
+                if let Some(current) = current {
+                    preserved(&old, &current)?;
+                    platform::quiescent(&current, config)?;
+                    platform::remove(true, &current.service.path, config)?;
+                }
+                publish(config, &json(&old)?)?;
+                platform::restore_registration(&old.service.path, config)?;
+            } else if let Some(current) = current {
+                platform::quiescent(&current, config)?;
+                platform::remove(true, &current.service.path, config)?;
+                // Preserve initialized identity/journal and metadata for the next explicit install.
+            }
+            std::fs::remove_file(snapshot)?;
+        }
+        Action::MsiCommit => {
+            if snapshot.exists() {
+                installation_security::protected(&snapshot).map_err(|_| Error::Identity)?;
+                std::fs::remove_file(snapshot)?;
+            }
+        }
+        _ => return Err(Error::Configuration),
+    }
+    Ok(())
 }

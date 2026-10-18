@@ -64,6 +64,11 @@ pub(crate) struct Active {
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum Purpose {
     Authorization,
+    Managed {
+        installation: uuid::Uuid,
+        bootstrap: uuid::Uuid,
+        fingerprint: [u8; 32],
+    },
     Configuration,
     Import,
     Renewal,

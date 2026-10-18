@@ -396,9 +396,6 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                 return Err(Error::Unsupported);
             }
         }
-        if matches!(p, wire::TaskPayload::Enrollment(_)) {
-            return Err(Error::Unsupported);
-        }
         Ok(())
     }
     /// Receive one offer and cancellation page. Transport failures retain the exact claim;
@@ -707,6 +704,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
     ) -> Result<Start, Error> {
         if matches!(offer.payload(),wire::TaskPayload::Software(v) if v.start_mode==wire::SoftwareStartMode::UserInitiated)
             || matches!(offer.payload(),wire::TaskPayload::Script(v) if matches!(v.authorization, wire::TaskAuthorization::SelfService { .. }))
+            || matches!(offer.payload(),wire::TaskPayload::Enrollment(v) if matches!(v.authorization, wire::TaskAuthorization::SelfService { .. }))
         {
             return Err(Error::Denied);
         }
@@ -807,6 +805,12 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
 }
 pub(crate) fn same_input(a: &wire::TaskPayload, b: &wire::TaskPayload) -> bool {
     match (a, b) {
+        (wire::TaskPayload::Enrollment(a), wire::TaskPayload::Enrollment(b)) => {
+            let mut b = b.clone();
+            b.permit = a.permit;
+            b.expires_at = a.expires_at;
+            &b == a
+        }
         (wire::TaskPayload::Collection(a), wire::TaskPayload::Collection(b)) => {
             let mut b = b.clone();
             b.permit = a.permit;

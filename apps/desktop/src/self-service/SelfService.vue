@@ -237,7 +237,8 @@ function failureLabel(value: string) {
         <p v-else>
           运行身份：{{
             resource.summary.kind === "collection" ||
-            resource.summary.identity === "system"
+            (resource.summary.kind === "script" &&
+              resource.summary.identity === "system")
               ? "系统账号"
               : "当前用户"
           }}
@@ -289,7 +290,8 @@ function failureLabel(value: string) {
           ·
           {{
             s.item.summary.kind === "collection" ||
-            s.item.summary.identity === "system"
+            (s.item.summary.kind === "script" &&
+              s.item.summary.identity === "system")
               ? "系统账号"
               : "当前用户"
           }}
@@ -337,7 +339,8 @@ function failureLabel(value: string) {
               ·
               {{
                 pending.action.offer.summary.kind === "collection" ||
-                pending.action.offer.summary.identity === "system"
+                (pending.action.offer.summary.kind === "script" &&
+                  pending.action.offer.summary.identity === "system")
                   ? "系统账号"
                   : "当前用户"
               }}

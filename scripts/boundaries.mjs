@@ -31,6 +31,7 @@ const assistantCommands = [
 const settingsCommands = [
   "execution_service_status",
   "agent_registration_status",
+  "mdm_registration_status",
   "agent_request_registration",
   "agent_import_registration",
   "agent_cancel_registration",
@@ -369,6 +370,11 @@ export function checkSource(file, source) {
         "Set",
       ],
       "apps/desktop/src/App.vue": ["setInterval", "clearInterval"],
+      "apps/desktop/src/settings/MdmRegistration.vue": [
+        "Promise",
+        "setInterval",
+        "clearInterval",
+      ],
       "apps/desktop/src/settings/LocalService.vue": [
         "setInterval",
         "clearInterval",

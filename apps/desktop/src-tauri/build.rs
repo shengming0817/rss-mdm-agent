@@ -111,6 +111,7 @@ fn main() {
             "select_test_user",
             "execution_service_status",
             "agent_registration_status",
+            "mdm_registration_status",
             "agent_request_registration",
             "agent_import_registration",
             "agent_cancel_registration",

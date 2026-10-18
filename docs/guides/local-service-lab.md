@@ -31,7 +31,7 @@
 
 安装成功与认证 readiness 分开核实，使用获准的普通用户运行已安装桌面的 `--service-probe`。共享注册文件仍由管理员负责保管和清理，安装器不删除它。
 
-初装从实际互动登录发现主体及 helper 路径；无人登录的静默初装必须提供管理员保护的 profile（`subjects` 与 `helper_work_roots`）。Windows EXE 接受 `/S /PROFILE=绝对路径`；macOS 可先固定 profile 于 `/Library/Application Support/RSS MDM Agent/install-profile.json` 再运行 `installer -pkg ... -target /`。桌面启动请求 Rust owner 注册当前配置用户的 helper，AI Host 随该桌面运行。
+初装从实际互动登录发现主体及 helper 路径；无人登录的静默初装可省略 profile，以空 IPC 用户集合启动机器注册；管理员需要预设桌面访问主体时提供受保护的 profile（`subjects` 与 `helper_work_roots`）。Windows EXE 接受 `/S /PROFILE=绝对路径`；macOS 可先固定 profile 于 `/Library/Application Support/RSS MDM Agent/install-profile.json` 再运行 `installer -pkg ... -target /`。桌面启动请求 Rust owner 注册当前配置用户的 helper，AI Host 随该桌面运行。
 
 卸载只移除匹配注册与程序；设备身份、Keychain / DPAPI 引用、通信库、journal、材料及用户数据保留。Windows 使用系统卸载入口或 `uninstall.exe /S`；macOS 管理员使用 `<受保护的服务程序> --installation uninstall --binary <当前配置的服务程序>`。重装核对 retained 当前格式上下文并复用安装 ID，原程序已移除时由新候选只读检查 retained 密钥与日志。没有隐式清库、换库或共享凭据删除入口。程序先从 versions 退役到精确版本的 retired 目录；删除失败可用同一版本入口重试，不清理其它版本。
 
@@ -226,3 +226,13 @@ Brew v2 只读取批准 prefix 内 Cellar/Caskroom 的安装记录与可识别 J
 原生查询、清理和诊断共享任务预算。完整传输不等于完整采集，进程退出也不等于所有工作已收尾。
 固定 worker 的本地收尾控制消息只记录执行事实；服务端结果仍直接使用唯一 wire DTO。
 升级前完成旧版未决操作；已固定结果继续补传，未得到完整结果的执行保持未知，不能通过重启重新采集。
+
+## 受管安装与互注册
+
+互注册由管理员的两条 Policy 分别控制：`ensure_agent_installed` 部署 Agent，`request_mdm_enrollment` 发起原生 MDM 注册。未配置或停用策略不会因检测到缺少通道而自动注册。设置页只有收到组织发布且当前可调用的自助注册策略时，才提供人工申请入口；组织与地址由策略确定。系统确认仍需用户完成，打开界面不表示注册成功。
+
+Windows 构建可显式选择 `--format nsis_exe|windows_msi|windows_msix`，默认仍为独立安装的 NSIS；macOS 使用 `macos_pkg`。MSI 使用 WiX 的 v4 XML 格式与 `wix build`，可用 `RSS_WIX` 指定工具。MSIX 使用 Windows SDK `makeappx`（可由 `RSS_MAKEAPPX` 指定），必须配置 `RSS_WINDOWS_PUBLISHER` 与匹配的 `RSS_WINDOWS_SIGNING_THUMBPRINT`，开发包也必须签名。各格式独立发布，不自动替换或回退格式。MSIX 的机器服务由 Package Manager 管理；机器配置、密钥和 journal 位于原有 ProgramData 目录，卸载包不等于退管。
+
+受管激活读取系统安装的专用短期引导证书，通过原生密钥句柄完成 mTLS，再使用独立本地日常密钥完成 Agent 激活。包和证书可以先后到达；私钥不可访问时等待/报错，不导出 MDM 私钥，也不自动放宽 ACL。没有交互登录时仍可运行机器注册；未配置桌面用户的安装保留空 IPC 用户集合，后续通过既有安装 profile/刷新流程配置用户访问。
+
+设置页和 Inventory 使用同一原生注册观察。无法读取或无法确认组织归属时显示 Unknown；只有明确无 MDM 注册才报告未注册。已有原生通道但缺少可信组织入口时，不按主机名或序列号推定归属。完整 Windows/macOS 包安装、SCEP 私钥访问及原生签入由 #2803 记录真机证据。

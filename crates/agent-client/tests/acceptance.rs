@@ -1416,3 +1416,89 @@ async fn native_start_rejects_a_changed_execution_context() {
     ));
     assert!(server.data.lock().unwrap().start_ops.is_empty());
 }
+
+#[tokio::test]
+async fn native_handoff_lost_response_reopens_same_operation_and_secret() {
+    let server = Server::tls().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    server.data.lock().unwrap().native_enrollment();
+    let offer = client.claim().await.unwrap().offer.unwrap();
+    client.received(&offer).await.unwrap();
+    let materials = client.prepare(&offer).await.unwrap();
+    let start = client.request_start(&offer, &materials).await.unwrap();
+    server.data.lock().unwrap().native_failure = true;
+    assert!(matches!(
+        client.native_enrollment(&start).await,
+        Err(Error::Unavailable)
+    ));
+    drop(materials);
+    drop(offer);
+    drop(client);
+    let mut client = server.client(&root, OpenMode::Existing);
+    let material = client.native_enrollment(&start).await.unwrap();
+    let data = server.data.lock().unwrap();
+    assert_eq!(data.native_inputs.len(), 2);
+    assert_eq!(data.native_inputs[0], data.native_inputs[1]);
+    assert_eq!(
+        material.receipt.enrollment_id,
+        data.native_receipt.as_ref().unwrap().enrollment_id
+    );
+    let storage = std::fs::read(root.path.join("communication.sqlite")).unwrap();
+    assert!(!storage
+        .windows(material.password.expose().len())
+        .any(|w| w == material.password.expose().as_bytes()));
+}
+
+#[tokio::test]
+async fn managed_identity_arrives_later_and_grant_response_loss_preserves_daily_key() {
+    let server = Server::tls().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    let capabilities = vec![
+        Capability::InventoryCollectionV1,
+        Capability::TaskExecuteV1,
+        Capability::MdmEnrollmentV1,
+    ];
+    assert!(!client
+        .prepare_managed_enrollment(capabilities.clone())
+        .unwrap());
+    assert!(!client.has_pending_enrollment().unwrap());
+    let installation = Uuid::new_v4();
+    let bootstrap = Uuid::new_v4();
+    {
+        let mut keys = server.secrets.0.lock().unwrap();
+        keys.insert("managed-installation".into(), installation.to_string());
+        keys.insert("managed-attempt".into(), bootstrap.to_string());
+    }
+    {
+        let mut data = server.data.lock().unwrap();
+        data.managed_installation = Some(installation);
+        data.registration_failure = true;
+    }
+    assert!(client
+        .prepare_managed_enrollment(capabilities.clone())
+        .unwrap());
+    let fingerprint = client.enrollment_status().unwrap().public_key_fingerprint;
+    assert!(matches!(
+        client.drive_enrollment().await,
+        Err(Error::Unavailable)
+    ));
+    drop(client);
+    let mut client = server.client(&root, OpenMode::Existing);
+    assert!(client
+        .prepare_managed_enrollment(capabilities.clone())
+        .unwrap());
+    assert_eq!(
+        client.enrollment_status().unwrap().public_key_fingerprint,
+        fingerprint
+    );
+    client.drive_enrollment().await.unwrap();
+    assert!(client.enrollment_status().unwrap().registered);
+    assert!(!client.prepare_managed_enrollment(capabilities).unwrap());
+    let data = server.data.lock().unwrap();
+    assert_eq!(data.native_inputs.len(), 2);
+    assert_eq!(data.native_inputs[0], data.native_inputs[1]);
+    assert_eq!(data.certificate_calls.len(), 1);
+}

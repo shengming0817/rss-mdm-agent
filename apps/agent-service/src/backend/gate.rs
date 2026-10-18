@@ -43,6 +43,29 @@ impl TrustedRisk {
                 ),
                 _ => return None,
             },
+            wire::TaskPayload::Enrollment(spec) => match &spec.authorization {
+                wire::TaskAuthorization::SelfService {
+                    policy_id,
+                    policy_revision,
+                    allow_ai: true,
+                    risk_level,
+                    source: wire::SelfServiceCaller::Ai,
+                    ..
+                } => (
+                    match risk_level {
+                        1 => RiskLevel::One,
+                        2 => RiskLevel::Two,
+                        _ => return None,
+                    },
+                    RiskSource::Policy {
+                        policy: VersionedRef {
+                            id: Id::new(policy_id.to_string()).ok()?,
+                            revision: Id::new(policy_revision.to_string()).ok()?,
+                        },
+                    },
+                ),
+                _ => return None,
+            },
             wire::TaskPayload::Software(spec) => {
                 let level = match spec.intent {
                     wire::SoftwareTaskIntent::Install | wire::SoftwareTaskIntent::Uninstall => {

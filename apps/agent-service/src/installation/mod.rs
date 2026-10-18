@@ -1,6 +1,10 @@
 //! One installation owner; packages and lab harnesses only invoke this boundary.
 //! ref: tauri tauri-cli-v2.11.2 crates/tauri-bundler/src/bundle/windows/nsis/installer.nsi.
 mod lifecycle;
+#[cfg(windows)]
+mod msix;
+#[cfg(windows)]
+pub use msix::initialize as initialize_packaged;
 #[cfg(target_os = "macos")]
 mod macos;
 mod outcome;
@@ -173,6 +177,20 @@ impl Candidate {
         platform::verify_signatures(self)?;
         Ok(())
     }
+    #[cfg(windows)]
+    fn format(&self) -> Result<String, Error> {
+        let bytes = installation_security::read_protected(&self.root.join("publication.json"))
+            .map_err(|_| Error::Identity)?;
+        if hash(&bytes) != self.publication_sha256 {
+            return Err(Error::Identity);
+        }
+        let value: serde_json::Value =
+            serde_json::from_slice(&bytes).map_err(|_| Error::Protocol)?;
+        Ok(value["packaging"]["kind"]
+            .as_str()
+            .ok_or(Error::Protocol)?
+            .into())
+    }
     fn deployment(
         &self,
         artifact: String,
@@ -180,8 +198,7 @@ impl Candidate {
         config: &Path,
     ) -> Result<Deployment, Error> {
         let base = config.parent().ok_or(Error::Configuration)?;
-        if profile.subjects.is_empty()
-            || profile.subjects.len() > 64
+        if profile.subjects.len() > 64
             || profile
                 .subjects
                 .iter()

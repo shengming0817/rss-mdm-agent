@@ -12,6 +12,11 @@ extern "C" fn stopped(_: i32) {
 fn run() -> Result<(), Error> {
     let mut args = std::env::args_os().skip(1).collect::<Vec<_>>();
     #[cfg(windows)]
+    if args.len() == 1 && args[0] == "--packaged-service" {
+        let deployment = agent_service::installation::initialize_packaged()?;
+        return serve(deployment.assemble()?, true);
+    }
+    #[cfg(windows)]
     if let [mode, name, path] = args.as_slice() {
         if mode == "--installation-worker" {
             return agent_service::installation::worker(
@@ -33,6 +38,10 @@ fn run() -> Result<(), Error> {
         return agent_service::installation::run(&args[1..]);
     }
     if let [mode, path] = args.as_slice() {
+        if mode == "--enrollment-worker" {
+            let code = agent_service::enrollment_worker::run(std::path::Path::new(path))?;
+            std::process::exit(code);
+        }
         if mode == "--collection-worker" {
             let code = agent_service::collection_worker::run(std::path::Path::new(path), None)?;
             std::process::exit(code);

@@ -254,6 +254,7 @@ export function operationProjection(
       snapshot.impact = action.directory.selfService.sideEffects;
       snapshot.reason ??= "当前系统设置未由此策略读取；建议不是当前状态。";
       snapshot.approval.elevation =
+        action.directory.task.kind !== "enrollment" &&
         action.directory.task.runAs === "system"
           ? "系统执行身份；OS 条件由服务复核"
           : "本机登录用户执行";
@@ -272,7 +273,9 @@ export function operationProjection(
           snapshot.proposal[binding.id] = value(binding.value);
       snapshot.logs = [
         `执行版本：${action.choice.policyVersion}`,
-        `资源：${action.directory.task.resource.id} / ${action.directory.task.resource.version}`,
+        action.directory.task.kind === "enrollment"
+          ? `原生 MDM 注册：${action.directory.task.organization}`
+          : `资源：${action.directory.task.resource.id} / ${action.directory.task.resource.version}`,
         `前置条件：${action.directory.selfService.prerequisites}`,
       ];
       if (form.blocked) {

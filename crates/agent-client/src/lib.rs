@@ -11,7 +11,11 @@ pub use redaction::CredentialRedactor;
 mod client;
 mod configuration;
 mod enrollment;
+mod managed;
+mod native_enrollment;
 pub use configuration::{verify_configuration, CONFIGURATION_BYTES, CONFIGURATION_FILENAME};
+pub use managed::{bootstrap_coordinates, NativeIdentity};
+pub use native_enrollment::NativeEnrollmentMaterial;
 mod identity;
 mod pki;
 
