@@ -14,7 +14,10 @@ import {
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
-import { IPC_VERSION, DEPLOYMENT_VERSION } from "../packages/execution-bindings/src/service-version.mjs";
+import {
+  IPC_VERSION,
+  DEPLOYMENT_VERSION,
+} from "../packages/execution-bindings/src/service-version.mjs";
 import { agentOrganizationConfiguration } from "./agent-organization.mjs";
 import {
   desktopBuildEnvironment,

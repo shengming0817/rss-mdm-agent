@@ -271,6 +271,10 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         let digest = document.installation_digest();
         if !self.pki_observed
             || state.installed.as_ref() != Some(&(document.revision, digest.clone()))
+            || state
+                .observation
+                .as_ref()
+                .is_none_or(|v| v.state != ObservationState::Applied)
         {
             let document = document.clone();
             self.observe_pki(Some(&document), ObservationState::Applied, None)?;
