@@ -1046,7 +1046,14 @@ try {
       join(reports, "desktop-native-start-default.png"),
     );
     await navigate("软件中心");
-    await wait(() => browser.$(".resource-card").isDisplayed());
+    mark("visual resource details and assistant context");
+    await wait(() =>
+      browser.execute(() =>
+        [...document.querySelectorAll('[data-action="resource-details"]')].some(
+          (el) => el.getClientRects().length > 0 && !el.closest("[inert]"),
+        ),
+      ),
+    );
     await browser.$('[data-action="resource-details"]').click();
     await click("询问 AI");
     await wait(() => browser.$(".context-panel select").isDisplayed());
