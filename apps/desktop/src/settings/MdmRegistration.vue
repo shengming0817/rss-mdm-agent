@@ -65,7 +65,7 @@ async function refresh() {
   const owner = port.value;
   const current = () => !disposed && props.active && version === epoch;
   try {
-    const nextStatus = props.servicePort
+    const nextStatus: MdmStatus = props.servicePort
       ? await props.servicePort.mdmStatus()
       : props.fixture
         ? { state: "unknown" }

@@ -2333,7 +2333,9 @@ try {
       result.processSecurity = proof;
     }
     mark("caller isolation and credential deletion");
-    await navigate("设置");
+    await openAgentSettings("账号与组织");
+    if (!(await browser.$(".account-local-workspaces").getAttribute("open")))
+      await browser.$(".account-local-workspaces > summary").click();
     await browser.$('[aria-label="测试用户名"]').setValue("Golden Bob");
     await click("进入");
     await wait(() => browser.$('[aria-label="测试用户名"]').isEnabled());
@@ -2341,8 +2343,9 @@ try {
     await text("个人 AI 连接（0）");
     await click("稍后配置，前往 AI");
     assert.equal(await visibleText("GOLDEN_HELLO 查看办公套件"), false);
-    await navigate("设置");
-    await browser.$(".account-local-workspaces > summary").click();
+    await openAgentSettings("账号与组织");
+    if (!(await browser.$(".account-local-workspaces").getAttribute("open")))
+      await browser.$(".account-local-workspaces > summary").click();
     await browser.$('[aria-label="测试用户名"]').setValue("Golden Alice");
     await click("进入");
     await wait(() => browser.$('[aria-label="测试用户名"]').isEnabled());
