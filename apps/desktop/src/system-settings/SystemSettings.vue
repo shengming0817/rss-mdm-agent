@@ -1,613 +1,310 @@
 <script setup lang="ts">
-import { computed, nextTick, ref } from "vue";
-import {
-  ChevronRight,
-  Settings,
-  UiSearchInput,
-  useUiContext,
-} from "@rss-mdm-agent/ui";
+import { reactive, computed, nextTick, ref } from "vue";
+import { ChevronRight, UiSearchInput, useUiContext } from "@rss-mdm-agent/ui";
 import SettingsGlyph from "./SettingsGlyph.vue";
-const emit = defineEmits<{ home: [] }>();
+import { systemEntries } from "./catalog";
+import type { PageNavigation } from "../workspace/page-navigation";
+const emit = defineEmits<{
+  navigation: [state: PageNavigation];
+  home: [];
+}>();
 const { configuration } = useUiContext();
 const mac = computed(() => configuration.platform === "macos");
-const search = ref("");
-const selected = ref("");
+const query = ref("");
+const selected = ref("overview");
 const heading = ref<HTMLElement>();
-const list = ref<HTMLElement>();
-const featured = ref<HTMLElement>();
 const searchInput = ref<InstanceType<typeof UiSearchInput>>();
-let origin: { area: "directory" | "featured"; id: string } | undefined;
-const entries = computed(() => [
-  {
-    id: "network",
-    title: mac.value ? "网络" : "网络和 Internet",
-    description: "网络连接、服务与代理",
-    color: "blue",
-    group: "连接",
-    rows: ["当前网络", "连接状态", mac.value ? "网络服务代理" : "当前用户代理"],
-    note: mac.value
-      ? "代理按所选网络服务分别配置。"
-      : "用户代理与系统服务代理分别配置。",
-  },
-  {
-    id: "display",
-    title: "显示器",
-    description: "屏幕排列、分辨率与缩放",
-    color: "purple",
-    group: "设备",
-    rows: ["已连接的显示器", "分辨率", "缩放"],
-    note: "显示器配置可能影响当前工作区的布局。",
-  },
-  {
-    id: "sound",
-    title: "声音",
-    description: "输出设备、音量与输入",
-    color: "pink",
-    group: "设备",
-    rows: ["声音输出", "输出音量", "声音输入"],
-    note: "切换音频设备可能影响正在进行的通话。",
-  },
-  {
-    id: "power",
-    title: mac.value ? "电池" : "电源和电池",
-    description: "电量、节能与供电偏好",
-    color: "green",
-    group: "设备",
-    rows: ["电池电量", "电源状态", mac.value ? "低电量模式" : "电源模式"],
-    note: "电源偏好需要分别核对电池和外接电源状态。",
-  },
-  {
-    id: "lock",
-    title: mac.value ? "锁定屏幕" : "屏幕和睡眠",
-    description: "屏幕闲置与返回电脑时的行为",
-    color: "cyan",
-    group: "个人与安全",
-    rows: ["使用电池时关闭屏幕", "接通电源时关闭屏幕", "返回时要求登录"],
-    note: "关闭屏幕、系统睡眠与锁定电脑是不同设置。",
-  },
-  {
-    id: "storage",
-    title: "储存空间",
-    description: "磁盘容量与空间使用情况",
-    color: "orange",
-    group: "设备",
-    rows: ["磁盘容量", "已用空间", "可用空间"],
-    note: "查看空间不会删除文件；清理前需要单独确认范围。",
-  },
-  {
-    id: "security",
-    title: mac.value ? "隐私与安全性" : "隐私和安全性",
-    description: "系统保护与应用权限",
-    color: "indigo",
-    group: "个人与安全",
-    rows: [mac.value ? "FileVault" : "设备加密", "防火墙", "应用权限"],
-    note: "受组织管理的配置与系统权限需要由相应管理方确认。",
-  },
-  {
-    id: "about",
-    title: mac.value ? "通用" : "系统信息",
-    description: "了解这台电脑与操作系统",
-    color: "gray",
-    group: "设备",
-    rows: ["操作系统版本", "处理器", "内存"],
-    note: "设备规格将在接入本机状态后显示。",
-  },
+const listing = ref<HTMLElement>();
+const entries = computed(() => systemEntries(mac.value));
+const sections = computed(() => [
+  { id: "overview", title: "系统概览" },
+  ...entries.value.filter((e) => e.id !== "lock"),
 ]);
+const current = computed(() =>
+  entries.value.find((e) => e.id === selected.value),
+);
 const filtered = computed(() =>
-  entries.value.filter((item) =>
-    `${item.title}${item.description}`.includes(search.value.trim()),
+  sections.value.filter(
+    (e) =>
+      e.id !== "overview" &&
+      `${e.title}${entries.value.find((a) => a.id === e.id)?.description}`.includes(
+        query.value.trim(),
+      ),
   ),
 );
-const current = computed(() =>
-  entries.value.find((item) => item.id === selected.value),
+const section = computed(() =>
+  selected.value === "lock" ? "power" : selected.value,
 );
-async function selectCategory(id: string, area: "directory" | "featured") {
-  origin = { area, id };
+const path = computed(() =>
+  selected.value === "overview"
+    ? []
+    : [
+        ...(selected.value === "lock"
+          ? [
+              {
+                id: "power",
+                title: entries.value.find((e) => e.id === "power")!.title,
+              },
+            ]
+          : []),
+        { id: selected.value, title: current.value!.title },
+      ],
+);
+let origin = "";
+async function openSection(id: string) {
+  if (!sections.value.some((e) => e.id === id) && id !== "lock") return;
   selected.value = id;
   await nextTick();
   heading.value?.focus();
 }
+function reset() {
+  query.value = "";
+  selected.value = "overview";
+}
+async function inspect(id: string) {
+  origin = id;
+  await openSection(id);
+}
 async function back() {
-  selected.value = "";
+  selected.value = "overview";
   await nextTick();
-  const region = origin?.area === "featured" ? featured.value : list.value;
-  const target = Array.from(
-    region?.querySelectorAll<HTMLButtonElement>("button") ?? [],
-  ).find((button) => button.dataset.setting === origin?.id);
-  if (target) target.focus();
+  const button = Array.from(
+    listing.value?.querySelectorAll<HTMLButtonElement>(
+      "button[data-setting]",
+    ) ?? [],
+  ).find((e) => e.dataset.setting === origin);
+  if (button) button.focus();
   else searchInput.value?.focus();
 }
+
+emit(
+  "navigation",
+  reactive({
+    reset,
+    openSection,
+    section,
+    sections,
+    path,
+    resources: computed(() =>
+      (current.value ? [current.value] : filtered.value).map((item) => ({
+        id: item.id,
+        title: item.title,
+        description:
+          entries.value.find((e) => e.id === item.id)?.description ?? "",
+        status: "系统值未读取",
+        source: "系统设置目录",
+      })),
+    ),
+    setQuery: (value: string) => (query.value = value),
+  }),
+);
 </script>
 <template>
-  <section
-    class="system-settings"
-    :class="{ 'settings-mac': mac }"
-    aria-label="系统设置工作区"
-  >
-    <div class="settings-main">
-      <div class="settings-layout" :class="{ 'has-detail': current }">
-        <div class="settings-directory" aria-label="设置目录">
-          <div class="directory-heading">
-            <h2>系统设置</h2>
-            <span>{{ mac ? "macOS" : "Windows" }}</span>
-          </div>
-          <UiSearchInput
-            ref="searchInput"
-            v-model="search"
-            aria-label="搜索系统设置"
-            placeholder="搜索系统设置"
-          />
-          <nav ref="list" class="settings-list" aria-label="系统设置分类">
-            <button
-              v-for="item in filtered"
-              :key="item.id"
-              type="button"
-              :aria-current="selected === item.id ? 'page' : undefined"
-              :data-setting="item.id"
-              @click="selectCategory(item.id, 'directory')"
-            >
-              <span class="setting-icon" :class="item.color"
-                ><SettingsGlyph :kind="item.id" :size="19"
-              /></span>
-              <span class="entry-copy"
-                ><strong>{{ item.title }}</strong
-                ><small>{{ item.description }}</small></span
-              >
-              <ChevronRight :size="15" aria-hidden="true" />
-            </button>
-            <p v-if="!filtered.length" role="status" class="empty-search">
-              没有匹配的设置，请换个关键词。
-            </p>
-          </nav>
-          <footer class="settings-directory-footer">
-            <button class="computer-return" type="button" @click="emit('home')">
-              ‹ 返回我的电脑
-            </button>
-            <span class="preview-label">UI 预览 · 未连接系统设置</span>
-          </footer>
+  <section class="system-settings design-page" aria-label="系统设置工作区">
+    <template v-if="!current"
+      ><header class="setting-detail-heading">
+        <div>
+          <h2>系统设置</h2>
+          <p>从网络连接到屏幕显示，让电脑更合你的习惯。</p>
         </div>
-        <div class="settings-detail">
-          <template v-if="current">
-            <button class="settings-back" type="button" @click="back">
-              ‹ 返回设置概览
-            </button>
-            <p class="detail-path">系统设置 / {{ current.group }}</p>
-            <div class="detail-title">
-              <span class="setting-icon large" :class="current.color"
-                ><SettingsGlyph :kind="current.id" :size="27"
-              /></span>
-              <h2 ref="heading" tabindex="-1">{{ current.title }}</h2>
-            </div>
-            <p class="detail-description">{{ current.description }}</p>
-            <div class="setting-rows">
-              <div v-for="row in current.rows" :key="row" class="setting-row">
-                <strong>{{ row }}</strong
-                ><span>未读取</span>
-              </div>
-            </div>
-            <p class="setting-note">{{ current.note }}</p>
-            <div class="connection-note">
-              <Settings :size="20" aria-hidden="true" />
-              <div>
-                <strong>系统设置尚未接入</strong>
-                <p>
-                  当前可浏览设置目录和页面布局。此处不会读取或修改你的系统配置。
-                </p>
-              </div>
-            </div>
-          </template>
-          <template v-else>
-            <div class="settings-welcome">
-              <span class="welcome-icon"
-                ><Settings :size="34" aria-hidden="true"
-              /></span>
-              <h2>让电脑更适合你</h2>
-              <p>从网络连接到屏幕显示，<br />在这里找到你需要的系统设置。</p>
-            </div>
-            <div ref="featured" class="settings-featured">
-              <h3>常用设置</h3>
-              <button
-                v-for="item in entries.slice(0, 3)"
-                :key="item.id"
-                type="button"
-                :data-setting="item.id"
-                @click="selectCategory(item.id, 'featured')"
-              >
-                <span class="setting-icon" :class="item.color"
-                  ><SettingsGlyph :kind="item.id" :size="20" /></span
-                ><span
-                  ><strong>{{ item.title }}</strong
-                  ><small>{{ item.description }}</small></span
-                ><ChevronRight :size="16" aria-hidden="true" />
-              </button>
-            </div>
-            <p class="overview-note">
-              先选择一个分类。实际状态与可用操作将在连接系统设置后提供。
-            </p>
-          </template>
+        <small>{{ mac ? "macOS" : "Windows" }}</small>
+      </header>
+      <div class="design-hero system-hero">
+        <div>
+          <span class="design-eyebrow">MAKE IT YOURS</span>
+          <h2>让好用的电脑，<br />更懂你的习惯。</h2>
+          <p>网络、显示与日常偏好。</p>
+          <button type="button" class="design-button" @click="inspect('about')">
+            了解这台电脑 →
+          </button>
+        </div>
+        <div class="system-hero-art" aria-hidden="true">
+          <SettingsGlyph kind="general" :size="62" /><span
+            ><SettingsGlyph kind="display" :size="28"
+          /></span>
         </div>
       </div>
-    </div>
-    <slot name="assistant" />
+      <div class="section-heading system-search">
+        <span />
+        <UiSearchInput
+          ref="searchInput"
+          v-model="query"
+          aria-label="搜索系统设置"
+          placeholder="搜索系统设置"
+        />
+      </div>
+      <div ref="listing" class="settings-overview-grid">
+        <button
+          v-for="item in filtered"
+          :key="item.id"
+          :data-setting="item.id"
+          type="button"
+          @click="inspect(item.id)"
+        >
+          <span class="design-symbol"
+            ><SettingsGlyph :kind="item.id" :size="25" /></span
+          ><strong>{{ item.title }}</strong
+          ><span>{{ entries.find((e) => e.id === item.id)?.description }}</span
+          ><ChevronRight :size="17" aria-hidden="true" />
+        </button>
+      </div>
+      <p v-if="!filtered.length" role="status">
+        没有匹配的设置，请换个关键词。
+      </p>
+      <button class="text-link computer-return" @click="emit('home')">
+        返回我的电脑 →
+      </button>
+    </template>
+    <template v-else>
+      <header class="setting-detail-heading">
+        <div>
+          <h2 ref="heading" tabindex="-1">{{ current.title }}</h2>
+          <p>{{ current.description }}</p>
+        </div>
+        <small>{{ mac ? "macOS" : "Windows" }}</small>
+      </header>
+      <section
+        v-for="(group, index) in selected === 'lock'
+          ? [
+              { title: '屏幕闲置', rows: current.rows.slice(0, 2) },
+              { title: '返回电脑时', rows: current.rows.slice(2) },
+            ]
+          : [{ title: '状态与偏好', rows: current.rows }]"
+        :key="group.title"
+      >
+        <h3>{{ group.title }}</h3>
+        <div class="design-rows">
+          <div
+            v-for="row in group.rows"
+            :key="row"
+            class="design-row setting-row"
+          >
+            <strong>{{ row }}</strong
+            ><select disabled :aria-label="row">
+              <option>未读取</option>
+            </select>
+          </div>
+          <button
+            v-if="selected === 'power' && index === 0"
+            class="design-row"
+            type="button"
+            data-setting="lock"
+            @click="openSection('lock')"
+          >
+            <strong>{{ entries.find((e) => e.id === "lock")!.title }}</strong
+            ><ChevronRight :size="18" aria-hidden="true" />
+          </button>
+        </div>
+      </section>
+      <p class="design-note">{{ current.note }}</p>
+      <button class="text-link settings-back" type="button" @click="back">
+        ‹ 返回设置概览
+      </button>
+    </template>
+    <p class="design-note connection-note">
+      系统设置尚未接入。此处不会读取或修改你的系统配置。
+    </p>
   </section>
 </template>
 <style scoped>
-.system-settings {
+.system-hero {
+  min-height: 310px;
+}
+.device-illustration {
+  width: 40%;
+  max-width: 370px;
+  margin-right: 4%;
+  transform: rotate(-7deg);
+  border-bottom: 9px solid #98a8aa;
+  border-radius: 4px;
+}
+.device-illustration > div {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 220px;
+  place-content: center;
+  gap: 10px;
+  text-align: center;
+  aspect-ratio: 1.5;
+  border: 7px solid #445151;
+  border-radius: 14px 14px 4px 4px;
+  background: linear-gradient(145deg, #91a4b4, #e2ccb0);
+  color: #fff;
+}
+.device-illustration span {
+  font-size: 48px;
+  font-weight: 300;
+}
+.device-illustration small {
+  opacity: 0.8;
+}
+.settings-overview-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 16px;
-  width: 100%;
-  min-width: 0;
-  padding: 24px 28px 32px;
-  color: var(--rss-color-text);
 }
-.settings-main {
-  container: system-settings / inline-size;
-  min-width: 0;
-}
-.settings-directory-footer {
+.settings-overview-grid button {
+  position: relative;
   display: grid;
-  gap: 14px;
-  margin-top: auto;
-  padding: 28px 8px 0;
-}
-.computer-return {
-  border: 0;
-  background: transparent;
-  text-align: left;
-  cursor: pointer;
-  color: var(--rss-color-text);
-  padding: 0;
-  font-size: 12px;
-}
-.preview-label {
-  color: var(--rss-color-text-muted);
-  font-size: 11px;
-}
-.settings-layout {
-  display: grid;
-  grid-template-columns: minmax(180px, 0.8fr) minmax(240px, 1.2fr);
-  border: 1px solid var(--rss-color-border);
-  border-radius: 12px;
-  overflow: hidden;
-  background: var(--rss-color-bg);
-  min-height: 560px;
-}
-.settings-directory {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  padding: 22px 18px;
-}
-.directory-heading {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  margin-bottom: 17px;
-}
-.directory-heading h2 {
-  font-size: 20px;
-  margin: 0;
-}
-.directory-heading > span {
-  font-size: 11px;
-  color: var(--rss-color-text-muted);
-}
-.settings-list {
-  display: grid;
-  gap: 8px;
-  margin-top: 18px;
-}
-.settings-list button,
-.settings-featured button {
-  display: flex;
-  gap: 12px;
+  grid-template-columns: 44px minmax(0, 1fr) 18px;
   align-items: center;
-  padding: 14px 12px;
-  width: 100%;
+  gap: 8px 14px;
+  padding: 23px;
   border: 1px solid var(--rss-color-border);
-  border-radius: 8px;
-  background: var(--rss-color-bg);
+  border-radius: 15px;
   text-align: left;
+  color: var(--rss-color-text);
+  background: var(--rss-color-bg);
   cursor: pointer;
-  color: inherit;
 }
-.settings-list button:hover,
-.settings-featured button:hover {
-  background: var(--rss-color-surface);
+.design-symbol {
+  grid-row: span 2;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  background: #e9eeed;
+  color: #6f9186;
 }
-.settings-list button[aria-current] {
-  background: color-mix(
-    in srgb,
-    var(--rss-color-accent, #367be6) 12%,
-    var(--rss-color-bg)
-  );
-  border-color: var(--rss-color-accent, #367be6);
-}
-.entry-copy,
-.settings-featured button > span:nth-child(2) {
-  flex: 1;
-  min-width: 0;
-}
-.settings-list strong,
-.settings-featured strong {
-  display: block;
-  font-size: 13px;
-  font-weight: 600;
-}
-.settings-list small,
-.settings-featured small {
-  display: block;
-  margin-top: 4px;
-  font-size: 11px;
+.settings-overview-grid button > span:not(.design-symbol) {
+  grid-column: 2;
+  font-size: 12px;
   color: var(--rss-color-text-muted);
   line-height: 1.5;
 }
-.setting-icon {
-  width: 33px;
-  height: 33px;
-  flex-shrink: 0;
-  display: grid;
-  place-items: center;
-  border-radius: 9px;
-  color: white;
-  background: #587bd8;
-}
-.purple {
-  background: #8c72cc;
-}
-.pink {
-  background: #c46187;
-}
-.green {
-  background: #378765;
-}
-.cyan {
-  background: #338797;
-}
-.orange {
-  background: #ae723a;
-}
-.indigo {
-  background: #6769b8;
-}
-.gray {
-  background: #76808e;
-}
-.settings-detail {
-  min-width: 0;
-  padding: 28px;
-  border-left: 1px solid var(--rss-color-border);
-}
-.settings-welcome {
-  text-align: center;
-  padding: 24px 0 28px;
-}
-.welcome-icon {
-  display: grid;
-  place-items: center;
-  width: 76px;
-  height: 76px;
-  margin: 0 auto 20px;
-  border-radius: 23px;
-  color: #687eb8;
-  background: color-mix(in srgb, #8aa5ec 16%, var(--rss-color-bg));
-}
-.settings-welcome h2 {
-  font-size: 23px;
-  letter-spacing: -0.5px;
-  margin: 0 0 12px;
-}
-.settings-welcome p,
-.overview-note,
-.setting-note {
-  color: var(--rss-color-text-muted);
-  font-size: 12px;
-  line-height: 1.8;
-}
-.settings-featured {
-  display: grid;
-  gap: 8px;
-}
-.settings-featured h3 {
-  font-size: 12px;
-  margin: 6px 0;
+.settings-overview-grid button > svg {
+  grid-column: 3;
+  grid-row: 1 / span 2;
   color: var(--rss-color-text-muted);
 }
-.overview-note {
-  margin: 23px 0 0;
-}
-.settings-back {
-  background: none;
-  border: 0;
-  padding: 0;
-  color: var(--rss-color-text-muted);
-  cursor: pointer;
-  font-size: 12px;
-}
-.detail-path {
-  color: var(--rss-color-text-muted);
-  font-size: 11px;
-  margin: 28px 0 18px;
-}
-.detail-title {
+.setting-detail-heading {
   display: flex;
-  gap: 13px;
-  align-items: center;
-}
-.large {
-  width: 48px;
-  height: 48px;
-  border-radius: 13px;
-}
-.detail-title h2 {
-  font-size: 24px;
-  margin: 0;
-}
-.detail-description {
-  font-size: 12px;
-  color: var(--rss-color-text-muted);
-  margin: 18px 0 24px;
-}
-.setting-rows {
-  display: grid;
-  gap: 8px;
-}
-.setting-row {
-  display: flex;
-  align-items: center;
   justify-content: space-between;
-  gap: 15px;
-  padding: 19px 16px;
-  border: 1px solid var(--rss-color-border);
-  border-radius: 8px;
-  background: var(--rss-color-bg);
-  font-size: 12px;
+  align-items: center;
+  gap: 20px;
+  margin: 12px 0 36px;
 }
-.setting-row strong {
-  font-weight: 500;
+.setting-detail-heading h2 {
+  font-size: 28px;
+  margin: 0 0 10px;
 }
-.setting-row > span {
-  white-space: nowrap;
+.setting-detail-heading p,
+.setting-detail-heading small {
   color: var(--rss-color-text-muted);
 }
-.connection-note {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  margin-top: 32px;
-  border-top: 1px solid var(--rss-color-border);
-  padding-top: 20px;
-  color: var(--rss-color-text-muted);
-  font-size: 12px;
+.setting-detail-heading p {
+  font-size: 14px;
 }
-.connection-note svg {
-  flex-shrink: 0;
+@media (max-width: 1100px) {
+  .settings-overview-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
-.connection-note p {
-  line-height: 1.8;
-  margin: 6px 0;
-}
-.empty-search {
-  font-size: 12px;
-  line-height: 1.7;
-  color: var(--rss-color-text-muted);
-}
-.settings-mac .settings-layout {
-  grid-template-columns: 204px minmax(0, 1fr);
-}
-.settings-mac .settings-directory {
-  padding: 20px 12px;
-}
-.settings-mac .directory-heading {
-  padding: 0 6px;
-}
-.settings-mac .directory-heading h2 {
-  font-size: 16px;
-}
-.settings-mac .settings-list {
-  gap: 3px;
-}
-.settings-mac .settings-list button {
-  background: transparent;
-  border-color: transparent;
-  padding: 8px;
-}
-.settings-mac .settings-list button[aria-current] {
-  background: var(--rss-color-accent, #367be6);
-  color: white;
-}
-.settings-mac .settings-list small {
-  display: none;
-}
-.settings-mac .settings-list .setting-icon {
-  width: 27px;
-  height: 27px;
-  border-radius: 7px;
-}
-.settings-mac .settings-detail {
-  padding: 30px;
-}
-.settings-mac .setting-rows {
-  gap: 0;
-  border: 1px solid var(--rss-color-border);
-  border-radius: 10px;
-  background: var(--rss-color-bg);
-  padding: 0 14px;
-}
-.settings-mac .setting-row {
-  border: 0;
-  border-radius: 0;
-  border-bottom: 1px solid var(--rss-color-border);
-  padding: 17px 0;
-}
-.settings-mac .setting-row:last-child {
-  border-bottom: 0;
-}
-button:focus-visible,
-h2:focus-visible {
-  outline: 2px solid var(--rss-color-accent, #367be6);
-  outline-offset: 3px;
-}
-@container system-settings (max-width: 480px) {
-  .settings-layout,
-  .settings-mac .settings-layout {
+@media (max-width: 600px) {
+  .settings-overview-grid {
     grid-template-columns: 1fr;
   }
-  .settings-detail,
-  .has-detail .settings-directory {
+  .device-illustration {
     display: none;
-  }
-  .has-detail .settings-detail {
-    display: block;
-    border-left: 0;
-  }
-  .settings-mac .settings-list small {
-    display: block;
-  }
-}
-@media (max-width: 1050px) {
-  .system-settings {
-    grid-template-columns: 1fr;
-  }
-}
-@media (max-width: 900px) {
-  .system-settings {
-    padding: 18px;
-  }
-  .settings-layout,
-  .settings-mac .settings-layout {
-    grid-template-columns: 1fr;
-  }
-  .settings-detail {
-    display: none;
-  }
-  .has-detail .settings-directory {
-    display: none;
-  }
-  .has-detail .settings-detail {
-    display: block;
-    border-left: 0;
-  }
-  .settings-mac .settings-list small {
-    display: block;
-  }
-}
-@media (max-width: 500px) {
-  .system-settings {
-    padding: 12px;
-  }
-  .settings-detail,
-  .settings-mac .settings-detail {
-    padding: 20px 16px;
-  }
-}
-@media (forced-colors: active) {
-  .setting-icon {
-    border: 1px solid ButtonText;
-  }
-  .settings-list button[aria-current] {
-    outline: 2px solid Highlight;
   }
 }
 </style>

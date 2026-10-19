@@ -9,21 +9,27 @@ import {
   watch,
 } from "vue";
 import {
-  AppShell,
   UiNavigation,
   UiBadge,
   UiIcon,
   House,
   Package,
   Terminal,
-  Activity,
-  Monitor,
-  Settings as SettingsIcon,
   Sparkles,
-  UserRound,
+  Settings as SettingsIcon,
   UiDialog,
+  X,
 } from "@rss-mdm-agent/ui";
-import ConversationList from "./assistant/ConversationList.vue";
+import AppShell from "./workspace/WorkspaceChrome.vue";
+import WorkspaceSearch from "./workspace/WorkspaceSearch.vue";
+import SettingsGlyph from "./system-settings/SettingsGlyph.vue";
+import AccountMenu from "./workspace/AccountMenu.vue";
+import ConversationShortcut from "./workspace/ConversationShortcut.vue";
+import ModuleNavigation from "./workspace/ModuleNavigation.vue";
+import "./workspace/design.css";
+import ConversationHistory from "./workspace/ConversationHistory.vue";
+import PageAssistantPanel from "./workspace/PageAssistantPanel.vue";
+import { pageContext } from "./workspace/page-context";
 import { nativeAssistant } from "./assistant/native";
 import Assistant from "./assistant/Assistant.vue";
 import ContextPanel from "./assistant/ContextPanel.vue";
@@ -39,8 +45,9 @@ import {
 } from "./assistant/controller";
 import SelfService from "./self-service/SelfService.vue";
 import Home from "./home/Home.vue";
-import HomeAssistant from "./home/HomeAssistant.vue";
 import SystemSettings from "./system-settings/SystemSettings.vue";
+import SoftwareManagement from "./catalog-preview/SoftwareManagement.vue";
+import ToolsPage from "./catalog-preview/ToolsPage.vue";
 import { createDeviceOverview, type DeviceOverviewPort } from "./home/device";
 import { nativeDeviceOverview } from "./home/native";
 import { createController } from "./self-service/controller";
@@ -65,10 +72,163 @@ const props = defineProps<{
 const emit = defineEmits<{
   navigate: [id: string];
 }>();
+import type { PageNavigation } from "./workspace/page-navigation";
+const softwarePage = ref<PageNavigation>();
+const toolsPage = ref<PageNavigation>();
+const systemPage = ref<PageNavigation>();
+const settingsPage = ref<PageNavigation>();
+const settingsExpanded = ref(false);
+const chromeNarrow = ref(false),
+  searchRequest = ref(0);
+const designedPages = [
+  "home",
+  "settings",
+  "system-settings",
+  "software-management",
+  "device-tools",
+];
+const currentModule = computed(() =>
+  props.page === "system-settings"
+    ? systemPage.value
+    : props.page === "software-management"
+      ? softwarePage.value
+      : props.page === "device-tools"
+        ? toolsPage.value
+        : props.page === "settings"
+          ? settingsPage.value
+          : undefined,
+);
+const moduleTitle = computed(
+  () =>
+    [
+      { id: "settings", title: "RSS Agent 设置" },
+      { id: "system-settings", title: "系统设置" },
+      { id: "software-management", title: "软件管理" },
+      { id: "device-tools", title: "工具中心" },
+      { id: "home", title: "主页" },
+    ].find((item) => item.id === props.page)?.title ?? "",
+);
+const searchEntries = computed(() => [
+  ...[
+    {
+      page: "software-management",
+      group: "软件管理",
+      module: softwarePage.value,
+    },
+    { page: "device-tools", group: "工具", module: toolsPage.value },
+    { page: "system-settings", group: "系统设置", module: systemPage.value },
+    { page: "settings", group: "RSS Agent 设置", module: settingsPage.value },
+  ].flatMap(({ page, group, module }) =>
+    (module?.sections ?? []).map((e) => ({ ...e, page, group })),
+  ),
+  ...(softwarePage.value?.searchEntries ?? []).map((e) => ({
+    ...e,
+    page: "software-management",
+    group: "应用",
+  })),
+  ...(toolsPage.value?.searchEntries ?? []).map((e) => ({
+    ...e,
+    page: "device-tools",
+    group: "工具",
+  })),
+  {
+    page: "system-settings",
+    id: "lock",
+    title: "屏幕与睡眠",
+    group: "系统设置 · 电源",
+  },
+]);
+function searchTarget(entry: { page: string; id: string }) {
+  const module =
+    entry.page === "software-management"
+      ? softwarePage.value
+      : entry.page === "device-tools"
+        ? toolsPage.value
+        : entry.page === "system-settings"
+          ? systemPage.value
+          : settingsPage.value;
+  module?.openSection(entry.id);
+  emit("navigate", entry.page);
+}
+function resetModule(id: string) {
+  if (id === "software-management") softwarePage.value?.reset();
+  if (id === "device-tools") toolsPage.value?.reset();
+  if (id === "system-settings") systemPage.value?.reset();
+  if (id === "settings") settingsPage.value?.reset();
+}
+function navigateMain(id: string) {
+  settingsExpanded.value = false;
+  emit("navigate", id);
+}
+function accountMenu(id: string) {
+  settingsExpanded.value = true;
+  settingsPage.value?.openSection(id);
+  emit("navigate", "settings");
+}
+function openConnectionSettings() {
+  accountMenu("connection");
+}
+function contextualNavigate(page: string, section?: string) {
+  navigateMain(page);
+  if (section) {
+    const module =
+      page === "system-settings"
+        ? systemPage.value
+        : page === "software-management"
+          ? softwarePage.value
+          : page === "device-tools"
+            ? toolsPage.value
+            : page === "settings"
+              ? settingsPage.value
+              : undefined;
+    module?.openSection(section);
+  }
+}
+const historyOpen = ref(false),
+  historyPinned = ref(false),
+  historyQuery = ref("");
+const historyPanel = ref<HTMLElement>();
+async function closeHistory(restore = false) {
+  historyOpen.value = false;
+  historyPinned.value = false;
+  if (!restore) return;
+  await nextTick();
+  const triggers = workspaceRoot.value
+    ?.closest(".workspace-chrome")
+    ?.querySelectorAll<HTMLElement>('[data-action="history-conversations"]');
+  [...(triggers ?? [])]
+    .find((button) => button.getClientRects().length)
+    ?.focus({ preventScroll: true });
+}
+async function toggleHistory() {
+  if (historyOpen.value) {
+    closeHistory();
+    return;
+  }
+  historyPinned.value = false;
+  historyOpen.value = true;
+  await nextTick();
+  historyPanel.value?.querySelector<HTMLInputElement>("input")?.focus();
+}
+function dismissHistory(event: PointerEvent) {
+  if (!historyOpen.value || historyPinned.value) return;
+  const node = event.target as HTMLElement | null;
+  if (
+    !node?.closest(
+      '.conversation-history-panel, [data-action="history-conversations"], .sidebar-cycle',
+    )
+  )
+    closeHistory();
+}
+function historySelected() {
+  if (!historyPinned.value) closeHistory();
+  if (!pageAssistantOpen.value) emit("navigate", "assistant");
+}
 const device = createDeviceOverview(
   props.fixture ? props.devicePort : nativeDeviceOverview(),
 );
 let devicePolling: ReturnType<typeof setInterval> | undefined;
+const lastContentPage = ref("home");
 const newIdentity = () => crypto.randomUUID();
 const controller = props.ready
   ? createController(props.selfServicePort ?? nativePort(), preview)
@@ -79,9 +239,11 @@ const assistant = props.ready
 watch(
   () => props.page,
   (id) => {
+    if (id !== "assistant") lastContentPage.value = id;
     if (["home", "software", "tools", "tasks"].includes(id))
       controller?.navigate(id);
     if (id === "home") void device.refresh();
+    if (!historyPinned.value) historyOpen.value = false;
   },
   { immediate: true },
 );
@@ -92,6 +254,58 @@ const contextOpen = ref(false),
 const candidate = shallowRef<ResourceContext>(),
   target = shallowRef<HTMLElement>();
 const panelHost = ref<HTMLElement>();
+const pageAssistantOpen = ref(false);
+const pagePanelHost = ref<HTMLElement>();
+const pageAssistantTrigger = ref<HTMLButtonElement>();
+const currentPageContext = computed(() =>
+  pageContext(
+    props.page,
+    moduleTitle.value || (props.page === "assistant" ? "AI 助手" : "工作区"),
+    currentModule.value?.path ?? [],
+    currentModule.value?.resources ??
+      (props.page === "home"
+        ? [
+            {
+              id: "computer",
+              title: device.state.value?.computerName ?? "这台电脑",
+              description: "当前设备概览",
+              status: device.state.value ? "已读取设备名称" : "设备信息未读取",
+              source: "设备概览",
+            },
+          ]
+        : []),
+  ),
+);
+function attachPage() {
+  assistant?.stageContext(currentPageContext.value);
+}
+async function togglePageAssistant() {
+  if (!assistant) return;
+  const opening = !pageAssistantOpen.value;
+  if (opening && props.page === "assistant")
+    emit("navigate", lastContentPage.value);
+  await relocate(() => {
+    pageAssistantOpen.value = opening;
+    contextOpen.value = false;
+    candidate.value = undefined;
+    chosen.value = false;
+  });
+  if (opening) {
+    attachPage();
+    pagePanelHost.value
+      ?.querySelector<HTMLTextAreaElement>("textarea")
+      ?.focus();
+  } else pageAssistantTrigger.value?.focus();
+}
+async function openMainAssistant() {
+  await relocate(() => {
+    pageAssistantOpen.value = false;
+  });
+  emit("navigate", "assistant");
+}
+watch([currentPageContext, () => assistant?.state.selected], () => {
+  if (pageAssistantOpen.value) attachPage();
+});
 const headerHost = ref<HTMLElement>();
 const contextSelection = ref("");
 const panelError = ref(""),
@@ -101,7 +315,9 @@ let trigger: HTMLElement | null = null;
 const assistantVisible = computed(
   () =>
     !moving.value &&
-    (props.page === "assistant" || (contextOpen.value && chosen.value)),
+    (props.page === "assistant" ||
+      pageAssistantOpen.value ||
+      (contextOpen.value && chosen.value)),
 );
 async function relocate(change: () => void) {
   const version = ++transition;
@@ -112,7 +328,8 @@ async function relocate(change: () => void) {
   change();
   await nextTick();
   if (version !== transition) return;
-  if (contextOpen.value && chosen.value) target.value = panelHost.value;
+  if (pageAssistantOpen.value) target.value = pagePanelHost.value;
+  else if (contextOpen.value && chosen.value) target.value = panelHost.value;
   moving.value = false;
 }
 async function askAi(item: BackendTask, source: HTMLElement) {
@@ -126,6 +343,7 @@ async function askAi(item: BackendTask, source: HTMLElement) {
     return;
   trigger = source;
   await relocate(() => {
+    pageAssistantOpen.value = false;
     candidate.value = value;
     contextSelection.value = "";
     chosen.value = false;
@@ -179,6 +397,10 @@ watch(
   () => props.page,
   () => {
     if (contextOpen.value) void closeContext();
+    if (props.page === "assistant" && pageAssistantOpen.value)
+      void relocate(() => {
+        pageAssistantOpen.value = false;
+      });
   },
 );
 watch(
@@ -204,16 +426,25 @@ watch(
 let sizing: ResizeObserver | undefined;
 const workspaceRoot = ref<HTMLElement>();
 const attention = computed(() => assistant?.attention.value ?? 0);
-const mode = computed(() =>
-  !props.ready
-    ? "选择使用身份"
-    : assistant?.state.mode === "s1"
-      ? "S1 受控测试 · 无真实执行"
-      : controller?.interactive
-        ? assistant?.state.connection === "connected"
-          ? "后台任务 · 本机执行服务"
-          : "AI 服务未连接 · 本机执行服务"
-        : "浏览器只读预览",
+const scrollPositions = new Map<string, number>();
+watch(
+  () => props.page,
+  async (page, previous) => {
+    const root = workspaceRoot.value;
+    const scroller =
+      previous === "home"
+        ? root?.querySelector<HTMLElement>(".home-content")
+        : root?.closest("main");
+    if (previous && scroller) scrollPositions.set(previous, scroller.scrollTop);
+    await nextTick();
+    if (props.page !== page) return;
+    const destination =
+      page === "home"
+        ? workspaceRoot.value?.querySelector<HTMLElement>(".home-content")
+        : workspaceRoot.value?.closest("main");
+    if (destination) destination.scrollTop = scrollPositions.get(page) ?? 0;
+  },
+  { flush: "pre" },
 );
 onMounted(() => {
   void device.refresh();
@@ -223,6 +454,10 @@ onMounted(() => {
   void assistant?.connect();
   if (workspaceRoot.value) {
     const resize = () => {
+      const outer =
+        workspaceRoot.value!.closest(".workspace-chrome") ??
+        workspaceRoot.value!;
+      chromeNarrow.value = outer.getBoundingClientRect().width < 900;
       const next = workspaceRoot.value!.getBoundingClientRect().width >= 1200;
       if (wide.value !== next) {
         wide.value = next;
@@ -232,6 +467,9 @@ onMounted(() => {
     resize();
     sizing = new ResizeObserver(resize);
     sizing.observe(workspaceRoot.value);
+    sizing.observe(
+      workspaceRoot.value.closest(".workspace-chrome") ?? workspaceRoot.value,
+    );
   }
 });
 onBeforeUnmount(() => {
@@ -244,84 +482,125 @@ onBeforeUnmount(() => {
 </script>
 <template>
   <AppShell
+    @pointerdown.capture="dismissHistory"
+    @keydown.esc="historyOpen && !historyPinned && closeHistory(true)"
+    :designed="designedPages.includes(page)"
+    :narrow="chromeNarrow"
+    @search="searchRequest++"
     :navigation-enabled="ready"
     :navigation-key="page"
     :content-mode="
-      ready && !['settings', 'system-settings'].includes(page)
+      ready &&
+      ![
+        'settings',
+        'system-settings',
+        'software-management',
+        'device-tools',
+      ].includes(page)
         ? 'conversation'
         : 'page'
     "
   >
-    <template #navigation-brand>
-      <div class="workspace-brand">
-        <span class="brand-mark"
-          ><Sparkles :size="20" aria-hidden="true" /></span
-        ><strong>RSS</strong>
-      </div>
-      <p class="workspace-description">你的 AI 与设备工作区</p>
-      <p class="workspace-mode">{{ mode }}</p>
-    </template>
     <template #header>
-      <div class="workspace-page-header">
+      <div class="workspace-page-header" data-tauri-drag-region>
         <div
           ref="headerHost"
           class="assistant-header-host"
           :hidden="page !== 'assistant'"
         />
-        <h1 v-if="page !== 'assistant'" tabindex="-1">
+        <nav
+          v-if="ready && designedPages.includes(page)"
+          class="workspace-breadcrumb"
+          aria-label="页面路径"
+        >
+          <button type="button" @click="resetModule(page)">
+            {{ moduleTitle }}</button
+          ><template
+            v-for="(item, index) in currentModule?.path ?? []"
+            :key="item.id"
+            ><span aria-hidden="true">/</span
+            ><button
+              v-if="index < (currentModule?.path.length ?? 0) - 1"
+              type="button"
+              @click="currentModule?.openSection(item.id)"
+            >
+              {{ item.title }}</button
+            ><span v-else aria-current="page">{{ item.title }}</span></template
+          >
+        </nav>
+        <h1 v-else-if="page !== 'assistant'" tabindex="-1">
           {{
             !ready || page === "settings"
               ? "设置"
-              : page === "system-settings"
-                ? "系统设置"
-                : page === "tasks"
-                  ? "请求与任务"
-                  : page === "software"
-                    ? "软件中心"
-                    : page === "tools"
-                      ? "工具中心"
-                      : page === "help"
-                        ? "设备与帮助"
-                        : "首页"
+              : page === "software-management"
+                ? "软件管理"
+                : page === "device-tools"
+                  ? "工具"
+                  : page === "system-settings"
+                    ? "系统设置"
+                    : page === "tasks"
+                      ? "请求与任务"
+                      : page === "software"
+                        ? "软件中心"
+                        : page === "tools"
+                          ? "工具中心"
+                          : page === "help"
+                            ? "设备与帮助"
+                            : "首页"
           }}
         </h1>
       </div>
     </template>
-    <template #navigation="{ navigate }"
+    <template #search>
+      <WorkspaceSearch
+        v-if="ready"
+        :entries="searchEntries"
+        :request="searchRequest"
+        @select="searchTarget"
+      />
+    </template>
+    <template #actions>
+      <button
+        v-if="ready"
+        ref="pageAssistantTrigger"
+        aria-label="打开电脑助手"
+        :aria-expanded="pageAssistantOpen"
+        title="电脑助手"
+        class="workspace-assistant-entry"
+        type="button"
+        @click="togglePageAssistant"
+      >
+        <Sparkles :size="16" aria-hidden="true" />
+      </button>
+    </template>
+    <template #navigation="{ navigate, layout, inlineSecondary }"
       ><UiNavigation
+        class="workspace-primary-navigation"
         label="工作区导航"
         :items="[
-          {
-            id: 'assistant',
-            label: 'AI 助手',
-          },
-          { id: 'home', label: '首页' },
+          { id: 'home', label: '主页' },
+          { id: 'assistant', label: 'AI 助手' },
+          { id: 'software-management', label: '软件管理' },
+          { id: 'device-tools', label: '工具中心' },
           { id: 'system-settings', label: '系统设置' },
-          { id: 'software', label: '软件中心' },
-          { id: 'tools', label: '工具中心' },
-          { id: 'tasks', label: '请求与任务' },
-          {
-            id: 'help',
-            label: '设备与帮助 · 未接线',
-            disabled: true,
-          },
         ]"
         :model-value="page"
         @update:model-value="
           (id) => {
-            emit('navigate', id);
+            navigateMain(id);
             navigate();
           }
         "
       >
         <template #icon="{ item }"
-          ><UiIcon
+          ><UiIcon :size="22" :title="item.label"
             ><Sparkles v-if="item.id === 'assistant'" /><House
               v-else-if="item.id === 'home'" /><SettingsIcon
               v-else-if="item.id === 'system-settings'" /><Package
-              v-else-if="item.id === 'software'" /><Terminal
-              v-else-if="item.id === 'tools'" /><Activity
-              v-else-if="item.id === 'tasks'" /><Monitor v-else /></UiIcon
+              v-else-if="item.id === 'software-management'" /><SettingsGlyph
+              v-else
+              kind="tools"
+              :size="22" /></UiIcon
         ></template>
         <template #trailing="{ item }"
           ><UiBadge
@@ -330,192 +609,321 @@ onBeforeUnmount(() => {
             >{{ attention }}</UiBadge
           ></template
         >
-      </UiNavigation></template
-    >
-    <template #conversations="{ navigate }"
-      ><ConversationList
-        v-if="assistant"
+        <template #after-item="{ item }"
+          ><div
+            v-if="inlineSecondary && item.id === page && page !== 'home'"
+            class="navigation-children"
+          >
+            <template v-if="page === 'assistant'"
+              ><ConversationShortcut
+                v-if="assistant"
+                :controller="assistant"
+                :history-open="historyOpen"
+                @select="
+                  emit('navigate', 'assistant');
+                  navigate();
+                "
+                @history="
+                  toggleHistory();
+                  navigate();
+                " /></template
+            ><ModuleNavigation
+              v-else
+              :items="currentModule?.sections ?? []"
+              :selected="currentModule?.section ?? ''"
+              @select="
+                currentModule?.openSection($event);
+                navigate();
+              "
+            /></div
+        ></template> </UiNavigation
+    ></template>
+    <template #secondary>
+      <ModuleNavigation
+        v-if="settingsExpanded"
+        :items="settingsPage?.sections ?? []"
+        :selected="settingsPage?.section ?? ''"
+        @select="accountMenu"
+      />
+      <ConversationShortcut
+        v-else-if="page === 'assistant' && assistant"
         :controller="assistant"
-        @select="
-          emit('navigate', 'assistant');
-          navigate();
-        "
-    /></template>
-    <template #navigation-footer="{ navigate }"
-      ><UiNavigation
-        label="工作区导航"
-        :items="[{ id: 'settings', label: '设置' }]"
-        :model-value="page"
-        @update:model-value="
-          (id) => {
-            emit('navigate', id);
-            navigate();
-          }
-        "
-      >
-        <template #icon
-          ><UiIcon><SettingsIcon /></UiIcon
-        ></template>
-      </UiNavigation>
-      <button
-        class="workspace-account"
-        type="button"
-        @click="
-          emit('navigate', 'settings');
-          navigate();
-        "
-      >
-        <span class="account-avatar"
-          ><UserRound :size="18" aria-hidden="true"
-        /></span>
-        <span><slot name="account-summary">账户与连接</slot></span>
-      </button>
+        :history-open="historyOpen"
+        @history="toggleHistory"
+        @select="emit('navigate', 'assistant')"
+      />
+      <ModuleNavigation
+        v-else
+        :items="currentModule?.sections ?? []"
+        :selected="currentModule?.section ?? ''"
+        @select="currentModule?.openSection($event)"
+      />
     </template>
+    <template #navigation-footer="{ navigate }">
+      <div class="workspace-settings-footer">
+        <ModuleNavigation
+          v-if="settingsExpanded"
+          class="agent-settings-navigation"
+          :items="settingsPage?.sections ?? []"
+          :selected="settingsPage?.section ?? ''"
+          @select="
+            (id) => {
+              accountMenu(id);
+              navigate();
+            }
+          "
+        />
+        <AccountMenu
+          :expanded="settingsExpanded"
+          :active="page === 'settings'"
+          @open="accountMenu('account')"
+          ><slot name="account-summary">账户与连接</slot></AccountMenu
+        >
+      </div></template
+    >
     <div
       ref="workspaceRoot"
       class="workspace-content"
-      :class="{
-        'context-layout': contextOpen && wide,
-      }"
+      :class="{ 'history-reserved': historyOpen && historyPinned }"
       :inert="busy ? true : undefined"
     >
-      <div
-        class="resource-content"
-        v-if="controller"
-        v-show="
-          !['assistant', 'settings', 'home', 'system-settings'].includes(page)
-        "
+      <aside
+        v-if="assistant && historyOpen"
+        ref="historyPanel"
+        class="conversation-history-panel"
+        :class="{ 'history-pinned': historyPinned }"
+        :role="historyPinned ? 'complementary' : 'dialog'"
+        :aria-modal="historyPinned ? undefined : false"
+        aria-label="历史会话清单"
+        tabindex="-1"
       >
-        <SelfService
+        <div class="history-heading">
+          <strong>历史会话</strong>
+          <div class="history-actions">
+            <button
+              type="button"
+              class="icon-button"
+              :aria-label="historyPinned ? '取消固定历史会话' : '固定历史会话'"
+              :aria-pressed="historyPinned"
+              @click="historyPinned = !historyPinned"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                width="16"
+                height="16"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.7"
+                aria-hidden="true"
+              >
+                <path d="M9 3h6l1 7 3 3v2H5v-2l3-3 1-7Zm3 12v7" />
+              </svg></button
+            ><button
+              type="button"
+              class="icon-button"
+              aria-label="关闭历史会话"
+              @click.stop="closeHistory(true)"
+            >
+              <X :size="16" />
+            </button>
+          </div>
+        </div>
+        <ConversationHistory
+          v-model:query="historyQuery"
+          :controller="assistant"
+          @select="historySelected"
+        />
+      </aside>
+      <div
+        class="workspace-page-surface"
+        :class="{ 'context-layout': contextOpen && wide }"
+      >
+        <div
+          class="resource-content"
           v-if="controller"
           v-show="
-            !['assistant', 'settings', 'home', 'system-settings'].includes(page)
+            ![
+              'assistant',
+              'settings',
+              'home',
+              'system-settings',
+              'software-management',
+              'device-tools',
+            ].includes(page)
           "
-          :controller="controller"
-          :context-key="candidate?.key ?? assistant?.context.value?.key"
-          :source="
-            assistant?.state.mode === 's1'
-              ? 's1'
-              : controller.interactive
-                ? 'live'
-                : 'preview'
-          "
-          @ask-ai="askAi"
+        >
+          <SelfService
+            v-if="controller"
+            v-show="
+              ![
+                'assistant',
+                'settings',
+                'home',
+                'system-settings',
+                'software-management',
+                'device-tools',
+              ].includes(page)
+            "
+            :controller="controller"
+            :context-key="candidate?.key ?? assistant?.context.value?.key"
+            :source="
+              assistant?.state.mode === 's1'
+                ? 's1'
+                : controller.interactive
+                  ? 'live'
+                  : 'preview'
+            "
+            @ask-ai="askAi"
+          />
+        </div>
+        <SoftwareManagement
+          @navigation="softwarePage = $event"
+          v-if="ready"
+          v-show="page === 'software-management'"
+          @navigate="emit('navigate', $event)"
         />
-      </div>
-      <SystemSettings
-        v-if="ready"
-        v-show="page === 'system-settings'"
-        @home="emit('navigate', 'home')"
-        ><template #assistant>
-          <HomeAssistant
+        <ToolsPage
+          @navigation="toolsPage = $event"
+          v-if="ready"
+          v-show="page === 'device-tools'"
+          @navigate="contextualNavigate"
+        />
+        <SystemSettings
+          @navigation="systemPage = $event"
+          v-if="ready"
+          v-show="page === 'system-settings'"
+          @home="emit('navigate', 'home')"
+        />
+        <div v-if="controller && page === 'home'" class="home-content">
+          <Home
+            :controller="controller"
+            :device="device.state.value"
+            :preview="!controller.interactive || !!fixture"
             :draft="assistant?.draft.value ?? ''"
             :connected="assistant?.state.connection === 'connected'"
-            context="系统设置"
-            @navigate="emit('navigate', $event)"
+            @navigate="contextualNavigate"
             @update:draft="
               (text) => {
                 if (assistant) assistant.draft.value = text;
               }
             "
-          /> </template
-      ></SystemSettings>
-      <div v-if="controller && page === 'home'" class="home-content">
-        <Home
-          :controller="controller"
+          />
+        </div>
+        <Teleport :to="target ?? 'body'" :disabled="!target"
+          ><Assistant
+            v-if="assistant"
+            :visible="assistantVisible"
+            :controller="assistant"
+            :presentation="
+              pageAssistantOpen || (contextOpen && chosen) ? 'context' : 'main'
+            "
+            :header-target="headerHost"
+            @settings="openConnectionSettings"
+            @tasks="emit('navigate', 'tasks')"
+        /></Teleport>
+        <UiDialog
+          :open="true"
+          presentation="drawer"
+          v-if="contextOpen && !wide && candidate && assistant"
+          class="resource-context-drawer"
+          title="资源上下文 AI"
+          side="right"
+          @update:open="closeContext"
+        >
+          <ContextPanel
+            v-model:selection="contextSelection"
+            :wide="false"
+            :candidate="candidate"
+            :controller="assistant"
+            :chosen="chosen"
+            :notice="panelNotice"
+            :error="
+              panelError ||
+              (candidate.stale && !chosen
+                ? '资源信息已变更，请从最新资源详情重新选择。'
+                : '')
+            "
+            @choose="chooseConversation"
+            @close="closeContext"
+            @main="mainConversation"
+            ><div ref="panelHost" class="assistant-panel-host"
+          /></ContextPanel>
+        </UiDialog>
+        <aside
+          v-if="contextOpen && wide && candidate && assistant"
+          class="resource-context-aside"
+          aria-label="资源上下文 AI"
+        >
+          <ContextPanel
+            v-model:selection="contextSelection"
+            :wide="true"
+            :candidate="candidate"
+            :controller="assistant"
+            :chosen="chosen"
+            :notice="panelNotice"
+            :error="
+              panelError ||
+              (candidate.stale && !chosen
+                ? '资源信息已变更，请从最新资源详情重新选择。'
+                : '')
+            "
+            @choose="chooseConversation"
+            @close="closeContext"
+            @main="mainConversation"
+            ><div ref="panelHost" class="assistant-panel-host"
+          /></ContextPanel>
+        </aside>
+        <Settings
+          @navigation="settingsPage = $event"
+          v-show="!ready || page === 'settings'"
+          :host="host"
+          :service-port="servicePort"
+          :self-service-port="selfServicePort"
           :device="device.state.value"
-          :preview="!controller.interactive || !!fixture"
-          :draft="assistant?.draft.value ?? ''"
-          :connected="assistant?.state.connection === 'connected'"
-          @navigate="emit('navigate', $event)"
-          @update:draft="
-            (text) => {
-              if (assistant) assistant.draft.value = text;
-            }
-          "
-        />
-      </div>
-      <Teleport :to="target ?? 'body'" :disabled="!target"
-        ><Assistant
-          v-if="assistant"
-          :visible="assistantVisible"
-          :controller="assistant"
-          :presentation="contextOpen && chosen ? 'context' : 'main'"
-          :header-target="headerHost"
-          @settings="emit('navigate', 'settings')"
-          @tasks="emit('navigate', 'tasks')"
-          ><template #operation-cards="slotProps"
-            ><slot
+          :fixture="fixture"
+          :active="!ready || page === 'settings'"
+          :assistant="assistant"
+          @assistant="emit('navigate', 'assistant')"
+          ><template #development="scope"
+            ><slot name="development" /><slot
               name="operation-cards"
-              :visible="slotProps.visible"
-              :session-id="slotProps.sessionId" /></template></Assistant
-      ></Teleport>
-      <UiDialog
-        :open="true"
-        presentation="drawer"
-        v-if="contextOpen && !wide && candidate && assistant"
-        class="resource-context-drawer"
-        title="资源上下文 AI"
-        side="right"
-        @update:open="closeContext"
-      >
-        <ContextPanel
-          v-model:selection="contextSelection"
-          :wide="false"
-          :candidate="candidate"
-          :controller="assistant"
-          :chosen="chosen"
-          :notice="panelNotice"
-          :error="
-            panelError ||
-            (candidate.stale && !chosen
-              ? '资源信息已变更，请从最新资源详情重新选择。'
-              : '')
-          "
-          @choose="chooseConversation"
-          @close="closeContext"
-          @main="mainConversation"
-          ><div ref="panelHost" class="assistant-panel-host"
-        /></ContextPanel>
-      </UiDialog>
+              :visible="scope.active"
+              :session-id="assistant?.state.selected ?? ''" /></template
+          ><template #user><slot name="user" /></template
+          ><template #account-summary
+            ><slot name="account-summary">账户与连接</slot></template
+          ></Settings
+        >
+      </div>
       <aside
-        v-if="contextOpen && wide && candidate && assistant"
-        class="resource-context-aside"
-        aria-label="资源上下文 AI"
+        v-if="assistant && pageAssistantOpen"
+        class="page-assistant-panel"
+        aria-label="电脑助手侧栏"
       >
-        <ContextPanel
-          v-model:selection="contextSelection"
-          :wide="true"
-          :candidate="candidate"
+        <PageAssistantPanel
+          :context="currentPageContext"
           :controller="assistant"
-          :chosen="chosen"
-          :notice="panelNotice"
-          :error="
-            panelError ||
-            (candidate.stale && !chosen
-              ? '资源信息已变更，请从最新资源详情重新选择。'
-              : '')
-          "
-          @choose="chooseConversation"
-          @close="closeContext"
-          @main="mainConversation"
-          ><div ref="panelHost" class="assistant-panel-host"
-        /></ContextPanel>
+          :history-open="historyOpen"
+          @history="toggleHistory"
+          @attach="attachPage"
+          @close="togglePageAssistant"
+          @main="openMainAssistant"
+          ><div ref="pagePanelHost" class="assistant-panel-host"
+        /></PageAssistantPanel>
       </aside>
-      <Settings
-        v-show="!ready || page === 'settings'"
-        :host="host"
-        :service-port="servicePort"
-        :fixture="fixture"
-        :active="!ready || page === 'settings'"
-        :assistant="assistant"
-        @assistant="emit('navigate', 'assistant')"
-        ><template #user><slot name="user" /></template
-      ></Settings>
     </div>
     <template #status
       ><span v-if="busy" role="status">正在读取或切换账户…</span
       ><span v-else
+        ><template v-if="!fixture"
+          >{{
+            !ready
+              ? "选择使用身份"
+              : controller?.interactive
+                ? "本机执行服务"
+                : "浏览器只读预览"
+          }}
+          · </template
         >会话保存在本机 · 模型请求发送至所选服务 · 设备状态独立核实</span
       ></template
     >
@@ -523,40 +931,12 @@ onBeforeUnmount(() => {
 </template>
 <style scoped>
 .home-content {
+  container-type: inline-size;
   height: 100%;
   flex: 1;
   min-width: 0;
   min-height: 0;
   overflow: auto;
-}
-.workspace-brand {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.workspace-brand strong {
-  font-size: 22px;
-  letter-spacing: -0.5px;
-}
-.brand-mark {
-  display: grid;
-  place-items: center;
-  width: 32px;
-  height: 32px;
-  border-radius: 9px;
-  background: var(--rss-color-text);
-  color: var(--rss-color-bg);
-}
-.workspace-description {
-  margin: 10px 0 0;
-  color: var(--rss-color-text-muted);
-  font-size: var(--rss-font-size-xs);
-}
-.workspace-mode {
-  margin: 8px 0 0;
-  font-size: var(--rss-font-size-xs);
-  color: var(--rss-color-text-muted);
-  line-height: 1.5;
 }
 .workspace-page-header {
   display: flex;
@@ -576,34 +956,75 @@ onBeforeUnmount(() => {
   font-size: var(--rss-font-size-md);
   font-weight: 500;
 }
-.workspace-account {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: 12px;
-  padding: 10px 12px;
-  text-align: left;
-  border: 0;
-  background: transparent;
-}
-.workspace-account > span:last-child {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-.account-avatar {
-  display: grid;
-  place-items: center;
-  flex: none;
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  background: var(--rss-color-accent-bg);
-  color: var(--rss-color-accent);
-}
 .workspace-content {
+  --history-width: min(300px, 45vw);
+  position: relative;
+  display: flex;
+  min-width: 0;
   height: 100%;
   min-height: 0;
+}
+.workspace-content.history-reserved {
+  padding-left: calc(var(--history-width) + 16px);
+}
+.workspace-page-surface {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+}
+.conversation-history-panel {
+  position: absolute;
+  z-index: 50;
+  top: 8px;
+  bottom: 8px;
+  left: 8px;
+  width: var(--history-width);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px;
+  background: var(--rss-color-surface);
+  border: 1px solid var(--rss-color-border);
+  border-radius: 12px;
+  box-shadow: 0 12px 32px #18223016;
+  min-height: 0;
+}
+.history-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+  flex: none;
+}
+.history-actions {
+  display: flex;
+  gap: 4px;
+}
+.history-actions button {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+}
+.page-assistant-panel {
+  flex: 0 0 400px;
+  width: 400px;
+  min-width: 0;
+  min-height: 0;
+  border-left: 1px solid var(--rss-color-border);
+  background: var(--rss-color-bg);
+}
+@media (max-width: 1000px) {
+  .page-assistant-panel {
+    position: fixed;
+    z-index: 35;
+    right: 0;
+    top: 56px;
+    bottom: 26px;
+    width: min(400px, 100vw);
+    box-shadow: -12px 0 32px #18223010;
+  }
 }
 .resource-content {
   height: 100%;
@@ -637,6 +1058,79 @@ onBeforeUnmount(() => {
 @media (max-width: 640px) {
   .resource-content {
     padding: 16px;
+  }
+}
+.workspace-breadcrumb {
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  white-space: nowrap;
+  gap: 12px;
+  min-width: 0;
+  color: var(--rss-color-text-muted);
+  font-size: 13px;
+}
+.workspace-breadcrumb button {
+  flex: none;
+  border: 0;
+  background: transparent;
+  padding: 5px 0;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.workspace-breadcrumb [aria-current] {
+  color: var(--rss-color-text);
+  font-weight: 600;
+}
+.workspace-assistant-entry {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  background: transparent;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  justify-content: center;
+  border-radius: 6px;
+  color: var(--rss-color-text-muted);
+}
+.workspace-assistant-entry:hover {
+  background: var(--rss-color-neutral-bg);
+  color: var(--rss-color-text);
+}
+.workspace-settings-footer {
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid var(--rss-color-border);
+}
+.agent-settings-navigation {
+  gap: 2px;
+  max-height: min(42vh, 324px);
+  overflow-y: auto;
+  padding-bottom: 12px;
+}
+.agent-settings-navigation :deep(button) {
+  min-height: 32px;
+  padding: 8px 10px;
+  line-height: 16px;
+}
+:global(.hidden-account .agent-settings-navigation) {
+  display: none;
+}
+:global(.hidden-account .workspace-settings-footer) {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+@media (max-width: 600px) {
+  .workspace-assistant-entry span {
+    display: none;
+  }
+  .workspace-breadcrumb {
+    gap: 6px;
+    font-size: 11px;
   }
 }
 </style>

@@ -1,7 +1,28 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { ArrowUp, Square } from "@lucide/vue";
 const composing = ref(false);
+const editor = ref<HTMLTextAreaElement>();
+let sizing: ResizeObserver | undefined;
+let editorWidth = 0;
+function fit() {
+  const el = editor.value;
+  if (!el || !el.getClientRects().length) return;
+  el.style.height = "auto";
+  el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+}
+onMounted(() => {
+  fit();
+  sizing = new ResizeObserver((entries) => {
+    const width = entries[0]?.contentRect.width ?? 0;
+    if (width !== editorWidth) {
+      editorWidth = width;
+      fit();
+    }
+  });
+  if (editor.value) sizing.observe(editor.value);
+});
+onBeforeUnmount(() => sizing?.disconnect());
 const props = withDefaults(
   defineProps<{
     modelValue: string;
@@ -19,6 +40,13 @@ const props = withDefaults(
     busy: false,
     canCancel: false,
     canSubmit: true,
+  },
+);
+watch(
+  () => props.modelValue,
+  async () => {
+    await nextTick();
+    fit();
   },
 );
 const emit = defineEmits<{
@@ -56,56 +84,85 @@ function input(event: Event) {
 </script>
 <template>
   <form class="rss-ui composer" @submit.prevent="submit">
-    <label
-      >消息<textarea
-        :value="modelValue"
-        :disabled="disabled"
-        :placeholder="placeholder"
-        rows="2"
-        @compositionstart="composing = true"
-        @compositionend="composing = false"
-        @input="input"
-        @keydown="keydown"
-      />
-    </label>
-    <div class="toolbar">
-      <div class="composer-tools"><slot name="tools" /></div>
-      <button
-        v-if="canCancel"
-        type="button"
-        data-action="cancel"
-        :disabled="disabled"
-        @click="!disabled && emit('cancel')"
-      >
-        <Square :size="14" aria-hidden="true" /><span>停止回复</span>
-      </button>
-      <button
-        type="submit"
-        :disabled="disabled || busy || !canSubmit || !modelValue.trim()"
-      >
-        <ArrowUp :size="18" aria-hidden="true" /><span class="sr-only">{{
-          submitLabel
-        }}</span>
-      </button>
+    <div class="composer-box">
+      <slot name="context" />
+      <label
+        ><span class="sr-only">消息</span
+        ><textarea
+          ref="editor"
+          :value="modelValue"
+          :disabled="disabled"
+          :placeholder="placeholder"
+          rows="2"
+          @compositionstart="composing = true"
+          @compositionend="composing = false"
+          @input="input"
+          @keydown="keydown"
+        />
+      </label>
+      <div class="toolbar">
+        <div class="composer-tools"><slot name="tools" /></div>
+        <button
+          v-if="canCancel"
+          type="button"
+          data-action="cancel"
+          :disabled="disabled"
+          title="停止回复"
+          @click="!disabled && emit('cancel')"
+        >
+          <Square :size="12" aria-hidden="true" /><span>停止回复</span>
+        </button>
+        <button
+          type="submit"
+          :aria-label="submitLabel"
+          :title="submitLabel"
+          :disabled="disabled || busy || !canSubmit || !modelValue.trim()"
+        >
+          <ArrowUp :size="18" aria-hidden="true" /><span class="sr-only">{{
+            submitLabel
+          }}</span>
+        </button>
+      </div>
     </div>
-    <p>Enter 发送 · Shift+Enter 换行</p>
+    <p class="composer-hint">Enter 发送<span> · </span>Shift+Enter 换行</p>
   </form>
 </template>
 <style scoped>
+/* ref: vscode 1.105.0 chat/browser/media/chat.css — shared input surface with a compact toolbar. */
 .composer {
-  border: 1px solid var(--rss-color-border-strong);
-  border-radius: 18px;
-  padding: 16px;
-  background: var(--rss-color-surface);
   display: flex;
   flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.composer-box {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--rss-color-border-strong);
+  border-radius: 16px;
+  background: var(--rss-color-surface);
+  box-shadow: 0 2px 8px #18223006;
+  transition:
+    border-color 140ms ease,
+    box-shadow 140ms ease;
+}
+.composer-box:focus-within {
+  border-color: color-mix(
+    in srgb,
+    var(--rss-color-accent) 45%,
+    var(--rss-color-border)
+  );
+  box-shadow: 0 0 0 3px
+    color-mix(in srgb, var(--rss-color-accent) 6%, transparent);
 }
 .toolbar {
   display: flex;
   gap: 8px;
-  order: 2;
-  margin-top: 12px;
   align-items: center;
+  min-width: 0;
 }
 .composer-tools {
   flex: 1;
@@ -113,56 +170,79 @@ function input(event: Event) {
   display: flex;
   align-items: center;
   gap: 8px;
-  flex-wrap: wrap;
 }
-.toolbar button {
+.composer .toolbar button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 6px;
   flex: none;
+  min-height: 30px;
+  height: 30px;
 }
-.toolbar button[data-action="cancel"] {
-  margin-left: 0;
-  margin-right: 0;
+.composer .toolbar button[data-action="cancel"] {
+  padding: 0 8px;
+  border-color: var(--rss-color-border);
+  font-size: 11px;
+  background: transparent;
 }
-button[type="submit"] {
-  width: 36px;
-  padding: 8px;
+.composer .toolbar button[type="submit"] {
+  width: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--rss-color-text);
+  color: var(--rss-color-surface);
+}
+.composer .toolbar button[type="submit"]:disabled {
+  opacity: 1;
+  background: var(--rss-color-neutral-bg);
+  color: var(--rss-color-text-muted);
+}
+.composer .toolbar button[type="submit"]:hover:not(:disabled) {
   background: var(--rss-color-accent);
   color: var(--rss-color-on-accent);
 }
 label {
   display: block;
-  font-size: 0;
+  min-width: 0;
 }
-textarea {
+.composer textarea {
   display: block;
   width: 100%;
-  resize: vertical;
-  min-height: 64px;
+  resize: none;
+  min-height: var(--rss-composer-min-height, 64px);
   max-height: 160px;
   border: 0;
-  background: var(--rss-color-surface);
-  padding: 4px;
-  border-radius: var(--rss-radius-sm);
-  font-size: var(--rss-font-size-lg);
+  background: transparent;
+  padding: 2px;
+  border-radius: 0;
+  font-size: 14px;
+  line-height: 1.7;
+  outline: none;
+  box-shadow: none;
+  scrollbar-width: thin;
 }
-p {
-  margin: 8px 0 0;
-  font-size: var(--rss-font-size-xs);
+textarea::placeholder {
   color: var(--rss-color-text-muted);
-  order: 3;
+}
+.composer-hint {
+  margin: 0;
+  text-align: center;
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--rss-color-text-muted);
 }
 @media (max-height: 520px) {
-  .composer {
-    padding: 8px;
+  .composer-box {
+    padding: 10px;
+    gap: 6px;
   }
-  textarea {
-    min-height: 44px;
+  .composer textarea {
+    min-height: 40px;
     max-height: 72px;
   }
-  p {
+  .composer-hint {
     display: none;
   }
 }

@@ -1,0 +1,712 @@
+.software-reference {
+  --software-muted: var(--rss-color-text-muted);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 220px;
+  gap: 18px;
+  width: 100%;
+  min-width: 0;
+  padding: 24px 28px 32px;
+  color: var(--rss-color-text);
+}
+.software-reference .software-workspace {
+  min-width: 0;
+}
+.software-reference .software-breadcrumb {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 9px;
+  margin: 0 0 27px;
+  font-size: 11px;
+  color: var(--software-muted);
+}
+.software-reference .software-breadcrumb button {
+  border: 0;
+  background: none;
+  color: inherit;
+  padding: 0;
+  cursor: pointer;
+  font: inherit;
+}
+.software-reference .software-breadcrumb small {
+  margin-left: auto;
+  font-size: 10px;
+}
+.software-reference .software-page-heading h2 {
+  font-size: 24px;
+  letter-spacing: -0.6px;
+  margin: 0 0 11px;
+}
+.software-reference .software-page-heading p {
+  color: var(--software-muted);
+  font-size: 12px;
+  margin: 0;
+}
+.software-reference .software-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 14px;
+  margin: 24px 0 17px;
+}
+.software-reference .software-toolbar .ui-search {
+  width: 160px;
+  min-width: 0;
+}
+.software-reference .software-tabs {
+  display: flex;
+  flex-shrink: 0;
+  padding: 3px;
+  gap: 2px;
+  border: 1px solid var(--rss-color-border);
+  background: color-mix(in srgb, #9392bf 13%, var(--rss-color-bg));
+  border-radius: 7px;
+}
+.software-reference .software-tabs button {
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 5px;
+  color: var(--software-muted);
+  background: transparent;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.software-reference .software-tabs button[aria-pressed="true"] {
+  background: var(--rss-color-bg);
+  color: var(--rss-color-text);
+  box-shadow: 0 1px 4px #33446612;
+}
+.software-reference .software-list {
+  border: 1px solid var(--rss-color-border);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--rss-color-bg);
+}
+.software-reference .software-item {
+  display: flex;
+  gap: 13px;
+  align-items: center;
+  padding: 19px 16px;
+  border-bottom: 1px solid var(--rss-color-border);
+}
+.software-reference .software-item:last-child {
+  border-bottom: 0;
+}
+.software-reference .software-logo {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 35px;
+  height: 35px;
+  border-radius: 10px;
+  font-size: 20px;
+  font-weight: 650;
+  background: linear-gradient(145deg, #f1f7ff, #d8e8fc);
+  color: #4776ad;
+  box-shadow: 0 3px 8px #344e6b14;
+}
+.software-reference .software-logo.purple {
+  background: linear-gradient(145deg, #ddd9ff, #9690dd);
+  color: #fff;
+}
+.software-reference .software-logo.amber {
+  background: linear-gradient(145deg, #fff1bf, #edca71);
+  color: #a77b27;
+}
+.software-reference .software-logo.teal {
+  background: linear-gradient(145deg, #bcebe6, #79c5c8);
+  color: #367982;
+}
+.software-reference .software-item-copy {
+  flex: 1;
+  min-width: 0;
+}
+.software-reference .software-name {
+  border: 0;
+  background: none;
+  color: inherit;
+  padding: 0;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+}
+.software-reference .software-item-copy p {
+  font-size: 10px;
+  color: var(--software-muted);
+  margin: 8px 0 0;
+  line-height: 1.7;
+}
+.software-reference .software-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+.software-button {
+  padding: 7px 11px;
+  border: 1px solid var(--rss-color-border);
+  border-radius: 6px;
+  background: var(--rss-color-bg);
+  color: var(--rss-color-text);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.software-button.primary {
+  background: #1477cf;
+  border-color: #1477cf;
+  color: white;
+}
+.software-button.soft {
+  background: color-mix(in srgb, #78a8e6 12%, var(--rss-color-bg));
+  color: #477db6;
+}
+.software-button.danger {
+  color: #bb6262;
+}
+.software-button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.software-button:not(:disabled):hover {
+  filter: brightness(0.97);
+}
+.software-reference .software-detail-hero {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+  border: 1px solid var(--rss-color-border);
+  border-radius: 12px;
+  padding: 24px 20px;
+  background: var(--rss-color-bg);
+}
+.software-reference .software-detail-hero .software-logo {
+  width: 54px;
+  height: 54px;
+  border-radius: 13px;
+  font-size: 28px;
+}
+.software-reference .software-detail-hero h2 {
+  font-size: 24px;
+  margin: 0;
+  letter-spacing: -0.5px;
+}
+.software-reference .software-detail-hero .software-item-actions {
+  margin-left: auto;
+}
+.software-reference .software-problem {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  padding: 18px 16px;
+  border: 1px solid color-mix(in srgb, #c8ac70 26%, var(--rss-color-border));
+  border-radius: 10px;
+  background: color-mix(in srgb, #e9d6ab 8%, var(--rss-color-bg));
+  margin: 18px 0;
+}
+.software-reference .software-problem-icon {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  color: #b78c54;
+  border-radius: 10px;
+  background: #d2ad6b12;
+}
+.software-reference .software-problem > div {
+  flex: 1;
+  min-width: 0;
+}
+.software-reference .software-problem strong {
+  font-size: 12px;
+}
+.software-reference .software-problem p {
+  font-size: 10px;
+  color: var(--software-muted);
+  line-height: 1.7;
+  margin: 7px 0 0;
+}
+.software-reference .software-info-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 15px;
+  margin-top: 18px;
+}
+.software-reference .software-info {
+  min-width: 0;
+  padding: 19px 17px;
+  border: 1px solid var(--rss-color-border);
+  border-radius: 11px;
+  background: var(--rss-color-bg);
+}
+.software-reference .software-info h3 {
+  font-size: 13px;
+  margin: 0 0 14px;
+}
+.software-reference .software-info p {
+  font-size: 11px;
+  line-height: 1.8;
+  color: var(--software-muted);
+  margin: 0 0 16px;
+}
+.software-reference .software-info small {
+  display: block;
+  color: var(--software-muted);
+  font-size: 10px;
+  line-height: 1.8;
+  margin-top: 14px;
+}
+.software-reference .software-info dl {
+  margin: 16px 0 0;
+}
+.software-reference .software-info dl > div {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px;
+  border-top: 1px solid var(--rss-color-border);
+  padding: 13px 0;
+  font-size: 10px;
+}
+.software-reference .software-info dl > div:first-child {
+  border-top: 0;
+}
+.software-reference .software-info dt {
+  color: var(--software-muted);
+}
+.software-reference .software-info dd {
+  margin: 0;
+}
+.software-reference .software-notice {
+  padding: 12px 14px;
+  margin-top: 18px;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.7;
+  background: var(--rss-color-surface);
+  color: var(--software-muted);
+}
+.software-reference .software-empty {
+  border: 1px dashed var(--rss-color-border);
+  padding: 40px 20px;
+  border-radius: 10px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--software-muted);
+}
+.software-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 24px;
+}
+.software-reference button:focus-visible,
+.software-reference h2:focus-visible,
+.software-button:focus-visible {
+  outline: 2px solid var(--rss-color-accent);
+  outline-offset: 3px;
+}
+@media (max-width: 1050px) {
+  .software-reference {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (max-width: 600px) {
+  .software-reference {
+    padding: 18px 12px;
+  }
+  .software-reference .software-item {
+    flex-wrap: wrap;
+  }
+  .software-reference .software-toolbar {
+    flex-wrap: wrap;
+  }
+  .software-reference .software-toolbar .ui-search {
+    width: 100%;
+  }
+  .software-reference .software-info-grid {
+    grid-template-columns: 1fr;
+  }
+  .software-reference .software-problem {
+    flex-wrap: wrap;
+  }
+  .software-reference .software-breadcrumb small {
+    width: 100%;
+    margin-left: 0;
+  }
+}
+/* Store composition from the approved desktop HTML, scoped to this PR's new page. */
+.software-reference {
+  display: block;
+}
+.software-reference .software-list {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 18px;
+  border: 0;
+  background: transparent;
+  overflow: visible;
+}
+.software-reference .software-item {
+  display: block;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--rss-color-border);
+  border-radius: 16px;
+  background: var(--rss-color-bg);
+}
+.software-reference .artwork-link {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  cursor: pointer;
+}
+.store-card-footer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 20px 16px;
+}
+.software-reference .software-logo {
+  width: 48px;
+  height: 48px;
+  font-size: 28px;
+  border-radius: 13px;
+}
+.software-reference .software-logo.workspace {
+  color: white;
+  background: linear-gradient(145deg, #7c9784, #3d5c4f);
+}
+.software-reference .software-logo.notes {
+  color: #866528;
+  background: linear-gradient(145deg, #f4dfa1, #ddb755);
+}
+.software-reference .software-logo.browser {
+  color: white;
+  background: linear-gradient(145deg, #b1d1d0, #6a9aa4);
+}
+.software-reference .software-logo.design {
+  color: white;
+  background: linear-gradient(145deg, #b8afd2, #77699b);
+}
+.software-reference .software-logo.sync {
+  color: white;
+  background: linear-gradient(145deg, #aac0e0, #688ab9);
+}
+.software-reference .software-name {
+  font-size: 14px;
+}
+.software-reference .software-item-copy p {
+  font-size: 11px;
+  margin: 6px 0 0;
+}
+.software-reference .store-action {
+  border: 0;
+  border-radius: 20px;
+  background: color-mix(in srgb, #6b8bdb 10%, var(--rss-color-bg));
+  color: var(--rss-color-accent);
+  padding: 8px 14px;
+  flex: none;
+  font-size: 12px;
+  cursor: pointer;
+}
+.store-editorial {
+  display: grid;
+  grid-template-columns: 1.65fr 1fr;
+  gap: 22px;
+}
+.store-hero {
+  min-height: 330px;
+}
+.store-hero > div:first-child {
+  z-index: 1;
+}
+.floating-apps {
+  position: relative;
+  width: 44%;
+  align-self: stretch;
+  flex: none;
+}
+.floating-apps span {
+  display: grid;
+  place-items: center;
+  position: absolute;
+  border-radius: 24%;
+  box-shadow: 0 20px 40px #3c493014;
+}
+.floating-apps span:nth-child(1) {
+  width: 76px;
+  height: 76px;
+  background: #fffbf1;
+  color: #b99c5c;
+  left: 0;
+  top: 0;
+  transform: rotate(-15deg);
+  font: 40px Georgia;
+}
+.floating-apps span:nth-child(2) {
+  width: 140px;
+  height: 140px;
+  background: linear-gradient(145deg, #68836e, #38564b);
+  color: white;
+  right: 0;
+  top: 65px;
+  transform: rotate(13deg);
+  font-size: 85px;
+  font-weight: 600;
+}
+.floating-apps span:nth-child(3) {
+  width: 70px;
+  height: 70px;
+  background: #eaf5ee;
+  color: #71988c;
+  bottom: 0;
+  left: 10px;
+  transform: rotate(10deg);
+  font-size: 35px;
+}
+.software-reference .creative-story {
+  position: relative;
+  overflow: hidden;
+  padding: 38px 32px;
+  border-radius: 22px;
+  color: #fff;
+  background: #282a36;
+}
+.software-reference .creative-story .design-eyebrow {
+  color: #beb9ce;
+}
+.software-reference .creative-story h2 {
+  font-size: 30px;
+  line-height: 1.4;
+  margin: 0 0 18px;
+  position: relative;
+  z-index: 1;
+}
+.software-reference .creative-story p {
+  color: #a5a4b2;
+  font-size: 13px;
+  line-height: 1.9;
+  position: relative;
+  z-index: 1;
+}
+.software-reference .creative-story button {
+  position: relative;
+  z-index: 1;
+  background: #ffffff15;
+  color: white;
+  border: 1px solid #ffffff20;
+  padding: 13px 16px;
+  border-radius: 9px;
+  margin-top: 10px;
+  cursor: pointer;
+}
+.creative-flower {
+  position: absolute;
+  right: -20px;
+  bottom: -30px;
+  width: 180px;
+  height: 180px;
+  transform: rotate(-18deg);
+}
+.creative-flower i {
+  position: absolute;
+  width: 90px;
+  height: 90px;
+  border-radius: 50% 50% 0 50%;
+  background: #d1a3a0;
+}
+.creative-flower i:nth-child(2) {
+  right: 0;
+  transform: rotate(90deg);
+  background: #adbbb0;
+}
+.creative-flower i:nth-child(3) {
+  bottom: 0;
+  transform: rotate(-90deg);
+  background: #b4a8d1;
+}
+.creative-flower i:nth-child(4) {
+  bottom: 0;
+  right: 0;
+  transform: rotate(180deg);
+  background: #e8d491;
+}
+.store-categories {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 14px;
+}
+.software-reference .store-categories button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 22px 18px;
+  border: 1px solid var(--rss-color-border);
+  border-radius: 12px;
+  background: var(--rss-color-bg);
+  color: var(--rss-color-text);
+  text-align: left;
+  font-size: 13px;
+  cursor: pointer;
+}
+.software-reference .library-banner {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  text-align: left;
+  gap: 20px;
+  margin-top: 30px;
+  padding: 26px;
+  border: 0;
+  border-radius: 16px;
+  background: #a3b9ad20;
+  color: #6e897c;
+  cursor: pointer;
+}
+.software-reference .library-banner strong {
+  display: block;
+  font-size: 18px;
+}
+.software-reference .library-banner small {
+  display: block;
+  font-size: 12px;
+  margin-top: 10px;
+}
+@media (max-width: 1150px) {
+  .software-reference .software-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 1000px) {
+  .store-editorial {
+    grid-template-columns: 1fr;
+  }
+  .creative-story {
+    min-height: 250px;
+  }
+  .store-categories {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+@media (max-width: 600px) {
+  .software-reference .software-list {
+    grid-template-columns: 1fr;
+  }
+  .store-categories {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .floating-apps {
+    display: none;
+  }
+  .library-banner {
+    flex-wrap: wrap;
+  }
+}
+/* Match the approved store layout at desktop widths. */
+.software-reference .store-editorial {
+  grid-template-columns: 1.7fr 1fr;
+  gap: 18px;
+}
+.software-reference .creative-story {
+  padding: 31px;
+  border-radius: 18px;
+}
+.software-reference .creative-story h2 {
+  font-size: 28px;
+  margin: 0 0 14px;
+  line-height: 1.4;
+}
+.software-reference .creative-story p {
+  font-size: 11px;
+  line-height: 1.85;
+}
+.software-reference .creative-story button {
+  padding: 9px 14px;
+  border-radius: 7px;
+  font-size: 10px;
+}
+.software-reference .software-list {
+  gap: 16px;
+}
+.software-reference .software-item {
+  border-radius: 13px;
+}
+.software-reference .app-artwork {
+  height: 130px;
+}
+.software-reference .store-card-footer {
+  padding: 16px 15px;
+  gap: 11px;
+}
+.software-reference .software-logo {
+  width: 42px;
+  height: 42px;
+  border-radius: 11px;
+  font-size: 25px;
+}
+.software-reference .software-name {
+  font-size: 12px;
+}
+.software-reference .software-item-copy p {
+  font-size: 10px;
+}
+.software-reference .store-action {
+  font-size: 10px;
+  padding: 6px 12px;
+  min-height: 28px;
+}
+.software-reference .store-categories button {
+  padding: 16px;
+  font-size: 11px;
+  border-radius: 10px;
+  min-height: 67px;
+}
+.software-reference .library-banner {
+  margin-top: 26px;
+  padding: 24px;
+  border-radius: 15px;
+  font-size: 10px;
+}
+.library-banner strong {
+  font-size: 16px;
+}
+.library-banner small {
+  font-size: 10px;
+  margin-top: 7px;
+}
+@media (max-width: 1100px) {
+  .software-reference .app-artwork {
+    height: 112px;
+  }
+  .software-reference .store-card-footer {
+    padding: 13px 11px;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .software-reference .creative-story h2 {
+    font-size: 25px;
+  }
+}
+@media (max-width: 850px) {
+  .software-reference .store-editorial {
+    grid-template-columns: 1fr;
+  }
+  .software-reference .creative-story {
+    min-height: 220px;
+  }
+}
+@media (max-width: 600px) {
+  .software-reference .app-artwork {
+    height: 145px;
+  }
+}

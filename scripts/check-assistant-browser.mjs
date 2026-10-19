@@ -18,25 +18,73 @@ const fixture = await startFixture();
 let browser, page;
 const title = "第一轮 <img src=x onerror=alert(1)>";
 const diagnostics = async () => {
-  await page.getByRole("button", { name: "更多", exact: true }).click();
-  await page
-    .getByRole("menuitem", { name: "会话详情与诊断", exact: true })
-    .click();
+  await openAgentSettings("AI 与连接");
+  const section = page.locator(".settings-disclosure").filter({
+    has: page.locator(":scope > summary", { hasText: "会话详情与诊断" }),
+  });
+  if ((await section.getAttribute("open")) === null)
+    await section.locator(":scope > summary").click();
+};
+const expandNavigation = async (target = page) => {
+  const root = target.locator(".workspace-chrome");
+  await target.locator(".sidebar-cycle").waitFor();
+  for (let count = 0; count < 3; count++) {
+    const mode = await root.getAttribute("data-layout");
+    if (mode === "full") return;
+    await target.locator(".sidebar-cycle").click();
+    await target
+      .locator(
+        `.workspace-chrome[data-layout="${mode === "rail" ? "full" : "rail"}"]`,
+      )
+      .waitFor();
+  }
+  throw new Error("Full navigation did not open");
+};
+const openHistory = async (target = page) => {
+  const button = target.locator(
+    '[data-action="history-conversations"]:visible',
+  );
+  if ((await button.getAttribute("aria-expanded")) !== "true")
+    await button.click();
+  const pin = target.getByRole("button", { name: "固定历史会话", exact: true });
+  if (await pin.count()) await pin.click();
+};
+const openAgentSettings = async (section) => {
+  const trigger = page.locator(".workspace-account:visible");
+  if ((await trigger.getAttribute("aria-expanded")) !== "true")
+    await trigger.click();
+  await page.getByRole("button", { name: section, exact: true }).click();
+};
+const fixtureControls = async () => {
+  const dialog = page.locator('[role="dialog"][data-state="open"]');
+  if (await dialog.count()) await page.keyboard.press("Escape");
+  await openAgentSettings("开发预览");
+  await page.locator(".fixture-controls").waitFor();
+  if ((await page.locator(".fixture-controls").getAttribute("open")) === null)
+    await page.locator(".fixture-controls summary").click();
 };
 const navigate = async (name) => {
   const dialog = page.locator('[role="dialog"][data-state="open"]');
   if (await dialog.count()) await page.keyboard.press("Escape");
-  const trigger = page.getByRole("button", { name: "打开主导航", exact: true });
-  if (page.viewportSize().width < 900) {
-    await trigger.waitFor();
-    await trigger.click();
-  } else await page.locator(".navigation-panel").waitFor();
+  if (["软件中心", "请求与任务"].includes(name)) {
+    await fixtureControls();
+    await page
+      .getByLabel("原有业务验证", { exact: true })
+      .selectOption(name === "软件中心" ? "software" : "tasks");
+    return;
+  }
+  if (name === "设置") {
+    await openAgentSettings("运行与诊断");
+    return;
+  }
+  await expandNavigation();
   await (
     (await page.locator('[role="dialog"][data-state="open"]').count())
       ? page.locator('[role="dialog"][data-state="open"]')
       : page
   )
-    .getByRole("button", { name, exact: true })
+    .locator(".workspace-primary-navigation > ol > li > button")
+    .filter({ hasText: name })
     .click();
 };
 try {
@@ -54,6 +102,7 @@ try {
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto(fixture.url);
+  await expandNavigation();
   const sidebarStyle = await page.locator(".shell aside").evaluate((el) => {
     const style = getComputedStyle(el);
     const item = getComputedStyle(
@@ -68,8 +117,55 @@ try {
       selectedColor: item.color,
     };
   });
-  await page.getByRole("button", { name: "AI 助手", exact: true }).click();
+  await page.getByRole("button", { name: /^AI 助手/ }).click();
   await page.locator(".composer textarea").waitFor();
+  assert.equal(await page.locator(".conversation-menu").count(), 0);
+  await page.locator(".workspace-account:visible").click();
+  await page
+    .locator('[data-settings-section="account"] h2')
+    .filter({ hasText: "账号与组织" })
+    .waitFor();
+  assert.equal(
+    await page
+      .locator(".agent-settings-navigation:visible button")
+      .first()
+      .getAttribute("aria-label"),
+    "账号与组织",
+  );
+  await page.locator(".workspace-search-trigger").click();
+  const searchInput = page.getByRole("combobox", {
+    name: "全局搜索",
+    exact: true,
+  });
+  await searchInput.fill("网络");
+  await page.getByRole("option", { name: "网络", exact: true }).waitFor();
+  await page.locator(".workspace-account:visible").click();
+  await page.locator(".workspace-search-popover").waitFor({ state: "hidden" });
+  await page.locator(".workspace-search-trigger").click();
+  await searchInput.fill("屏幕与睡眠");
+  await searchInput.press("Enter");
+  await page.locator(".workspace-search-popover").waitFor({ state: "hidden" });
+  await page
+    .locator(".workspace-breadcrumb")
+    .filter({ hasText: "屏幕与睡眠" })
+    .waitFor();
+  await navigate("AI 助手");
+  const historyPanel = page.locator(".conversation-history-panel");
+  await page.locator('[data-action="history-conversations"]:visible').click();
+  const floatingHistoryBounds = await historyPanel.boundingBox();
+  await page.getByRole("button", { name: "固定历史会话", exact: true }).click();
+  assert.deepEqual(await historyPanel.boundingBox(), floatingHistoryBounds);
+  await page.getByRole("button", { name: "关闭历史会话", exact: true }).click();
+  await historyPanel.waitFor({ state: "hidden" });
+  await page.locator('[data-action="history-conversations"]:visible').click();
+  assert.equal(
+    await historyPanel.evaluate((el) =>
+      el.classList.contains("history-pinned"),
+    ),
+    false,
+  );
+  await page.getByRole("button", { name: "关闭历史会话", exact: true }).click();
+  await historyPanel.waitFor({ state: "hidden" });
   await page.setViewportSize({ width: 480, height: 400 });
   await page.getByRole("button", { name: "打开主导航", exact: true }).click();
   const navigation = page.getByRole("dialog", { name: "主导航", exact: true });
@@ -121,7 +217,11 @@ try {
     true,
   );
   await page.setViewportSize({ width: 1100, height: 760 });
-  await page.locator(".navigation-panel .conversation-list").waitFor();
+  await expandNavigation();
+  await openHistory();
+  await page
+    .locator(".conversation-history-panel .conversation-list")
+    .waitFor();
   assert.equal(await page.locator(".conversation-list li").count(), 20);
   await page.getByRole("button", { name: "加载更多会话" }).click();
   await page.waitForFunction(
@@ -132,7 +232,8 @@ try {
     0,
     "other caller excluded",
   );
-  await page.locator(".new-conversation").click();
+  await page.locator('[data-action="new-conversation"]:visible').click();
+  await page.getByRole("button", { name: "关闭历史会话", exact: true }).click();
   const composer = page.locator(".composer textarea");
   await composer.waitFor();
   const startInput = await composer.elementHandle();
@@ -144,6 +245,11 @@ try {
       [480, 400],
     ]) {
       await page.setViewportSize({ width, height });
+      await page.clock.runFor(150);
+      if (width < 900)
+        await page
+          .locator('.workspace-chrome:not([data-layout="full"])')
+          .waitFor();
       await page.locator(".assistant-welcome").waitFor();
       assert.equal(
         await composer.evaluate((el, original) => el === original, startInput),
@@ -155,7 +261,10 @@ try {
         box.y >= 0 && box.y + box.height <= height,
         "empty-state input reachable",
       );
-      assert.equal(await page.locator(".shell-header h1:visible").count(), 1);
+      assert.equal(
+        await page.locator(".shell-header h1:visible").count(),
+        width < 700 ? 0 : 1,
+      );
       assert.equal(
         await page.evaluate(
           () => document.documentElement.scrollWidth <= innerWidth,
@@ -174,6 +283,8 @@ try {
   }
   await page.emulateMedia({ colorScheme: "light" });
   await page.setViewportSize({ width: 1100, height: 760 });
+  await expandNavigation();
+  await openHistory();
   await composer.fill("第一轮 <img src=x onerror=alert(1)>");
   await page.getByRole("button", { name: "发送", exact: true }).click();
   await page.getByText("AI 命令已接收 / 排队中", { exact: true }).waitFor();
@@ -230,7 +341,7 @@ try {
   );
   // Keep a draft and active subscriptions across both session and product navigation changes.
   await composer.fill("保留草稿");
-  await page.locator(".new-conversation").click();
+  await page.locator('[data-action="new-conversation"]:visible').click();
   assert.equal(await composer.inputValue(), "");
   assert.equal(
     await page.getByText("临时片段", { exact: true }).count(),
@@ -251,7 +362,9 @@ try {
   await page.getByRole("region", { name: "AI 工具权限请求" }).waitFor();
   const other = await browser.newPage();
   await other.goto(fixture.url);
-  await other.getByRole("button", { name: "AI 助手", exact: true }).click();
+  await expandNavigation(other);
+  await other.getByRole("button", { name: /^AI 助手/ }).click();
+  await openHistory(other);
   await other.getByRole("button", { name: "加载更多会话" }).click();
   await other.getByRole("button", { name: title, exact: true }).click();
   await other.getByText("选择下一步", { exact: false }).waitFor();
@@ -497,7 +610,9 @@ try {
     route.abort(),
   );
   await degraded.goto(fixture.url);
-  await degraded.getByRole("button", { name: "AI 助手", exact: true }).click();
+  await expandNavigation(degraded);
+  await degraded.getByRole("button", { name: /^AI 助手/ }).click();
+  await openHistory(degraded);
   await degraded.getByRole("button", { name: "加载更多会话" }).click();
   await degraded.getByRole("button", { name: title, exact: true }).click();
   await degraded
@@ -529,7 +644,9 @@ try {
     }),
   );
   await invalid.goto(fixture.url);
-  await invalid.getByRole("button", { name: "AI 助手", exact: true }).click();
+  await expandNavigation(invalid);
+  await invalid.getByRole("button", { name: /^AI 助手/ }).click();
+  await openHistory(invalid);
   await invalid.getByRole("button", { name: "加载更多会话" }).click();
   await invalid.getByRole("button", { name: title, exact: true }).click();
   await invalid
@@ -553,7 +670,9 @@ try {
     return result;
   };
   await noA2ui.goto(fixture.url);
-  await noA2ui.getByRole("button", { name: "AI 助手", exact: true }).click();
+  await expandNavigation(noA2ui);
+  await noA2ui.getByRole("button", { name: /^AI 助手/ }).click();
+  await openHistory(noA2ui);
   await noA2ui.locator(".composer textarea").waitFor();
   fixture.host.negotiate = negotiate;
   await noA2ui.getByRole("button", { name: "加载更多会话" }).click();
@@ -689,7 +808,7 @@ try {
     .fill(fixture.execution.running.status.operationRequestId);
   await page.getByRole("button", { name: "读取执行详情" }).click();
   await page
-    .getByRole("dialog", { name: "会话详情与诊断", exact: true })
+    .getByRole("region", { name: "会话详情与诊断", exact: true })
     .getByText("执行器已接收，设备效果尚未确认", { exact: true })
     .waitFor();
   // Cross the 64-event snapshot page boundary without overflowing the fixture channel.
@@ -914,7 +1033,7 @@ try {
     ) < 2,
     "returning to AI preserves history reading position",
   );
-  await page.locator(".new-conversation").click();
+  await page.locator('[data-action="new-conversation"]:visible').click();
   await page
     .locator(".conversation-list")
     .getByRole("button", { name: title, exact: true })
@@ -932,15 +1051,15 @@ try {
   );
   await page.clock.setFixedTime(new Date());
   await navigate("软件中心");
-  await page.getByRole("button", { name: "AI 助手", exact: true }).click();
+  await page.getByRole("button", { name: /^AI 助手/ }).click();
   assert.equal(await composer.inputValue(), "保留草稿");
   await navigate("设置");
   await page
-    .getByRole("heading", { name: "数据与诊断", exact: true })
+    .getByRole("heading", { name: "运行与诊断", exact: true })
     .waitFor();
   assert.equal(
     await page
-      .locator(".shell-header h1:visible")
+      .locator('[data-settings-section="diagnostics"] h2:visible')
       .evaluate((el) => el === document.activeElement),
     true,
   );
@@ -1000,7 +1119,11 @@ try {
     ),
   });
   await page.setViewportSize({ width: 1280, height: 900 });
-  await page.locator(".navigation-panel .conversation-list").waitFor();
+  await expandNavigation();
+  await openHistory();
+  await page
+    .locator(".conversation-history-panel .conversation-list")
+    .waitFor();
   await page.screenshot({
     path: fileURLToPath(
       new URL("../.local-ci-runs/assistant-1280x900.png", import.meta.url),
@@ -1067,7 +1190,9 @@ try {
     "same-process native resume goes through Host independently of history restore",
   );
   assert.equal(await page.locator('[role="alert"]').count(), 0);
-  await page.getByText("稳定历史块 69", { exact: true }).waitFor();
+  await page
+    .getByText("稳定历史块 69", { exact: true })
+    .waitFor({ state: "attached" });
   await page
     .getByRole("button", { name: "分离当前会话视图", exact: true })
     .click();
@@ -1080,7 +1205,9 @@ try {
     true,
   );
   await page.getByRole("button", { name: "重新读取历史", exact: true }).click();
-  await page.getByText("稳定历史块 69", { exact: true }).waitFor();
+  await page
+    .getByText("稳定历史块 69", { exact: true })
+    .waitFor({ state: "attached" });
   if (process.env.ASSISTANT_SCREENSHOT) {
     await page
       .locator(".shell > .shell-body > main")
@@ -1139,37 +1266,8 @@ try {
       .getByRole("region", { name: "待发送资源上下文", exact: true })
       .waitFor();
     if (width < 1440) {
-      await panel.locator(".connection-trigger").click();
-      const connectionMenu = page.getByRole("dialog", {
-        name: "AI 连接选择",
-        exact: true,
-      });
-      await connectionMenu.waitFor();
-      assert.equal(
-        await connectionMenu.evaluate((el) =>
-          el.contains(document.activeElement),
-        ),
-        true,
-        "connection popover receives focus inside the shared overlay scope",
-      );
-      await page.keyboard.press("Escape");
-      await panel.getByRole("button", { name: "更多", exact: true }).click();
-      await page
-        .getByRole("menuitem", { name: "会话详情与诊断", exact: true })
-        .click();
-      await page
-        .getByRole("dialog", { name: "会话详情与诊断", exact: true })
-        .waitFor();
-      await page.keyboard.press("Tab");
-      assert.equal(
-        await page.evaluate(() =>
-          document.activeElement
-            .closest('[role="dialog"]')
-            .getAttribute("aria-label"),
-        ),
-        "会话详情与诊断",
-      );
-      await page.keyboard.press("Escape");
+      assert.equal(await panel.locator(".connection-trigger").count(), 0);
+      assert.equal(await panel.locator(".conversation-menu").count(), 0);
       await panel.locator(".composer textarea").waitFor();
     }
     assert.equal(await page.locator(".assistant").count(), 1);
@@ -1181,7 +1279,7 @@ try {
     );
     await panel
       .getByRole("region", { name: "待发送资源上下文", exact: true })
-      .getByText("核对将发送的信息", { exact: true })
+      .getByLabel("核对将发送的信息", { exact: true })
       .click();
     const contextText = await panel
       .locator(".resource-context pre")
@@ -1243,7 +1341,9 @@ try {
       [],
     ),
   );
+  await fixtureControls();
   await page.getByLabel("显示操作模板", { exact: true }).check();
+  await page.locator(".fixture-controls summary").click();
   for (const template of [
     "SettingsForm",
     "ObjectActions",
@@ -1281,7 +1381,9 @@ try {
         .waitFor();
     }
   }
+  await fixtureControls();
   await page.getByLabel("显示操作模板", { exact: true }).uncheck();
+  await page.locator(".fixture-controls summary").click();
   await checkFoundations(browser, fixture.url);
   assert.deepEqual(errors, []);
   console.log(

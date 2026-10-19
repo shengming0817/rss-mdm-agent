@@ -122,6 +122,10 @@ export function createFixturePorts() {
         rpc<
           import("../../apps/desktop/src/settings/service-contract").RegistrationStatus
         >("registration"),
+      mdmStatus: () =>
+        rpc<
+          import("../../apps/desktop/src/settings/service-contract").MdmStatus
+        >("mdm-registration"),
       importRegistration: async () => null,
       cancelRegistration: async () => {},
       requestRegistration: () =>

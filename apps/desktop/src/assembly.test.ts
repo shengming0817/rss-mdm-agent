@@ -21,7 +21,11 @@ it("requires every fixture port and sends AI confirmation/cancellation to the ex
       }),
     ).toThrow("incomplete");
   }
-  for (const method of ["registration", "requestRegistration"] as const) {
+  for (const method of [
+    "registration",
+    "requestRegistration",
+    "mdmStatus",
+  ] as const) {
     expect(() =>
       assertFixtureAssembly({
         ...ports,

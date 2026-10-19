@@ -24,6 +24,7 @@ it("requests one fixed machine registration and refreshes its original public pr
       structuredClone(serviceViews.registrationRequired) as ServiceView,
     registration: async () => state,
     requestRegistration: request,
+    mdmStatus: async () => ({ state: "unknown" }),
     importRegistration: async () => null,
     cancelRegistration: async () => {},
   };
@@ -67,6 +68,7 @@ it("stops an explicit registration wait without starting another machine request
       credential: "absent",
     }),
     requestRegistration: request,
+    mdmStatus: async () => ({ state: "unknown" }),
     importRegistration: async () => null,
     cancelRegistration: cancel,
   };
@@ -87,4 +89,40 @@ it("stops an explicit registration wait without starting another machine request
   expect(request).toHaveBeenCalledTimes(1);
   expect(wrapper.text()).toContain("已提交的原请求仍保留");
   wrapper.unmount();
+});
+
+it("removes stale registration facts after the local service becomes unavailable", async () => {
+  const read = vi.fn().mockResolvedValue(structuredClone(serviceViews.ready));
+  const request = vi.fn();
+  const port: ServicePort = {
+    read,
+    registration: async () => ({
+      phase: "active",
+      registered: true,
+      credential: "active",
+      grantId: "previous-registration",
+    }),
+    mdmStatus: async () => ({ state: "unenrolled" }),
+    requestRegistration: request,
+    importRegistration: async () => null,
+    cancelRegistration: async () => {},
+  };
+  const wrapper = mount(LocalService, { props: { fixture: true, port } });
+  try {
+    await flushPromises();
+    expect(wrapper.text()).toContain("previous-registration");
+    expect(wrapper.text()).not.toContain("正在处理原注册请求");
+    expect(request).not.toHaveBeenCalled();
+    read.mockRejectedValueOnce(new Error("offline"));
+    await wrapper
+      .findAll("button")
+      .find((button) => button.text() === "重新查询")!
+      .trigger("click");
+    await flushPromises();
+    expect(wrapper.text()).not.toContain("previous-registration");
+    expect(wrapper.find(".registration-badge.ready").exists()).toBe(false);
+    expect(request).not.toHaveBeenCalled();
+  } finally {
+    wrapper.unmount();
+  }
 });

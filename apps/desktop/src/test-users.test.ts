@@ -159,7 +159,7 @@ it.each([
     try {
       await flushPromises();
       await wrapper.get('[aria-label="测试用户名"]').setValue("Bob");
-      await wrapper.get("form").trigger("submit");
+      await wrapper.get(".test-users form").trigger("submit");
       await flushPromises();
       expect(invoke).toHaveBeenCalledWith("select_test_user", { name: "Bob" });
       expect(wrapper.get('[role="alert"]').text()).toContain(expected);
@@ -198,7 +198,7 @@ it("keeps the current workspace mounted and inert while a switch is pending", as
   await flushPromises();
   const workspace = wrapper.findComponent({ name: "Workspace" }).element;
   await wrapper.get('[aria-label="测试用户名"]').setValue("Bob");
-  await wrapper.get("form").trigger("submit");
+  await wrapper.get(".test-users form").trigger("submit");
   await flushPromises();
   expect(wrapper.findComponent({ name: "Workspace" }).element).toBe(workspace);
   expect(
@@ -328,10 +328,7 @@ it("queries the production execution service without a fixture fallback and repo
   await flushPromises();
   const nav = wrapper.find('[aria-label="打开主导航"]');
   if (nav.exists()) await nav.trigger("click");
-  await wrapper
-    .findAll("button")
-    .find((b) => b.text() === "软件中心")!
-    .trigger("click");
+  wrapper.getComponent(Workspace).vm.$emit("navigate", "software");
   await flushPromises();
   expect(wrapper.text()).toContain("无法读取执行服务；原任务保留");
   expect(

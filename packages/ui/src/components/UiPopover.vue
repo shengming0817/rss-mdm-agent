@@ -7,7 +7,7 @@ import {
   PopoverContent,
 } from "reka-ui";
 import { useUiContext } from "../context";
-defineProps<{ open: boolean; label: string }>();
+defineProps<{ open: boolean; label: string; contentClass?: string }>();
 const emit = defineEmits<{ "update:open": [value: boolean] }>();
 const { portal } = useUiContext();
 const titleId = `ui-popover-title-${useId()}`;
@@ -18,6 +18,7 @@ const titleId = `ui-popover-title-${useId()}`;
     ><PopoverPortal v-if="portal"
       ><PopoverContent
         class="ui-popup ui-popover"
+        :class="contentClass"
         :aria-label="label"
         :aria-labelledby="titleId"
         :side-offset="6"

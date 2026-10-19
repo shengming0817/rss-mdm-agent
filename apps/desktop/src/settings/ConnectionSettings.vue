@@ -286,7 +286,7 @@ function containRemovalFocus(event: KeyboardEvent) {
           保存只更新配置；测试针对已保存版本。连接修改仅影响后续上下文，已接收请求保持原绑定。
         </p>
         <p>
-          连接与默认选择仅属于当前测试用户。API
+          连接与默认选择仅属于当前账户。API
           密钥在下方密码框填写并加密保存。保存不发送模型请求；测试会发送简短请求，可能产生服务费用。
         </p>
         <div :inert="pendingRemoval ? true : undefined">

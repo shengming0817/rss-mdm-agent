@@ -47,7 +47,7 @@ const users = ref<TestUser[]>([]),
   loading = ref(!!props.environment || accountEnabled),
   message = ref(""),
   accountMessage = ref("");
-const page = ref(accountEnabled ? "settings" : "assistant");
+const page = ref(accountEnabled ? "settings" : "home");
 const content = ref<HTMLElement>();
 const host = createHostSettings(
   props.environment ? props.environment.host : nativeHost(),
@@ -106,12 +106,14 @@ async function focusSettings() {
   const title =
     page.value === "assistant"
       ? ".assistant-header-host h1"
-      : ".workspace-page-header > h1";
-  content.value?.querySelector<HTMLElement>(title)?.focus();
+      : ".workspace-page-header > h1, .settings .agent-settings-heading h1";
+  content.value
+    ?.querySelector<HTMLElement>(title)
+    ?.focus({ preventScroll: true });
 }
 async function navigate(id: string) {
   page.value = accountEnabled && !selectedUser.value ? "settings" : id;
-  if (page.value === "settings") await focusSettings();
+  if (page.value === "settings" && id !== "settings") await focusSettings();
 }
 watch(selectedUser, (next, previous) => {
   if (accountEnabled && previous && !next) {
@@ -149,6 +151,7 @@ onBeforeUnmount(() => {
 </script>
 <template>
   <UiProvider
+    class="agent-experience"
     :platform="desktopPlatform"
     :reduced-motion="appearance.state.reducedMotion"
     :high-contrast="appearance.state.highContrast"
@@ -186,7 +189,11 @@ onBeforeUnmount(() => {
             :drafts="operationDrafts"
         /></template>
         <template #account-summary>
-          <strong>{{ selectedUser?.user.displayName ?? "账户与连接" }}</strong>
+          <strong>{{
+            environment
+              ? "本地工作区"
+              : (selectedUser?.user.displayName ?? "账户与连接")
+          }}</strong>
           <small>{{
             selectedUser?.identity.mode === "user_device"
               ? "企业工作区"
@@ -197,21 +204,20 @@ onBeforeUnmount(() => {
                   : "选择使用身份"
           }}</small>
         </template>
+        <template #development>
+          <details
+            v-if="environment"
+            open
+            class="fixture-controls"
+            aria-label="开发 fixture"
+          >
+            <summary>场景与测试工具</summary>
+            <div><slot name="fixture-controls" :navigate="navigate" /></div>
+          </details>
+        </template>
         <template #user>
           <p v-if="environment">开发 fixture 身份，不访问生产账户。</p>
           <template v-else>
-            <TestUsers
-              :users="users"
-              :current="
-                selectedUser?.identity.authorityId === 'desktop-test'
-                  ? selectedUser
-                  : undefined
-              "
-              :native="accountEnabled"
-              :loading="loading"
-              :message="message"
-              @select="select"
-            />
             <Account
               :loading="loading"
               :message="accountMessage || accountNotice"
@@ -221,18 +227,25 @@ onBeforeUnmount(() => {
                 (org, login) => accountAction(() => loginEnterprise(org, login))
               "
             />
+            <details class="account-local-workspaces">
+              <summary>本地测试工作区</summary>
+              <TestUsers
+                :users="users"
+                :current="
+                  selectedUser?.identity.authorityId === 'desktop-test'
+                    ? selectedUser
+                    : undefined
+                "
+                :native="accountEnabled"
+                :loading="loading"
+                :message="message"
+                @select="select"
+              />
+            </details>
           </template>
         </template>
       </Workspace>
     </div>
-    <aside
-      v-if="environment"
-      class="fixture-controls"
-      aria-label="开发 fixture"
-    >
-      <strong>开发 fixture · 无真实设备执行</strong
-      ><slot name="fixture-controls" />
-    </aside>
     <p v-if="loading" class="account-progress" role="status">
       正在读取或切换账户…
     </p>
@@ -250,15 +263,24 @@ onBeforeUnmount(() => {
   font-size: var(--rss-font-size-xs);
 }
 .fixture-controls {
-  position: fixed;
-  top: 4px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 150;
-  padding: 4px 8px;
-  border-radius: 6px;
-  font: 11px var(--rss-font-sans);
+  border: 1px solid var(--rss-color-border);
+  border-radius: 8px;
   background: var(--rss-color-bg);
+  color: var(--rss-color-text-muted);
+  font: 12px var(--rss-font-sans);
+}
+.fixture-controls summary {
+  cursor: pointer;
+  padding: 6px 10px;
+}
+.fixture-controls > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  max-width: min(620px, 85vw);
+  padding: 12px;
+  border-top: 1px solid var(--rss-color-border);
 }
 .account-progress {
   position: fixed;

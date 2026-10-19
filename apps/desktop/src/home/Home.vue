@@ -1,18 +1,15 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, inject, ref } from "vue";
 import HomeAssistant from "./HomeAssistant.vue";
-import {
-  Monitor,
-  UserRound,
-  UiPopover,
-  Package,
-  Terminal,
-  Settings,
-  Activity,
-  ChevronRight,
-} from "@rss-mdm-agent/ui";
+import SettingsGlyph from "../system-settings/SettingsGlyph.vue";
+import { UiPopover, Package, Sparkles } from "@rss-mdm-agent/ui";
 import type { Controller } from "../self-service/controller";
 import type { DeviceOverview } from "../self-service/types";
+import {
+  softwarePreviewKey,
+  type SoftwarePreview,
+} from "../catalog-preview/software-preview";
+import { homePreviewKey, type HomePreview } from "./preview";
 const props = defineProps<{
   controller: Controller;
   preview: boolean;
@@ -21,519 +18,575 @@ const props = defineProps<{
   device?: DeviceOverview | null;
 }>();
 const emit = defineEmits<{
-  navigate: [page: string];
+  navigate: [page: string, section?: string];
   "update:draft": [text: string];
 }>();
-const software = computed(
-  () =>
-    props.controller.state.snapshot?.available.filter(
-      (item) => item.summary.kind === "software",
-    ) ?? [],
+const sample = inject<HomePreview | undefined>(homePreviewKey, undefined);
+const catalog = inject<SoftwarePreview | undefined>(
+  softwarePreviewKey,
+  undefined,
+);
+const installed = computed(
+  () => catalog?.items.filter((e) => e.installed) ?? [],
+);
+const updates = computed(
+  () => installed.value.filter((e) => e.version !== e.latest).length,
 );
 const addressesOpen = ref(false);
-const shortcuts = [
-  {
-    page: "system-settings",
-    title: "系统设置",
-    description: "网络、显示与电源",
-  },
-  {
-    page: "software",
-    title: "软件管理",
-    description: "浏览可用软件",
-  },
-  {
-    page: "tools",
-    title: "工具",
-    description: "查看组织提供的工具",
-  },
-];
 </script>
 <template>
-  <div class="computer-home">
-    <div class="home-main">
-      <section class="device-card" aria-label="我的电脑概览">
-        <div class="computer-overview">
-          <div class="computer-model">
-            <div
-              class="computer-chassis"
-              role="img"
-              aria-label="银色笔记本电脑示意图"
-            />
-            <div class="computer-screen">
-              <div v-if="software.length" class="screen-apps">
-                <button
-                  v-for="(item, index) in software.slice(0, 4)"
-                  :key="item.task"
-                  type="button"
-                  :title="`在软件中心查看 ${item.title}`"
-                  @click="emit('navigate', 'software')"
-                >
-                  <span class="app-tile" :class="`tile-${index}`"
-                    ><Package :size="22" aria-hidden="true" /></span
-                  ><span>{{ item.title }}</span>
-                </button>
-              </div>
-              <div v-else class="screen-welcome">
-                <Monitor :size="30" aria-hidden="true" /><strong
-                  >你的工作，从这里开始</strong
-                ><span>软件与工具，触手可及</span>
-              </div>
-            </div>
-          </div>
-          <div class="computer-identity" aria-label="本机信息">
-            <span
-              class="identity-name"
-              :aria-label="`计算机名：${device?.computerName ?? '未读取'}`"
-              :title="device?.computerName ?? '计算机名未读取'"
-            >
-              <Monitor :size="17" aria-hidden="true" /><span>{{
-                device?.computerName ?? "—"
-              }}</span>
-            </span>
-            <span class="identity-divider" aria-hidden="true" />
-            <span
-              :aria-label="`IP 地址：${device?.ipAddresses?.join('、') || (device?.ipAddresses ? '无可用地址' : '未读取')}`"
-              :title="
-                device?.ipAddresses?.join('、') ||
-                (device?.ipAddresses ? '无可用地址' : 'IP 地址未读取')
-              "
-            >
-              <Activity :size="14" aria-hidden="true" />
-              <span>{{ device?.ipAddresses?.[0] ?? "—" }}</span>
-              <UiPopover
-                v-if="device?.ipAddresses && device.ipAddresses.length > 1"
-                v-model:open="addressesOpen"
-                label="全部 IP 地址"
-              >
-                <template #trigger
-                  ><button
-                    class="ip-more"
-                    type="button"
-                    aria-label="查看所有 IP 地址"
-                  >
-                    +{{ device.ipAddresses.length - 1 }}
-                  </button></template
-                >
-                <ul class="ip-list">
-                  <li v-for="address in device.ipAddresses" :key="address">
-                    {{ address }}
-                  </li>
-                </ul>
-              </UiPopover>
-            </span>
-            <span
-              :aria-label="`系统登录用户：${device?.loginUser ?? '未读取'}`"
-              :title="device?.loginUser ?? '系统登录用户未读取'"
-            >
-              <UserRound :size="14" aria-hidden="true" /><span>{{
-                device?.loginUser ?? "—"
-              }}</span>
-            </span>
-          </div>
-        </div>
-        <div class="model-toolbar">
-          <span
-            >{{ software.length }} 项软件资源 ·
-            {{
-              preview
-                ? "样本目录 · 不代表本机已安装软件"
-                : "可用目录 · 不代表本机已安装软件"
-            }}</span
-          ><button type="button" @click="emit('navigate', 'software')">
-            管理软件 <ChevronRight :size="13" aria-hidden="true" />
+  <div class="computer-home design-page">
+    <div class="home-feature">
+      <section class="home-hero" aria-label="我的电脑概览">
+        <div class="home-hero-copy">
+          <span class="design-eyebrow">● YOUR EVERYDAY COMPANION</span>
+          <h2>好状态，<br />开启好的一天。</h2>
+          <p>
+            {{ device?.computerName ?? "你的电脑" }} · 设备概览<br />常用应用、设备状态，都在这里。
+          </p>
+          <button
+            class="design-button"
+            type="button"
+            @click="emit('navigate', 'system-settings', 'about')"
+          >
+            了解这台电脑 →
           </button>
         </div>
+        <div class="home-laptop" aria-hidden="true">
+          <div class="laptop-screen">
+            <small>你的每一天，都有好工具相伴</small
+            ><span class="laptop-clock">09:41</span>
+            <div class="laptop-dock"><i>W</i><i>N</i><i>◎</i><i>↻</i></div>
+          </div>
+          <div class="laptop-base" />
+        </div>
       </section>
-      <section class="home-notice" aria-label="设备状态">
-        <span class="notice-icon"
-          ><Activity :size="21" aria-hidden="true"
+      <HomeAssistant
+        presentation="hero"
+        :draft="draft"
+        :connected="connected"
+        @update:draft="emit('update:draft', $event)"
+        @navigate="emit('navigate', $event)"
+      />
+    </div>
+    <div class="home-stats">
+      <button
+        type="button"
+        @click="emit('navigate', 'system-settings', 'network')"
+      >
+        <span class="stat-label"
+          ><SettingsGlyph kind="network" :size="17" />网络连接</span
+        ><strong>{{ sample?.network ?? "未读取" }}</strong
+        ><small>{{ sample?.networkDetail ?? "连接状态尚未接入" }}</small
+        ><span class="stat-track"
+          ><i :style="{ width: sample ? '92%' : '0%' }"
         /></span>
-        <div>
-          <strong>{{
-            controller.state.error ? "任务需要关注" : "每一次操作，都有记录"
-          }}</strong>
-          <p>
-            {{ controller.state.error || "查看请求进度、确认事项和执行结果。" }}
+      </button>
+      <button
+        type="button"
+        @click="emit('navigate', 'system-settings', 'storage')"
+      >
+        <span class="stat-label"
+          ><SettingsGlyph kind="storage" :size="17" />存储空间</span
+        ><strong
+          >{{ sample?.storageFree ?? "—"
+          }}<em v-if="sample">GB 可用</em></strong
+        ><small>{{ sample?.storageDetail ?? "磁盘使用情况未读取" }}</small
+        ><span class="stat-track storage-track"
+          ><i :style="{ width: sample ? '64%' : '0%' }"
+        /></span>
+      </button>
+      <button
+        type="button"
+        @click="emit('navigate', 'system-settings', 'power')"
+      >
+        <span class="stat-label"
+          ><SettingsGlyph kind="power" :size="17" />电池与电源</span
+        ><strong>{{ sample?.battery ?? "—" }}<em v-if="sample">电量</em></strong
+        ><small>{{ sample?.batteryDetail ?? "电源状态未读取" }}</small
+        ><span class="stat-track power-track"
+          ><i :style="{ width: sample ? '86%' : '0%' }"
+        /></span>
+      </button>
+      <button
+        type="button"
+        @click="emit('navigate', 'software-management', 'installed')"
+      >
+        <span class="stat-label"
+          ><Package :size="17" aria-hidden="true" />我的应用</span
+        ><strong>{{ catalog ? installed.length : "—" }}<em>个已安装</em></strong
+        ><small>{{
+          catalog ? `${updates} 个更新可用` : "软件清单尚未接入"
+        }}</small
+        ><span class="stat-link">查看更新 →</span>
+      </button>
+    </div>
+    <div class="home-bottom">
+      <section>
+        <div class="section-heading">
+          <h3>你的常用应用</h3>
+          <button
+            class="text-link"
+            @click="emit('navigate', 'software-management')"
+          >
+            发现更多 ›
+          </button>
+        </div>
+        <div class="home-apps">
+          <button
+            v-for="item in installed.slice(0, 4)"
+            :key="item.id"
+            @click="emit('navigate', 'software-management', item.id)"
+          >
+            <span class="home-app-icon" :class="item.id">{{ item.letter }}</span
+            ><span>{{ item.name }}</span>
+          </button>
+          <p v-if="!installed.length" class="home-empty">
+            软件清单尚未接入，先去发现适合你的应用。
           </p>
         </div>
-        <button type="button" @click="emit('navigate', 'tasks')">
-          查看任务
-        </button>
+        <div class="home-tip">
+          <Sparkles :size="17" aria-hidden="true" /><span
+            >小提示：使用 ⌘ / Ctrl K，快速找到你需要的应用和工具。</span
+          >
+        </div>
       </section>
-      <nav class="home-shortcuts" aria-label="电脑快捷入口">
-        <button
-          v-for="item in shortcuts"
-          :key="item.page"
-          type="button"
-          @click="emit('navigate', item.page)"
-        >
-          <span class="shortcut-icon"
-            ><Settings
-              v-if="item.page === 'system-settings'"
-              :size="20"
-              aria-hidden="true" /><Package
-              v-else-if="item.page === 'software'"
-              :size="20"
-              aria-hidden="true" /><Terminal
-              v-else
-              :size="20"
-              aria-hidden="true" /></span
-          ><span
-            ><strong>{{ item.title }}</strong
-            ><small>{{ item.description }}</small></span
-          ><ChevronRight :size="14" aria-hidden="true" />
-        </button>
-      </nav>
+      <section>
+        <div class="section-heading"><h3>最近动态</h3></div>
+        <div class="home-activity">
+          <div v-for="item in sample?.activities ?? []" :key="item.title">
+            <span class="activity-symbol"
+              ><SettingsGlyph kind="security" :size="17" /></span
+            ><span
+              ><strong>{{ item.title }}</strong
+              ><small>{{ item.description }}</small></span
+            ><time>{{ item.time }}</time>
+          </div>
+          <p v-if="!sample?.activities.length" class="home-empty">
+            暂无操作记录
+          </p>
+          <div v-if="controller.state.error" role="status">
+            <span
+              ><strong>任务需要关注</strong
+              ><small>{{ controller.state.error }}</small></span
+            ><button class="text-link" @click="emit('navigate', 'tasks')">
+              查看处理详情
+            </button>
+          </div>
+        </div>
+      </section>
     </div>
-    <HomeAssistant
-      :draft="draft"
-      :connected="connected"
-      @update:draft="emit('update:draft', $event)"
-      @navigate="emit('navigate', $event)"
-    />
+    <div class="computer-identity" aria-label="本机信息">
+      <span
+        class="identity-name"
+        :aria-label="`计算机名：${device?.computerName ?? '未读取'}`"
+        >{{ device?.computerName ?? "计算机名未读取" }}</span
+      ><span :title="device?.ipAddresses?.join('、') || 'IP 地址未读取'"
+        >{{ device?.ipAddresses?.[0] ?? "IP 地址未读取"
+        }}<UiPopover
+          v-if="device?.ipAddresses && device.ipAddresses.length > 1"
+          v-model:open="addressesOpen"
+          label="全部 IP 地址"
+          ><template #trigger
+            ><button aria-label="查看所有 IP 地址" class="ip-more">
+              +{{ device.ipAddresses.length - 1 }}
+            </button></template
+          >
+          <ul>
+            <li v-for="address in device.ipAddresses" :key="address">
+              {{ address }}
+            </li>
+          </ul></UiPopover
+        ></span
+      ><span>{{ device?.loginUser ?? "系统登录用户未读取" }}</span>
+    </div>
   </div>
 </template>
 <style scoped>
 .computer-home {
-  --home-bg: var(--rss-color-bg);
-  --home-muted: var(--rss-color-text-muted);
   color: var(--rss-color-text);
+}
+.home-feature {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 246px;
-  min-height: 100%;
-  background: var(--rss-color-bg);
+  grid-template-columns: 1.7fr 1fr;
+  gap: 18px;
 }
-.home-main {
-  min-width: 0;
-  padding: 24px;
-  background: color-mix(in srgb, var(--home-bg) 94%, #b7b9d9);
+.home-hero {
+  position: relative;
+  overflow: hidden;
+  min-height: 326px;
+  border-radius: 18px;
+  padding: 30px;
+  background: linear-gradient(115deg, #e8ede7, #f1eee8);
+  color: #354d43;
 }
-.model-toolbar {
+.home-hero::after {
+  content: "";
+  position: absolute;
+  width: 470px;
+  height: 470px;
+  right: -150px;
+  top: -220px;
+  border-radius: 50%;
+  border: 1px solid #748e6b0c;
+  background: #ffffff15;
+}
+.home-hero-copy {
+  position: relative;
+  z-index: 1;
+}
+.home-hero .design-eyebrow {
+  font-size: 8px;
+  letter-spacing: 1.8px;
+  color: #7f9e91;
+  margin: 0 0 20px;
+}
+.home-hero h2 {
+  font-size: 30px;
+  line-height: 1.4;
+  margin: 0 0 15px;
+  letter-spacing: -0.9px;
+}
+.home-hero p {
+  font-size: 11px;
+  line-height: 1.9;
+  color: #8c9e94;
+  margin: 0 0 22px;
+}
+.home-laptop {
+  position: absolute;
+  right: 4%;
+  bottom: 30px;
+  width: 48%;
+  transform: rotate(-7deg);
+}
+.laptop-screen {
+  aspect-ratio: 1.55;
+  border: 5px solid #3d4a4f;
+  border-radius: 10px 10px 3px 3px;
+  background: linear-gradient(145deg, #8aa2b3, #e8cfb0);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 20px 10px 10px;
+  position: relative;
+}
+.laptop-screen::before {
+  content: "";
+  position: absolute;
+  width: 20%;
+  height: 9px;
+  background: #3d4a4f;
+  top: -1px;
+  border-radius: 0 0 4px 4px;
+}
+.laptop-screen small {
+  font-size: 7px;
+  color: #ffffff9c;
+}
+.laptop-clock {
+  font-size: 34px;
+  font-weight: 300;
+  color: #fff;
+  margin-top: 6px;
+}
+.laptop-dock {
+  display: flex;
+  gap: 5px;
+  padding: 6px;
+  margin-top: auto;
+  border: 1px solid #ffffff40;
+  border-radius: 10px;
+  background: #ffffff20;
+}
+.laptop-dock i {
+  display: grid;
+  place-items: center;
+  width: 27px;
+  height: 27px;
+  background: #557c66;
+  border-radius: 7px;
+  font-style: normal;
+  color: white;
+  font-size: 19px;
+}
+.laptop-dock i:nth-child(2) {
+  background: #e6c572;
+  color: #947633;
+}
+.laptop-dock i:nth-child(3) {
+  background: #8ab2b6;
+}
+.laptop-dock i:nth-child(4) {
+  background: #7e9dca;
+}
+.laptop-base {
+  height: 5px;
+  background: linear-gradient(#c5d0d2, #91a3a9);
+  border-radius: 0 0 80% 80%;
+  margin: 0 -12px;
+  box-shadow: 0 15px 24px #39534712;
+}
+.home-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 18px;
+}
+.home-stats > button {
+  text-align: left;
+  background: var(--rss-color-surface);
+  border: 1px solid var(--rss-color-border);
+  border-radius: 12px;
+  padding: 18px;
+  min-height: 135px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  color: var(--rss-color-text);
+}
+.stat-label {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 8px;
+  font-size: 10px;
+  color: var(--rss-color-text-muted);
+}
+.home-stats strong {
+  font-size: 23px;
+  margin-top: 13px;
+  line-height: 1.4;
+  font-weight: 650;
+}
+.home-stats em {
+  font-size: 10px;
+  font-style: normal;
+  color: var(--rss-color-text-muted);
+  font-weight: 400;
+  margin-left: 8px;
+}
+.home-stats small {
+  font-size: 9px;
+  color: var(--rss-color-text-muted);
+  margin-top: 5px;
+}
+.stat-track {
+  display: block;
+  width: 100%;
+  height: 4px;
+  border-radius: 4px;
+  background: var(--rss-color-neutral-bg);
+  margin-top: 12px;
+  overflow: hidden;
+}
+.stat-track i {
+  display: block;
+  height: 100%;
+  background: #91b0a1;
+  border-radius: 4px;
+}
+.storage-track i {
+  background: #a4adc5;
+}
+.power-track i {
+  background: #a9b59c;
+}
+.stat-link {
+  font-size: 9px;
+  color: var(--rss-color-accent);
+  margin-top: 12px;
+}
+.home-bottom {
+  display: grid;
+  grid-template-columns: 1.55fr 1fr;
+  gap: 23px;
+  margin-top: 25px;
+}
+.computer-home .section-heading {
+  margin: 0 0 14px;
+}
+.computer-home .section-heading h3 {
+  font-size: 16px;
+  margin: 0;
+}
+.computer-home .section-heading .text-link {
+  font-size: 10px;
+  padding: 0;
+}
+.home-apps {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
 }
-.device-card {
-  padding: 20px 20px 12px;
+.home-apps button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 13px;
+  padding: 20px 10px;
+  background: var(--rss-color-surface);
+  border: 1px solid var(--rss-color-border);
+  border-radius: 12px;
+  font-size: 10px;
+  min-height: 113px;
 }
-.computer-overview {
-  width: min(720px, 100%);
-  margin: 0 auto;
+.home-app-icon {
+  display: grid;
+  place-items: center;
+  width: 45px;
+  height: 45px;
+  border-radius: 12px;
+  color: white;
+  font-size: 27px;
+  font-weight: 650;
+  background: linear-gradient(140deg, #799782, #3e6456);
+  box-shadow: 0 2px 5px #24372b10;
+}
+.home-app-icon.notes {
+  background: linear-gradient(140deg, #f2db97, #e0b951);
+  color: #96732e;
+}
+.home-app-icon.browser {
+  background: linear-gradient(140deg, #b2d3d0, #739ea5);
+}
+.home-app-icon.sync {
+  background: linear-gradient(140deg, #a5bfe1, #6b8fc2);
+}
+.home-activity {
+  border: 1px solid var(--rss-color-border);
+  border-radius: 12px;
+  background: var(--rss-color-surface);
+  padding: 0 17px;
+}
+.home-activity > div {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 56px;
+  padding: 13px 0;
+  border-bottom: 1px solid var(--rss-color-border);
+}
+.home-activity > div:last-child {
+  border: 0;
+}
+.activity-symbol {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  background: #edf3ef;
+  color: #88a599;
+  display: grid;
+  place-items: center;
+  flex: none;
+}
+.home-activity strong {
+  display: block;
+  font-size: 10px;
+  font-weight: 550;
+}
+.home-activity small {
+  display: block;
+  color: var(--rss-color-text-muted);
+  font-size: 9px;
+  margin-top: 5px;
+}
+.home-activity time {
+  margin-left: auto;
+  font-size: 9px;
+  color: var(--rss-color-text-muted);
+}
+.home-tip {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  border-radius: 10px;
+  background: #efede6;
+  color: #9a8e73;
+  font-size: 9px;
+  padding: 11px 13px;
+  margin-top: 14px;
 }
 .computer-identity {
   display: flex;
-  align-items: center;
-  justify-content: center;
   flex-wrap: wrap;
-  gap: 24px;
-  margin: 10px auto 24px;
-  color: var(--home-muted);
-  font-size: 12px;
-  line-height: 1.4;
+  gap: 14px;
+  margin-top: 20px;
+  font-size: 9px;
+  color: var(--rss-color-text-muted);
 }
-.computer-identity > span:not(.identity-divider) {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 42px;
-  max-width: 100%;
-  overflow-wrap: anywhere;
-}
-.computer-identity svg {
-  flex: none;
-  opacity: 0.65;
-}
-.computer-identity .identity-name {
-  color: var(--rss-color-text);
-  font-size: 15px;
-  font-weight: 550;
-}
-.identity-divider {
-  height: 13px;
-  width: 1px;
-  background: var(--rss-color-border);
-}
-
 .ip-more {
   border: 0;
-  padding: 2px 5px;
-  border-radius: 4px;
-  color: var(--rss-color-accent);
-  background: var(--rss-color-accent-bg);
-  font-size: 10px;
-}
-.ip-list {
-  list-style: none;
-  margin: 0;
-  padding: 4px;
-  font-size: 12px;
-  line-height: 1.8;
-}
-.computer-model {
-  position: relative;
-  width: 100%;
-  aspect-ratio: 1508/780;
-  container-type: inline-size;
-  margin: 0 auto;
-}
-.computer-chassis {
-  position: absolute;
-  inset: 0;
-  /* Crop only the source's empty top/bottom margins; keep its image ratio. */
-  background: url("./model-a.png") center / 100% auto no-repeat;
-  mix-blend-mode: darken;
-}
-.computer-screen {
-  position: absolute;
-  left: 17.25%;
-  /* Original 1508 × 1043 image, centered in the 1508 × 780 viewport. */
-  top: 8.013%;
-  width: 65.45%;
-  height: 79.162%;
-  overflow: auto;
-  background:
-    radial-gradient(ellipse at 110% 20%, #f9d2c5, transparent 70%),
-    radial-gradient(ellipse at 45% 110%, #d8c5ef, transparent 65%),
-    linear-gradient(135deg, #83a8dd, #c3b7e4 60%, #edc8d7);
-}
-.screen-apps {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  padding: 3cqw 2cqw;
-  gap: 1cqw;
-}
-.screen-apps button {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 1.75cqw;
-  border: 1px solid transparent;
-  border-radius: 1.5cqw;
-  padding: 1.75cqw 0.75cqw;
   background: transparent;
-  color: #243347;
-  font-size: 2.25cqw;
-  min-width: 0;
-}
-.screen-apps button:hover {
-  background: #ffffff40;
-  border-color: #ffffff80;
-}
-.screen-apps button > span:last-child {
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.app-tile {
-  display: grid;
-  place-items: center;
-  width: 8.5cqw;
-  height: 8.5cqw;
-  border-radius: 2.25cqw;
-  color: white;
-  background: linear-gradient(145deg, #b296ea, #7052b9);
-  box-shadow: 0 4px 9px #45537025;
-}
-.app-tile svg {
-  width: 5.5cqw;
-  height: 5.5cqw;
-}
-.tile-1 {
-  background: linear-gradient(145deg, #efcc88, #d69a43);
-}
-.tile-2 {
-  background: linear-gradient(145deg, #8fd3c5, #47968c);
-}
-.tile-3 {
-  background: linear-gradient(145deg, #8cbbef, #4d80c7);
-}
-.screen-welcome {
-  display: flex;
-  height: 100%;
-  flex-direction: column;
-  gap: 2.5cqw;
-  align-items: center;
-  justify-content: center;
-  color: #35415a;
-  font-size: 3cqw;
-}
-.screen-welcome span {
-  font-size: 2.5cqw;
-}
-.screen-welcome > svg {
-  width: 7.5cqw;
-  height: 7.5cqw;
-}
-.model-toolbar {
-  margin: 4px 0 14px;
-  font-size: 10px;
-  color: var(--home-muted);
-}
-.model-toolbar button,
-.home-notice > button {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  flex-shrink: 0;
-  border: 1px solid var(--rss-color-border);
-  border-radius: 6px;
-  background: var(--home-bg);
-  color: var(--rss-color-text);
-  padding: 6px 9px;
-  font-size: 10px;
-}
-.home-notice {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin: 13px 0;
-  padding: 15px;
-  background: color-mix(in srgb, var(--home-bg) 94%, #e5c77e);
-  border: 1px solid var(--rss-color-border);
-  border-radius: 11px;
-}
-.notice-icon {
-  display: grid;
-  place-items: center;
-  background: #d4b45b18;
-  color: #a48b48;
-  border-radius: 8px;
-  width: 33px;
-  height: 33px;
-  flex: none;
-}
-.home-notice > div {
-  flex: 1;
-  min-width: 0;
-}
-.home-notice strong {
-  font-size: 11px;
-}
-.home-notice p {
-  font-size: 10px;
-  line-height: 1.6;
-  margin: 5px 0 0;
-  color: var(--home-muted);
-}
-.home-shortcuts {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-}
-.home-shortcuts button {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  text-align: left;
-  padding: 16px 12px;
-  border: 1px solid var(--rss-color-border);
-  border-radius: 10px;
-  background: var(--home-bg);
-  color: var(--rss-color-text);
-}
-.shortcut-icon {
-  color: #809dbc;
-  background: #849dc211;
-  padding: 6px;
-  border-radius: 8px;
-  display: flex;
-}
-.home-shortcuts strong {
-  display: block;
-  font-size: 12px;
-  font-weight: 550;
-}
-.home-shortcuts small {
-  display: block;
+  padding: 0 5px;
   font-size: 9px;
-  margin-top: 5px;
-  color: var(--home-muted);
 }
-.home-shortcuts button > svg {
-  margin-left: auto;
-  flex: none;
-  color: var(--home-muted);
+.home-empty {
+  font-size: 11px;
+  line-height: 1.8;
+  color: var(--rss-color-text-muted);
+  padding: 20px;
+  grid-column: 1 / -1;
 }
-
-.sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-}
-button {
-  cursor: pointer;
-  font-family: inherit;
-}
-button:focus-visible,
-textarea:focus-visible {
-  outline: 2px solid #6d95c8;
-  outline-offset: 3px;
-}
-button:not(:disabled):hover {
-  filter: brightness(0.97);
-}
-@media (prefers-color-scheme: dark) {
-  .computer-chassis {
-    mix-blend-mode: normal;
-    border-radius: 10px;
+@container (max-width: 1100px) {
+  .home-laptop {
+    width: 44%;
+    right: 3%;
+  }
+  .laptop-screen {
+    padding-top: 14px;
+  }
+  .laptop-clock {
+    font-size: 27px;
+  }
+  .home-hero h2 {
+    font-size: 27px;
   }
 }
-@media (max-width: 1250px) {
-  .computer-home {
-    grid-template-columns: minmax(0, 1fr) 220px;
-  }
-  .home-main {
-    padding: 20px 16px;
-  }
-  .home-shortcuts button {
-    gap: 6px;
-    padding: 13px 8px;
-  }
-  .home-shortcuts button > svg {
-    display: none;
-  }
-  .shortcut-icon {
-    padding: 4px;
-  }
-  .device-card {
-    padding: 17px 14px 12px;
-  }
-}
-@media (max-width: 1050px) {
-  .computer-home {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .home-shortcuts small {
-    line-height: 1.5;
-  }
-}
-@media (max-width: 500px) {
-  .home-main {
-    padding: 18px 12px;
-  }
-  .home-shortcuts {
+@container (max-width: 850px) {
+  .home-feature {
     grid-template-columns: 1fr;
   }
-  .home-shortcuts button {
-    padding: 13px;
+  .home-hero {
+    min-height: 300px;
   }
-  .home-shortcuts button > svg {
-    display: block;
+  .home-bottom {
+    grid-template-columns: 1fr;
   }
-  .home-shortcuts small {
-    font-size: 10px;
+  .home-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
-  .model-toolbar {
-    flex-wrap: wrap;
+}
+@container (max-width: 480px) {
+  .home-hero {
+    padding: 24px;
+    min-height: 290px;
   }
-  .home-notice {
-    padding: 12px 10px;
-    gap: 8px;
+  .home-laptop {
+    width: 42%;
+    right: -2%;
+    bottom: 30px;
+  }
+  .laptop-clock {
+    font-size: 20px;
+  }
+  .laptop-screen small,
+  .laptop-dock {
+    display: none;
+  }
+  .home-hero h2 {
+    font-size: 27px;
+  }
+  .home-hero p {
+    max-width: 170px;
+  }
+  .home-stats {
+    gap: 10px;
+  }
+  .home-stats > button {
+    padding: 15px;
+  }
+  .home-apps {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 </style>

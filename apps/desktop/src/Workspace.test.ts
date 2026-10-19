@@ -97,12 +97,12 @@ it("uses one content header, a sidebar brand and a main welcome without remounti
   });
   try {
     await flushPromises();
-    expect(w.get(".navigation-brand").text()).toContain("RSS");
+    expect(w.text()).not.toContain("你的 AI 与设备工作区");
     expect(w.get(".shell-header").text()).toContain("新对话");
     expect(document.querySelectorAll(".shell-header h1")).toHaveLength(1);
     const assistant = w.getComponent(Assistant);
     expect(assistant.props("presentation")).toBe("main");
-    expect(assistant.text()).toContain("今天，想完成什么？");
+    expect(assistant.text()).toContain("有什么可以帮你？");
     const c = assistant.props("controller");
     const input = assistant.get("textarea").element;
     const prompt = vi.spyOn(c, "prompt");
@@ -169,7 +169,7 @@ it("changes the same assistant to compact resource presentation and stages sugge
     await panel.get('[data-action="choose-conversation"]').trigger("click");
     await flushPromises();
     expect(view.props("presentation")).toBe("context");
-    expect(view.text()).not.toContain("今天，想完成什么？");
+    expect(view.text()).not.toContain("有什么可以帮你？");
     expect(view.get("textarea").element).toBe(input);
     await view.get('[data-action="suggest-prompt"]').trigger("click");
     expect(c.draft.value).toContain("资源");
@@ -210,21 +210,19 @@ it("opens system settings separately from application settings and preserves ass
   await entry.trigger("click");
   expect(w.emitted("navigate")?.at(-1)).toEqual(["system-settings"]);
   await w.setProps({ page: "system-settings" });
-  expect(w.get(".workspace-page-header > h1").text()).toBe("系统设置");
+  expect(w.get(".workspace-breadcrumb").text()).toBe("系统设置");
   expect(w.get(".resource-content").isVisible()).toBe(false);
   expect(w.get(".system-settings").isVisible()).toBe(true);
-  const settingsAssistant = w.get(".system-settings .home-assistant");
-  expect(settingsAssistant.get("textarea").element.value).toBe("保留这个问题");
-  await settingsAssistant.get("textarea").setValue("从系统设置继续提问");
-  expect(assistant.draft.value).toBe("从系统设置继续提问");
-  await settingsAssistant.get("form").trigger("submit");
-  expect(w.emitted("navigate")?.at(-1)).toEqual(["assistant"]);
+  await w.get(".workspace-assistant-entry").trigger("click");
+  await flushPromises();
+  expect(w.find(".page-assistant-panel").exists()).toBe(true);
+  expect(w.emitted("navigate")?.at(-1)).toEqual(["system-settings"]);
 
   expect(w.getComponent(SelfService).props("controller").state.page).not.toBe(
     "system-settings",
   );
   await w.setProps({ page: "assistant" });
   expect(w.getComponent(Assistant).props("controller")).toBe(assistant);
-  expect(assistant.draft.value).toBe("从系统设置继续提问");
+  expect(assistant.draft.value).toBe("保留这个问题");
   w.unmount();
 });

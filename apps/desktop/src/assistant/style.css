@@ -31,16 +31,6 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.connection-trigger {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  max-width: 45%;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-  font-size: var(--rss-font-size-sm) !important;
-}
 .assistant summary {
   cursor: pointer;
 }
@@ -50,16 +40,17 @@
   overflow: auto;
   /* Reading restoration and following are owned by Assistant.vue. */
   overflow-anchor: none;
-  padding: 12px max(24px, calc((100% - var(--rss-reading-width)) / 2));
+  padding: 20px max(28px, calc((100% - 720px) / 2));
+  scrollbar-width: thin;
   overflow-wrap: anywhere;
 }
 .assistant-timeline > article {
-  margin: 24px 0;
+  margin: 28px 0;
   min-width: 0;
 }
 .conversation-input {
   flex: none;
-  padding: 8px max(24px, calc((100% - var(--rss-reading-width)) / 2)) 16px;
+  padding: 16px max(28px, calc((100% - 720px) / 2)) 14px;
 }
 .conversation-notice {
   display: flex;
@@ -176,37 +167,109 @@
 }
 
 .resource-context {
-  border: 1px solid var(--rss-color-border);
-  border-radius: var(--rss-radius-sm);
-  padding: 8px;
-  margin-bottom: 8px;
+  min-width: 0;
   max-height: 25vh;
   overflow: auto;
-  background: var(--rss-color-surface);
-  font-size: var(--rss-font-size-sm);
+  padding: 0 0 10px;
+  border-bottom: 1px solid var(--rss-color-border);
+  font-size: 11px;
+  color: var(--rss-color-text-muted);
 }
 .resource-context-heading {
   display: flex;
-  align-items: start;
+  align-items: center;
   justify-content: space-between;
   gap: 8px;
 }
-.resource-context-heading strong {
-  min-width: 0;
-  overflow-wrap: anywhere;
+.assistant .resource-context-heading button {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  min-height: 24px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--rss-color-text-muted);
 }
-.resource-context-heading button {
+.resource-context details {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+}
+.resource-context summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+  font-size: 11px;
+  list-style: none;
+}
+.resource-context summary::-webkit-details-marker {
+  display: none;
+}
+.resource-context summary > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.resource-context summary > svg {
   flex: none;
 }
+.resource-context details[open] summary > svg {
+  transform: rotate(180deg);
+}
 .resource-context p {
-  margin: 4px 0;
-  font-size: var(--rss-font-size-xs);
+  margin: 8px 0;
+  font-size: 11px;
+  line-height: 1.6;
 }
 .resource-context pre {
   max-height: 120px;
   overflow: auto;
 }
-
+.composer-connection {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  font-size: 11px;
+  color: var(--rss-color-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.composer-connection i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--rss-color-text-muted);
+  flex: none;
+}
+.composer-connection.ready i {
+  background: var(--rss-color-success);
+}
+.assistant .markdown-message {
+  font-size: 15px;
+  line-height: 1.8;
+}
+.assistant-context .markdown-message {
+  font-size: 13px;
+  line-height: 1.8;
+}
+.assistant .markdown-message > :first-child {
+  margin-top: 0;
+}
+.assistant .markdown-message > :last-child {
+  margin-bottom: 0;
+}
+.assistant-context .user-bubble {
+  max-width: 92%;
+  font-size: 13px;
+  padding: 8px 12px;
+}
 .assistant-start {
   overflow: auto;
 }
@@ -214,30 +277,30 @@
   flex: none;
   text-align: center;
   padding: 0 24px;
-  margin: auto auto 24px;
+  margin: auto auto 28px;
   width: 100%;
   max-width: 800px;
 }
 .welcome-mark {
   display: grid;
   place-items: center;
-  margin: 40px auto 24px;
-  width: 56px;
-  height: 56px;
-  border-radius: 17px;
-  background: var(--rss-color-accent-bg);
+  margin: 32px auto 20px;
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  background: transparent;
   color: var(--rss-color-accent);
 }
 .assistant-welcome h2 {
-  font-size: var(--rss-font-size-title);
+  font-size: 30px;
   font-weight: 600;
-  letter-spacing: -0.8px;
-  margin: 0 0 16px;
+  letter-spacing: -0.9px;
+  margin: 0 0 12px;
 }
 .assistant-welcome p {
   color: var(--rss-color-text-muted);
-  font-size: var(--rss-font-size-md);
-  line-height: 1.7;
+  font-size: 13px;
+  line-height: 1.8;
   margin: 0;
 }
 .assistant-start .conversation-input {
@@ -245,12 +308,9 @@
   padding-right: max(24px, calc((100% - var(--rss-hero-width)) / 2));
   padding-bottom: 0;
 }
-.assistant-start .composer textarea {
-  min-height: 80px;
-}
 .assistant-start-followup {
   flex: none;
-  padding: 20px max(24px, calc((100% - var(--rss-hero-width)) / 2)) 24px;
+  padding: 16px max(24px, calc((100% - var(--rss-hero-width)) / 2)) 24px;
   margin-bottom: auto;
 }
 .start-suggestions {
@@ -259,19 +319,17 @@
   gap: 12px;
   flex-wrap: wrap;
 }
-.start-suggestions button {
+.assistant .start-suggestions button {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 14px;
-  background: var(--rss-color-bg);
-  font-size: var(--rss-font-size-sm);
-}
-.suggestion-note {
-  text-align: center;
-  font-size: var(--rss-font-size-xs);
+  min-height: 34px;
+  padding: 7px 13px;
+  border: 1px solid var(--rss-color-border);
+  border-radius: 999px;
+  background: transparent;
+  font-size: 12px;
   color: var(--rss-color-text-muted);
-  margin: 12px 0 0;
 }
 .assistant .resume-conversation {
   display: flex;
@@ -279,8 +337,9 @@
   justify-content: space-between;
   gap: 16px;
   width: 100%;
-  margin-top: 32px;
-  padding: 16px 0;
+  margin: 24px auto 0;
+  padding: 12px 0;
+  max-width: 420px;
   border: 0;
   border-top: 1px solid var(--rss-color-border);
   background: transparent;
@@ -289,7 +348,7 @@
 .resume-conversation strong {
   display: block;
   font-size: var(--rss-font-size-sm);
-  margin-top: 10px;
+  margin-top: 5px;
 }
 .context-session {
   flex: 1;
@@ -300,7 +359,11 @@
   font-size: var(--rss-font-size-sm);
 }
 .assistant-context .conversation-header {
-  padding: 8px 0;
+  padding: 4px 0 8px;
+  color: var(--rss-color-text-muted);
+}
+.assistant-context .assistant-start .conversation-header {
+  display: none;
 }
 .assistant-context .assistant-welcome {
   text-align: left;
@@ -308,7 +371,8 @@
   padding: 0;
 }
 .assistant-context .welcome-mark {
-  display: none;
+  display: grid;
+  margin: 0 auto 16px;
 }
 .assistant-context .assistant-welcome h2 {
   font-size: 22px;
@@ -326,8 +390,8 @@
   order: 2;
   margin-top: auto;
 }
-.assistant-context .composer textarea {
-  min-height: 56px;
+.assistant-context .composer {
+  --rss-composer-min-height: 52px;
 }
 .assistant-context .assistant-start-followup {
   padding: 8px 0 16px;
@@ -338,7 +402,7 @@
   flex-direction: column;
   gap: 8px;
 }
-.assistant-context .start-suggestions button {
+.assistant-context .assistant .start-suggestions button {
   justify-content: start;
 }
 .assistant-context .resource-context {
@@ -418,8 +482,8 @@
   .assistant-welcome p {
     font-size: var(--rss-font-size-xs);
   }
-  .assistant-start .composer textarea {
-    min-height: 44px;
+  .assistant-start .composer {
+    --rss-composer-min-height: 40px;
   }
   .assistant-start-followup {
     padding-top: 8px;
@@ -447,7 +511,7 @@
     overflow: auto;
     padding: 4px 0;
   }
-  .assistant-context .composer textarea {
-    min-height: 44px;
+  .assistant-context .composer {
+    --rss-composer-min-height: 40px;
   }
 }

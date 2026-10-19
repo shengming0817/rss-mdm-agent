@@ -13,14 +13,11 @@ import {
   MessageComposer,
   MessageStream,
   UiDialog,
-  UiPopover,
-  UiButton,
-  UiMenu,
-  MoreHorizontal,
-  ChevronDown,
   Sparkles,
   MessageSquare,
   ChevronRight,
+  ChevronDown,
+  X,
 } from "@rss-mdm-agent/ui";
 import { copyText } from "./clipboard";
 const RuntimeSurface = defineAsyncComponent({
@@ -35,20 +32,11 @@ import {
   permissionPresentation,
   type AssistantController,
 } from "./controller";
-import SessionConnection from "./SessionConnection.vue";
 const emit = defineEmits<{ settings: []; tasks: [] }>();
-async function selectMenu(id: string) {
-  menuOpen.value = false;
-  await nextTick();
-  if (id === "diagnostics") diagnosticsOpen.value = true;
-  else emit("settings");
-}
 import QuestionCard from "./QuestionCard.vue";
 import ExecutionDetails from "./ExecutionDetails.vue";
 import OperationActivity from "./operation-ui/OperationActivity.vue";
-const diagnosticsOpen = ref(false),
-  connectionOpen = ref(false),
-  menuOpen = ref(false);
+import { cancelNote } from "./command-presentation";
 const copyStatus = ref("");
 const timeline = ref<HTMLElement>();
 const root = ref<HTMLElement>();
@@ -106,12 +94,6 @@ const c = props.controller,
   runtime = c.runtime,
   draft = c.draft;
 const clock = c.clock;
-const retryLabel = new Map([
-  ["same_command", "仅可核对并重试原命令，勿新建重复命令"],
-  ["reconcile_first", "先恢复历史并核对，再决定后续操作"],
-  ["never", "此命令不可重试"],
-]);
-const taskId = ref("");
 const rows = computed(() => {
   const v = view.value;
   if (!v) return [];
@@ -147,26 +129,6 @@ function commandStatus(command: CommandView) {
   if (command.state === "dispatching") return "AI 正在派发";
   return "AI 命令已接收 / 排队中";
 }
-function cancelNote(command: CommandView) {
-  if (command.acknowledgement?.type === "queued_cancelled")
-    return "已取消排队，未发送给模型。";
-  switch (
-    command.acknowledgement?.type === "cancel"
-      ? command.acknowledgement.confirmation
-      : command.cancelDispatched
-  ) {
-    case "request_only":
-      return command.state === "terminal"
-        ? "取消请求已发出；模型终止事实已记录。"
-        : "取消已发送给模型；等待模型终止事实。";
-    case "already_terminal":
-      return "取消请求返回模型已终止；设备效果仍需独立核对。";
-    case "unsupported":
-      return "当前模型不支持取消；原运行状态保持不变。";
-    default:
-      return "";
-  }
-}
 function questionEnabled(id: string) {
   return c.answerable(id);
 }
@@ -175,17 +137,6 @@ function hasSurface(item: TimelineItem) {
     (surface) => surface.interactionId === item.key,
   );
 }
-const diagnostics = computed(() =>
-  Object.values(view.value?.commands ?? {}).filter(
-    (command) => command.failure,
-  ),
-);
-const cancellations = computed(() =>
-  Object.values(view.value?.commands ?? {}).filter(
-    (command) => command.command.input.type === "cancel",
-  ),
-);
-
 const empty = computed(
   () =>
     !rows.value.length &&
@@ -218,12 +169,6 @@ const permissions = computed(() =>
     (item) => item.request.sessionId === s.selected,
   ),
 );
-const connectionPanel = ref<HTMLElement>();
-async function showContextChoices() {
-  connectionOpen.value = true;
-  await nextTick();
-  connectionPanel.value?.querySelector("select")?.focus();
-}
 const notice = computed(() => {
   if (s.connection === "connecting")
     return { text: "正在连接 AI 服务…", action: "connect" };
@@ -337,7 +282,6 @@ watch(
   async (_, previous) => {
     if (props.visible) remember(previous);
     openedOperation.value = "";
-    diagnosticsOpen.value = connectionOpen.value = menuOpen.value = false;
     copyStatus.value = "";
     await nextTick();
     restoreReading();
@@ -350,7 +294,6 @@ watch(
     if (!visible) {
       remember();
       openedOperation.value = "";
-      diagnosticsOpen.value = connectionOpen.value = menuOpen.value = false;
       copyStatus.value = "";
     } else {
       await nextTick();
@@ -389,40 +332,6 @@ async function copy(text: string) {
         <header v-show="visible" class="conversation-header">
           <h1 v-if="presentation === 'main'" tabindex="-1">{{ title }}</h1>
           <span v-else class="context-session">{{ title }}</span>
-          <UiPopover v-model:open="connectionOpen" label="AI 连接选择">
-            <template #trigger
-              ><UiButton class="connection-trigger"
-                >{{ connectionName }}
-                <ChevronDown :size="14" aria-hidden="true" /></UiButton
-            ></template>
-            <div ref="connectionPanel">
-              <SessionConnection :controller="c" /><UiButton
-                @click="
-                  connectionOpen = false;
-                  $emit('settings');
-                "
-                >管理 AI 连接</UiButton
-              >
-            </div>
-          </UiPopover>
-          <UiMenu
-            v-model:open="menuOpen"
-            label="会话菜单"
-            :items="[
-              { id: 'diagnostics', label: '会话详情与诊断' },
-              { id: 'settings', label: '设置' },
-            ]"
-            @select="selectMenu"
-          >
-            <template #trigger
-              ><UiButton
-                icon
-                variant="ghost"
-                class="conversation-menu"
-                aria-label="更多"
-                ><MoreHorizontal :size="20" aria-hidden="true" /></UiButton
-            ></template>
-          </UiMenu>
         </header>
       </Teleport>
       <div v-if="c.background.value.length" class="notice">
@@ -436,18 +345,22 @@ async function copy(text: string) {
       </div>
       <div v-if="empty" class="assistant-welcome">
         <span class="welcome-mark"
-          ><Sparkles :size="28" aria-hidden="true"
+          ><Sparkles :size="24" aria-hidden="true"
         /></span>
         <h2>
           {{
-            presentation === "main" ? "今天，想完成什么？" : "想了解这个资源？"
+            presentation === "main"
+              ? "有什么可以帮你？"
+              : c.context.value?.scope === "page"
+                ? "聊聊当前页面"
+                : "想了解这个资源？"
           }}
         </h2>
         <p>
           {{
             presentation === "main"
-              ? "讨论想法、解决问题，也可以了解这台设备上的任务。"
-              : "解释用途、核对版本与要求。资源信息由你确认后发送。"
+              ? "整理想法、查找应用，或一起解决电脑上的问题。"
+              : "解释内容、核对信息，一起找到下一步。"
           }}
         </p>
       </div>
@@ -612,23 +525,6 @@ async function copy(text: string) {
         </section>
       </div>
       <div class="conversation-input">
-        <section
-          v-if="c.context.value"
-          class="resource-context"
-          aria-label="待发送资源上下文"
-        >
-          <div class="resource-context-heading">
-            <strong>待发送资源 · {{ c.context.value.path[2] }}</strong
-            ><button type="button" @click="c.removeContext()">
-              移除上下文
-            </button>
-          </div>
-          <details>
-            <summary>核对将发送的信息</summary>
-            <pre>{{ c.context.value.text }}</pre>
-          </details>
-          <p>仅发送所选目录信息，不包含表单输入或设备历史。</p>
-        </section>
         <p v-if="c.compositionError.value" role="alert" class="error">
           {{ c.compositionError.value }}
         </p>
@@ -653,9 +549,9 @@ async function copy(text: string) {
           </button>
           <button
             v-else-if="notice.action === 'context'"
-            @click="showContextChoices"
+            @click="$emit('settings')"
           >
-            选择连接与新上下文
+            前往连接与上下文设置
           </button>
           <button
             v-else-if="notice.action === 'first'"
@@ -694,7 +590,9 @@ async function copy(text: string) {
         <MessageComposer
           :placeholder="
             presentation === 'context' && c.context.value
-              ? '输入关于此资源的问题…'
+              ? c.context.value.scope === 'page'
+                ? '询问当前页面，或输入你的问题…'
+                : '输入关于此资源的问题…'
               : empty
                 ? '向 RSS 提问，或描述你希望完成的事…'
                 : '继续提问…'
@@ -708,10 +606,44 @@ async function copy(text: string) {
           @submit="c.prompt()"
           @cancel="c.cancel"
         >
+          <template #context>
+            <section
+              v-if="c.context.value"
+              class="resource-context"
+              aria-label="待发送资源上下文"
+            >
+              <div class="resource-context-heading">
+                <details>
+                  <summary
+                    aria-label="核对将发送的信息"
+                    title="核对将发送的信息"
+                  >
+                    <span
+                      >待发送{{
+                        c.context.value.scope === "page" ? "页面" : "资源"
+                      }}
+                      · {{ c.context.value.path.at(-1) }}</span
+                    ><ChevronDown :size="12" aria-hidden="true" />
+                  </summary>
+                  <p>仅发送所选目录信息，不包含表单输入或设备历史。</p>
+                  <pre>{{ c.context.value.text }}</pre>
+                </details>
+                <button
+                  type="button"
+                  aria-label="移除上下文"
+                  title="移除上下文"
+                  @click="c.removeContext()"
+                >
+                  <X :size="14" aria-hidden="true" />
+                </button>
+              </div></section
+          ></template>
           <template #tools
-            ><span class="status-badge"
-              >{{ connectionName }} ·
-              {{ c.connectionReady.value ? "连接可用" : "待配置或验证" }}</span
+            ><span
+              class="composer-connection"
+              :class="{ ready: c.connectionReady.value }"
+              :title="`${connectionName} · ${c.connectionReady.value ? '连接可用' : '待配置或验证'}`"
+              ><i aria-hidden="true" />{{ connectionName }}</span
             ></template
           >
         </MessageComposer>
@@ -726,12 +658,18 @@ async function copy(text: string) {
               suggest(
                 presentation === 'main'
                   ? '帮我整理一个想法：'
-                  : '解释这个资源的用途与限制。',
+                  : c.context.value?.scope === 'page'
+                    ? '解释当前页面的内容与作用。'
+                    : '解释这个资源的用途与限制。',
               )
             "
           >
             <MessageSquare :size="16" aria-hidden="true" />{{
-              presentation === "main" ? "整理一个想法" : "解释资源用途"
+              presentation === "main"
+                ? "整理一个想法"
+                : c.context.value?.scope === "page"
+                  ? "解释当前页面"
+                  : "解释资源用途"
             }}
           </button>
           <button
@@ -741,20 +679,22 @@ async function copy(text: string) {
               suggest(
                 presentation === 'main'
                   ? '帮我理解软件与工具的使用要求。'
-                  : '核对这个资源的版本与运行身份。',
+                  : c.context.value?.scope === 'page'
+                    ? '根据当前页面信息，建议我可以继续检查的内容。'
+                    : '核对这个资源的版本与运行身份。',
               )
             "
           >
-            {{ presentation === "main" ? "理解使用要求" : "核对版本与身份" }}
+            {{
+              presentation === "main"
+                ? "理解使用要求"
+                : c.context.value?.scope === "page"
+                  ? "建议下一步"
+                  : "核对版本与身份"
+            }}
           </button>
         </div>
-        <p class="suggestion-note">
-          {{
-            draft.trim()
-              ? "已有草稿，请编辑后显式发送。"
-              : "引导仅填入草稿，由你决定是否发送。"
-          }}
-        </p>
+
         <button
           v-if="presentation === 'main' && recent"
           class="resume-conversation"
@@ -796,74 +736,5 @@ async function copy(text: string) {
       @update:open="closeDetails"
       ><div ref="detailsHost"
     /></UiDialog>
-    <UiDialog
-      :open="true"
-      presentation="drawer"
-      v-if="visible && diagnosticsOpen"
-      title="会话详情与诊断"
-      side="right"
-      @update:open="diagnosticsOpen = false"
-    >
-      <p>会话编号：{{ s.selected || "尚未创建" }}</p>
-      <p v-if="s.mode === 's1'">S1 测试装配 · 无真实执行</p>
-      <p>连接：{{ c.sessionConnection.value }}</p>
-      <p v-if="s.cleanupError">连接清理未确认：{{ s.cleanupError }}</p>
-      <div v-if="view" class="assistant-actions">
-        <button
-          :disabled="s.connection !== 'connected' || s.opening"
-          @click="c.restore()"
-        >
-          重新读取历史
-        </button>
-        <button
-          :disabled="!c.canResume.value || s.opening"
-          @click="c.restore(true)"
-        >
-          恢复原模型上下文
-        </button>
-        <button :disabled="view.connection !== 'attached'" @click="c.detach">
-          分离当前会话视图
-        </button>
-      </div>
-      <section
-        v-if="diagnostics.length"
-        class="command-failures"
-        aria-label="AI 命令诊断"
-      >
-        <h3>AI 命令诊断</h3>
-        <template
-          v-for="command in diagnostics"
-          :key="command.command.commandId"
-        >
-          <p v-if="command.failure" role="status">
-            {{
-              command.command.input.type === "prompt"
-                ? "消息"
-                : command.command.input.type === "cancel"
-                  ? "取消"
-                  : "回答"
-            }}
-            {{ command.command.commandId }}：{{ command.failure.code }}。{{
-              retryLabel.get(command.failure.retry)
-            }}；该诊断不证明模型已终止。
-          </p>
-        </template>
-      </section>
-
-      <p v-for="command in cancellations" :key="command.command.commandId">
-        {{ cancelNote(command) }}
-      </p>
-      <details>
-        <summary>按执行编号查询</summary>
-        <form @submit.prevent="taskId.trim() && c.taskDetails(taskId.trim())">
-          <label>执行请求编号<input v-model="taskId" maxlength="128" /></label
-          ><button :disabled="!taskId.trim() || s.taskLoading">
-            读取执行详情
-          </button>
-        </form>
-        <p v-if="s.taskError" role="alert">{{ s.taskError }}</p>
-        <ExecutionDetails v-if="s.task" :details="s.task" :now="clock" />
-      </details>
-    </UiDialog>
   </section>
 </template>

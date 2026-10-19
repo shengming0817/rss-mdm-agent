@@ -3,6 +3,11 @@
   "description": "Local main window: controlled execution service and private AI transport.",
   "windows": ["main"],
   "permissions": [
+    "core:window:allow-start-dragging",
+    "core:window:allow-internal-toggle-maximize",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-close",
     "allow-self-service-policy-directory",
     "allow-self-service-policy-invoke",
     "allow-self-service-policy-confirm",

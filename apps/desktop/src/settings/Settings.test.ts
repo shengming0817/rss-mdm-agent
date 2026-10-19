@@ -233,3 +233,33 @@ it("explains connection capacity failures without the history size message", asy
     t.close();
   }
 });
+
+it("keeps settings in one document with registration second and removes placeholder preferences", async () => {
+  const t = await setup();
+  try {
+    const sections = t.wrapper.findAll("[data-settings-section]");
+    expect(
+      sections.map((item) => item.attributes("data-settings-section")),
+    ).toEqual([
+      "account",
+      "registration",
+      "connection",
+      "diagnostics",
+      "about",
+    ]);
+    expect(sections.every((item) => item.isVisible())).toBe(true);
+    const nav = t.wrapper.emitted(
+      "navigation",
+    )![0][0] as import("../workspace/page-navigation").PageNavigation;
+    nav.openSection("registration");
+    await flushPromises();
+    expect(nav.section).toBe("registration");
+    expect(sections.every((item) => item.isVisible())).toBe(true);
+    expect(t.wrapper.findAll(".connection-form")).toHaveLength(1);
+    expect(t.wrapper.find('[role="switch"]').exists()).toBe(false);
+    expect(t.wrapper.text()).not.toContain("登录时启动 RSS Agent");
+    expect(t.wrapper.text()).not.toContain("默认下载位置");
+  } finally {
+    t.close();
+  }
+});
