@@ -38,6 +38,14 @@ function executionOwner() {
 }
 const port = ref(executionOwner());
 let timer: ReturnType<typeof setInterval> | undefined;
+let epoch = 0;
+let disposed = false;
+function clearTasks() {
+  records.value = [];
+  executions.value = [];
+  available.value = [];
+  pending.value = true;
+}
 const text = computed(() => {
   switch (status.value?.state) {
     case "unenrolled":
@@ -53,19 +61,23 @@ const text = computed(() => {
 async function refresh() {
   if (busy.value || !props.active) return;
   busy.value = true;
+  const version = epoch;
+  const owner = port.value;
+  const current = () => !disposed && props.active && version === epoch;
   try {
-    status.value = props.servicePort
+    const nextStatus = props.servicePort
       ? await props.servicePort.mdmStatus()
       : props.fixture
         ? { state: "unknown" }
         : await readMdmStatus();
-    if (port.value && props.agentReady) {
-      const snapshot = await port.value.snapshot({
+    if (!current()) return;
+    if (owner && props.agentReady) {
+      const snapshot = await owner.snapshot({
         after: null,
         selected: null,
       });
-      records.value = snapshot.preparations;
-      executions.value = snapshot.requests.filter(
+      if (!current()) return;
+      const nextExecutions = snapshot.requests.filter(
         (t) => t.action.operation.action === "backend-enrollment",
       );
       const statuses = await Promise.all(
@@ -79,7 +91,7 @@ async function refresh() {
           .map(async (r) => {
             if (r.action.kind !== "policy") return false;
             if (r.state !== "observed") return true;
-            const result = await port.value!.policy_status({
+            const result = await owner.policy_status({
               requestId: r.action.choice.request,
             });
             if (result.kind === "absent") return false;
@@ -95,9 +107,12 @@ async function refresh() {
             );
           }),
       );
+      if (!current()) return;
+      records.value = snapshot.preparations;
+      executions.value = nextExecutions;
       pending.value =
         statuses.some((value) => value) ||
-        executions.value.some(
+        nextExecutions.some(
           (t) =>
             ![
               "verified",
@@ -112,44 +127,49 @@ async function refresh() {
         (t) => t.summary.kind === "enrollment",
       );
     } else {
-      records.value = [];
-      executions.value = [];
-      available.value = [];
-      pending.value = true;
+      clearTasks();
     }
+    status.value = nextStatus;
     error.value = "";
   } catch {
+    if (!current()) return;
     error.value = "无法读取本机服务，请刷新重试。";
     status.value = undefined;
-    pending.value = true;
-    records.value = [];
-    available.value = [];
-    executions.value = [];
+    clearTasks();
   } finally {
     busy.value = false;
+    if (!disposed && props.active && version !== epoch) void refresh();
   }
 }
+// ref: Vue v3.5.38 apiWatch.ts — invalidate async work when its owner changes.
 watch(
-  () => [currentUser.value?.generation, props.agentReady],
+  [
+    () => currentUser.value?.generation,
+    () => props.agentReady,
+    () => props.active,
+    () => props.executionPort,
+    () => props.servicePort,
+    () => props.fixture,
+  ],
   () => {
+    epoch++;
     port.value = executionOwner();
-    records.value = [];
-    executions.value = [];
-    available.value = [];
+    status.value = undefined;
+    error.value = "";
+    clearTasks();
     if (props.active) void refresh();
   },
-);
-watch(
-  () => props.active,
-  (active) => {
-    if (active) void refresh();
-  },
+  { flush: "sync" },
 );
 onMounted(() => {
   void refresh();
   timer = setInterval(refresh, 5000);
 });
-onUnmounted(() => clearInterval(timer));
+onUnmounted(() => {
+  disposed = true;
+  epoch++;
+  clearInterval(timer);
+});
 </script>
 <template>
   <section class="mdm-registration" aria-label="MDM 注册">

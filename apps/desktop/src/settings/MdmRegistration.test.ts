@@ -3,6 +3,8 @@ import { expect, it, vi } from "vitest";
 import MdmRegistration from "./MdmRegistration.vue";
 import type { SelfServicePort } from "../self-service/types";
 import PolicySelfService from "../self-service/PolicySelfService.vue";
+import TaskDetail from "../self-service/TaskDetail.vue";
+import { snapshot as emptySnapshot } from "../../../../tests/self-service/support";
 const fixtures = vi.hoisted(() => ({
   read: vi.fn(),
   snapshot: vi.fn(),
@@ -116,5 +118,97 @@ it("reads MDM facts without enabling tasks before Agent identity is ready and st
     );
   } finally {
     wrapper.unmount();
+  }
+});
+
+it("discards delayed task receipts after readiness changes and refreshes the current owner", async () => {
+  let finish!: (value: ReturnType<typeof emptySnapshot>) => void;
+  const oldPort = {
+    snapshot: vi.fn(
+      () =>
+        new Promise<ReturnType<typeof emptySnapshot>>((resolve) => {
+          finish = resolve;
+        }),
+    ),
+  } as unknown as SelfServicePort;
+  const nextPort = {
+    snapshot: vi.fn().mockResolvedValue(emptySnapshot()),
+  } as unknown as SelfServicePort;
+  const read = vi.fn().mockResolvedValue({ state: "unenrolled" });
+  const wrapper = shallowMount(MdmRegistration, {
+    props: {
+      fixture: true,
+      servicePort: { mdmStatus: read },
+      executionPort: oldPort,
+    },
+  });
+  try {
+    await flushPromises();
+    await wrapper.setProps({ agentReady: false, executionPort: nextPort });
+    const stale = emptySnapshot();
+    stale.requests = [
+      {
+        action: {
+          operation: { action: "backend-enrollment" },
+          requestId: "old",
+        },
+        status: { phase: "executing" },
+      },
+    ] as unknown as typeof stale.requests;
+    finish(stale);
+    await flushPromises();
+    expect(wrapper.findComponent(TaskDetail).exists()).toBe(false);
+    expect(wrapper.findComponent(PolicySelfService).exists()).toBe(false);
+    expect(nextPort.snapshot).not.toHaveBeenCalled();
+    expect(read).toHaveBeenCalledTimes(2);
+    await wrapper.setProps({ agentReady: true });
+    await flushPromises();
+    expect(nextPort.snapshot).toHaveBeenCalledTimes(1);
+    expect(
+      wrapper.getComponent(PolicySelfService).props("allowNewRequests"),
+    ).toBe(true);
+  } finally {
+    wrapper.unmount();
+  }
+});
+
+it("invalidates hidden work, resumes on activation and stops polling after unmount", async () => {
+  vi.useFakeTimers();
+  let finish!: (value: { state: "unenrolled" }) => void;
+  const read = vi
+    .fn()
+    .mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    )
+    .mockResolvedValue({ state: "other_organization" });
+  const snapshot = vi.fn().mockResolvedValue(emptySnapshot());
+  const wrapper = shallowMount(MdmRegistration, {
+    props: {
+      fixture: true,
+      servicePort: { mdmStatus: read },
+      executionPort: { snapshot } as unknown as SelfServicePort,
+    },
+  });
+  try {
+    await wrapper.setProps({ active: false });
+    finish({ state: "unenrolled" });
+    await flushPromises();
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(snapshot).not.toHaveBeenCalled();
+    expect(wrapper.text()).not.toContain("本机尚未注册 MDM。");
+    await wrapper.setProps({ active: true });
+    await flushPromises();
+    expect(wrapper.text()).toContain("其他组织管理");
+    expect(read).toHaveBeenCalledTimes(2);
+    wrapper.unmount();
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(read).toHaveBeenCalledTimes(2);
+  } finally {
+    if (wrapper.exists()) wrapper.unmount();
+    vi.useRealTimers();
   }
 });

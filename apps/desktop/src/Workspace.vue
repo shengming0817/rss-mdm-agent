@@ -220,9 +220,17 @@ function dismissHistory(event: PointerEvent) {
   )
     closeHistory();
 }
-function historySelected() {
-  if (!historyPinned.value) closeHistory();
+async function historySelected() {
+  const floating = !historyPinned.value;
+  if (floating) closeHistory();
   if (!pageAssistantOpen.value) emit("navigate", "assistant");
+  if (floating) {
+    await nextTick();
+    await nextTick();
+    workspaceRoot.value
+      ?.querySelector<HTMLTextAreaElement>(".composer textarea")
+      ?.focus({ preventScroll: true });
+  }
 }
 const device = createDeviceOverview(
   props.fixture ? props.devicePort : nativeDeviceOverview(),
@@ -239,6 +247,7 @@ const assistant = props.ready
 watch(
   () => props.page,
   (id) => {
+    if (id !== "settings") settingsExpanded.value = false;
     if (id !== "assistant") lastContentPage.value = id;
     if (["home", "software", "tools", "tasks"].includes(id))
       controller?.navigate(id);
@@ -884,6 +893,7 @@ onBeforeUnmount(() => {
           :active="!ready || page === 'settings'"
           :assistant="assistant"
           @assistant="emit('navigate', 'assistant')"
+          @tasks="navigateMain('tasks')"
           ><template #development="scope"
             ><slot name="development" /><slot
               name="operation-cards"

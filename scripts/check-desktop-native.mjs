@@ -297,17 +297,71 @@ const field = (label) =>
   browser.$(
     `//form[contains(@class,'connection-form')]//label[starts-with(normalize-space(.),${JSON.stringify(label)})]/*[self::input or self::select]`,
   );
+const closeNavigationDialog = async () => {
+  if (
+    await browser.execute(
+      () => !!document.querySelector('[role="dialog"][data-state="open"]'),
+    )
+  )
+    key(53);
+};
+const expandNavigation = async () => {
+  await wait(() => browser.$(".sidebar-cycle").isExisting());
+  for (let count = 0; count < 3; count++) {
+    if (
+      (await browser.$(".workspace-chrome").getAttribute("data-layout")) ===
+      "full"
+    )
+      return;
+    await browser.$(".sidebar-cycle").click();
+  }
+  throw new Error("Full navigation did not open");
+};
+const openAgentSettings = async (section) => {
+  await closeNavigationDialog();
+  await click("RSS Agent 设置");
+  await click(section);
+};
+const fixtureControls = async () => {
+  await openAgentSettings("开发预览");
+  if (
+    !(await browser.execute(
+      () => document.querySelector(".fixture-controls")?.open,
+    ))
+  )
+    await browser.$(".fixture-controls > summary").click();
+};
+const openHistory = async () => {
+  if (
+    !(await browser.execute(
+      () => !!document.querySelector(".conversation-history-panel"),
+    ))
+  )
+    await click("历史会话");
+  if (await browser.$('[aria-label="固定历史会话"]').isExisting())
+    await click("固定历史会话");
+};
 const navigate = async (name) => {
-  await wait(() =>
-    browser.execute(
-      () =>
-        innerWidth < 900 ===
-        !!document.querySelector('[aria-label="打开主导航"]'),
-    ),
-  );
-  if (await browser.execute(() => innerWidth < 900))
-    await browser.$('[aria-label="打开主导航"]').click();
-  await click(name);
+  await closeNavigationDialog();
+  if (name === "设置") {
+    await openAgentSettings("AI 与连接");
+    return;
+  }
+  if (["软件中心", "请求与任务"].includes(name)) {
+    if (visualOnly) {
+      await fixtureControls();
+      await selectValue(
+        await browser.$('[aria-label="原有业务验证"]'),
+        name === "软件中心" ? "software" : "tasks",
+      );
+    } else {
+      await openAgentSettings("运行与诊断");
+      await click("执行服务记录");
+    }
+    return;
+  }
+  await expandNavigation();
+  await click(name, '//*[contains(@class,"workspace-primary-navigation")]');
   await browser.execute(
     () =>
       new Promise((resolve) =>
@@ -955,6 +1009,7 @@ try {
   result.checks.push("webdriver-per-request-authentication");
   if (visualOnly) {
     mark("visual fixture in the product main WKWebView");
+    await fixtureControls();
     await text("开发 fixture · 无真实设备执行");
     await click("基础控件");
     await click("对话框与附属面板");
@@ -981,11 +1036,11 @@ try {
     await browser.saveScreenshot(
       join(reports, "desktop-native-foundations.png"),
     );
-    await click("返回应用");
+    await click("收起基础控件");
     mark("macOS foundation dialog keyboard focus and cleanup");
     await navigate("AI 助手");
     await wait(() => browser.$(".composer textarea").isDisplayed());
-    await browser.$(".new-conversation").click();
+    await click("新会话");
     await browser.setWindowSize(1100, 760);
     await browser.saveScreenshot(
       join(reports, "desktop-native-start-default.png"),
@@ -1047,7 +1102,9 @@ try {
             mainOpaque: !getComputedStyle(
               document.querySelector(".shell main"),
             ).backgroundColor.includes("rgba"),
-            inputOpaque: !style.backgroundColor.includes("rgba"),
+            inputOpaque: !getComputedStyle(
+              document.querySelector(".composer-box"),
+            ).backgroundColor.includes("rgba"),
           };
         });
         assert.equal(metrics.theme, theme);
@@ -1066,8 +1123,9 @@ try {
       };
       await click("关闭资源上下文 AI");
       await navigate("AI 助手");
-      await browser.$(".new-conversation").click();
-      await click("移除上下文");
+      await click("新会话");
+      if (await browser.$('[aria-label="移除上下文"]').isExisting())
+        await click("移除上下文");
       await browser.execute(() => {
         window.nativeVisualInput = document.querySelector(".composer textarea");
       });
@@ -1305,7 +1363,7 @@ try {
         mark("physical native Chinese IME confirmation and explicit send");
         await browser.setWindowSize(1100, 760);
         await navigate("AI 助手");
-        await browser.$(".new-conversation").click();
+        await click("新会话");
         await browser.$(".composer textarea").setValue("");
         await browser.$(".composer textarea").click();
         const before = await browser.execute(
@@ -1530,6 +1588,7 @@ try {
     result.status = "passed";
   } else {
     mark("account and saved unverified connection");
+    await browser.$(".account-local-workspaces > summary").click();
     await browser.$('[aria-label="测试用户名"]').setValue("Golden Alice");
     await click("进入");
     await wait(() => browser.$('[aria-label="测试用户名"]').isEnabled());
@@ -1857,8 +1916,9 @@ try {
     );
     await browser.saveScreenshot(join(reports, "desktop-native-narrow.png"));
     await browser.setWindowSize(1100, 760);
+    await openHistory();
     await wait(() =>
-      browser.$(".navigation-panel .conversation-list").isDisplayed(),
+      browser.$(".conversation-history-panel .conversation-list").isDisplayed(),
     );
     result.checks.push(
       "native-tab-shift-tab-escape",
@@ -1938,45 +1998,16 @@ try {
       await click("继续到所选会话");
       await wait(() => browser.$(".resource-context").isDisplayed());
       if (width < 1440) {
-        mark(`resource context ${width}×${height}: native diagnostic focus`);
-        await browser.$(".connection-trigger").click();
-        await wait(() => browser.$('[aria-label="AI 连接选择"]').isDisplayed());
-        key(53);
-        await wait(
-          async () =>
-            !(await browser.$('[aria-label="AI 连接选择"]').isDisplayed()),
+        mark(
+          `resource context ${width}×${height}: configuration stays in Agent settings`,
         );
-        await browser.$('[aria-label="更多"]').click();
-        await wait(() => browser.$('[role="menuitem"]').isDisplayed());
-        await browser.$('[role="menuitem"]').click();
-        await wait(() =>
-          browser
-            .$('[role="dialog"][aria-label="会话详情与诊断"]')
-            .isDisplayed(),
+        assert.equal(
+          await browser.$(".connection-trigger").isExisting(),
+          false,
         );
-        await wait(() =>
-          browser.execute(
-            () =>
-              document.activeElement
-                .closest('[role="dialog"]')
-                ?.getAttribute("aria-label") === "会话详情与诊断",
-          ),
-        );
-        key(48);
-        await wait(() =>
-          browser.execute(
-            () =>
-              document.activeElement
-                .closest('[role="dialog"]')
-                ?.getAttribute("aria-label") === "会话详情与诊断",
-          ),
-        );
-        key(53);
-        await wait(
-          async () =>
-            !(await browser
-              .$('[role="dialog"][aria-label="会话详情与诊断"]')
-              .isExisting()),
+        assert.equal(
+          await browser.$('[aria-label="更多"]').isExisting(),
+          false,
         );
       }
       assert.equal(
@@ -2142,7 +2173,7 @@ try {
     });
     result.owner.restartedHostPid = hostPid();
     mark("reuse native credential after Host restart");
-    await text("AI Host：已就绪");
+    await text("已就绪");
     await wait(
       async () =>
         await browser
@@ -2150,11 +2181,12 @@ try {
           .isEnabled(),
     );
     await click("测试连接");
+    await openAgentSettings("AI 与连接");
     await text("Golden Codex · Codex · 可用");
     mark("restore history and create a new provider session after restart");
     await navigate("AI 助手");
     await text("GOLDEN_HELLO 查看办公套件");
-    await browser.$(".conversation-list .new-conversation").click();
+    await click("新会话");
     await prompt("GOLDEN_HELLO 重启后新对话");
     await text("完成 HELLO");
     result.checks.push(
@@ -2197,7 +2229,7 @@ try {
               throw error;
             }
           });
-        await text("AI Host：已就绪");
+        await text("已就绪");
         result.owner.restartedHostPid = hostPid();
       };
       const held = async () => {
@@ -2205,7 +2237,7 @@ try {
         rememberScopes(existing, hostPid());
         const previousRoots = new Set(existing.map((row) => row.scope.root));
         await navigate("AI 助手");
-        await browser.$(".conversation-list .new-conversation").click();
+        await click("新会话");
         const previous = fixture.facts.held;
         await prompt("GOLDEN_HOLD 安全验收：保持请求等待");
         await wait(() => fixture.facts.held > previous);
@@ -2310,6 +2342,7 @@ try {
     await click("稍后配置，前往 AI");
     assert.equal(await visibleText("GOLDEN_HELLO 查看办公套件"), false);
     await navigate("设置");
+    await browser.$(".account-local-workspaces > summary").click();
     await browser.$('[aria-label="测试用户名"]').setValue("Golden Alice");
     await click("进入");
     await wait(() => browser.$('[aria-label="测试用户名"]').isEnabled());

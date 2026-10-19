@@ -25,6 +25,7 @@ const props = withDefaults(
 const emit = defineEmits<{
   navigation: [state: PageNavigation];
   assistant: [];
+  tasks: [];
 }>();
 const section = ref("account");
 const root = ref<HTMLElement>();
@@ -284,6 +285,9 @@ emit("navigation", reactive({ openSection, reset, section, sections, path }));
             {{ diagnosticMessage(host.state.status) }}
           </p>
           <div class="settings-actions">
+            <button v-if="assistant" @click="emit('tasks')">
+              执行服务记录
+            </button>
             <button
               :disabled="
                 !host.available || host.state.busy || host.state.loading

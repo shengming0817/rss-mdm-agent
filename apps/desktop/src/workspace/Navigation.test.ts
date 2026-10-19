@@ -12,6 +12,7 @@ import ToolsPage from "../catalog-preview/ToolsPage.vue";
 import SystemSettings from "../system-settings/SystemSettings.vue";
 import AccountMenu from "./AccountMenu.vue";
 import Settings from "../settings/Settings.vue";
+import WorkspaceSearch from "./WorkspaceSearch.vue";
 import { createHostSettings } from "../settings/controller";
 import { softwarePreviewKey } from "../catalog-preview/software-preview";
 import { createSoftwarePreview } from "../../../../tests/assistant/software-preview";
@@ -78,14 +79,16 @@ it("opens history in a separate panel from either sidebar and preserves one comp
     ).toHaveLength(2);
     await w.get(".sidebar-cycle").trigger("click");
     expect(w.get(".workspace-chrome").attributes("data-layout")).toBe("hidden");
-    await w
+    const historyChoice = w
       .getComponent(ConversationList)
       .findAll("li button")
-      .find((e) => e.text().includes("较早的会话"))!
-      .trigger("click");
+      .find((e) => e.text().includes("较早的会话"))!;
+    (historyChoice.element as HTMLElement).focus();
+    await historyChoice.trigger("click");
     await flushPromises();
     expect(c.state.selected).toBe("older");
     expect(c.draft.value).toBe("已选会话的草稿");
+    expect(document.activeElement).toBe(input);
     await w.get(".sidebar-cycle").trigger("click");
     expect(w.get(".workspace-chrome").attributes("data-layout")).toBe("rail");
     expect(w.getComponent(Assistant).get("textarea").element).toBe(input);
@@ -298,6 +301,43 @@ it("closes floating and pinned history, and resets pinning when reopened", async
     expect(w.get(".conversation-history-panel").classes()).not.toContain(
       "history-pinned",
     );
+  } finally {
+    w.unmount();
+  }
+});
+
+it("keeps secondary navigation with its current page after search and settings actions", async () => {
+  const w = await setup("settings");
+  try {
+    await w.getComponent(AccountMenu).get("button").trigger("click");
+    await w.get(".sidebar-cycle").trigger("click");
+    await w.get(".sidebar-cycle").trigger("click");
+    w.getComponent(WorkspaceSearch).vm.$emit("select", {
+      page: "system-settings",
+      id: "network",
+    });
+    await w.setProps({ page: "system-settings" });
+    await flushPromises();
+    expect(w.get(".hidden-secondary").text()).not.toContain("账号与组织");
+    expect(w.get(".hidden-secondary").text()).toContain("网络");
+    await w.getComponent(AccountMenu).vm.$emit("open");
+    await w.setProps({ page: "settings" });
+    await w.getComponent(Settings).vm.$emit("assistant");
+    await w.setProps({ page: "assistant" });
+    expect(w.get(".hidden-secondary").text()).not.toContain("账号与组织");
+    expect(w.get(".hidden-secondary").text()).toContain("新会话");
+    await w.getComponent(AccountMenu).vm.$emit("open");
+    await w.setProps({ page: "settings" });
+    await w
+      .getComponent(Settings)
+      .findAll("button")
+      .find((b) => b.text() === "执行服务记录")!
+      .trigger("click");
+    expect(w.emitted("navigate")?.at(-1)).toEqual(["tasks"]);
+    await w.setProps({ page: "tasks" });
+    expect(
+      w.find(".hidden-secondary .agent-settings-navigation").exists(),
+    ).toBe(false);
   } finally {
     w.unmount();
   }

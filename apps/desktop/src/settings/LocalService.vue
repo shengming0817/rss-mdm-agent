@@ -128,8 +128,7 @@ watch(
 onMounted(() => {
   void refresh();
   timer = setInterval(() => {
-    if (props.active && registration.value && !registration.value.registered)
-      void refresh();
+    if (props.active) void refresh();
   }, 2000);
 });
 onUnmounted(() => {
