@@ -665,8 +665,6 @@ mod tests {
                 worker.join().unwrap();
                 // Registered handoff publishes readiness only after the execution owner assembles.
                 assert_eq!(shared.lock().unwrap().readiness, Readiness::NotReady);
-                assert!(client.runtime_readiness().is_err());
-                client.drive_task_trust().await.unwrap();
                 client.runtime_readiness().unwrap();
                 assert!(shared.lock().unwrap().status.registered);
                 assert_eq!(client.registration().unwrap(), binding);

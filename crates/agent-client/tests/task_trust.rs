@@ -165,6 +165,7 @@ async fn invalid_updates_and_failed_sqlite_commit_do_not_ack_or_replace_installe
 #[tokio::test]
 async fn rotated_uninstall_evidence_only_recovers_original_installation_and_task() {
     let server = Server::tls().await;
+    server.data.lock().unwrap().unmanage();
     let root = Root::new();
     let mut client = server.client(&root, OpenMode::Create);
     server.register(&mut client).await;

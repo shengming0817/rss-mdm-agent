@@ -1071,51 +1071,34 @@ async fn handler(
         d.observations.push(value.clone());
         return axum::Json(value).into_response();
     }
-    if path.ends_with("/runtime/task-trust") {
-        if value.is_null() {
-            if std::mem::take(&mut d.task_trust_failure) {
-                return runtime_error(
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    ErrorCode::ServiceUnavailable,
-                );
-            }
-            if d.task_trust.is_null() {
-                d.task_trust = serde_json::json!({"version":1,"origin":d.trust["origin"],"tenant":d.tenant,"revision":1,
-                    "keys":[{"id":"test","public_key":base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(d.signer.public_key().as_ref()),"state":"active"}]});
-            }
-            return axum::Json(d.task_trust.clone()).into_response();
-        }
-        d.task_trust_ack_calls.push(value.clone());
-        if std::mem::take(&mut d.task_trust_ack_failure) {
-            return runtime_error(
-                StatusCode::SERVICE_UNAVAILABLE,
-                ErrorCode::ServiceUnavailable,
-            );
-        }
-        return axum::Json(value).into_response();
-    }
     if let Some(action) = path.strip_prefix("/api/v1/agent/enroll/") {
         return enrollment_response(&mut d, action, value, peer_leaf.as_deref());
     }
     if !path.starts_with("/api/v1/agent/runtime/") {
         return StatusCode::NOT_FOUND.into_response();
     }
+    runtime_response(&mut d, path, headers, value)
+}
+
+fn runtime_response(d: &mut Data, path: &str, headers: HeaderMap, value: Value) -> Response {
     if d.denied {
         return runtime_error(StatusCode::UNAUTHORIZED, ErrorCode::CredentialRevoked);
     }
     if d.activation.is_none() {
         return runtime_error(StatusCode::UNAUTHORIZED, ErrorCode::InvalidIdentity);
     }
-    let response = if path.ends_with("/enrollment") {
-        native_enrollment_response(&mut d, value)
+    let response = if path.ends_with("/runtime/task-trust") {
+        task_trust_response(d, value)
+    } else if path.ends_with("/enrollment") {
+        native_enrollment_response(d, value)
     } else if path.ends_with("/reports") {
-        report_response(&mut d, value)
+        report_response(d, value)
     } else if path.ends_with("/claim") {
-        claim_response(&mut d, value)
+        claim_response(d, value)
     } else if path.ends_with("/events") {
-        event_response(&mut d, value)
+        event_response(d, value)
     } else if path.ends_with("/content") {
-        content_response(&mut d, headers)
+        content_response(d, headers)
     } else {
         StatusCode::NOT_FOUND.into_response()
     };
@@ -1866,4 +1849,28 @@ fn self_service_response(d: &mut Data, uri: &Uri, headers: &HeaderMap, value: Va
         }
     }
     runtime_error(StatusCode::NOT_FOUND, ErrorCode::TaskNotFound)
+}
+
+fn task_trust_response(d: &mut Data, value: Value) -> Response {
+    if value.is_null() {
+        if std::mem::take(&mut d.task_trust_failure) {
+            return runtime_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                ErrorCode::ServiceUnavailable,
+            );
+        }
+        if d.task_trust.is_null() {
+            d.task_trust = serde_json::json!({"version":1,"origin":d.trust["origin"],"tenant":d.tenant,"revision":1,
+                    "keys":[{"id":"test","public_key":base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(d.signer.public_key().as_ref()),"state":"active"}]});
+        }
+        return axum::Json(d.task_trust.clone()).into_response();
+    }
+    d.task_trust_ack_calls.push(value.clone());
+    if std::mem::take(&mut d.task_trust_ack_failure) {
+        return runtime_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            ErrorCode::ServiceUnavailable,
+        );
+    }
+    axum::Json(value).into_response()
 }
