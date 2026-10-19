@@ -102,6 +102,10 @@ export interface RegistrationStatus {
     | "paused"
     | "rejected";
   /**
+   * Last Agent PKI installation observation; not a CRL freshness proof.
+   */
+  pkiTrust?: TrustInstallationStatus | null;
+  /**
    * SHA256 of the exact request public key.
    */
   publicKeyFingerprint?: string | null;
@@ -109,6 +113,35 @@ export interface RegistrationStatus {
    * A durable registration exists, independent of runtime readiness.
    */
   registered: boolean;
+  /**
+   * Last task trust observation; absence means unknown.
+   */
+  taskTrust?: TrustInstallationStatus | null;
+}
+/**
+ * Non-secret installation progress from the sole communication owner.
+ */
+export interface TrustInstallationStatus {
+  /**
+   * Separate successful ACK confirmation.
+   */
+  acknowledged: boolean;
+  /**
+   * Last read-back installed public revision when known.
+   */
+  actualRevision?: number | null;
+  /**
+   * Local observation time, not ordering authority.
+   */
+  observedAt: number;
+  /**
+   * Last locally observed result; not current connectivity.
+   */
+  state: "received" | "applied" | "failed" | "unknown";
+  /**
+   * Target public revision when known.
+   */
+  targetRevision?: number | null;
 }
 
 /**

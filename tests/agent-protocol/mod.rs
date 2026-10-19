@@ -216,6 +216,11 @@ impl agent_client::MachineTrust for Secrets {
 }
 pub struct Data {
     pub trust: Value,
+    pub task_trust: Value,
+    pub task_trust_ack_calls: Vec<Value>,
+    pub task_trust_failure: bool,
+    pub task_trust_ack_failure: bool,
+    pub observations: Vec<Value>,
     pub trust_calls: usize,
     pub trust_ack_calls: Vec<Value>,
     pub trust_ack_failure: bool,
@@ -252,6 +257,7 @@ pub struct Data {
     pub operation: Option<Uuid>,
     pub bytes: Vec<u8>,
     pub signer: Ed25519KeyPair,
+    pub task_key_id: String,
     pub offer: Option<SignedTask>,
     pub time: Time,
     pub native_inputs: Vec<Value>,
@@ -308,11 +314,11 @@ impl Data {
         SignedTask {
             signature: base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(
                 self.signer
-                    .sign(&payload.signing_bytes("test").unwrap())
+                    .sign(&payload.signing_bytes(&self.task_key_id).unwrap())
                     .as_ref(),
             ),
             payload,
-            key_id: "test".into(),
+            key_id: self.task_key_id.clone(),
         }
     }
     pub fn unmanage(&mut self) {
@@ -676,7 +682,7 @@ impl Drop for ServerRuntime {
 }
 impl Server {
     pub async fn new() -> Self {
-        Self::listen(false).await
+        Self::listen(true).await
     }
     pub async fn tls() -> Self {
         Self::listen(true).await
@@ -686,6 +692,11 @@ impl Server {
         let signer = Ed25519KeyPair::from_seed_unchecked(&[7; 32]).unwrap();
         let data = Arc::new(Mutex::new(Data {
             trust: Value::Null,
+            task_trust: Value::Null,
+            task_trust_ack_calls: Vec::new(),
+            task_trust_failure: false,
+            task_trust_ack_failure: false,
+            observations: Vec::new(),
             trust_calls: 0,
             trust_ack_calls: Vec::new(),
             trust_ack_failure: false,
@@ -722,6 +733,7 @@ impl Server {
             operation: None,
             bytes: b"{\"ok\":true}\n".repeat(4096),
             signer,
+            task_key_id: "test".into(),
             offer: None,
             time: time.clone(),
             native_inputs: vec![],
@@ -852,7 +864,14 @@ impl Server {
                 .as_ref()
                 .map_or(TaskPlatform::Macos, |s| s.payload.platform()),
             architecture: TaskArchitecture::Aarch64,
-            keys: BTreeMap::from([("test".into(), data.signer.public_key().as_ref().to_vec())]),
+            registration_keys: BTreeMap::from([(
+                "test".into(),
+                Ed25519KeyPair::from_seed_unchecked(&[7; 32])
+                    .unwrap()
+                    .public_key()
+                    .as_ref()
+                    .to_vec(),
+            )]),
             limits: Limits::test_defaults(),
             transport: if data.tls_required {
                 Transport::Https
@@ -973,6 +992,7 @@ impl Server {
             .await
             .unwrap();
         client.drive_pki().await.unwrap();
+        client.drive_task_trust().await.unwrap();
         client.registration().unwrap()
     }
 }
@@ -1029,6 +1049,7 @@ async fn handler(
             || path.ends_with("/native-grants")
             || path.ends_with("/renewal-grants")
             || path.ends_with("/trust/acknowledgements")
+            || path.ends_with("/trust/observations")
             || path.starts_with("/api/v1/agent/runtime/"))
         && !authenticated
     {
@@ -1045,6 +1066,33 @@ async fn handler(
         if path.ends_with(suffix) {
             return axum::Json(body.clone()).into_response();
         }
+    }
+    if path.ends_with("/task-trust/observations") || path.ends_with("/trust/observations") {
+        d.observations.push(value.clone());
+        return axum::Json(value).into_response();
+    }
+    if path.ends_with("/runtime/task-trust") {
+        if value.is_null() {
+            if std::mem::take(&mut d.task_trust_failure) {
+                return runtime_error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    ErrorCode::ServiceUnavailable,
+                );
+            }
+            if d.task_trust.is_null() {
+                d.task_trust = serde_json::json!({"version":1,"origin":d.trust["origin"],"tenant":d.tenant,"revision":1,
+                    "keys":[{"id":"test","public_key":base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(d.signer.public_key().as_ref()),"state":"active"}]});
+            }
+            return axum::Json(d.task_trust.clone()).into_response();
+        }
+        d.task_trust_ack_calls.push(value.clone());
+        if std::mem::take(&mut d.task_trust_ack_failure) {
+            return runtime_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                ErrorCode::ServiceUnavailable,
+            );
+        }
+        return axum::Json(value).into_response();
     }
     if let Some(action) = path.strip_prefix("/api/v1/agent/enroll/") {
         return enrollment_response(&mut d, action, value, peer_leaf.as_deref());

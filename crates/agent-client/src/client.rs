@@ -71,6 +71,8 @@ pub struct Client<S, C> {
     pub(crate) http: reqwest::Client,
     pub(crate) bootstrap: reqwest::Client,
     pub(crate) runtime_gate: crate::RuntimeGate,
+    pub(crate) task_trust_started: bool,
+    pub(crate) pki_observed: bool,
     pub(crate) secrets: S,
     pub(crate) clock: C,
     profiles: Vec<wire::ExecutorProfile>,
@@ -179,6 +181,8 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             http,
             bootstrap,
             runtime_gate: crate::RuntimeGate::default(),
+            task_trust_started: false,
+            pki_observed: false,
             secrets,
             clock,
             profiles: Vec::new(),
@@ -246,7 +250,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         };
         Err(error)
     }
-    async fn json<T: DeserializeOwned>(
+    pub(crate) async fn json<T: DeserializeOwned>(
         &self,
         method: Method,
         path: &str,
@@ -361,17 +365,12 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             return Err(Error::Expired);
         }
         let registration = self.store.registration()?;
-        let key = self
-            .store
-            .cfg
-            .keys
-            .get(&signed.key_id)
-            .ok_or(Error::Untrusted)?;
+        let key = self.task_verification_key(&signed.key_id)?;
         verify_task(
             signed,
             &TaskVerification {
                 key_id: &signed.key_id,
-                public_key: key,
+                public_key: &key,
                 tenant_id: self.store.cfg.tenant,
                 device_id: &registration.device_id,
                 platform: self.store.cfg.platform,
@@ -401,6 +400,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
     /// Receive one offer and cancellation page. Transport failures retain the exact claim;
     /// a verified response durably completes it independently of execution settlement.
     pub async fn claim(&mut self) -> Result<Claim, Error> {
+        self.task_trust_ready()?;
         if self.retiring()? {
             return Err(Error::CredentialRetired);
         }

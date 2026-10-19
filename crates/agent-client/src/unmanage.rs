@@ -11,6 +11,7 @@ use uuid::Uuid;
 struct Record {
     installation: Uuid,
     start: wire::SignedTask,
+    verification_key: Vec<u8>,
     accepted_at: i64,
     drained: bool,
     binding: wire::BindingProfile,
@@ -105,6 +106,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         let record = Record {
             installation,
             start: start.signed.clone(),
+            verification_key: self.task_verification_key(&start.signed.key_id)?,
             accepted_at: self.now()?,
             drained: false,
             binding: self.store.registration()?,
@@ -192,7 +194,10 @@ fn validate_record(
     if record.installation != installation || installation.is_nil() {
         return Err(Error::Identity);
     }
-    let key = cfg.keys.get(&record.start.key_id).ok_or(Error::Untrusted)?;
+    let key = &record.verification_key;
+    if key.len() != 32 {
+        return Err(Error::Untrusted);
+    }
     crate::protocol::verify_task(
         &record.start,
         &crate::protocol::TaskVerification {

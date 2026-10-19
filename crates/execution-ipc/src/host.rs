@@ -2,9 +2,9 @@
 use execution_contract::{Digest, Id, RequestId, VersionedRef};
 use serde::{Deserialize, Serialize};
 /// Current desktop/system IPC. No negotiation or legacy parser exists.
-pub const IPC_VERSION: u8 = 17;
+pub const IPC_VERSION: u8 = 18;
 /// Current protected installation document format.
-pub const DEPLOYMENT_VERSION: u32 = 5;
+pub const DEPLOYMENT_VERSION: u32 = 6;
 
 /// Read-only native state, independent from Agent identity and policy authorization.
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema, PartialEq, Eq)]
@@ -113,6 +113,10 @@ pub enum RegistrationFailure {
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RegistrationStatus {
+    /// Last task trust observation; absence means unknown.
+    pub task_trust: Option<TrustInstallationStatus>,
+    /// Last Agent PKI installation observation; not a CRL freshness proof.
+    pub pki_trust: Option<TrustInstallationStatus>,
     /// Classified failure without untrusted server text or secrets.
     pub failure: Option<RegistrationFailure>,
     /// Closed lifecycle phase.
@@ -127,6 +131,34 @@ pub struct RegistrationStatus {
     pub registered: bool,
     /// Exact retained credential state, independent of a pending authorization.
     pub credential: CredentialStatus,
+}
+/// Non-secret installation progress from the sole communication owner.
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TrustInstallationStatus {
+    /// Last locally observed result; not current connectivity.
+    pub state: TrustInstallationState,
+    /// Target public revision when known.
+    pub target_revision: Option<u64>,
+    /// Last read-back installed public revision when known.
+    pub actual_revision: Option<u64>,
+    /// Local observation time, not ordering authority.
+    pub observed_at: i64,
+    /// Separate successful ACK confirmation.
+    pub acknowledged: bool,
+}
+/// Closed installation result projection.
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TrustInstallationState {
+    /// Received but not yet applied.
+    Received,
+    /// Durable installation and readback succeeded.
+    Applied,
+    /// Installation or refresh failed.
+    Failed,
+    /// Actual state cannot be determined.
+    Unknown,
 }
 /// Authenticated machine-owned coordinates for native user authorization.
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]

@@ -34,6 +34,50 @@ pub(crate) fn project(value: EnrollmentStatus) -> RegistrationStatus {
         _ => CredentialStatus::Absent,
     };
     RegistrationStatus {
+        task_trust: value
+            .task_trust
+            .map(|v| execution_ipc::host::TrustInstallationStatus {
+                state: match v.state {
+                    rss_mdm_agent_wire::task_trust::ObservationState::Received => {
+                        execution_ipc::host::TrustInstallationState::Received
+                    }
+                    rss_mdm_agent_wire::task_trust::ObservationState::Applied => {
+                        execution_ipc::host::TrustInstallationState::Applied
+                    }
+                    rss_mdm_agent_wire::task_trust::ObservationState::Failed => {
+                        execution_ipc::host::TrustInstallationState::Failed
+                    }
+                    rss_mdm_agent_wire::task_trust::ObservationState::Unknown => {
+                        execution_ipc::host::TrustInstallationState::Unknown
+                    }
+                },
+                target_revision: v.target_revision,
+                actual_revision: v.actual_revision,
+                observed_at: v.observed_at,
+                acknowledged: value.task_trust_acknowledged,
+            }),
+        pki_trust: value
+            .pki_trust
+            .map(|v| execution_ipc::host::TrustInstallationStatus {
+                state: match v.state {
+                    rss_mdm_agent_wire::pki::ObservationState::Received => {
+                        execution_ipc::host::TrustInstallationState::Received
+                    }
+                    rss_mdm_agent_wire::pki::ObservationState::Applied => {
+                        execution_ipc::host::TrustInstallationState::Applied
+                    }
+                    rss_mdm_agent_wire::pki::ObservationState::Failed => {
+                        execution_ipc::host::TrustInstallationState::Failed
+                    }
+                    rss_mdm_agent_wire::pki::ObservationState::Unknown => {
+                        execution_ipc::host::TrustInstallationState::Unknown
+                    }
+                },
+                target_revision: v.target_revision,
+                actual_revision: v.actual_revision,
+                observed_at: v.observed_at,
+                acknowledged: value.pki_trust_acknowledged,
+            }),
         failure: value.failure.map(|code| match code {
             rss_mdm_agent_wire::enroll::ErrorCode::GrantExpired => {
                 execution_ipc::host::RegistrationFailure::Expired
@@ -90,6 +134,8 @@ impl RegistrationOwner {
     pub(crate) fn new(deployment: Deployment) -> Result<Self, Error> {
         let snapshot = Arc::new(Mutex::new(Snapshot {
             status: RegistrationStatus {
+                task_trust: None,
+                pki_trust: None,
                 failure: None,
                 phase: RegistrationPhase::Unregistered,
                 grant_id: None,
@@ -619,6 +665,8 @@ mod tests {
                 worker.join().unwrap();
                 // Registered handoff publishes readiness only after the execution owner assembles.
                 assert_eq!(shared.lock().unwrap().readiness, Readiness::NotReady);
+                assert!(client.runtime_readiness().is_err());
+                client.drive_task_trust().await.unwrap();
                 client.runtime_readiness().unwrap();
                 assert!(shared.lock().unwrap().status.registered);
                 assert_eq!(client.registration().unwrap(), binding);
@@ -644,6 +692,10 @@ mod tests {
     fn snapshot() -> Arc<Mutex<Snapshot>> {
         Arc::new(Mutex::new(Snapshot {
             status: project(EnrollmentStatus {
+                task_trust: None,
+                pki_trust: None,
+                task_trust_acknowledged: false,
+                pki_trust_acknowledged: false,
                 phase: EnrollmentPhase::Unregistered,
                 grant_id: None,
                 expires_at: None,

@@ -94,6 +94,9 @@ impl Candidate {
             || candidate.service.path != deployment.service.path
             || candidate.origin != deployment.origin
             || candidate.tenant != deployment.tenant
+            || candidate.signing_keys != deployment.signing_keys
+            || candidate.ca_pem.as_deref().map(str::as_bytes)
+                != deployment.network()?.ca_pem.as_deref()
             || candidate.target != Target::current().map_err(|_| Error::Unsupported)?
         {
             return Err(Error::Identity);
@@ -150,6 +153,7 @@ impl Candidate {
         {
             return Err(Error::Configuration);
         }
+        self.format()?;
         for image in [&self.service, &self.desktop] {
             image.verify(&image.path).map_err(|_| Error::Identity)?;
             self.target
@@ -189,6 +193,26 @@ impl Candidate {
         }
         let value: serde_json::Value =
             serde_json::from_slice(&bytes).map_err(|_| Error::Protocol)?;
+        let platform = if self.target.platform() == "win32" {
+            "windows"
+        } else {
+            "macos"
+        };
+        let architecture = match self.target {
+            Target::WindowsAmd64 => "x86_64",
+            _ => "aarch64",
+        };
+        if value["wireVersion"] != 1
+            || value["tenantId"] != self.tenant.to_string()
+            || value["origin"] != self.origin
+            || value["version"] != self.product_version
+            || value["target"]["platform"] != platform
+            || value["target"]["architecture"] != architecture
+            || value["signingKeys"]
+                != serde_json::to_value(&self.signing_keys).map_err(|_| Error::Configuration)?
+        {
+            return Err(Error::Identity);
+        }
         Ok(value["packaging"]["kind"]
             .as_str()
             .ok_or(Error::Protocol)?

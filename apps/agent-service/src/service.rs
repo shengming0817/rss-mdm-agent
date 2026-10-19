@@ -268,6 +268,9 @@ impl<S: IdentityProvider> DeviceService<S> {
             self.update_identity_gate();
             result?;
         }
+        // Task trust belongs to the communication owner. A failed refresh retains usable installed keys.
+        let _ = network(self.client.drive_task_trust(), &mut self.core, commands).await;
+        self.update_identity_gate();
         if !self.core.host.identity_ready() {
             self.core.revoke_preparations()?;
             self.core.reconcile()?;

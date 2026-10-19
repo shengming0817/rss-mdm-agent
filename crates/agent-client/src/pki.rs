@@ -3,7 +3,9 @@ use crate::{
     trust::{VerifiedTrust, Watermark},
     CertificateAdd, Client, Clock, Error, IdentityProvider, MachineStore,
 };
-use rss_mdm_agent_wire::pki::{Acknowledgement, Trust};
+use rss_mdm_agent_wire::pki::{
+    Acknowledgement, Observation, ObservationReason, ObservationState, Trust,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::sync::{
@@ -37,6 +39,10 @@ pub(crate) struct State {
     attempts: u8,
     retry_at: i64,
     pub blocked: bool,
+    observation_sequence: u64,
+    observation: Option<Observation>,
+    pending_observation: Option<Observation>,
+    installed: Option<(u64, String)>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -89,12 +95,14 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
 
     /// Validate the current device identity against fresh approved trust, without HTTP or key creation.
     pub fn runtime_readiness(&self) -> Result<(), Error> {
-        self.active()
+        self.active()?;
+        self.task_trust_ready()
     }
 
     /// Earliest credential or approved trust expiry, for the existing execution owner's admission gate.
     pub fn runtime_deadline(&self) -> Result<i64, Error> {
         self.active()?;
+        self.task_trust_ready()?;
         let active = self.identity_state()?.active.ok_or(Error::Identity)?;
         Ok(active.not_after.min(self.verified_trust()?.expires))
     }
@@ -178,6 +186,10 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         self.runtime_gate.close();
         self.store.put("pki", &state)?;
         self.publish_runtime_gate();
+        if self.identity_state()?.active.is_some() {
+            let document = self.pki_state()?.document.ok_or(Error::Storage)?;
+            self.observe_pki(Some(&document), ObservationState::Received, None)?;
+        }
         Ok(())
     }
 
@@ -257,6 +269,15 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         let mut state = self.pki_state()?;
         let document = state.document.as_ref().ok_or(Error::Identity)?;
         let digest = document.installation_digest();
+        if !self.pki_observed
+            || state.installed.as_ref() != Some(&(document.revision, digest.clone()))
+        {
+            let document = document.clone();
+            self.observe_pki(Some(&document), ObservationState::Applied, None)?;
+            self.pki_observed = true;
+            state = self.pki_state()?;
+        }
+        let document = state.document.as_ref().ok_or(Error::Identity)?;
         if !state.ack.as_ref().is_some_and(|a| {
             a.registration == registration
                 && a.request.revision == document.revision
@@ -312,7 +333,23 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         if now < self.pki_state()?.retry_at {
             return Ok(());
         }
+        let _ = self.flush_pki_observation().await;
         let result = self.drive_pki_once().await;
+        if let Err(error) = result {
+            let reason = match error {
+                Error::Storage => ObservationReason::Storage,
+                Error::Unavailable => ObservationReason::Transport,
+                Error::Identity
+                | Error::CredentialRevoked
+                | Error::CredentialRetired
+                | Error::CertificateExpired => ObservationReason::Credential,
+                _ => ObservationReason::Validation,
+            };
+            if self.identity_state()?.active.is_some() {
+                let _ = self.observe_pki(None, ObservationState::Failed, Some(reason));
+            }
+        }
+        let _ = self.flush_pki_observation().await;
         let now = self.now()?;
         let mut state = self.pki_state()?;
         if result.is_ok() {
@@ -345,5 +382,104 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             }
         }
         self.acknowledge_trust().await
+    }
+}
+
+impl<S: IdentityProvider, C: Clock> Client<S, C> {
+    /// Last PKI installation observation; it is not evidence of current CRL freshness.
+    pub fn pki_observation(&self) -> Result<Option<Observation>, Error> {
+        Ok(self.pki_state()?.observation)
+    }
+    /// Whether the current installed PKI revision has a confirmed server ACK.
+    pub fn pki_acknowledged(&self) -> Result<bool, Error> {
+        let state = self.pki_state()?;
+        let registration = self
+            .identity_state()?
+            .active
+            .map(|_| self.registration())
+            .transpose()?;
+        Ok(state.ack.as_ref().is_some_and(|a| {
+            a.completed
+                && registration
+                    .as_ref()
+                    .is_some_and(|r| r.registration_id == a.registration)
+                && state.document.as_ref().is_some_and(|d| {
+                    d.revision == a.request.revision && d.installation_digest() == a.request.digest
+                })
+        }))
+    }
+    fn observe_pki(
+        &self,
+        target: Option<&Trust>,
+        status: ObservationState,
+        reason: Option<ObservationReason>,
+    ) -> Result<(), Error> {
+        let registration = self.registration()?;
+        let mut state = self.pki_state()?;
+        state.observation_sequence = state
+            .observation_sequence
+            .checked_add(1)
+            .filter(|v| *v <= i64::MAX as u64)
+            .ok_or(Error::Capacity)?;
+        if status == ObservationState::Applied {
+            let target = target.ok_or(Error::Storage)?;
+            state.installed = Some((target.revision, target.installation_digest()));
+        }
+        let observation = Observation {
+            operation: Uuid::new_v4(),
+            version: 1,
+            registration: registration.registration_id,
+            generation: registration.generation,
+            sequence: state.observation_sequence,
+            target_revision: target.map(|v| v.revision),
+            target_digest: target.map(Trust::installation_digest),
+            actual_revision: state.installed.as_ref().map(|v| v.0),
+            actual_digest: state.installed.as_ref().map(|v| v.1.clone()),
+            state: status,
+            reason,
+            observed_at: self.now()?,
+        };
+        observation.validate()?;
+        if state.pending_observation.is_none() {
+            state.pending_observation = Some(observation.clone());
+        }
+        state.observation = Some(observation);
+        self.store.put("pki", &state)
+    }
+    async fn flush_pki_observation(&mut self) -> Result<(), Error> {
+        let mut state = self.pki_state()?;
+        let Some(pending) = state.pending_observation.as_ref() else {
+            return Ok(());
+        };
+        self.restore_runtime_transport()?;
+        let url = self
+            .store
+            .cfg
+            .origin
+            .join("api/v1/agent/enroll/trust/observations")
+            .map_err(|_| Error::Configuration)?;
+        let (status, bytes) = json_transport(
+            self.http
+                .post(url)
+                .header("content-type", "application/json")
+                .body(crate::store::encode(pending)?)
+                .timeout(self.store.cfg.limits.request_timeout),
+            self.store.cfg.limits.response_bytes,
+        )
+        .await?;
+        if !status.is_success() {
+            let error: rss_mdm_agent_wire::enroll::ErrorBody = crate::store::decode(&bytes)?;
+            self.identity_failure(error.code)?;
+            return Err(crate::identity::enrollment_error(error.code));
+        }
+        let reply: Observation = crate::store::decode(&bytes)?;
+        if &reply != pending {
+            return Err(Error::Protocol);
+        }
+        state.pending_observation = state
+            .observation
+            .clone()
+            .filter(|v| v.sequence > reply.sequence);
+        self.store.put("pki", &state)
     }
 }
