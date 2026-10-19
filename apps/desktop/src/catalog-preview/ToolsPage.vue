@@ -275,10 +275,10 @@ emit(
           <SettingsGlyph kind="about" :size="19" />
           <div>
             <strong>有些问题，交给熟悉它的人。</strong>
-            <p>如果没有找到合适的工具，可以整理诊断信息，联系你的 IT 支持。</p>
+            <p>查看服务状态或导出脱敏诊断，便于你的 IT 支持继续排查。</p>
           </div>
-          <button @click="emit('navigate', 'settings', 'support')">
-            联系 IT 支持 ↗
+          <button @click="emit('navigate', 'settings', 'diagnostics')">
+            查看诊断信息 ↗
           </button>
         </div>
       </template>

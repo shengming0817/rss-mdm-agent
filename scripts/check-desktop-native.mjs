@@ -341,6 +341,34 @@ const openHistory = async () => {
   if (await browser.$('[aria-label="固定历史会话"]').isExisting())
     await click("固定历史会话");
 };
+const assertEmptyHistory = async () => {
+  await openHistory();
+  await wait(() =>
+    browser.execute(() => {
+      const list = document.querySelector(
+        ".conversation-history-panel .conversation-list",
+      );
+      return (
+        list?.getClientRects().length > 0 &&
+        !list.querySelector('[role="alert"]') &&
+        [...list.querySelectorAll("p")].some(
+          (node) => node.textContent.trim() === "暂无历史会话",
+        )
+      );
+    }),
+  );
+  assert.equal(
+    await browser.execute(
+      () =>
+        document.querySelectorAll(
+          ".conversation-history-panel .conversation-list li",
+        ).length,
+    ),
+    0,
+    "entering chat does not create an empty session",
+  );
+  await click("关闭历史会话");
+};
 const navigate = async (name) => {
   await closeNavigationDialog();
   if (name === "设置") {
@@ -1052,6 +1080,7 @@ try {
     await navigate("AI 助手");
     await wait(() => browser.$(".composer textarea").isDisplayed());
     await click("新会话");
+    await assertEmptyHistory();
     await browser.setWindowSize(1100, 760);
     await browser.saveScreenshot(
       join(reports, "desktop-native-start-default.png"),
@@ -1665,13 +1694,7 @@ try {
     });
     await click("开始对话");
     assert.equal(await browser.$(".composer textarea").isDisplayed(), true);
-    assert.equal(
-      await browser.execute(
-        () => document.querySelectorAll(".conversation-list li").length,
-      ),
-      0,
-      "entering chat does not create an empty session",
-    );
+    await assertEmptyHistory();
     result.checks.push(
       "saved-unverified",
       "failed-probe-retry",

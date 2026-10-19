@@ -342,3 +342,18 @@ it("keeps secondary navigation with its current page after search and settings a
     w.unmount();
   }
 });
+
+it("opens the registered diagnostics section from the tools help action", async () => {
+  const w = await setup("device-tools");
+  try {
+    await w
+      .getComponent(ToolsPage)
+      .get(".organization-tools button")
+      .trigger("click");
+    expect(w.emitted("navigate")?.at(-1)).toEqual(["settings"]);
+    await w.setProps({ page: "settings" });
+    expect(navigation(w.getComponent(Settings)).section).toBe("diagnostics");
+  } finally {
+    w.unmount();
+  }
+});
