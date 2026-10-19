@@ -272,6 +272,8 @@ mod tests {
             origin: organization.origin.clone(),
             tenant_id: organization.tenant_id.clone(),
             status: RegistrationStatus {
+                task_trust: None,
+                pki_trust: None,
                 failure: None,
                 phase: RegistrationPhase::Authorized,
                 grant_id: Some(uuid::Uuid::new_v4().to_string()),

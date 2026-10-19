@@ -635,3 +635,50 @@ async fn rebuilding_created_material_gets_fresh_ownership_and_can_be_retired() {
         .certificate_present(MachineStore::Root, &old)
         .unwrap());
 }
+
+#[tokio::test]
+async fn same_revision_refresh_and_readback_recovery_publish_applied() {
+    use rss_mdm_agent_wire::pki::ObservationState;
+    let server = Server::tls().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    let original = client.pki_observation().unwrap().unwrap();
+    server.time.set(301);
+    client.drive_pki().await.unwrap();
+    let refreshed = client.pki_observation().unwrap().unwrap();
+    assert_eq!(refreshed.state, ObservationState::Applied);
+    assert_eq!(refreshed.actual_revision, original.actual_revision);
+    assert!(refreshed.sequence > original.sequence);
+    server
+        .secrets
+        .0
+        .lock()
+        .unwrap()
+        .insert("machine/read-failure".into(), "injected".into());
+    server.time.set(601);
+    assert_eq!(client.drive_pki().await.unwrap_err(), Error::Storage);
+    assert_eq!(
+        client.pki_observation().unwrap().unwrap().state,
+        ObservationState::Failed
+    );
+    server
+        .secrets
+        .0
+        .lock()
+        .unwrap()
+        .remove("machine/read-failure");
+    server.time.set(603);
+    client.drive_pki().await.unwrap();
+    let recovered = client.pki_observation().unwrap().unwrap();
+    assert_eq!(recovered.state, ObservationState::Applied);
+    assert_eq!(recovered.actual_revision, original.actual_revision);
+    assert!(client.pki_acknowledged().unwrap());
+    server.time.set(605);
+    client.drive_pki().await.unwrap();
+    let data = server.data.lock().unwrap();
+    assert!(data
+        .observations
+        .iter()
+        .any(|v| v["operation"] == recovered.operation.to_string()));
+}

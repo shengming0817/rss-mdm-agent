@@ -38,6 +38,14 @@ pub enum EnrollmentPhase {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct EnrollmentStatus {
+    /// Last task authority observation from the communication owner.
+    pub task_trust: Option<rss_mdm_agent_wire::task_trust::Observation>,
+    /// Current task authority ACK confirmation.
+    pub task_trust_acknowledged: bool,
+    /// Last PKI installation observation, independent of CRL freshness.
+    pub pki_trust: Option<rss_mdm_agent_wire::pki::Observation>,
+    /// Current PKI ACK confirmation.
+    pub pki_trust_acknowledged: bool,
     /// Closed progress phase.
     pub phase: EnrollmentPhase,
     /// Exact grant/request identity for native user authorization.
@@ -187,6 +195,10 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             })
             .transpose()?;
         Ok(EnrollmentStatus {
+            task_trust: self.task_trust_observation()?,
+            task_trust_acknowledged: self.task_trust_acknowledged()?,
+            pki_trust: self.pki_observation()?,
+            pki_trust_acknowledged: self.pki_acknowledged()?,
             phase,
             registered: state.active.is_some(),
             failure: failure.or(operation_failure),

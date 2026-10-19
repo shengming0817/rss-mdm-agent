@@ -14,7 +14,10 @@ import {
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
-import { IPC_VERSION } from "../packages/execution-bindings/src/service-version.mjs";
+import {
+  IPC_VERSION,
+  DEPLOYMENT_VERSION,
+} from "../packages/execution-bindings/src/service-version.mjs";
 import { agentOrganizationConfiguration } from "./agent-organization.mjs";
 import {
   desktopBuildEnvironment,
@@ -96,7 +99,7 @@ test("desktop and Agent consume the same env CA without embedding paths or priva
   });
   const desktop = JSON.parse(environment[organizationBuildInput]);
   const template = {
-    version: 5,
+    version: DEPLOYMENT_VERSION,
     ipc_version: IPC_VERSION,
     signing_keys: { key: "public" },
     state_root: "/state",
@@ -134,7 +137,7 @@ test("Agent origin normalization matches desktop DNS root-dot rules", (t) => {
   const root = mkdtempSync(join(tmpdir(), "rss-origin-env-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const template = {
-    version: 5,
+    version: DEPLOYMENT_VERSION,
     ipc_version: IPC_VERSION,
   };
 
@@ -148,7 +151,7 @@ test("Agent origin normalization matches desktop DNS root-dot rules", (t) => {
     () =>
       agentOrganizationConfiguration(
         root,
-        { version: 5, ipc_version: 6 },
+        { version: DEPLOYMENT_VERSION, ipc_version: 6 },
         join(root, "old-ca.pem"),
       ),
     /current deployment and IPC versions/,
@@ -222,7 +225,7 @@ test("real Agent generator CLI preserves user-readable public inputs under restr
   writeFileSync(
     template,
     JSON.stringify({
-      version: 5,
+      version: DEPLOYMENT_VERSION,
       ipc_version: IPC_VERSION,
       state_root: "/state",
     }),

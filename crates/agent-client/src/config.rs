@@ -64,8 +64,8 @@ pub struct Config {
     pub execution_context: wire::SoftwareExecutionContext,
     /// Actual architecture.
     pub architecture: wire::TaskArchitecture,
-    /// Trusted Ed25519 public keys.
-    pub keys: BTreeMap<String, Vec<u8>>,
+    /// Installation bootstrap keys used only to verify signed enrollment configurations.
+    pub registration_keys: BTreeMap<String, Vec<u8>>,
     /// Explicit budgets.
     pub limits: Limits,
     /// Network mode.
@@ -96,9 +96,9 @@ impl Config {
             || o.password().is_some()
             || o.query().is_some()
             || o.fragment().is_some()
-            || self.keys.is_empty()
-            || self.keys.len() > 32
-            || self.keys.iter().any(|(id, k)| {
+            || self.registration_keys.is_empty()
+            || self.registration_keys.len() > 32
+            || self.registration_keys.iter().any(|(id, k)| {
                 id.is_empty()
                     || id.len() > 128
                     || !id

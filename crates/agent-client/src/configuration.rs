@@ -21,7 +21,10 @@ pub fn verify_configuration(
     now: i64,
 ) -> Result<(), Error> {
     let c = &file.configuration;
-    let key = cfg.keys.get(&c.key_id).ok_or(Error::Untrusted)?;
+    let key = cfg
+        .registration_keys
+        .get(&c.key_id)
+        .ok_or(Error::Untrusted)?;
     let bytes = c.signing_bytes(&file.secret)?;
     let signature = base64::engine::general_purpose::URL_SAFE_NO_PAD
         .decode(&file.signature)
@@ -160,6 +163,19 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                 v.tenant_id == self.store.cfg.tenant
                     && v.origin == c.configuration.origin
                     && v.candidate_sha256 == c.candidate_sha256
+                    && v.signing_keys
+                        == self
+                            .store
+                            .cfg
+                            .registration_keys
+                            .iter()
+                            .map(|(id, key)| {
+                                (
+                                    id.clone(),
+                                    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(key),
+                                )
+                            })
+                            .collect()
                     && v.target.platform == self.store.cfg.platform
                     && v.target.architecture == self.store.cfg.architecture
                     && c.configuration.channels.contains(&v.channel)

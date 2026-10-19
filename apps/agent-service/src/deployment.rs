@@ -193,7 +193,7 @@ impl Deployment {
             tenant: self.tenant,
             platform,
             architecture,
-            keys,
+            registration_keys: keys,
             transport: Transport::Https,
             ca_pem: self
                 .ca_file
@@ -305,6 +305,7 @@ impl Deployment {
         client.import_bootstrap_secret(&reference, secret)?;
         client.import_recovery_grant(grant, &reference)?;
         client.drive_pki().await?;
+        client.drive_task_trust().await?;
         client.runtime_readiness()
     }
     /// Manual same-registration renewal; the exclusive owner lease requires the daemon to be stopped.

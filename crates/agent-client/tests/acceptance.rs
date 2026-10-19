@@ -401,7 +401,7 @@ fn unsupported_database_and_changed_namespace_are_preserved() {
     let root = Root::new();
     drop(server.client(&root, OpenMode::Create));
     let path = root.path.join("communication.sqlite");
-    for version in [1, 2, 3, 4, 5, 6, 8] {
+    for version in [1, 2, 3, 4, 5, 6, 7, 9] {
         let db = rusqlite::Connection::open(&path).unwrap();
         db.pragma_update(None, "user_version", version).unwrap();
         drop(db);
@@ -541,7 +541,7 @@ fn configuration_rejects_untrusted_network_and_unbounded_budgets() {
         tenant: Uuid::new_v4(),
         platform: TaskPlatform::Macos,
         architecture: TaskArchitecture::Aarch64,
-        keys: Default::default(),
+        registration_keys: Default::default(),
         limits: Limits::test_defaults(),
         transport: Transport::Https,
         ca_pem: None,
@@ -549,7 +549,7 @@ fn configuration_rejects_untrusted_network_and_unbounded_budgets() {
     assert_eq!(cfg.validate(), Err(Error::Configuration));
     cfg.origin = Url::parse("http://127.0.0.1:8080").unwrap();
     cfg.transport = Transport::TestLoopback;
-    cfg.keys.insert("test".into(), vec![1; 32]);
+    cfg.registration_keys.insert("test".into(), vec![1; 32]);
     assert!(cfg.validate().is_ok());
     cfg.limits.cache_bytes = 0;
     assert_eq!(cfg.validate(), Err(Error::Configuration));
@@ -1570,7 +1570,7 @@ async fn retirement_signature_binds_every_target_and_cannot_use_an_offer_as_star
     let signed = data.offer.clone().unwrap();
     let context = TaskVerification {
         key_id: "test",
-        public_key: cfg.keys.get("test").unwrap(),
+        public_key: cfg.registration_keys.get("test").unwrap(),
         tenant_id: data.tenant,
         device_id: "device-1",
         platform: TaskPlatform::Windows,
