@@ -350,9 +350,20 @@ const navigate = async (name) => {
   if (["软件中心", "请求与任务"].includes(name)) {
     if (visualOnly) {
       await fixtureControls();
-      await selectValue(
-        await browser.$('[aria-label="原有业务验证"]'),
+      await browser.execute(
+        (value) => {
+          const select = document.querySelector('[aria-label="原有业务验证"]');
+          select.value = value;
+          select.dispatchEvent(new Event("change", { bubbles: true }));
+        },
         name === "软件中心" ? "software" : "tasks",
+      );
+      await wait(() =>
+        browser.execute(
+          () =>
+            document.querySelector(".self-service")?.getClientRects().length >
+            0,
+        ),
       );
     } else {
       await openAgentSettings("运行与诊断");
