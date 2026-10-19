@@ -238,3 +238,51 @@ async fn old_database_is_rejected_before_writing_original_materials() {
     ));
     assert_eq!(std::fs::read(db).unwrap(), before);
 }
+
+#[tokio::test]
+async fn same_process_ack_recovery_restores_and_reports_applied_without_refresh() {
+    use rss_mdm_agent_wire::task_trust::ObservationState;
+    let server = Server::tls().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    let trust = prepared(&server);
+    publish(&server, &trust, 70);
+    server.data.lock().unwrap().task_trust_ack_failure = true;
+    assert_eq!(
+        client.drive_task_trust().await.unwrap_err(),
+        Error::Unavailable
+    );
+    let failed = client.task_trust_observation().unwrap().unwrap();
+    assert_eq!(failed.state, ObservationState::Failed);
+    assert!(!client.task_trust_acknowledged().unwrap());
+    let frozen = state(&root);
+    // No reopen and no refresh: recovery must happen in the ACK-only branch.
+    server.data.lock().unwrap().task_trust_failure = true;
+    server.time.set(72);
+    client.drive_task_trust().await.unwrap();
+    assert!(client.task_trust_acknowledged().unwrap());
+    let applied = client.task_trust_observation().unwrap().unwrap();
+    assert_eq!(applied.state, ObservationState::Applied);
+    assert_eq!(applied.actual_revision, Some(trust.revision));
+    assert_eq!(
+        applied.target_digest,
+        Some(trust.installation_digest().unwrap())
+    );
+    assert!(applied.sequence > failed.sequence);
+    assert_eq!(state(&root)["refresh_at"], frozen["refresh_at"]);
+    let data = server.data.lock().unwrap();
+    assert!(data.task_trust_failure); // GET fault was never consumed.
+    assert_eq!(
+        data.task_trust_ack_calls[data.task_trust_ack_calls.len() - 1],
+        frozen["ack"]
+    );
+    assert_eq!(
+        data.task_trust_ack_calls[data.task_trust_ack_calls.len() - 2],
+        frozen["ack"]
+    );
+    assert!(data
+        .observations
+        .iter()
+        .any(|v| v["operation"] == applied.operation.to_string() && v["state"] == "applied"));
+}

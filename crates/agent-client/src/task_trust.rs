@@ -151,7 +151,15 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             return Err(Error::Protocol);
         }
         state.confirmed = true;
-        self.store.put("task_trust", &state)
+        self.store.put("task_trust", &state)?;
+        if state
+            .latest
+            .as_ref()
+            .is_none_or(|v| v.state != ObservationState::Applied)
+        {
+            self.observe_task_trust(state.document.as_ref(), ObservationState::Applied, None)?;
+        }
+        Ok(())
     }
     async fn refresh_task_trust(&self) -> Result<(), Error> {
         let trust: Trust = self.json(reqwest::Method::GET, "task-trust", None).await?;
