@@ -15,6 +15,7 @@ enum Phase {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Recovery {
+    version: u8,
     deployment: Deployment,
     candidate: Candidate,
     permit: UnmanagePermit,
@@ -44,6 +45,9 @@ fn load(task: uuid::Uuid) -> Result<Recovery, Error> {
     Ok(record)
 }
 fn validate(r: &Recovery, task: uuid::Uuid) -> Result<(), Error> {
+    if r.version != 2 {
+        return Err(Error::Configuration);
+    }
     r.permit
         .verify_handoff(&r.deployment.network()?, r.deployment.installation_id)?;
     if r.permit.task().task_id != task
@@ -106,6 +110,7 @@ fn prepare(d: &Deployment, permit: &UnmanagePermit, package_managed: bool) -> Re
         return Err(Error::Denied);
     }
     let record = Recovery {
+        version: 2,
         deployment: d.clone(),
         candidate,
         permit: checked,

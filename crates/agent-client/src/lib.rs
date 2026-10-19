@@ -21,6 +21,7 @@ pub use managed::{bootstrap_coordinates, NativeIdentity};
 pub use native_enrollment::NativeEnrollmentMaterial;
 mod identity;
 mod pki;
+mod task_trust;
 
 mod self_service;
 mod tls;

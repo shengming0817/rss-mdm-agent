@@ -8,7 +8,7 @@
 
 `pnpm build:installer --organization /absolute/public-organization.json` 在当前原生平台构建 macOS arm64 PKG 或 Windows amd64 / arm64 的 perMachine NSIS EXE，不套用 MSI。macOS 构建命令通过 `python3 scripts/build-run.py -- pnpm build:installer ...` 复用本地 Cargo 槽位；Windows 使用 `pnpm exec node scripts/build-installers.mjs ...`。Windows 构建进程、Rust 工具链和 Node 必须为目标原生架构，不接受仿真进程或混合 PE。目标设备须预装 machine-wide WebView2；安装器缺失时明确拒绝。当前机器有匹配架构、受保护的 PowerShell 7 时才登记该解释器与相关能力。
 
-组织输入仅含 `origin`（规范 HTTPS origin）、`tenant`（非零 UUID）、`label`、`signing_keys`（key ID → base64url Ed25519 公钥）与必填 `ca_pem`（HTTPS bootstrap CA）。设备 CA/CRL 从该 HTTPS origin 的公开 trust API 获取；HTTPS bootstrap CA 与程序签名证书独立；输入不允许 grant、secret、账号目录或私钥。包内固定相同组织上下文的生产服务、桌面、Node、AI Host、worker 和资源。产物及其 `package-manifest.json` 位于忽略的 `.local-ci-runs/installers/`，记录源码、锁文件、平台、候选及最终包摘要。
+组织输入仅含 `origin`（规范 HTTPS origin）、`tenant`（非零 UUID）、`label`、`signing_keys`（仅用于注册配置验签的 key ID → base64url Ed25519 公钥）与必填 `ca_pem`（HTTPS bootstrap CA）。设备 CA/CRL 从该 HTTPS origin 的公开 trust API 获取；HTTPS bootstrap CA 与程序签名证书独立；输入不允许 grant、secret、账号目录或私钥。包内固定相同组织上下文的生产服务、桌面、Node、AI Host、worker 和资源。产物及其 `package-manifest.json` 位于忽略的 `.local-ci-runs/installers/`，记录源码、锁文件、平台、候选及最终包摘要。
 
 默认 macOS 为 ad-hoc 开发签名，Windows 为明确标记的开发包。正式包增加 `--release`：macOS 设置 `RSS_MACOS_APP_SIGNING_IDENTITY`、`RSS_MACOS_INSTALLER_SIGNING_IDENTITY` 和已存在的 `RSS_MACOS_NOTARY_PROFILE` Keychain 引用；Windows 设置 `RSS_WINDOWS_SIGNING_THUMBPRINT`，可选 `RSS_SIGNTOOL` 完整路径。构建不会接收证书密码；正式 macOS 包完成 notarization / stapling，正式 Windows 包与原生资源进行 Authenticode 签名。缺少正式签名配置会失败。
 
@@ -185,8 +185,14 @@ resume 同样在拒绝前后核验这些前提，不把撤销、旧产物或 off
 脚本不创建账户、不自动注销，不使用 sudo 切 UID 代替 GUI 登录。缺环境时保留未执行，
 不得把这两个场景或 Windows 计为通过。
 
-Agent 部署生成使用 `.env` 的 RSS_AGENT_ORIGIN、必填 RSS_AGENT_CA_FILE；桌面管理 origin/CA 继续独立配置。使用 Deployment 5、Candidate 2；生成器只写新文件，不覆盖原身份材料。设备证书经原生 CNG/daemon Keychain 签名完成 mTLS；HTTPS 只信任部署时保护的 bootstrap CA，下载的设备 CA 不扩展 HTTPS 信任；任务签名验证始终保留。
+Agent 部署生成使用 `.env` 的 RSS_AGENT_ORIGIN、必填 RSS_AGENT_CA_FILE；桌面管理 origin/CA 继续独立配置。部署与候选格式以当前生成器为准；生成器只写新文件，不覆盖原身份材料。设备证书经原生 CNG/daemon Keychain 签名完成 mTLS；HTTPS 只信任部署时保护的 bootstrap CA，下载的设备 CA 不扩展 HTTPS 信任；任务签名验证始终保留。
 
+
+任务运行验签只读取通信 SQLite 中通过已认证设备 HTTPS 通道取得的任务公钥集合，安装 `signing_keys` 不参与运行验签。首次同步失败保留原注册身份并暂停任务准入；刷新失败保留仍可验证的旧集合，未知 key ID 拒绝执行。集合绑定 tenant/origin，拒绝回退、同版本异内容、同 ID 换钥和非法生命周期变化。完整集合与 ACK 意图持久提交并读回后才 ACK，丢失响应或重启重试同一操作。Prepared、Active 和 VerifyOnly 公钥均可验签；执行仍须取得有效 Start 许可并满足身份、期限和输入一致性检查。离线设备可使密钥轮换待完成，不阻塞后端部署、启动或租户开通。
+
+HTTPS 认证服务端、设备证书认证设备、任务签名检查持久任务内容、Start 决定执行许可。通过 HTTPS 更新的任务信任不构成独立于该通道的批准权威，也不防御客户端完整失陷。任务信任和 PKI 各自上报接收、应用、失败或未知观察；认证 IPC 只投影脱敏状态及独立 ACK 确认。失联时观察仅代表最后一次结果；PKI 安装摘要不代表 CRL 仍新鲜。磁盘写入失败不报告已应用。
+
+已接受卸载在原受保护恢复载体中冻结当时的签名证据，只能继续原 installation/task/attempt；旧钥退出后该证据仍可完成原卸载，但不能成为新任务信任。升级前由原候选完成旧版未决操作；不转换历史恢复载体，不清库、改版本号或重新注册绕过拒绝。当前格式内重启和重复安装保留原身份及 journal。
 
 设备 PKI 由现有系统服务和通信 lease 持有。服务获取并验证完整 Agent trust 集合、签名 CRL、有效期和持久化防回退水位后，把 root/issuer 分别安装到机器 Root/CA 存储（macOS System Keychain 的 Admin root trust，issuer 不设独立 anchor）。只有独立回读成功、当前设备 mTLS 凭证有效时才 ACK；重试保留同一操作。原有或崩溃后无法证明归属的证书不删除；物理证书添加完成后先持久化 Owned，再配置其机器 trust，暂态设置失败可沿原归属重试。若崩溃发生在持久化 Owned 前且材料存在但设置缺失，保持拒绝，由管理员核对同一 DER 后修复机器设置，不把 presence 推断为 ownership。
 
@@ -194,7 +200,7 @@ Agent 部署生成使用 `.env` 的 RSS_AGENT_ORIGIN、必填 RSS_AGENT_CA_FILE�
 
 管理员恢复需要停止系统服务，准备服务端为**同一注册**签发的受保护 `GrantImport` JSON（`operationId`、`grant`），通过 `rss-execution-service --installation recover --scope system --config <部署路径> --grant <JSON路径> --secret-file <私有secret路径>` 交给原 installation owner。Windows 沿既有 SCM worker 转为 LocalSystem，macOS 使用系统管理员执行；secret 文件由原私有输入规则保护，不把 secret 放入 argv。此入口不替换未决操作，也不创建新注册；成功激活只恢复新任务准入。owner 尝试重新启动原服务；核对认证 IPC readiness，并按既有私有材料处理方式清理输入 secret。此同身份恢复入口不属于首次注册配置导入。
 
-旧 Deployment 4 / Candidate 1 保持原样并被拒绝；本仓不提供历史格式转换、兼容读取或重试入口。当前格式的安装与 apply/refresh 只处理当前候选及当前部署，沿用既有候选、代码身份、持久状态与设备归属校验。拒绝旧格式不停止原 owner、不覆盖配置或 retained manifest、不转换通信库，也不重建注册、凭据或执行 journal。管理员应保留旧部署及持久材料，不通过改写版本号、删除状态或重新注册绕过拒绝。
+历史部署、通信库与卸载恢复格式保持原样并被拒绝；本仓不提供历史格式转换、兼容读取或重试入口。当前格式的安装与 apply/refresh 只处理当前候选及当前部署，沿用既有候选、代码身份、持久状态与设备归属校验。拒绝旧格式不停止原 owner、不覆盖配置或 retained manifest、不转换通信库，也不重建注册、凭据或执行 journal。管理员应保留旧部署及持久材料，不通过改写版本号、删除状态或重新注册绕过拒绝。
 
 ## Windows 原生声明式采集
 
