@@ -71,6 +71,14 @@ function reset() {
 function trackSection() {
   const container = root.value;
   if (!container?.clientHeight || !props.active) return;
+  if (
+    container.scrollTop > 0 &&
+    Math.ceil(container.scrollTop + container.clientHeight) >=
+      container.scrollHeight - 1
+  ) {
+    section.value = sections.at(-1)!.id;
+    return;
+  }
   const threshold = container.getBoundingClientRect().top + 96;
   const current = [...sections].reverse().find((item) => {
     const target = container.querySelector(

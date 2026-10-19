@@ -1010,7 +1010,7 @@ try {
   if (visualOnly) {
     mark("visual fixture in the product main WKWebView");
     await fixtureControls();
-    await text("开发 fixture · 无真实设备执行");
+    await text("隔离样例与验证工具");
     await click("基础控件");
     await click("对话框与附属面板");
     await click("打开对话框");

@@ -263,3 +263,28 @@ it("keeps settings in one document with registration second and removes placehol
     t.close();
   }
 });
+
+it("tracks the final section when the document end prevents its heading reaching the top", async () => {
+  const t = await setup();
+  try {
+    const root = t.wrapper.get(".settings-page");
+    Object.defineProperties(root.element, {
+      clientHeight: { value: 400 },
+      scrollHeight: { value: 1040 },
+    });
+    root.element.scrollTop = 640;
+    vi.spyOn(
+      t.wrapper.get('[data-settings-section="about"]').element,
+      "getBoundingClientRect",
+    ).mockReturnValue(new DOMRect(0, 200, 600, 150));
+    await root.trigger("scroll");
+    const nav = t.wrapper.emitted(
+      "navigation",
+    )![0][0] as import("../workspace/page-navigation").PageNavigation;
+    expect(nav.section).toBe("about");
+    root.element.scrollTop = 0;
+    await root.trigger("scroll");
+  } finally {
+    t.close();
+  }
+});
