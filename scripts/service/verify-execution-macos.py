@@ -1334,12 +1334,13 @@ def main():
     default_config = DEFAULT_CONFIG
     if args.desktop and (default_config.exists() or default_config.is_symlink()):
         raise RuntimeError('default deployment exists; refusing to replace another installation')
+    acceptance_environment=dict(node=run('node','--version').stdout.strip(), python=sys.version.split()[0])
     args.output.mkdir(mode=0o700, parents=True, exist_ok=False)
     lab = args.output.resolve()
     inputs = Path(tempfile.mkdtemp(prefix='rss-native-service-input-')).resolve()
     receipt_inputs = inputs
     receipt = dict(platform=os.uname().sysname, architecture=os.uname().machine,
-                   osVersion=run('/usr/bin/sw_vers','-productVersion').stdout.strip(), subject=dict(uid=os.geteuid(),session=run('/bin/launchctl','managername').stdout.strip()), candidate=frozen, journal=None, scenarios={}, security=security_matrix(), acceptanceEnvironment=dict(node=run('node','--version').stdout.strip(), python=sys.version.split()[0]))
+                   osVersion=run('/usr/bin/sw_vers','-productVersion').stdout.strip(), subject=dict(uid=os.geteuid(),session=run('/bin/launchctl','managername').stdout.strip()), candidate=frozen, journal=None, scenarios={}, security=security_matrix(), acceptanceEnvironment=acceptance_environment)
     installed = helper = False
     administrator_session = backend = exchange = backend_log = protected = native_probe = probe_log = None
     try:

@@ -58,6 +58,25 @@ test("appearance evidence waits for all flags and reports the recovered snapshot
   assert.equal(actual, recovered);
 });
 
+test("visual development cannot silently consume a fixed candidate option", () => {
+  const result = spawnSync(
+    process.execPath,
+    [
+      fileURLToPath(new URL("check-desktop-native.mjs", import.meta.url)),
+      "--visual",
+      "--controlled-service",
+      "--candidate",
+      "unused-candidate.json",
+    ],
+    { encoding: "utf8" },
+  );
+  assert.notEqual(result.status, 0);
+  assert.match(
+    result.stderr,
+    /candidate is unavailable in visual development mode/,
+  );
+});
+
 function fixture(t) {
   const root = mkdtempSync(join(tmpdir(), "rss-dev-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));

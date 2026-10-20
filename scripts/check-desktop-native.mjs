@@ -58,6 +58,11 @@ assert.ok(
   "candidate requires controlled-service mode",
 );
 
+assert.ok(
+  !candidatePath || !visualOnly,
+  "candidate is unavailable in visual development mode",
+);
+
 const passwordFileIndex = process.argv.indexOf("--authorization-password-file");
 const authorizationPasswordFile =
   passwordFileIndex < 0 ? undefined : process.argv[passwordFileIndex + 1];
