@@ -937,7 +937,9 @@ fn software_encoding(
             .get(&phase)
             .or(step.uninstall.as_ref())
             .ok_or(Error::Protocol)?,
-        P::Attach | P::Stage | P::Cleanup => step.auxiliary.get(&phase).ok_or(Error::Protocol)?,
+        P::Prepare | P::Attach | P::Stage | P::Cleanup => {
+            step.auxiliary.get(&phase).ok_or(Error::Protocol)?
+        }
         P::Before | P::RemovalAfter | P::After => match &step.detection {
             SoftwareDetector::Script { invocation } => invocation.as_ref(),
             _ => &step.install,

@@ -127,6 +127,18 @@ pub(crate) fn not_downgrade(step: &SoftwareProgramStep, state: &SoftwareState) -
     if version == &step.version {
         return true;
     }
+    // The authenticated native adapter checks Homebrew Version ordering in Prepare. WinGet's
+    // upgrade workflow checks its own native ordering before invoking an installer. A separate
+    // removal would bypass that guard, so it still requires a detector with known ordering below.
+    if matches!(step.format, SoftwareFormat::Homebrew { .. })
+        || (matches!(step.format, SoftwareFormat::Winget { .. })
+            && matches!(
+                step.upgrade,
+                execution_contract::SoftwareUpgrade::InPlace { .. }
+            ))
+    {
+        return true;
+    }
     if let SoftwareFormat::Msix { identity, .. } = &step.format {
         let old = version
             .as_str()

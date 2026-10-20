@@ -1660,6 +1660,8 @@ mod tests {
             downgrade: wire::SoftwareTaskDowngrade::Deny,
         };
         let request = WorkerRequest {
+            intent: SoftwareOperation::Install,
+            export: wire::SoftwareTaskExport::Direct,
             native_output: Default::default(),
             native_pending: Default::default(),
             external_pending: Default::default(),

@@ -548,6 +548,10 @@ fn software(p: &ExecutionInput, limits: &ExecutionLimits) -> Result<(), Contract
             }
             invocation(&step.install)?;
             let mut expected = match (&step.format, program.intent) {
+                (
+                    crate::SoftwareFormat::Winget { .. } | crate::SoftwareFormat::Homebrew { .. },
+                    crate::SoftwareOperation::Install | crate::SoftwareOperation::Uninstall,
+                ) => vec![crate::SoftwarePhase::Prepare, crate::SoftwarePhase::Cleanup],
                 (crate::SoftwareFormat::DmgApp { .. }, crate::SoftwareOperation::Uninstall) => {
                     vec![crate::SoftwarePhase::Cleanup]
                 }

@@ -65,6 +65,17 @@ impl DeviceSecrets {
     }
 }
 impl IdentityProvider for DeviceSecrets {
+    fn software_read_token(
+        &self,
+        credential: &rss_mdm_agent_wire::runtime::SoftwareReadCredential,
+    ) -> Result<zeroize::Zeroizing<String>, Error> {
+        let bytes = self
+            .0
+            .read(&agent_client::native_source::credential_key(credential)?)?;
+        let text = std::str::from_utf8(&bytes).map_err(|_| Error::Identity)?;
+        agent_client::native_source::validate_read_token(text)?;
+        Ok(zeroize::Zeroizing::new(text.into()))
+    }
     fn native_identities(&self) -> Result<Vec<agent_client::NativeIdentity>, Error> {
         self.0.native_identities()
     }

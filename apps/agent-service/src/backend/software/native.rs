@@ -85,7 +85,7 @@ fn command(
             artifact_encoding: ArtifactEncoding::Utf8,
             stdin: if matches!(
                 request.operation,
-                O::Install | O::Upgrade | O::Uninstall | O::RemovePrevious
+                O::Prepare | O::Install | O::Upgrade | O::Uninstall | O::RemovePrevious
             ) {
                 StandardInput::Controlled {
                     reference: reference("software-before", request.step.to_string())?,
@@ -210,6 +210,51 @@ pub(super) fn compile(
     }
     let mut tools = BTreeMap::new();
     match &action.behavior {
+        wire::SoftwareTaskBehavior::Winget(_) | wire::SoftwareTaskBehavior::Brew(_) => {
+            let kind = if matches!(action.behavior, wire::SoftwareTaskBehavior::Brew(_)) {
+                SoftwareManagerKind::Brew
+            } else {
+                SoftwareManagerKind::Winget
+            };
+            let manager = config
+                .managers
+                .iter()
+                .find(|m| m.executor == kind)
+                .ok_or(Error::Unsupported)?;
+            manager
+                .image
+                .verify(&manager.image.path)
+                .map_err(|_| Error::Untrusted)?;
+            tools.insert("manager".into(), pin(&manager.image.path)?);
+            if kind == SoftwareManagerKind::Brew {
+                tools.insert("git".into(), pin(Path::new("/usr/bin/git"))?);
+            }
+            use sha2::{Digest as _, Sha256};
+            use std::io::Read;
+            let mut bytes = Vec::new();
+            materials
+                .native_source(index)?
+                .reader()?
+                .take(agent_client::native_source::MAX_PACK_BYTES as u64 + 1)
+                .read_to_end(&mut bytes)?;
+            if bytes.len() > agent_client::native_source::MAX_PACK_BYTES {
+                return Err(Error::Capacity);
+            }
+            let digest: [u8; 32] = Sha256::digest(&bytes).into();
+            let reference = artifact(&digest)?;
+            let path = compiler
+                .root
+                .publish(
+                    helper.as_ref().map(|h| h.context().subject.as_str()),
+                    std::io::Cursor::new(&bytes),
+                    &reference.sha256,
+                    bytes.len() as u64,
+                )
+                .map_err(crate::error::app_error)?;
+            compiler
+                .files
+                .insert("native-source".into(), (path, reference));
+        }
         wire::SoftwareTaskBehavior::Dmg(d) => {
             for (name, path) in [
                 ("diskutil", "/usr/sbin/diskutil"),
@@ -277,6 +322,22 @@ pub(super) fn compile(
         .1
         .clone();
     let format = match &action.behavior {
+        wire::SoftwareTaskBehavior::Winget(_) => {
+            let wire::SoftwareTaskExport::Winget { binding, .. } = &step.export else {
+                return Err(Error::Protocol);
+            };
+            SoftwareFormat::Winget {
+                export_identity: id(hex(&binding.publication))?,
+            }
+        }
+        wire::SoftwareTaskBehavior::Brew(_) => {
+            let wire::SoftwareTaskExport::Brew { binding, .. } = &step.export else {
+                return Err(Error::Protocol);
+            };
+            SoftwareFormat::Homebrew {
+                export_identity: id(hex(&binding.publication))?,
+            }
+        }
         wire::SoftwareTaskBehavior::Exe(exe) => SoftwareFormat::Exe {
             layout: exe
                 .layout
@@ -355,6 +416,8 @@ pub(super) fn compile(
     };
     let (run_as, session, work_root, _) = identity(config, helper.as_ref(), source_command)?;
     let request = WorkerRequest {
+        intent,
+        export: step.export.clone(),
         external_pending: Default::default(),
         native_pending: Default::default(),
         native_output: Default::default(),
@@ -406,10 +469,23 @@ pub(super) fn compile(
     let mut mutations = BTreeMap::new();
     if matches!(
         format,
-        SoftwareFormat::DmgApp { .. } | SoftwareFormat::DmgPkg { .. }
+        SoftwareFormat::DmgApp { .. }
+            | SoftwareFormat::DmgPkg { .. }
+            | SoftwareFormat::Winget { .. }
+            | SoftwareFormat::Homebrew { .. }
     ) {
         let phases = match intent {
             SoftwareOperation::Detect => Vec::new(),
+            _ if matches!(
+                format,
+                SoftwareFormat::Winget { .. } | SoftwareFormat::Homebrew { .. }
+            ) =>
+            {
+                vec![
+                    (SoftwarePhase::Prepare, O::Prepare),
+                    (SoftwarePhase::Cleanup, O::Cleanup),
+                ]
+            }
             SoftwareOperation::Uninstall if matches!(format, SoftwareFormat::DmgApp { .. }) => {
                 vec![(SoftwarePhase::Cleanup, O::Cleanup)]
             }
