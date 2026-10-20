@@ -9,7 +9,11 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use x509_parser::{prelude::*, revocation_list::CertificateRevocationList};
+use x509_parser::{
+    extensions::{DistributionPointName, GeneralName},
+    prelude::*,
+    revocation_list::CertificateRevocationList,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -155,14 +159,31 @@ fn crl(der: Vec<u8>, signer: &X509Certificate<'_>, now: i64) -> Result<Crl, Erro
     for e in value.extensions() {
         if !seen.insert(e.oid.to_id_string())
             || matches!(e.parsed_extension(), ParsedExtension::ParseError { .. })
-            || e.critical
             || e.oid.to_id_string() == "2.5.29.27"
-            || matches!(
-                e.parsed_extension(),
-                ParsedExtension::IssuingDistributionPoint(_)
-            )
         {
             return Err(Error::Untrusted);
+        }
+        // ref: rustls-webpki 0.103.15 src/crl/types.rs; RFC 5280 §5.2.5.
+        // step-ca emits a critical IDP even for a full, direct CRL. Keep CDP/IDP
+        // matching in webpki; do not accept partitioned or indirect CRLs here.
+        match e.parsed_extension() {
+            ParsedExtension::IssuingDistributionPoint(idp) => {
+                if !e.critical
+                    || idp.only_contains_user_certs
+                    || idp.only_contains_ca_certs
+                    || idp.only_contains_attribute_certs
+                    || idp.only_some_reasons.is_some()
+                    || idp.indirect_crl
+                    || !matches!(&idp.distribution_point,
+                        Some(DistributionPointName::FullName(names))
+                            if !names.is_empty() && names.iter().all(|name|
+                                matches!(name, GeneralName::URI(uri) if !uri.is_empty())))
+                {
+                    return Err(Error::Untrusted);
+                }
+            }
+            _ if e.critical => return Err(Error::Untrusted),
+            _ => {}
         }
     }
     let mut number = value.crl_number().ok_or(Error::Untrusted)?.to_bytes_be();

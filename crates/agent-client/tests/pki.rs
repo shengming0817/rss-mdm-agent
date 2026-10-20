@@ -15,6 +15,52 @@ fn state(root: &Root, key: &str) -> Value {
     serde_json::from_slice(&body).unwrap()
 }
 
+fn idp(only_ca: bool) -> Vec<u8> {
+    use der::Encode;
+    use x509_cert::ext::pkix::{
+        crl::IssuingDistributionPoint,
+        name::{DistributionPointName, GeneralName},
+    };
+    IssuingDistributionPoint {
+        distribution_point: Some(DistributionPointName::FullName(vec![
+            GeneralName::UniformResourceIdentifier(
+                der::asn1::Ia5String::new("https://step-ca/1.0/crl").unwrap(),
+            ),
+        ])),
+        only_contains_user_certs: false,
+        only_contains_ca_certs: only_ca,
+        only_some_reasons: None,
+        indirect_crl: false,
+        only_contains_attribute_certs: false,
+    }
+    .to_der()
+    .unwrap()
+}
+
+#[tokio::test]
+async fn full_direct_critical_idp_allows_registration_and_refresh() {
+    let server = Server::tls().await;
+    let root = Root::new();
+    {
+        let mut data = server.data.lock().unwrap();
+        let crl = support::pki::crl_with_extension(1, "2.5.29.28", true, idp(false));
+        data.trust["issuers"][0]["crl"] = crl.clone().into();
+        data.trust["issuers"][0]["root_crl"] = crl.into();
+    }
+    let mut client = server.client(&root, OpenMode::Create);
+    let binding = server.register(&mut client).await;
+    {
+        let mut data = server.data.lock().unwrap();
+        let crl = support::pki::crl_with_extension(2, "2.5.29.28", true, idp(false));
+        data.trust["issuers"][0]["crl"] = crl.clone().into();
+        data.trust["issuers"][0]["root_crl"] = crl.into();
+    }
+    server.time.set(301);
+    client.drive_pki().await.unwrap();
+    client.runtime_readiness().unwrap();
+    assert_eq!(client.registration().unwrap(), binding);
+}
+
 #[tokio::test]
 async fn committed_renewal_is_recovered_over_anonymous_https_after_expiry_without_old_signer() {
     let server = Server::tls().await;
@@ -128,6 +174,10 @@ async fn invalid_complete_trust_set_blocks_runtime_without_replacing_registratio
         "signature",
         "future",
         "expired",
+        "partitioned-idp",
+        "noncritical-idp",
+        "unknown-critical",
+        "delta",
     ] {
         let server = Server::tls().await;
         let root = Root::new();
@@ -158,7 +208,37 @@ async fn invalid_complete_trust_set_blocks_runtime_without_replacing_registratio
                 "expired" => {
                     data.trust["issuers"][0]["crl"] = support::pki::crl(2, 0, 301, &[]).into()
                 }
+                "partitioned-idp" | "noncritical-idp" => {
+                    data.trust["issuers"][0]["crl"] = support::pki::crl_with_extension(
+                        2,
+                        "2.5.29.28",
+                        fault != "noncritical-idp",
+                        idp(fault == "partitioned-idp"),
+                    )
+                    .into();
+                }
+                "unknown-critical" | "delta" => {
+                    data.trust["issuers"][0]["crl"] = support::pki::crl_with_extension(
+                        2,
+                        if fault == "delta" {
+                            "2.5.29.27"
+                        } else {
+                            "1.2.3.4"
+                        },
+                        true,
+                        vec![2, 1, 1],
+                    )
+                    .into();
+                }
                 _ => unreachable!(),
+            }
+            if matches!(
+                fault,
+                "partitioned-idp" | "noncritical-idp" | "unknown-critical" | "delta"
+            ) {
+                // This fixture uses one self-signed CA for both roles: keep the
+                // CRL identical so rejection cannot come from watermark conflict.
+                data.trust["issuers"][0]["root_crl"] = data.trust["issuers"][0]["crl"].clone();
             }
         }
         server.time.set(301);
