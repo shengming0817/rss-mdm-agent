@@ -1,14 +1,11 @@
-//! Explicit frozen REST source; no default-source search, settings reset or manifest fallback.
-//! ref: microsoft/winget-cli SourceFlow.cpp, GroupPolicy.cpp and AppInstallerErrors.h.
+//! Native WinGet consumes one verified publication snapshot, never a fresh source resolution.
+//! ref: microsoft/winget-cli {Argument.cpp,Commands/InstallCommand.cpp,Commands/UpgradeCommand.cpp,
+//! Commands/UninstallCommand.cpp,Rest/Schema/1_0/Json/ManifestDeserializer_1_0.cpp}.
 use super::*;
+use std::io::Read;
 
-fn authority(request: &WorkerRequest) -> Result<(&wire::SoftwareExportBinding, &str, &str), Error> {
-    let wire::SoftwareTaskExport::Winget {
-        binding,
-        uri,
-        identifier,
-    } = &request.export
-    else {
+fn manifest(request: &WorkerRequest) -> Result<Vec<u8>, Error> {
+    let wire::SoftwareTaskExport::Winget { binding, .. } = &request.export else {
         return Err(Error::Protocol);
     };
     if !matches!(
@@ -17,56 +14,37 @@ fn authority(request: &WorkerRequest) -> Result<(&wire::SoftwareExportBinding, &
     ) {
         return Err(Error::Protocol);
     }
-    Ok((binding, uri, identifier))
+    let mut bytes = Vec::new();
+    fs::File::open(request.material("native-source")?)?
+        .take(agent_client::native_source::MAX_DOCUMENT_BYTES as u64 + 1)
+        .read_to_end(&mut bytes)?;
+    agent_client::native_source::winget_manifest(&bytes, binding, &request.action)
 }
-fn present(request: &WorkerRequest) -> Result<bool, Error> {
-    let (_, uri, name) = authority(request)?;
-    let (code, stdout, _) = run_tool_environment(
-        request,
-        &request.tool("manager")?,
-        &[
-            "source".into(),
-            "export".into(),
-            "--name".into(),
-            name.into(),
-            "--disable-interactivity".into(),
-        ],
-        Some(&environment(request)?),
-    )?;
-    // The documented HRESULT is structured failure, independent of translated console messages.
-    if code as u32 == 0x8A150012 {
-        return Ok(false);
-    }
-    if code != 0 {
-        return Err(Error::Unavailable);
-    }
-    let value: serde_json::Value = serde_json::from_slice(&stdout).map_err(|_| Error::Protocol)?;
-    if value["Name"].as_str() != Some(name)
-        || value["Arg"].as_str() != Some(uri)
-        || value["Identifier"].as_str() != Some(name)
-        || value["Type"].as_str() != Some("Microsoft.Rest")
-    {
-        return Err(Error::Untrusted);
-    }
-    Ok(true)
+fn path(request: &WorkerRequest) -> Result<String, Error> {
+    request
+        .resource_root
+        .join("manifest.yaml")
+        .to_str()
+        .map(String::from)
+        .ok_or(Error::Configuration)
 }
 fn arguments(
     request: &WorkerRequest,
     before: Option<&SoftwareState>,
 ) -> Result<Vec<String>, Error> {
-    let (_, _, name) = authority(request)?;
     let wire::SoftwareTaskBehavior::Winget(native) = &request.action.behavior else {
         return Err(Error::Protocol);
     };
     let command = match request.operation {
-        WorkerOperation::Uninstall | WorkerOperation::RemovePrevious => native
-            .uninstall
-            .as_ref()
-            .ok_or(Error::Unsupported)?
-            .invocation
-            .clone(),
-        WorkerOperation::Upgrade => native.upgrade_invocation.clone(),
-        _ => native.install.clone(),
+        WorkerOperation::Uninstall | WorkerOperation::RemovePrevious => {
+            &native
+                .uninstall
+                .as_ref()
+                .ok_or(Error::Unsupported)?
+                .invocation
+        }
+        WorkerOperation::Upgrade => &native.upgrade_invocation,
+        _ => &native.install,
     };
     if !command.arguments.is_empty() {
         return Err(Error::Unsupported);
@@ -81,14 +59,6 @@ fn arguments(
         request.operation,
         WorkerOperation::Uninstall | WorkerOperation::RemovePrevious
     );
-    let version = if request.operation == WorkerOperation::RemovePrevious {
-        let SoftwareState::Present { version } = before else {
-            return Err(Error::Denied);
-        };
-        version.as_str()
-    } else {
-        &request.action.version
-    };
     let mut args = vec![
         if removal {
             "uninstall"
@@ -98,13 +68,8 @@ fn arguments(
             "install"
         }
         .into(),
-        "--id".into(),
-        request.action.package.clone(),
-        "--version".into(),
-        version.into(),
-        "--exact".into(),
-        "--source".into(),
-        name.into(),
+        "--manifest".into(),
+        path(request)?,
         "--scope".into(),
         if native.scope == wire::SoftwareTaskScope::System {
             "machine"
@@ -115,7 +80,19 @@ fn arguments(
         "--silent".into(),
         "--disable-interactivity".into(),
     ];
-    if !removal {
+    if removal {
+        let version = if request.operation == WorkerOperation::RemovePrevious {
+            let SoftwareState::Present { version } = before else {
+                return Err(Error::Denied);
+            };
+            version.as_str()
+        } else {
+            &request.action.version
+        };
+        args.extend(["--version".into(), version.into()]);
+    } else {
+        // --manifest cannot be combined with search selectors. Exact identity/version and hashes
+        // come exclusively from this verified file; no source query may replace them.
         args.extend([
             "--skip-dependencies".into(),
             "--architecture".into(),
@@ -131,41 +108,40 @@ fn arguments(
 pub(super) fn execute(
     request: &WorkerRequest,
     before: Option<&SoftwareState>,
-    record: &mut State,
+    _: &mut State,
 ) -> Result<(i32, SoftwareWorkerResult), Error> {
-    let (binding, uri, name) = authority(request)?;
+    let bytes = manifest(request)?;
+    let directory = platform_private_storage::PrivateDirectory::open(&request.resource_root)?;
+    let name = Path::new("manifest.yaml");
     if request.operation == WorkerOperation::Prepare {
-        let bytes = fs::read(request.material("native-source")?)?;
-        agent_client::native_source::verify_winget(&bytes, binding, &request.action)?;
-        if !present(request)? {
-            record.created = true;
-            save(request, record)?;
-            tool(
-                request,
-                "manager",
-                vec![
-                    "source".into(),
-                    "add".into(),
-                    "--name".into(),
-                    name.into(),
-                    "--arg".into(),
-                    uri.into(),
-                    "--type".into(),
-                    "Microsoft.Rest".into(),
-                    "--explicit".into(),
-                    "--disable-interactivity".into(),
-                ],
-                &environment(request)?,
-            )?;
-            if !present(request)? {
-                return Err(Error::Untrusted);
+        match directory.read(name, agent_client::native_source::MAX_DOCUMENT_BYTES) {
+            Ok(existing) if existing == bytes => (),
+            Ok(_) => return Err(Error::Untrusted),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                use std::io::Write;
+                let mut file = directory.create_file(name)?;
+                file.write_all(&bytes)?;
+                file.sync_all()?;
             }
+            Err(error) => return Err(error.into()),
         }
+        tool(
+            request,
+            "manager",
+            vec![
+                "validate".into(),
+                "--manifest".into(),
+                path(request)?,
+                "--disable-interactivity".into(),
+            ],
+            &environment(request)?,
+        )?;
         return Ok(result(0, None, String::new()));
     }
-    if !present(request)? {
+    if directory.read(name, agent_client::native_source::MAX_DOCUMENT_BYTES)? != bytes {
         return Err(Error::Untrusted);
     }
+    // Native policy gates LocalManifestFiles. No settings/policy/--ignore-security-hash mutation.
     let (code, stdout, stderr) = run_tool_environment(
         request,
         &request.tool("manager")?,
@@ -182,34 +158,86 @@ pub(super) fn execute(
         ),
     ))
 }
-pub(super) fn cleanup(request: &WorkerRequest, record: &State) -> Result<(), Error> {
-    if !record.created || !present(request)? {
-        return Ok(());
-    }
-    let (_, _, name) = authority(request)?;
-    tool(
-        request,
-        "manager",
-        vec![
-            "source".into(),
-            "remove".into(),
-            "--name".into(),
-            name.into(),
-            "--disable-interactivity".into(),
-        ],
-        &environment(request)?,
-    )?;
-    if present(request)? {
-        return Err(Error::Unavailable);
-    }
-    Ok(())
-}
 
 #[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::*;
     #[test]
-    fn selectors_and_removal_version_are_frozen_without_native_flag_overrides() {
+    fn native_file_input_stays_frozen_when_the_remote_source_changes() {
+        use crate::protocol_test_support::{Root, Server};
+        let root = Root::new();
+        let mut request = super::super::tests::fixture(&root);
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let server = runtime.block_on(Server::tls());
+        server
+            .data
+            .lock()
+            .unwrap()
+            .software_native(&server.url, false);
+        let (action, export, document) = {
+            let data = server.data.lock().unwrap();
+            let wire::TaskPayload::Software(spec) = &data.offer.as_ref().unwrap().payload else {
+                unreachable!()
+            };
+            (
+                spec.steps[0].action.clone(),
+                spec.steps[0].export.clone(),
+                data.software_source.as_ref().unwrap().document.clone(),
+            )
+        };
+        request.action = action;
+        request.export = export;
+        let file = request.materials.get_mut("native-source").unwrap();
+        fs::write(&file.path, serde_json::to_vec(&document).unwrap()).unwrap();
+        file.artifact.sha256 = Digest::new(format!(
+            "{:x}",
+            Sha256::digest(fs::read(&file.path).unwrap())
+        ))
+        .unwrap();
+        let manager = request.tools.get_mut("manager").unwrap();
+        fs::write(&manager.path,"#!/bin/sh\ncase \"$1\" in validate) test -f \"$3\" ;; install) /bin/cat \"$3\" ;; *) exit 91 ;; esac\n").unwrap();
+        manager.artifact.sha256 = Digest::new(format!(
+            "{:x}",
+            Sha256::digest(fs::read(&manager.path).unwrap())
+        ))
+        .unwrap();
+        super::super::execute(&request, Some(&SoftwareState::Absent {})).unwrap();
+        server
+            .data
+            .lock()
+            .unwrap()
+            .software_source
+            .as_mut()
+            .unwrap()
+            .document["Versions"][0]["Installers"][0]["InstallerUrl"] =
+            "https://other.example.test/evil.msi".into();
+        request.operation = WorkerOperation::Install;
+        let (code, result) =
+            super::super::execute(&request, Some(&SoftwareState::Absent {})).unwrap();
+        assert_eq!(code, 0);
+        assert!(result.detected.is_none());
+        let consumed: serde_json::Value = serde_json::from_str(&result.diagnostics).unwrap();
+        assert_eq!(
+            consumed["Installers"],
+            document["Versions"][0]["Installers"]
+        );
+        assert!(server
+            .data
+            .lock()
+            .unwrap()
+            .software_source
+            .as_ref()
+            .unwrap()
+            .requests
+            .is_empty());
+        fs::write(path(&request).unwrap(), b"changed").unwrap();
+        assert!(super::super::execute(&request, Some(&SoftwareState::Absent {})).is_err());
+        request.operation = WorkerOperation::Cleanup;
+        super::super::execute(&request, None).unwrap();
+        assert!(!request.resource_root.exists());
+    }
+    #[test]
+    fn sole_manifest_input_cannot_be_overridden_by_search_or_native_flags() {
         let root = crate::protocol_test_support::Root::new();
         let mut request = super::super::tests::fixture(&root);
         let wire::SoftwareTaskExport::Brew { binding, .. } = request.export else {
@@ -234,8 +262,12 @@ mod tests {
         request.operation = WorkerOperation::Upgrade;
         let args = arguments(&request, Some(&before)).unwrap();
         assert_eq!(args[0], "upgrade");
-        assert!(args.windows(2).any(|p| p == ["--source", "rss-frozen"]));
-        assert!(args.windows(2).any(|p| p == ["--version", "1.0"]));
+        assert!(args
+            .windows(2)
+            .any(|p| p == ["--manifest", path(&request).unwrap().as_str()]));
+        assert!(!args.iter().any(
+            |v| ["--id", "--source", "--version", "--ignore-security-hash"].contains(&v.as_str())
+        ));
         assert!(args.iter().any(|v| v == "--skip-dependencies"));
         request.operation = WorkerOperation::RemovePrevious;
         let args = arguments(&request, Some(&before)).unwrap();

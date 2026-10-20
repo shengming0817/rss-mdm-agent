@@ -65,6 +65,83 @@ pub fn verify_winget(
     Ok(())
 }
 
+/// Project the verified standard REST document into WinGet's native singleton manifest.
+/// JSON is valid YAML; the native parser owns installer semantics and hash enforcement.
+/// No source query, new installer URL, hash override or fallback is introduced.
+/// ref: microsoft/winget-cli ManifestDeserializer_1_0.cpp and manifest.singleton.1.12.0.json.
+pub fn winget_manifest(
+    bytes: &[u8],
+    binding: &wire::SoftwareExportBinding,
+    action: &wire::SoftwareTaskAction,
+) -> Result<Vec<u8>, Error> {
+    verify_winget(bytes, binding, action)?;
+    let document: Value = serde_json::from_slice(bytes).map_err(|_| Error::Protocol)?;
+    let version = &document["Versions"][0];
+    let locale = version["DefaultLocale"]
+        .as_object()
+        .ok_or(Error::Protocol)?;
+    // Locale extension fields must never become installer defaults in the singleton root.
+    let mut manifest = serde_json::Map::new();
+    for key in [
+        "PackageLocale",
+        "Publisher",
+        "PublisherUrl",
+        "PublisherSupportUrl",
+        "PrivacyUrl",
+        "Author",
+        "PackageName",
+        "PackageUrl",
+        "License",
+        "LicenseUrl",
+        "Copyright",
+        "CopyrightUrl",
+        "ShortDescription",
+        "Description",
+        "Tags",
+        "Agreements",
+        "ReleaseNotes",
+        "ReleaseNotesUrl",
+        "PurchaseUrl",
+        "InstallationNotes",
+        "Documentations",
+    ] {
+        if let Some(value) = locale.get(key) {
+            manifest.insert(key.into(), value.clone());
+        }
+    }
+    for key in [
+        "PackageLocale",
+        "Publisher",
+        "PackageName",
+        "License",
+        "ShortDescription",
+    ] {
+        if manifest
+            .get(key)
+            .and_then(Value::as_str)
+            .is_none_or(|s| s.trim().is_empty())
+        {
+            return Err(Error::Protocol);
+        }
+    }
+    manifest.insert(
+        "PackageIdentifier".into(),
+        document["PackageIdentifier"].clone(),
+    );
+    manifest.insert("PackageVersion".into(), version["PackageVersion"].clone());
+    manifest.insert("Installers".into(), version["Installers"].clone());
+    if let Some(locales) = version.get("Locales") {
+        manifest.insert("Localization".into(), locales.clone());
+    }
+    manifest.insert("ManifestType".into(), "singleton".into());
+    manifest.insert("ManifestVersion".into(), "1.12.0".into());
+    let bytes = serde_json::to_vec(&manifest).map_err(|_| Error::Protocol)?;
+    if bytes.len() > MAX_DOCUMENT_BYTES {
+        return Err(Error::Capacity);
+    }
+    Ok(bytes)
+}
+
 /// Build the narrow standard upload-pack request for the exact signed commit.
 pub(crate) fn pack_request(commit: &str) -> Result<Vec<u8>, Error> {
     if commit.len() != 40

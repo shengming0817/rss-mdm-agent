@@ -159,7 +159,7 @@ fn source_creation_borrowing_and_cleanup_are_owned_by_the_original_attempt() {
     // Original activity still being alive cannot be erased by a cleanup worker.
     let mut pending = original;
     pending.active = true;
-    pending.group = group();
+    pending.activity = execution_runner::software::NativeActivity::current().unwrap();
     save(&first, &pending).unwrap();
     first.operation = WorkerOperation::Cleanup;
     assert!(!execute(&first, None).unwrap().1.closed);

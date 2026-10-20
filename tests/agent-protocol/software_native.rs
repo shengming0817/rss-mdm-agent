@@ -158,6 +158,7 @@ impl Data {
                 session_id,
             };
         } else {
+            step.action.package = "Fixture.App".into();
             native.detect = SoftwareTaskDetection::MsiProduct {
                 product_code: "{00000000-0000-0000-0000-000000000001}".into(),
                 version: "1.0".into(),
@@ -173,7 +174,7 @@ impl Data {
             length: self.bytes.len() as u64,
             sha256: Sha256::digest(&self.bytes).into(),
         };
-        let document = json!({"PackageIdentifier":step.action.package,"Versions":[{"PackageVersion":step.action.version,"Installers":[{"InstallerUrl":artifact.url,"InstallerSha256":""}]}]});
+        let document = json!({"PackageIdentifier":step.action.package,"Versions":[{"PackageVersion":step.action.version,"DefaultLocale":{"PackageLocale":"en-US","PackageName":"Fixture","Publisher":"Fixture","License":"Proprietary","ShortDescription":"Fixture package"},"Installers":[{"Architecture":"arm64","InstallerType":"msi","Scope":"machine","InstallerUrl":artifact.url,"InstallerSha256":""}]}]});
         let mut document = document;
         document["Versions"][0]["Installers"][0]["InstallerSha256"] =
             Value::String(artifact.sha256.iter().map(|b| format!("{b:02x}")).collect());

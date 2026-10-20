@@ -18,7 +18,7 @@ struct State {
     created: bool,
     parent_created: bool,
     active: bool,
-    group: u32,
+    activity: execution_runner::software::NativeActivity,
 }
 fn owner(request: &WorkerRequest) -> Result<String, Error> {
     Ok(format!(
@@ -33,6 +33,7 @@ fn owner(request: &WorkerRequest) -> Result<String, Error> {
                 &request.resource_root,
                 &request.run_as,
                 &request.session,
+                request.architecture,
                 request.step,
             ))
             .map_err(|_| Error::Protocol)?
@@ -80,34 +81,8 @@ fn prepared(request: &WorkerRequest) -> Result<State, Error> {
     }
     Ok(current)
 }
-fn group() -> u32 {
-    #[cfg(unix)]
-    {
-        unsafe { libc::getpgrp() as u32 }
-    }
-    #[cfg(not(unix))]
-    {
-        std::process::id()
-    }
-}
 fn group_closed(record: &State) -> bool {
-    if !record.active {
-        return true;
-    }
-    #[cfg(unix)]
-    {
-        let Ok(group) = i32::try_from(record.group) else {
-            return false;
-        };
-        group > 1
-            && group != unsafe { libc::getpgrp() }
-            && unsafe { libc::kill(-group, 0) } == -1
-            && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
-    }
-    #[cfg(not(unix))]
-    {
-        false
-    }
+    !record.active || record.activity.closed().unwrap_or(false)
 }
 fn environment(request: &WorkerRequest) -> Result<BTreeMap<String, String>, Error> {
     let mut env = BTreeMap::new();
@@ -279,7 +254,8 @@ pub(super) fn execute(
                 created: false,
                 parent_created: false,
                 active: false,
-                group: group(),
+                activity: execution_runner::software::NativeActivity::current()
+                    .map_err(crate::error::app_error)?,
             }
         }
     } else {
@@ -289,7 +265,8 @@ pub(super) fn execute(
         return Err(Error::Unavailable);
     }
     record.active = true;
-    record.group = group();
+    record.activity =
+        execution_runner::software::NativeActivity::current().map_err(crate::error::app_error)?;
     save(request, &record)?;
     let outcome = physical(request, before, &mut record);
     if outcome.is_ok() || !request.native_pending.load(Ordering::Acquire) {
@@ -307,7 +284,7 @@ fn physical(
     if matches!(request.export, wire::SoftwareTaskExport::Brew { .. }) {
         return brew::execute(request, before, record);
     }
-    #[cfg(windows)]
+    #[cfg(any(windows, all(test, target_os = "macos")))]
     if matches!(request.export, wire::SoftwareTaskExport::Winget { .. }) {
         return winget::execute(request, before, record);
     }
@@ -318,10 +295,6 @@ fn cleanup(request: &WorkerRequest, record: &State) -> Result<(), Error> {
     #[cfg(target_os = "macos")]
     if matches!(request.export, wire::SoftwareTaskExport::Brew { .. }) {
         brew::cleanup(request, record)?;
-    }
-    #[cfg(windows)]
-    if matches!(request.export, wire::SoftwareTaskExport::Winget { .. }) {
-        winget::cleanup(request, record)?;
     }
     // The account-private attempt directory contains only source ownership and private cache data.
     platform_private_storage::PrivateDirectory::open(&request.resource_root)?;

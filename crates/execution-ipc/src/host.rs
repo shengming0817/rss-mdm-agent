@@ -307,6 +307,22 @@ pub fn current_session_binding() -> Result<Id, execution_app::Error> {
     }
 }
 
+/// Current kernel boot generation, independent of adjustable wall-clock time.
+pub fn boot_generation() -> Result<Id, execution_app::Error> {
+    #[cfg(target_os = "macos")]
+    {
+        crate::macos_identity::boot_generation()
+    }
+    #[cfg(windows)]
+    {
+        crate::windows_identity::boot_generation()
+    }
+    #[cfg(not(any(target_os = "macos", windows)))]
+    {
+        Err(execution_app::Error::Unsupported)
+    }
+}
+
 /// Device-wide monotonic time, shared across service/helper processes and including sleep.
 /// Used for the original first-start window; it is never renewed by an IPC retry.
 pub fn monotonic_millis() -> Result<u64, execution_app::Error> {

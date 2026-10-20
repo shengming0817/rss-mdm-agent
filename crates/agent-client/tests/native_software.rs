@@ -103,6 +103,61 @@ fn provision(server: &Server) {
 }
 
 #[tokio::test]
+async fn native_manifest_keeps_frozen_installers_and_never_promotes_locale_extensions() {
+    let server = Server::tls().await;
+    server
+        .data
+        .lock()
+        .unwrap()
+        .software_native(&server.url, false);
+    let data = server.data.lock().unwrap();
+    let TaskPayload::Software(spec) = &data.offer.as_ref().unwrap().payload else {
+        unreachable!()
+    };
+    let SoftwareTaskExport::Winget { binding, .. } = &spec.steps[0].export else {
+        unreachable!()
+    };
+    let original = data.software_source.as_ref().unwrap().document.clone();
+    let manifest = native_source::winget_manifest(
+        &serde_json::to_vec(&original).unwrap(),
+        binding,
+        &spec.steps[0].action,
+    )
+    .unwrap();
+    let manifest: serde_json::Value = serde_json::from_slice(&manifest).unwrap();
+    assert_eq!(
+        manifest["Installers"],
+        original["Versions"][0]["Installers"]
+    );
+    assert_eq!(manifest["PackageIdentifier"], original["PackageIdentifier"]);
+    assert_eq!(manifest["PackageVersion"], "1.0");
+    let mut changed = original.clone();
+    changed["Versions"][0]["Installers"][0]["InstallerUrl"] =
+        "https://other.example.test/evil.msi".into();
+    assert!(native_source::winget_manifest(
+        &serde_json::to_vec(&changed).unwrap(),
+        binding,
+        &spec.steps[0].action
+    )
+    .is_err());
+    let mut extended = original;
+    extended["Versions"][0]["DefaultLocale"]["InstallerSwitches"] =
+        serde_json::json!({"Silent":"unapproved"});
+    let mut binding = binding.clone();
+    binding.document_sha256 = winget_document_digest(&extended).unwrap();
+    let output: serde_json::Value = serde_json::from_slice(
+        &native_source::winget_manifest(
+            &serde_json::to_vec(&extended).unwrap(),
+            &binding,
+            &spec.steps[0].action,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert!(output.get("InstallerSwitches").is_none());
+}
+
+#[tokio::test]
 async fn frozen_sources_prepare_before_start_and_recover_without_source_io() {
     for brew in [false, true] {
         let server = Server::tls().await;

@@ -145,7 +145,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                     let body: serde_json::Value =
                         serde_json::from_slice(&body).map_err(|_| Error::Protocol)?;
                     let bytes = serde_json::to_vec(&body["Data"]).map_err(|_| Error::Protocol)?;
-                    native::verify_winget(&bytes, binding, &step.action)?;
+                    native::winget_manifest(&bytes, binding, &step.action)?;
                     bytes
                 }
                 wire::SoftwareTaskExport::Brew {
