@@ -98,7 +98,9 @@ export function verifyCandidate(path) {
 }
 // Fixed acceptance binds the frozen runtime; development binds the current source.
 export function verifyNativeRuntime(root, directory, candidatePath) {
-  const manifest = JSON.parse(readFileSync(resolve(directory, "manifest.json")));
+  const manifest = JSON.parse(
+    readFileSync(resolve(directory, "manifest.json")),
+  );
   assert.equal(manifest.kind, "development");
   assert.equal(manifest.status, "passed");
   if (candidatePath) {
