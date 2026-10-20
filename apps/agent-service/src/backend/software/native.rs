@@ -710,6 +710,12 @@ mod gc_tests {
             unreachable!()
         };
         let db = local::Database::new();
+        let _journal = execution_sqlite::Store::initialize_test(
+            &db.path,
+            local::plan().spec().request.authority.clone(),
+            plan::storage_limits(),
+        )
+        .unwrap();
         let root_path = db.path.parent().unwrap().join("materials");
         platform_private_storage::directory(&root_path).unwrap();
         let mut root = execution_runner::staging::MaterialRoot::open_fixture(
@@ -729,6 +735,7 @@ mod gc_tests {
             authority: local::plan().spec().request.authority.clone(),
             device: DeviceId::new("device-1").unwrap(),
         };
+        let before = inventory_files(&mut root).unwrap();
         assert!(matches!(
             crate::backend::software::compile(
                 &offer,
@@ -741,7 +748,7 @@ mod gc_tests {
             ),
             Err(Error::Identity)
         ));
-        assert!(inventory_files(&mut root).unwrap().is_empty());
+        assert_eq!(inventory_files(&mut root).unwrap(), before);
         assert!(!server.data.lock().unwrap().started);
     }
 

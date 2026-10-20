@@ -130,7 +130,8 @@ fn changed_artifact_fails_before_native_install_and_still_closes_owned_source() 
     let root = Root::new();
     let mut request = fixture(&root);
     execute(&request, Some(&SoftwareState::Absent {})).unwrap();
-    fs::write(root.path.join("package"), b"changed").unwrap();
+    let length = fs::metadata(root.path.join("package")).unwrap().len() as usize;
+    fs::write(root.path.join("package"), vec![b'x'; length]).unwrap();
     request.operation = WorkerOperation::Install;
     assert!(execute(&request, Some(&SoftwareState::Absent {})).is_err());
     assert!(!root.path.join("native-calls").exists());

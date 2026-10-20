@@ -361,15 +361,27 @@ fn cache(
         return Err(Error::Untrusted);
     }
     if cache.try_exists()? {
-        execution_runner::staging::verify_retained(&cache, &material.artifact.sha256)
-            .map_err(crate::error::app_error)?;
+        execution_runner::staging::verify_staged(
+            &cache,
+            &material.artifact.sha256,
+            &request.resource_root,
+            &request.run_as,
+            &request.session,
+        )
+        .map_err(crate::error::app_error)?;
     } else {
         let mut output = platform_private_storage::create_new(&cache)?;
         std::io::copy(&mut input, &mut output)?;
         output.flush()?;
         output.sync_all()?;
-        execution_runner::staging::verify_retained(&cache, &material.artifact.sha256)
-            .map_err(crate::error::app_error)?;
+        execution_runner::staging::verify_staged(
+            &cache,
+            &material.artifact.sha256,
+            &request.resource_root,
+            &request.run_as,
+            &request.session,
+        )
+        .map_err(crate::error::app_error)?;
     }
     Ok(())
 }
