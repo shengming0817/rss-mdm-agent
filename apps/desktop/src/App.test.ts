@@ -1,7 +1,8 @@
 import { activeStage } from "@rss-mdm-agent/ai-contract";
-import { DOMWrapper, mount } from "@vue/test-utils";
+import { DOMWrapper, mount, flushPromises } from "@vue/test-utils";
 import { expect, it, vi } from "vitest";
 import App from "./App.vue";
+import AccountMenu from "./workspace/AccountMenu.vue";
 import Assistant from "./assistant/Assistant.vue";
 import type { AssistantController } from "./assistant/controller";
 import type { SessionView } from "@rss-mdm-agent/ai-client";
@@ -12,7 +13,11 @@ it("replaces the old sample with an explicitly read-only browser preview", async
     .mockRejectedValue(new Error("unexpected network"));
   const wrapper = mount(App, { attachTo: document.body });
   expect(wrapper.text()).toContain("浏览器只读预览");
-  expect(wrapper.text()).toContain("软件中心");
+  expect(
+    wrapper
+      .findAll(".workspace-rail .ui-navigation > ol > li > button")
+      .some((e) => e.text() === "软件中心"),
+  ).toBe(false);
   expect(wrapper.text()).toContain("工具中心");
   const assistant = wrapper
     .findAll("button")
@@ -122,12 +127,14 @@ it("expires navigation badge, background entry and question card together withou
 
 it("keeps settings and diagnostics reachable without an AI connection", async () => {
   const wrapper = mount(App, { attachTo: document.body });
-  const settings = wrapper
+  await wrapper.getComponent(AccountMenu).get("button").trigger("click");
+  await wrapper
+    .get(".workspace-rail .agent-settings-navigation")
     .findAll("button")
-    .find((button) => button.text() === "设置");
-  expect(settings).toBeDefined();
-  await settings!.trigger("click");
-  expect(wrapper.text()).toContain("数据与诊断");
+    .find((b) => b.text() === "运行与诊断")!
+    .trigger("click");
+  await flushPromises();
+  expect(wrapper.text()).toContain("运行与诊断");
   expect(wrapper.text()).toContain("非登录");
   expect(wrapper.text()).toContain("隐私");
   expect(wrapper.find('input[type="password"]').exists()).toBe(false);
@@ -146,11 +153,13 @@ it("shares the home draft with the assistant without sending or replacing it", a
       .trigger("click");
   };
   try {
-    await navigate("首页");
+    await navigate("主页");
     expect(wrapper.find(".computer-home").isVisible()).toBe(true);
-    await wrapper.get("#home-question").setValue("检查应用连接");
+    await wrapper
+      .get(".computer-home .home-composer textarea")
+      .setValue("检查应用连接");
     expect(
-      wrapper.get(".home-prompts button").attributes("disabled"),
+      wrapper.get(".hero-ai-prompts button").attributes("disabled"),
     ).toBeDefined();
     await wrapper.get(".home-composer").trigger("submit");
     const assistant = wrapper
@@ -158,13 +167,16 @@ it("shares the home draft with the assistant without sending or replacing it", a
       .props("controller") as AssistantController;
     expect(assistant.draft.value).toBe("检查应用连接");
     expect(assistant.state.sessions.size).toBe(0);
-    await navigate("首页");
+    await navigate("主页");
     expect(
-      (wrapper.get("#home-question").element as HTMLTextAreaElement).value,
+      (
+        wrapper.get(".computer-home .home-composer textarea")
+          .element as HTMLTextAreaElement
+      ).value,
     ).toBe("检查应用连接");
-    await wrapper.findAll(".home-shortcuts button")[1].trigger("click");
+    await wrapper.findAll(".home-stats > button")[3].trigger("click");
     expect(wrapper.find(".computer-home").exists()).toBe(false);
-    expect(wrapper.get(".resource-content").isVisible()).toBe(true);
+    expect(wrapper.get(".software-reference").isVisible()).toBe(true);
   } finally {
     wrapper.unmount();
     bounds.mockRestore();

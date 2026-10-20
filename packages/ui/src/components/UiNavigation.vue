@@ -18,6 +18,8 @@ const emit = defineEmits<{ "update:modelValue": [id: string] }>();
       <li v-for="item in items" :key="item.id">
         <button
           type="button"
+          :aria-label="item.label"
+          :title="item.label"
           :disabled="item.disabled"
           :aria-current="modelValue === item.id ? 'page' : undefined"
           @click="emit('update:modelValue', item.id)"
@@ -25,6 +27,7 @@ const emit = defineEmits<{ "update:modelValue": [id: string] }>();
           <slot name="icon" :item="item" /><span>{{ item.label }}</span
           ><slot name="trailing" :item="item" />
         </button>
+        <slot name="after-item" :item="item" />
       </li>
     </ol>
   </nav>

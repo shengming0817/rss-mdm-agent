@@ -10,6 +10,8 @@ export {
   Settings,
   PanelLeft,
   MoreHorizontal,
+  Search,
+  ArrowUpRight,
   ChevronDown,
   X,
   Sparkles,

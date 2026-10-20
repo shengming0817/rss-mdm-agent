@@ -1,0 +1,78 @@
+export function systemEntries(mac: boolean) {
+  return [
+    {
+      id: "network",
+      title: mac ? "网络" : "网络和 Internet",
+      description: "网络连接、服务与代理",
+      color: "blue",
+      group: "连接",
+      rows: ["当前网络", "连接状态", mac ? "网络服务代理" : "当前用户代理"],
+      note: mac
+        ? "代理按所选网络服务分别配置。"
+        : "用户代理与系统服务代理分别配置。",
+    },
+    {
+      id: "display",
+      title: "显示器",
+      description: "屏幕排列、分辨率与缩放",
+      color: "purple",
+      group: "设备",
+      rows: ["已连接的显示器", "分辨率", "缩放"],
+      note: "显示器配置可能影响当前工作区的布局。",
+    },
+    {
+      id: "sound",
+      title: "声音",
+      description: "输出设备、音量与输入",
+      color: "pink",
+      group: "设备",
+      rows: ["声音输出", "输出音量", "声音输入"],
+      note: "切换音频设备可能影响正在进行的通话。",
+    },
+    {
+      id: "power",
+      title: mac ? "电池" : "电源和电池",
+      description: "电量、节能与供电偏好",
+      color: "green",
+      group: "设备",
+      rows: ["电池电量", "电源状态", mac ? "低电量模式" : "电源模式"],
+      note: "电源偏好需要分别核对电池和外接电源状态。",
+    },
+    {
+      id: "lock",
+      title: mac ? "屏幕与睡眠" : "屏幕和睡眠",
+      description: "屏幕闲置与返回电脑时的行为",
+      color: "cyan",
+      group: "个人与安全",
+      rows: ["使用电池时关闭屏幕", "接通电源时关闭屏幕", "返回时要求登录"],
+      note: "关闭屏幕、系统睡眠与锁定电脑是不同设置。",
+    },
+    {
+      id: "storage",
+      title: "储存空间",
+      description: "磁盘容量与空间使用情况",
+      color: "orange",
+      group: "设备",
+      rows: ["磁盘容量", "已用空间", "可用空间"],
+      note: "查看空间不会删除文件；清理前需要单独确认范围。",
+    },
+    {
+      id: "security",
+      title: mac ? "隐私与安全性" : "隐私和安全性",
+      description: "系统保护与应用权限",
+      color: "indigo",
+      group: "个人与安全",
+      rows: [mac ? "FileVault" : "设备加密", "防火墙", "应用权限"],
+      note: "受组织管理的配置与系统权限需要由相应管理方确认。",
+    },
+    {
+      id: "about",
+      title: "关于这台电脑",
+      description: "了解这台电脑与操作系统",
+      color: "gray",
+      group: "设备",
+      rows: ["操作系统版本", "处理器", "内存"],
+      note: "设备规格将在接入本机状态后显示。",
+    },
+  ];
+}

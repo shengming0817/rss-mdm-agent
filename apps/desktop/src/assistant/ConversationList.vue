@@ -1,7 +1,22 @@
 <script setup lang="ts">
+import { computed } from "vue";
 import { MessageSquare, Plus } from "@rss-mdm-agent/ui";
 import type { AssistantController } from "./controller";
-const props = defineProps<{ controller: AssistantController }>();
+const props = withDefaults(
+  defineProps<{
+    controller: AssistantController;
+    showCreate?: boolean;
+    query?: string;
+  }>(),
+  { showCreate: true, query: "" },
+);
+const sessions = computed(() =>
+  props.controller.sessions.value.filter((session) =>
+    session.title
+      .toLocaleLowerCase()
+      .includes(props.query.trim().toLocaleLowerCase()),
+  ),
+);
 const emit = defineEmits<{ select: [] }>();
 function select(id?: string) {
   if (id) void props.controller.select(id);
@@ -11,7 +26,7 @@ function select(id?: string) {
 </script>
 <template>
   <nav aria-label="最近对话" class="conversation-list">
-    <button class="new-conversation" @click="select()">
+    <button v-if="showCreate" class="new-conversation" @click="select()">
       <Plus :size="18" aria-hidden="true" />新对话
     </button>
     <h2>最近对话</h2>
@@ -24,10 +39,7 @@ function select(id?: string) {
       </button>
     </p>
     <ul>
-      <li
-        v-for="session in controller.sessions.value"
-        :key="session.namespace.sessionId"
-      >
+      <li v-for="session in sessions" :key="session.namespace.sessionId">
         <button
           :aria-current="
             controller.state.selected === session.namespace.sessionId
@@ -43,6 +55,15 @@ function select(id?: string) {
         </button>
       </li>
     </ul>
+    <p
+      v-if="
+        !sessions.length &&
+        !controller.state.listing &&
+        !controller.state.listError
+      "
+    >
+      {{ query ? "没有匹配的已加载会话" : "暂无历史会话" }}
+    </p>
     <button
       v-if="controller.state.next"
       :disabled="controller.state.listing"

@@ -55,7 +55,7 @@ export async function createFixture() {
         schemaVersion: 8,
         kind: "connection",
         connectionId: "cfg",
-        name: "Browser fixture",
+        name: "默认连接",
         provider: "codex",
         configRevision: 1,
 
@@ -91,7 +91,7 @@ export async function createFixture() {
   const identity = structuredClone(
     fixtures.valid.find((value) => value.kind === "userContext"),
   );
-  identity.user.displayName = "开发 fixture";
+  identity.user.displayName = "本地工作区";
   identity.generation = "isolated-fixture-identity";
   let hostStatus = {
     schemaVersion: 8,
@@ -114,6 +114,9 @@ export async function createFixture() {
     "outcomeUnknown",
     "verified",
     "cancelled",
+    "mdmEnrolled",
+    "mdmOtherOrganization",
+    "mdmUnknown",
   ];
   let registrationRequested = false;
   function selectScenario(value) {
@@ -259,6 +262,8 @@ export async function createFixture() {
           "/__fixture/host-restart",
           "/__fixture/host-export",
           "/__fixture/registration",
+          "/__fixture/mdm-registration",
+          "/__fixture/policy_directory",
           "/__fixture/registration-request",
           "/__fixture/state",
           "/__fixture/scenario",
@@ -296,6 +301,27 @@ export async function createFixture() {
             break;
           case "/__fixture/host-export":
             value = false;
+            break;
+          case "/__fixture/mdm-registration":
+            value = {
+              state:
+                scenario === "mdmEnrolled"
+                  ? "this_organization"
+                  : scenario === "mdmOtherOrganization"
+                    ? "other_organization"
+                    : scenario === "mdmUnknown"
+                      ? "unknown"
+                      : "unenrolled",
+              observedAt: Math.floor(Date.now() / 1000),
+            };
+            break;
+          case "/__fixture/policy_directory":
+            available();
+            value = {
+              items: [],
+              nextCursor: null,
+              asOf: Math.floor(Date.now() / 1000),
+            };
             break;
           case "/__fixture/registration":
             value = registration();
@@ -535,7 +561,9 @@ export async function createFixture() {
           id,
           // This surface spans renderer lifecycle and multi-page browser scenarios.
           // Deadline boundary cases use an injected clock in the dedicated renderer fixture.
-          id === "surface-question" ? 600_000 : 10_000,
+          ["surface-question", "background-question"].includes(id)
+            ? 600_000
+            : 10_000,
         ),
       );
     },

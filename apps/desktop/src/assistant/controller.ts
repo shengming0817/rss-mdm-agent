@@ -229,6 +229,7 @@ export function createAssistant(
     for (const [id, value] of state.drafts) {
       if (
         value.context &&
+        value.context.scope === "catalog" &&
         !value.context.stale &&
         !contextCurrent(value.context, catalog, source)
       )

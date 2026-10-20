@@ -59,6 +59,7 @@ const compositionCommands = [
   "development_assembly",
 ];
 const nativeAdapters = new Map([
+  ["apps/desktop/src/workspace/window.ts", []],
   ["apps/desktop/src/home/native.ts", ["device_overview"]],
   ["apps/desktop/src/assembly.ts", ["development_assembly"]],
   ["apps/desktop/src/appearance.ts", ["appearance_snapshot"]],
@@ -188,6 +189,8 @@ export function checkSource(file, source) {
   if (file === "apps/desktop/src/self-service/PolicySelfService.vue")
     allowed.push("ajv");
   if (nativeAdapters.has(file)) allowed.push("@tauri-apps/api/core");
+  if (file === "apps/desktop/src/workspace/window.ts")
+    allowed.push("@tauri-apps/api/window");
   if (assistant)
     allowed.push(
       "@rss-mdm-agent/ai-client",
@@ -341,7 +344,12 @@ export function checkSource(file, source) {
       for (const name of ["document", "HTMLElement"]) globals.add(name);
     if (file === "packages/ui/src/components/UiSearchInput.vue")
       for (const name of ["setTimeout", "clearTimeout"]) globals.add(name);
-    if (file === "packages/ui/src/components/AppShell.vue")
+    if (
+      [
+        "packages/ui/src/components/AppShell.vue",
+        "packages/ui/src/components/MessageComposer.vue",
+      ].includes(file)
+    )
       globals.add("ResizeObserver");
     if (file === "apps/desktop/src/assistant/clipboard.ts")
       globals.add("navigator");
@@ -364,6 +372,7 @@ export function checkSource(file, source) {
     )
       globals.add("Error");
     const assistantGlobals = {
+      "apps/desktop/src/workspace/page-context.ts": ["JSON"],
       "apps/desktop/src/assistant/operation-ui/NodeView.ts": [
         "Symbol",
         "document",
@@ -451,7 +460,11 @@ export function checkSource(file, source) {
         errors.push(`${file}: unexpected dependency ${name}`);
       if (
         /(?:^|\/)(api|transport|stores?)(?:[./]|$)/.test(name) &&
-        !(nativeAdapters.has(file) && name === "@tauri-apps/api/core")
+        !(nativeAdapters.has(file) && name === "@tauri-apps/api/core") &&
+        !(
+          file === "apps/desktop/src/workspace/window.ts" &&
+          name === "@tauri-apps/api/window"
+        )
       )
         errors.push(`${file}: host dependency ${name}`);
       if (
@@ -782,9 +795,16 @@ export function checkTree(treeRoot = root, executable) {
       JSON.stringify(cap.windows) !== '["main"]' ||
       JSON.stringify(cap.permissions?.toSorted()) !==
         JSON.stringify(
-          compositionCommands
-            .map((cmd) => `allow-${cmd.replaceAll("_", "-")}`)
-            .toSorted(),
+          [
+            ...compositionCommands.map(
+              (cmd) => `allow-${cmd.replaceAll("_", "-")}`,
+            ),
+            "core:window:allow-start-dragging",
+            "core:window:allow-internal-toggle-maximize",
+            "core:window:allow-minimize",
+            "core:window:allow-toggle-maximize",
+            "core:window:allow-close",
+          ].toSorted(),
         ) ||
       cap.remote
     )

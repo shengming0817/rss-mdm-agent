@@ -27,7 +27,7 @@ withDefaults(
 
       <div v-else-if="item.kind === 'user'" class="user-row">
         <div class="user-bubble">
-          <span class="user-label">你 / You</span>
+          <span class="sr-only">你</span>
           <pre class="text">{{ item.text }}</pre>
         </div>
       </div>
@@ -44,10 +44,10 @@ withDefaults(
 
 <style scoped>
 .stream {
-  margin-top: var(--rss-space-4);
+  margin-top: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--rss-space-8);
+  gap: 20px;
 }
 .text {
   margin: 0;
@@ -56,7 +56,7 @@ withDefaults(
   font: inherit;
 }
 .message {
-  line-height: 1.5;
+  line-height: 1.75;
 }
 .reasoning {
   border-left: 2px solid var(--rss-color-border-strong);
@@ -76,18 +76,13 @@ withDefaults(
   justify-content: flex-end;
 }
 .user-bubble {
-  max-width: 80%;
-  padding: var(--rss-space-6) var(--rss-space-8);
-  border-radius: var(--rss-radius-lg);
+  max-width: 86%;
+  padding: 10px 15px;
+  border-radius: 16px 16px 4px 16px;
+  font-size: 14px;
   background: var(--rss-color-neutral-bg);
 }
-.user-label {
-  display: block;
-  font-size: var(--rss-font-size-sm);
-  color: var(--rss-color-text-muted);
-  margin-bottom: var(--rss-space-2);
-}
 .user-bubble .text {
-  line-height: 1.5;
+  line-height: 1.75;
 }
 </style>

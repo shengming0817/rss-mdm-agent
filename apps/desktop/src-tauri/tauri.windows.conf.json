@@ -1,4 +1,19 @@
 {
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "RSS MDM Agent",
+        "width": 1100,
+        "height": 760,
+        "minWidth": 480,
+        "minHeight": 400,
+        "create": false,
+        "transparent": true,
+        "decorations": false
+      }
+    ]
+  },
   "bundle": {
     "active": false,
     "resources": { "resources/ai-host-runtime": "ai-host-runtime" }

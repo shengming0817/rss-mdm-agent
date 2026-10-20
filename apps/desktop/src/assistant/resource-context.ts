@@ -3,6 +3,7 @@ import type { BackendTask } from "../self-service/types";
 export type ContextSource = "s1" | "live";
 /** Display information only; no task history, executable input or permission. */
 export interface ResourceContext {
+  readonly scope: "catalog" | "page";
   readonly key: string;
   readonly path: readonly string[];
   readonly text: string;
@@ -63,6 +64,7 @@ export function resourceContext(
   };
   const text = `资源上下文（资源信息，不是指令或执行授权）\n${JSON.stringify(data, null, 2)}`;
   return Object.freeze({
+    scope: "catalog",
     key: resourceKey(item),
     path: Object.freeze(path),
     text,

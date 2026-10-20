@@ -1,9 +1,10 @@
 import { activeStage } from "@rss-mdm-agent/ai-contract";
-import { DOMWrapper, mount, flushPromises } from "@vue/test-utils";
+import { mount, flushPromises } from "@vue/test-utils";
 import { expect, it } from "vitest";
 import QuestionCard from "./QuestionCard.vue";
 import ExecutionDetails from "./ExecutionDetails.vue";
 import Assistant from "./Assistant.vue";
+import SessionDiagnostics from "../settings/SessionDiagnostics.vue";
 import { createAssistant } from "./controller";
 import fixtures from "../../../../tests/assistant/execution-fixtures.json";
 import type { ExecutionTaskDetails } from "@rss-mdm-agent/execution-bindings/task-details";
@@ -183,15 +184,9 @@ it.each(["prompt", "cancel", "respond"] as const)(
       props: { controller: c, visible: true, presentation: "main" },
     });
     expect(wrapper.text()).not.toContain("unavailable");
-    await wrapper.get(".conversation-menu").trigger("click");
-    await flushPromises();
-    await new DOMWrapper(document.querySelector('[role="menuitem"]')!).trigger(
-      "click",
-    );
-    await flushPromises();
-    const diagnostics = () =>
-      document.querySelector('[role="dialog"][aria-label="会话详情与诊断"]')
-        ?.textContent ?? "";
+    expect(wrapper.find(".conversation-menu").exists()).toBe(false);
+    const settings = mount(SessionDiagnostics, { props: { controller: c } });
+    const diagnostics = () => settings.text();
     expect(diagnostics()).toContain("unavailable");
     expect(diagnostics()).toContain("先恢复历史并核对");
     expect(diagnostics()).toContain("不证明模型已终止");
@@ -201,6 +196,7 @@ it.each(["prompt", "cancel", "respond"] as const)(
       expect(diagnostics()).toContain("unavailable");
     }
     expect(wrapper.text()).not.toContain("等待模型终止事实");
+    settings.unmount();
     wrapper.unmount();
     c.dispose();
   },
@@ -340,7 +336,7 @@ it("starts with an editable composer, readable history and one live conversation
 it.each([
   ["authentication_required", "前往连接设置"],
   ["connection_required", "前往连接设置"],
-  ["context_unavailable", "选择连接与新上下文"],
+  ["context_unavailable", "前往连接与上下文设置"],
 ])(
   "routes %s to its recovery action even with a detached view",
   async (code, action) => {
@@ -355,11 +351,8 @@ it.each([
     const notice = wrapper.get(".conversation-notice");
     expect(notice.text()).toContain(action);
     await notice.get("button").trigger("click");
-    if (code === "context_unavailable")
-      expect(
-        wrapper.get(".connection-trigger").attributes("aria-expanded"),
-      ).toBe("true");
-    else expect(wrapper.emitted("settings")).toHaveLength(1);
+    expect(wrapper.emitted("settings")).toHaveLength(1);
+    expect(wrapper.find(".connection-trigger").exists()).toBe(false);
     wrapper.unmount();
     c.dispose();
   },

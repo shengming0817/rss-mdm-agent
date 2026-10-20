@@ -35,6 +35,7 @@ export function nativeHost() {
 export type ServicePort = {
   read(): Promise<ServiceView>;
   registration(): Promise<RegistrationStatus>;
+  mdmStatus(): Promise<MdmStatus>;
   requestRegistration(
     organizationId?: string,
     login?: string,
@@ -47,6 +48,7 @@ export function nativeService(): ServicePort | undefined {
   return {
     read: () => invoke<ServiceView>("execution_service_status"),
     registration: () => invoke<RegistrationStatus>("agent_registration_status"),
+    mdmStatus: readMdmStatus,
     async requestRegistration(organizationId, login) {
       try {
         return await invoke<RegistrationStatus>("agent_request_registration", {

@@ -96,7 +96,13 @@ test("fixture supplies isolated current identity and Host operations with genera
     return { status: r.status, value: await r.json() };
   };
   const identity = (await read("identity")).value;
-  assert.match(identity.user.displayName, /fixture/);
+  assert.equal(identity.generation, "isolated-fixture-identity");
+  assert.deepEqual(identity.identity, {
+    mode: "device",
+    authorityId: "desktop-guest",
+    tenantId: "local-guest",
+    principalId: "guest",
+  });
   const host = (await read("host")).value;
   assert.equal(host.phase, "ready");
   assert.match(host.version, /fixture/);
