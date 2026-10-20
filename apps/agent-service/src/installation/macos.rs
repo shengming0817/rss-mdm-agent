@@ -291,8 +291,7 @@ pub(super) fn quiescent(old: &Deployment, config: &Path) -> Result<(), Error> {
     Ok(())
 }
 pub(super) fn interactive_profile() -> Result<Profile, Error> {
-    let (subject, _) =
-        execution_ipc::host::active_user_session().map_err(crate::error::app_error)?;
+    let subject = execution_ipc::host::active_user_subject().map_err(crate::error::app_error)?;
     let uid: libc::uid_t = subject.parse().map_err(|_| Error::Identity)?;
     let mut entry = std::mem::MaybeUninit::<libc::passwd>::uninit();
     let mut result = std::ptr::null_mut();

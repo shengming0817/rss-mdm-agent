@@ -28,7 +28,9 @@ unicode-normalization = "=0.1.25"
 uuid = { version = "=1.26.0", features = ["v4"] }
 libc = "=0.2.189"
 schemars.workspace = true
-tauri = { workspace = true, features = ["macos-private-api"] }
+# The installer exposes a root-owned /Applications symlink to the pinned versioned app.
+# Native IPC pins and the bundled runtime digest still verify the resolved installed images.
+tauri = { workspace = true, features = ["macos-private-api", "process-relaunch-dangerous-allow-symlink-macos"] }
 serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }
 sha2.workspace = true
