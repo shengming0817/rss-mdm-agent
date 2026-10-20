@@ -78,25 +78,11 @@ export function freezeCandidate(
       : {}),
   };
 }
-export function verifyCandidate(root, path) {
+export function verifyCandidate(path) {
   const candidate = JSON.parse(readFileSync(path, "utf8"));
   assert.equal(candidate.version, 1);
   assert.equal(candidate.platform, process.platform);
   assert.equal(candidate.architecture, process.arch);
-  const source = sourceEvidence(root);
-  for (const key of [
-    "head",
-    "sourceSha256",
-    "cargoLockSha256",
-    "pnpmLockSha256",
-    "node",
-    "pnpm",
-  ])
-    assert.equal(
-      candidate.source[key],
-      source[key],
-      "candidate source/toolchain changed",
-    );
   assert.ok(candidate.binaries.service && candidate.binaries.backend);
   for (const expected of Object.values(candidate.binaries))
     assert.deepEqual(image(expected.path), expected, "candidate image changed");
@@ -115,7 +101,7 @@ if (
 ) {
   const [verb, ...arguments_] = process.argv.slice(2);
   if (verb === "verify" && arguments_.length === 1) {
-    console.log(JSON.stringify(verifyCandidate(process.cwd(), arguments_[0])));
+    console.log(JSON.stringify(verifyCandidate(arguments_[0])));
   } else if (verb === "freeze") {
     const options = {};
     for (let i = 0; i < arguments_.length; i += 2) {

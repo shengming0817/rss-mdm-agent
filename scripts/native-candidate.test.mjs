@@ -45,26 +45,26 @@ test(
     const file = join(root, "candidate.json");
     writeFileSync(file, JSON.stringify(candidate));
     assert.equal(
-      verifyCandidate(process.cwd(), file).binaries.service.sha256,
+      verifyCandidate(file).binaries.service.sha256,
       candidate.binaries.service.sha256,
     );
     assert.equal(
-      verifyCandidate(process.cwd(), file).binaries.securityProbe.sha256,
+      verifyCandidate(file).binaries.securityProbe.sha256,
       candidate.binaries.securityProbe.sha256,
     );
     const manifest = JSON.stringify({
       runtimeTreeSha256: runtimeTreeSha256(runtime),
     });
     writeFileSync(join(runtime, "manifest.json"), "substituted manifest");
-    assert.throws(() => verifyCandidate(process.cwd(), file));
+    assert.throws(() => verifyCandidate(file));
     writeFileSync(join(runtime, "manifest.json"), manifest);
     writeFileSync(join(runtime, "bin/node"), "substituted runtime");
-    assert.throws(() => verifyCandidate(process.cwd(), file));
+    assert.throws(() => verifyCandidate(file));
     writeFileSync(join(runtime, "bin/node"), "fixed runtime");
     writeFileSync(file, JSON.stringify({ ...candidate, platform: "win32" }));
-    assert.throws(() => verifyCandidate(process.cwd(), file));
+    assert.throws(() => verifyCandidate(file));
     writeFileSync(file, JSON.stringify(candidate));
     writeFileSync(binary, "substituted image");
-    assert.throws(() => verifyCandidate(process.cwd(), file));
+    assert.throws(() => verifyCandidate(file));
   },
 );

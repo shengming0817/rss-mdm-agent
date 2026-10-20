@@ -731,7 +731,7 @@ try {
     );
   } else {
     const candidate = candidatePath
-      ? verifyCandidate(root, candidatePath)
+      ? verifyCandidate(candidatePath)
       : undefined;
     if (candidate)
       assert.ok(
@@ -950,7 +950,7 @@ try {
     assert.equal(manifest.status, "passed");
     assert.equal(manifest.developmentFingerprint, developmentFingerprint(root));
     verifyRuntimeIntegrity(artifact, manifest.runtimeTreeSha256);
-    if (candidatePath) verifyCandidate(root, candidatePath);
+    if (candidatePath) verifyCandidate(candidatePath);
     result.runtimeManifestSha256 = sha256(
       readFileSync(join(artifact, "manifest.json")),
     );
@@ -2487,7 +2487,7 @@ try {
       result.runtimeManifestSha256,
     );
     verifyRuntimeIntegrity(artifact, manifest.runtimeTreeSha256);
-    if (candidatePath) verifyCandidate(root, candidatePath);
+    if (candidatePath) verifyCandidate(candidatePath);
     result.status = "passed";
   }
 } catch (error) {
