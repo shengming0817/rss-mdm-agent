@@ -21,6 +21,8 @@ $Config=[IO.Path]::GetFullPath($Config)
 $Frozen=(& node (Join-Path $Root 'scripts/native-candidate.mjs') verify $Candidate | ConvertFrom-Json)
 if ($LASTEXITCODE -ne 0) { throw 'Fixed candidate verification failed' }
 $Binary=$Frozen.binaries.service.path
+$NodeVersion=(& node --version)
+if ($LASTEXITCODE -ne 0) { throw 'Acceptance Node version unavailable' }
 if ([IO.File]::Exists($Output) -or [IO.Directory]::Exists($Output)) { throw 'Receipt directory must be new' }
 $null=New-Item -ItemType Directory -Path $Output
 $Acl=[Security.AccessControl.DirectorySecurity]::new()
@@ -29,7 +31,7 @@ foreach ($Sid in @($Identity.User.Value,'S-1-5-18','S-1-5-32-544')) {
     $Acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]::new($Sid),'FullControl','ContainerInherit,ObjectInherit','None','Allow'))
 }
 Set-Acl -LiteralPath $Output -AclObject $Acl
-$Receipt=[ordered]@{status='running';phase=$Phase;utc=[DateTime]::UtcNow.ToString('o');osVersion=[Environment]::OSVersion.Version.ToString();architecture=[Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString().ToLowerInvariant();subject=$Identity.User.Value;session=(Get-Process -Id $PID).SessionId;candidate=$Frozen;signature=(Get-AuthenticodeSignature -LiteralPath $Binary).Status.ToString();scenarios=@{};unexecuted=@('remote/same-name pipe','wrong SID/session','fake server','weak ACL/reparse','LocalSystem/user DPAPI separation','malformed/replay/expiry requests','old-connection revocation','real desktop/Codex','Host/worker Job Object recovery')}
+$Receipt=[ordered]@{status='running';phase=$Phase;utc=[DateTime]::UtcNow.ToString('o');osVersion=[Environment]::OSVersion.Version.ToString();architecture=[Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString().ToLowerInvariant();subject=$Identity.User.Value;session=(Get-Process -Id $PID).SessionId;candidate=$Frozen;acceptanceEnvironment=@{node=$NodeVersion;powershell=$PSVersionTable.PSVersion.ToString()};signature=(Get-AuthenticodeSignature -LiteralPath $Binary).Status.ToString();scenarios=@{};unexecuted=@('remote/same-name pipe','wrong SID/session','fake server','weak ACL/reparse','LocalSystem/user DPAPI separation','malformed/replay/expiry requests','old-connection revocation','real desktop/Codex','Host/worker Job Object recovery')}
 $HelperCreated=$false
 try {
     switch ($Phase) {

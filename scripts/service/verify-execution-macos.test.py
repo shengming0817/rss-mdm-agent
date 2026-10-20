@@ -202,29 +202,58 @@ finally: connection.close()
                     if owner.poll() is None: owner.kill();owner.communicate(timeout=5)
 
     def test_prepared_administrator_programs_remain_valid_before_authority(self):
+        for fixed in (False,True):
+            with tempfile.TemporaryDirectory() as directory:
+                root=Path(directory);backend=root/'backend';output=root/'output'
+                info={'origin':'https://localhost:1','tenant':'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','key':'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+                      'caPem':(Path(__file__).resolve().parents[2]/'tests/agent-protocol/pki/root-test-ca.pem').read_text()}
+                configuration={'configuration':{'wireVersion':1,'configurationId':'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+                    'tenantId':info['tenant'],'origin':info['origin'],'targets':[{'platform':'macos','architecture':'aarch64'}],
+                    'channels':['test'],'expiresAt':9999999999,'quantity':{'kind':'finite','count':2},'keyId':'test'},
+                    'secret':'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE','signature':'preparation-only'}
+                # Preparation only: assert the new public input, then stop before authority or TLS.
+                backend.write_text('#!/usr/bin/python3\nimport sys,json\nprint('+repr(json.dumps(info))+',flush=True)\nfor line in sys.stdin:\n request=json.loads(line)\n assert request["kind"]=="configuration"\n assert len(request["candidateSha256"])==32 and all(type(v)==int and 0<=v<=255 for v in request["candidateSha256"])\n print('+repr(json.dumps(configuration))+',flush=True)\n');backend.chmod(0o700)
+                programs=[]
+                class NoAuthority:
+                    reader=None
+                    def __init__(self,setup,initialize,restart,cleanup,*args):
+                        for path in (setup,initialize,restart,cleanup):
+                            program=path.read_text();compile(program,str(path),'exec');programs.append(program)
+                    def start(self): raise RuntimeError('stop before administrator authority')
+                    def close(self): pass
+                frozen=dict(source=dict(head='historical-build',node='old-node',pnpm='old-pnpm'),
+                            binaries={name:dict(path=str(path.resolve())) for name,path in [('service',Path('/bin/sh')),('desktop',Path('/bin/sh')),('backend',backend)]}) if fixed else None
+                argv=['verify','--binary','/bin/sh','--desktop','/bin/sh','--backend',str(backend),'--output',str(output)]
+                if fixed: argv+=['--candidate',str(root/'candidate.json')]
+                actual_run=acceptance.run
+                def no_git(*args,**kwargs):
+                    self.assertNotIn('git',Path(args[0]).name)
+                    return actual_run(*args,**kwargs)
+                with patch.object(acceptance,'DEFAULT_CONFIG',root/'absent-default.json'), patch.object(acceptance.sys,'argv',argv),patch.object(acceptance,'AdministratorSession',NoAuthority),patch.object(acceptance,'verify_candidate',return_value=frozen) as verify,patch.object(acceptance,'run',side_effect=no_git):
+                    with self.assertRaisesRegex(RuntimeError,'stop before administrator authority'): acceptance.main()
+                self.assertEqual(len(programs),4)
+                receipt=json.loads((output/'receipt.json').read_text());self.assertEqual(receipt['cleanup'],'complete');self.assertFalse(receipt['installationCreated'])
+                self.assertEqual(receipt['candidate'],frozen)
+                self.assertEqual(receipt['acceptanceEnvironment']['python'],sys.version.split()[0])
+                self.assertEqual(receipt['acceptanceEnvironment']['node'],subprocess.check_output(['node','--version'],text=True).strip())
+                if fixed: self.assertEqual(verify.call_count,2)
+                staged=Path(receipt['inputStaging']);(staged/'helper').rmdir();staged.rmdir()
+    def test_tool_version_failure_does_not_allocate_receipt_or_staging(self):
         with tempfile.TemporaryDirectory() as directory:
-            root=Path(directory);backend=root/'backend';output=root/'output'
-            info={'origin':'https://localhost:1','tenant':'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','key':'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
-                  'caPem':(Path(__file__).resolve().parents[2]/'tests/agent-protocol/pki/root-test-ca.pem').read_text()}
-            configuration={'configuration':{'wireVersion':1,'configurationId':'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
-                'tenantId':info['tenant'],'origin':info['origin'],'targets':[{'platform':'macos','architecture':'aarch64'}],
-                'channels':['test'],'expiresAt':9999999999,'quantity':{'kind':'finite','count':2},'keyId':'test'},
-                'secret':'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE','signature':'preparation-only'}
-            # Preparation only: assert the new public input, then stop before authority or TLS.
-            backend.write_text('#!/usr/bin/python3\nimport sys,json\nprint('+repr(json.dumps(info))+',flush=True)\nfor line in sys.stdin:\n request=json.loads(line)\n assert request["kind"]=="configuration"\n assert len(request["candidateSha256"])==32 and all(type(v)==int and 0<=v<=255 for v in request["candidateSha256"])\n print('+repr(json.dumps(configuration))+',flush=True)\n');backend.chmod(0o700)
-            programs=[]
-            class NoAuthority:
-                reader=None
-                def __init__(self,setup,initialize,restart,cleanup,*args):
-                    for path in (setup,initialize,restart,cleanup):
-                        program=path.read_text();compile(program,str(path),'exec');programs.append(program)
-                def start(self): raise RuntimeError('stop before administrator authority')
-                def close(self): pass
-            with patch.object(acceptance,'DEFAULT_CONFIG',root/'absent-default.json'), patch.object(acceptance.sys,'argv',['verify','--binary','/bin/sh','--desktop','/bin/sh','--backend',str(backend),'--output',str(output)]),patch.object(acceptance,'AdministratorSession',NoAuthority):
-                with self.assertRaisesRegex(RuntimeError,'stop before administrator authority'): acceptance.main()
-            self.assertEqual(len(programs),4)
-            receipt=json.loads((output/'receipt.json').read_text());self.assertEqual(receipt['cleanup'],'complete');self.assertFalse(receipt['installationCreated'])
-            staged=Path(receipt['inputStaging']);(staged/'helper').rmdir();staged.rmdir()
+            root=Path(directory);output=root/'output'
+            argv=['verify','--binary','/bin/sh','--backend','/bin/sh','--output',str(output)]
+            with patch.object(acceptance.sys,'argv',argv),patch.object(acceptance,'DEFAULT_CONFIG',root/'absent'),patch.object(acceptance,'run',side_effect=RuntimeError('Node version unavailable')),patch.object(acceptance.subprocess,'run',return_value=MagicMock(returncode=113)),patch.object(acceptance.tempfile,'mkdtemp') as stage:
+                with self.assertRaisesRegex(RuntimeError,'Node version unavailable'): acceptance.main()
+                stage.assert_not_called()
+            self.assertFalse(output.exists())
+
+    def test_fixed_candidate_arguments_and_security_probes_remain_required(self):
+        frozen=dict(source=dict(head='historical-build'),binaries={name:dict(path=str(Path('/bin/sh').resolve())) for name in ('service','backend')})
+        base=['verify','--binary','/bin/sh','--backend','/bin/sh','--output','unused','--candidate','candidate.json']
+        for extra,message in [(['--binary','/bin/ls'],'candidate argument mismatch'),(['--security'],'security matrix requires frozen')]:
+            with self.subTest(extra=extra),patch.object(acceptance.sys,'argv',base+extra),patch.object(acceptance,'verify_candidate',return_value=frozen):
+                with self.assertRaisesRegex(RuntimeError,message): acceptance.main()
+
 
 
 class EvidenceTests(unittest.TestCase):

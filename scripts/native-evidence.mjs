@@ -46,6 +46,12 @@ export function sourceEvidence(root) {
     sourceSha256: hash.digest("hex"),
     cargoLockSha256: sha256(readFileSync(join(root, "Cargo.lock"))),
     pnpmLockSha256: sha256(readFileSync(join(root, "pnpm-lock.yaml"))),
+    ...toolchainEvidence(root),
+  };
+}
+
+export function toolchainEvidence(root) {
+  return {
     node: process.version,
     pnpm: execFileSync(
       process.platform === "win32" ? process.execPath : "pnpm",

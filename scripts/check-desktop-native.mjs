@@ -33,13 +33,16 @@ import { remote } from "webdriverio";
 import { startModelFixture } from "../tests/desktop/model-fixture.mjs";
 import {
   sourceEvidence,
+  toolchainEvidence,
   sha256,
   waitForAppearance,
 } from "./native-evidence.mjs";
-import { developmentFingerprint } from "./desktop-dev-runtime.mjs";
-import { verifyCandidate } from "./native-candidate.mjs";
+import {
+  verifyCandidate,
+  verifyNativeRuntime,
+  nativeProductModules,
+} from "./native-candidate.mjs";
 import { verifyRuntimeIntegrity } from "./ai-host-artifacts.mjs";
-import { scopeAbsentWithin } from "../packages/ai-host/dist/process.js";
 
 const visualOnly = process.argv.includes("--visual");
 const baseline = process.argv.includes("--baseline");
@@ -55,6 +58,11 @@ const candidatePath =
 assert.ok(
   candidateIndex < 0 || (controlledService && candidatePath),
   "candidate requires controlled-service mode",
+);
+
+assert.ok(
+  !candidatePath || !visualOnly,
+  "candidate is unavailable in visual development mode",
 );
 
 const passwordFileIndex = process.argv.indexOf("--authorization-password-file");
@@ -142,7 +150,7 @@ let directory,
   stage = "preflight",
   spawnError,
   keychainState;
-let scopeRuntime;
+let scopeRuntime, productModules, scopeAbsentWithin;
 const ownedWorkerScopes = new Map();
 const processIdentity = processField;
 const rememberScopes = (rows, host) => {
@@ -502,9 +510,9 @@ const verifyUnknownFence = async () => {
     import {pathToFileURL} from 'node:url';
     import {join} from 'node:path';
     const input=JSON.parse(process.argv[1]);
-    const {openSqliteStore}=await import(pathToFileURL(join(input.root,'packages/ai-store-sqlite/dist/index.js')));
-    const {createHost}=await import(pathToFileURL(join(input.root,'packages/ai-host/dist/index.js')));
-    const {scopeAbsentWithin,processWorkerAdapter}=await import(pathToFileURL(join(input.root,'packages/ai-host/dist/process.js')));
+    const {openSqliteStore}=await import(input.modules.store);
+    const {createHost}=await import(input.modules.host);
+    const {scopeAbsentWithin,processWorkerAdapter}=await import(input.modules.process);
     const {fixtureSession,acceptance}=await import(pathToFileURL(join(input.root,'packages/ai-contract/dist/testing/index.js')));
     const {fixturePersistence}=await import(pathToFileURL(join(input.root,'tests/ai-host/harness.mjs')));
     const budget=()=>({timeoutMs:5000,signal:new AbortController().signal});
@@ -555,6 +563,7 @@ const verifyUnknownFence = async () => {
       path: join(directory, "scope-fault.sqlite"),
       actorRecoveryPath: join(directory, "scope-fault-actor.json"),
       runtime: scopeRuntime,
+      modules: productModules,
     },
     async (proof, executorPid) => {
       assert.equal(proof.kind, "ownedScope");
@@ -617,7 +626,12 @@ const task = async () => {
   );
 };
 try {
-  result.source = sourceEvidence(root);
+  result.acceptanceEnvironment = {
+    platform: process.platform,
+    architecture: process.arch,
+    ...toolchainEvidence(root),
+  };
+  if (!candidatePath) result.developmentSource = sourceEvidence(root);
   assert.equal(process.platform, "darwin");
   assert.equal(process.arch, "arm64");
   if (!visualOnly && !controlledService)
@@ -643,9 +657,12 @@ try {
     "System Events accessibility permission is required",
   );
   const packageManifest = JSON.parse(readFileSync(join(root, "package.json")));
-  assert.equal(result.source.node, `v${packageManifest.engines.node}`);
   assert.equal(
-    result.source.pnpm,
+    result.acceptanceEnvironment.node,
+    `v${packageManifest.engines.node}`,
+  );
+  assert.equal(
+    result.acceptanceEnvironment.pnpm,
     packageManifest.packageManager.split("@")[1],
   );
   // Temporary assertion owned by this run; never changes lock settings or unlocks a desktop.
@@ -731,7 +748,7 @@ try {
     );
   } else {
     const candidate = candidatePath
-      ? verifyCandidate(root, candidatePath)
+      ? verifyCandidate(candidatePath)
       : undefined;
     if (candidate)
       assert.ok(
@@ -784,6 +801,8 @@ try {
         0,
         "native candidate preparation failed",
       );
+    productModules = nativeProductModules(root, candidate?.runtime.path);
+    ({ scopeAbsentWithin } = await import(productModules.process));
     mark(
       "explicit controlled installation; native administrator authorization",
     );
@@ -945,12 +964,7 @@ try {
     env.RSS_AI_HOST_RUNTIME ?? join(root, ".local-ci-runs/ai-host-dev-runtime");
   let manifest;
   if (!visualOnly) {
-    manifest = JSON.parse(readFileSync(join(artifact, "manifest.json")));
-    assert.equal(manifest.kind, "development");
-    assert.equal(manifest.status, "passed");
-    assert.equal(manifest.developmentFingerprint, developmentFingerprint(root));
-    verifyRuntimeIntegrity(artifact, manifest.runtimeTreeSha256);
-    if (candidatePath) verifyCandidate(root, candidatePath);
+    manifest = verifyNativeRuntime(root, artifact, candidatePath);
     result.runtimeManifestSha256 = sha256(
       readFileSync(join(artifact, "manifest.json")),
     );
@@ -1629,7 +1643,7 @@ try {
     result.baseline = baseline;
     assert.deepEqual(
       sourceEvidence(root),
-      result.source,
+      result.developmentSource,
       "source changed during acceptance",
     );
     result.status = "passed";
@@ -2477,17 +2491,18 @@ try {
       model: fixture.facts,
     };
     result.checks.push("native-menu-quit", "host-processes-reaped");
-    assert.deepEqual(
-      sourceEvidence(root),
-      result.source,
-      "source changed during acceptance",
-    );
+    if (!candidatePath)
+      assert.deepEqual(
+        sourceEvidence(root),
+        result.developmentSource,
+        "source changed during acceptance",
+      );
     assert.equal(
       sha256(readFileSync(join(artifact, "manifest.json"))),
       result.runtimeManifestSha256,
     );
     verifyRuntimeIntegrity(artifact, manifest.runtimeTreeSha256);
-    if (candidatePath) verifyCandidate(root, candidatePath);
+    if (candidatePath) verifyCandidate(candidatePath);
     result.status = "passed";
   }
 } catch (error) {

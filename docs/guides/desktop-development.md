@@ -92,9 +92,9 @@ CI 在本轮准备阶段构建选中的包与 Rust helper，后续检查复用�
 
 真实执行旅程需要显式 `--controlled-service`，使用受保护固定候选、真实认证 IPC 和服务 journal；普通开发启动不会自动安装服务。调试构建的真实 AI 路径使用隔离 macOS 文件钥匙串，退出后删除并核对默认钥匙串与搜索列表未改变；fixture 路径不创建钥匙串。正式签名应用的钥匙串授权另行验收。
 
-驱动使用固定 `webdriverio@9.32.0` 与 `tauri-plugin-wdio-webdriver@1.4.0` 的标准 WebDriver 接口。`native-e2e` 只允许调试构建，并要求显式 nonce、动态 loopback 端口和隔离 `--test-data-dir`；release 携带该 feature 会编译失败。脚本核对主进程与监听端口归属；固定的 [本地上游补丁](../../vendor/tauri-plugin-wdio-webdriver/NOTICE.md) 对每个请求校验运行凭据，缺失或错误凭据一律拒绝，启动日志仅记录凭据摘要。脚本不调用 WebView 内部 IPC、不替换业务回复。视觉模式的关闭/重开通过 WebDriver 原生 `window.close()` 与应用“显示窗口”菜单验证；开发窗口的标题栏关闭按钮未向 AX 暴露，物理按钮点击单独标为未验证。Tab、Shift+Tab、Escape 和应用菜单操作由 macOS System Events 发出；WebDriver 键盘事件不能替代这些证据。不要在验收期间修改源码或并发启动同一 worktree 的开发服务。
+驱动使用固定 `webdriverio@9.32.0` 与 `tauri-plugin-wdio-webdriver@1.4.0` 的标准 WebDriver 接口。`native-e2e` 只允许调试构建，并要求显式 nonce、动态 loopback 端口和隔离 `--test-data-dir`；release 携带该 feature 会编译失败。脚本核对主进程与监听端口归属；固定的 [本地上游补丁](../../vendor/tauri-plugin-wdio-webdriver/NOTICE.md) 对每个请求校验运行凭据，缺失或错误凭据一律拒绝，启动日志仅记录凭据摘要。脚本不调用 WebView 内部 IPC、不替换业务回复。视觉模式的关闭/重开通过 WebDriver 原生 `window.close()` 与应用“显示窗口”菜单验证；开发窗口的标题栏关闭按钮未向 AX 暴露，物理按钮点击单独标为未验证。Tab、Shift+Tab、Escape 和应用菜单操作由 macOS System Events 发出；WebDriver 键盘事件不能替代这些证据。开发构建验收期间保持源码不变；固定候选验收允许源码变化。不要并发启动同一 worktree 的开发服务。
 
-`.local-ci-runs/desktop-native.json` 记录实际模式、源码/锁文件/运行包摘要、进程归属与完成项，截图和脱敏日志在同目录。失败回执不能解释为通过。fixture 模式证明产品 WebView 与显式样本装配；controlled-service 模式分别保留真实服务 journal、后台回执及独立设备效果证据。本地模型响应仍是受控样本，不证明真实模型能力。
+`.local-ci-runs/desktop-native.json` 记录实际模式、当前工具运行环境、运行包摘要、进程归属与完成项；固定候选保留冻结时来源，开发构建路径另记源码与锁文件摘要，截图和脱敏日志在同目录。失败回执不能解释为通过。fixture 模式证明产品 WebView 与显式样本装配；controlled-service 模式分别保留真实服务 journal、后台回执及独立设备效果证据。本地模型响应仍是受控样本，不证明真实模型能力。
 
 发布资源验收使用 `pnpm bundle:ai-host && pnpm check:desktop-bundle`。入口构建带隔离应用标识和测试内置连接的实际 release `.app`，从无测试参数的生产 main 启动；核对 Host、内置组织不落盘及运行时配置不能覆盖默认连接，不主动登录。禁用 runtime override，不包含原生驱动，核验完整 runtime 树与 Native health 握手；结果写入 `.local-ci-runs/desktop-bundle.json`，绑定源码、锁文件和 runtime manifest。此 smoke 只证明启动与资源定位，使用隔离进程组清理，优雅退出由日常原生验收验证。
 

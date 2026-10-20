@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { developmentFingerprint } from "./desktop-dev-runtime.mjs";
 import { sourceEvidence, sha256 } from "./native-evidence.mjs";
 import {
   runtimeTreeSha256,
@@ -78,25 +79,11 @@ export function freezeCandidate(
       : {}),
   };
 }
-export function verifyCandidate(root, path) {
+export function verifyCandidate(path) {
   const candidate = JSON.parse(readFileSync(path, "utf8"));
   assert.equal(candidate.version, 1);
   assert.equal(candidate.platform, process.platform);
   assert.equal(candidate.architecture, process.arch);
-  const source = sourceEvidence(root);
-  for (const key of [
-    "head",
-    "sourceSha256",
-    "cargoLockSha256",
-    "pnpmLockSha256",
-    "node",
-    "pnpm",
-  ])
-    assert.equal(
-      candidate.source[key],
-      source[key],
-      "candidate source/toolchain changed",
-    );
   assert.ok(candidate.binaries.service && candidate.binaries.backend);
   for (const expected of Object.values(candidate.binaries))
     assert.deepEqual(image(expected.path), expected, "candidate image changed");
@@ -109,13 +96,52 @@ export function verifyCandidate(root, path) {
   }
   return candidate;
 }
+// Explicit file URLs prevent module lookup from falling back to checkout packages.
+// ref: nodejs/node lib/internal/modules/esm/resolve.js@v24.14.1.
+export function nativeProductModules(root, runtime) {
+  const packages = runtime
+    ? resolve(runtime, "node_modules/@rss-mdm-agent")
+    : resolve(root, "packages");
+  return Object.fromEntries(
+    Object.entries({
+      host: "ai-host/dist/index.js",
+      process: "ai-host/dist/process.js",
+      store: "ai-store-sqlite/dist/index.js",
+    }).map(([name, path]) => [
+      name,
+      pathToFileURL(resolve(packages, path)).href,
+    ]),
+  );
+}
+
+// Fixed acceptance binds the frozen runtime; development binds the current source.
+export function verifyNativeRuntime(root, directory, candidatePath) {
+  const manifest = JSON.parse(
+    readFileSync(resolve(directory, "manifest.json")),
+  );
+  assert.equal(manifest.kind, "development");
+  assert.equal(manifest.status, "passed");
+  if (candidatePath) {
+    const candidate = verifyCandidate(candidatePath);
+    assert.equal(
+      realpathSync(directory),
+      candidate.runtime?.path,
+      "candidate runtime mismatch",
+    );
+  } else {
+    assert.equal(manifest.developmentFingerprint, developmentFingerprint(root));
+  }
+  verifyRuntimeIntegrity(directory, manifest.runtimeTreeSha256);
+  return manifest;
+}
+
 if (
   process.argv[1] &&
   resolve(process.argv[1]) === fileURLToPath(import.meta.url)
 ) {
   const [verb, ...arguments_] = process.argv.slice(2);
   if (verb === "verify" && arguments_.length === 1) {
-    console.log(JSON.stringify(verifyCandidate(process.cwd(), arguments_[0])));
+    console.log(JSON.stringify(verifyCandidate(arguments_[0])));
   } else if (verb === "freeze") {
     const options = {};
     for (let i = 0; i < arguments_.length; i += 2) {
