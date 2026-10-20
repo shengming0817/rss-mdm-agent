@@ -527,6 +527,7 @@ async fn prior_communication_schema_preserves_registration_pending_delivery_and_
 #[test]
 fn configuration_rejects_untrusted_network_and_unbounded_budgets() {
     let mut cfg = Config {
+        software_read_grants: vec![],
         execution_context: rss_mdm_agent_wire::runtime::SoftwareExecutionContext {
             revision: 1,
             os_version: [14, 0, 0, 0],

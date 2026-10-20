@@ -30,6 +30,9 @@ pub use enrollment::{EnrollmentPhase, EnrollmentStatus, GrantImport};
 pub use tls::validate_public_ca;
 mod config;
 mod content;
+mod native_content;
+/// Bounded verification of the standard native source documents, without execution authority.
+pub mod native_source;
 mod store;
 pub use client::*;
 pub use config::*;

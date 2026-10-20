@@ -3,6 +3,7 @@ use crate::Error;
 /// The secret list is private and never serialized or printed.
 pub struct CredentialRedactor {
     pub(crate) device: Vec<crate::Secret>,
+    pub(crate) software: Vec<zeroize::Zeroizing<String>>,
     pub(crate) employee: Vec<std::sync::Weak<zeroize::Zeroizing<String>>>,
 }
 impl CredentialRedactor {
@@ -30,6 +31,9 @@ impl CredentialRedactor {
         for secret in &self.device {
             value = value.replace(secret.expose(), "[redacted]");
         }
+        for secret in &self.software {
+            value = value.replace(secret.as_str(), "[redacted]");
+        }
         for secret in &self.employee {
             if let Some(secret) = secret.upgrade() {
                 value = value.replace(secret.as_str(), "[redacted]");
@@ -47,6 +51,7 @@ mod tests {
     fn retired_sessions_drain_without_dropping_an_inflight_output_lease() {
         let mut redactor = CredentialRedactor {
             device: vec![],
+            software: vec![],
             employee: vec![],
         };
         let pending = Arc::new(zeroize::Zeroizing::new("pending-credential".into()));

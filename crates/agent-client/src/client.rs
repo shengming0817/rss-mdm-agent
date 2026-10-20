@@ -132,6 +132,14 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         }
         Ok(crate::CredentialRedactor {
             device: secrets,
+            software: self
+                .store
+                .cfg
+                .execution_context
+                .source_credentials
+                .iter()
+                .map(|c| self.secrets.software_read_token(c))
+                .collect::<Result<_, _>>()?,
             employee: Vec::new(),
         })
     }

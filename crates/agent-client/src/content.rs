@@ -13,10 +13,10 @@ use std::{
 /// A locked, verified local artifact. No server-selected filesystem path is used.
 pub struct ContentFile {
     pub(crate) file: File,
-    path: PathBuf,
-    length: u64,
-    digest: [u8; 32],
-    key: String,
+    pub(crate) path: PathBuf,
+    pub(crate) length: u64,
+    pub(crate) digest: [u8; 32],
+    pub(crate) key: String,
 }
 impl ContentFile {
     /// Protocol artifact key, independent of the local filename.
@@ -60,6 +60,14 @@ pub struct Materials {
     pub(crate) input: Vec<u8>,
 }
 impl Materials {
+    /// The verified frozen native document or Git pack for one signed software step.
+    /// The file remains leased with the complete original offer's material set.
+    pub fn native_source(&self, index: usize) -> Result<&ContentFile, Error> {
+        self.files
+            .iter()
+            .find(|f| f.key == format!("native/{index}"))
+            .ok_or(Error::Untrusted)
+    }
     /// All required artifacts in producer order, including software prerequisites.
     pub fn files(&self) -> &[ContentFile] {
         &self.files
@@ -112,7 +120,7 @@ pub(crate) fn open(path: &Path, write: bool) -> Result<File, Error> {
     }
     Ok(file)
 }
-fn digest(mut file: File) -> Result<[u8; 32], Error> {
+pub(crate) fn digest(mut file: File) -> Result<[u8; 32], Error> {
     file.seek(SeekFrom::Start(0))?;
     let mut hash = Sha256::new();
     let mut buffer = [0u8; 65536];
@@ -163,6 +171,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             content.verify()?;
             files.push(content);
         }
+        self.recover_native_sources(offer, &root, &mut files)?;
         Ok(Materials {
             files,
             task: offer.task_id(),
@@ -207,6 +216,8 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                     .await?,
             );
         }
+        self.prepare_native_sources(offer, &root, &mut files)
+            .await?;
         Ok(Materials {
             files,
             task: offer.task_id(),
@@ -407,6 +418,9 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                 continue;
             }
             std::fs::remove_file(&path)?;
+            self.store
+                .conn
+                .execute("DELETE FROM state WHERE key=?1", [format!("native/{name}")])?;
             removed += 1;
         }
         Ok(removed)

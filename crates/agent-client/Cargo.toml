@@ -27,7 +27,7 @@ thiserror.workspace = true
 sha2.workspace = true
 url.workspace = true
 rusqlite.workspace = true
-tokio = { workspace = true, features = ["fs", "net", "rt-multi-thread"] }
+tokio = { workspace = true, features = ["fs", "net", "rt-multi-thread", "process"] }
 futures-util.workspace = true
 uuid = { version = "=1.26.0", features = ["v4", "serde"] }
 fs2 = "=0.4.3"

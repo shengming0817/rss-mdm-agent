@@ -51,9 +51,20 @@ impl Limits {
         }
     }
 }
+/// Local permission to disclose one source read credential to one HTTPS origin.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SoftwareReadGrant {
+    /// Exact source and opaque credential reference advertised in execution context.
+    pub credential: wire::SoftwareReadCredential,
+    /// Administrator-approved origin, without a path, user information, query or fragment.
+    pub origin: String,
+}
 /// Independently trusted deployment context; network payloads cannot change it.
 #[derive(Clone)]
 pub struct Config {
+    /// Source read credentials are scoped independently from the device's HTTP identity.
+    pub software_read_grants: Vec<SoftwareReadGrant>,
     /// Fixed origin with no credential/query/fragment/path prefix.
     pub origin: Url,
     /// Trusted tenant, absent from BindingProfile.
@@ -77,6 +88,31 @@ impl Config {
     /// Validate before storage or I/O.
     pub fn validate(&self) -> Result<(), Error> {
         self.execution_context.validate_for(self.platform)?;
+        if self.software_read_grants.len() > 16 {
+            return Err(Error::Configuration);
+        }
+        let mut sources = std::collections::BTreeSet::new();
+        for grant in &self.software_read_grants {
+            let url = Url::parse(&grant.origin).map_err(|_| Error::Configuration)?;
+            if url.scheme() != "https"
+                || url.host_str().is_none()
+                || url.path() != "/"
+                || !url.username().is_empty()
+                || url.password().is_some()
+                || url.query().is_some()
+                || url.fragment().is_some()
+                || !sources.insert(&grant.credential.source)
+                || !self
+                    .execution_context
+                    .source_credentials
+                    .contains(&grant.credential)
+            {
+                return Err(Error::Configuration);
+            }
+        }
+        if self.execution_context.source_credentials.len() != self.software_read_grants.len() {
+            return Err(Error::Configuration);
+        }
         let o = &self.origin;
         let l = self.limits;
         let network = match self.transport {
@@ -137,6 +173,14 @@ impl Config {
 /// Platform-owned bootstrap secrets and non-exportable device signing keys.
 /// References are frozen by the communication owner before network operations.
 pub trait IdentityProvider: MachineTrust {
+    /// Resolve an existing source-scoped software read token. This never provisions credentials.
+    /// The client separately authorizes the exact source/reference against its local configuration.
+    fn software_read_token(
+        &self,
+        _: &wire::SoftwareReadCredential,
+    ) -> Result<zeroize::Zeroizing<String>, Error> {
+        Err(Error::Unsupported)
+    }
     /// Enumerate only product bootstrap identities; empty means no managed installation authority.
     fn native_identities(&self) -> Result<Vec<crate::NativeIdentity>, Error> {
         Ok(Vec::new())

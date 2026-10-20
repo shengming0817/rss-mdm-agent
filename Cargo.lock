@@ -4035,7 +4035,7 @@ dependencies = [
 [[package]]
 name = "rss-mdm-agent-wire"
 version = "1.0.0"
-source = "git+https://dev.azure.com/shengming0923/rss/_git/rss-mdm?rev=0bad320b8bd7f960f20c5490aea624a3bced6779#0bad320b8bd7f960f20c5490aea624a3bced6779"
+source = "git+https://dev.azure.com/shengming0923/rss/_git/rss-mdm?rev=91db8ff65ce94ddd44657eb4378bc8e2bfc7a932#91db8ff65ce94ddd44657eb4378bc8e2bfc7a932"
 dependencies = [
  "base64 0.22.1",
  "ordered-float",
