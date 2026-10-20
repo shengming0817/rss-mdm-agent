@@ -15,6 +15,7 @@ import {
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { test } from "node:test";
+import { runtimeTreeSha256 } from "./ai-host-artifacts.mjs";
 import { waitForAppearance } from "./native-evidence.mjs";
 import {
   reapOwnedProcessGroup,
@@ -24,6 +25,7 @@ import {
 } from "./desktop-dev-process.mjs";
 import {
   developmentFingerprint,
+  verifyNativeRuntime,
   ensureDevelopmentRuntime,
 } from "./desktop-dev-runtime.mjs";
 
@@ -135,6 +137,38 @@ test("fingerprint includes dirty Host, adapter, contract, lock, Node and added/d
   assert.notEqual(developmentFingerprint(root), before);
   rmSync(join(root, "apps/ai-host/src/new.ts"));
   assert.equal(developmentFingerprint(root), before);
+});
+test("native development acceptance still binds source and runtime bytes", (t) => {
+  const { root, write } = fixture(t);
+  const directory = join(root, "runtime");
+  for (const name of [
+    "bin/node",
+    "node_modules/entry.js",
+    "NODE-LICENSE",
+    "package.json",
+    "pnpm-lock.yaml",
+    "worker-manifest.json",
+  ])
+    write(`runtime/${name}`, "fixed");
+  const manifest = {
+    kind: "development",
+    status: "passed",
+    developmentFingerprint: developmentFingerprint(root),
+    runtimeTreeSha256: runtimeTreeSha256(directory),
+  };
+  write("runtime/manifest.json", JSON.stringify(manifest));
+  assert.deepEqual(verifyNativeRuntime(root, directory), manifest);
+  write("apps/ai-host/src/index.ts", "changed source");
+  assert.throws(
+    () => verifyNativeRuntime(root, directory),
+    assert.AssertionError,
+  );
+  write("apps/ai-host/src/index.ts", "original");
+  write("runtime/bin/node", "changed bytes");
+  assert.throws(
+    () => verifyNativeRuntime(root, directory),
+    /runtime tree integrity mismatch/,
+  );
 });
 test("missing and stale runtimes rebuild, unchanged runtime reuses and validates", (t) => {
   const { root, write } = fixture(t);

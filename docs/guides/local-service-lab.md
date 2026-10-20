@@ -128,7 +128,9 @@ macOS arm64 的实际执行与目标 Windows 环境按需运行的验证分别�
 
 在全部源码变更与构建完成后，使用 `node scripts/native-candidate.mjs freeze --service <服务产物> --backend <controlled-backend产物> --desktop <native-acceptance桌面产物> --runtime <Host运行包> --output <新的忽略目录内candidate.json>` 固定候选。
 服务单独旅程可以省略 desktop/runtime。签名在冻结前完成；验收只复制原字节，不重新签名或构建。
-候选绑定源码、锁文件、程序摘要、代码身份与运行包完整性；改代码、改锁或换产物后重新冻结。
+冻结时记录源码、锁文件和构建工具链供追溯；运行验收以固定程序摘要、代码身份、运行包完整性及适用平台/架构为准。
+后续文档、提交、源码或锁文件变化无需重新冻结原产物；更换程序、代码身份或运行包后重新冻结。
+验收回执将候选构建来源与当前工具运行环境分开记录；工具仍须满足当前入口自身的运行要求，不与构建时工具版本强制等值。
 
 macOS 服务入口增加 `--candidate <candidate.json>`，其它产物参数必须与候选一致。
 真实桌面入口为 `pnpm check:desktop-native --controlled-service --candidate <candidate.json>`，跳过候选构建。
