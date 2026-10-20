@@ -4,6 +4,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { developmentFingerprint } from "./desktop-dev-runtime.mjs";
 import { sourceEvidence, sha256 } from "./native-evidence.mjs";
 import {
   runtimeTreeSha256,
@@ -95,6 +96,25 @@ export function verifyCandidate(path) {
   }
   return candidate;
 }
+// Fixed acceptance binds the frozen runtime; development binds the current source.
+export function verifyNativeRuntime(root, directory, candidatePath) {
+  const manifest = JSON.parse(readFileSync(resolve(directory, "manifest.json")));
+  assert.equal(manifest.kind, "development");
+  assert.equal(manifest.status, "passed");
+  if (candidatePath) {
+    const candidate = verifyCandidate(candidatePath);
+    assert.equal(
+      realpathSync(directory),
+      candidate.runtime?.path,
+      "candidate runtime mismatch",
+    );
+  } else {
+    assert.equal(manifest.developmentFingerprint, developmentFingerprint(root));
+  }
+  verifyRuntimeIntegrity(directory, manifest.runtimeTreeSha256);
+  return manifest;
+}
+
 if (
   process.argv[1] &&
   resolve(process.argv[1]) === fileURLToPath(import.meta.url)

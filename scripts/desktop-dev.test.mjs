@@ -15,6 +15,7 @@ import {
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { test } from "node:test";
+import { verifyNativeRuntime } from "./native-candidate.mjs";
 import { runtimeTreeSha256 } from "./ai-host-artifacts.mjs";
 import { waitForAppearance } from "./native-evidence.mjs";
 import {
@@ -25,7 +26,6 @@ import {
 } from "./desktop-dev-process.mjs";
 import {
   developmentFingerprint,
-  verifyNativeRuntime,
   ensureDevelopmentRuntime,
 } from "./desktop-dev-runtime.mjs";
 

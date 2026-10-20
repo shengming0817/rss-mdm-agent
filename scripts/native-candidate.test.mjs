@@ -13,8 +13,11 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { runtimeTreeSha256 } from "./ai-host-artifacts.mjs";
-import { freezeCandidate, verifyCandidate } from "./native-candidate.mjs";
-import { verifyNativeRuntime } from "./desktop-dev-runtime.mjs";
+import {
+  freezeCandidate,
+  verifyCandidate,
+  verifyNativeRuntime,
+} from "./native-candidate.mjs";
 
 function fixture(t) {
   const root = mkdtempSync(join(tmpdir(), "agent-candidate-"));

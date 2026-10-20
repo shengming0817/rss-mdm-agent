@@ -37,8 +37,7 @@ import {
   sha256,
   waitForAppearance,
 } from "./native-evidence.mjs";
-import { verifyNativeRuntime } from "./desktop-dev-runtime.mjs";
-import { verifyCandidate } from "./native-candidate.mjs";
+import { verifyCandidate, verifyNativeRuntime } from "./native-candidate.mjs";
 import { verifyRuntimeIntegrity } from "./ai-host-artifacts.mjs";
 import { scopeAbsentWithin } from "../packages/ai-host/dist/process.js";
 
