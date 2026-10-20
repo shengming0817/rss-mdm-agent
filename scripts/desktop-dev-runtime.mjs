@@ -1,6 +1,8 @@
+import assert from "node:assert/strict";
+import { verifyCandidate } from "./native-candidate.mjs";
 import { withPreparation } from "./preparation.mjs";
 import { createHash } from "node:crypto";
-import { lstatSync, readFileSync, readdirSync } from "node:fs";
+import { lstatSync, readFileSync, readdirSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import {
   run,
@@ -54,6 +56,25 @@ export function developmentFingerprint(root) {
   ])
     visit(name);
   return hash.digest("hex");
+}
+
+// Fixed acceptance binds the frozen runtime; development binds the current source.
+export function verifyNativeRuntime(root, directory, candidatePath) {
+  const manifest = JSON.parse(readFileSync(join(directory, "manifest.json")));
+  assert.equal(manifest.kind, "development");
+  assert.equal(manifest.status, "passed");
+  if (candidatePath) {
+    const candidate = verifyCandidate(candidatePath);
+    assert.equal(
+      realpathSync(directory),
+      candidate.runtime?.path,
+      "candidate runtime mismatch",
+    );
+  } else {
+    assert.equal(manifest.developmentFingerprint, developmentFingerprint(root));
+  }
+  verifyRuntimeIntegrity(directory, manifest.runtimeTreeSha256);
+  return manifest;
 }
 
 export function verifyDevelopmentRuntime(root, directory) {

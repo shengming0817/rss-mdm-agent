@@ -1339,7 +1339,7 @@ def main():
     inputs = Path(tempfile.mkdtemp(prefix='rss-native-service-input-')).resolve()
     receipt_inputs = inputs
     receipt = dict(platform=os.uname().sysname, architecture=os.uname().machine,
-                   osVersion=run('/usr/bin/sw_vers','-productVersion').stdout.strip(), subject=dict(uid=os.geteuid(),session=run('/bin/launchctl','managername').stdout.strip()), candidate=frozen, journal=None, scenarios={}, security=security_matrix(), sourceHead=run('/usr/bin/git', 'rev-parse', 'HEAD').stdout.strip())
+                   osVersion=run('/usr/bin/sw_vers','-productVersion').stdout.strip(), subject=dict(uid=os.geteuid(),session=run('/bin/launchctl','managername').stdout.strip()), candidate=frozen, journal=None, scenarios={}, security=security_matrix(), acceptanceEnvironment=dict(node=run('node','--version').stdout.strip(), python=sys.version.split()[0]))
     installed = helper = False
     administrator_session = backend = exchange = backend_log = protected = native_probe = probe_log = None
     try:
