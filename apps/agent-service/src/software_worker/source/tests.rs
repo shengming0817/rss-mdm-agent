@@ -30,11 +30,18 @@ pub(super) fn fixture(root: &Root) -> WorkerRequest {
     let repository = root.path.join("repository");
     fs::create_dir_all(repository.join("Library/Taps")).unwrap();
     let manager = root.path.join("brew-fixture");
+    let wire::SoftwareTaskExport::Brew { binding, .. } = &spec.steps[0].export else {
+        unreachable!()
+    };
+    let cache_leaf = format!(
+        "{:x}--fixture.bottle.tar.gz",
+        Sha256::digest(binding.artifacts[0].url.as_bytes())
+    );
     fs::write(
         &manager,
         format!(
-            "#!/bin/sh\nif [ \"$1\" = --repository ]; then printf '%s\\n' '{}'; else exit 91; fi\n",
-            repository.display()
+            "#!/bin/sh\ncase \"$1\" in\n--repository) printf '%s\\n' '{}' ;;\ninfo) printf '%s\\n' '{{\"formulae\":[{{\"tap\":\"rss/fixture\",\"versions\":{{\"stable\":\"1.0\"}}}}]}}' ;;\n--cache) printf '%s/downloads/%s\\n' \"$HOMEBREW_CACHE\" '{cache_leaf}' ;;\ninstall) test -f \"$HOMEBREW_CACHE/downloads/{cache_leaf}\" || exit 92; printf '%s\\n' \"$*\" >> '{}'; if test -f '{}'; then exit 17; fi; printf '%s\\n' fixture-native-install ;;\n*) exit 91 ;;\nesac\n",
+            repository.display(), root.path.join("native-calls").display(), root.path.join("fail-install").display()
         ),
     )
     .unwrap();
@@ -42,6 +49,8 @@ pub(super) fn fixture(root: &Root) -> WorkerRequest {
     let pack = root.path.join("source.pack");
     platform_private_storage::write_new(&pack, &data.software_source.as_ref().unwrap().pack)
         .unwrap();
+    let installer = root.path.join("package");
+    platform_private_storage::write_new(&installer, &data.bytes).unwrap();
     WorkerRequest {
         intent: SoftwareOperation::Install,
         export: spec.steps[0].export.clone(),
@@ -50,7 +59,11 @@ pub(super) fn fixture(root: &Root) -> WorkerRequest {
         native_output: Default::default(),
         native_pending: Default::default(),
         external_pending: Default::default(),
-        materials: [("native-source".into(), material(&pack))].into(),
+        materials: [
+            ("native-source".into(), material(&pack)),
+            ("package".into(), material(&installer)),
+        ]
+        .into(),
         tools: [
             ("manager".into(), material(&manager)),
             ("git".into(), material(Path::new("/usr/bin/git"))),
@@ -68,6 +81,62 @@ pub(super) fn fixture(root: &Root) -> WorkerRequest {
         output_bytes: 1_048_576,
         step: 0,
     }
+}
+
+#[test]
+fn native_install_consumes_verified_cache_and_preserves_real_failure_before_cleanup() {
+    for fail in [false, true] {
+        let root = Root::new();
+        let mut request = fixture(&root);
+        if fail {
+            fs::write(root.path.join("fail-install"), b"fail").unwrap();
+        }
+        let before = SoftwareState::Absent {};
+        execute(&request, Some(&before)).unwrap();
+        let tap = state(&request).unwrap().unwrap().path.unwrap();
+        request.operation = WorkerOperation::Install;
+        let (code, observed) = execute(&request, Some(&before)).unwrap();
+        assert_eq!(code, if fail { 17 } else { 0 });
+        assert!(observed.detected.is_none());
+        assert!(observed.closed);
+        assert_eq!(
+            fs::read_to_string(root.path.join("native-calls")).unwrap(),
+            "install --formula --force-bottle --ignore-dependencies rss/fixture/fixture-0\n"
+        );
+        let cached = fs::read_dir(request.resource_root.join("cache/downloads"))
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        assert_eq!(
+            fs::read(cached).unwrap(),
+            fs::read(root.path.join("package")).unwrap()
+        );
+        request.operation = WorkerOperation::Cleanup;
+        assert_eq!(execute(&request, None).unwrap().0, 0);
+        assert!(!tap.exists());
+        assert_eq!(
+            fs::read_to_string(root.path.join("native-calls"))
+                .unwrap()
+                .lines()
+                .count(),
+            1
+        );
+    }
+}
+#[test]
+fn changed_artifact_fails_before_native_install_and_still_closes_owned_source() {
+    let root = Root::new();
+    let mut request = fixture(&root);
+    execute(&request, Some(&SoftwareState::Absent {})).unwrap();
+    fs::write(root.path.join("package"), b"changed").unwrap();
+    request.operation = WorkerOperation::Install;
+    assert!(execute(&request, Some(&SoftwareState::Absent {})).is_err());
+    assert!(!root.path.join("native-calls").exists());
+    request.operation = WorkerOperation::Cleanup;
+    execute(&request, None).unwrap();
+    assert!(!request.resource_root.exists());
 }
 #[test]
 fn source_creation_borrowing_and_cleanup_are_owned_by_the_original_attempt() {

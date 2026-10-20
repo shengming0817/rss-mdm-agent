@@ -31,6 +31,7 @@ tokio = { workspace = true, features = ["fs", "net", "rt-multi-thread", "process
 futures-util.workspace = true
 uuid = { version = "=1.26.0", features = ["v4", "serde"] }
 fs2 = "=0.4.3"
+flate2 = { version = "=1.1.10", default-features = false, features = ["rust_backend"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "=0.2.189"

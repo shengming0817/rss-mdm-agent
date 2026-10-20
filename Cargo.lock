@@ -52,6 +52,7 @@ dependencies = [
  "base64 0.23.1",
  "der",
  "execution-contract",
+ "flate2",
  "fs2",
  "futures-util",
  "libc",

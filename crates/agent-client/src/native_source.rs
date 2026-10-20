@@ -5,6 +5,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::{path::Path, process::Stdio, time::Duration};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+mod pack_budget;
 
 /// Bound on one frozen Git pack, independently of the decoded document budget.
 pub const MAX_PACK_BYTES: usize = 16 * 1024 * 1024;
@@ -106,6 +107,7 @@ async fn git(
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("GIT_NO_REPLACE_OBJECTS", "1")
+        .env("GIT_ALLOC_LIMIT", "33554432")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -172,6 +174,7 @@ pub async fn import_brew_pack(
     if pack.len() > MAX_PACK_BYTES || !pack.starts_with(b"PACK") {
         return Err(Error::Capacity);
     }
+    pack_budget::check(pack)?;
     git(repository, &["init", "--bare", "."], &[], 4096, account).await?;
     git(
         repository,

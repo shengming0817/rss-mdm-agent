@@ -679,6 +679,73 @@ mod gc_tests {
     use std::collections::BTreeSet;
 
     #[tokio::test]
+    async fn native_brew_compiler_rejects_absent_authenticated_helper_before_publishing_recipes() {
+        let _budget = crate::scenario_budget::enter();
+        let server = protocol::Server::tls().await;
+        server
+            .data
+            .lock()
+            .unwrap()
+            .software_native(&server.url, true);
+        let credential = server
+            .data
+            .lock()
+            .unwrap()
+            .software_source
+            .as_ref()
+            .unwrap()
+            .credential
+            .clone()
+            .unwrap();
+        server.secrets.0.lock().unwrap().insert(
+            agent_client::native_source::credential_key(&credential).unwrap(),
+            protocol::software_native::TOKEN.into(),
+        );
+        let cache = protocol::Root::new();
+        let mut client = server.client(&cache, OpenMode::Create);
+        server.register(&mut client).await;
+        let offer = client.claim().await.unwrap().offer.unwrap();
+        let materials = client.prepare(&offer).await.unwrap();
+        let wire::TaskPayload::Software(payload) = offer.payload() else {
+            unreachable!()
+        };
+        let db = local::Database::new();
+        let root_path = db.path.parent().unwrap().join("materials");
+        platform_private_storage::directory(&root_path).unwrap();
+        let mut root = execution_runner::staging::MaterialRoot::open_fixture(
+            &root_path,
+            &Digest::new("a".repeat(64)).unwrap(),
+            &db.path,
+        )
+        .unwrap();
+        let config = ExecutionConfig {
+            work_root: db.path.parent().unwrap().into(),
+            material_root: root_path,
+            interpreters: vec![],
+            managers: vec![],
+            processes: 1,
+        };
+        let binding = execution_app::ServiceBinding {
+            authority: local::plan().spec().request.authority.clone(),
+            device: DeviceId::new("device-1").unwrap(),
+        };
+        assert!(matches!(
+            crate::backend::software::compile(
+                &offer,
+                &materials,
+                payload,
+                &binding,
+                &local::plan().spec().request.actor,
+                (&config, &mut root),
+                None
+            ),
+            Err(Error::Identity)
+        ));
+        assert!(inventory_files(&mut root).unwrap().is_empty());
+        assert!(!server.data.lock().unwrap().started);
+    }
+
+    #[tokio::test]
     async fn native_compiler_reclaims_all_frozen_inputs_across_intents_and_upgrade_strategies() {
         let _budget = crate::scenario_budget::enter();
         let db = local::Database::new();
