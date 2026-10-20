@@ -37,9 +37,12 @@ import {
   sha256,
   waitForAppearance,
 } from "./native-evidence.mjs";
-import { verifyCandidate, verifyNativeRuntime } from "./native-candidate.mjs";
+import {
+  verifyCandidate,
+  verifyNativeRuntime,
+  nativeProductModules,
+} from "./native-candidate.mjs";
 import { verifyRuntimeIntegrity } from "./ai-host-artifacts.mjs";
-import { scopeAbsentWithin } from "../packages/ai-host/dist/process.js";
 
 const visualOnly = process.argv.includes("--visual");
 const baseline = process.argv.includes("--baseline");
@@ -147,7 +150,7 @@ let directory,
   stage = "preflight",
   spawnError,
   keychainState;
-let scopeRuntime;
+let scopeRuntime, productModules, scopeAbsentWithin;
 const ownedWorkerScopes = new Map();
 const processIdentity = processField;
 const rememberScopes = (rows, host) => {
@@ -507,9 +510,9 @@ const verifyUnknownFence = async () => {
     import {pathToFileURL} from 'node:url';
     import {join} from 'node:path';
     const input=JSON.parse(process.argv[1]);
-    const {openSqliteStore}=await import(pathToFileURL(join(input.root,'packages/ai-store-sqlite/dist/index.js')));
-    const {createHost}=await import(pathToFileURL(join(input.root,'packages/ai-host/dist/index.js')));
-    const {scopeAbsentWithin,processWorkerAdapter}=await import(pathToFileURL(join(input.root,'packages/ai-host/dist/process.js')));
+    const {openSqliteStore}=await import(input.modules.store);
+    const {createHost}=await import(input.modules.host);
+    const {scopeAbsentWithin,processWorkerAdapter}=await import(input.modules.process);
     const {fixtureSession,acceptance}=await import(pathToFileURL(join(input.root,'packages/ai-contract/dist/testing/index.js')));
     const {fixturePersistence}=await import(pathToFileURL(join(input.root,'tests/ai-host/harness.mjs')));
     const budget=()=>({timeoutMs:5000,signal:new AbortController().signal});
@@ -560,6 +563,7 @@ const verifyUnknownFence = async () => {
       path: join(directory, "scope-fault.sqlite"),
       actorRecoveryPath: join(directory, "scope-fault-actor.json"),
       runtime: scopeRuntime,
+      modules: productModules,
     },
     async (proof, executorPid) => {
       assert.equal(proof.kind, "ownedScope");
@@ -797,6 +801,8 @@ try {
         0,
         "native candidate preparation failed",
       );
+    productModules = nativeProductModules(root, candidate?.runtime.path);
+    ({ scopeAbsentWithin } = await import(productModules.process));
     mark(
       "explicit controlled installation; native administrator authorization",
     );

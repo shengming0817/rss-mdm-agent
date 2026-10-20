@@ -17,6 +17,7 @@ import {
   freezeCandidate,
   verifyCandidate,
   verifyNativeRuntime,
+  nativeProductModules,
 } from "./native-candidate.mjs";
 
 function fixture(t) {
@@ -189,5 +190,59 @@ test(
     );
     writeFileSync(join(runtime, "bin/node"), "fixed runtime");
     assert.deepEqual(verifyCandidate(file), candidate);
+  },
+);
+
+test(
+  "fixed security probes execute frozen modules despite different checkout behavior",
+  native,
+  async (t) => {
+    const { root, runtime, binaries, file } = fixture(t);
+    const install = (packages, identity, absent) => {
+      for (const [name, files] of Object.entries({
+        "ai-host": {
+          "index.js": `export function createHost(){return ${JSON.stringify(identity)}}`,
+          "process.js": `export function scopeAbsentWithin(){return ${absent}}; export class WorkerPort {source=${JSON.stringify(identity)}}`,
+        },
+        "ai-store-sqlite": {
+          "index.js": `export function openSqliteStore(){return ${JSON.stringify(identity)}}`,
+        },
+      })) {
+        mkdirSync(join(packages, name, "dist"), { recursive: true });
+        writeFileSync(
+          join(packages, name, "package.json"),
+          JSON.stringify({ type: "module" }),
+        );
+        for (const [leaf, source] of Object.entries(files))
+          writeFileSync(join(packages, name, "dist", leaf), source);
+      }
+    };
+    const checkout = join(root, "packages");
+    install(checkout, "candidate-A", false);
+    install(join(runtime, "node_modules/@rss-mdm-agent"), "candidate-A", false);
+    const manifest = JSON.parse(readFileSync(join(runtime, "manifest.json")));
+    manifest.runtimeTreeSha256 = runtimeTreeSha256(runtime);
+    writeFileSync(join(runtime, "manifest.json"), JSON.stringify(manifest));
+    const frozen = freezeCandidate(root, { ...binaries, runtime });
+    writeFileSync(file, JSON.stringify(frozen));
+    install(checkout, "checkout-B", true);
+    assert.deepEqual(verifyCandidate(file), frozen);
+    const fixedModules = nativeProductModules(root, frozen.runtime.path);
+    const currentModules = nativeProductModules(root);
+    for (const [modules, identity, absent] of [
+      [fixedModules, "candidate-A", false],
+      [currentModules, "checkout-B", true],
+    ]) {
+      const { createHost } = await import(modules.host);
+      const { openSqliteStore } = await import(modules.store);
+      const { WorkerPort, scopeAbsentWithin } = await import(modules.process);
+      assert.equal(createHost(), identity);
+      assert.equal(openSqliteStore(), identity);
+      assert.equal(new WorkerPort().source, identity);
+      assert.equal(scopeAbsentWithin(), absent);
+    }
+    const missing = nativeProductModules(root, join(root, "missing-runtime"));
+    for (const url of Object.values(missing))
+      await assert.rejects(import(url), { code: "ERR_MODULE_NOT_FOUND" });
   },
 );

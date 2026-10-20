@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { developmentFingerprint } from "./desktop-dev-runtime.mjs";
 import { sourceEvidence, sha256 } from "./native-evidence.mjs";
 import {
@@ -96,6 +96,24 @@ export function verifyCandidate(path) {
   }
   return candidate;
 }
+// Explicit file URLs prevent module lookup from falling back to checkout packages.
+// ref: nodejs/node lib/internal/modules/esm/resolve.js@v24.14.1.
+export function nativeProductModules(root, runtime) {
+  const packages = runtime
+    ? resolve(runtime, "node_modules/@rss-mdm-agent")
+    : resolve(root, "packages");
+  return Object.fromEntries(
+    Object.entries({
+      host: "ai-host/dist/index.js",
+      process: "ai-host/dist/process.js",
+      store: "ai-store-sqlite/dist/index.js",
+    }).map(([name, path]) => [
+      name,
+      pathToFileURL(resolve(packages, path)).href,
+    ]),
+  );
+}
+
 // Fixed acceptance binds the frozen runtime; development binds the current source.
 export function verifyNativeRuntime(root, directory, candidatePath) {
   const manifest = JSON.parse(
