@@ -207,3 +207,84 @@ fn read_credentials_are_independent_from_device_bootstrap_encoding() {
     assert!(agent_client::native_source::validate_read_token("short").is_err());
     assert!(agent_client::native_source::validate_read_token(&" ".repeat(32)).is_err());
 }
+
+#[test]
+fn interrupted_git_checkout_is_private_and_recovery_closes_the_attempt() {
+    let root = Root::new();
+    let mut request = fixture(&root);
+    let documents = [
+        (
+            "Formula/fixture-0.rb",
+            b"class Fixture < Formula\nend\n".as_slice(),
+            "100644",
+        ),
+        (
+            "Formula/fixture-1.rb",
+            b"class Other < Formula\nend\n".as_slice(),
+            "100644",
+        ),
+    ];
+    let (frozen_commit, pack) = software_native::pack(&documents, false);
+    let wire::SoftwareTaskExport::Brew {
+        commit, binding, ..
+    } = &mut request.export
+    else {
+        unreachable!()
+    };
+    *commit = frozen_commit;
+    binding.document_sha256 =
+        wire::brew_documents_digest(documents.iter().map(|(p, b, _)| (*p, *b))).unwrap();
+    let source = root.path.join("source.pack");
+    fs::write(&source, pack).unwrap();
+    request
+        .materials
+        .insert("native-source".into(), material(&source));
+    let git = root.path.join("git-checkout-interrupted");
+    // Real Git writes one of two frozen paths, then this pinned process exits unsuccessfully.
+    // This deterministic interruption leaves the same partially populated checkout as a kill.
+    fs::write(&git, b"#!/bin/sh\nif test \"$1\" = --git-dir; then\n /usr/bin/git \"$1\" \"$2\" \"$3\" \"$4\" checkout \"$7\" -- Formula/fixture-0.rb || exit 92\n exit 17\nfi\nexec /usr/bin/git \"$@\"\n").unwrap();
+    fs::set_permissions(&git, fs::Permissions::from_mode(0o700)).unwrap();
+    request.tools.insert("git".into(), material(&git));
+    assert!(execute(&request, Some(&SoftwareState::Absent {})).is_err());
+    let record = state(&request).unwrap().unwrap();
+    let tap = record.path.unwrap();
+    assert!(!tap.exists());
+    let partial = request.resource_root.join("tap/Formula");
+    assert!(partial.join("fixture-0.rb").is_file());
+    assert!(!partial.join("fixture-1.rb").exists());
+    request.operation = WorkerOperation::Cleanup;
+    assert_eq!(execute(&request, None).unwrap().0, 0);
+    assert!(!request.resource_root.exists());
+    assert!(!tap.exists());
+    assert!(!tap.parent().unwrap().exists());
+}
+
+#[test]
+fn identical_foreign_replacement_does_not_inherit_created_tap_ownership() {
+    let root = Root::new();
+    let mut request = fixture(&root);
+    execute(&request, Some(&SoftwareState::Absent {})).unwrap();
+    let record = state(&request).unwrap().unwrap();
+    let tap = record.path.unwrap();
+    let original = root.path.join("original-tap");
+    fs::rename(&tap, &original).unwrap();
+    software_native::git(
+        &root.path,
+        &[
+            "clone",
+            "--no-local",
+            original.to_str().unwrap(),
+            tap.to_str().unwrap(),
+        ],
+        &[],
+    );
+    let wire::SoftwareTaskExport::Brew { uri, .. } = &request.export else {
+        unreachable!()
+    };
+    software_native::git(&tap, &["config", "remote.origin.url", uri], &[]);
+    fs::set_permissions(&tap, fs::Permissions::from_mode(0o700)).unwrap();
+    request.operation = WorkerOperation::Cleanup;
+    assert!(execute(&request, None).is_err());
+    assert!(tap.join("Formula/fixture-0.rb").is_file());
+    assert!(request.resource_root.is_dir());
+}

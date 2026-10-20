@@ -2,6 +2,7 @@
 //! ref: Homebrew/brew Library/Homebrew/{cmd/--cache.rb,cmd/install.rb,tap.rb}.
 use super::*;
 use std::io::{Read, Write};
+use std::os::unix::fs::MetadataExt;
 
 fn authority(
     request: &WorkerRequest,
@@ -208,8 +209,11 @@ fn prepare(request: &WorkerRequest, record: &mut State) -> Result<(), Error> {
     if record.parent_created {
         platform_private_storage::directory(parent)?;
     }
-    platform_private_storage::directory(&path)?;
-    let repository = path.join(".git");
+    // Checkout can stop after any file write. Keep it inside the owned attempt until fully
+    // verified, then publish atomically without replacing an existing tap (renameatx_np EXCL).
+    let staged = request.resource_root.join("tap");
+    platform_private_storage::directory(&staged)?;
+    let repository = staged.join(".git");
     platform_private_storage::directory(&repository)?;
     let mut pack = Vec::new();
     fs::File::open(request.material("native-source")?)?
@@ -238,13 +242,17 @@ fn prepare(request: &WorkerRequest, record: &mut State) -> Result<(), Error> {
         "--git-dir".into(),
         repository.to_str().ok_or(Error::Configuration)?.into(),
         "--work-tree".into(),
-        path.to_str().ok_or(Error::Configuration)?.into(),
+        staged.to_str().ok_or(Error::Configuration)?.into(),
         "checkout".into(),
         "--detach".into(),
         commit.into(),
     ];
     tool(request, "git", arguments, &environment(request)?)?;
-    verify_tap(request, &path, uri, commit)?;
+    verify_tap(request, &staged, uri, commit)?;
+    let metadata = fs::symlink_metadata(&staged)?;
+    record.created_directory = Some((metadata.dev(), metadata.ino()));
+    save(request, record)?; // Rename preserves this identity even if the worker dies just after publication.
+    super::super::macos::rename(&staged, &path, false)?;
     Ok(())
 }
 fn arguments(
@@ -453,23 +461,20 @@ pub(super) fn cleanup(request: &WorkerRequest, record: &State) -> Result<(), Err
     if record.path.as_ref() != Some(&expected) {
         return Err(Error::Untrusted);
     }
-    if !expected.try_exists()? {
-        return Ok(());
-    }
-    // A partial prepare may not have a checkout yet. The private directory and recorded creation
-    // intent own that partial; a completed foreign replacement is never deleted.
-    platform_private_storage::PrivateDirectory::open(&expected)?;
-    if expected.join("Formula").try_exists()? || expected.join("Casks").try_exists()? {
+    // Only a complete verified checkout can be published here; partial checkout stays inside
+    // resource_root and is removed by the existing attempt cleanup after original activity ends.
+    if expected.try_exists()? {
+        platform_private_storage::PrivateDirectory::open(&expected)?;
+        let metadata = fs::symlink_metadata(&expected)?;
+        if record.created_directory != Some((metadata.dev(), metadata.ino())) {
+            return Err(Error::Untrusted);
+        }
         verify_tap(request, &expected, uri, commit)?;
-    } else if fs::read_dir(&expected)?
-        .any(|e| e.is_err() || e.is_ok_and(|e| e.file_name() != ".git"))
-    {
-        return Err(Error::Untrusted);
+        fs::remove_dir_all(&expected)?;
     }
-    fs::remove_dir_all(&expected)?;
     if record.parent_created {
         let parent = expected.parent().ok_or(Error::Untrusted)?;
-        if fs::read_dir(parent)?.next().is_none() {
+        if parent.try_exists()? && fs::read_dir(parent)?.next().is_none() {
             fs::remove_dir(parent)?;
         }
     }

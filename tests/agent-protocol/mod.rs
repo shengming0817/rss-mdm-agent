@@ -1080,7 +1080,7 @@ async fn handler(
         return d
             .software_source
             .as_mut()
-            .map(|source| source.response(path, &headers, &bytes))
+            .map(|source| source.response(path, &headers, &bytes, authenticated))
             .unwrap_or_else(|| StatusCode::NOT_FOUND.into_response());
     }
     if d.tls_required

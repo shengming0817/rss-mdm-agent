@@ -370,3 +370,54 @@ async fn git_pack_checks_commit_inventory_and_document_bytes_before_checkout() {
         Err(Error::Capacity)
     ));
 }
+
+#[tokio::test]
+async fn independent_source_origin_never_receives_device_tls_identity() {
+    for brew in [false, true] {
+        let source = Server::tls().await;
+        source
+            .data
+            .lock()
+            .unwrap()
+            .software_native(&source.url, brew);
+        let management = Server::tls().await;
+        assert_ne!(management.url.origin(), source.url.origin());
+        management
+            .data
+            .lock()
+            .unwrap()
+            .software_native(&source.url, brew);
+        source.data.lock().unwrap().software_source =
+            management.data.lock().unwrap().software_source.clone();
+        provision(&management);
+        let mut cfg = management.config();
+        for grant in &mut cfg.software_read_grants {
+            grant.origin = source.url.origin().ascii_serialization();
+        }
+        let root = Root::new();
+        let mut client = agent_client::Client::open(
+            &root.path,
+            cfg,
+            OpenMode::Create,
+            management.secrets.clone(),
+            management.time.clone(),
+        )
+        .unwrap();
+        client.set_profiles(vec![ExecutorProfile::PosixSh]).unwrap();
+        // Registration and claim require the real device mTLS identity on management's listener.
+        management.register(&mut client).await;
+        let offer = client.claim().await.unwrap().offer.unwrap();
+        let materials = client.prepare(&offer).await.unwrap();
+        materials.native_source(0).unwrap().reader().unwrap();
+        let data = source.data.lock().unwrap();
+        let observed = data.software_source.as_ref().unwrap();
+        assert_eq!(
+            observed.client_authenticated.len(),
+            if brew { 1 } else { 2 }
+        );
+        assert!(observed
+            .client_authenticated
+            .iter()
+            .all(|authenticated| !authenticated));
+    }
+}

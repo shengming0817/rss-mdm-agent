@@ -17,6 +17,7 @@ struct State {
     path: Option<PathBuf>,
     created: bool,
     parent_created: bool,
+    created_directory: Option<(u64, u64)>,
     active: bool,
     activity: execution_runner::software::NativeActivity,
 }
@@ -253,6 +254,7 @@ pub(super) fn execute(
                 path: None,
                 created: false,
                 parent_created: false,
+                created_directory: None,
                 active: false,
                 activity: execution_runner::software::NativeActivity::current()
                     .map_err(crate::error::app_error)?,

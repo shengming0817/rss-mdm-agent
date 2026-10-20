@@ -119,7 +119,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                     let info = self
                         .native_read(
                             offer,
-                            self.http
+                            self.native_http
                                 .get(base.join("information").map_err(|_| Error::Protocol)?),
                             None,
                             65536,
@@ -140,7 +140,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                     url.query_pairs_mut()
                         .append_pair("Version", &step.action.version);
                     let body = self
-                        .native_read(offer, self.http.get(url), None, MAX_DOCUMENT_BYTES)
+                        .native_read(offer, self.native_http.get(url), None, MAX_DOCUMENT_BYTES)
                         .await?;
                     let body: serde_json::Value =
                         serde_json::from_slice(&body).map_err(|_| Error::Protocol)?;
@@ -180,7 +180,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                     let response = self
                         .native_read(
                             offer,
-                            self.http
+                            self.native_http
                                 .post(url)
                                 .header("content-type", "application/x-git-upload-pack-request")
                                 .body(native::pack_request(commit)?),

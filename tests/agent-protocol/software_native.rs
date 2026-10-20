@@ -6,6 +6,7 @@ use std::{
 };
 
 pub const TOKEN: &str = "source-read-test-only-token-123456789";
+#[derive(Clone)]
 pub struct Source {
     pub document: Value,
     pub pack: Vec<u8>,
@@ -13,11 +14,19 @@ pub struct Source {
     pub identifier: String,
     pub credential: Option<SoftwareReadCredential>,
     pub requests: Vec<String>,
+    pub client_authenticated: Vec<bool>,
     pub denied: bool,
 }
 impl Source {
-    pub fn response(&mut self, path: &str, headers: &HeaderMap, body: &[u8]) -> Response {
+    pub fn response(
+        &mut self,
+        path: &str,
+        headers: &HeaderMap,
+        body: &[u8],
+        authenticated: bool,
+    ) -> Response {
         self.requests.push(path.into());
+        self.client_authenticated.push(authenticated);
         if self.denied {
             return StatusCode::FORBIDDEN.into_response();
         }
@@ -248,6 +257,7 @@ impl Data {
             identifier: "rss-fixture".into(),
             credential,
             requests: vec![],
+            client_authenticated: vec![],
             denied: false,
         });
     }

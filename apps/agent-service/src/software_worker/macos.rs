@@ -1065,7 +1065,7 @@ fn copy_tree_from(source: &File, target: &Path, tree: &Tree) -> Result<(), Error
     }
     Ok(())
 }
-fn rename(source: &Path, target: &Path, swap: bool) -> Result<(), Error> {
+pub(super) fn rename(source: &Path, target: &Path, swap: bool) -> Result<(), Error> {
     let parent = |p: &Path| -> Result<File, Error> {
         Ok(OpenOptions::new()
             .read(true)
