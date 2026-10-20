@@ -10,7 +10,7 @@ use std::{
 use tokio::net::windows::named_pipe::NamedPipeServer;
 use windows_sys::Win32::{
     Storage::FileSystem::*,
-    System::{JobObjects::*, Pipes::*},
+    System::{JobObjects::*, Pipes::*, SystemServices::JOB_OBJECT_QUERY},
 };
 
 pub(crate) struct Owner {
@@ -19,7 +19,7 @@ pub(crate) struct Owner {
     session: u32,
 }
 impl Owner {
-    pub(crate) fn prepare(_: &mut tokio::process::Command) -> Result<Self, Error> {
+    pub(crate) fn prepare(command: &mut tokio::process::Command) -> Result<Self, Error> {
         let (subject, session) = token_identity()?;
         let name = format!("Local\\rss-mdm-attempt-{}", nonce()?);
         let descriptor = security(&format!("D:P(A;;GA;;;{subject})(A;;GA;;;SY)(A;;GA;;;BA)"))?;
@@ -48,6 +48,9 @@ impl Owner {
         {
             return Err(Error::Unavailable);
         }
+        // This value is injected after the frozen invocation environment and is verified against
+        // actual Job membership by the worker; it cannot select a different execution scope.
+        command.env(crate::software::activity::WINDOWS_JOB_ENV, &name);
         Ok(Self { job, name, session })
     }
     pub(crate) fn scope(&self) -> ProcessScope {
@@ -81,6 +84,59 @@ impl Owner {
                 && value.ActiveProcesses == 0
         }
     }
+}
+
+fn open_activity(name: &str) -> Result<Option<OwnedHandle>, Error> {
+    if !name.starts_with("Local\\rss-mdm-attempt-")
+        || name.len() > 128
+        || name.chars().any(char::is_control)
+    {
+        return Err(Error::Unbound);
+    }
+    let handle = unsafe { OpenJobObjectW(JOB_OBJECT_QUERY, 0, wide(name).as_ptr()) };
+    if handle.is_null() {
+        return if unsafe { GetLastError() } == ERROR_FILE_NOT_FOUND {
+            Ok(None)
+        } else {
+            Err(Error::Unavailable)
+        };
+    }
+    Ok(Some(unsafe { own(handle) }?))
+}
+pub(crate) fn current_activity() -> Result<ProcessScope, Error> {
+    let name =
+        std::env::var(crate::software::activity::WINDOWS_JOB_ENV).map_err(|_| Error::Unbound)?;
+    let job = open_activity(&name)?.ok_or(Error::Unbound)?;
+    let mut member = 0;
+    if unsafe { IsProcessInJob(GetCurrentProcess(), raw(&job), &mut member) } == 0 || member == 0 {
+        return Err(Error::Unbound);
+    }
+    Ok(ProcessScope::JobObject {
+        name,
+        session: token_identity()?.1,
+    })
+}
+pub(crate) fn activity_closed(name: &str, session: u32) -> Result<bool, Error> {
+    if token_identity()?.1 != session {
+        return Err(Error::Unbound);
+    }
+    let Some(job) = open_activity(name)? else {
+        return Ok(true);
+    };
+    let mut value: JOBOBJECT_BASIC_ACCOUNTING_INFORMATION = unsafe { std::mem::zeroed() };
+    if unsafe {
+        QueryInformationJobObject(
+            raw(&job),
+            JobObjectBasicAccountingInformation,
+            (&mut value as *mut JOBOBJECT_BASIC_ACCOUNTING_INFORMATION).cast(),
+            size_of_val(&value) as u32,
+            null_mut(),
+        )
+    } == 0
+    {
+        return Err(Error::Unavailable);
+    }
+    Ok(value.ActiveProcesses == 0)
 }
 impl Drop for Owner {
     fn drop(&mut self) {
@@ -361,6 +417,10 @@ mod tests {
     fn child_fixture() {
         use std::os::windows::process::CommandExt;
         if std::env::var_os("RSS_JOB_LEAF").is_some() {
+            if let Some(path) = std::env::var_os("RSS_JOB_ACTIVITY_PATH") {
+                let activity = crate::software::NativeActivity::current().unwrap();
+                std::fs::write(path, serde_json::to_vec(&activity).unwrap()).unwrap();
+            }
             std::thread::sleep(Duration::from_secs(30));
             return;
         }
@@ -385,6 +445,52 @@ mod tests {
             .unwrap();
         println!("descendant={}", child.id());
         // Child handle closes; the kernel job retains the live descendant.
+    }
+    #[tokio::test]
+    async fn persisted_activity_waits_for_the_original_job_then_survives_owner_loss() {
+        let path = std::env::temp_dir().join(format!("rss-activity-{}.json", nonce().unwrap()));
+        let mut command = tokio::process::Command::new(std::env::current_exe().unwrap());
+        command
+            .args([
+                "--exact",
+                "windows::process::tests::child_fixture",
+                "--ignored",
+            ])
+            .env_clear()
+            .env("RSS_JOB_LEAF", "1")
+            .env("RSS_JOB_ACTIVITY_PATH", &path)
+            .current_dir(std::env::current_dir().unwrap());
+        let mut owner = Owner::prepare(&mut command).unwrap();
+        let mut child = spawn(
+            &mut command,
+            &mut owner,
+            &std::sync::atomic::AtomicBool::new(false),
+            Instant::now() + Duration::from_secs(5),
+        )
+        .await
+        .unwrap();
+        let until = Instant::now() + Duration::from_secs(5);
+        let activity = loop {
+            if let Ok(bytes) = std::fs::read(&path) {
+                if let Ok(activity) =
+                    serde_json::from_slice::<crate::software::NativeActivity>(&bytes)
+                {
+                    break activity;
+                }
+            }
+            assert!(
+                Instant::now() < until,
+                "child did not publish scope evidence"
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        };
+        assert!(!activity.closed().unwrap());
+        owner.terminate();
+        child.wait().await.unwrap();
+        assert!(activity.closed().unwrap());
+        drop(owner);
+        assert!(activity.closed().unwrap());
+        std::fs::remove_file(path).unwrap();
     }
     #[tokio::test]
     async fn job_owns_descendants_and_cleans_up() {

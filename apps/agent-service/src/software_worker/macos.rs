@@ -1065,7 +1065,7 @@ fn copy_tree_from(source: &File, target: &Path, tree: &Tree) -> Result<(), Error
     }
     Ok(())
 }
-fn rename(source: &Path, target: &Path, swap: bool) -> Result<(), Error> {
+pub(super) fn rename(source: &Path, target: &Path, swap: bool) -> Result<(), Error> {
     let parent = |p: &Path| -> Result<File, Error> {
         Ok(OpenOptions::new()
             .read(true)
@@ -1660,6 +1660,8 @@ mod tests {
             downgrade: wire::SoftwareTaskDowngrade::Deny,
         };
         let request = WorkerRequest {
+            intent: SoftwareOperation::Install,
+            export: wire::SoftwareTaskExport::Direct,
             native_output: Default::default(),
             native_pending: Default::default(),
             external_pending: Default::default(),

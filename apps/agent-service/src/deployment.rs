@@ -16,6 +16,7 @@ use std::{
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Deployment {
+    pub software_read_grants: Vec<agent_client::SoftwareReadGrant>,
     pub version: u32,
     pub ipc_version: u8,
     pub origin: String,
@@ -33,6 +34,25 @@ pub struct Deployment {
     pub helper_work_roots: BTreeMap<String, PathBuf>,
 }
 impl Deployment {
+    /// Provision a source-scoped token into the existing OS namespace, without overwriting it.
+    /// The communication lease requires the daemon to be stopped; no registration is created.
+    pub fn import_software_credential(&self, target: &str, token: &str) -> Result<(), Error> {
+        self.require_service()?;
+        agent_client::native_source::validate_read_token(token)?;
+        let grant = self
+            .software_read_grants
+            .iter()
+            .find(|g| g.credential.source == target)
+            .ok_or(Error::Configuration)?;
+        let _communication = self.communication(false)?;
+        let store = DeviceSecrets::open(&self.state_root.join("secrets"), &self.namespace()?)?;
+        store.verify_storage(&self.state_root)?;
+        store.0.import(
+            &agent_client::native_source::credential_key(&grant.credential)?,
+            token.as_bytes(),
+        )?;
+        Ok(())
+    }
     /// Assemble the machine owner. Registration is driven only by explicit IPC or retained operations.
     pub fn assemble(self) -> Result<Box<dyn execution_ipc::host::Handler>, Error> {
         self.require_service()?;
@@ -179,13 +199,18 @@ impl Deployment {
             })
             .collect::<Result<_, Error>>()?;
         Ok(Config {
+            software_read_grants: self.software_read_grants.clone(),
             execution_context: wire::SoftwareExecutionContext {
                 revision: 1,
                 os_version: crate::os_version::current()?,
                 system_broker: true,
                 user_helper: true,
                 interactive_user: None,
-                source_credentials: vec![],
+                source_credentials: self
+                    .software_read_grants
+                    .iter()
+                    .map(|g| g.credential.clone())
+                    .collect(),
                 msix_sideload: crate::software_worker::sideload_allowed()?,
                 msix_unsigned: cfg!(windows) && crate::os_version::current()? >= [10, 0, 19041, 0],
             },
@@ -611,7 +636,7 @@ mod tests {
             "version": execution_ipc::host::DEPLOYMENT_VERSION,
             "ipc_version": execution_ipc::host::IPC_VERSION,
             "origin":"https://agent.example.org", "tenant":uuid::Uuid::new_v4(),
-            "signing_keys":{}, "ca_file":root.path.join("https-ca.pem"),
+            "software_read_grants":[], "signing_keys":{}, "ca_file":root.path.join("https-ca.pem"),
             "installation_id":uuid::Uuid::new_v4(), "installation_artifact":"a".repeat(64),
             "registration_clients":peer.clone(), "clients":peer, "service":image,
             "state_root":root.path.join("state"), "helper_work_roots":{},
@@ -672,6 +697,7 @@ mod tests {
             cdhash: None,
         };
         let mut deployment = Deployment {
+            software_read_grants: vec![],
             version: execution_ipc::host::DEPLOYMENT_VERSION,
             ipc_version: execution_ipc::host::IPC_VERSION,
             origin: String::new(),

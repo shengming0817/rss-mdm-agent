@@ -246,6 +246,7 @@ impl Candidate {
             interactive: true,
         };
         Ok(Deployment {
+            software_read_grants: vec![],
             version: execution_ipc::host::DEPLOYMENT_VERSION,
             ipc_version: execution_ipc::host::IPC_VERSION,
             origin: self.origin.clone(),

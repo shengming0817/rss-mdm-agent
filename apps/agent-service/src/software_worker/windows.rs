@@ -192,7 +192,7 @@ fn executable(
     Ok(completion)
 }
 
-fn detect(
+pub(super) fn detect(
     request: &WorkerRequest,
     detection: &wire::SoftwareTaskDetection,
 ) -> Result<SoftwareState, Error> {

@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 pub(crate) mod pki;
+pub mod software_native;
 use agent_client::*;
 use axum::{
     body::{Body, Bytes},
@@ -77,6 +78,18 @@ impl Secrets {
     }
 }
 impl IdentityProvider for Secrets {
+    fn software_read_token(
+        &self,
+        credential: &SoftwareReadCredential,
+    ) -> Result<zeroize::Zeroizing<String>, Error> {
+        let values = self.0.lock().unwrap();
+        Ok(zeroize::Zeroizing::new(
+            values
+                .get(&agent_client::native_source::credential_key(credential)?)
+                .ok_or(Error::Identity)?
+                .clone(),
+        ))
+    }
     fn native_identities(&self) -> Result<Vec<agent_client::NativeIdentity>, Error> {
         let values = self.0.lock().unwrap();
         let Some(installation) = values.get("managed-installation") else {
@@ -215,6 +228,7 @@ impl agent_client::MachineTrust for Secrets {
     }
 }
 pub struct Data {
+    pub software_source: Option<software_native::Source>,
     pub trust: Value,
     pub task_trust: Value,
     pub task_trust_ack_calls: Vec<Value>,
@@ -691,6 +705,7 @@ impl Server {
         let time = Time(Arc::new(AtomicI64::new(1)));
         let signer = Ed25519KeyPair::from_seed_unchecked(&[7; 32]).unwrap();
         let data = Arc::new(Mutex::new(Data {
+            software_source: None,
             trust: Value::Null,
             task_trust: Value::Null,
             task_trust_ack_calls: Vec::new(),
@@ -856,7 +871,24 @@ impl Server {
     pub fn config(&self) -> Config {
         let data = self.data.lock().unwrap();
         Config {
-            execution_context: execution_context(),
+            software_read_grants: data
+                .software_source
+                .as_ref()
+                .and_then(|s| s.credential.clone())
+                .map(|credential| agent_client::SoftwareReadGrant {
+                    credential,
+                    origin: self.url.origin().ascii_serialization(),
+                })
+                .into_iter()
+                .collect(),
+            execution_context: if data.software_source.is_some() {
+                match &data.offer.as_ref().unwrap().payload {
+                    TaskPayload::Software(s) => s.execution_context.clone(),
+                    _ => unreachable!(),
+                }
+            } else {
+                execution_context()
+            },
             origin: self.url.clone(),
             tenant: data.tenant,
             platform: data
@@ -1044,6 +1076,13 @@ async fn handler(
     let path = uri.path();
     let peer_leaf = peer.ok().and_then(|v| v.0 .0);
     let authenticated = peer_leaf.is_some();
+    if path.starts_with("/native/") {
+        return d
+            .software_source
+            .as_mut()
+            .map(|source| source.response(path, &headers, &bytes, authenticated))
+            .unwrap_or_else(|| StatusCode::NOT_FOUND.into_response());
+    }
     if d.tls_required
         && (path.ends_with("/activate")
             || path.ends_with("/native-grants")

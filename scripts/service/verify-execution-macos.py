@@ -1378,7 +1378,7 @@ def main():
         system_installer_source = installer_source
         shutil.copyfile(lab / 'tls.pem', inputs / 'tls.pem')
         deployment = dict(**service_versions(), origin=info['origin'].rstrip('/'), tenant=info['tenant'],
-                          signing_keys={'test': info['key']}, ca_file=str(protected / 'ca.pem'),
+                          software_read_grants=[], signing_keys={'test': info['key']}, ca_file=str(protected / 'ca.pem'),
                           installation_id=str(uuid.uuid4()), installation_artifact=hashlib.sha256(args.binary.read_bytes()).hexdigest(),
                           state_root=str(protected / 'state'),
                           helper_work_roots={str(os.geteuid()): str(helper_root)},

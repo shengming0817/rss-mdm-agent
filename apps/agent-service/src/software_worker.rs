@@ -16,6 +16,8 @@ pub enum WorkerOperation {
     Install,
     /// Execute the separately approved update command.
     Upgrade,
+    /// Configure only the exact source frozen by the original publication.
+    Prepare,
     /// Execute only the explicit removal.
     Uninstall,
     /// Remove the exact previously observed version before installing.
@@ -31,6 +33,10 @@ pub enum WorkerOperation {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WorkerRequest {
+    /// Original desired operation; auxiliary preparation cannot invent install authority.
+    pub intent: SoftwareOperation,
+    /// Producer-owned native source authority, retained with the original frozen input.
+    pub export: wire::SoftwareTaskExport,
     /// Runtime accounting shared by all native checks in this one physical invocation.
     #[serde(skip)]
     pub native_output: std::sync::Arc<std::sync::atomic::AtomicU64>,
@@ -96,7 +102,8 @@ pub fn run(path: &std::path::Path) -> Result<i32, Error> {
         .map_err(crate::error::app_error)?;
     let before = if matches!(
         request.operation,
-        WorkerOperation::Install
+        WorkerOperation::Prepare
+            | WorkerOperation::Install
             | WorkerOperation::Upgrade
             | WorkerOperation::Uninstall
             | WorkerOperation::RemovePrevious
@@ -112,9 +119,17 @@ pub fn run(path: &std::path::Path) -> Result<i32, Error> {
         None
     };
     #[cfg(target_os = "macos")]
-    let outcome = macos::execute(&request, before.as_ref());
+    let outcome = if !matches!(request.export, wire::SoftwareTaskExport::Direct) {
+        source::execute(&request, before.as_ref())
+    } else {
+        macos::execute(&request, before.as_ref())
+    };
     #[cfg(windows)]
-    let outcome = windows::execute(&request, before.as_ref());
+    let outcome = if !matches!(request.export, wire::SoftwareTaskExport::Direct) {
+        source::execute(&request, before.as_ref())
+    } else {
+        windows::execute(&request, before.as_ref())
+    };
     #[cfg(not(any(target_os = "macos", windows)))]
     let outcome: Result<(i32, SoftwareWorkerResult), Error> = Err(Error::Unsupported);
     let mut result = outcome.unwrap_or_else(|error| {
@@ -130,7 +145,8 @@ pub fn run(path: &std::path::Path) -> Result<i32, Error> {
     {
         result.1.closed = false;
     }
-    if !matches!(request.action.behavior, wire::SoftwareTaskBehavior::Dmg(_))
+    if matches!(request.export, wire::SoftwareTaskExport::Direct)
+        && !matches!(request.action.behavior, wire::SoftwareTaskBehavior::Dmg(_))
         && request.resource_root.exists()
     {
         result.1.closed = false;
@@ -156,6 +172,7 @@ pub fn run(path: &std::path::Path) -> Result<i32, Error> {
 mod macos;
 #[cfg(any(windows, test))]
 mod material;
+mod source;
 #[cfg(windows)]
 mod windows;
 
@@ -179,6 +196,14 @@ fn run_tool(
     image: &std::path::Path,
     args: &[String],
 ) -> Result<(i32, Vec<u8>, Vec<u8>), Error> {
+    run_tool_environment(request, image, args, None)
+}
+fn run_tool_environment(
+    request: &WorkerRequest,
+    image: &std::path::Path,
+    args: &[String],
+    environment: Option<&BTreeMap<String, String>>,
+) -> Result<(i32, Vec<u8>, Vec<u8>), Error> {
     use std::{
         io::Read,
         process::{Command, Stdio},
@@ -189,6 +214,9 @@ fn run_tool(
         time::Duration,
     };
     let mut command = Command::new(image);
+    if let Some(environment) = environment {
+        command.env_clear().envs(environment);
+    }
     if image.starts_with(&request.resource_root) {
         command.current_dir(image.parent().ok_or(Error::Protocol)?);
     }

@@ -7,6 +7,7 @@ use execution_contract::*;
 pub(crate) use execution_ipc::windows_identity::{identity, wide};
 use execution_ipc::windows_identity::{nonce, own, raw, security, sid, token_identity, Local};
 pub(crate) use files::*;
+pub(crate) use process::{activity_closed, current_activity};
 pub(crate) use process::{spawn, Owner};
 use std::{
     os::windows::{

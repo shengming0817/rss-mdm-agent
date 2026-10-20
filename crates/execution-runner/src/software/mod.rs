@@ -1,5 +1,7 @@
 //! Native read-only software detection and bounded preparation.
+pub(crate) mod activity;
 pub(crate) mod native_detection;
+pub use activity::NativeActivity;
 use execution_app::Error;
 pub(crate) use native_detection::detect as native_detection;
 use std::sync::Arc;

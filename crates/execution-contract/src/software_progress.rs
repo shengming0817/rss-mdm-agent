@@ -19,6 +19,8 @@ pub enum SoftwarePhase {
     RemovalAfter,
     /// Distinct approved update command.
     Upgrade,
+    /// Prepare the exact frozen package-manager source and record resource ownership.
+    Prepare,
     /// Acquire the exact read-only image mount and record its ownership.
     Attach,
     /// Validate and copy the selected payload into private staging.

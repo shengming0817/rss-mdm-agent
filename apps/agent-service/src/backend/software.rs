@@ -294,9 +294,6 @@ pub(crate) fn compile(
         {
             return Err(Error::Unsupported);
         }
-        if !matches!(step.export, wire::SoftwareTaskExport::Direct) {
-            return Err(Error::Unsupported);
-        }
         match (&step.target, helper.as_ref()) {
             (wire::SoftwareExecutionTarget::Device, _) => (),
             (
@@ -315,6 +312,8 @@ pub(crate) fn compile(
             wire::SoftwareTaskBehavior::Exe(_)
                 | wire::SoftwareTaskBehavior::Msix(_)
                 | wire::SoftwareTaskBehavior::Dmg(_)
+                | wire::SoftwareTaskBehavior::Winget(_)
+                | wire::SoftwareTaskBehavior::Brew(_)
         ) {
             let (compiled, source) = native::compile(
                 (step, index),
@@ -338,12 +337,6 @@ pub(crate) fn compile(
                 SoftwareKind::Pkg,
                 Some((SoftwareManagerKind::PackageInstaller, n)),
             ),
-            wire::SoftwareTaskBehavior::Winget(n) => {
-                (SoftwareKind::Winget, Some((SoftwareManagerKind::Winget, n)))
-            }
-            wire::SoftwareTaskBehavior::Brew(n) => {
-                (SoftwareKind::Homebrew, Some((SoftwareManagerKind::Brew, n)))
-            }
             wire::SoftwareTaskBehavior::Bundle(_) => (
                 if platform == Platform::Macos {
                     SoftwareKind::MacosBundle
@@ -401,7 +394,7 @@ pub(crate) fn compile(
             .get(action.behavior.installer())
             .cloned()
             .ok_or(Error::Untrusted)?;
-        if let Some(name) = native_export_name(adapter, &action.package)? {
+        if let Some(name) = native_export_name(adapter) {
             primary.0 = compiler
                 .root
                 .native_export(
@@ -699,10 +692,6 @@ fn wrapper(adapter: SoftwareKind, operation: SoftwareOperation) -> Result<&'stat
         (SoftwareKind::Pkg, SoftwareOperation::Install) => b"#!/bin/sh\nset -eu\nmanager=$1; payload=$2; shift 4\nexec \"$manager\" -pkg \"$payload\" -target / \"$@\"\n",
         (SoftwareKind::Msi, SoftwareOperation::Install) => b"param($Manager,$Payload,$Package,$Version)\n$ErrorActionPreference='Stop'\n& $Manager /i $Payload /qn /norestart @args\nexit $LASTEXITCODE\n",
         (SoftwareKind::Msi, SoftwareOperation::Uninstall) => b"param($Manager,$Payload,$Package,$Version)\n$ErrorActionPreference='Stop'\n& $Manager /x $Payload /qn /norestart @args\nexit $LASTEXITCODE\n",
-        (SoftwareKind::Winget, SoftwareOperation::Install) => b"param($Manager,$Payload,$Package,$Version)\n$ErrorActionPreference='Stop'\n& $Manager install --manifest $Payload --version $Version --exact --skip-dependencies --silent --disable-interactivity @args\nexit $LASTEXITCODE\n",
-        (SoftwareKind::Winget, SoftwareOperation::Uninstall) => b"param($Manager,$Payload,$Package,$Version)\n$ErrorActionPreference='Stop'\n& $Manager uninstall --manifest $Payload --version $Version --exact --silent --disable-interactivity @args\nexit $LASTEXITCODE\n",
-        (SoftwareKind::Homebrew, SoftwareOperation::Install) => b"#!/bin/sh\nset -eu\nmanager=$1; payload=$2; shift 4\nexport HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK=1 HOMEBREW_NO_INSTALL_UPGRADE=1 HOMEBREW_NO_ANALYTICS=1\nexec \"$manager\" install --formula --ignore-dependencies \"$payload\" \"$@\"\n",
-        (SoftwareKind::Homebrew, SoftwareOperation::Uninstall) => b"#!/bin/sh\nset -eu\nmanager=$1; payload=$2; shift 4\nexport HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 HOMEBREW_NO_ANALYTICS=1\nexec \"$manager\" uninstall --formula \"$payload\" \"$@\"\n",
         _ => return Err(Error::Unsupported),
     })
 }
@@ -725,27 +714,12 @@ fn bundle_directory(members: &BTreeMap<String, PathBuf>, entry: &str) -> Result<
     Ok(root.to_path_buf())
 }
 // Native package managers require these filenames; the name never comes from a wire path.
-pub(crate) fn native_export_name(
-    adapter: SoftwareKind,
-    package: &str,
-) -> Result<Option<String>, Error> {
-    Ok(Some(match adapter {
+pub(crate) fn native_export_name(adapter: SoftwareKind) -> Option<String> {
+    Some(match adapter {
         SoftwareKind::Pkg => "package.pkg".into(),
         SoftwareKind::Msi => "package.msi".into(),
-        SoftwareKind::Winget => "manifest.yaml".into(),
-        SoftwareKind::Homebrew => {
-            let leaf = package.rsplit('/').next().ok_or(Error::Protocol)?;
-            if leaf.is_empty()
-                || !leaf
-                    .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b"@+_.-".contains(&b))
-            {
-                return Err(Error::Protocol);
-            }
-            format!("{leaf}.rb")
-        }
-        _ => return Ok(None),
-    }))
+        _ => return None,
+    })
 }
 
 #[cfg(test)]

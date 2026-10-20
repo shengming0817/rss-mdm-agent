@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 /// Current desktop/system IPC. No negotiation or legacy parser exists.
 pub const IPC_VERSION: u8 = 18;
 /// Current protected installation document format.
-pub const DEPLOYMENT_VERSION: u32 = 6;
+pub const DEPLOYMENT_VERSION: u32 = 7;
 
 /// Read-only native state, independent from Agent identity and policy authorization.
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema, PartialEq, Eq)]
@@ -300,6 +300,22 @@ pub fn current_session_binding() -> Result<Id, execution_app::Error> {
     #[cfg(windows)]
     {
         crate::windows_identity::current_session_binding()
+    }
+    #[cfg(not(any(target_os = "macos", windows)))]
+    {
+        Err(execution_app::Error::Unsupported)
+    }
+}
+
+/// Current kernel boot generation, independent of adjustable wall-clock time.
+pub fn boot_generation() -> Result<Id, execution_app::Error> {
+    #[cfg(target_os = "macos")]
+    {
+        crate::macos_identity::boot_generation()
+    }
+    #[cfg(windows)]
+    {
+        crate::windows_identity::boot_generation()
     }
     #[cfg(not(any(target_os = "macos", windows)))]
     {

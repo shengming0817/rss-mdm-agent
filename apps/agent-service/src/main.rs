@@ -71,6 +71,24 @@ fn run() -> Result<(), Error> {
         return Ok(());
     }
     let deployment = Deployment::load(&path)?;
+    if let [mode, target] = args.as_slice() {
+        if mode == "--import-software-credential" {
+            use std::io::Read;
+            let mut bytes = zeroize::Zeroizing::new(Vec::new());
+            std::io::stdin().take(515).read_to_end(&mut bytes)?;
+            if bytes.ends_with(b"\n") {
+                bytes.pop();
+                if bytes.ends_with(b"\r") {
+                    bytes.pop();
+                }
+            }
+            let token = std::str::from_utf8(&bytes).map_err(|_| Error::Configuration)?;
+            deployment
+                .import_software_credential(target.to_str().ok_or(Error::Configuration)?, token)?;
+            println!("software read credential imported");
+            return Ok(());
+        }
+    }
     if args.len() == 1 && args[0] == "--validate-installation" {
         deployment
             .service

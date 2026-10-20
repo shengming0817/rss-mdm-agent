@@ -126,9 +126,10 @@ impl SoftwareProgram {
                 SoftwareUpgrade::InPlace { invocation } => Some(invocation),
                 _ => None,
             },
-            SoftwarePhase::Attach | SoftwarePhase::Stage | SoftwarePhase::Cleanup => {
-                step.auxiliary.get(&phase)
-            }
+            SoftwarePhase::Prepare
+            | SoftwarePhase::Attach
+            | SoftwarePhase::Stage
+            | SoftwarePhase::Cleanup => step.auxiliary.get(&phase),
             SoftwarePhase::Before | SoftwarePhase::RemovalAfter | SoftwarePhase::After => {
                 match &step.detection {
                     SoftwareDetector::Script { invocation } => Some(invocation),
@@ -164,6 +165,9 @@ impl SoftwareProgram {
             return Vec::new();
         }
         let mut phases = Vec::new();
+        if step.auxiliary.contains_key(&SoftwarePhase::Prepare) {
+            phases.push(SoftwarePhase::Prepare);
+        }
         if step.auxiliary.contains_key(&SoftwarePhase::Attach)
             && self.intent == SoftwareOperation::Install
         {
@@ -190,7 +194,7 @@ impl SoftwareProgram {
     }
     /// The original phase may acquire resources that only its frozen Cleanup can close.
     pub(crate) fn acquires_resources(&self, step: u32, phase: SoftwarePhase) -> bool {
-        phase == SoftwarePhase::Attach
+        matches!(phase, SoftwarePhase::Attach | SoftwarePhase::Prepare)
             || (phase == SoftwarePhase::Mutation
                 && self.intent == SoftwareOperation::Uninstall
                 && self.steps.get(step as usize).is_some_and(|s| {

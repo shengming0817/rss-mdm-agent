@@ -70,6 +70,7 @@ pub struct Client<S, C> {
     pub(crate) store: Store,
     pub(crate) http: reqwest::Client,
     pub(crate) bootstrap: reqwest::Client,
+    pub(crate) native_http: reqwest::Client,
     pub(crate) runtime_gate: crate::RuntimeGate,
     pub(crate) task_trust_started: bool,
     pub(crate) pki_observed: bool,
@@ -132,6 +133,14 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         }
         Ok(crate::CredentialRedactor {
             device: secrets,
+            software: self
+                .store
+                .cfg
+                .execution_context
+                .source_credentials
+                .iter()
+                .map(|c| self.secrets.software_read_token(c))
+                .collect::<Result<_, _>>()?,
             employee: Vec::new(),
         })
     }
@@ -174,12 +183,15 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         config.validate()?;
         let store = Store::open(root, config, mode)?;
         let bootstrap = crate::tls::client(&store.cfg, None, &secrets)?;
+        // Software sources have server trust, never the device signer or its TLS sessions.
+        let native_http = crate::tls::client(&store.cfg, None, &secrets)?;
         let http = bootstrap.clone();
         let mut client = Self {
             delivery_owner: Uuid::new_v4(),
             store,
             http,
             bootstrap,
+            native_http,
             runtime_gate: crate::RuntimeGate::default(),
             task_trust_started: false,
             pki_observed: false,
