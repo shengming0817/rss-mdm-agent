@@ -306,6 +306,15 @@ const publication = {
       }
     : {
         kind: "macos_pkg",
+        bundle: execFileSync(
+          "/usr/libexec/PlistBuddy",
+          [
+            "-c",
+            "Print :CFBundleIdentifier",
+            join(payload, "RSS MDM Agent.app/Contents/Info.plist"),
+          ],
+          { encoding: "utf8" },
+        ).trim(),
         team: release
           ? (/^TeamIdentifier=(.+)$/m.exec(
               spawnSync("/usr/bin/codesign", ["-d", "--verbose=4", desktop], {
