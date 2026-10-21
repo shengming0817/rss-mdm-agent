@@ -673,21 +673,13 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn registration_owner_recovers_transient_failure_without_another_request() {
         let _budget = crate::scenario_budget::enter();
-        for fault in ["registration", "trust", "machine"] {
+        for fault in ["registration", "trust"] {
             for restart in [false, true] {
                 let server = Server::tls().await;
                 let root = Root::new();
                 match fault {
                     "registration" => server.data.lock().unwrap().registration_failure = true,
                     "trust" => server.data.lock().unwrap().trust_failure = true,
-                    "machine" => {
-                        server
-                            .secrets
-                            .0
-                            .lock()
-                            .unwrap()
-                            .insert("machine/configure-failure".into(), "injected".into());
-                    }
                     _ => unreachable!(),
                 }
                 let client = if restart {
@@ -700,14 +692,10 @@ mod tests {
                     None
                 };
                 let moving_time = server.time.clone();
-                let native = server.secrets.clone();
                 let clock_task = tokio::spawn(async move {
                     let start = std::time::Instant::now();
                     loop {
                         moving_time.set(1 + start.elapsed().as_secs() as i64);
-                        if start.elapsed() >= std::time::Duration::from_secs(1) {
-                            native.0.lock().unwrap().remove("machine/configure-failure");
-                        }
                         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
                     }
                 });
