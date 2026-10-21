@@ -151,7 +151,7 @@ it.each(["prompt", "cancel", "respond"] as const)(
       commands: {
         p: {
           command: {
-            schemaVersion: 8,
+            schemaVersion: 1,
             kind: "command",
             sessionId: session.namespace.sessionId,
             commandId: "p",
@@ -316,7 +316,7 @@ it("starts with an editable composer, readable history and one live conversation
   c.state.sessions.set(session.namespace.sessionId, {
     namespace: session.namespace,
     status: "active",
-    title: "检查网络连接",
+    presentation: { title: "检查网络连接" },
     lastActivityAtMs: 1,
   });
   const wrapper = mount(Assistant, {

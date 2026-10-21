@@ -21,12 +21,12 @@ import {
 const require = createRequire(
   new URL("../../packages/ai-contract/package.json", import.meta.url),
 );
-test("the previous contract cannot negotiate the new session-list response", () => {
-  const previousVersion = 6;
+test("an unknown contract cannot negotiate the current session response", () => {
+  const unknownVersion = 99;
   assert.throws(() =>
     parseNegotiation(
       {
-        contractVersion: previousVersion,
+        contractVersion: unknownVersion,
         acp: 1,
         durableReceipts: true,
         cursorAttach: true,
@@ -140,13 +140,13 @@ test("official A2UI action binds exact surface/run/revision; payload claims gran
 test("negotiation permits basic ACP without A2UI and rejects unselected versions", () => {
   const host = new FakeHost();
   const basic = {
-    contractVersion: 8,
+    contractVersion: 1,
     acp: 1,
     durableReceipts: false,
     cursorAttach: false,
   };
   assert.deepEqual(host.negotiate(basic), { ok: true, value: basic });
-  assert.equal(host.negotiate({ ...basic, contractVersion: 1 }).ok, false);
+  assert.equal(host.negotiate({ ...basic, contractVersion: 99 }).ok, false);
 });
 
 test("A2UI constructed inputs are bounded before upstream validation", async () => {

@@ -23,16 +23,16 @@ const settingsPage = (
   organizations: Organization[] = [],
   selected?: string,
 ) => ({
-  schemaVersion: 8,
+  schemaVersion: 1,
   kind: "accountSettings",
   organizations,
   ...(selected ? { selected } : {}),
 });
 const current = {
-  schemaVersion: 8 as const,
+  schemaVersion: 1 as const,
   kind: "userContext" as const,
   user: {
-    schemaVersion: 8 as const,
+    schemaVersion: 1 as const,
     kind: "testUser" as const,
     userId: "a",
     displayName: "Alice",
@@ -58,7 +58,7 @@ it("installs the native device workspace after logout retires the old generation
     expect(currentUser.value).toBeUndefined();
     if (command === "account_logout") return;
     if (command === "account_status")
-      return { schemaVersion: 8, kind: "accountStatus", current: device };
+      return { schemaVersion: 1, kind: "accountStatus", current: device };
     throw Error("unexpected native request");
   });
   await logoutAccount();
@@ -112,7 +112,7 @@ it("closes assistant modals when leaving the page and preserves the conversation
 it("keeps settings selected when navigation needs an unselected user", async () => {
   vi.mocked(invoke).mockImplementation(async (command) => {
     if (command === "test_users")
-      return { schemaVersion: 8, kind: "testUserPage", users: [] };
+      return { schemaVersion: 1, kind: "testUserPage", users: [] };
     throw { code: "ai_unavailable" };
   });
   const wrapper = mount(App);
@@ -141,7 +141,7 @@ it.each([
     vi.mocked(invoke).mockImplementation(async (command) => {
       if (command === "test_users")
         return {
-          schemaVersion: 8,
+          schemaVersion: 1,
           kind: "testUserPage",
           users: [current.user],
           current,
@@ -180,7 +180,7 @@ it("keeps the current workspace mounted and inert while a switch is pending", as
   vi.mocked(invoke).mockImplementation(async (command) => {
     if (command === "test_users")
       return {
-        schemaVersion: 8,
+        schemaVersion: 1,
         kind: "testUserPage",
         users: [current.user],
         current,
@@ -214,7 +214,7 @@ it("keeps the current workspace mounted and inert while a switch is pending", as
 it("keeps enterprise, test and guest entries visible before selecting a user", async () => {
   vi.mocked(invoke).mockImplementation(async (command) => {
     if (command === "test_users")
-      return { schemaVersion: 8, kind: "testUserPage", users: [] };
+      return { schemaVersion: 1, kind: "testUserPage", users: [] };
     if (command === "account_organizations") return settingsPage();
     throw { code: "ai_unavailable" };
   });
@@ -312,7 +312,7 @@ it("queries the production execution service without a fixture fallback and repo
   vi.mocked(invoke).mockImplementation(async (command) => {
     if (command === "test_users")
       return {
-        schemaVersion: 8,
+        schemaVersion: 1,
         kind: "testUserPage",
         users: [],
         current: enterprise,
@@ -320,7 +320,7 @@ it("queries the production execution service without a fixture fallback and repo
     if (command === "account_organizations") return settingsPage();
     if (command === "account_status")
       return {
-        schemaVersion: 8,
+        schemaVersion: 1,
         kind: "accountStatus",
         ...(revoked ? {} : { current: enterprise }),
       };
@@ -369,7 +369,7 @@ it("focuses the default AI page after the selected workspace is replaced", async
   vi.mocked(invoke).mockImplementation(async (command) => {
     if (command === "test_users")
       return {
-        schemaVersion: 8,
+        schemaVersion: 1,
         kind: "testUserPage",
         users: active ? [active.user] : [],
         current: active,

@@ -316,7 +316,7 @@ impl Collector {
         let policy = reference(p.policy.to_string(), p.policy_version.to_string())?;
         let frozen = FrozenExecution::freeze(
             ExecutionInput {
-                schema_version: V8,
+                schema_version: V1,
                 execution: ExecutionSpec::Process {},
                 request: ExecutionRequest {
                     schema_version: V1,

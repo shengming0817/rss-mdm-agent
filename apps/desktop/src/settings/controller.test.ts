@@ -2,7 +2,7 @@ import { expect, it, vi } from "vitest";
 import type { HostStatus } from "@rss-mdm-agent/ai-contract/wire";
 import { createHostSettings, diagnosticMessage } from "./controller";
 const status = (generation: number): HostStatus => ({
-  schemaVersion: 8,
+  schemaVersion: 1,
   kind: "hostStatus",
   generation,
   phase: "ready",

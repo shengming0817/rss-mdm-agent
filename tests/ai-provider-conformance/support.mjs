@@ -68,7 +68,7 @@ export async function until(check, label = "condition", timeoutMs = 15000) {
 }
 export function command(sessionId, commandId, text = "hello") {
   return {
-    schemaVersion: 8,
+    schemaVersion: 1,
     kind: "command",
     sessionId,
     commandId,
@@ -262,10 +262,10 @@ export async function configuration(
       profile,
     },
     connection: {
-      schemaVersion: 8,
+      schemaVersion: 1,
       kind: "connection",
       connectionId: "local",
-      name: "Native fixture",
+      presentation: { name: "Native fixture" },
       provider,
       configRevision: 1,
 
@@ -347,12 +347,12 @@ export async function clientAt(
   await parent.control.call("attach", {
     channel,
     context: {
-      schemaVersion: 8,
+      schemaVersion: 1,
       kind: "userContext",
       executionBinding: "fixture-binding",
       generation,
       user: {
-        schemaVersion: 8,
+        schemaVersion: 1,
         kind: "testUser",
         userId: "fixture-actor",
         displayName: "Fixture",

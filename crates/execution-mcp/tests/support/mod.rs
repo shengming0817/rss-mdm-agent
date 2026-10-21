@@ -167,14 +167,17 @@ impl ExecutionServicePort for TestService {
         ))
         .await;
         Ok(vec![BackendTask {
-            summary: BackendTaskSummary::Script {
-                identity: BackendIdentity::System,
+            presentation: execution_contract::BackendPresentation {
+                title: "Test-only backend offer".into(),
+                summary: BackendTaskSummary::Script {
+                    identity: BackendIdentity::System,
+                },
+                extra: Default::default(),
             },
             task: Id::new("test-task").unwrap(),
             attempt: Id::new("test-attempt").unwrap(),
             revision: Digest::new("a".repeat(64)).unwrap(),
             request: RequestId::new("test-request").unwrap(),
-            title: "Test-only backend offer".into(),
             expires_at: 9999999999,
             user_initiated: true,
         }])

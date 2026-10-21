@@ -2,9 +2,9 @@
 use execution_contract::{Digest, Id, RequestId, VersionedRef};
 use serde::{Deserialize, Serialize};
 /// Current desktop/system IPC. No negotiation or legacy parser exists.
-pub const IPC_VERSION: u8 = 18;
+pub const IPC_VERSION: u8 = 1;
 /// Current protected installation document format.
-pub const DEPLOYMENT_VERSION: u32 = 7;
+pub const DEPLOYMENT_VERSION: u32 = 1;
 
 /// Read-only native state, independent from Agent identity and policy authorization.
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema, PartialEq, Eq)]
@@ -178,12 +178,22 @@ pub struct RegistrationContext {
 #[derive(Clone, Debug, Default, Serialize, Deserialize, schemars::JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DeviceOverview {
+    /// Extensible device facts; OS peer identity is held separately.
+    pub attributes: DeviceAttributes,
+}
+/// Known device presentation keys; new ordinary keys do not change IPC identity.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, schemars::JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceAttributes {
     /// OS computer name, absent when the platform read failed.
     pub computer_name: Option<String>,
     /// Up-interface unicast addresses; empty means no address, absent means read failed.
     pub ip_addresses: Option<Vec<String>>,
     /// OS login name of the requesting interactive session, never a product account.
     pub login_user: Option<String>,
+    /// Ordinary unrecognized facts preserved without becoming authority.
+    #[serde(flatten)]
+    pub extra: std::collections::BTreeMap<String, serde_json::Value>,
 }
 /// Closed presentation combining local installation checks and authenticated service facts.
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema, PartialEq, Eq)]
@@ -214,13 +224,47 @@ struct Response {
 }
 /// Serialize the single current response envelope for native transport and operator probes.
 pub fn encode_reply(reply: Reply) -> Vec<u8> {
-    serde_json::to_vec(&Response {
+    let bytes = serde_json::to_vec(&Response {
         version: IPC_VERSION,
         reply,
     })
-    .expect("closed service reply serialization")
+    .expect("service reply serialization");
+    if valid_reply_shape(&bytes) {
+        bytes
+    } else {
+        serde_json::to_vec(&Response {
+            version: IPC_VERSION,
+            reply: Reply::Unavailable,
+        })
+        .expect("unavailable reply serialization")
+    }
+}
+// All reply content, including unknown display keys, shares the native frame budget.
+// This is transport validation only: JSON contents never establish peer authority.
+fn valid_reply_shape(bytes: &[u8]) -> bool {
+    fn visit(value: &serde_json::Value, depth: usize, remaining: &mut usize) -> bool {
+        if depth > 64 || *remaining == 0 {
+            return false;
+        }
+        *remaining -= 1;
+        match value {
+            serde_json::Value::Array(values) => {
+                values.iter().all(|v| visit(v, depth + 1, remaining))
+            }
+            serde_json::Value::Object(values) => {
+                values.values().all(|v| visit(v, depth + 1, remaining))
+            }
+            _ => true,
+        }
+    }
+    bytes.len() <= FRAME_LIMIT
+        && serde_json::from_slice::<serde_json::Value>(bytes)
+            .is_ok_and(|value| visit(&value, 0, &mut 131072))
 }
 fn decode_reply(bytes: &[u8]) -> Result<Reply, execution_app::Error> {
+    if !valid_reply_shape(bytes) {
+        return Err(execution_app::Error::InvalidInput);
+    }
     let response: Response =
         serde_json::from_slice(bytes).map_err(|_| execution_app::Error::InvalidInput)?;
     if response.version != IPC_VERSION {
@@ -644,7 +688,7 @@ impl NativeContextSession {
         }
     }
 }
-/// Local IPC V8 carries backend task references, never executable plans or authority claims.
+/// Local IPC V1 carries backend task references, never executable plans or authority claims.
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(
     tag = "method",
@@ -974,7 +1018,7 @@ impl ServiceClient {
         }
         Ok(Self { server })
     }
-    /// Send a bounded V8 request over a mutually authenticated native connection.
+    /// Send a bounded V1 request over a mutually authenticated native connection.
     /// Transport failure does not mean a submitted selection or cancellation failed.
     pub fn request(&self, request: Request) -> Result<Reply, execution_app::Error> {
         let bytes = encode(request)?;
@@ -1039,7 +1083,7 @@ pub trait Handler: Send {
     /// Process one bounded request serially; a lost reply does not prove no mutation.
     fn handle(&mut self, peer: &Peer, request: Request) -> Reply;
     /// Native framing seam for the separately authenticated helper protocol. The system
-    /// service uses this default, which accepts only task-reference IPC V8.
+    /// service uses this default, which accepts only task-reference IPC V1.
     fn handle_wire(&mut self, peer: &Peer, bytes: &[u8]) -> Vec<u8> {
         let reply = if bytes.len() > 65536 {
             Reply::Rejected
@@ -1110,9 +1154,15 @@ mod tests {
             value["request"].as_object_mut().unwrap().remove(field);
         }
         let overview = super::DeviceOverview {
-            computer_name: Some("Studio Mac".into()),
-            ip_addresses: Some(vec!["192.0.2.24".into()]),
-            login_user: Some("studio".into()),
+            attributes: super::DeviceAttributes {
+                computer_name: Some("Studio Mac".into()),
+                ip_addresses: Some(vec!["192.0.2.24".into()]),
+                login_user: Some("studio".into()),
+                extra: std::collections::BTreeMap::from([(
+                    "customFact".into(),
+                    serde_json::json!({"site":"test"}),
+                )]),
+            },
         };
         let bytes = super::encode_reply(super::Reply::DeviceOverview {
             value: overview.clone(),

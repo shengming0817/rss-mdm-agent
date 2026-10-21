@@ -61,7 +61,7 @@ impl Users {
                 _ => return Err(storage()),
             }
         } else {
-            from_value(json!({"schemaVersion":8,"kind":"testUserPage","users":[]}))?
+            from_value(json!({"schemaVersion":1,"kind":"testUserPage","users":[]}))?
         };
         let mut this = Self {
             path,
@@ -96,7 +96,7 @@ impl Users {
     }
     fn context(user: TestUser) -> Result<UserContext> {
         from_value(
-            json!({"schemaVersion":8,"kind":"userContext","user":user,"generation":Uuid::new_v4().to_string(),"identity":{"mode":"device","authorityId":"desktop-test","tenantId":"local-test","principalId":user.user_id}}),
+            json!({"schemaVersion":1,"kind":"userContext","user":user,"generation":Uuid::new_v4().to_string(),"identity":{"mode":"device","authorityId":"desktop-test","tenantId":"local-test","principalId":user.user_id}}),
         )
     }
     pub fn page(&self) -> TestUserPage {
@@ -139,7 +139,7 @@ impl Users {
                     return Err(error("limit", "测试用户数量已达上限"));
                 }
                 let user: TestUser = from_value(
-                    json!({"schemaVersion":8,"kind":"testUser","userId":Uuid::new_v4().to_string(),"displayName":display,"nameKey":key}),
+                    json!({"schemaVersion":1,"kind":"testUser","userId":Uuid::new_v4().to_string(),"displayName":display,"nameKey":key}),
                 )?;
                 page.users.push(user.clone());
                 user
@@ -185,8 +185,8 @@ impl Users {
             file.sync_all().map_err(|_| storage())?;
             id
         };
-        from_value(json!({"schemaVersion":8,"kind":"userContext",
-            "user":{"schemaVersion":8,"kind":"testUser","userId":id.to_string(),"displayName":"本机设备","nameKey":"device"},
+        from_value(json!({"schemaVersion":1,"kind":"userContext",
+            "user":{"schemaVersion":1,"kind":"testUser","userId":id.to_string(),"displayName":"本机设备","nameKey":"device"},
             "generation":Uuid::new_v4().to_string(),
             "identity":{"mode":"device","authorityId":"desktop-device","tenantId":"local-device","principalId":id.to_string()}}))
     }

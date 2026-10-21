@@ -485,7 +485,7 @@ mod tests {
         let (reader, writer) = tokio::io::split(peer);
         let mut reader = FramedRead::new(reader, LinesCodec::new());
         let mut writer = FramedWrite::new(writer, LinesCodec::new());
-        let previous = json!({"connectionId":"c","name":"Fixture","provider":"codex","profile":"conversation","source":{"type":"custom_api","apiUrl":"https://EXAMPLE.invalid:443","model":"old"}});
+        let previous = json!({"connectionId":"c","presentation":{"name":"Fixture"},"provider":"codex","profile":"conversation","source":{"type":"custom_api","apiUrl":"https://EXAMPLE.invalid:443","model":"old"}});
         for (id, endpoint, expected) in [
             (1, "https://example.invalid/", true),
             (2, "https://other.invalid/", false),
@@ -493,7 +493,7 @@ mod tests {
             let mut connection = previous.clone();
             connection["source"]["apiUrl"] = endpoint.into();
             connection["source"]["model"] = "new".into();
-            writer.send(json!({"schemaVersion":8,"kind":"nativeCall","id":id,"method":"matchCredential","data":{"caller":{"tenantId":"t","principalId":"p","authorityId":"a"},"previous":previous,"connection":connection}}).to_string()).await.unwrap();
+            writer.send(json!({"schemaVersion":1,"kind":"nativeCall","id":id,"method":"matchCredential","data":{"caller":{"tenantId":"t","principalId":"p","authorityId":"a"},"previous":previous,"connection":connection}}).to_string()).await.unwrap();
             let line = tokio::time::timeout(Duration::from_secs(2), reader.next())
                 .await
                 .unwrap()
@@ -512,11 +512,11 @@ mod tests {
         let mut view = control.view("view".into()).unwrap();
         let mut writer = FramedWrite::new(peer, LinesCodec::new_with_max_length(524288));
         writer
-            .send(json!({"schemaVersion":8,"kind":"nativeCall","id":1,"method":"openCredential","data":{"caller":{"tenantId":"t","principalId":"p","authorityId":"a"},"connection":{"connectionId":"c","name":"Fixture","provider":"codex","profile":"conversation","source":{"type":"custom_api","apiUrl":"https://example.invalid/","model":"fixture"}},"encrypted":vec![0u8;29]}}).to_string())
+            .send(json!({"schemaVersion":1,"kind":"nativeCall","id":1,"method":"openCredential","data":{"caller":{"tenantId":"t","principalId":"p","authorityId":"a"},"connection":{"connectionId":"c","presentation":{"name":"Fixture"},"provider":"codex","profile":"conversation","source":{"type":"custom_api","apiUrl":"https://example.invalid/","model":"fixture"}},"encrypted":vec![0u8;29]}}).to_string())
             .await
             .unwrap();
         writer
-            .send(json!({"schemaVersion":8,"kind":"nativeEvent","channel":"view","message":{"ready":true}}).to_string())
+            .send(json!({"schemaVersion":1,"kind":"nativeEvent","channel":"view","message":{"ready":true}}).to_string())
             .await
             .unwrap();
         let event = tokio::time::timeout(Duration::from_millis(100), view.recv())
@@ -552,7 +552,7 @@ mod tests {
         let mut reader = FramedRead::new(reader, LinesCodec::new_with_max_length(524288));
         let mut writer = FramedWrite::new(writer, LinesCodec::new_with_max_length(524288));
         writer
-            .send(json!({"schemaVersion":8,"kind":"nativeCall","id":1,"method":"openCredential","data":{"caller":{"tenantId":"t","principalId":"p","authorityId":"a"},"connection":{"connectionId":"c","name":"Fixture","provider":"codex","profile":"conversation","source":{"type":"custom_api","apiUrl":"https://example.invalid/","model":"fixture"}},"encrypted":vec![0u8;29]}}).to_string())
+            .send(json!({"schemaVersion":1,"kind":"nativeCall","id":1,"method":"openCredential","data":{"caller":{"tenantId":"t","principalId":"p","authorityId":"a"},"connection":{"connectionId":"c","presentation":{"name":"Fixture"},"provider":"codex","profile":"conversation","source":{"type":"custom_api","apiUrl":"https://example.invalid/","model":"fixture"}},"encrypted":vec![0u8;29]}}).to_string())
             .await
             .unwrap();
         let reply = tokio::time::timeout(Duration::from_secs(2), reader.next())
@@ -562,11 +562,11 @@ mod tests {
             .unwrap();
         assert_eq!(
             serde_json::from_str::<Value>(&reply).unwrap(),
-            json!({"schemaVersion":8,"kind":"nativeReply","id":1,"ok":false})
+            json!({"schemaVersion":1,"kind":"nativeReply","id":1,"ok":false})
         );
         assert!(!reply.contains("key"));
         writer
-            .send(json!({"schemaVersion":8,"kind":"nativeEvent","channel":"view","message":{"ready":true}}).to_string())
+            .send(json!({"schemaVersion":1,"kind":"nativeEvent","channel":"view","message":{"ready":true}}).to_string())
             .await
             .unwrap();
         assert_eq!(view.recv().await.unwrap()["ready"], true);
@@ -580,7 +580,7 @@ mod tests {
         let mut writer = FramedWrite::new(peer, LinesCodec::new_with_max_length(524288));
         writer
             .send(String::from(
-                r#"{"schemaVersion":8,"schemaVersion":8,"kind":"nativeEvent","channel":"view","message":{}}"#,
+                r#"{"schemaVersion":1,"schemaVersion":1,"kind":"nativeEvent","channel":"view","message":{}}"#,
             ))
             .await
             .unwrap();
@@ -617,7 +617,7 @@ mod incarnation_tests {
         let (a, pa) = tokio::io::duplex(1048576);
         let first = Control::start(a, master.clone());
         let mut wa = FramedWrite::new(pa, LinesCodec::new());
-        wa.send(json!({"schemaVersion":8,"kind":"nativeCall","id":1,"method":"openCredential","data":{"caller":{"tenantId":"t","principalId":"p","authorityId":"a"},"connection":{"connectionId":"c","name":"Fixture","provider":"codex","profile":"conversation","source":{"type":"custom_api","apiUrl":"https://example.invalid/","model":"fixture"}},"encrypted":vec![0u8;29]}}).to_string()).await.unwrap();
+        wa.send(json!({"schemaVersion":1,"kind":"nativeCall","id":1,"method":"openCredential","data":{"caller":{"tenantId":"t","principalId":"p","authorityId":"a"},"connection":{"connectionId":"c","presentation":{"name":"Fixture"},"provider":"codex","profile":"conversation","source":{"type":"custom_api","apiUrl":"https://example.invalid/","model":"fixture"}},"encrypted":vec![0u8;29]}}).to_string()).await.unwrap();
         for _ in 0..100 {
             if calls.load(Ordering::SeqCst) == 1 {
                 break;
@@ -628,7 +628,7 @@ mod incarnation_tests {
         let (b, pb) = tokio::io::duplex(1048576);
         let second = Control::start(b, master.clone());
         let mut wb = FramedWrite::new(pb, LinesCodec::new());
-        wb.send(json!({"schemaVersion":8,"kind":"nativeCall","id":2,"method":"openCredential","data":{"caller":{"tenantId":"t","principalId":"p","authorityId":"a"},"connection":{"connectionId":"c","name":"Fixture","provider":"codex","profile":"conversation","source":{"type":"custom_api","apiUrl":"https://example.invalid/","model":"fixture"}},"encrypted":vec![0u8;29]}}).to_string()).await.unwrap();
+        wb.send(json!({"schemaVersion":1,"kind":"nativeCall","id":2,"method":"openCredential","data":{"caller":{"tenantId":"t","principalId":"p","authorityId":"a"},"connection":{"connectionId":"c","presentation":{"name":"Fixture"},"provider":"codex","profile":"conversation","source":{"type":"custom_api","apiUrl":"https://example.invalid/","model":"fixture"}},"encrypted":vec![0u8;29]}}).to_string()).await.unwrap();
         tokio::time::sleep(Duration::from_millis(50)).await;
         assert_eq!(master.permit.available_permits(), 0);
         assert_eq!(calls.load(Ordering::SeqCst), 1);

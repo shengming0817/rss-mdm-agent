@@ -7,7 +7,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
-import { checkContractBase } from "./ai-contract-evolution.mjs";
+import { checkCurrentContract } from "./ai-contract-evolution.mjs";
 const root = fileURLToPath(new URL("../", import.meta.url));
 const require = createRequire(
   new URL("../packages/ai-contract/package.json", import.meta.url),
@@ -32,7 +32,7 @@ const schemaText = readFileSync(
   "utf8",
 );
 const schema = JSON.parse(schemaText);
-checkContractBase(root, schema);
+checkCurrentContract(schema);
 // json-schema-to-typescript inlines $ref siblings with descriptions, duplicating
 // named types. Compile references intact, then attach those schema-owned member
 // docs to the generated TS AST. This is a compiler projection, not another model.

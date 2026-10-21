@@ -25,7 +25,7 @@ pub enum SoftwareManagerKind {
     Winget,
     Brew,
 }
-/// Protected native package-manager binary selected by a closed V8 executor.
+/// Protected native package-manager binary selected by a closed V1 executor.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SoftwareManager {
@@ -291,7 +291,7 @@ pub(crate) fn script(
     };
     let plan = FrozenExecution::freeze(
         ExecutionInput {
-            schema_version: V8,
+            schema_version: V1,
             execution: ExecutionSpec::Process {},
             request: ExecutionRequest {
                 schema_version: V1,

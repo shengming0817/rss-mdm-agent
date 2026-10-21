@@ -414,12 +414,12 @@ mod tests {
     }
     #[test]
     fn credential_owners_follow_required_device_and_user_device_identity() {
-        let draft = serde_json::from_value(serde_json::json!({"connectionId":"c","name":"Connection","provider":"codex","profile":"conversation","source":{"type":"custom_api","apiUrl":"https://example.invalid","model":"chosen"}})).unwrap();
+        let draft = serde_json::from_value(serde_json::json!({"connectionId":"c","presentation":{"name":"Connection"},"provider":"codex","profile":"conversation","source":{"type":"custom_api","apiUrl":"https://example.invalid","model":"chosen"}})).unwrap();
         for identity in [
             serde_json::json!({"mode":"device","tenantId":"local-device","principalId":"device","authorityId":"desktop-device"}),
             serde_json::json!({"mode":"user_device","tenantId":"tenant","principalId":"principal","authorityId":"authority","organizationId":"org","expiresAtMs":1000}),
         ] {
-            let context = serde_json::from_value(serde_json::json!({"schemaVersion":8,"kind":"userContext","generation":"generation","user":{"schemaVersion":8,"kind":"testUser","userId":"profile","nameKey":"name","displayName":"Name"},"identity":identity})).unwrap();
+            let context = serde_json::from_value(serde_json::json!({"schemaVersion":1,"kind":"userContext","generation":"generation","user":{"schemaVersion":1,"kind":"testUser","userId":"profile","nameKey":"name","displayName":"Name"},"identity":identity})).unwrap();
             let owner = serde_json::to_value(
                 credential_owner(&credential_caller(&context), &draft).unwrap(),
             )
@@ -429,7 +429,7 @@ mod tests {
             assert_eq!(owner["authorityId"], identity["authorityId"]);
             assert_eq!(owner["endpoint"], "https://example.invalid/");
         }
-        let mut context = serde_json::json!({"schemaVersion":8,"kind":"userContext","generation":"generation","user":{"schemaVersion":8,"kind":"testUser","userId":"profile","nameKey":"name","displayName":"Name"},"identity":null});
+        let mut context = serde_json::json!({"schemaVersion":1,"kind":"userContext","generation":"generation","user":{"schemaVersion":1,"kind":"testUser","userId":"profile","nameKey":"name","displayName":"Name"},"identity":null});
         assert!(
             serde_json::from_value::<ai_session_contract::UserContext>(context.clone()).is_err()
         );
@@ -442,7 +442,7 @@ mod tests {
             serde_json::json!({"tenantId":"t","principalId":"p","authorityId":"a"}),
         )
         .unwrap();
-        let original = serde_json::json!({"connectionId":"c","name":"Connection","provider":"codex","profile":"conversation","source":{"type":"custom_api","apiUrl":"https://EXAMPLE.invalid:443","model":"chosen"}});
+        let original = serde_json::json!({"connectionId":"c","presentation":{"name":"Connection"},"provider":"codex","profile":"conversation","source":{"type":"custom_api","apiUrl":"https://EXAMPLE.invalid:443","model":"chosen"}});
         let draft = serde_json::from_value(original.clone()).unwrap();
         let keys = MasterKey::new(Fake {
             stored: Mutex::new(Some(vec![7; 32])),
@@ -451,7 +451,7 @@ mod tests {
         let owner = credential_owner(&caller, &draft).unwrap();
         let encrypted = keys.seal(&owner, "fixture-secret", false).unwrap();
         let mut metadata = original.clone();
-        metadata["name"] = "Renamed".into();
+        metadata["presentation"]["name"] = "Renamed".into();
         metadata["source"]["model"] = "other".into();
         metadata["source"]["apiUrl"] = "https://example.invalid/".into();
         metadata["source"]["credentialType"] = "api_key".into();

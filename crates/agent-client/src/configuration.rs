@@ -52,7 +52,7 @@ pub(crate) struct ConfigurationExchange {
     pub configuration: wire::Configuration,
     pub signature: String,
     pub secret_reference: String,
-    pub candidate_sha256: [u8; 32],
+    pub installer_format: wire::InstallerFormat,
     pub installation: Option<wire::Installation>,
     // Written before HTTP. Once set, expiry never skips the read-only recovery lookup.
     pub submitted: bool,
@@ -63,7 +63,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
     pub fn prepare_configuration(
         &mut self,
         file: wire::ConfigurationFile,
-        candidate_sha256: [u8; 32],
+        installer_format: wire::InstallerFormat,
         capabilities: Vec<runtime::Capability>,
     ) -> Result<(), Error> {
         let state = self.identity_state()?;
@@ -77,7 +77,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             if crate::store::encode(&old.configuration)?
                 != crate::store::encode(&file.configuration)?
                 || old.signature != file.signature
-                || old.candidate_sha256 != candidate_sha256
+                || old.installer_format != installer_format
                 || self.secrets.resolve(&old.secret_reference)?.expose() != file.secret.expose()
             {
                 return Err(Error::Conflict);
@@ -101,7 +101,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                 configuration: file.configuration,
                 signature: file.signature,
                 secret_reference: config_reference,
-                candidate_sha256,
+                installer_format,
                 installation: None,
                 submitted: false,
                 rejection: None,
@@ -159,33 +159,9 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                 return Err(Error::Unavailable);
             }
             let packages: Vec<wire::Package> = crate::store::decode(&bytes)?;
-            let mut matching = packages.into_iter().filter(|v| {
-                v.tenant_id == self.store.cfg.tenant
-                    && v.origin == c.configuration.origin
-                    && v.candidate_sha256 == c.candidate_sha256
-                    && v.signing_keys
-                        == self
-                            .store
-                            .cfg
-                            .registration_keys
-                            .iter()
-                            .map(|(id, key)| {
-                                (
-                                    id.clone(),
-                                    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(key),
-                                )
-                            })
-                            .collect()
-                    && v.target.platform == self.store.cfg.platform
-                    && v.target.architecture == self.store.cfg.architecture
-            });
-            let package = matching.next().ok_or(Error::Denied)?;
-            if matching.next().is_some() {
-                return Err(Error::Conflict);
-            }
+            let package = select_package(&packages, &self.store.cfg, c.installer_format)?;
             c.installation = Some(wire::Installation {
                 release_id: package.release_id,
-                candidate_sha256: c.candidate_sha256,
             });
         }
         c.submitted = true;
@@ -233,4 +209,32 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             }
         }
     }
+}
+
+// ref: version-compare 0.2.1 src/version.rs (numeric component ordering).
+fn select_package<'a>(
+    packages: &'a [wire::Package],
+    cfg: &Config,
+    format: wire::InstallerFormat,
+) -> Result<&'a wire::Package, Error> {
+    let mut selected = None;
+    for package in packages.iter().filter(|p| {
+        p.tenant_id == cfg.tenant
+            && p.target.platform == cfg.platform
+            && p.target.architecture == cfg.architecture
+            && p.format == format
+    }) {
+        let version = version_compare::Version::from(&package.version)
+            .filter(|v| !v.parts().is_empty())
+            .ok_or(Error::Protocol)?;
+        if selected.as_ref().is_none_or(
+            |(old, old_version): &(&wire::Package, version_compare::Version<'_>)| {
+                version > *old_version
+                    || (version == *old_version && package.release_id > old.release_id)
+            },
+        ) {
+            selected = Some((package, version));
+        }
+    }
+    selected.map(|(p, _)| p).ok_or(Error::Denied)
 }

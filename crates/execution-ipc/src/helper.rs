@@ -5,7 +5,7 @@ use execution_contract::*;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 /// Current helper wire version; older envelopes are rejected without negotiation.
-pub const VERSION: u8 = 2;
+pub const VERSION: u8 = 1;
 /// One command from the authenticated system service to a pinned user helper.
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

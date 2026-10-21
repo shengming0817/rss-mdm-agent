@@ -666,9 +666,9 @@ export type Initiator =
     };
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "LocalContractV8".
+ * via the `definition` "LocalContractV1".
  */
-export type LocalContractV8 = 8;
+export type LocalContractV1 = 1;
 /**
  * Required target user-session availability, independent of the originating login.
  *
@@ -1176,6 +1176,10 @@ export interface BackendTask {
    */
   expiresAt: number;
   /**
+   * Extensible safe display snapshot; it never grants execution authority.
+   */
+  presentation: BackendPresentation;
+  /**
    * Deterministic original execution request used for status after response loss.
    */
   request: RequestId;
@@ -1184,21 +1188,30 @@ export interface BackendTask {
    */
   revision: Digest;
   /**
-   * Complete safe action preview, immutable with the offer revision.
-   */
-  summary: BackendTaskSummary;
-  /**
    * Backend task identity.
    */
   task: Id;
   /**
-   * Safe display text selected by the backend.
-   */
-  title: string;
-  /**
    * Requires an explicit local user action before requesting Start.
    */
   userInitiated: boolean;
+}
+/**
+ * Known display fields and bounded future presentation content.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "BackendPresentation".
+ */
+export interface BackendPresentation {
+  /**
+   * Safe action preview, never executable input.
+   */
+  summary: BackendTaskSummary;
+  /**
+   * Display title.
+   */
+  title: string;
+  [k: string]: unknown;
 }
 /**
  * Exact software coordinate displayed before user confirmation.
@@ -1489,6 +1502,18 @@ export interface Command11 {
  */
 export interface DeviceOverview {
   /**
+   * Extensible device facts; OS peer identity is held separately.
+   */
+  attributes: DeviceAttributes;
+}
+/**
+ * Known device presentation keys; new ordinary keys do not change IPC identity.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "DeviceAttributes".
+ */
+export interface DeviceAttributes {
+  /**
    * OS computer name, absent when the platform read failed.
    */
   computerName: string | null;
@@ -1500,6 +1525,7 @@ export interface DeviceOverview {
    * OS login name of the requesting interactive session, never a product account.
    */
   loginUser: string | null;
+  [k: string]: unknown;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
@@ -1594,7 +1620,7 @@ export interface FrozenExecutionSummary {
   /**
    * Version of the frozen execution plan, independent of the AI wire version.
    */
-  schemaVersion: LocalContractV8;
+  schemaVersion: LocalContractV1;
   /**
    * Required target user session.
    */

@@ -1047,7 +1047,7 @@ mod tests {
         let script = artifact.join("node_modules/@rss-mdm-agent/ai-host-app/dist/cli.js");
         std::fs::create_dir_all(script.parent().unwrap()).unwrap();
         std::fs::write(script, mode).unwrap();
-        let manifest = json!({"status":"passed","desktopProtocol":4,"contractVersion":8,
+        let manifest = json!({"status":"passed","desktopProtocol":1,"contractVersion":1,
             "verification":{"platform":if cfg!(windows){"win32"}else{"darwin"},"arch":installation_security::Target::current().unwrap().architecture()},
             "runtimeTreeSha256":super::super::runtime_package::digest(&artifact).unwrap()});
         std::fs::write(

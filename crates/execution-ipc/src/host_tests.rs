@@ -23,7 +23,7 @@ fn only_current_envelope_calls_the_handler() {
         #[cfg(windows)]
         native: 0,
     };
-    for version in 1..IPC_VERSION {
+    for version in [0, 99] {
         let bytes = serde_json::to_vec(
             &serde_json::json!({"version":version,"request":{"method":"status","request":"r"}}),
         )

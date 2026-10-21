@@ -12,22 +12,19 @@ const limits = {
   maxNodes: 4096,
 };
 const command = {
-  schemaVersion: 8,
+  schemaVersion: 1,
   kind: "command",
   sessionId: "s1",
   commandId: "c1",
   expiresAtMs: 1000,
   input: { type: "prompt", text: "hello", policy: "queue_next" },
 };
-test("V8 command round trips without a Rust, UI or provider runtime", () => {
+test("V1 command round trips without a Rust, UI or provider runtime", () => {
   assert.deepEqual(decode(JSON.stringify(command), limits), command);
 });
-test("old formats, duplicate keys and excess authority fields fail closed", () => {
-  const previousVersion = 7;
+test("unknown formats, duplicate keys and excess authority fields fail closed", () => {
   for (const raw of [
-    JSON.stringify({ ...command, schemaVersion: previousVersion }),
-    JSON.stringify({ ...command, schemaVersion: 1 }),
-    JSON.stringify({ ...command, schemaVersion: 5 }),
+    JSON.stringify({ ...command, schemaVersion: 99 }),
     JSON.stringify({ ...command, approved: true }),
     JSON.stringify(command).replace('"c1"', '"c1","commandId":"c2"'),
   ])
@@ -35,10 +32,10 @@ test("old formats, duplicate keys and excess authority fields fail closed", () =
 });
 test("private control and execution provenance use the same closed generated schema", () => {
   const context = {
-    schemaVersion: 8,
+    schemaVersion: 1,
     kind: "userContext",
     user: {
-      schemaVersion: 8,
+      schemaVersion: 1,
       kind: "testUser",
       userId: "alice",
       displayName: "Alice",
@@ -53,7 +50,7 @@ test("private control and execution provenance use the same closed generated sch
     },
   };
   const suspend = {
-    schemaVersion: 8,
+    schemaVersion: 1,
     kind: "nativeCall",
     id: 1,
     method: "suspend",
@@ -61,7 +58,7 @@ test("private control and execution provenance use the same closed generated sch
   };
   assert.deepEqual(decode(JSON.stringify(suspend), limits), suspend);
   const origin = {
-    schemaVersion: 8,
+    schemaVersion: 1,
     kind: "executionOrigin",
     userGeneration: "generation-a",
     namespace: {
@@ -120,12 +117,12 @@ test("shared golden covers every record and identical rejection diagnostics", ()
 
 test("connection saves reject client-owned state and accept only editable drafts", () => {
   const request = {
-    schemaVersion: 8,
+    schemaVersion: 1,
     kind: "saveConnectionRequest",
     expectedRevision: null,
     connection: {
       connectionId: "one",
-      name: "Custom",
+      presentation: { name: "Custom" },
       provider: "deepseek",
       profile: "conversation",
       source: {
@@ -153,4 +150,26 @@ test("connection saves reject client-owned state and accept only editable drafts
       ContractError,
     );
   }
+});
+
+test("ordinary presentation and diagnostic extensions round trip but cannot replace core", () => {
+  const connection = {
+    schemaVersion: 1,
+    kind: "connection",
+    connectionId: "c",
+    provider: "codex",
+    configRevision: 1,
+    profile: "conversation",
+    status: "unverified",
+    source: { type: "existing_config" },
+    presentation: { name: "local", icon: { color: "blue" }, status: "ready" },
+  };
+  assert.deepEqual(decode(JSON.stringify(connection), limits), connection);
+  assert.equal(decode(JSON.stringify(connection), limits).status, "unverified");
+  assert.throws(() =>
+    decode(JSON.stringify({ ...connection, authority: "forged" }), limits),
+  );
+  assert.throws(() =>
+    decode(JSON.stringify(connection), { ...limits, maxNodes: 4 }),
+  );
 });

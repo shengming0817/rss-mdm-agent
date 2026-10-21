@@ -635,12 +635,12 @@ fn actual_sqlite_full_rolls_back_and_preserves_existing_authority() {
     host.prepare(&mut store);
     drop(store);
     let conn = db.sql();
-    conn.execute_batch("CREATE TABLE ballast(bytes BLOB); CREATE TRIGGER consume_pages AFTER INSERT ON receipts BEGIN INSERT INTO ballast VALUES(zeroblob(1048576)); END; PRAGMA wal_checkpoint(TRUNCATE);").unwrap();
     let mut bounds = limits();
     bounds.max_database_pages = conn
         .pragma_query_value(None, "page_count", |r| r.get(0))
         .unwrap();
     let mut store = db.open_with(bounds);
+    conn.execute_batch("CREATE TABLE ballast(bytes BLOB); CREATE TRIGGER consume_pages AFTER INSERT ON receipts BEGIN INSERT INTO ballast VALUES(zeroblob(1048576)); END; PRAGMA wal_checkpoint(TRUNCATE);").unwrap();
     let before = db.count("receipts");
     assert_eq!(
         store
@@ -673,7 +673,7 @@ fn actual_sqlite_full_rolls_back_and_preserves_existing_authority() {
     );
 }
 #[test]
-fn prior_schema_is_rejected_without_modifying_the_database() {
+fn unknown_schema_is_rejected_without_modifying_the_database() {
     let db = Database::new();
     let host = software_host();
     let mut store = db.create();
@@ -703,7 +703,7 @@ fn prior_schema_is_rejected_without_modifying_the_database() {
         .unwrap();
     drop(store);
     let conn = db.sql();
-    conn.pragma_update(None, "user_version", 11).unwrap();
+    conn.pragma_update(None, "user_version", 98).unwrap();
     conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
         .unwrap();
     drop(conn);
@@ -711,8 +711,8 @@ fn prior_schema_is_rejected_without_modifying_the_database() {
     assert!(matches!(
         Store::open(&db.path, &plan().spec().request.authority, limits()),
         Ok(OpenOutcome::UnsupportedSchema {
-            found: 11,
-            supported: 13
+            found: 98,
+            supported: 1
         })
     ));
     assert!(Store::initialize_test(
@@ -741,7 +741,7 @@ fn newer_schema_is_diagnostics_only_and_corrupt_database_is_never_reinitialized(
         Store::open(&db.path, &plan().spec().request.authority, limits()).unwrap(),
         OpenOutcome::UnsupportedSchema {
             found: 99,
-            supported: 13
+            supported: 1
         }
     ));
     assert_eq!(std::fs::read(&db.path).unwrap(), before);
@@ -1943,7 +1943,7 @@ fn confirmation_commit_failure_has_its_own_recovery_and_is_retryable() {
     assert_eq!(error, JournalError::ConfirmationCommitUnknown);
     assert_eq!(db.count("confirmations"), 0);
     db.sql()
-        .execute_batch("DROP TRIGGER fail_confirm;")
+        .execute_batch("DROP TRIGGER fail_confirm; DROP TABLE commit_fault;")
         .unwrap();
     store
         .confirm(&host.scope(), &consumer, &receipt.event_id, &host)
@@ -2622,7 +2622,7 @@ fn software_checkpoints_commit_atomically_and_survive_reopen_without_replay() {
     ));
     assert_eq!(db.count("software_progress"), 0);
     db.sql()
-        .execute_batch("DROP TRIGGER fail_progress")
+        .execute_batch("DROP TRIGGER fail_progress; DROP TABLE progress_fault")
         .unwrap();
     let receipt = store
         .record_software_progress(&host.scope(), &progress, &host)
@@ -3412,7 +3412,7 @@ fn moved_application_identity_reopens_v7_and_replays_without_dispatch_authority(
     let db = Database::new();
     let host = TestHost::new(0);
     let scope = host.scope();
-    // Fixed identities from the pre-refactor V8 canonical encoding, independent of Rust owner.
+    // Fixed identities from the pre-refactor V1 canonical encoding, independent of Rust owner.
     assert_eq!(
         scope.interaction_subject().as_str(),
         "99067cdd0ad2a17d2e877ff170f147a0f77746d87f7fa66b19d756497763000b"
@@ -3516,4 +3516,19 @@ fn current_satisfied_targets_complete_without_inventing_mutation_facts_in_sqlite
         assert_eq!(db.count("process_evidence"), 0);
         assert_eq!(db.count("attempts"), 1);
     }
+}
+
+#[test]
+fn current_number_does_not_accept_a_different_execution_layout() {
+    let db = Database::new();
+    drop(db.create());
+    db.sql()
+        .execute_batch("ALTER TABLE executions ADD COLUMN unexpected TEXT")
+        .unwrap();
+    let bytes = std::fs::read(&db.path).unwrap();
+    assert!(matches!(
+        Store::validate_existing(&db.path, &plan().spec().request.authority, limits()),
+        Err(execution_sqlite::Error::Schema)
+    ));
+    assert_eq!(std::fs::read(&db.path).unwrap(), bytes);
 }

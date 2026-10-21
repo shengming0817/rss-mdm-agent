@@ -144,7 +144,7 @@ test("standard ACP prompt waits for terminal, carries text/tool updates, and sup
   );
   await assert.rejects(
     agent.request(extension.list, {
-      schemaVersion: 8,
+      schemaVersion: 1,
       kind: "listRequest",
       query: { limit: 2 },
     }),
@@ -211,7 +211,7 @@ test("product receipt, paged recovery and late delta use only the shared stable 
     ),
     id = view.namespace.sessionId;
   const prompt = {
-    schemaVersion: 8,
+    schemaVersion: 1,
     kind: "command",
     sessionId: id,
     commandId: "product-1",
@@ -386,7 +386,7 @@ test("connection management crosses RuntimeClient and access with exact revision
   await runtime.initialize();
   const draft = {
     connectionId: "managed",
-    name: "Managed",
+    presentation: { name: "Managed" },
     provider: "codex",
     profile: "conversation",
     source: { type: "existing_config" },
@@ -401,7 +401,10 @@ test("connection management crosses RuntimeClient and access with exact revision
   assert.equal(tested.status, "ready");
   assert.equal(tested.configRevision, 2);
   await assert.rejects(
-    runtime.saveConnection({ ...draft, name: "Stale" }, 1),
+    runtime.saveConnection(
+      { ...draft, presentation: { ...draft.presentation, name: "Stale" } },
+      1,
+    ),
     (error) => error.code === "revision_conflict",
   );
   await assert.rejects(

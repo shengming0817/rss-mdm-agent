@@ -96,7 +96,7 @@ const schema31 = {
         },
       },
       required: ["id", "label", "component"],
-      additionalProperties: false,
+      additionalProperties: true,
     },
     OperationRule: {
       type: "object",
@@ -130,7 +130,7 @@ const schema31 = {
     OperationPresentation: {
       type: "object",
       properties: {
-        version: { const: 2 },
+        version: { const: 1 },
         template: {
           enum: [
             "SettingsForm",
@@ -202,7 +202,7 @@ const schema31 = {
         },
       },
       required: ["version", "template", "fields", "rules", "sections"],
-      additionalProperties: false,
+      additionalProperties: true,
     },
     OperationScope: {
       type: "object",
@@ -244,7 +244,7 @@ const schema31 = {
         status: { type: "string", maxLength: 256 },
       },
       required: ["id", "label", "detail"],
-      additionalProperties: false,
+      additionalProperties: true,
     },
     OperationInteraction: {
       type: "object",
@@ -285,10 +285,6 @@ const schema31 = {
         scope: { $ref: "#/$defs/OperationScope" },
         revision: { type: "integer", minimum: 0 },
         baseline: { type: "string", maxLength: 256 },
-        title: { type: "string", maxLength: 256 },
-        source: { type: "string", maxLength: 256 },
-        targetLabel: { type: "string", maxLength: 256 },
-        impact: { type: "string", maxLength: 4096 },
         current: {
           type: "object",
           maxProperties: 128,
@@ -364,15 +360,28 @@ const schema31 = {
         result: { type: "string", maxLength: 4096 },
         interaction: { $ref: "#/$defs/OperationInteraction" },
         expiresAtMs: { type: "integer", minimum: 0, maximum: 9007199254740991 },
+        presentation: {
+          type: "object",
+          properties: {
+            title: { type: "string", maxLength: 256 },
+            targetLabel: { type: "string", maxLength: 256 },
+            source: { type: "string", maxLength: 256 },
+            impact: { type: "string", maxLength: 4096 },
+          },
+          required: ["title", "targetLabel", "source", "impact"],
+          additionalProperties: true,
+        },
+        secretFields: {
+          type: "array",
+          items: { type: "string", minLength: 1, maxLength: 128 },
+          maxItems: 128,
+          uniqueItems: true,
+        },
       },
       required: [
         "scope",
         "revision",
         "baseline",
-        "title",
-        "source",
-        "targetLabel",
-        "impact",
         "current",
         "proposal",
         "phase",
@@ -380,6 +389,7 @@ const schema31 = {
         "approval",
         "objects",
         "logs",
+        "presentation",
       ],
       additionalProperties: false,
     },

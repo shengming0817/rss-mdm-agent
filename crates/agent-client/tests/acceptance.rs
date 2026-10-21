@@ -401,7 +401,7 @@ fn unsupported_database_and_changed_namespace_are_preserved() {
     let root = Root::new();
     drop(server.client(&root, OpenMode::Create));
     let path = root.path.join("communication.sqlite");
-    for version in [1, 2, 3, 4, 5, 6, 7, 9] {
+    for version in [0, 99] {
         let db = rusqlite::Connection::open(&path).unwrap();
         db.pragma_update(None, "user_version", version).unwrap();
         drop(db);
@@ -421,7 +421,7 @@ fn unsupported_database_and_changed_namespace_are_preserved() {
 }
 
 #[tokio::test]
-async fn prior_communication_schema_preserves_registration_pending_delivery_and_materials() {
+async fn unknown_communication_schema_preserves_registration_pending_delivery_and_materials() {
     use execution_contract::{ActorId, Digest, EventId, RequestId};
     let server = Server::new().await;
     let root = Root::new();
@@ -466,7 +466,7 @@ async fn prior_communication_schema_preserves_registration_pending_delivery_and_
     drop(client);
     let path = root.path.join("communication.sqlite");
     let db = rusqlite::Connection::open(&path).unwrap();
-    db.pragma_update(None, "user_version", 6).unwrap();
+    db.pragma_update(None, "user_version", 99).unwrap();
     drop(db);
     // Snapshot all existing entries; rejection must not initialize a lock or sidecar.
     let entries = || {
@@ -1212,12 +1212,12 @@ async fn obsolete_activation_capability_preserves_active_binding_and_candidate()
 async fn imports_signed_configuration_over_real_tls_without_replacing_the_operation() {
     let server = Server::tls().await;
     let root = Root::new();
-    let file = server.configuration([4; 32]);
+    let file = server.configuration();
     let mut client = server.client(&root, OpenMode::Create);
     client
         .prepare_configuration(
             file,
-            [4; 32],
+            rss_mdm_agent_wire::enroll::configuration::InstallerFormat::MacosPkg,
             vec![Capability::InventoryCollectionV1, Capability::TaskExecuteV1],
         )
         .unwrap();

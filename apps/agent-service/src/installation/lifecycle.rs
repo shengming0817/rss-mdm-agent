@@ -479,7 +479,7 @@ fn import_configuration(path: &Path, config: &Path) -> Result<(), ImportFailure>
     let file: rss_mdm_agent_wire::enroll::configuration::ConfigurationFile =
         serde_json::from_slice(&bytes).map_err(|_| Error::Protocol)?;
     agent_client::verify_configuration(&file, &deployment.network()?, SystemClock::new()?.now()?)?;
-    let candidate_sha256 = publication_digest(&deployment).map_err(ImportFailure::Lifecycle)?;
+    let installer_format = installer_format(&deployment).map_err(ImportFailure::Lifecycle)?;
     restore_registration(
         || platform::stop(true, &deployment.service.path, config),
         || {
@@ -487,7 +487,7 @@ fn import_configuration(path: &Path, config: &Path) -> Result<(), ImportFailure>
             if client.enrollment_status()?.registered {
                 return Ok(());
             }
-            client.prepare_configuration(file, candidate_sha256, deployment.capabilities())
+            client.prepare_configuration(file, installer_format, deployment.capabilities())
         },
         || platform::register(true, &deployment.service.path, config),
     )

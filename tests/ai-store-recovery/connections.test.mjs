@@ -9,10 +9,10 @@ import { unwrap } from "../../packages/ai-contract/dist/testing/index.js";
 const a = { tenantId: "test", principalId: "alice", authorityId: "desktop" };
 const b = { ...a, principalId: "bob" };
 const connection = (id) => ({
-  schemaVersion: 8,
+  schemaVersion: 1,
   kind: "connection",
   connectionId: id,
-  name: id,
+  presentation: { name: id },
   provider: "deepseek",
   configRevision: 1,
 
@@ -34,10 +34,12 @@ test("empty sessions and per-user connection revisions persist without provider 
     rmSync(root, { recursive: true, force: true });
   });
   const session = productSession({ ...a, sessionId: "empty" });
+  session.presentation = { badge: { label: "ordinary", color: "blue" } };
   unwrap(await store.create(session));
   assert.deepEqual(unwrap(await store.session(session.namespace)), session);
   const first = connection("first"),
     second = connection("second");
+  first.presentation.icon = { name: "custom", options: [1, true] };
   unwrap(await store.saveConnection(a, first, null));
   unwrap(await store.saveConnection(a, second, null));
   assert.equal(unwrap(await store.preferences(a)).defaultConnectionId, "first");
@@ -66,4 +68,8 @@ test("empty sessions and per-user connection revisions persist without provider 
     "second",
   );
   assert.deepEqual(unwrap(await store.connection(a, "first", 1)), first);
+  assert.deepEqual(
+    unwrap(await store.session(session.namespace)).presentation,
+    session.presentation,
+  );
 });

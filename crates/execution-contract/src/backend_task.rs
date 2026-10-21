@@ -15,14 +15,24 @@ pub struct BackendTask {
     pub revision: Digest,
     /// Deterministic original execution request used for status after response loss.
     pub request: RequestId,
-    /// Safe display text selected by the backend.
-    pub title: String,
-    /// Complete safe action preview, immutable with the offer revision.
-    pub summary: BackendTaskSummary,
+    /// Extensible safe display snapshot; it never grants execution authority.
+    pub presentation: BackendPresentation,
     /// Exclusive UTC Unix expiry in seconds.
     pub expires_at: i64,
     /// Requires an explicit local user action before requesting Start.
     pub user_initiated: bool,
+}
+/// Known display fields and bounded future presentation content.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct BackendPresentation {
+    /// Display title.
+    pub title: String,
+    /// Safe action preview, never executable input.
+    pub summary: BackendTaskSummary,
+    /// Unrecognized display properties retained through IPC and persistence.
+    #[serde(flatten)]
+    pub extra: std::collections::BTreeMap<String, serde_json::Value>,
 }
 /// A selection references exact backend content and carries no script or local catalog model.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

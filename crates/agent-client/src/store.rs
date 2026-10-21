@@ -7,6 +7,13 @@ use std::{
     fs::File,
     path::{Path, PathBuf},
 };
+const SCHEMA: &str = "CREATE TABLE metadata(singleton INTEGER PRIMARY KEY CHECK(singleton=1),binding BLOB NOT NULL,sequence INTEGER NOT NULL,watermark INTEGER NOT NULL);
+                    CREATE TABLE state(key TEXT PRIMARY KEY,body BLOB NOT NULL);
+                    CREATE TABLE reports(id TEXT PRIMARY KEY,body BLOB NOT NULL);
+                    CREATE TABLE tasks(id TEXT PRIMARY KEY,body BLOB NOT NULL);
+                    CREATE TABLE requests(key TEXT PRIMARY KEY,task TEXT NOT NULL,source TEXT,body BLOB NOT NULL,accepted INTEGER NOT NULL DEFAULT 0 CHECK(accepted IN(0,1)));
+                    CREATE TABLE cache_refs(task TEXT NOT NULL,name TEXT NOT NULL,PRIMARY KEY(task,name));
+                    PRAGMA application_id=1380008771; PRAGMA user_version=1;";
 pub(crate) struct Store {
     pub conn: Connection,
     pub root: PathBuf,
@@ -69,13 +76,7 @@ impl Store {
                     "PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA journal_mode=DELETE;",
                 )?;
                 let tx = conn.unchecked_transaction()?;
-                tx.execute_batch("CREATE TABLE metadata(singleton INTEGER PRIMARY KEY CHECK(singleton=1),binding BLOB NOT NULL,sequence INTEGER NOT NULL,watermark INTEGER NOT NULL);
-                    CREATE TABLE state(key TEXT PRIMARY KEY,body BLOB NOT NULL);
-                    CREATE TABLE reports(id TEXT PRIMARY KEY,body BLOB NOT NULL);
-                    CREATE TABLE tasks(id TEXT PRIMARY KEY,body BLOB NOT NULL);
-                    CREATE TABLE requests(key TEXT PRIMARY KEY,task TEXT NOT NULL,source TEXT,body BLOB NOT NULL,accepted INTEGER NOT NULL DEFAULT 0 CHECK(accepted IN(0,1)));
-                    CREATE TABLE cache_refs(task TEXT NOT NULL,name TEXT NOT NULL,PRIMARY KEY(task,name));
-                    PRAGMA application_id=1380008771; PRAGMA user_version=8;")?;
+                tx.execute_batch(SCHEMA)?;
                 tx.execute("INSERT INTO metadata VALUES(1,?1,0,0)", [binding])?;
                 tx.execute(
                     "INSERT INTO state VALUES('execution_context',?1)",
@@ -147,9 +148,10 @@ pub(crate) fn read_existing(root: &Path, cfg: &Config) -> Result<Connection, Err
     let reader = Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
     let version: u32 = reader.pragma_query_value(None, "user_version", |r| r.get(0))?;
     let app: u32 = reader.pragma_query_value(None, "application_id", |r| r.get(0))?;
-    if version != 8 || app != 1380008771 {
+    if version != 1 || app != 1380008771 {
         return Err(Error::Schema);
     }
+    validate_schema(&reader)?;
     let binding = encode(&(
         cfg.origin.as_str(),
         cfg.tenant,
@@ -255,6 +257,26 @@ fn sidecars(path: &Path) -> Result<(), Error> {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(e) => return Err(e.into()),
         }
+    }
+    Ok(())
+}
+
+fn validate_schema(conn: &Connection) -> Result<(), Error> {
+    fn catalog(conn: &Connection) -> Result<Vec<(String, String)>, rusqlite::Error> {
+        let mut query = conn.prepare(
+            "SELECT name,sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY name",
+        )?;
+        let rows = query.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        rows.collect()
+    }
+    let expected = Connection::open_in_memory()?;
+    expected.execute_batch(SCHEMA)?;
+    if catalog(conn)? != catalog(&expected)? {
+        return Err(Error::Schema);
+    }
+    let integrity: String = conn.query_row("PRAGMA quick_check(1)", [], |r| r.get(0))?;
+    if integrity != "ok" || conn.prepare("PRAGMA foreign_key_check")?.exists([])? {
+        return Err(Error::Schema);
     }
     Ok(())
 }

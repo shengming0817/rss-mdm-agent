@@ -43,7 +43,7 @@ pub use windows::worker;
 #[serde(deny_unknown_fields)]
 pub struct Candidate {
     pub version: u8,
-    pub publication_sha256: String,
+    pub format: rss_mdm_agent_wire::enroll::configuration::InstallerFormat,
     pub product_version: String,
     pub target: Target,
     pub root: PathBuf,
@@ -90,7 +90,7 @@ impl Candidate {
             return Err(Error::Identity);
         }
         let candidate: Self = serde_json::from_slice(&bytes).map_err(|_| Error::Configuration)?;
-        if candidate.version != 3
+        if candidate.version != 1
             || candidate.service.path != deployment.service.path
             || candidate.origin != deployment.origin
             || candidate.tenant != deployment.tenant
@@ -111,13 +111,12 @@ impl Candidate {
         Ok((candidate, hash(&bytes)))
     }
     fn validate(&self) -> Result<(), Error> {
-        if self.version != 3
+        if self.version != 1
             || self.target != Target::current().map_err(|_| Error::Unsupported)?
             || !self.root.is_absolute()
             || self.tenant.is_nil()
             || self.product_version.is_empty()
             || self.product_version.len() > 64
-            || !digest_valid(&self.publication_sha256)
             || !digest_valid(&self.runtime_sha256)
             || !self.service.path.starts_with(&self.root)
             || !self.desktop.path.starts_with(&self.root)
@@ -186,37 +185,17 @@ impl Candidate {
         Ok(())
     }
     fn format(&self) -> Result<String, Error> {
-        let bytes = installation_security::read_protected(&self.root.join("publication.json"))
-            .map_err(|_| Error::Identity)?;
-        if hash(&bytes) != self.publication_sha256 {
+        use rss_mdm_agent_wire::enroll::configuration::InstallerFormat;
+        let (platform, value) = match self.format {
+            InstallerFormat::WindowsExe => ("win32", "windows_exe"),
+            InstallerFormat::WindowsMsi => ("win32", "windows_msi"),
+            InstallerFormat::WindowsMsix => ("win32", "windows_msix"),
+            InstallerFormat::MacosPkg => ("darwin", "macos_pkg"),
+        };
+        if self.target.platform() != platform {
             return Err(Error::Identity);
         }
-        let value: serde_json::Value =
-            serde_json::from_slice(&bytes).map_err(|_| Error::Protocol)?;
-        let platform = if self.target.platform() == "win32" {
-            "windows"
-        } else {
-            "macos"
-        };
-        let architecture = match self.target {
-            Target::WindowsAmd64 => "x86_64",
-            _ => "aarch64",
-        };
-        if value["wireVersion"] != 1
-            || value["tenantId"] != self.tenant.to_string()
-            || value["origin"] != self.origin
-            || value["version"] != self.product_version
-            || value["target"]["platform"] != platform
-            || value["target"]["architecture"] != architecture
-            || value["signingKeys"]
-                != serde_json::to_value(&self.signing_keys).map_err(|_| Error::Configuration)?
-        {
-            return Err(Error::Identity);
-        }
-        Ok(value["packaging"]["kind"]
-            .as_str()
-            .ok_or(Error::Protocol)?
-            .into())
+        Ok(value.into())
     }
     fn deployment(
         &self,
@@ -301,34 +280,31 @@ fn retire_payload(candidate: &Candidate) -> Result<PathBuf, Error> {
     }
     Ok(target)
 }
-/// Immutable publication identity retained in the protected local installation manifest.
-pub(crate) fn publication_digest(deployment: &Deployment) -> Result<[u8; 32], Error> {
+/// Installed format from the same protected manifest used for deployment integrity.
+pub(crate) fn installer_format(
+    deployment: &Deployment,
+) -> Result<rss_mdm_agent_wire::enroll::configuration::InstallerFormat, Error> {
     let path = deployment
         .service
         .path
         .parent()
         .ok_or(Error::Configuration)?
         .join("candidate.json");
-    let manifest = installation_security::read_protected(&path).map_err(|_| Error::Identity)?;
-    if hash(&manifest) != deployment.installation_artifact {
+    let bytes = installation_security::read_protected(&path).map_err(|_| Error::Identity)?;
+    if hash(&bytes) != deployment.installation_artifact {
         return Err(Error::Identity);
     }
-    let candidate: Candidate =
-        serde_json::from_slice(&manifest).map_err(|_| Error::Configuration)?;
-    if candidate.version != 3
+    let candidate: Candidate = serde_json::from_slice(&bytes).map_err(|_| Error::Configuration)?;
+    if candidate.version != 1
         || candidate.origin != deployment.origin
         || candidate.tenant != deployment.tenant
         || candidate.service.path != deployment.service.path
-        || !digest_valid(&candidate.publication_sha256)
+        || candidate.signing_keys != deployment.signing_keys
     {
         return Err(Error::Identity);
     }
-    let bytes = installation_security::read_protected(&candidate.root.join("publication.json"))
-        .map_err(|_| Error::Identity)?;
-    if hash(&bytes) != candidate.publication_sha256 {
-        return Err(Error::Identity);
-    }
-    Ok(Sha256::digest(&bytes).into())
+    candidate.format()?;
+    Ok(candidate.format)
 }
 /// Every native utility uses a fixed absolute path and bounded execution; output is never logged.
 fn utility(path: &Path, args: &[OsString]) -> Result<(std::process::ExitStatus, Vec<u8>), Error> {

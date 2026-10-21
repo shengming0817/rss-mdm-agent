@@ -26,21 +26,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if !users_path.try_exists()? {
         platform_private_storage::create_new(&users_path)?.write_all(
             serde_json::to_vec(&json!({
-            "schemaVersion": 8,
+            "schemaVersion": 1,
             "kind": "testUserPage",
             "users": [{
-                "schemaVersion": 8,
+                "schemaVersion": 1,
                 "kind": "testUser",
                 "userId": "fixture-actor",
                 "displayName": "Fixture",
                 "nameKey": "fixture"
             }],
             "current": {
-                "schemaVersion": 8,
+                "schemaVersion": 1,
                 "kind": "userContext",
                 "identity":{"mode":"device","authorityId":"desktop-test","tenantId":"local-test","principalId":"fixture-actor"},
                 "user": {
-                    "schemaVersion": 8,
+                    "schemaVersion": 1,
                     "kind": "testUser",
                     "userId": "fixture-actor",
                     "displayName": "Fixture",

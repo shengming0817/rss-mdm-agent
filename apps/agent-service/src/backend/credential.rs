@@ -84,7 +84,7 @@ pub(crate) fn compile(
         .map_err(crate::error::app_error)?;
     let frozen = FrozenExecution::freeze(
         ExecutionInput {
-            schema_version: V8,
+            schema_version: V1,
             execution: ExecutionSpec::Process {},
             request: ExecutionRequest {
                 schema_version: V1,

@@ -98,9 +98,11 @@ export function createFixturePorts() {
     device: {
       async read() {
         return {
-          computerName: "Studio Mac",
-          ipAddresses: ["192.0.2.24"],
-          loginUser: "studio",
+          attributes: {
+            computerName: "Studio Mac",
+            ipAddresses: ["192.0.2.24"],
+            loginUser: "studio",
+          },
         };
       },
     },

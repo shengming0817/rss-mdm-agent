@@ -6,6 +6,34 @@ use execution_admission::{ai_execution_gate, ExecutionGate};
 use execution_contract::*;
 use rss_mdm_agent_wire::runtime as wire;
 
+/// Private startup authority derived only from an authenticated payload.
+/// Presentation is retained separately for display and confirmation binding.
+#[derive(Clone)]
+pub(crate) struct TrustedStart {
+    revision: Digest,
+}
+impl TrustedStart {
+    pub(crate) fn from_offer(offer: &Offer) -> Option<Self> {
+        match offer.payload() {
+            wire::TaskPayload::Software(spec)
+                if spec.start_mode == wire::SoftwareStartMode::UserInitiated
+                    && matches!(
+                        spec.intent,
+                        wire::SoftwareTaskIntent::Install | wire::SoftwareTaskIntent::Uninstall
+                    ) =>
+            {
+                Some(Self {
+                    revision: offered(offer).ok()?.revision,
+                })
+            }
+            _ => None,
+        }
+    }
+    pub(crate) fn permits(&self, revision: &Digest) -> bool {
+        &self.revision == revision
+    }
+}
+
 /// A decoded backend risk decision tied to its authenticated full offer revision.
 /// Backend scripts and built-in software rules have distinct authority identities.
 #[derive(Clone)]

@@ -52,10 +52,10 @@ export async function createFixture() {
     await host.store.saveConnection(
       fixtureCaller,
       {
-        schemaVersion: 8,
+        schemaVersion: 1,
         kind: "connection",
         connectionId: "cfg",
-        name: "默认连接",
+        presentation: { name: "默认连接" },
         provider: "codex",
         configRevision: 1,
 
@@ -94,7 +94,7 @@ export async function createFixture() {
   identity.user.displayName = "本地工作区";
   identity.generation = "isolated-fixture-identity";
   let hostStatus = {
-    schemaVersion: 8,
+    schemaVersion: 1,
     kind: "hostStatus",
     generation: 1,
     phase: "ready",
@@ -453,7 +453,7 @@ export async function createFixture() {
       const namespace = { ...fixtureCaller, sessionId };
       const session = unwrap(await host.store.session(namespace));
       const event = {
-        schemaVersion: 8,
+        schemaVersion: 1,
         kind: "event",
         namespace,
         eventId: `visual-${operationId}`,
@@ -476,7 +476,7 @@ export async function createFixture() {
         },
       };
       const row = {
-        schemaVersion: 8,
+        schemaVersion: 1,
         kind: "delivery",
         namespace,
         operationId,

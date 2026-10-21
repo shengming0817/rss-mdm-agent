@@ -272,7 +272,7 @@ async function fillObservationQueue(s, count = 341) {
 }
 
 const reconciliationRecord = (s, command, attempt) => ({
-  schemaVersion: 8,
+  schemaVersion: 1,
   kind: "commandRecord",
   command,
   receipt: { namespace: s.configuration.namespace },
@@ -385,7 +385,7 @@ test("lost submit response is reconciled by clientId; no blind second start", as
   );
   assert.equal(s.calls.filter((v) => v.method === "turn/start").length, 1);
   const record = {
-    schemaVersion: 8,
+    schemaVersion: 1,
     kind: "commandRecord",
     command,
     receipt: { namespace: s.configuration.namespace },
@@ -412,7 +412,7 @@ test("missing native history is unknown and reverse dynamic/approval calls canno
   });
   await s.adapter.dispatch(s.admitted.binding, command, attempt, budget());
   const record = {
-    schemaVersion: 8,
+    schemaVersion: 1,
     kind: "commandRecord",
     command,
     receipt: { namespace: s.configuration.namespace },
@@ -906,7 +906,7 @@ test("absent and slow diagnostic consumers never terminate a healthy incarnation
   const stream = s.adapter
     .diagnostics(s.admitted.binding, budget())
     [Symbol.asyncIterator]();
-  assert.ok((await stream.next()).value.dropped > 0);
+  assert.ok((await stream.next()).value.attributes.dropped > 0);
   for (let i = 0; i < 1025; i++) s.emit("diagnostic-only", {});
   await stream.return();
   const result = await s.adapter.dispatch(

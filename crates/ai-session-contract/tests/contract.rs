@@ -39,7 +39,7 @@ fn native_thread_identity_roundtrips_and_rejects_invalid_ids() {
     }
 }
 #[test]
-fn shared_v8_golden_and_safe_diagnostics() {
+fn shared_current_golden_and_safe_diagnostics() {
     let f: Value = serde_json::from_str(FIXTURES).unwrap();
     for v in f["valid"].as_array().unwrap() {
         let record = decode(&serde_json::to_vec(v).unwrap(), &limits()).unwrap();
@@ -77,7 +77,7 @@ fn shared_v8_golden_and_safe_diagnostics() {
     assert_eq!(fingerprint(&c, &limits()).unwrap(), f["commandHash"]);
 }
 #[test]
-fn constructed_data_gets_the_same_limits_and_no_old_version_fallback() {
+fn constructed_data_gets_the_same_limits_and_current_version_check() {
     let f: Value = serde_json::from_str(FIXTURES).unwrap();
     let bytes = serde_json::to_vec(&f["valid"][0]).unwrap();
     let record = decode(&bytes, &limits()).unwrap();
@@ -109,10 +109,10 @@ fn constructed_data_gets_the_same_limits_and_no_old_version_fallback() {
         .code,
         ai_session_contract::Diagnostic::Configuration
     );
-    let mut previous = f["valid"][0].clone();
-    previous["schemaVersion"] = Value::from(6);
+    let mut unknown = f["valid"][0].clone();
+    unknown["schemaVersion"] = Value::from(99);
     assert_eq!(
-        decode(&serde_json::to_vec(&previous).unwrap(), &limits())
+        decode(&serde_json::to_vec(&unknown).unwrap(), &limits())
             .unwrap_err()
             .code,
         ai_session_contract::Diagnostic::Version
@@ -182,7 +182,7 @@ fn preference_patch_retains_set_clear_and_omission_through_rust_roundtrip() {
         serde_json::json!({"selectedSessionId":{"clear":true}}),
     ] {
         let value =
-            serde_json::json!({"schemaVersion":8,"kind":"preferencesRequest","patch":patch});
+            serde_json::json!({"schemaVersion":1,"kind":"preferencesRequest","patch":patch});
         let record = decode(&serde_json::to_vec(&value).unwrap(), &limits()).unwrap();
         assert_eq!(
             serde_json::from_slice::<Value>(&encode(&record, &limits()).unwrap()).unwrap(),
@@ -194,7 +194,7 @@ fn preference_patch_retains_set_clear_and_omission_through_rust_roundtrip() {
         serde_json::json!({"selectedSessionId":{"set":"session","clear":true}}),
     ] {
         let value =
-            serde_json::json!({"schemaVersion":8,"kind":"preferencesRequest","patch":patch});
+            serde_json::json!({"schemaVersion":1,"kind":"preferencesRequest","patch":patch});
         assert!(decode(&serde_json::to_vec(&value).unwrap(), &limits()).is_err());
     }
 }
@@ -202,8 +202,8 @@ fn preference_patch_retains_set_clear_and_omission_through_rust_roundtrip() {
 #[test]
 fn native_control_and_execution_origin_are_generated_closed_rust_types() {
     for value in [
-        serde_json::json!({"schemaVersion":8,"kind":"nativeCall","id":1,"method":"openCredential","data":{"caller":{"tenantId":"t","principalId":"alice","authorityId":"desktop"},"connection":{"connectionId":"local","name":"Fixture","provider":"codex","profile":"conversation","source":{"type":"custom_api","apiUrl":"https://example.invalid/","model":"fixture"}},"encrypted":vec![7;32]}}),
-        serde_json::json!({"schemaVersion":8,"kind":"executionOrigin","namespace":{"tenantId":"test-users","principalId":"alice","authorityId":"desktop-fixture","sessionId":"session-1"},"userGeneration":"generation-a","contextBinding":"binding-a","operationId":"operation-1","provider":"codex","config":{"id":"connection-1","revision":"1"}}),
+        serde_json::json!({"schemaVersion":1,"kind":"nativeCall","id":1,"method":"openCredential","data":{"caller":{"tenantId":"t","principalId":"alice","authorityId":"desktop"},"connection":{"connectionId":"local","presentation":{"name":"Fixture"},"provider":"codex","profile":"conversation","source":{"type":"custom_api","apiUrl":"https://example.invalid/","model":"fixture"}},"encrypted":vec![7;32]}}),
+        serde_json::json!({"schemaVersion":1,"kind":"executionOrigin","namespace":{"tenantId":"test-users","principalId":"alice","authorityId":"desktop-fixture","sessionId":"session-1"},"userGeneration":"generation-a","contextBinding":"binding-a","operationId":"operation-1","provider":"codex","config":{"id":"connection-1","revision":"1"}}),
     ] {
         let record = decode(&serde_json::to_vec(&value).unwrap(), &limits()).unwrap();
         assert_eq!(
@@ -211,7 +211,7 @@ fn native_control_and_execution_origin_are_generated_closed_rust_types() {
             value
         );
     }
-    let invalid = serde_json::json!({"schemaVersion":8,"kind":"nativeCall","id":1,"method":"masterKey","data":{"create":false,"secret":"forged"}});
+    let invalid = serde_json::json!({"schemaVersion":1,"kind":"nativeCall","id":1,"method":"masterKey","data":{"create":false,"secret":"forged"}});
     assert!(decode(&serde_json::to_vec(&invalid).unwrap(), &limits()).is_err());
 }
 
@@ -234,4 +234,23 @@ fn account_variants_require_enterprise_metadata_in_the_generated_rust_dto() {
             case["name"]
         );
     }
+}
+
+#[test]
+fn native_draft_and_read_views_preserve_unknown_presentation_fields() {
+    let draft = serde_json::json!({"connectionId":"c","presentation":{"name":"Connection","icon":{"name":"custom","palette":["blue"]}},"provider":"codex","profile":"conversation","source":{"type":"existing_config"}});
+    let typed: ai_session_contract::ConnectionDraft =
+        serde_json::from_value(draft.clone()).unwrap();
+    assert_eq!(serde_json::to_value(typed).unwrap(), draft);
+    let mut connection = draft;
+    connection["schemaVersion"] = 1.into();
+    connection["kind"] = "connection".into();
+    connection["configRevision"] = 1.into();
+    connection["status"] = "unverified".into();
+    let typed: ai_session_contract::Connection =
+        serde_json::from_value(connection.clone()).unwrap();
+    assert_eq!(serde_json::to_value(typed).unwrap(), connection);
+    let item = serde_json::json!({"namespace":{"tenantId":"t","principalId":"p","authorityId":"a","sessionId":"s"},"status":"active","lastActivityAtMs":0,"presentation":{"title":"Session","badge":{"count":2}}});
+    let typed: ai_session_contract::SessionListItem = serde_json::from_value(item.clone()).unwrap();
+    assert_eq!(serde_json::to_value(typed).unwrap(), item);
 }

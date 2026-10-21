@@ -337,7 +337,7 @@ fn newer_schema_retains_read_only_startup_diagnostic() {
     };
     assert_eq!(
         format!("{error:?}"),
-        "UnsupportedSchema { found: 999, supported: 13 }"
+        "UnsupportedSchema { found: 999, supported: 1 }"
     );
     assert_eq!(std::fs::read(&db.path).unwrap(), before);
     assert_eq!(runner.dispatch_count(), 0);
@@ -1429,7 +1429,7 @@ fn reconcile_checkpoint_after_storage_failures(
     assert_eq!(persisted_progress(), original_progress);
     assert_eq!(db.count("software_claims"), 1);
     db.sql()
-        .execute_batch("DROP TRIGGER fail_progress_commit")
+        .execute_batch("DROP TRIGGER fail_progress_commit; DROP TABLE progress_fault")
         .unwrap();
     let boundary = app.reconcile(request).unwrap();
     assert!(pending.lock().unwrap().is_none());
@@ -2361,7 +2361,7 @@ fn service_expires_pending_confirmation_and_exposes_corrupt_confirmation_storage
 }
 
 #[test]
-fn old_schema_reports_exact_versions_and_keeps_bytes() {
+fn unknown_schema_reports_exact_versions_and_keeps_bytes() {
     let db = Database::new();
     let host = TestHost::new();
     let runner = DeterministicTestRunner::new(id("test-runner"), TestScenario::Wait, 16).unwrap();
@@ -2374,7 +2374,7 @@ fn old_schema_reports_exact_versions_and_keeps_bytes() {
     };
     assert_eq!(
         error.to_string(),
-        "execution database schema 4 is unsupported; required schema 13; preserve the existing database; initialization and automatic migration are disabled"
+        "execution database schema 4 is unsupported; required schema 1; preserve the existing database; initialization and automatic migration are disabled"
     );
     assert_eq!(std::fs::read(&db.path).unwrap(), before);
 }
@@ -2681,14 +2681,17 @@ fn backend_preparation_is_durable_bound_and_never_dispatches_without_start() {
                 task: id("task"),
                 attempt: id("attempt"),
                 revision: Digest::new("a".repeat(64)).unwrap(),
-                title: "Exact backend task".into(),
-                summary: BackendTaskSummary::Software {
-                    intent: SoftwareOperation::Uninstall,
-                    steps: vec![BackendStepSummary {
-                        package: "fixed".into(),
-                        version: "1.0".into(),
-                        identity: BackendIdentity::User,
-                    }],
+                presentation: execution_contract::BackendPresentation {
+                    title: "Exact backend task".into(),
+                    summary: BackendTaskSummary::Software {
+                        intent: SoftwareOperation::Uninstall,
+                        steps: vec![BackendStepSummary {
+                            package: "fixed".into(),
+                            version: "1.0".into(),
+                            identity: BackendIdentity::User,
+                        }],
+                    },
+                    extra: Default::default(),
                 },
                 expires_at: 60,
                 user_initiated: true,

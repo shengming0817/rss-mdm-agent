@@ -108,7 +108,7 @@ async function refresh() {
   if (controller && !controller.state.unknown) mountSurface();
 }
 const title = computed(
-  () => controller?.state.snapshot.title ?? "操作界面不可用",
+  () => controller?.state.snapshot.presentation.title ?? "操作界面不可用",
 );
 </script>
 <template>

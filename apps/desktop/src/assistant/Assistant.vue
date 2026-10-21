@@ -157,12 +157,14 @@ async function suggest(value: string) {
   await nextTick();
   root.value?.querySelector<HTMLTextAreaElement>("textarea")?.focus();
 }
-const title = computed(() => s.sessions.get(s.selected)?.title ?? "新对话");
+const title = computed(
+  () => s.sessions.get(s.selected)?.presentation.title ?? "新对话",
+);
 const connectionName = computed(
   () =>
     s.connections.find(
       (row) => row.connectionId === c.selectedConnectionId.value,
-    )?.name ?? "选择连接",
+    )?.presentation.name ?? "选择连接",
 );
 const permissions = computed(() =>
   [...s.permissions.values()].filter(
@@ -340,7 +342,7 @@ async function copy(text: string) {
           :key="id"
           @click="c.select(id)"
         >
-          {{ s.sessions.get(id)?.title ?? "新对话" }}
+          {{ s.sessions.get(id)?.presentation.title ?? "新对话" }}
         </button>
       </div>
       <div v-if="empty" class="assistant-welcome">
@@ -702,7 +704,7 @@ async function copy(text: string) {
         >
           <span
             ><small>继续上次的工作</small
-            ><strong>{{ recent.title }}</strong></span
+            ><strong>{{ recent.presentation.title }}</strong></span
           ><ChevronRight :size="18" aria-hidden="true" />
         </button>
       </div>

@@ -75,6 +75,7 @@ dependencies = [
  "toml 1.1.5+spec-1.1.0",
  "url",
  "uuid",
+ "version-compare",
  "x509-cert",
  "x509-parser",
  "zeroize",
@@ -4041,7 +4042,7 @@ dependencies = [
 [[package]]
 name = "rss-mdm-agent-wire"
 version = "1.0.0"
-source = "git+https://dev.azure.com/shengming0923/rss/_git/rss-mdm?rev=f59937e07d9bc0abc6ec31cd5225304d90850c57#f59937e07d9bc0abc6ec31cd5225304d90850c57"
+source = "git+https://dev.azure.com/shengming0923/rss/_git/rss-mdm?rev=4b0cd11be629be390e8fea6a3d187921ea3a7ec4#4b0cd11be629be390e8fea6a3d187921ea3a7ec4"
 dependencies = [
  "base64 0.22.1",
  "ordered-float",

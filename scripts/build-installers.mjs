@@ -45,21 +45,19 @@ if (
   throw Error("Build on native macOS arm64 or Windows amd64/arm64");
 const release = args.includes("--release");
 const format =
-  formatIndex >= 0 ? args[formatIndex + 1] : windows ? "nsis_exe" : "macos_pkg";
+  formatIndex >= 0
+    ? args[formatIndex + 1]
+    : windows
+      ? "windows_exe"
+      : "macos_pkg";
 if (
   !(
-    windows ? ["nsis_exe", "windows_msi", "windows_msix"] : ["macos_pkg"]
+    windows ? ["windows_exe", "windows_msi", "windows_msix"] : ["macos_pkg"]
   ).includes(format)
 )
   throw Error("Unsupported native installer format");
-if (
-  format === "windows_msix" &&
-  (!process.env.RSS_WINDOWS_PUBLISHER ||
-    !process.env.RSS_WINDOWS_SIGNING_THUMBPRINT)
-)
-  throw Error(
-    "MSIX requires a matching Publisher and signing certificate, including development builds",
-  );
+if (format === "windows_msix" && !process.env.RSS_WINDOWS_PUBLISHER)
+  throw Error("MSIX requires a Publisher identity");
 const organization = JSON.parse(readFileSync(resolve(args[input + 1]), "utf8"));
 const allowed = ["origin", "tenant", "label", "signing_keys", "ca_pem"];
 if (Object.keys(organization).some((key) => !allowed.includes(key)))
@@ -136,7 +134,7 @@ mkdirSync(output, { recursive: true });
 const suffix = windows ? ".exe" : "";
 const sign = (file) => {
   if (windows) {
-    if (release || format === "windows_msix")
+    if (release)
       run(process.env.RSS_SIGNTOOL ?? "signtool.exe", [
         "sign",
         "/sha1",
@@ -289,59 +287,9 @@ function image(path) {
   }
   return result;
 }
-// Public publication metadata is separate from the local executable/runtime manifest.
-// The evidence reference resolves to this build's final package-manifest.json; development
-// candidates explicitly carry no production signing/notarization claim.
-const evidence = `package-manifest:${id}`;
-const publication = {
-  wireVersion: 1,
-  tenantId: organization.tenant,
-  target: {
-    platform: windows ? "windows" : "macos",
-    architecture: process.arch === "x64" ? "x86_64" : "aarch64",
-  },
-  version,
-  origin: organization.origin,
-  signingKeys: organization.signing_keys,
-  packaging: windows
-    ? {
-        kind: format,
-        publisher:
-          release || format === "windows_msix"
-            ? `certificate-sha1:${process.env.RSS_WINDOWS_SIGNING_THUMBPRINT}`
-            : "development-unsigned",
-        signature_evidence: release ? evidence : `development-only:${evidence}`,
-      }
-    : {
-        kind: "macos_pkg",
-        bundle: execFileSync(
-          "/usr/libexec/PlistBuddy",
-          [
-            "-c",
-            "Print :CFBundleIdentifier",
-            join(payload, "RSS MDM Agent.app/Contents/Info.plist"),
-          ],
-          { encoding: "utf8" },
-        ).trim(),
-        team: release
-          ? (/^TeamIdentifier=(.+)$/m.exec(
-              spawnSync("/usr/bin/codesign", ["-d", "--verbose=4", desktop], {
-                encoding: "utf8",
-              }).stderr,
-            )?.[1] ??
-            (() => {
-              throw Error("Release team identity missing");
-            })())
-          : "development-ad-hoc",
-        notarization_evidence: release ? evidence : `not-notarized:${evidence}`,
-      },
-};
-const publicationBytes = JSON.stringify(publication, null, 2) + "\n";
-writeFileSync(join(payload, "publication.json"), publicationBytes);
-writeFileSync(join(output, "publication.json"), publicationBytes);
 const candidate = {
-  version: 3,
-  publication_sha256: hash(publicationBytes),
+  version: 1,
+  format,
   product_version: version,
   target,
   root: installed,
@@ -533,9 +481,8 @@ writeFileSync(
       productVersion: version,
       signingMode: candidate.signing_mode,
       source,
-      candidateSha256: hash(publicationBytes),
+
       installationManifestSha256: hash(candidateBytes),
-      evidenceId: evidence,
       packageSha256: hash(readFileSync(packagePath)),
       package: packagePath,
     },

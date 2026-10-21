@@ -14,12 +14,15 @@ export function offer(): BackendTask {
     attempt: "backend-attempt",
     request: "backend-request",
     revision: "a".repeat(64),
-    title: "固定软件 1.0",
-    summary: {
-      kind: "software",
-      intent: "install",
-      steps: [{ package: "固定软件", version: "1.0", identity: "system" }],
+    presentation: {
+      title: "固定软件 1.0",
+      summary: {
+        kind: "software",
+        intent: "install",
+        steps: [{ package: "固定软件", version: "1.0", identity: "system" }],
+      },
     },
+
     expiresAt: 9999999999,
     userInitiated: true,
   };
@@ -37,11 +40,13 @@ export function snapshot(): Snapshot {
 export function resourceOffer(): BackendTask {
   return {
     ...offer(),
-    title: "办公套件",
-    summary: {
-      kind: "software",
-      intent: "install",
-      steps: [{ package: "办公套件", version: "1.0", identity: "system" }],
+    presentation: {
+      title: "办公套件",
+      summary: {
+        kind: "software",
+        intent: "install",
+        steps: [{ package: "办公套件", version: "1.0", identity: "system" }],
+      },
     },
   };
 }

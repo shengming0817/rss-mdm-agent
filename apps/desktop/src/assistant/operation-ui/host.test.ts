@@ -135,8 +135,8 @@ describe("production operation adapter", () => {
         stop.signal,
       );
       try {
-        expect(bridge.snapshot.title).toBe("策略 policy-1");
-        expect(bridge.snapshot.impact).toBe("未提供");
+        expect(bridge.snapshot.presentation.title).toBe("策略 policy-1");
+        expect(bridge.snapshot.presentation.impact).toBe("未提供");
       } finally {
         stop.abort();
       }
@@ -313,10 +313,12 @@ describe("production operation adapter", () => {
         "delivery",
         new AbortController().signal,
       );
-      expect(bridge.snapshot.targetLabel).toContain(
+      expect(bridge.snapshot.presentation.targetLabel).toContain(
         userTarget ? "S-1-5-21-OTHER / 登录会话 target-login2" : "本机设备",
       );
-      expect(bridge.snapshot.targetLabel).not.toContain("enterprise-user");
+      expect(bridge.snapshot.presentation.targetLabel).not.toContain(
+        "enterprise-user",
+      );
       expect(bridge.snapshot.approval.enterprise).toContain(
         userTarget ? "设备准入主体" : "enterprise-user",
       );

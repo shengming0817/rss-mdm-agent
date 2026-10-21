@@ -162,13 +162,13 @@ test("session summaries derive bounded first-prompt titles and freeze recent ord
   await accept(b, "b-first", "另一个会话", 20);
   const first = unwrap(await store.listSessions(a.namespace, { limit: 1 }));
   assert.equal(first.items[0].namespace.sessionId, "b");
-  assert.equal(first.items[0].title, "另一个会话");
+  assert.equal(first.items[0].presentation.title, "另一个会话");
   assert.equal(first.items[0].lastActivityAtMs, 20);
   assert.deepEqual(Object.keys(first.items[0]).sort(), [
     "lastActivityAtMs",
     "namespace",
+    "presentation",
     "status",
-    "title",
   ]);
   await accept(a, "a-second", "不改标题", 30);
   const continuation = unwrap(
@@ -178,7 +178,10 @@ test("session summaries derive bounded first-prompt titles and freeze recent ord
     }),
   );
   assert.equal(continuation.items[0].lastActivityAtMs, 10);
-  assert.equal(continuation.items[0].title, "首条 " + "😀".repeat(29));
+  assert.equal(
+    continuation.items[0].presentation.title,
+    "首条 " + "😀".repeat(29),
+  );
   const expected = unwrap(await store.listSessions(a.namespace, { limit: 64 }));
   assert.equal(expected.items[0].namespace.sessionId, "a");
   assert.equal(expected.items[0].lastActivityAtMs, 30);

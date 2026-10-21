@@ -161,7 +161,7 @@ try {
                 caller,
                 {
                   connectionId: id,
-                  name: id,
+                  presentation: { name: id },
                   provider,
                   profile: "conversation",
                   source: { type, directory: directory ?? root },

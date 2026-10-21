@@ -20,14 +20,14 @@ export function resourceContext(
   item: BackendTask,
   source: ContextSource,
 ): ResourceContext {
-  const software = item.summary.kind === "software";
+  const software = item.presentation.summary.kind === "software";
   const path = [
     software ? "软件中心" : "工具中心",
     "未提供分类",
-    item.title,
+    item.presentation.title,
     software
       ? "软件详情"
-      : item.summary.kind === "collection"
+      : item.presentation.summary.kind === "collection"
         ? "采集详情"
         : "脚本详情",
   ];
@@ -38,15 +38,15 @@ export function resourceContext(
       name: path[2],
       detail: path[3],
     },
-    kind: item.summary.kind,
+    kind: item.presentation.summary.kind,
     source:
       source === "s1"
         ? "明确标注的测试展示信息，无真实执行承诺"
         : "后台返回的资源展示信息，不代表安装或执行结果",
     sourceRevision: item.revision,
     resourceVersions:
-      item.summary.kind === "software"
-        ? item.summary.steps.map((step) => ({
+      item.presentation.summary.kind === "software"
+        ? item.presentation.summary.steps.map((step) => ({
             package: step.package,
             version: step.version,
           }))

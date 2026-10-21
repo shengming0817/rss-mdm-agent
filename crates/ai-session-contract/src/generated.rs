@@ -240,7 +240,7 @@ impl ::std::convert::From<AccessUpdateSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for AccessUpdateSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -590,7 +590,7 @@ impl ::std::convert::From<AccountSettingsSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for AccountSettingsSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -689,7 +689,7 @@ impl ::std::convert::From<AccountStatusSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for AccountStatusSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -862,7 +862,7 @@ impl ::std::convert::From<ActionRequestSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for ActionRequestSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -963,7 +963,7 @@ impl ::std::convert::From<AttachReceiptSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for AttachReceiptSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -1064,7 +1064,7 @@ impl ::std::convert::From<AttachRequestSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for AttachRequestSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -1722,7 +1722,7 @@ impl ::std::convert::From<CommandRecordVariant0SchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for CommandRecordVariant0SchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -1852,7 +1852,7 @@ impl ::std::convert::From<CommandRecordVariant1SchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for CommandRecordVariant1SchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -1982,7 +1982,7 @@ impl ::std::convert::From<CommandRecordVariant2SchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for CommandRecordVariant2SchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -2112,7 +2112,7 @@ impl ::std::convert::From<CommandRecordVariant3SchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for CommandRecordVariant3SchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -2242,7 +2242,7 @@ impl ::std::convert::From<CommandRecordVariant4SchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for CommandRecordVariant4SchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -2372,7 +2372,7 @@ impl ::std::convert::From<CommandRecordVariant5SchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for CommandRecordVariant5SchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -2502,7 +2502,7 @@ impl ::std::convert::From<CommandRecordVariant6SchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for CommandRecordVariant6SchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -2632,7 +2632,7 @@ impl ::std::convert::From<CommandRecordVariant7SchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for CommandRecordVariant7SchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -2820,7 +2820,7 @@ impl ::std::convert::From<CommandRecordVariant8SchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for CommandRecordVariant8SchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -2903,7 +2903,7 @@ impl ::std::convert::From<CommandSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for CommandSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -2946,8 +2946,8 @@ pub struct Connection {
     )]
     #[doc = "`last_test` member; see its generated type and parent schema."]
     pub last_test: ::std::option::Option<ConnectionTest>,
-    #[doc = "`name` member; see its generated type and parent schema."]
-    pub name: ConnectionName,
+    #[doc = "`presentation` member; see its generated type and parent schema."]
+    pub presentation: ConnectionPresentation,
     #[doc = "`profile` member; see its generated type and parent schema."]
     pub profile: ConnectionProfile,
     #[doc = "`provider` member; see its generated type and parent schema."]
@@ -2967,8 +2967,8 @@ pub struct ConnectionDraft {
     #[serde(rename = "connectionId")]
     #[doc = "`connection_id` member; see its generated type and parent schema."]
     pub connection_id: Id,
-    #[doc = "`name` member; see its generated type and parent schema."]
-    pub name: ConnectionDraftName,
+    #[doc = "`presentation` member; see its generated type and parent schema."]
+    pub presentation: ConnectionDraftPresentation,
     #[doc = "`profile` member; see its generated type and parent schema."]
     pub profile: ConnectionDraftProfile,
     #[doc = "`provider` member; see its generated type and parent schema."]
@@ -2976,24 +2976,33 @@ pub struct ConnectionDraft {
     #[doc = "`source` member; see its generated type and parent schema."]
     pub source: ConnectionSource,
 }
-#[doc = "`ConnectionDraftName`"]
+#[doc = "`ConnectionDraftPresentation`"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+pub struct ConnectionDraftPresentation {
+    #[doc = "`name` member; see its generated type and parent schema."]
+    pub name: ConnectionDraftPresentationName,
+    #[serde(flatten)]
+    #[doc = "`extra` member; see its generated type and parent schema."]
+    pub extra: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+}
+#[doc = "`ConnectionDraftPresentationName`"]
 #[derive(:: serde :: Serialize, Clone, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[serde(transparent)]
-pub struct ConnectionDraftName(
+pub struct ConnectionDraftPresentationName(
     #[doc = "`` member; see its generated type and parent schema."] ::std::string::String,
 );
-impl ::std::ops::Deref for ConnectionDraftName {
+impl ::std::ops::Deref for ConnectionDraftPresentationName {
     type Target = ::std::string::String;
     fn deref(&self) -> &::std::string::String {
         &self.0
     }
 }
-impl ::std::convert::From<ConnectionDraftName> for ::std::string::String {
-    fn from(value: ConnectionDraftName) -> Self {
+impl ::std::convert::From<ConnectionDraftPresentationName> for ::std::string::String {
+    fn from(value: ConnectionDraftPresentationName) -> Self {
         value.0
     }
 }
-impl ::std::str::FromStr for ConnectionDraftName {
+impl ::std::str::FromStr for ConnectionDraftPresentationName {
     type Err = self::error::ConversionError;
     fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
         if value.chars().count() > 64usize {
@@ -3005,13 +3014,13 @@ impl ::std::str::FromStr for ConnectionDraftName {
         Ok(Self(value.to_string()))
     }
 }
-impl ::std::convert::TryFrom<&str> for ConnectionDraftName {
+impl ::std::convert::TryFrom<&str> for ConnectionDraftPresentationName {
     type Error = self::error::ConversionError;
     fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
         value.parse()
     }
 }
-impl ::std::convert::TryFrom<::std::string::String> for ConnectionDraftName {
+impl ::std::convert::TryFrom<::std::string::String> for ConnectionDraftPresentationName {
     type Error = self::error::ConversionError;
     fn try_from(
         value: ::std::string::String,
@@ -3019,7 +3028,7 @@ impl ::std::convert::TryFrom<::std::string::String> for ConnectionDraftName {
         value.parse()
     }
 }
-impl<'de> ::serde::Deserialize<'de> for ConnectionDraftName {
+impl<'de> ::serde::Deserialize<'de> for ConnectionDraftPresentationName {
     fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
     where
         D: ::serde::Deserializer<'de>,
@@ -3187,61 +3196,6 @@ impl ::std::convert::TryFrom<::std::string::String> for ConnectionKind {
         value.parse()
     }
 }
-#[doc = "`ConnectionName`"]
-#[derive(:: serde :: Serialize, Clone, Eq, Hash, Ord, PartialEq, PartialOrd)]
-#[serde(transparent)]
-pub struct ConnectionName(
-    #[doc = "`` member; see its generated type and parent schema."] ::std::string::String,
-);
-impl ::std::ops::Deref for ConnectionName {
-    type Target = ::std::string::String;
-    fn deref(&self) -> &::std::string::String {
-        &self.0
-    }
-}
-impl ::std::convert::From<ConnectionName> for ::std::string::String {
-    fn from(value: ConnectionName) -> Self {
-        value.0
-    }
-}
-impl ::std::str::FromStr for ConnectionName {
-    type Err = self::error::ConversionError;
-    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if value.chars().count() > 64usize {
-            return Err("longer than 64 characters".into());
-        }
-        if value.chars().count() < 1usize {
-            return Err("shorter than 1 characters".into());
-        }
-        Ok(Self(value.to_string()))
-    }
-}
-impl ::std::convert::TryFrom<&str> for ConnectionName {
-    type Error = self::error::ConversionError;
-    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
-impl ::std::convert::TryFrom<::std::string::String> for ConnectionName {
-    type Error = self::error::ConversionError;
-    fn try_from(
-        value: ::std::string::String,
-    ) -> ::std::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
-impl<'de> ::serde::Deserialize<'de> for ConnectionName {
-    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
-    where
-        D: ::serde::Deserializer<'de>,
-    {
-        ::std::string::String::deserialize(deserializer)?
-            .parse()
-            .map_err(|e: self::error::ConversionError| {
-                <D::Error as ::serde::de::Error>::custom(e.to_string())
-            })
-    }
-}
 #[doc = "`ConnectionPage`"]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
 #[serde(deny_unknown_fields)]
@@ -3323,7 +3277,7 @@ impl ::std::convert::From<ConnectionPageSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for ConnectionPageSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -3337,6 +3291,70 @@ impl<'de> ::serde::Deserialize<'de> for ConnectionPageSchemaVersion {
     {
         Self::try_from(<i64>::deserialize(deserializer)?)
             .map_err(|e| <D::Error as ::serde::de::Error>::custom(e.to_string()))
+    }
+}
+#[doc = "`ConnectionPresentation`"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+pub struct ConnectionPresentation {
+    #[doc = "`name` member; see its generated type and parent schema."]
+    pub name: ConnectionPresentationName,
+    #[serde(flatten)]
+    #[doc = "`extra` member; see its generated type and parent schema."]
+    pub extra: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+}
+#[doc = "`ConnectionPresentationName`"]
+#[derive(:: serde :: Serialize, Clone, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[serde(transparent)]
+pub struct ConnectionPresentationName(
+    #[doc = "`` member; see its generated type and parent schema."] ::std::string::String,
+);
+impl ::std::ops::Deref for ConnectionPresentationName {
+    type Target = ::std::string::String;
+    fn deref(&self) -> &::std::string::String {
+        &self.0
+    }
+}
+impl ::std::convert::From<ConnectionPresentationName> for ::std::string::String {
+    fn from(value: ConnectionPresentationName) -> Self {
+        value.0
+    }
+}
+impl ::std::str::FromStr for ConnectionPresentationName {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if value.chars().count() > 64usize {
+            return Err("longer than 64 characters".into());
+        }
+        if value.chars().count() < 1usize {
+            return Err("shorter than 1 characters".into());
+        }
+        Ok(Self(value.to_string()))
+    }
+}
+impl ::std::convert::TryFrom<&str> for ConnectionPresentationName {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for ConnectionPresentationName {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for ConnectionPresentationName {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        ::std::string::String::deserialize(deserializer)?
+            .parse()
+            .map_err(|e: self::error::ConversionError| {
+                <D::Error as ::serde::de::Error>::custom(e.to_string())
+            })
     }
 }
 #[doc = "`ConnectionProfile`"]
@@ -3468,7 +3486,7 @@ impl ::std::convert::From<ConnectionSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for ConnectionSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -3970,7 +3988,7 @@ impl ::std::convert::From<ConnectionsRequestSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for ConnectionsRequestSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -4332,7 +4350,7 @@ impl ::std::convert::From<DeleteConnectionRequestSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for DeleteConnectionRequestSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -4558,7 +4576,7 @@ impl ::std::convert::From<DeliverySchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for DeliverySchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -4719,7 +4737,7 @@ impl ::std::convert::From<DetachRequestSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for DetachRequestSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -5833,7 +5851,7 @@ impl ::std::convert::From<EventAcknowledgedQueuedCancelledSchemaVersion> for i64
 impl ::std::convert::TryFrom<i64> for EventAcknowledgedQueuedCancelledSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -5869,7 +5887,7 @@ impl ::std::convert::From<EventAcknowledgedSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for EventAcknowledgedSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -6066,7 +6084,7 @@ impl ::std::convert::From<EventCancelDispatchedSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for EventCancelDispatchedSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -6207,7 +6225,7 @@ impl ::std::convert::From<EventCancelledSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for EventCancelledSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -6347,7 +6365,7 @@ impl ::std::convert::From<EventCommandAcceptedSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for EventCommandAcceptedSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -6550,7 +6568,7 @@ impl ::std::convert::From<EventDeliveryRecordedSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for EventDeliveryRecordedSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -6704,7 +6722,7 @@ impl ::std::convert::From<EventDeliveryRequestedSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for EventDeliveryRequestedSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -6844,7 +6862,7 @@ impl ::std::convert::From<EventDispatchSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for EventDispatchSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -6984,7 +7002,7 @@ impl ::std::convert::From<EventErrorSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for EventErrorSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -7177,7 +7195,7 @@ impl ::std::convert::From<EventInteractionAnsweredSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for EventInteractionAnsweredSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -7374,7 +7392,7 @@ impl ::std::convert::From<EventInteractionExpiredUnavailableSchemaVersion> for i
 impl ::std::convert::TryFrom<i64> for EventInteractionExpiredUnavailableSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -7572,7 +7590,7 @@ impl ::std::convert::From<EventInteractionPendingSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for EventInteractionPendingSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -7712,7 +7730,7 @@ impl ::std::convert::From<EventInvalidatedSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for EventInvalidatedSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -7926,7 +7944,7 @@ impl ::std::convert::From<EventReconciledSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for EventReconciledSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -8067,7 +8085,7 @@ impl ::std::convert::From<EventSessionReboundSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for EventSessionReboundSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -8205,7 +8223,7 @@ impl ::std::convert::From<EventSessionRecoveryUnavailableSchemaVersion> for i64 
 impl ::std::convert::TryFrom<i64> for EventSessionRecoveryUnavailableSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -8343,7 +8361,7 @@ impl ::std::convert::From<EventSessionRetiredSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for EventSessionRetiredSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -8552,7 +8570,7 @@ impl ::std::convert::TryFrom<i64>
 {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -8694,7 +8712,7 @@ impl ::std::convert::From<EventSurfaceSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for EventSurfaceSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -8834,7 +8852,7 @@ impl ::std::convert::From<EventTerminalSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for EventTerminalSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -9029,7 +9047,7 @@ impl ::std::convert::From<EventTextSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for EventTextSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -9174,7 +9192,7 @@ impl ::std::convert::From<EventToolProposalSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for EventToolProposalSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -9428,7 +9446,7 @@ impl ::std::convert::From<EventToolResultSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for EventToolResultSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -9593,7 +9611,7 @@ impl ::std::convert::From<ExecutionOriginSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for ExecutionOriginSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -9718,7 +9736,7 @@ impl ::std::convert::From<HistoryPreviewSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for HistoryPreviewSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -9872,7 +9890,7 @@ impl ::std::convert::From<HistoryRequestSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for HistoryRequestSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -9899,6 +9917,9 @@ pub struct HostDiagnostic {
     pub at_ms: Counter,
     #[doc = "`code` member; see its generated type and parent schema."]
     pub code: HostDiagnosticCode,
+    #[serde(default, skip_serializing_if = "::serde_json::Map::is_empty")]
+    #[doc = "`details` member; see its generated type and parent schema."]
+    pub details: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
     #[doc = "`stage` member; see its generated type and parent schema."]
     pub stage: HostDiagnosticStage,
 }
@@ -10222,7 +10243,7 @@ impl ::std::convert::From<HostHealthProtocol> for i64 {
 impl ::std::convert::TryFrom<i64> for HostHealthProtocol {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![4_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -10258,7 +10279,7 @@ impl ::std::convert::From<HostHealthSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for HostHealthSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -10425,7 +10446,7 @@ impl ::std::convert::From<HostProcessDiagnosticSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for HostProcessDiagnosticSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -10598,7 +10619,7 @@ impl ::std::convert::From<HostStatusSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for HostStatusSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -11129,7 +11150,7 @@ impl ::std::convert::From<InteractionSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for InteractionSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -11286,7 +11307,7 @@ impl ::std::convert::From<ListRequestSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for ListRequestSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -11521,7 +11542,7 @@ impl ::std::convert::From<NativeCallSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for NativeCallSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -11658,7 +11679,7 @@ impl ::std::convert::From<NativeEventSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for NativeEventSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -11801,7 +11822,7 @@ impl ::std::convert::From<NativeReplyFailureSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for NativeReplyFailureSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -11884,7 +11905,7 @@ impl ::std::convert::From<NativeReplySuccessSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for NativeReplySuccessSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -11995,7 +12016,7 @@ impl ::std::convert::From<NegotiationContractVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for NegotiationContractVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -12123,6 +12144,9 @@ pub struct PreferencesPatch {
     )]
     #[doc = "`default_connection_id` member; see its generated type and parent schema."]
     pub default_connection_id: ::std::option::Option<PreferenceChange>,
+    #[serde(default, skip_serializing_if = "::serde_json::Map::is_empty")]
+    #[doc = "`presentation` member; see its generated type and parent schema."]
+    pub presentation: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
     #[serde(
         rename = "selectedSessionId",
         skip_serializing_if = "::std::option::Option::is_none"
@@ -12209,7 +12233,7 @@ impl ::std::convert::From<PreferencesRequestSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for PreferencesRequestSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -12379,7 +12403,7 @@ impl ::std::convert::From<ReceiptSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for ReceiptSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -12475,7 +12499,7 @@ impl ::std::convert::From<ResumeRequestSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for ResumeRequestSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -12633,7 +12657,7 @@ impl ::std::convert::From<SaveConnectionRequestSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for SaveConnectionRequestSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -12735,7 +12759,7 @@ impl ::std::convert::From<SelectConnectionRequestSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for SelectConnectionRequestSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -12774,6 +12798,9 @@ pub struct Session {
     pub last_sequence: Counter,
     #[doc = "Trusted storage isolation scope; not copied from model or action content."]
     pub namespace: Namespace,
+    #[serde(default, skip_serializing_if = "::serde_json::Map::is_empty")]
+    #[doc = "`presentation` member; see its generated type and parent schema."]
+    pub presentation: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
     #[doc = "Monotonic CAS revision of this product record."]
     pub revision: Counter,
     #[doc = "Exact product wire version; Earlier versions are rejected without migration or fallback."]
@@ -12846,10 +12873,74 @@ pub struct SessionListItem {
     pub last_activity_at_ms: Counter,
     #[doc = "`namespace` member; see its generated type and parent schema."]
     pub namespace: Namespace,
+    #[doc = "`presentation` member; see its generated type and parent schema."]
+    pub presentation: SessionListItemPresentation,
     #[doc = "`status` member; see its generated type and parent schema."]
     pub status: SessionListItemStatus,
+}
+#[doc = "`SessionListItemPresentation`"]
+#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
+pub struct SessionListItemPresentation {
     #[doc = "`title` member; see its generated type and parent schema."]
-    pub title: SessionListItemTitle,
+    pub title: SessionListItemPresentationTitle,
+    #[serde(flatten)]
+    #[doc = "`extra` member; see its generated type and parent schema."]
+    pub extra: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+}
+#[doc = "`SessionListItemPresentationTitle`"]
+#[derive(:: serde :: Serialize, Clone, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[serde(transparent)]
+pub struct SessionListItemPresentationTitle(
+    #[doc = "`` member; see its generated type and parent schema."] ::std::string::String,
+);
+impl ::std::ops::Deref for SessionListItemPresentationTitle {
+    type Target = ::std::string::String;
+    fn deref(&self) -> &::std::string::String {
+        &self.0
+    }
+}
+impl ::std::convert::From<SessionListItemPresentationTitle> for ::std::string::String {
+    fn from(value: SessionListItemPresentationTitle) -> Self {
+        value.0
+    }
+}
+impl ::std::str::FromStr for SessionListItemPresentationTitle {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        if value.chars().count() > 32usize {
+            return Err("longer than 32 characters".into());
+        }
+        if value.chars().count() < 1usize {
+            return Err("shorter than 1 characters".into());
+        }
+        Ok(Self(value.to_string()))
+    }
+}
+impl ::std::convert::TryFrom<&str> for SessionListItemPresentationTitle {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for SessionListItemPresentationTitle {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for SessionListItemPresentationTitle {
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
+    where
+        D: ::serde::Deserializer<'de>,
+    {
+        ::std::string::String::deserialize(deserializer)?
+            .parse()
+            .map_err(|e: self::error::ConversionError| {
+                <D::Error as ::serde::de::Error>::custom(e.to_string())
+            })
+    }
 }
 #[doc = "`SessionListItemStatus`"]
 #[derive(
@@ -12906,61 +12997,6 @@ impl ::std::convert::TryFrom<::std::string::String> for SessionListItemStatus {
         value: ::std::string::String,
     ) -> ::std::result::Result<Self, self::error::ConversionError> {
         value.parse()
-    }
-}
-#[doc = "`SessionListItemTitle`"]
-#[derive(:: serde :: Serialize, Clone, Eq, Hash, Ord, PartialEq, PartialOrd)]
-#[serde(transparent)]
-pub struct SessionListItemTitle(
-    #[doc = "`` member; see its generated type and parent schema."] ::std::string::String,
-);
-impl ::std::ops::Deref for SessionListItemTitle {
-    type Target = ::std::string::String;
-    fn deref(&self) -> &::std::string::String {
-        &self.0
-    }
-}
-impl ::std::convert::From<SessionListItemTitle> for ::std::string::String {
-    fn from(value: SessionListItemTitle) -> Self {
-        value.0
-    }
-}
-impl ::std::str::FromStr for SessionListItemTitle {
-    type Err = self::error::ConversionError;
-    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if value.chars().count() > 32usize {
-            return Err("longer than 32 characters".into());
-        }
-        if value.chars().count() < 1usize {
-            return Err("shorter than 1 characters".into());
-        }
-        Ok(Self(value.to_string()))
-    }
-}
-impl ::std::convert::TryFrom<&str> for SessionListItemTitle {
-    type Error = self::error::ConversionError;
-    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
-impl ::std::convert::TryFrom<::std::string::String> for SessionListItemTitle {
-    type Error = self::error::ConversionError;
-    fn try_from(
-        value: ::std::string::String,
-    ) -> ::std::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
-impl<'de> ::serde::Deserialize<'de> for SessionListItemTitle {
-    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
-    where
-        D: ::serde::Deserializer<'de>,
-    {
-        ::std::string::String::deserialize(deserializer)?
-            .parse()
-            .map_err(|e: self::error::ConversionError| {
-                <D::Error as ::serde::de::Error>::custom(e.to_string())
-            })
     }
 }
 #[doc = "`SessionPage`"]
@@ -13045,7 +13081,7 @@ impl ::std::convert::From<SessionPageSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for SessionPageSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -13081,7 +13117,7 @@ impl ::std::convert::From<SessionSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for SessionSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -13252,7 +13288,7 @@ impl ::std::convert::From<SnapshotPageSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for SnapshotPageSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -13350,7 +13386,7 @@ impl ::std::convert::From<SnapshotRequestSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for SnapshotRequestSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -13491,7 +13527,7 @@ impl ::std::convert::From<SurfaceActionSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for SurfaceActionSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -13678,7 +13714,7 @@ impl ::std::convert::From<SurfaceStateSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for SurfaceStateSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -13834,7 +13870,7 @@ impl ::std::convert::From<TestConnectionRequestSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for TestConnectionRequestSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -13850,7 +13886,7 @@ impl<'de> ::serde::Deserialize<'de> for TestConnectionRequestSchemaVersion {
             .map_err(|e| <D::Error as ::serde::de::Error>::custom(e.to_string()))
     }
 }
-#[doc = "TestUser product wire record; validated against the V8 schema."]
+#[doc = "TestUser product wire record; validated against the current schema."]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct TestUser {
@@ -14108,7 +14144,7 @@ impl ::std::convert::From<TestUserPageSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for TestUserPageSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -14144,7 +14180,7 @@ impl ::std::convert::From<TestUserSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for TestUserSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -14249,7 +14285,7 @@ impl ::std::convert::From<UserContextSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for UserContextSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -14277,6 +14313,9 @@ pub struct UserPreferences {
     pub default_connection_id: ::std::option::Option<Id>,
     #[doc = "`kind` member; see its generated type and parent schema."]
     pub kind: UserPreferencesKind,
+    #[serde(default, skip_serializing_if = "::serde_json::Map::is_empty")]
+    #[doc = "`presentation` member; see its generated type and parent schema."]
+    pub presentation: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
     #[serde(rename = "schemaVersion")]
     #[doc = "`schema_version` member; see its generated type and parent schema."]
     pub schema_version: UserPreferencesSchemaVersion,
@@ -14354,7 +14393,7 @@ impl ::std::convert::From<UserPreferencesSchemaVersion> for i64 {
 impl ::std::convert::TryFrom<i64> for UserPreferencesSchemaVersion {
     type Error = self::error::ConversionError;
     fn try_from(value: i64) -> ::std::result::Result<Self, self::error::ConversionError> {
-        if ![8_i64].contains(&value) {
+        if ![1_i64].contains(&value) {
             Err("invalid value".into())
         } else {
             Ok(Self(value))
@@ -15196,9 +15235,20 @@ impl std::fmt::Debug for ConnectionDraft {
         f.write_str(concat!(stringify!(ConnectionDraft), "([redacted])"))
     }
 }
-impl std::fmt::Debug for ConnectionDraftName {
+impl std::fmt::Debug for ConnectionDraftPresentation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(concat!(stringify!(ConnectionDraftName), "([redacted])"))
+        f.write_str(concat!(
+            stringify!(ConnectionDraftPresentation),
+            "([redacted])"
+        ))
+    }
+}
+impl std::fmt::Debug for ConnectionDraftPresentationName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(ConnectionDraftPresentationName),
+            "([redacted])"
+        ))
     }
 }
 impl std::fmt::Debug for ConnectionDraftProfile {
@@ -15216,11 +15266,6 @@ impl std::fmt::Debug for ConnectionKind {
         f.write_str(concat!(stringify!(ConnectionKind), "([redacted])"))
     }
 }
-impl std::fmt::Debug for ConnectionName {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(concat!(stringify!(ConnectionName), "([redacted])"))
-    }
-}
 impl std::fmt::Debug for ConnectionPage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(concat!(stringify!(ConnectionPage), "([redacted])"))
@@ -15235,6 +15280,19 @@ impl std::fmt::Debug for ConnectionPageSchemaVersion {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(concat!(
             stringify!(ConnectionPageSchemaVersion),
+            "([redacted])"
+        ))
+    }
+}
+impl std::fmt::Debug for ConnectionPresentation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(ConnectionPresentation), "([redacted])"))
+    }
+}
+impl std::fmt::Debug for ConnectionPresentationName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(ConnectionPresentationName),
             "([redacted])"
         ))
     }
@@ -16705,14 +16763,25 @@ impl std::fmt::Debug for SessionListItem {
         f.write_str(concat!(stringify!(SessionListItem), "([redacted])"))
     }
 }
+impl std::fmt::Debug for SessionListItemPresentation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(SessionListItemPresentation),
+            "([redacted])"
+        ))
+    }
+}
+impl std::fmt::Debug for SessionListItemPresentationTitle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(
+            stringify!(SessionListItemPresentationTitle),
+            "([redacted])"
+        ))
+    }
+}
 impl std::fmt::Debug for SessionListItemStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(concat!(stringify!(SessionListItemStatus), "([redacted])"))
-    }
-}
-impl std::fmt::Debug for SessionListItemTitle {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(concat!(stringify!(SessionListItemTitle), "([redacted])"))
     }
 }
 impl std::fmt::Debug for SessionPage {
@@ -16942,235 +17011,235 @@ impl std::fmt::Debug for WireRecord {
 }
 impl AccessUpdateSchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl AccountSettingsSchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl AccountStatusSchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl ActionRequestSchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl AttachReceiptSchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl AttachRequestSchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl CommandRecordVariant0SchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl CommandRecordVariant1SchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl CommandRecordVariant2SchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl CommandRecordVariant3SchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl CommandRecordVariant4SchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl CommandRecordVariant5SchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl CommandRecordVariant6SchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl CommandRecordVariant7SchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl CommandRecordVariant8SchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl CommandSchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl ConnectionPageSchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl ConnectionSchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl ConnectionsRequestSchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl DeleteConnectionRequestSchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl DeliverySchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl DetachRequestSchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl EventAcknowledgedQueuedCancelledSchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl EventAcknowledgedSchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl EventCancelDispatchedSchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl EventCancelledSchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl EventCommandAcceptedSchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl EventDeliveryRecordedSchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl EventDeliveryRequestedSchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl EventDispatchSchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl EventErrorSchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl EventInteractionAnsweredSchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl EventInteractionExpiredUnavailableSchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl EventInteractionPendingSchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl EventInvalidatedSchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl EventReconciledSchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl EventSessionReboundSchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl EventSessionRecoveryUnavailableSchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl EventSessionRetiredSchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl EventStatusDispatchingRunningReconciliationRequiredSchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl EventSurfaceSchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl EventTerminalSchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl EventTextSchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl EventToolProposalSchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl EventToolResultSchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl ExecutionOriginSchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl HistoryPreviewSchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl HistoryRequestSchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl HostHealthProtocol {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(4_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl HostHealthSchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl HostProcessDiagnosticSchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl HostStatusSchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl InteractionSchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl ListRequestSchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl NativeCallSchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl NativeEventSchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl NativeReplyFailureSchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl NativeReplySuccessSchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl NegotiationAcp {
     #[doc = "The sole value permitted by the canonical schema."]
@@ -17178,69 +17247,69 @@ impl NegotiationAcp {
 }
 impl NegotiationContractVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl PreferencesRequestSchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl ReceiptSchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl ResumeRequestSchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl SaveConnectionRequestSchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl SelectConnectionRequestSchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl SessionPageSchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl SessionSchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl SnapshotPageSchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl SnapshotRequestSchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl SurfaceActionSchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl SurfaceStateSchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl TestConnectionRequestSchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl TestUserPageSchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl TestUserSchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl UserContextSchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }
 impl UserPreferencesSchemaVersion {
     #[doc = "The sole value permitted by the canonical schema."]
-    pub const VALUE: Self = Self(8_i64);
+    pub const VALUE: Self = Self(1_i64);
 }

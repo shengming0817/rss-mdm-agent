@@ -150,7 +150,7 @@ export async function connectExecution(
     )
       throw new Error("execution origin unavailable");
     const origin: ExecutionOrigin = {
-      schemaVersion: 8,
+      schemaVersion: 1,
       kind: "executionOrigin",
       namespace: request.namespace,
       userGeneration,
@@ -202,7 +202,7 @@ export async function connectExecution(
             catalog: catalogBinding,
           });
         const origin: ExecutionOrigin = {
-          schemaVersion: 8,
+          schemaVersion: 1,
           kind: "executionOrigin",
           namespace,
           userGeneration,

@@ -144,7 +144,7 @@ function edit(row?: Connection) {
   replaceKey.value = false;
   draftId.value = row?.connectionId ?? crypto.randomUUID();
   editing.value = row;
-  name.value = row?.name ?? "";
+  name.value = row?.presentation.name ?? "";
   provider.value = row?.provider ?? "codex";
   sourceType.value = row?.source.type ?? "existing_config";
   directory.value =
@@ -181,7 +181,7 @@ async function save() {
     try {
       const candidate: ConnectionDraft = {
         connectionId: draftId.value,
-        name: name.value.trim(),
+        presentation: { ...old?.presentation, name: name.value.trim() },
         provider: provider.value,
         profile: profile.value,
         source,
@@ -292,7 +292,8 @@ function containRemovalFocus(event: KeyboardEvent) {
         <div :inert="pendingRemoval ? true : undefined">
           <ul>
             <li v-for="row in rows" :key="row.connectionId">
-              <strong>{{ row.name }}</strong> · {{ labels.get(row.provider) }} ·
+              <strong>{{ row.presentation.name }}</strong> ·
+              {{ labels.get(row.provider) }} ·
               {{ row.status === "ready" ? "可用" : "未验证" }}
               <span>
                 ·
@@ -315,7 +316,7 @@ function containRemovalFocus(event: KeyboardEvent) {
                   testing.has(row.connectionId) ||
                   c.state.connection !== 'connected'
                 "
-                :aria-label="`测试连接 ${row.name}`"
+                :aria-label="`测试连接 ${row.presentation.name}`"
                 @click="testConnection(row)"
               >
                 {{ testing.has(row.connectionId) ? "正在测试…" : "测试连接" }}
@@ -324,7 +325,7 @@ function containRemovalFocus(event: KeyboardEvent) {
                 · 默认</span
               >
               <button
-                :aria-label="`编辑连接 ${row.name}`"
+                :aria-label="`编辑连接 ${row.presentation.name}`"
                 :disabled="busy"
                 @click="edit(row)"
               >
@@ -336,12 +337,12 @@ function containRemovalFocus(event: KeyboardEvent) {
                   row.status !== 'ready' ||
                   prefs.defaultConnectionId === row.connectionId
                 "
-                :aria-label="`将连接 ${row.name} 设为默认`"
+                :aria-label="`将连接 ${row.presentation.name} 设为默认`"
                 @click="defaultConnection(row.connectionId)"
               >
                 设为默认</button
               ><button
-                :aria-label="`删除连接 ${row.name}`"
+                :aria-label="`删除连接 ${row.presentation.name}`"
                 :disabled="busy || c.state.connection !== 'connected'"
                 @click="requestRemoval(row, $event)"
               >
@@ -490,7 +491,7 @@ function containRemovalFocus(event: KeyboardEvent) {
           @keydown="containRemovalFocus"
         >
           <p>
-            确认删除 {{ pendingRemoval.name }}（{{
+            确认删除 {{ pendingRemoval.presentation.name }}（{{
               labels.get(pendingRemoval.provider)
             }}）？连接将不可再使用，保存的 API 密钥会删除；所有会话历史保留。
           </p>

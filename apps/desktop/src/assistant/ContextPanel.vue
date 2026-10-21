@@ -62,7 +62,7 @@ const selectId = useId();
           :value="session.namespace.sessionId"
           :disabled="session.status === 'retired'"
         >
-          {{ session.title }} · {{ session.namespace.sessionId }}
+          {{ session.presentation.title }} · {{ session.namespace.sessionId }}
         </option>
       </select>
       <p v-if="controller.state.listing" role="status">正在读取会话…</p>

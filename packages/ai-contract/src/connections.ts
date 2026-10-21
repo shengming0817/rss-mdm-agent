@@ -4,7 +4,7 @@ import { boundedJson, decode } from "./codec.js";
 import { defaultLimits, fail, ok } from "./results.js";
 
 export const emptyPreferences = (): UserPreferences => ({
-  schemaVersion: 8,
+  schemaVersion: 1,
   kind: "userPreferences",
 });
 /** Append-only revisions keep accepted phases reproducible without retaining secrets. */
@@ -26,7 +26,10 @@ export function connectionRevision(
       next.configRevision !== (previous?.configRevision ?? 0) + 1
     )
       return fail("invalid_input");
-    if (!next.name.trim() || /\p{Cc}/u.test(next.name))
+    if (
+      !next.presentation.name.trim() ||
+      /\p{Cc}/u.test(next.presentation.name)
+    )
       return fail("invalid_input");
     if (next.source.type === "custom_api") {
       const url = new URL(next.source.apiUrl);
@@ -58,12 +61,14 @@ export function mergePreferences(
   try {
     decode(
       boundedJson(
-        { schemaVersion: 8, kind: "preferencesRequest", patch },
+        { schemaVersion: 1, kind: "preferencesRequest", patch },
         defaultLimits,
       ),
       defaultLimits,
     );
     const next = { ...current };
+    if (patch.presentation)
+      next.presentation = { ...current.presentation, ...patch.presentation };
     for (const key of ["defaultConnectionId", "selectedSessionId"] as const) {
       const change = patch[key];
       if (!change) continue;
@@ -85,7 +90,7 @@ export function savedDraft(
     decode(
       boundedJson(
         {
-          schemaVersion: 8,
+          schemaVersion: 1,
           kind: "saveConnectionRequest",
           connection: draft,
           expectedRevision: expected,
@@ -96,7 +101,7 @@ export function savedDraft(
     );
     return ok({
       ...draft,
-      schemaVersion: 8,
+      schemaVersion: 1,
       kind: "connection",
       configRevision: (expected ?? 0) + 1,
       status: "unverified",

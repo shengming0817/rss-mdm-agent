@@ -39,7 +39,7 @@ const presentation = (
   template: OperationPresentation["template"],
   fields: OperationField[] = [],
 ): OperationPresentation => ({
-  version: 2,
+  version: 1,
   template,
   fields,
   rules: [],
@@ -141,10 +141,13 @@ export function operationProjection(
     scope,
     revision,
     baseline: scope.instance,
-    title: "设备操作",
-    source: "认证执行服务",
-    targetLabel: scope.target,
-    impact: "执行仍需服务核验授权与系统条件",
+    presentation: {
+      title: "设备操作",
+      source: "认证执行服务",
+      targetLabel: scope.target,
+      impact: "执行仍需服务核验授权与系统条件",
+    },
+
     current: {},
     proposal: {},
     phase: "unknown",
@@ -163,8 +166,8 @@ export function operationProjection(
     const details = view.value,
       status = details.status,
       display = taskPresentation(details);
-    snapshot.title = details.action.operation.resource.id;
-    snapshot.source = `${status.mode === "test" ? "测试执行器，无真实设备效果" : "生产执行服务"} · ${details.action.actor}`;
+    snapshot.presentation.title = details.action.operation.resource.id;
+    snapshot.presentation.source = `${status.mode === "test" ? "测试执行器，无真实设备效果" : "生产执行服务"} · ${details.action.actor}`;
     snapshot.result = `${display.label}。${display.stage}。${display.cancel}`;
     snapshot.phase =
       status.software === "restartPending"
@@ -226,11 +229,10 @@ export function operationProjection(
         ? action.offer.expiresAt * 1000
         : action.expiresAtUnixMs;
     const expired = now >= snapshot.expiresAtMs;
-    snapshot.reason = record.failure
-      ? `执行服务拒绝：${record.failure}`
-      : expired
-        ? "原准备已过期；草稿保留，不能沿用旧确认"
-        : undefined;
+    if (record.failure) snapshot.reason = `执行服务拒绝：${record.failure}`;
+    else if (expired)
+      snapshot.reason = "原准备已过期；草稿保留，不能沿用旧确认";
+    else delete snapshot.reason;
     snapshot.approval.user = record.confirmation
       ? "已确认原请求最终参数"
       : editable
@@ -249,12 +251,12 @@ export function operationProjection(
         form.specialized ? "SettingsForm" : "OperationApproval",
         form.fields,
       );
-      snapshot.title = presentationText(
+      snapshot.presentation.title = presentationText(
         action.directory.selfService.presentation.displayName,
         `策略 ${action.directory.policyId}`,
       );
-      snapshot.source = `登记策略 ${action.choice.policyId} / ${action.choice.policyRevision}`;
-      snapshot.impact = presentationText(
+      snapshot.presentation.source = `登记策略 ${action.choice.policyId} / ${action.choice.policyRevision}`;
+      snapshot.presentation.impact = presentationText(
         action.directory.selfService.presentation.sideEffects,
       );
       snapshot.reason ??= "当前系统设置未由此策略读取；建议不是当前状态。";
@@ -264,7 +266,7 @@ export function operationProjection(
           ? "系统执行身份；OS 条件由服务复核"
           : "本机登录用户执行";
       const task = action.directory.task;
-      snapshot.targetLabel =
+      snapshot.presentation.targetLabel =
         task.kind === "software" && task.target.kind === "user"
           ? `${scope.target} · 目标 OS 用户 ${task.target.identity} / 登录会话 ${task.target.sessionId}`
           : `${scope.target} · 本机设备`;
@@ -288,11 +290,11 @@ export function operationProjection(
         snapshot.reason = "秘密输入接缝不可用，禁止提交。";
       }
     } else if (action.kind === "offered") {
-      snapshot.title = action.offer.title;
-      snapshot.logs = [JSON.stringify(action.offer.summary)];
-      snapshot.source = `签名任务 ${action.offer.task} / ${action.offer.attempt}`;
+      snapshot.presentation.title = action.offer.presentation.title;
+      snapshot.logs = [JSON.stringify(action.offer.presentation.summary)];
+      snapshot.presentation.source = `签名任务 ${action.offer.task} / ${action.offer.attempt}`;
     } else {
-      snapshot.title = "可信软件状态观察";
+      snapshot.presentation.title = "可信软件状态观察";
       snapshot.result = action.observation
         ? JSON.stringify(action.observation)
         : "尚无可信观察结果";
@@ -301,7 +303,7 @@ export function operationProjection(
   }
   const origin = operationOrigin(view);
   if (origin.kind === "ai") {
-    snapshot.source = `AI 发起 · ${snapshot.source}`;
+    snapshot.presentation.source = `AI 发起 · ${snapshot.presentation.source}`;
     snapshot.logs.push(
       `AI 会话 / 调用：${origin.conversation} / ${origin.toolCall}`,
       `AI 配置：${origin.config.id} / ${origin.config.revision}`,

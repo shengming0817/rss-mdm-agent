@@ -153,7 +153,7 @@ export function readSnapshotPage(
   for (;;) {
     const records = value.records.slice(offset, offset + count);
     const page: SnapshotPage = {
-      schemaVersion: 8,
+      schemaVersion: 1,
       kind: "snapshotPage",
       snapshotId: id,
       pageIndex: index,
@@ -210,7 +210,7 @@ export function readSessionPage(
   let count = Math.min(query.limit, value.length - offset);
   for (;;) {
     const page: SessionPage = {
-      schemaVersion: 8,
+      schemaVersion: 1,
       kind: "sessionPage",
       items: value.slice(offset, offset + count),
       ...(offset + count < value.length
@@ -244,8 +244,12 @@ export function sessionListItem(
   return {
     namespace: session.namespace,
     status: session.status,
-    title:
-      [...text.replace(/\s+/gu, " ").trim()].slice(0, 32).join("") || "新对话",
+    presentation: {
+      ...session.presentation,
+      title:
+        [...text.replace(/\s+/gu, " ").trim()].slice(0, 32).join("") ||
+        "新对话",
+    },
     lastActivityAtMs: commands.reduce(
       (latest, row) => Math.max(latest, row.receipt.acceptedAtMs),
       0,

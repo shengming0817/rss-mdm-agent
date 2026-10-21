@@ -113,7 +113,7 @@ for (const signal of ["SIGTERM", "SIGINT"]) {
         .sessionId,
     );
     await client.submit({
-      schemaVersion: 8,
+      schemaVersion: 1,
       kind: "command",
       commandId: "bundled",
       sessionId: session.namespace.sessionId,

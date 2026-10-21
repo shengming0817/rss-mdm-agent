@@ -198,15 +198,17 @@ emit("navigation", reactive({ openSection, reset, section, sections, path }));
           <dl class="settings-facts">
             <div>
               <dt>设备名称</dt>
-              <dd>{{ device?.computerName ?? "尚未读取" }}</dd>
+              <dd>{{ device?.attributes.computerName ?? "尚未读取" }}</dd>
             </div>
             <div>
               <dt>当前系统用户</dt>
-              <dd>{{ device?.loginUser ?? "尚未读取" }}</dd>
+              <dd>{{ device?.attributes.loginUser ?? "尚未读取" }}</dd>
             </div>
             <div>
               <dt>IP 地址</dt>
-              <dd>{{ device?.ipAddresses?.join("、") || "尚未读取" }}</dd>
+              <dd>
+                {{ device?.attributes.ipAddresses?.join("、") || "尚未读取" }}
+              </dd>
             </div>
           </dl>
         </div>

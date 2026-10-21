@@ -832,7 +832,7 @@ impl Server {
             ca_pem: data.tls_required.then(pki::ca),
         }
     }
-    pub fn configuration(&self, candidate: [u8; 32]) -> enroll::configuration::ConfigurationFile {
+    pub fn configuration(&self) -> enroll::configuration::ConfigurationFile {
         use enroll::configuration as w;
         let cfg = self.config();
         let mut data = self.data.lock().unwrap();
@@ -872,17 +872,10 @@ impl Server {
                 platform: cfg.platform,
                 architecture: cfg.architecture,
             },
-            version: "test".into(),
+            version: "1.0.0".into(),
             filename: "fixture.pkg".into(),
             length: 1,
             installer_sha256: [9; 32],
-            candidate_sha256: candidate,
-            origin: cfg.origin.origin().ascii_serialization(),
-            signing_keys: BTreeMap::from([(
-                "test".into(),
-                base64::engine::general_purpose::URL_SAFE_NO_PAD
-                    .encode(data.signer.public_key().as_ref()),
-            )]),
         }];
         data.configuration_file = Some(file.clone());
         file
@@ -1132,8 +1125,12 @@ fn configuration_response(d: &mut Data, action: &str, value: Value) -> Response 
                 serde_json::to_value(d.configuration_file.as_ref().unwrap()).unwrap()
             );
             assert_eq!(
-                request.installation.candidate_sha256,
-                d.packages[0].candidate_sha256
+                request.installation.release_id,
+                d.packages
+                    .iter()
+                    .find(|p| p.release_id == request.installation.release_id)
+                    .unwrap()
+                    .release_id
             );
             assert_ne!(request.secret.expose(), request.file.secret.expose());
             if d.operation.is_some_and(|v| v != request.operation_id) {

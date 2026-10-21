@@ -35,7 +35,7 @@ export async function generateOperations(outputs, compileValidator) {
     };
   }
   const catalog = {
-    catalogId: "urn:rss-mdm-agent:a2ui:operation:2",
+    catalogId: "urn:rss-mdm-agent:a2ui:operation:1",
     components,
     functions: {},
     $defs: { CatalogComponentCommon: basic.$defs.CatalogComponentCommon },

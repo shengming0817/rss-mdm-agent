@@ -57,14 +57,17 @@ fn main() {
         task: id("backend-task"),
         attempt: id("backend-attempt"),
         revision: Digest::new("a".repeat(64)).unwrap(),
-        title: "办公套件".into(),
-        summary: BackendTaskSummary::Software {
-            intent: SoftwareOperation::Install,
-            steps: vec![BackendStepSummary {
-                package: "办公套件".into(),
-                version: "1.0".into(),
-                identity: BackendIdentity::System,
-            }],
+        presentation: execution_contract::BackendPresentation {
+            title: "办公套件".into(),
+            summary: BackendTaskSummary::Software {
+                intent: SoftwareOperation::Install,
+                steps: vec![BackendStepSummary {
+                    package: "办公套件".into(),
+                    version: "1.0".into(),
+                    identity: BackendIdentity::System,
+                }],
+            },
+            extra: Default::default(),
         },
         expires_at: 9999999999,
         user_initiated: true,

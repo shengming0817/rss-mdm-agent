@@ -122,9 +122,11 @@ async function refresh() {
               "admissionDenied",
             ].includes(t.status.phase),
         ) ||
-        snapshot.available.some((t) => t.summary.kind === "enrollment");
+        snapshot.available.some(
+          (t) => t.presentation.summary.kind === "enrollment",
+        );
       available.value = snapshot.available.filter(
-        (t) => t.summary.kind === "enrollment",
+        (t) => t.presentation.summary.kind === "enrollment",
       );
     } else {
       clearTasks();

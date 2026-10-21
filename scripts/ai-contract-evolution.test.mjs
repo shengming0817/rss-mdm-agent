@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { readFileSync } from "node:fs";
-import { checkContractEvolution } from "./ai-contract-evolution.mjs";
+import { checkCurrentContract } from "./ai-contract-evolution.mjs";
 const schema = JSON.parse(
   readFileSync(
     new URL(
@@ -10,31 +10,21 @@ const schema = JSON.parse(
     ),
   ),
 );
-test("session response replacement needs a contract version change", () => {
-  const changed = structuredClone(schema);
-  changed.$defs.SessionPage.properties.items.items.$ref = "#/$defs/Session";
+test("display extension does not change current contract identity", () => {
+  const current = structuredClone(schema);
+  current.$defs.Connection.properties.presentation.properties.icon = {
+    type: "string",
+  };
+  checkCurrentContract(current);
+});
+test("all current records and the schema identity match negotiation", () => {
+  const current = structuredClone(schema);
+  current.$defs.SessionPage.properties.schemaVersion.const = 99;
   assert.throws(
-    () => checkContractEvolution(schema, changed),
-    /version increase/,
-  );
-  const next = schema.$defs.Negotiation.properties.contractVersion.const + 1;
-  function upgrade(node) {
-    if (!node || typeof node !== "object") return;
-    for (const key of ["schemaVersion", "contractVersion"])
-      if (node.properties?.[key]) node.properties[key].const = next;
-    for (const value of Object.values(node)) upgrade(value);
-  }
-  upgrade(changed);
-  changed.$id = `urn:rss-mdm-agent:ai-runtime:${next}`;
-  checkContractEvolution(schema, changed);
-  changed.$defs.SessionPage.properties.schemaVersion.const--;
-  assert.throws(
-    () => checkContractEvolution(schema, changed),
+    () => checkCurrentContract(current),
     /differs from negotiation/,
   );
-});
-test("documentation edits need no contract version change", () => {
-  const changed = structuredClone(schema);
-  changed.$defs.SessionPage.description = "Reworded documentation";
-  checkContractEvolution(schema, changed);
+  current.$defs.SessionPage.properties.schemaVersion.const = 1;
+  current.$id = "urn:foreign";
+  assert.throws(() => checkCurrentContract(current), /identity/);
 });
