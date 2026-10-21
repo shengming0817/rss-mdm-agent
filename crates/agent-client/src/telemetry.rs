@@ -62,6 +62,14 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         {
             return Err(Error::Untrusted);
         }
+        if matches!(&p.collector, w::TelemetryCollector::Native { mappings, .. }
+            if mappings.values().any(|m| m.counter_normalization.is_some()))
+            && !r
+                .capabilities
+                .contains(&w::Capability::TelemetryCounterLocalV1)
+        {
+            return Err(Error::Unsupported);
+        }
         let bytes = p.signing_bytes(&signed.key_id)?;
         let key = self.task_verification_key(&signed.key_id)?;
         let signature = base64::engine::general_purpose::URL_SAFE_NO_PAD

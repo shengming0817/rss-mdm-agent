@@ -33,6 +33,8 @@ impl Limits {
 pub use w::TelemetryGapReason as GapReason;
 #[path = "gap_spool.rs"]
 mod gap_spool;
+#[path = "native_counters.rs"]
+mod native_counters;
 pub use gap_spool::PendingGap;
 /// Aggregate loss evidence. Bounds describe the span, not continuous coverage.
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
@@ -170,6 +172,7 @@ impl Spool {
         }
         // Add diagnostic tables without altering existing samples, batches or unowned legacy gaps.
         gap_spool::install(&conn)?;
+        native_counters::install(&conn)?;
         conn.pragma_update(None, "max_page_count", limits.pages)?;
         let mut spool = Self {
             conn,
@@ -251,6 +254,7 @@ impl Spool {
                     .execute("DELETE FROM counters WHERE key=?1", [key])?;
             }
         }
+        native_counters::reclaim(&self.conn, &self.configurations()?)?;
         Ok(())
     }
     /// Retained signed leases still require current signature/identity/time verification.
@@ -316,6 +320,7 @@ impl Spool {
             .optional()?
             .unwrap_or(0);
         normalize_counters(&tx, c, &source, boot, at, &mut values)?;
+        native_counters::normalize(&tx, c, &source, boot, at, &mut values)?;
         let observation = w::TelemetryObservation {
             id: Uuid::new_v4(),
             sequence,
@@ -770,7 +775,11 @@ fn normalize_counters(
                 at,
             }
         } else {
-            let count: u64 = db.query_row("SELECT count(*) FROM counters", [], |r| r.get(0))?;
+            let count: u64 = db.query_row(
+                "SELECT (SELECT count(*) FROM counters)+(SELECT count(*) FROM native_counters)",
+                [],
+                |r| r.get(0),
+            )?;
             if !existing && count >= 4096 {
                 return Err(Error::Capacity);
             }

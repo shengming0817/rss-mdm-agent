@@ -284,6 +284,7 @@ pub fn native_performance_configuration(
         mappings: [(
             "custom.load".into(),
             TelemetryNativeMapping {
+                counter_normalization: None,
                 query: "memory".into(),
                 mapping: TelemetryValueMapping {
                     pointer: "/total_bytes".into(),
@@ -294,5 +295,83 @@ pub fn native_performance_configuration(
         )]
         .into(),
     };
+    sign(&server.data.lock().unwrap(), c)
+}
+
+/// Signed native Network mapping: the Agent owns only the generated start property.
+pub fn native_network_configuration(
+    server: &Server,
+    registration: &BindingProfile,
+) -> SignedTelemetryConfiguration {
+    let mut c = native_performance_configuration(server, registration).configuration;
+    let TelemetryCollector::Native { plan, mappings } = &mut c.collector else {
+        unreachable!()
+    };
+    let mut spec = plan.spec().clone();
+    let query = spec.queries.get_mut("memory").unwrap();
+    query.definition = if cfg!(target_os = "windows") {
+        NativeQueryDefinition::WindowsPerformance {
+            section: PerformanceSection::Network,
+        }
+    } else {
+        NativeQueryDefinition::MacosPerformance {
+            section: PerformanceSection::Network,
+        }
+    };
+    query.cardinality = NativeCardinality::List;
+    query.instance_keys = vec!["id".into()];
+    query.budget.max_rows = 4;
+    spec.budget.max_rows = 4;
+    *plan = NativeCollectionPlan::try_from(spec).unwrap();
+    let m = mappings.get_mut("custom.load").unwrap();
+    m.counter_normalization = Some(NativeCounterNormalization::LocalCumulativeV1);
+    m.mapping = TelemetryValueMapping {
+        pointer: String::new(),
+        conversion: TelemetryConversion::Identity,
+        columns: [
+            (
+                "id".into(),
+                TelemetryValueMapping {
+                    pointer: "/id".into(),
+                    conversion: TelemetryConversion::Identity,
+                    columns: Default::default(),
+                },
+            ),
+            (
+                "bytes".into(),
+                TelemetryValueMapping {
+                    pointer: "/received_bytes".into(),
+                    conversion: TelemetryConversion::Integer,
+                    columns: Default::default(),
+                },
+            ),
+        ]
+        .into(),
+    };
+    let f = &mut c.fields[0];
+    f.value_type = ValueType::Array {
+        items: Box::new(ValueType::Object {
+            properties: [
+                (
+                    "id".into(),
+                    ValueType::String {
+                        max_length: 256,
+                        allow_empty: false,
+                    },
+                ),
+                ("bytes".into(), ValueType::Integer),
+                ("start".into(), ValueType::Integer),
+            ]
+            .into(),
+        }),
+        max_items: 4,
+    };
+    f.item_key = Some("id".into());
+    let binding = f.time_series.as_mut().unwrap();
+    binding.kind = TelemetryKind::CumulativeCounter;
+    binding.aggregations = [TelemetryAggregation::Increase, TelemetryAggregation::Rate].into();
+    binding.value_path = vec!["bytes".into()];
+    binding.interval_start_path = Some(vec!["start".into()]);
+    binding.max_resources = 4;
     sign(&server.data.lock().unwrap(), c)
 }

@@ -282,7 +282,7 @@ SQLite spool 独立限制为 64 MiB / 4096 次观测，按原始批次查询或�
 本地状态的 `telemetry` 包含排队量、按原因汇总的缺口及最近持久接收回执状态；
 `pending` 回执仅表示服务端持久接收，不表示分析存储已经可查询。
 网络成本未知或昂贵时暂停上传，低电量停止采样，省电模式退出加速采样。
-标量累计计数器从首次观察建立本地基线；重启、计数器回退或起点未知时输出 missing，
+标量累计计数器从首次观察建立本地基线；启动身份变化、计数器回退或起点未知时输出 missing，
 不把开机以来的累计数当作本区间增量。Windows 服务重启保守地重新建立基线。
 
 受信安装的服务程序可执行 `--telemetry-probe`，读取本机 CPU、内存、卷和网卡计数，
@@ -290,6 +290,11 @@ SQLite spool 独立限制为 64 MiB / 4096 次观测，按原始批次查询或�
 原生性能采集消费服务端发布的 Windows/macOS performance V1 recipe，经同一签名配置与受限 collection worker 执行 CPU、内存、文件系统和网络读取。
 CPU 在单次查询内至少间隔 250 ms 读取两次；计数域变化、回退或无有效增量时报告 missing。
 网络值为累计字节数，文件系统容量按稳定卷身份分别报告，不将 APFS 共享容器容量相加。
+逐接口历史 Counter 使用签名的 `counterNormalization: "local_cumulative_v1"`，要求注册能力
+`telemetry.counter.local.v1`。Agent 按稳定接口键保存基线和起点，上传相对基线的累计值与逐接口区间；
+首次出现、接口重现、计数回退或启动身份变化先输出 missing，不用有效零值代替预热。
+同一字段包含多个接口时，任一接口预热使该次字段整体 missing，context 保留接口身份与起点。
+基线与样本同事务落盘，同一启动身份下进程重启恢复已有基线；原始 UInt64 转换为 Integer 超范围时明确失败。
 macOS 优先使用卷 UUID；不提供 UUID 的文件系统使用启动、原生 fsid 和挂载来源限定身份，仅保证当前挂载实例内稳定。
 Windows CPU 当前仅接纳单 processor group，多组系统报告 unsupported，不以局部计数冒充整机 CPU。
 

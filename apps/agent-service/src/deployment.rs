@@ -444,6 +444,7 @@ impl Deployment {
         let mut values = vec![
             C::InventoryCollectionV1,
             C::TelemetryCollectV1,
+            C::TelemetryCounterLocalV1,
             C::TaskExecuteV1,
             C::MdmEnrollmentV1,
         ];

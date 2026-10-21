@@ -70,12 +70,39 @@ pub(super) fn readings(
             check_keys(c, mappings.keys())?;
             for field in &c.fields {
                 let mapping = mappings.get(field.key.as_str()).ok_or(Error::Protocol)?;
+                let query = plan
+                    .spec()
+                    .queries
+                    .get(&mapping.query)
+                    .ok_or(Error::Protocol)?;
+                mapping.validate_counter_normalization(&query.definition, field)?;
                 let result = native.queries.get(&mapping.query).ok_or(Error::Protocol)?;
-                let valid =
-                    result.status == w::NativeQueryStatus::Complete && result.enumeration_complete;
+                let valid = result.complete_for(query, now / 1_000_000);
                 let value = if valid {
                     let input = serde_json::to_value(&result.rows).map_err(|_| Error::Protocol)?;
-                    reading(field, project(&input, &mapping.mapping, 0)?, now)?
+                    let mut projected = project(&input, &mapping.mapping, 0)?;
+                    if mapping.counter_normalization.is_some() {
+                        // The signed wire contract reserves this property for the Agent.
+                        // Spool atomically replaces this candidate with the durable baseline start.
+                        let start = field
+                            .time_series
+                            .as_ref()
+                            .and_then(|b| b.interval_start_path.as_ref())
+                            .and_then(|p| p.first())
+                            .ok_or(Error::Protocol)?;
+                        for item in projected.as_array_mut().ok_or(Error::Protocol)? {
+                            let fields = item.as_object_mut().ok_or(Error::Protocol)?;
+                            if fields.insert(start.clone(), Json::from(now)).is_some() {
+                                return Err(Error::Protocol);
+                            }
+                        }
+                    }
+                    reading(field, projected, now)?
+                } else if result.status == w::NativeQueryStatus::Missing {
+                    w::TelemetryReading::Missing {
+                        interval_start: None,
+                        context: None,
+                    }
                 } else {
                     w::TelemetryReading::Failed {
                         interval_start: None,

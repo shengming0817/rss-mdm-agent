@@ -244,3 +244,194 @@ async fn gap_network_turn_recovers_unknown_receipt_and_does_not_starve() {
     assert_eq!(server.data.lock().unwrap().telemetry.gap_attempts.len(), 1);
     assert_eq!(t.spool.summary().unwrap().gaps["lease"].count, 1);
 }
+
+fn network_evidence(
+    c: &w::TelemetryConfiguration,
+    at: i64,
+    bytes: u64,
+    complete: bool,
+) -> ProcessEvidence {
+    use sha2::{Digest as _, Sha256};
+    let w::TelemetryCollector::Native { plan, .. } = &c.collector else {
+        unreachable!()
+    };
+    let rows = if complete {
+        vec![serde_json::from_value(
+            serde_json::json!({"id":"en0","received_bytes":bytes.to_string(),"sent_bytes":"900"}),
+        )
+        .unwrap()]
+    } else {
+        vec![]
+    };
+    let result = w::NativeCollectionResult {
+        plan_digest: plan.digest(),
+        collected_at: at / 1_000_000,
+        queries: [(
+            "memory".into(),
+            w::NativeQueryResult {
+                scan: None,
+                query_digest: plan.spec().queries["memory"].digest(),
+                collected_at: at / 1_000_000,
+                status: if complete {
+                    w::NativeQueryStatus::Complete
+                } else {
+                    w::NativeQueryStatus::Failed
+                },
+                enumeration_complete: complete,
+                row_count: rows.len() as u32,
+                rows,
+                users: None,
+            },
+        )]
+        .into(),
+    };
+    let stdout = serde_json::to_vec(&result).unwrap();
+    let stderr = serde_json::to_vec(&CollectionCompletion {
+        native_output_bytes: stdout.len() as u64,
+        input_sha256: "a".repeat(64),
+        output_sha256: format!("{:x}", Sha256::digest(&stdout)),
+        closed: true,
+    })
+    .unwrap();
+    ProcessEvidence {
+        content_digest: Digest::new("a".repeat(64)).unwrap(),
+        attempt_id: AttemptId::new("network").unwrap(),
+        runner: Id::new("native").unwrap(),
+        scope: ProcessScope::NotStarted {},
+        finished: true,
+        quiescent: true,
+        exit_code: Some(0),
+        end: ProcessEnd::Exited,
+        failure_kind: ProcessFailureKind::None,
+        total_output_bytes: (stdout.len() + stderr.len()) as u64,
+        stdout,
+        stderr,
+        quality: OutputQuality::Complete,
+    }
+}
+
+// Real signature admission, mapping and SQLite spool; provider rows are explicit fixtures.
+#[tokio::test]
+async fn signed_native_network_mapping_normalizes_two_observations_and_preserves_failure() {
+    let server = protocol::Server::tls().await;
+    let root = protocol::Root::new();
+    server.time.set(timestamp().unwrap() / 1_000_000);
+    let mut client = server.client(&root, agent_client::OpenMode::Create);
+    let r = server.register(&mut client).await;
+    let c = client
+        .verify_telemetry(fixture::native_network_configuration(&server, &r))
+        .unwrap();
+    let mut t = Telemetry::open(&client).unwrap();
+    t.install(c.clone()).unwrap();
+    let first = timestamp().unwrap();
+    let key = c.payload().fields[0].key;
+    let evidence = network_evidence(c.payload(), first, 100, true);
+    // A malformed signed projection cannot smuggle a native counter into the start.
+    let mut invalid = c.payload().clone();
+    let w::TelemetryCollector::Native { mappings, .. } = &mut invalid.collector else {
+        unreachable!()
+    };
+    let native = mappings.get_mut(key.as_str()).unwrap();
+    native.mapping.columns.insert(
+        "start".into(),
+        w::TelemetryValueMapping {
+            pointer: "/sent_bytes".into(),
+            conversion: w::TelemetryConversion::Integer,
+            columns: Default::default(),
+        },
+    );
+    assert!(mapping::readings(&invalid, &evidence, first).is_err());
+    let w::TelemetryCollector::Native { mappings, .. } = &mut invalid.collector else {
+        unreachable!()
+    };
+    let native = mappings.get_mut(key.as_str()).unwrap();
+    native.mapping.columns.remove("start");
+    native.counter_normalization = None;
+    assert!(mapping::readings(&invalid, &evidence, first).is_err());
+    let mut bounded = c.payload().clone();
+    let w::ValueType::Array { items, .. } = &mut bounded.fields[0].value_type else {
+        unreachable!()
+    };
+    let w::ValueType::Object { properties } = items.as_mut() else {
+        unreachable!()
+    };
+    properties.insert(
+        "id".into(),
+        w::ValueType::String {
+            max_length: 1,
+            allow_empty: false,
+        },
+    );
+    assert!(mapping::readings(&bounded, &evidence, first).is_err());
+    let mut bounded = c.payload().clone();
+    bounded.max_points = 0;
+    assert!(mapping::readings(&bounded, &evidence, first).is_err());
+    for (at, raw, complete) in [
+        (first, 100, true),
+        (first + 5_000_000, 160, true),
+        (first + 10_000_000, 0, false),
+    ] {
+        let mapped = mapping::readings(
+            c.payload(),
+            &network_evidence(c.payload(), at, raw, complete),
+            at,
+        )
+        .unwrap();
+        if complete {
+            let w::TelemetryReading::Valid {
+                value: w::Scalar::Array(items),
+                interval_start: None,
+            } = &mapped[&key]
+            else {
+                panic!("expected projected native counter")
+            };
+            let w::Scalar::Object(item) = &items[0] else {
+                panic!("expected item")
+            };
+            assert_eq!(item["start"], w::Scalar::Integer(at));
+            assert_eq!(item["bytes"], w::Scalar::Integer(raw as i64));
+        } else {
+            assert!(matches!(mapped[&key], w::TelemetryReading::Failed { .. }));
+        }
+        t.spool.append(&c, at, mapped, "boot").unwrap();
+    }
+    t.spool.freeze_all(&c).unwrap();
+    let pending = t.spool.pending(first / 1_000_000, false).unwrap().unwrap();
+    let action = Action::Send(pending);
+    let receipt = request(&client, &action).await.unwrap();
+    t.apply(&action, Ok(receipt)).unwrap();
+    let batch: w::TelemetryUpload =
+        serde_json::from_value(server.data.lock().unwrap().telemetry.uploads[0].clone()).unwrap();
+    batch.validate().unwrap();
+    assert_eq!(batch.observations.len(), 3);
+    assert!(matches!(
+        batch.observations[0].values[&key],
+        w::TelemetryReading::Missing { .. }
+    ));
+    let w::TelemetryReading::Valid {
+        value: w::Scalar::Array(items),
+        interval_start: None,
+    } = &batch.observations[1].values[&key]
+    else {
+        panic!("expected normalized counter")
+    };
+    let w::Scalar::Object(item) = &items[0] else {
+        panic!("expected item")
+    };
+    assert_eq!(item["bytes"], w::Scalar::Integer(60));
+    assert_eq!(item["start"], w::Scalar::Integer(first));
+    assert!(first < batch.observations[1].observed_at);
+    c.payload().fields[0]
+        .validate_scalar(&w::Scalar::Array(items.clone()))
+        .unwrap();
+    mapping::validate_budget(
+        c.payload(),
+        &batch.observations[1].values,
+        batch.observations[1].observed_at,
+    )
+    .unwrap();
+    assert!(matches!(
+        batch.observations[2].values[&key],
+        w::TelemetryReading::Failed { .. }
+    ));
+}

@@ -937,6 +937,8 @@ impl Server {
         client
             .request_authorization(vec![
                 Capability::InventoryCollectionV1,
+                Capability::TelemetryCollectV1,
+                Capability::TelemetryCounterLocalV1,
                 Capability::TaskExecuteV1,
                 Capability::SoftwarePkgSystemV1,
             ])
