@@ -30,6 +30,7 @@ pub(crate) struct Telemetry {
     request_at: Instant,
     send_at: Instant,
     newest: bool,
+    network_turn: usize,
     registration: w::BindingProfile,
     last_time: Option<(Instant, i64)>,
     summary_at: Instant,
@@ -60,6 +61,7 @@ impl Telemetry {
             request_at: Instant::now(),
             send_at: Instant::now(),
             newest: false,
+            network_turn: 0,
             registration: client.registration()?,
             last_time: None,
             summary_at: Instant::now(),
@@ -74,6 +76,9 @@ impl Telemetry {
     }
     fn install(&mut self, c: Configuration) -> Result<(), Error> {
         let p = c.payload();
+        if let w::TelemetryCollector::Script { output_schema, .. } = &p.collector {
+            mapping::admit_schema(output_schema)?;
+        }
         self.spool.install(&c)?;
         if let Some(slot) = self
             .slots
@@ -156,41 +161,9 @@ impl Telemetry {
             self.collector.cancel()?;
         }
         if let Some((active, evidence)) = self.collector.take()? {
-            let p = active.configuration.payload();
-            let current = live
-                && self
-                    .slots
-                    .get(&p.policy)
-                    .is_some_and(|s| s.configuration.payload().binding == p.binding)
-                && at / 1_000_000 < p.expires_at;
-            if current {
-                match mapping::readings(p, &evidence, at).and_then(|values| {
-                    self.spool.append(
-                        &active.configuration,
-                        active.observed,
-                        values,
-                        &performance::boot()?,
-                    )
-                }) {
-                    Ok(_) => (),
-                    Err(e) => {
-                        self.spool.gap(
-                            if e == Error::Capacity {
-                                GapReason::Capacity
-                            } else {
-                                GapReason::Collection
-                            },
-                            1,
-                            active.observed,
-                            at,
-                        )?;
-                    }
-                }
-            } else {
-                self.spool
-                    .gap(GapReason::Configuration, 1, active.observed, at)?;
-            }
+            self.complete(&active.configuration, active.observed, &evidence, live, at)?;
         }
+
         if live && !self.collector.active() {
             let policy = self
                 .slots
@@ -252,6 +225,8 @@ impl Telemetry {
                             at,
                         )?;
                     }
+                } else {
+                    self.spool.gap(GapReason::Collection, 1, at, at)?;
                 }
             }
         }
@@ -274,6 +249,45 @@ impl Telemetry {
         }
         Ok(())
     }
+    fn complete(
+        &mut self,
+        configuration: &Configuration,
+        observed: i64,
+        evidence: &execution_contract::ProcessEvidence,
+        live: bool,
+        at: i64,
+    ) -> Result<(), Error> {
+        let p = configuration.payload();
+        let current = live
+            && self
+                .slots
+                .get(&p.policy)
+                .is_some_and(|s| s.configuration.payload().binding == p.binding)
+            && at / 1_000_000 < p.expires_at;
+        if current {
+            match mapping::readings(p, &evidence, at).and_then(|values| {
+                self.spool
+                    .append(&configuration, observed, values, &performance::boot()?)
+            }) {
+                Ok(_) => (),
+                Err(e) => {
+                    self.spool.gap(
+                        if e == Error::Capacity {
+                            GapReason::Capacity
+                        } else {
+                            GapReason::Collection
+                        },
+                        1,
+                        observed,
+                        at,
+                    )?;
+                }
+            }
+        } else {
+            self.spool.gap(GapReason::Configuration, 1, observed, at)?;
+        }
+        Ok(())
+    }
     pub fn action(&mut self) -> Result<Option<Action>, Error> {
         let now = Instant::now();
         if now < self.request_at {
@@ -284,29 +298,43 @@ impl Telemetry {
             self.directory_at = now + Duration::from_secs(60);
             return Ok(Some(Action::Directory));
         }
-        if let Some((p, v)) = self.refresh.pop_front() {
-            return Ok(Some(Action::Configuration(p, v)));
-        }
-        if let Some(slot) = self.slots.values_mut().find(|s| {
-            s.content_at <= now
-                && s.content.is_none()
-                && matches!(
-                    s.configuration.payload().collector,
-                    w::TelemetryCollector::Script { .. }
-                )
-                && s.configuration.payload().expires_at
-                    > timestamp().unwrap_or(i64::MAX) / 1_000_000
-        }) {
-            slot.content_at = now + Duration::from_secs(60);
-            return Ok(Some(Action::Content(slot.configuration.clone())));
-        }
-        if now >= self.send_at && self.environment.observe(self.spool.root()).upload {
-            if let Some(p) = self.spool.pending(timestamp()? / 1_000_000, self.newest)? {
-                self.newest = !self.newest;
-                self.send_at =
-                    now + Duration::from_secs_f64((p.bytes() as f64 / 65536.0).max(0.05));
-                self.spool.attempting(&p, timestamp()? / 1_000_000)?;
-                return Ok(Some(Action::Send(p)));
+        for _ in 0..3 {
+            let turn = self.network_turn;
+            self.network_turn = (turn + 1) % 3;
+            match turn {
+                0 => {
+                    if let Some((p, v)) = self.refresh.pop_front() {
+                        return Ok(Some(Action::Configuration(p, v)));
+                    }
+                }
+                1 => {
+                    if let Some(slot) = self.slots.values_mut().find(|s| {
+                        s.content_at <= now
+                            && s.content.is_none()
+                            && matches!(
+                                s.configuration.payload().collector,
+                                w::TelemetryCollector::Script { .. }
+                            )
+                            && s.configuration.payload().expires_at
+                                > timestamp().unwrap_or(i64::MAX) / 1_000_000
+                    }) {
+                        slot.content_at = now + Duration::from_secs(60);
+                        return Ok(Some(Action::Content(slot.configuration.clone())));
+                    }
+                }
+                _ => {
+                    if now >= self.send_at && self.environment.observe(self.spool.root()).upload {
+                        if let Some(p) =
+                            self.spool.pending(timestamp()? / 1_000_000, self.newest)?
+                        {
+                            self.newest = !self.newest;
+                            self.send_at = now
+                                + Duration::from_secs_f64((p.bytes() as f64 / 65536.0).max(0.05));
+                            self.spool.attempting(&p, timestamp()? / 1_000_000)?;
+                            return Ok(Some(Action::Send(p)));
+                        }
+                    }
+                }
             }
         }
         Ok(None)
@@ -338,12 +366,16 @@ impl Telemetry {
                 {
                     self.collector.cancel()?;
                 }
-                self.refresh = d
-                    .assignments
-                    .into_iter()
-                    .filter(|a| a.supported)
-                    .map(|a| (a.policy, a.version))
-                    .collect();
+                self.refresh.retain(|(p, v)| {
+                    d.assignments
+                        .iter()
+                        .any(|a| a.supported && a.policy == *p && a.version == *v)
+                });
+                for a in d.assignments.into_iter().filter(|a| a.supported) {
+                    if !self.refresh.contains(&(a.policy, a.version)) {
+                        self.refresh.push_back((a.policy, a.version));
+                    }
+                }
             }
             Ok(Event::Configuration(c)) => self.install(c)?,
             Ok(Event::Content(c, bytes)) => {
@@ -468,3 +500,7 @@ mod tests {
         assert_eq!(cadence(3000, 3000, None, true, 10), 3000);
     }
 }
+
+#[cfg(all(test, target_os = "macos"))]
+#[path = "telemetry/tests.rs"]
+mod behavior_tests;

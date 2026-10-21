@@ -32,6 +32,15 @@ pub(super) fn readings(
             {
                 return Err(Error::Capacity);
             }
+            admit_schema(output_schema)?;
+            if serde_json::to_vec(output_schema)
+                .map_err(|_| Error::Protocol)?
+                .len()
+                .saturating_mul(e.stdout.len())
+                > 16 * 1024 * 1024
+            {
+                return Err(Error::Capacity);
+            }
             let validator =
                 jsonschema::validator_for(output_schema).map_err(|_| Error::Protocol)?;
             if !validator.is_valid(&output) {
@@ -381,9 +390,62 @@ mod tests {
         assert!(scalar(&w::ValueType::Integer, &json!(1.5), 0).is_err());
     }
     #[test]
+    fn schema_admission_rejects_recursive_and_exponential_work() {
+        assert!(admit_schema(&json!({"$ref":"#"})).is_err());
+        assert!(admit_schema(&json!({"allOf":[{"type":"integer"},{"type":"integer"}]})).is_err());
+        assert!(admit_schema(&json!({"type":"string","pattern":"(a+)+$"})).is_err());
+        assert!(admit_schema(&json!({"type":"array","items":{"type":"object","properties":{"load":{"type":"integer"}},"required":["load"],"additionalProperties":false},"maxItems":16})).is_ok());
+    }
+    #[test]
     fn cim_time_requires_a_complete_calendar_and_timezone() {
         assert_eq!(cim_time("19700101010000.000000+060").unwrap(), 0);
         assert!(cim_time("20260230010000.000000+000").is_err());
         assert!(cim_time("2026**********.******+***").is_err());
     }
+}
+
+/// Restrict remote validation to bounded, non-recursive structural schemas.
+pub(super) fn admit_schema(schema: &Json) -> Result<(), Error> {
+    fn walk(v: &Json, depth: usize, nodes: &mut usize, literal: bool) -> Result<(), Error> {
+        *nodes += 1;
+        if depth > 12 || *nodes > 256 {
+            return Err(Error::Capacity);
+        }
+        match v {
+            Json::Object(map) => {
+                for (key, value) in map {
+                    if literal {
+                        walk(value, depth + 1, nodes, true)?;
+                        continue;
+                    }
+                    match key.as_str() {
+                        "properties" => {
+                            let fields = value.as_object().ok_or(Error::Unsupported)?;
+                            for schema in fields.values() {
+                                walk(schema, depth + 1, nodes, false)?;
+                            }
+                        }
+                        "items" => walk(value, depth + 1, nodes, false)?,
+                        "type" | "required" | "enum" | "const" | "minimum" | "maximum"
+                        | "exclusiveMinimum" | "exclusiveMaximum" | "minLength" | "maxLength"
+                        | "minItems" | "maxItems" | "minProperties" | "maxProperties" | "title"
+                        | "description" | "$schema" => walk(value, depth + 1, nodes, true)?,
+                        "additionalProperties" if value.is_boolean() => (),
+                        _ => return Err(Error::Unsupported),
+                    }
+                }
+            }
+            Json::Array(items) => {
+                if !literal {
+                    return Err(Error::Unsupported);
+                }
+                for item in items {
+                    walk(item, depth + 1, nodes, true)?;
+                }
+            }
+            _ => (),
+        }
+        Ok(())
+    }
+    walk(schema, 0, &mut 0, false)
 }

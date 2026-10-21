@@ -1,6 +1,8 @@
 //! Host-authorized periodic reads reuse the native process owner, outside command dispatch.
 //! ref: tokio tokio/src/time/interval.rs (skip missed ticks, no catch-up execution).
 use crate::{Artifacts, NativeRunner};
+use agent_client::telemetry::Configuration;
+mod authorization;
 use execution_app::Error;
 use execution_contract::*;
 use execution_lifecycle::DispatchAllowance;
@@ -27,6 +29,7 @@ impl PeriodicRunner {
     /// Launch an immutable Policy read prepared by the trusted service.
     pub fn start(
         &mut self,
+        configuration: &Configuration,
         plan: FrozenExecution,
         artifacts: Artifacts,
         now_ms: u64,
@@ -42,6 +45,15 @@ impl PeriodicRunner {
         {
             return Err(Error::Denied);
         }
+        authorization::verify(configuration, &plan, &artifacts, now_ms)?;
+        self.start_admitted(plan, artifacts, now_ms)
+    }
+    fn start_admitted(
+        &mut self,
+        plan: FrozenExecution,
+        artifacts: Artifacts,
+        now_ms: u64,
+    ) -> Result<(), Error> {
         let timeout = plan
             .spec()
             .budget
@@ -104,5 +116,52 @@ impl PeriodicRunner {
 impl Drop for PeriodicRunner {
     fn drop(&mut self) {
         let _ = self.cancel();
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    use super::*;
+    #[test]
+    fn cancelled_owner_is_taken_only_after_quiescence_and_slot_is_reusable() {
+        let fixture = crate::runner::tests::fixture(
+            "sleep 2\nprintf '{}'",
+            vec![LaunchArg::ArtifactPath {}],
+            1024,
+            5000,
+        );
+        let materials = fixture
+            .runner
+            .artifacts
+            .get(fixture.plan.digest().as_str())
+            .unwrap()
+            .unwrap();
+        let mut runner = PeriodicRunner::new().unwrap();
+        let now = fixture.plan.spec().validity.not_before_unix_ms;
+        // Unprivileged mechanics use the private admitted seam; no test grants production authority.
+        runner
+            .start_admitted(fixture.plan.clone(), (*materials).clone(), now)
+            .unwrap();
+        assert!(runner.active());
+        assert!(runner
+            .start_admitted(fixture.plan.clone(), (*materials).clone(), now)
+            .is_err());
+        runner.cancel().unwrap();
+        runner.shutdown().unwrap();
+        let id = runner.active.clone().unwrap();
+        let facts = runner.runner.records.lock().unwrap()[&id].facts.clone();
+        facts.lock().unwrap().as_mut().unwrap().quiescent = false;
+        assert!(runner.take().unwrap().is_none());
+        assert!(runner.active());
+        facts.lock().unwrap().as_mut().unwrap().quiescent = true;
+        assert!(runner.take().unwrap().is_some());
+        assert!(runner.take().unwrap().is_none());
+        assert!(!runner.active());
+        runner
+            .start_admitted(fixture.plan.clone(), (*materials).clone(), now)
+            .unwrap();
+        runner.cancel().unwrap();
+        runner.shutdown().unwrap();
+        assert!(runner.take().unwrap().is_some());
     }
 }

@@ -1908,7 +1908,7 @@ pub(crate) fn assemble_journal<H: execution_app::AppHost, R: execution_app::Runn
 
 #[cfg(all(test, target_os = "macos"))]
 #[path = "product_gate_tests.rs"]
-mod product_gate_tests;
+pub(crate) mod product_gate_tests;
 
 fn is_policy_offer(offer: &Offer) -> bool {
     matches!(offer.payload(), wire::TaskPayload::Enrollment(p)

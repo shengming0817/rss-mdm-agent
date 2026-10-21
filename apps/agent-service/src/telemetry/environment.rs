@@ -17,6 +17,16 @@ pub(super) struct Environment {
     evidence: Evidence,
 }
 impl Environment {
+    #[cfg(test)]
+    pub(super) fn force(&mut self, collect: bool, upload: bool) {
+        self.evidence = Evidence {
+            collect,
+            upload,
+            capacity: false,
+            boost: true,
+        };
+        self.next = Instant::now() + Duration::from_secs(120);
+    }
     pub fn new() -> Self {
         Self {
             #[cfg(target_os = "macos")]

@@ -1326,7 +1326,7 @@ async fn run(
     publish(&facts);
 }
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 #[cfg(all(test, windows))]
 mod windows_tests;

@@ -4,17 +4,17 @@ use super::support::{create_app, reopen_app};
 use super::*;
 use std::{os::unix::fs::PermissionsExt, path::PathBuf, sync::atomic::AtomicU64};
 static NEXT: AtomicU64 = AtomicU64::new(0);
-struct Fixture {
+pub(crate) struct Fixture {
     root: PathBuf,
-    plan: FrozenExecution,
-    runner: NativeRunner,
+    pub(crate) plan: FrozenExecution,
+    pub(crate) runner: NativeRunner,
 }
 impl Drop for Fixture {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.root);
     }
 }
-fn fixture(script: &str, argv: Vec<LaunchArg>, budget: u64, timeout: u64) -> Fixture {
+pub(crate) fn fixture(script: &str, argv: Vec<LaunchArg>, budget: u64, timeout: u64) -> Fixture {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!(
         "../../.cache/runner-test-{}-{}",
         std::process::id(),

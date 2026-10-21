@@ -239,3 +239,33 @@ async fn replacement_freezes_every_old_batch_with_original_binding() {
     }
     assert_eq!(spool.summary().unwrap().pending, 0);
 }
+
+#[tokio::test]
+async fn expired_collection_lease_still_recovers_unfrozen_retained_observations() {
+    let server = Server::new().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    let r = server.register(&mut client).await;
+    let signed = fixture::configuration(&server, &r);
+    let c = client.verify_telemetry(signed.clone()).unwrap();
+    let mut spool = client.telemetry_spool(Limits::production()).unwrap();
+    spool.install(&c).unwrap();
+    spool
+        .append(
+            &c,
+            server.time.now().unwrap() * 1_000_000,
+            values(3),
+            "boot",
+        )
+        .unwrap();
+    drop(spool);
+    server.time.set(c.payload().expires_at);
+    assert!(client.verify_telemetry(signed).is_err());
+    let spool = client.telemetry_spool(Limits::production()).unwrap();
+    let pending = spool
+        .pending(server.time.now().unwrap(), false)
+        .unwrap()
+        .unwrap();
+    let receipt = client.telemetry_submit(&pending).await.unwrap();
+    assert_eq!(receipt.batch_id, pending.id());
+}

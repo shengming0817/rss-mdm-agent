@@ -201,12 +201,17 @@ impl Spool {
             return Err(Error::Untrusted);
         }
         conn.pragma_update(None, "max_page_count", limits.pages)?;
-        Ok(Self {
+        let mut spool = Self {
             conn,
             limits,
             root: root.to_owned(),
             _lease: lease,
-        })
+        };
+        // Protected persisted configuration freezes old observations; it does not authorize execution.
+        for signed in spool.configurations()? {
+            spool.freeze_all(&Configuration(signed))?;
+        }
+        Ok(spool)
     }
     /// Private directory used for disk-reserve checks; not a caller-selected path.
     pub fn root(&self) -> &Path {
@@ -250,6 +255,32 @@ impl Spool {
             return Err(Error::Capacity);
         }
         self.conn.execute("INSERT INTO configurations VALUES(?1,?2) ON CONFLICT(policy) DO UPDATE SET body=excluded.body",params![p.policy.to_string(),bytes])?;
+        self.reclaim_counters()?;
+        Ok(())
+    }
+    fn reclaim_counters(&self) -> Result<(), Error> {
+        let mut keep = std::collections::BTreeSet::new();
+        for signed in self.configurations()? {
+            let c = signed.configuration;
+            let source = source_key(&c)?;
+            for field in &c.fields {
+                keep.insert(format!(
+                    "{source}:{}:{}",
+                    field.key.as_str(),
+                    hash(&encode(field)?)
+                ));
+            }
+        }
+        let mut q = self.conn.prepare("SELECT key FROM counters")?;
+        let keys = q
+            .query_map([], |r| r.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        for key in keys {
+            if !keep.contains(&key) {
+                self.conn
+                    .execute("DELETE FROM counters WHERE key=?1", [key])?;
+            }
+        }
         Ok(())
     }
     /// Retained signed leases still require current signature/identity/time verification.
@@ -288,6 +319,7 @@ impl Spool {
             }
         }
         tx.commit()?;
+        self.reclaim_counters()?;
         Ok(())
     }
     /// Atomically allocate a source sequence and persist one immutable sample.
@@ -303,21 +335,16 @@ impl Spool {
             return Err(Error::Expired);
         }
         self.prune(at / 1_000_000, c.registration_id, c.generation)?;
-        let source = encode(&(c.registration_id, c.generation, c.source, c.source_epoch))?;
-        let source = hash(&source);
+        let source = source_key(c)?;
         let tx = self.conn.transaction()?;
         let sequence: u64 = tx
             .query_row(
                 "SELECT next FROM sequences WHERE source=?1",
-                [&source],
+                ["observations"],
                 |r| r.get(0),
             )
             .optional()?
             .unwrap_or(0);
-        let count: u64 = tx.query_row("SELECT count(*) FROM sequences", [], |r| r.get(0))?;
-        if count >= 4096 && sequence == 0 {
-            return Err(Error::Capacity);
-        }
         normalize_counters(&tx, c, &source, boot, at, &mut values)?;
         let observation = w::TelemetryObservation {
             id: Uuid::new_v4(),
@@ -333,9 +360,7 @@ impl Spool {
             observations: vec![observation.clone()],
         };
         upload.validate()?;
-        if expanded_points(c, &upload) > c.max_points as usize
-            || encode(&upload)?.len() > c.max_bytes as usize
-        {
+        if !within_budget(c, &upload)? || encode(&upload)?.len() > c.max_bytes as usize {
             return Err(Error::Capacity);
         }
         let body = encode(&observation)?;
@@ -344,7 +369,7 @@ impl Spool {
             .checked_add(1)
             .filter(|v| *v <= i64::MAX as u64)
             .ok_or(Error::Capacity)?;
-        tx.execute("INSERT INTO sequences VALUES(?1,?2) ON CONFLICT(source) DO UPDATE SET next=excluded.next",params![source,next])?;
+        tx.execute("INSERT INTO sequences VALUES(?1,?2) ON CONFLICT(source) DO UPDATE SET next=excluded.next",params!["observations",next])?;
         tx.execute(
             "INSERT INTO samples VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",
             params![
@@ -409,9 +434,7 @@ impl Spool {
         for (bytes, expiry) in rows {
             let observation: w::TelemetryObservation = decode(&bytes)?;
             batch.observations.push(observation);
-            if expanded_points(c, &batch) > c.max_points as usize
-                || encode(&batch)?.len() > c.max_bytes as usize
-            {
+            if !within_budget(c, &batch)? || encode(&batch)?.len() > c.max_bytes as usize {
                 batch.observations.pop();
                 break;
             }
@@ -722,6 +745,7 @@ fn normalize_counters(
             })
             .optional()?;
         let old = old.map(|b| decode::<Counter>(&b)).transpose()?;
+        let existing = old.is_some();
         let compatible = old.filter(|v| {
             v.boot == boot
                 && v.at < at
@@ -759,7 +783,7 @@ fn normalize_counters(
             }
         } else {
             let count: u64 = db.query_row("SELECT count(*) FROM counters", [], |r| r.get(0))?;
-            if count >= 4096 {
+            if !existing && count >= 4096 {
                 return Err(Error::Capacity);
             }
             *reading = w::TelemetryReading::Missing {
@@ -782,22 +806,123 @@ fn normalize_counters(
     Ok(())
 }
 
-fn expanded_points(c: &w::TelemetryConfiguration, batch: &w::TelemetryUpload) -> usize {
-    batch
-        .observations
-        .iter()
-        .map(|o| {
-            c.fields
-                .iter()
-                .filter(|f| f.time_series.is_some())
-                .map(|f| match o.values.get(&f.key) {
-                    Some(w::TelemetryReading::Valid {
-                        value: w::Scalar::Array(a),
-                        ..
-                    }) => a.len(),
-                    _ => 1,
-                })
-                .sum::<usize>()
-        })
-        .sum()
+fn within_budget(c: &w::TelemetryConfiguration, batch: &w::TelemetryUpload) -> Result<bool, Error> {
+    let mut resources = std::collections::BTreeSet::new();
+    let mut points = 0usize;
+    for o in &batch.observations {
+        for f in &c.fields {
+            let Some(binding) = &f.time_series else {
+                continue;
+            };
+            let value = match o.values.get(&f.key) {
+                Some(w::TelemetryReading::Valid { value, .. }) => Some(value),
+                Some(
+                    w::TelemetryReading::Missing { context, .. }
+                    | w::TelemetryReading::Failed { context, .. },
+                ) => context.as_ref(),
+                None => return Err(Error::Protocol),
+            };
+            let items = match value {
+                Some(w::Scalar::Array(a)) => a.iter().map(Some).collect::<Vec<_>>(),
+                v => vec![v],
+            };
+            if items.len() > binding.max_resources as usize {
+                return Ok(false);
+            }
+            let mut local = std::collections::BTreeSet::new();
+            for item in items {
+                let identity = if let Some(key) = &f.item_key {
+                    let Some(w::Scalar::Object(values)) = item else {
+                        return Err(Error::Protocol);
+                    };
+                    encode(values.get(key).ok_or(Error::Protocol)?)?
+                } else {
+                    b"device".to_vec()
+                };
+                if !local.insert(identity.clone()) {
+                    return Err(Error::Protocol);
+                }
+                resources.insert((f.key, identity));
+                points += 1;
+                if resources.len() > c.max_resources as usize || points > c.max_points as usize {
+                    return Ok(false);
+                }
+            }
+        }
+    }
+    Ok(true)
+}
+
+fn source_key(c: &w::TelemetryConfiguration) -> Result<String, Error> {
+    Ok(hash(&encode(&(
+        c.registration_id,
+        c.generation,
+        c.source,
+        c.source_epoch,
+    ))?))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[tokio::test]
+    async fn full_counter_metadata_allows_existing_reset_and_reclaims_retired_fields() {
+        use crate::{
+            test_support::{telemetry as fixture, Root, Server},
+            Clock, OpenMode,
+        };
+        let server = Server::new().await;
+        let root = Root::new();
+        let mut client = server.client(&root, OpenMode::Create);
+        let r = server.register(&mut client).await;
+        let mut signed = fixture::configuration(&server, &r);
+        let binding = signed.configuration.fields[0].time_series.as_mut().unwrap();
+        binding.kind = w::TelemetryKind::CumulativeCounter;
+        binding.aggregations = [w::TelemetryAggregation::Increase].into();
+        let c = client
+            .verify_telemetry(fixture::sign(
+                &server.data.lock().unwrap(),
+                signed.configuration,
+            ))
+            .unwrap();
+        let mut spool = client.telemetry_spool(Limits::production()).unwrap();
+        spool.install(&c).unwrap();
+        let tx = spool.conn.transaction().unwrap();
+        for n in 0..4095 {
+            tx.execute(
+                "INSERT INTO counters VALUES(?1,?2)",
+                params![format!("retired-{n}"), b"{}".as_slice()],
+            )
+            .unwrap();
+        }
+        tx.commit().unwrap();
+        let values = || {
+            [(
+                w::FieldKey::parse("custom.load").unwrap(),
+                w::TelemetryReading::Valid {
+                    value: w::Scalar::Integer(42),
+                    interval_start: None,
+                },
+            )]
+            .into()
+        };
+        let at = server.time.now().unwrap() * 1_000_000;
+        spool.append(&c, at, values(), "boot-a").unwrap();
+        spool.append(&c, at + 1, values(), "boot-b").unwrap();
+        spool.install(&c).unwrap();
+        assert_eq!(
+            spool
+                .conn
+                .query_row("SELECT count(*) FROM counters", [], |r| r.get::<_, u64>(0))
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            spool
+                .conn
+                .query_row("SELECT count(*) FROM sequences", [], |r| r.get::<_, u64>(0))
+                .unwrap(),
+            1
+        );
+    }
 }

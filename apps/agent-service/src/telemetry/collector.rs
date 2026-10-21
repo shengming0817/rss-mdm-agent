@@ -342,7 +342,7 @@ impl Collector {
         .map_err(crate::error::app_error)?];
         let input_digest = frozen.spec().launch.artifact.sha256.clone();
         self.runner
-            .start(frozen, artifacts, now_ms)
+            .start(&configuration, frozen, artifacts, now_ms)
             .map_err(crate::error::app_error)?;
         self.active = Some(Active {
             configuration,
