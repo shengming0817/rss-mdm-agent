@@ -46,9 +46,15 @@ const connection = (id) => ({
     model: "test",
   },
 });
-const draftOf = ({ connectionId, name, provider, profile, source }) => ({
+const draftOf = ({
   connectionId,
-  presentation: { name },
+  presentation,
+  provider,
+  profile,
+  source,
+}) => ({
+  connectionId,
+  presentation,
   provider,
   profile,
   source,

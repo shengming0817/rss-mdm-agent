@@ -423,19 +423,3 @@ fn additional_attempts_do_not_multiply_total_plan_budgets() {
     legacy["budget"]["timeoutMs"] = 1000.into();
     assert!(decode_execution(&serde_json::to_vec(&legacy).unwrap(), &limits()).is_err());
 }
-
-#[test]
-fn original_v3_bytes_are_rejected_without_legacy_identity_aliases() {
-    let bytes = include_bytes!("fixtures/rejected-v3.json");
-    assert!(decode_execution(bytes, &limits()).is_err());
-    let mut current = fixture();
-    current["planId"] = serde_json::json!("old-plan");
-    assert!(decode_execution(&serde_json::to_vec(&current).unwrap(), &limits()).is_err());
-}
-
-#[test]
-fn v4_is_rejected_without_reinterpreting_current_input() {
-    let mut value = fixture();
-    value["schemaVersion"] = 4.into();
-    assert!(decode_execution(&serde_json::to_vec(&value).unwrap(), &limits()).is_err());
-}

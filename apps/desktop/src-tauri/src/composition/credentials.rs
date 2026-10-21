@@ -414,7 +414,7 @@ mod tests {
     }
     #[test]
     fn credential_owners_follow_required_device_and_user_device_identity() {
-        let draft = serde_json::from_value(serde_json::json!({"connectionId":"c","name":"Connection","provider":"codex","profile":"conversation","source":{"type":"custom_api","apiUrl":"https://example.invalid","model":"chosen"}})).unwrap();
+        let draft = serde_json::from_value(serde_json::json!({"connectionId":"c","presentation":{"name":"Connection"},"provider":"codex","profile":"conversation","source":{"type":"custom_api","apiUrl":"https://example.invalid","model":"chosen"}})).unwrap();
         for identity in [
             serde_json::json!({"mode":"device","tenantId":"local-device","principalId":"device","authorityId":"desktop-device"}),
             serde_json::json!({"mode":"user_device","tenantId":"tenant","principalId":"principal","authorityId":"authority","organizationId":"org","expiresAtMs":1000}),
@@ -442,7 +442,7 @@ mod tests {
             serde_json::json!({"tenantId":"t","principalId":"p","authorityId":"a"}),
         )
         .unwrap();
-        let original = serde_json::json!({"connectionId":"c","name":"Connection","provider":"codex","profile":"conversation","source":{"type":"custom_api","apiUrl":"https://EXAMPLE.invalid:443","model":"chosen"}});
+        let original = serde_json::json!({"connectionId":"c","presentation":{"name":"Connection"},"provider":"codex","profile":"conversation","source":{"type":"custom_api","apiUrl":"https://EXAMPLE.invalid:443","model":"chosen"}});
         let draft = serde_json::from_value(original.clone()).unwrap();
         let keys = MasterKey::new(Fake {
             stored: Mutex::new(Some(vec![7; 32])),

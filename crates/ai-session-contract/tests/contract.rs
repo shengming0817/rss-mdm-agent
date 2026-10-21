@@ -235,3 +235,22 @@ fn account_variants_require_enterprise_metadata_in_the_generated_rust_dto() {
         );
     }
 }
+
+#[test]
+fn native_draft_and_read_views_preserve_unknown_presentation_fields() {
+    let draft = serde_json::json!({"connectionId":"c","presentation":{"name":"Connection","icon":{"name":"custom","palette":["blue"]}},"provider":"codex","profile":"conversation","source":{"type":"existing_config"}});
+    let typed: ai_session_contract::ConnectionDraft =
+        serde_json::from_value(draft.clone()).unwrap();
+    assert_eq!(serde_json::to_value(typed).unwrap(), draft);
+    let mut connection = draft;
+    connection["schemaVersion"] = 1.into();
+    connection["kind"] = "connection".into();
+    connection["configRevision"] = 1.into();
+    connection["status"] = "unverified".into();
+    let typed: ai_session_contract::Connection =
+        serde_json::from_value(connection.clone()).unwrap();
+    assert_eq!(serde_json::to_value(typed).unwrap(), connection);
+    let item = serde_json::json!({"namespace":{"tenantId":"t","principalId":"p","authorityId":"a","sessionId":"s"},"status":"active","lastActivityAtMs":0,"presentation":{"title":"Session","badge":{"count":2}}});
+    let typed: ai_session_contract::SessionListItem = serde_json::from_value(item.clone()).unwrap();
+    assert_eq!(serde_json::to_value(typed).unwrap(), item);
+}

@@ -2981,6 +2981,9 @@ pub struct ConnectionDraft {
 pub struct ConnectionDraftPresentation {
     #[doc = "`name` member; see its generated type and parent schema."]
     pub name: ConnectionDraftPresentationName,
+    #[serde(flatten)]
+    #[doc = "`extra` member; see its generated type and parent schema."]
+    pub extra: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
 }
 #[doc = "`ConnectionDraftPresentationName`"]
 #[derive(:: serde :: Serialize, Clone, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -3295,6 +3298,9 @@ impl<'de> ::serde::Deserialize<'de> for ConnectionPageSchemaVersion {
 pub struct ConnectionPresentation {
     #[doc = "`name` member; see its generated type and parent schema."]
     pub name: ConnectionPresentationName,
+    #[serde(flatten)]
+    #[doc = "`extra` member; see its generated type and parent schema."]
+    pub extra: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
 }
 #[doc = "`ConnectionPresentationName`"]
 #[derive(:: serde :: Serialize, Clone, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -12877,6 +12883,9 @@ pub struct SessionListItem {
 pub struct SessionListItemPresentation {
     #[doc = "`title` member; see its generated type and parent schema."]
     pub title: SessionListItemPresentationTitle,
+    #[serde(flatten)]
+    #[doc = "`extra` member; see its generated type and parent schema."]
+    pub extra: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
 }
 #[doc = "`SessionListItemPresentationTitle`"]
 #[derive(:: serde :: Serialize, Clone, Eq, Hash, Ord, PartialEq, PartialOrd)]

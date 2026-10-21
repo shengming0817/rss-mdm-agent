@@ -483,7 +483,6 @@ writeFileSync(
       source,
 
       installationManifestSha256: hash(candidateBytes),
-      evidenceId: evidence,
       packageSha256: hash(readFileSync(packagePath)),
       package: packagePath,
     },

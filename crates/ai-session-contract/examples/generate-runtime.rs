@@ -168,6 +168,16 @@ fn singleton_constants(file: &syn::File) -> Vec<syn::ItemImpl> {
 fn project_constants(value: &mut serde_json::Value) {
     match value {
         serde_json::Value::Object(fields) => {
+            // ref: typify-impl 0.8.0 src/structs.rs: true discards extras;
+            // the equivalent empty schema emits a flattened map that preserves them.
+            if fields.get("additionalProperties") == Some(&serde_json::Value::Bool(true))
+                && fields
+                    .get("properties")
+                    .and_then(serde_json::Value::as_object)
+                    .is_some_and(|p| !p.is_empty())
+            {
+                fields.insert("additionalProperties".into(), serde_json::json!({}));
+            }
             if let Some(constant) = fields.remove("const") {
                 fields.insert("enum".into(), serde_json::Value::Array(vec![constant]));
             }

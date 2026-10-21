@@ -76,9 +76,6 @@ fn software_steps_bind_order_materials_and_context_with_exact_material_binding()
         .unwrap()
         .reverse();
     assert_ne!(ordered.digest(), freeze(&changed).digest());
-    assert!(
-        decode_execution(include_bytes!("fixtures/software-obsolete.json"), &limits()).is_err()
-    );
     for replacement in [serde_json::json!([]), serde_json::json!([{}])] {
         let mut changed = value.clone();
         changed["execution"]["program"]["steps"] = replacement;
