@@ -451,9 +451,8 @@ async fn native_memory_version_withdrawal_survives_restart_and_preserves_upload(
     server.time.set(timestamp().unwrap() / 1_000_000);
     let mut client = server.client(&root, agent_client::OpenMode::Create);
     let r = server.register(&mut client).await;
-    let c = client
-        .verify_telemetry(fixture::native_performance_configuration(&server, &r))
-        .unwrap();
+    let signed = fixture::native_performance_configuration(&server, &r);
+    let c = client.verify_telemetry(signed.clone()).unwrap();
     let at = timestamp().unwrap();
     let evidence = native_evidence(
         c.payload(),
@@ -499,7 +498,7 @@ async fn native_memory_version_withdrawal_survives_restart_and_preserves_upload(
         .unwrap();
     assert!(t.slots.is_empty());
     drop(t); // V2 is not fetched; the V1 signature and lease are still valid.
-    assert!(client.verify_telemetry(c.signed().clone()).is_ok());
+    assert!(client.verify_telemetry(signed).is_ok());
     let t = Telemetry::open(&client).unwrap();
     assert!(
         t.slots.is_empty(),
