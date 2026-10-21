@@ -39,7 +39,7 @@ test("two clients receive the same full command without snapshot hydration and k
       return original(...args);
     };
     const command = {
-      schemaVersion: 8,
+      schemaVersion: 1,
       kind: "command",
       sessionId: id,
       commandId: "prompt-1",

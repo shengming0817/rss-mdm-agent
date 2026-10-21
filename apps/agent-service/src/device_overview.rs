@@ -53,9 +53,12 @@ pub(crate) fn read(subject: &str, session: u32) -> Reply {
     };
     Reply::DeviceOverview {
         value: DeviceOverview {
-            computer_name: text(name),
-            ip_addresses: addresses(ips),
-            login_user: text(user),
+            attributes: execution_ipc::host::DeviceAttributes {
+                computer_name: text(name),
+                ip_addresses: addresses(ips),
+                login_user: text(user),
+                extra: Default::default(),
+            },
         },
     }
 }

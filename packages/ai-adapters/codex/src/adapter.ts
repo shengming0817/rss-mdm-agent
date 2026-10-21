@@ -884,7 +884,7 @@ export class CodexAdapter implements ProviderAgentPort {
     decode(
       boundedJson(
         {
-          schemaVersion: 8,
+          schemaVersion: 1,
           kind: "event",
           namespace: this.configuration!.namespace,
           eventId: "validation",
@@ -924,7 +924,7 @@ export class CodexAdapter implements ProviderAgentPort {
               : message.method === "turn/completed"
                 ? "turn_completed"
                 : "other",
-        dropped: 0,
+        attributes: { dropped: 0 },
       });
     if (!this.binding || this.failed) return;
     const notification = nativeNotification(message);
@@ -1095,7 +1095,13 @@ export class CodexAdapter implements ProviderAgentPort {
   ): AsyncIterable<ProviderDiagnostic> {
     if (this.options.nativeDiagnostics && this.owns(binding))
       for await (const record of this.nativeEvents.read(budget))
-        yield { ...record, dropped: this.nativeEvents.dropped };
+        yield {
+          ...record,
+          attributes: {
+            ...record.attributes,
+            dropped: this.nativeEvents.dropped,
+          },
+        };
   }
   private async cancelRun(
     binding: Binding,

@@ -94,7 +94,7 @@ export class OperationDrafts {
   }
 }
 const fallback: OperationPresentation = {
-  version: 2,
+  version: 1,
   template: "OperationApproval",
   fields: [],
   rules: [],
@@ -160,11 +160,7 @@ export function createOperationController(
   let deadline: ReturnType<typeof setTimeout> | undefined;
   const captures = new Map<string, number>();
   const fields = new Map(presentation.fields.map((f) => [f.id, f]));
-  const secretFields = new Set(
-    presentation.fields
-      .filter((f) => f.component === "SecretField")
-      .map((f) => f.id),
-  );
+  const secretFields = new Set(initial.secretFields ?? []);
   function merge(
     snapshot: OperationSnapshot,
     acknowledge = false,
@@ -174,6 +170,12 @@ export function createOperationController(
     if (scopeKey(next.scope) !== scopeKey(scope))
       throw new Error("操作主体或目标不匹配");
     if (next.revision < state.snapshot.revision) return false;
+    secretFields.clear();
+    for (const id of next.secretFields ?? []) {
+      secretFields.add(id);
+      delete draft.values[id];
+      draft.dirty.delete(id);
+    }
     state.snapshot = next;
     if (
       queried &&
@@ -281,7 +283,7 @@ export function createOperationController(
         absent = value === undefined || value === null || value === "";
       if (
         f.required &&
-        (f.component === "SecretField" ? !state.secrets[f.id] : absent)
+        (secretFields.has(f.id) ? !state.secrets[f.id] : absent)
       )
         errors[f.id] = "请填写此项";
       if (
@@ -483,6 +485,7 @@ export function createOperationController(
     }
   });
   return {
+    isSecret: (id: string) => secretFields.has(id),
     presentation,
     state,
     update: (snapshot: OperationSnapshot) => merge(snapshot),

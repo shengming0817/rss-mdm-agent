@@ -338,10 +338,10 @@ export async function startLocalApp(
     async ({ method, data }) => {
       if (method === "health")
         return {
-          schemaVersion: 8,
+          schemaVersion: 1,
           kind: "hostHealth",
           ready: true,
-          protocol: 4,
+          protocol: 1,
         } satisfies HostHealth;
       if (method === "refresh")
         return switchUser(async () => {

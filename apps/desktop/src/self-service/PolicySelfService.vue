@@ -348,12 +348,14 @@ watch(
       >
         <button :disabled="busy || !!request" @click="select(item)">
           {{
-            kind === "enrollment" ? "注册 MDM" : item.selfService.displayName
+            kind === "enrollment"
+              ? "注册 MDM"
+              : item.selfService.presentation.displayName
           }}
         </button>
-        <p>{{ item.selfService.description }}</p>
+        <p>{{ item.selfService.presentation.description }}</p>
         <p>
-          {{ item.selfService.category }} · 风险
+          {{ item.selfService.presentation.category }} · 风险
           {{ item.selfService.riskLevel }}
         </p>
         <p>
@@ -370,7 +372,7 @@ watch(
       v-if="selected && !choice && allowNewRequests !== false"
       @submit.prevent="preview"
     >
-      <h3>{{ selected.selfService.displayName }}</h3>
+      <h3>{{ selected.selfService.presentation.displayName }}</h3>
       <label v-for="field in fields" :key="field.name"
         >{{ field.schema.title ?? field.name
         }}<span>{{ field.schema.description }}</span
@@ -418,7 +420,7 @@ watch(
       v-if="choice && !request && allowNewRequests !== false"
       aria-label="人工执行确认"
     >
-      <h3>确认 {{ selected?.selfService.displayName }}</h3>
+      <h3>确认 {{ selected?.selfService.presentation.displayName }}</h3>
       <p>
         准入主体：{{
           selected?.subject.kind === "device"
@@ -430,8 +432,8 @@ watch(
         企业身份：{{ selected.subject.user.tenantId }} /
         {{ selected.subject.user.principalId }}
       </p>
-      <p>前置条件：{{ selected?.selfService.prerequisites }}</p>
-      <p>副作用：{{ selected?.selfService.sideEffects }}</p>
+      <p>前置条件：{{ selected?.selfService.presentation.prerequisites }}</p>
+      <p>副作用：{{ selected?.selfService.presentation.sideEffects }}</p>
       <p>
         策略 {{ choice.policyId }} / revision {{ choice.policyRevision }} /
         执行版本 {{ choice.policyVersion }}

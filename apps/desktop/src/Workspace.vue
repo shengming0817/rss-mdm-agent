@@ -276,7 +276,7 @@ const currentPageContext = computed(() =>
         ? [
             {
               id: "computer",
-              title: device.state.value?.computerName ?? "这台电脑",
+              title: device.state.value?.attributes.computerName ?? "这台电脑",
               description: "当前设备概览",
               status: device.state.value ? "已读取设备名称" : "设备信息未读取",
               source: "设备概览",

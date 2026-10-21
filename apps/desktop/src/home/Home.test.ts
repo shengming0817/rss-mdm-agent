@@ -20,9 +20,11 @@ it("shows device values as plain text and exposes all addresses without an unava
       draft: "",
       connected: false,
       device: {
-        computerName: "<img src=x>",
-        ipAddresses: ["192.0.2.24", "2001:db8::24"],
-        loginUser: "studio",
+        attributes: {
+          computerName: "<img src=x>",
+          ipAddresses: ["192.0.2.24", "2001:db8::24"],
+          loginUser: "studio",
+        },
       },
     },
   });

@@ -157,7 +157,7 @@ async function setup(t, revision = "1", extras = {}) {
     await openFixture(host, store, caller, options, budget()),
   );
   const command = (id, text = "hold") => ({
-    schemaVersion: 8,
+    schemaVersion: 1,
     kind: "command",
     sessionId: session.namespace.sessionId,
     commandId: id,
@@ -199,10 +199,10 @@ test(
           await store.saveConnection(
             uncertain.namespace,
             {
-              schemaVersion: 8,
+              schemaVersion: 1,
               kind: "connection",
               connectionId,
-              name: "Fenced fixture",
+              presentation: { name: "Fenced fixture" },
               provider: "codex",
               configRevision: 1,
               profile: "conversation",
@@ -511,7 +511,7 @@ test("standard ACP queued input outlives the request budget and executes in FIFO
     await f.host.cancel(
       caller,
       {
-        schemaVersion: 8,
+        schemaVersion: 1,
         kind: "command",
         sessionId: session.namespace.sessionId,
         commandId: "release-long-run",

@@ -31,10 +31,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "kind",
-              "id"
-            ],
+            "required": ["kind", "id"],
             "type": "object"
           },
           {
@@ -54,11 +51,7 @@
                 "description": "Explicit enterprise tenant reference; local/test authority never fabricates a tenant."
               }
             },
-            "required": [
-              "kind",
-              "id",
-              "tenant"
-            ],
+            "required": ["kind", "id", "tenant"],
             "type": "object"
           },
           {
@@ -74,10 +67,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "kind",
-              "id"
-            ],
+            "required": ["kind", "id"],
             "type": "object"
           }
         ]
@@ -94,9 +84,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "kind"
-            ],
+            "required": ["kind"],
             "type": "object"
           },
           {
@@ -112,10 +100,7 @@
                 "description": "Actual native account and login session, supplied by ingress."
               }
             },
-            "required": [
-              "kind",
-              "osSession"
-            ],
+            "required": ["kind", "osSession"],
             "type": "object"
           },
           {
@@ -171,9 +156,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "kind"
-            ],
+            "required": ["kind"],
             "type": "object"
           },
           {
@@ -185,9 +168,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "kind"
-            ],
+            "required": ["kind"],
             "type": "object"
           },
           {
@@ -199,9 +180,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "kind"
-            ],
+            "required": ["kind"],
             "type": "object"
           },
           {
@@ -213,9 +192,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "kind"
-            ],
+            "required": ["kind"],
             "type": "object"
           },
           {
@@ -235,11 +212,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "kind",
-              "attemptId",
-              "evidence"
-            ],
+            "required": ["kind", "attemptId", "evidence"],
             "type": "object"
           }
         ]
@@ -302,11 +275,7 @@
             "description": "Runner reference whose evidence is being recorded, including an explicit fixture runner in tests."
           }
         },
-        "required": [
-          "reference",
-          "kind",
-          "runner"
-        ],
+        "required": ["reference", "kind", "runner"],
         "type": "object"
       },
       "EvidenceRefs": {
@@ -348,12 +317,7 @@
                 "description": "Authenticated local trigger or automatic backend dispatch."
               }
             },
-            "required": [
-              "kind",
-              "task",
-              "attempt",
-              "trigger"
-            ],
+            "required": ["kind", "task", "attempt", "trigger"],
             "type": "object"
           },
           {
@@ -369,10 +333,7 @@
                 "description": "Originating OS account/session reference, separate from requested run-as identity."
               }
             },
-            "required": [
-              "kind",
-              "osSession"
-            ],
+            "required": ["kind", "osSession"],
             "type": "object"
           },
           {
@@ -427,10 +388,7 @@
                 "description": "Exact policy revision associated with this request or audit decision."
               }
             },
-            "required": [
-              "kind",
-              "policy"
-            ],
+            "required": ["kind", "policy"],
             "type": "object"
           }
         ]
@@ -452,10 +410,7 @@
             "description": "Owner-assigned binding identity, scoped to the authenticated native peer."
           }
         },
-        "required": [
-          "id",
-          "generation"
-        ],
+        "required": ["id", "generation"],
         "type": "object"
       },
       "Operation": {
@@ -471,10 +426,7 @@
             "description": "Exact resource ID and revision; no latest-version lookup is performed here."
           }
         },
-        "required": [
-          "action",
-          "resource"
-        ],
+        "required": ["action", "resource"],
         "type": "object"
       },
       "OsAccountRef": {
@@ -490,10 +442,7 @@
             "description": "Opaque stable OS account reference, such as a SID/UID reference, not an authentication credential."
           }
         },
-        "required": [
-          "platform",
-          "subject"
-        ],
+        "required": ["platform", "subject"],
         "type": "object"
       },
       "OsSessionRef": {
@@ -513,11 +462,7 @@
             "description": "Origin OS login/session reference, including an explicit test reference in fixtures."
           }
         },
-        "required": [
-          "device",
-          "account",
-          "session"
-        ],
+        "required": ["device", "account", "session"],
         "type": "object"
       },
       "Platform": {
@@ -564,11 +509,7 @@
             "description": "Device-wide or explicit-user scope as defined by this type."
           }
         },
-        "required": [
-          "device",
-          "platform",
-          "scope"
-        ],
+        "required": ["device", "platform", "scope"],
         "type": "object"
       },
       "TargetScope": {
@@ -583,9 +524,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "kind"
-            ],
+            "required": ["kind"],
             "type": "object"
           },
           {
@@ -601,10 +540,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "kind",
-              "account"
-            ],
+            "required": ["kind", "account"],
             "type": "object"
           }
         ]
@@ -622,10 +558,7 @@
             "description": "Exact immutable revision reference; does not resolve or follow a moving alias."
           }
         },
-        "required": [
-          "id",
-          "revision"
-        ],
+        "required": ["id", "revision"],
         "type": "object"
       }
     },
@@ -784,10 +717,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "kind",
-              "id"
-            ],
+            "required": ["kind", "id"],
             "type": "object"
           },
           {
@@ -807,11 +737,7 @@
                 "description": "Explicit enterprise tenant reference; local/test authority never fabricates a tenant."
               }
             },
-            "required": [
-              "kind",
-              "id",
-              "tenant"
-            ],
+            "required": ["kind", "id", "tenant"],
             "type": "object"
           },
           {
@@ -827,10 +753,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "kind",
-              "id"
-            ],
+            "required": ["kind", "id"],
             "type": "object"
           }
         ]
@@ -847,9 +770,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "kind"
-            ],
+            "required": ["kind"],
             "type": "object"
           },
           {
@@ -865,10 +786,7 @@
                 "description": "Actual native account and login session, supplied by ingress."
               }
             },
-            "required": [
-              "kind",
-              "osSession"
-            ],
+            "required": ["kind", "osSession"],
             "type": "object"
           },
           {
@@ -935,10 +853,7 @@
             "type": "array"
           }
         },
-        "required": [
-          "length",
-          "sha256"
-        ],
+        "required": ["length", "sha256"],
         "type": "object"
       },
       "BundleLimits": {
@@ -1009,12 +924,7 @@
             "description": "The only supported Bundle schema."
           }
         },
-        "required": [
-          "schema",
-          "platform",
-          "architecture",
-          "entries"
-        ],
+        "required": ["schema", "platform", "architecture", "entries"],
         "type": "object"
       },
       "DeviceId": {
@@ -1044,10 +954,7 @@
             "description": "Expected content SHA-256. The adapter must verify the actual bytes before use."
           }
         },
-        "required": [
-          "resource",
-          "sha256"
-        ],
+        "required": ["resource", "sha256"],
         "type": "object"
       },
       "ExecutionBudget": {
@@ -1073,11 +980,7 @@
             "type": "integer"
           }
         },
-        "required": [
-          "totalTimeoutMs",
-          "totalOutputBytes",
-          "maxAttempts"
-        ],
+        "required": ["totalTimeoutMs", "totalOutputBytes", "maxAttempts"],
         "type": "object"
       },
       "ExecutionRequest": {
@@ -1159,10 +1062,7 @@
                 "description": "Complete compiled instructions; no local source catalog or enterprise grant."
               }
             },
-            "required": [
-              "kind",
-              "program"
-            ],
+            "required": ["kind", "program"],
             "type": "object"
           },
           {
@@ -1174,9 +1074,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "kind"
-            ],
+            "required": ["kind"],
             "type": "object"
           }
         ]
@@ -1212,12 +1110,7 @@
                 "description": "Authenticated local trigger or automatic backend dispatch."
               }
             },
-            "required": [
-              "kind",
-              "task",
-              "attempt",
-              "trigger"
-            ],
+            "required": ["kind", "task", "attempt", "trigger"],
             "type": "object"
           },
           {
@@ -1233,10 +1126,7 @@
                 "description": "Originating OS account/session reference, separate from requested run-as identity."
               }
             },
-            "required": [
-              "kind",
-              "osSession"
-            ],
+            "required": ["kind", "osSession"],
             "type": "object"
           },
           {
@@ -1291,10 +1181,7 @@
                 "description": "Exact policy revision associated with this request or audit decision."
               }
             },
-            "required": [
-              "kind",
-              "policy"
-            ],
+            "required": ["kind", "policy"],
             "type": "object"
           }
         ]
@@ -1314,10 +1201,7 @@
                 "description": "Untrusted literal data; long-lived credentials must be passed as controlled references."
               }
             },
-            "required": [
-              "kind",
-              "value"
-            ],
+            "required": ["kind", "value"],
             "type": "object"
           },
           {
@@ -1333,10 +1217,7 @@
                 "description": "Exact versioned reference. Authenticity and access are checked by its owner."
               }
             },
-            "required": [
-              "kind",
-              "reference"
-            ],
+            "required": ["kind", "reference"],
             "type": "object"
           }
         ]
@@ -1354,10 +1235,7 @@
             "description": "Calling convention identity/revision; matched together with the binary."
           }
         },
-        "required": [
-          "artifact",
-          "profile"
-        ],
+        "required": ["artifact", "profile"],
         "type": "object"
       },
       "IsolationPolicy": {
@@ -1372,9 +1250,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "kind"
-            ],
+            "required": ["kind"],
             "type": "object"
           },
           {
@@ -1440,10 +1316,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "kind",
-              "value"
-            ],
+            "required": ["kind", "value"],
             "type": "object"
           },
           {
@@ -1455,9 +1328,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "kind"
-            ],
+            "required": ["kind"],
             "type": "object"
           }
         ]
@@ -1524,10 +1395,6 @@
         "const": 1,
         "type": "integer"
       },
-      "LocalContractV8": {
-        "const": 8,
-        "type": "integer"
-      },
       "MsixContainer": {
         "description": "MSIX container selection; no implicit architecture or language selection.",
         "oneOf": [
@@ -1540,9 +1407,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "kind"
-            ],
+            "required": ["kind"],
             "type": "object"
           },
           {
@@ -1561,10 +1426,7 @@
                 "type": "array"
               }
             },
-            "required": [
-              "kind",
-              "members"
-            ],
+            "required": ["kind", "members"],
             "type": "object"
           }
         ]
@@ -1581,9 +1443,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "kind"
-            ],
+            "required": ["kind"],
             "type": "object"
           },
           {
@@ -1595,9 +1455,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "kind"
-            ],
+            "required": ["kind"],
             "type": "object"
           }
         ]
@@ -1667,12 +1525,7 @@
             "description": "Complete uncompressed SHA256."
           }
         },
-        "required": [
-          "path",
-          "identity",
-          "length",
-          "sha256"
-        ],
+        "required": ["path", "identity", "length", "sha256"],
         "type": "object"
       },
       "NativeContextRef": {
@@ -1688,10 +1541,7 @@
             "description": "Owner-assigned binding identity, scoped to the authenticated native peer."
           }
         },
-        "required": [
-          "id",
-          "generation"
-        ],
+        "required": ["id", "generation"],
         "type": "object"
       },
       "NetworkAccess": {
@@ -1706,9 +1556,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "kind"
-            ],
+            "required": ["kind"],
             "type": "object"
           },
           {
@@ -1727,10 +1575,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "kind",
-              "destinations"
-            ],
+            "required": ["kind", "destinations"],
             "type": "object"
           }
         ]
@@ -1755,11 +1600,7 @@
             "description": "Protocol the runner must enforce; HTTPS cannot be silently treated as unrestricted TCP."
           }
         },
-        "required": [
-          "scheme",
-          "host",
-          "port"
-        ],
+        "required": ["scheme", "host", "port"],
         "type": "object"
       },
       "NetworkHost": {
@@ -1806,10 +1647,7 @@
             "description": "Exact resource ID and revision; no latest-version lookup is performed here."
           }
         },
-        "required": [
-          "action",
-          "resource"
-        ],
+        "required": ["action", "resource"],
         "type": "object"
       },
       "OsAccountRef": {
@@ -1825,10 +1663,7 @@
             "description": "Opaque stable OS account reference, such as a SID/UID reference, not an authentication credential."
           }
         },
-        "required": [
-          "platform",
-          "subject"
-        ],
+        "required": ["platform", "subject"],
         "type": "object"
       },
       "OsSessionRef": {
@@ -1848,11 +1683,7 @@
             "description": "Origin OS login/session reference, including an explicit test reference in fixtures."
           }
         },
-        "required": [
-          "device",
-          "account",
-          "session"
-        ],
+        "required": ["device", "account", "session"],
         "type": "object"
       },
       "OutputFormat": {
@@ -1867,9 +1698,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "kind"
-            ],
+            "required": ["kind"],
             "type": "object"
           },
           {
@@ -1888,10 +1717,7 @@
                 "type": "integer"
               }
             },
-            "required": [
-              "kind",
-              "maxRows"
-            ],
+            "required": ["kind", "maxRows"],
             "type": "object"
           }
         ]
@@ -1913,11 +1739,7 @@
             "description": "Required stdout interpretation; preserve raw bytes on failure."
           }
         },
-        "required": [
-          "format",
-          "stdout",
-          "stderr"
-        ],
+        "required": ["format", "stdout", "stderr"],
         "type": "object"
       },
       "PackageValue": {
@@ -1967,10 +1789,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "kind",
-              "account"
-            ],
+            "required": ["kind", "account"],
             "type": "object"
           },
           {
@@ -1986,10 +1805,7 @@
                 "description": "OS namespace of this reference or target; does not assert platform support."
               }
             },
-            "required": [
-              "kind",
-              "platform"
-            ],
+            "required": ["kind", "platform"],
             "type": "object"
           }
         ]
@@ -2006,9 +1822,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "kind"
-            ],
+            "required": ["kind"],
             "type": "object"
           },
           {
@@ -2028,11 +1842,7 @@
                 "description": "Exact native login session; a new login for the same account is not interchangeable."
               }
             },
-            "required": [
-              "kind",
-              "account",
-              "session"
-            ],
+            "required": ["kind", "account", "session"],
             "type": "object"
           }
         ]
@@ -2057,11 +1867,7 @@
                 "description": "Expected exact version."
               }
             },
-            "required": [
-              "kind",
-              "productCode",
-              "version"
-            ],
+            "required": ["kind", "productCode", "version"],
             "type": "object"
           },
           {
@@ -2081,11 +1887,7 @@
                 "description": "Expected exact version."
               }
             },
-            "required": [
-              "kind",
-              "receipt",
-              "version"
-            ],
+            "required": ["kind", "receipt", "version"],
             "type": "object"
           },
           {
@@ -2101,10 +1903,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "kind",
-              "invocation"
-            ],
+            "required": ["kind", "invocation"],
             "type": "object"
           }
         ]
@@ -2132,10 +1931,7 @@
             "uniqueItems": true
           }
         },
-        "required": [
-          "success",
-          "reboot"
-        ],
+        "required": ["success", "reboot"],
         "type": "object"
       },
       "SoftwareFormat": {
@@ -2150,9 +1946,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "kind"
-            ],
+            "required": ["kind"],
             "type": "object"
           },
           {
@@ -2164,9 +1958,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "kind"
-            ],
+            "required": ["kind"],
             "type": "object"
           },
           {
@@ -2182,10 +1974,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "kind",
-              "exportIdentity"
-            ],
+            "required": ["kind", "exportIdentity"],
             "type": "object"
           },
           {
@@ -2201,10 +1990,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "kind",
-              "exportIdentity"
-            ],
+            "required": ["kind", "exportIdentity"],
             "type": "object"
           },
           {
@@ -2224,11 +2010,7 @@
                 "description": "Complete manifest."
               }
             },
-            "required": [
-              "kind",
-              "manifest",
-              "limits"
-            ],
+            "required": ["kind", "manifest", "limits"],
             "type": "object"
           },
           {
@@ -2247,10 +2029,7 @@
                 "type": "object"
               }
             },
-            "required": [
-              "kind",
-              "layout"
-            ],
+            "required": ["kind", "layout"],
             "type": "object"
           },
           {
@@ -2451,10 +2230,7 @@
             "type": "string"
           }
         },
-        "required": [
-          "path",
-          "artifact"
-        ],
+        "required": ["path", "artifact"],
         "type": "object"
       },
       "SoftwareOperation": {
@@ -2497,11 +2273,7 @@
             "type": "array"
           }
         },
-        "required": [
-          "definitionDigest",
-          "intent",
-          "steps"
-        ],
+        "required": ["definitionDigest", "intent", "steps"],
         "type": "object"
       },
       "SoftwareProgramStep": {
@@ -2618,11 +2390,7 @@
                 "description": "Approved native publisher."
               }
             },
-            "required": [
-              "kind",
-              "artifact",
-              "publisher"
-            ],
+            "required": ["kind", "artifact", "publisher"],
             "type": "object"
           },
           {
@@ -2642,11 +2410,7 @@
                 "description": "Approved native publisher/team identity."
               }
             },
-            "required": [
-              "kind",
-              "artifact",
-              "publisher"
-            ],
+            "required": ["kind", "artifact", "publisher"],
             "type": "object"
           },
           {
@@ -2666,11 +2430,7 @@
                 "description": "Approved manifest publisher DN."
               }
             },
-            "required": [
-              "kind",
-              "artifact",
-              "publisher"
-            ],
+            "required": ["kind", "artifact", "publisher"],
             "type": "object"
           }
         ]
@@ -2691,10 +2451,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "kind",
-              "invocation"
-            ],
+            "required": ["kind", "invocation"],
             "type": "object"
           },
           {
@@ -2706,9 +2463,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "kind"
-            ],
+            "required": ["kind"],
             "type": "object"
           },
           {
@@ -2720,9 +2475,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "kind"
-            ],
+            "required": ["kind"],
             "type": "object"
           }
         ]
@@ -2739,9 +2492,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "kind"
-            ],
+            "required": ["kind"],
             "type": "object"
           },
           {
@@ -2767,12 +2518,7 @@
                 "description": "Immutable input reference, not input/credential bytes."
               }
             },
-            "required": [
-              "kind",
-              "reference",
-              "encoding",
-              "maxBytes"
-            ],
+            "required": ["kind", "reference", "encoding", "maxBytes"],
             "type": "object"
           }
         ]
@@ -2794,11 +2540,7 @@
             "description": "Device-wide or explicit-user scope as defined by this type."
           }
         },
-        "required": [
-          "device",
-          "platform",
-          "scope"
-        ],
+        "required": ["device", "platform", "scope"],
         "type": "object"
       },
       "TargetScope": {
@@ -2813,9 +2555,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "kind"
-            ],
+            "required": ["kind"],
             "type": "object"
           },
           {
@@ -2831,10 +2571,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "kind",
-              "account"
-            ],
+            "required": ["kind", "account"],
             "type": "object"
           }
         ]
@@ -2871,10 +2608,7 @@
             "type": "integer"
           }
         },
-        "required": [
-          "notBeforeUnixMs",
-          "expiresAtUnixMs"
-        ],
+        "required": ["notBeforeUnixMs", "expiresAtUnixMs"],
         "type": "object"
       },
       "VersionedRef": {
@@ -2890,10 +2624,7 @@
             "description": "Exact immutable revision reference; does not resolve or follow a moving alias."
           }
         },
-        "required": [
-          "id",
-          "revision"
-        ],
+        "required": ["id", "revision"],
         "type": "object"
       }
     },
@@ -2930,8 +2661,8 @@
         "description": "Requested target execution identity, separate from actor and originating login."
       },
       "schemaVersion": {
-        "$ref": "#/$defs/LocalContractV8",
-        "description": "Required current V8 discriminator; absent or unsupported versions are rejected."
+        "$ref": "#/$defs/LocalContractV1",
+        "description": "Required current V1 discriminator; absent or unsupported versions are rejected."
       },
       "sessionRequirement": {
         "$ref": "#/$defs/SessionRequirement",

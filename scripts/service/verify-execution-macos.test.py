@@ -212,7 +212,7 @@ finally: connection.close()
                     'expiresAt':9999999999,'quantity':{'kind':'finite','count':2},'keyId':'test'},
                     'secret':'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE','signature':'preparation-only'}
                 # Preparation only: assert the new public input, then stop before authority or TLS.
-                backend.write_text('#!/usr/bin/python3\nimport sys,json\nprint('+repr(json.dumps(info))+',flush=True)\nfor line in sys.stdin:\n request=json.loads(line)\n assert request["kind"]=="configuration"\n assert len(request["candidateSha256"])==32 and all(type(v)==int and 0<=v<=255 for v in request["candidateSha256"])\n print('+repr(json.dumps(configuration))+',flush=True)\n');backend.chmod(0o700)
+                backend.write_text('#!/usr/bin/python3\nimport sys,json\nprint('+repr(json.dumps(info))+',flush=True)\nfor line in sys.stdin:\n request=json.loads(line)\n assert request["kind"]=="configuration"\n print('+repr(json.dumps(configuration))+',flush=True)\n');backend.chmod(0o700)
                 programs=[]
                 class NoAuthority:
                     reader=None

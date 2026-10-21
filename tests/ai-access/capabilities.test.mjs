@@ -32,7 +32,7 @@ test("scripted Host exercises queue, steer, cancel and continuation support and 
       ),
     );
     const command = {
-      schemaVersion: 8,
+      schemaVersion: 1,
       kind: "command",
       sessionId: s.namespace.sessionId,
       commandId: "first",

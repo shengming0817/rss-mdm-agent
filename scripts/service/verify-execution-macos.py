@@ -1364,11 +1364,7 @@ def main():
         if not info['origin'].startswith('https://'):
             raise RuntimeError('controlled participant must provide direct TLS, without an HTTP proxy')
         (lab / 'tls.pem').write_text(info['caPem'])
-        publication = dict(wireVersion=1, tenantId=info['tenant'], target=dict(platform='macos', architecture='aarch64'),
-                           version='controlled', origin=info['origin'].rstrip('/'), signingKeys={'test':info['key']},
-                           packaging=dict(kind='macos_pkg',team='controlled-development',notarization_evidence='not-notarized-controlled-test'))
-        publication_bytes = (json.dumps(publication,sort_keys=True)+'\n').encode()
-        grant = command('configuration',candidateSha256=list(hashlib.sha256(publication_bytes).digest()))
+        grant = command('configuration')
         tag = uuid.uuid4().hex
         protected = Path('/Library/Application Support/RSS MDM Agent') / ('verification-' + tag)
         binary, config = protected / 'rss-execution-service', protected / 'execution.json'
@@ -1408,9 +1404,7 @@ config['execution']['interpreters']=[dict(profile='posix_sh',image=artifact('/bi
 config['execution']['managers']=[dict(executor='package_installer',image=artifact('/usr/sbin/installer'))]
 (root/'ca.pem').write_bytes(%r); os.chmod(root/'ca.pem',0o644)
 grant=json.loads(%r)
-publication=%r
-(root/'publication.json').write_bytes(publication);os.chmod(root/'publication.json',0o644)
-candidate=dict(version=3,publication_sha256=hashlib.sha256(publication).hexdigest(),product_version='controlled',target='macos-arm64',
+candidate=dict(version=1,format='macos_pkg',product_version='controlled',target='macos-arm64',
     root=str(root),service=config['service'],desktop=config['service'],runtime_root=str(root/'runtime'),runtime_sha256='0'*64,
     origin=config['origin'],tenant=config['tenant'],signing_keys=config['signing_keys'],ca_pem=%r,signing_mode='development')
 manifest=(json.dumps(candidate,sort_keys=True)+'\\n').encode();(root/'candidate.json').write_bytes(manifest);os.chmod(root/'candidate.json',0o644)
@@ -1420,7 +1414,7 @@ path=root/'execution.json';path.write_text(json.dumps(config));os.chmod(path,0o6
 subprocess.run([str(binary),'--installation','import','--config',str(path),'--configuration',str(root/'grant.json')],text=True,check=True)
 subprocess.run(%r,check=True)
 instrument_service_diagnostics(root,binary,path)
-''' % (str(protected), str(args.binary.resolve()), hashlib.sha256(args.binary.read_bytes()).hexdigest(), deployment, str(os.geteuid()), str(os.geteuid()), (lab / 'tls.pem').read_bytes(), json.dumps(grant), publication_bytes, info['caPem'], frozen_installer(system_installer_source, ['install','--scope','system','--binary',str(binary),'--config',str(config)])))
+''' % (str(protected), str(args.binary.resolve()), hashlib.sha256(args.binary.read_bytes()).hexdigest(), deployment, str(os.geteuid()), str(os.geteuid()), (lab / 'tls.pem').read_bytes(), json.dumps(grant), info['caPem'], frozen_installer(system_installer_source, ['install','--scope','system','--binary',str(binary),'--config',str(config)])))
         if args.desktop:
             # Extend this same installation owner, retaining its protected binary/config checks.
             contents = setup.read_text()

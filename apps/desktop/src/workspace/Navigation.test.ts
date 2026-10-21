@@ -47,7 +47,7 @@ it("opens history in a separate panel from either sidebar and preserves one comp
     ] as const)
       c.state.sessions.set(id, {
         namespace: { ...session.namespace, sessionId: id },
-        title,
+        presentation: { title },
         status: "active",
         lastActivityAtMs: time,
       });

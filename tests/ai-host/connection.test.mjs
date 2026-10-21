@@ -5,11 +5,11 @@ import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
 import { resolveConnection } from "../../apps/ai-host/dist/connection.js";
 const connection = (provider) => ({
-  schemaVersion: 8,
+  schemaVersion: 1,
   kind: "connection",
   connectionId: "one",
   configRevision: 1,
-  name: "Local",
+  presentation: { name: "Local" },
   provider,
   source: { type: "existing_config" },
   status: "ready",

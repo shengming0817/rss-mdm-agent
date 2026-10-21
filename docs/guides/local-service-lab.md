@@ -8,7 +8,7 @@
 
 `pnpm build:installer --organization /absolute/public-organization.json` 在当前原生平台构建 macOS arm64 PKG 或 Windows amd64 / arm64 的 perMachine NSIS EXE，不套用 MSI。macOS 构建命令通过 `python3 scripts/build-run.py -- pnpm build:installer ...` 复用本地 Cargo 槽位；Windows 使用 `pnpm exec node scripts/build-installers.mjs ...`。Windows 构建进程、Rust 工具链和 Node 必须为目标原生架构，不接受仿真进程或混合 PE。目标设备须预装 machine-wide WebView2；安装器缺失时明确拒绝。当前机器有匹配架构、受保护的 PowerShell 7 时才登记该解释器与相关能力。
 
-组织输入仅含 `origin`（Agent 通信 HTTPS origin）、`tenant`（非零 UUID）、`label`、`signing_keys`（仅用于注册配置验签的 key ID → base64url Ed25519 公钥）与必填 `ca_pem`（HTTPS bootstrap CA）。设备 CA/CRL 从 Agent origin 的公开 trust API 获取。桌面登录、会话与注册授权复用根 `.env` 中已有的 `RSS_MDM_ORIGIN`、租户和可选 `RSS_MDM_CA_FILE` 网站配置，机器通信使用组织输入的 Agent origin。构建时核对同一租户并固定两者关系，不通过端口猜测或失败回退；Agent bootstrap CA 不会自动用于网站，公共网站证书不需要额外 CA。HTTPS bootstrap CA 与程序签名证书独立；输入不允许 grant、secret、账号目录或私钥。包内固定相同组织上下文的生产服务、桌面、Node、AI Host、worker 和资源。产物及其 `package-manifest.json` 位于忽略的 `.local-ci-runs/installers/`，记录源码、锁文件、平台、候选及最终包摘要。
+组织输入仅含 `origin`（Agent 通信 HTTPS origin）、`tenant`（非零 UUID）、`label`、`signing_keys`（仅用于注册配置验签的 key ID → base64url Ed25519 公钥）与必填 `ca_pem`（HTTPS bootstrap CA）。设备 CA/CRL 从 Agent origin 的公开 trust API 获取。桌面登录、会话与注册授权复用根 `.env` 中已有的 `RSS_MDM_ORIGIN`、租户和可选 `RSS_MDM_CA_FILE` 网站配置，机器通信使用组织输入的 Agent origin。构建时核对同一租户并固定两者关系，不通过端口猜测或失败回退；Agent bootstrap CA 不会自动用于网站，公共网站证书不需要额外 CA。HTTPS bootstrap CA 与程序签名证书独立；输入不允许 grant、secret、账号目录或私钥。包内固定相同组织上下文的生产服务、桌面、Node、AI Host、worker 和资源。产物及其 `package-manifest.json` 位于忽略的 `.local-ci-runs/installers/`，记录源码、锁文件、平台、本地安装资源及最终包摘要。上传仅需要实际安装文件，不需要公开候选 manifest 或签名/公证证明文件。本地资源清单保留部署与代码身份完整性，不是后端发布合同。
 
 默认 macOS 为 ad-hoc 开发签名，Windows 为明确标记的开发包。正式包增加 `--release`：macOS 设置 `RSS_MACOS_APP_SIGNING_IDENTITY`、`RSS_MACOS_INSTALLER_SIGNING_IDENTITY` 和已存在的 `RSS_MACOS_NOTARY_PROFILE` Keychain 引用；Windows 设置 `RSS_WINDOWS_SIGNING_THUMBPRINT`，可选 `RSS_SIGNTOOL` 完整路径。构建不会接收证书密码；正式 macOS 包完成 notarization / stapling，正式 Windows 包与原生资源进行 Authenticode 签名。只有显式请求 `--release` 时才要求这些正式签名材料；默认包可正常上传、发布和注册，无测试/试点/生产环门槛。
 
@@ -27,7 +27,7 @@
 
 旧 Bootstrap envelope、双文件首次注册和 `--initialize` 已退出，不提供兼容解析。安装器发现无效配置时保留安装并报告注册失败，可改用 Agent 登录；结果未知时保留原操作恢复，不通过换身份重试。已有设备身份不因登录、重复导入或重装而替换。
 
-构建同时输出可发布的 `publication.json` 和本地 `candidate.json`。`package-manifest.json` 的 `candidateSha256` 标识 publication 原始字节，`installationManifestSha256` 标识本机清单，`packageSha256` 标识最终安装包，不可混用。公开 manifest 的签名/公证证据引用对应构建回执；开发候选明确标注未正式签名/公证，不能作为正式发行信任证据。
+本地 `candidate.json` 只绑定已安装程序、运行资源及受保护组织配置；`package-manifest.json` 记录本机清单与最终安装包摘要。上传发布不消费这些本地清单，也不要求额外证明文件。
 
 安装成功与认证 readiness 分开核实，使用获准的普通用户运行已安装桌面的 `--service-probe`。共享注册文件仍由管理员负责保管和清理，安装器不删除它。
 
@@ -80,7 +80,6 @@ Windows 使用 PowerShell 7 运行 `scripts/service/execution-windows.ps1 -Actio
 如明确选择本地密码文件，可为两个受控入口提供 `--authorization-password-file <绝对路径>`。文件须属于当前登录用户、仅该用户可读写（`0600`）、为普通文件且非符号链接；不得提交。密码仅通过 AppleScript 标准输入提供给原生授权，不进入 argv、日志、部署配置或回执。验收不创建或复制密码；`.passwd` 已由 Git 忽略。
 
 材料目录最多 8 GiB / 32,768 条目，硬链接按同一文件身份计费，每个目录和文件名占一个条目。系统服务独占材料目录，并绑定设备权威及原 journal 文件身份；不匹配时拒绝打开，不覆盖归属。服务在提交之间完整读取 journal 与补传状态，只回收已安全结清且无活跃引用的精确材料；Unknown、补传未完成、未知来源和无法核实的材料保留。达到配额时拒绝新材料。管理员不得清空材料目录、删除归属文件或替换 journal 来绕过未决任务；新部署使用独立材料目录。
-
 
 ### 已发布 SQL 模板采集
 
@@ -197,7 +196,6 @@ resume 同样在拒绝前后核验这些前提，不把撤销、旧产物或 off
 
 Agent 部署生成使用 `.env` 的 RSS_AGENT_ORIGIN、必填 RSS_AGENT_CA_FILE；桌面管理 origin/CA 继续独立配置。部署与候选格式以当前生成器为准；生成器只写新文件，不覆盖原身份材料。设备证书经原生 CNG/daemon Keychain 签名完成 mTLS；HTTPS 只信任部署时保护的 bootstrap CA，下载的设备 CA 不扩展 HTTPS 信任；任务签名验证始终保留。
 
-
 任务运行验签只读取通信 SQLite 中通过已认证设备 HTTPS 通道取得的任务公钥集合，安装 `signing_keys` 不参与运行验签。首次同步失败保留原注册身份并暂停任务准入；刷新失败保留仍可验证的旧集合，未知 key ID 拒绝执行。集合绑定 tenant/origin，拒绝回退、同版本异内容、同 ID 换钥和非法生命周期变化。完整集合与 ACK 意图持久提交并读回后才 ACK，丢失响应或重启重试同一操作。Prepared、Active 和 VerifyOnly 公钥均可验签；执行仍须取得有效 Start 许可并满足身份、期限和输入一致性检查。离线设备可使密钥轮换待完成，不阻塞后端部署、启动或租户开通。
 
 HTTPS 认证服务端、设备证书认证设备、任务签名检查持久任务内容、Start 决定执行许可。通过 HTTPS 更新的任务信任不构成独立于该通道的批准权威，也不防御客户端完整失陷。任务信任和 PKI 各自上报接收、应用、失败或未知观察；认证 IPC 只投影脱敏状态及独立 ACK 确认。失联时观察仅代表最后一次结果；PKI 安装摘要不代表 CRL 仍新鲜。磁盘写入失败不报告已应用。
@@ -226,7 +224,6 @@ HTTPS 认证服务端、设备证书认证设备、任务签名检查持久任�
 
 开发机使用本仓 Rust 纯逻辑、SQLite/协议接缝及本地 CI，不再需要 COLLECTION_PWSH 或 PowerShell 5.1 兼容会话。纯逻辑 fixture 不证明 Windows 原生读取；Windows 编译、运行、LocalSystem、多用户、x64/ARM64 和性能必须以目标环境证据另行声明。
 
-
 ## macOS 原生采集
 
 macOS 硬件、Applications、PKG receipts 和 Homebrew 使用同一 Collection 任务、journal 与补传链。
@@ -249,7 +246,7 @@ Brew v2 只读取批准 prefix 内 Cellar/Caskroom 的安装记录与可识别 J
 
 互注册由管理员的两条 Policy 分别控制：`ensure_agent_installed` 部署 Agent，`request_mdm_enrollment` 发起原生 MDM 注册。未配置或停用策略不会因检测到缺少通道而自动注册。设置页只有收到组织发布且当前可调用的自助注册策略时，才提供人工申请入口；组织与地址由策略确定。系统确认仍需用户完成，打开界面不表示注册成功。
 
-Windows 构建可显式选择 `--format nsis_exe|windows_msi|windows_msix`，默认仍为独立安装的 NSIS；macOS 使用 `macos_pkg`。MSI 使用 WiX 的 v4 XML 格式与 `wix build`，可用 `RSS_WIX` 指定工具。MSIX 使用 Windows SDK `makeappx`（可由 `RSS_MAKEAPPX` 指定），必须配置 `RSS_WINDOWS_PUBLISHER` 与匹配的 `RSS_WINDOWS_SIGNING_THUMBPRINT`，开发包也必须签名。各格式独立发布，不自动替换或回退格式。MSIX 的机器服务由 Package Manager 管理；机器配置、密钥和 journal 位于原有 ProgramData 目录，卸载包不等于退管。
+Windows 构建可显式选择 `--format windows_exe|windows_msi|windows_msix`，默认仍为独立安装的 NSIS；macOS 使用 `macos_pkg`。MSI 使用 WiX 的 v4 XML 格式与 `wix build`，可用 `RSS_WIX` 指定工具。MSIX 使用 Windows SDK `makeappx`（可由 `RSS_MAKEAPPX` 指定），必须配置格式需要的 `RSS_WINDOWS_PUBLISHER`；只有显式 `--release` 才要求匹配的 `RSS_WINDOWS_SIGNING_THUMBPRINT`。默认包不强制签名，实际安装仍由操作系统与企业策略判断。各格式独立发布，不自动替换或回退格式。MSIX 的机器服务由 Package Manager 管理；机器配置、密钥和 journal 位于原有 ProgramData 目录，卸载包不等于退管。
 
 受管激活读取系统安装的专用短期引导证书，通过原生密钥句柄完成 mTLS，再使用独立本地日常密钥完成 Agent 激活。包和证书可以先后到达；私钥不可访问时等待/报错，不导出 MDM 私钥，也不自动放宽 ACL。没有交互登录时仍可运行机器注册；未配置桌面用户的安装保留空 IPC 用户集合，后续通过既有安装 profile/刷新流程配置用户访问。
 
@@ -270,3 +267,5 @@ Microsoft LAPS 的 CSP、组策略、原始配置或旧版 AdmPwd 策略存在�
 
 本机测试覆盖纯恢复逻辑、加密协议和 SQLite/通信恢复。Windows 原生编译、LocalSystem DPAPI/ACL、
 实际多卷轮换与账户改密、断电及真实恢复效果由 #2800 在 Windows 环境验证。
+
+注册配置交换按当前租户、平台、架构和安装格式选择最高发布版本，并在发送前固定 releaseId。同版本使用稳定 releaseId 排序，不解释为发布时间；未知结果与重启继续原操作，不重新选择。该关联不改变本机实际安装版本，也不触发自动升级。

@@ -1,4 +1,4 @@
-//! V8 product AI reliability records generated from one JSON Schema owner.
+//! V1 product AI reliability records generated from one JSON Schema owner.
 //! Records are untrusted data: they neither authenticate a caller nor grant
 //! approval or establish execution facts. TS owns Host, Provider and Store ports.
 #![forbid(unsafe_code)]

@@ -7,7 +7,7 @@ export type OperationContract =
 export type OperationValue = (string | number | boolean | null) | string[];
 
 export interface OperationPresentation {
-  version: 2;
+  version: 1;
   template:
     | "SettingsForm"
     | "ObjectActions"
@@ -44,6 +44,7 @@ export interface OperationPresentation {
      */
     fields: string[];
   }[];
+  [k: string]: unknown;
 }
 export interface OperationField {
   id: string;
@@ -74,6 +75,7 @@ export interface OperationField {
   }[];
   submitMode?: "draft" | "immediate";
   section?: string;
+  [k: string]: unknown;
 }
 export interface OperationRule {
   field: string;
@@ -86,10 +88,6 @@ export interface OperationSnapshot {
   scope: OperationScope;
   revision: number;
   baseline: string;
-  title: string;
-  source: string;
-  targetLabel: string;
-  impact: string;
   current: {
     [k: string]: OperationValue;
   };
@@ -133,6 +131,17 @@ export interface OperationSnapshot {
   result?: string;
   interaction?: OperationInteraction;
   expiresAtMs?: number;
+  presentation: {
+    title: string;
+    targetLabel: string;
+    source: string;
+    impact: string;
+    [k: string]: unknown;
+  };
+  /**
+   * @maxItems 128
+   */
+  secretFields?: string[];
 }
 export interface OperationScope {
   authority: string;
@@ -148,6 +157,7 @@ export interface OperationObject {
   detail: string;
   disabledReason?: string;
   status?: string;
+  [k: string]: unknown;
 }
 export interface OperationInteraction {
   id: string;

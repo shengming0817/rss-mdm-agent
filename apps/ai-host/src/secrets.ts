@@ -19,7 +19,7 @@ function credentialCaller({
 /** Project editable fields only; native code owns all credential binding semantics. */
 function credentialDraft(connection: Connection): ConnectionDraft {
   const { connectionId, name, provider, profile, source } = connection;
-  return { connectionId, name, provider, profile, source };
+  return { connectionId, presentation: { name }, provider, profile, source };
 }
 /** Rust owns the key and cryptography. Only activation consumes decrypted material. */
 export class ConnectionSecrets {

@@ -2681,14 +2681,17 @@ fn backend_preparation_is_durable_bound_and_never_dispatches_without_start() {
                 task: id("task"),
                 attempt: id("attempt"),
                 revision: Digest::new("a".repeat(64)).unwrap(),
-                title: "Exact backend task".into(),
-                summary: BackendTaskSummary::Software {
-                    intent: SoftwareOperation::Uninstall,
-                    steps: vec![BackendStepSummary {
-                        package: "fixed".into(),
-                        version: "1.0".into(),
-                        identity: BackendIdentity::User,
-                    }],
+                presentation: execution_contract::BackendPresentation {
+                    title: "Exact backend task".into(),
+                    summary: BackendTaskSummary::Software {
+                        intent: SoftwareOperation::Uninstall,
+                        steps: vec![BackendStepSummary {
+                            package: "fixed".into(),
+                            version: "1.0".into(),
+                            identity: BackendIdentity::User,
+                        }],
+                    },
+                    extra: Default::default(),
                 },
                 expires_at: 60,
                 user_initiated: true,

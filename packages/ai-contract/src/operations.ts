@@ -1,3 +1,5 @@
+import { boundedJson } from "./codec.js";
+import { defaultLimits } from "./results.js";
 import validatePresentation from "./validate-operation-presentation.js";
 import validateSnapshot from "./validate-operation-snapshot.js";
 import validateEvent from "./validate-operation-event.js";
@@ -24,7 +26,7 @@ export class OperationRejectedError extends Error {
 function bounded<T>(input: unknown, validate: (input: unknown) => boolean): T {
   let raw: string;
   try {
-    raw = JSON.stringify(input);
+    raw = boundedJson(input, { ...defaultLimits, maxDepth: 24 });
   } catch {
     throw new OperationInputError();
   }

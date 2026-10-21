@@ -42,7 +42,7 @@ const groups = computed(() =>
       label: "软件",
       items:
         s.snapshot?.available.filter(
-          (item) => item.summary.kind === "software",
+          (item) => item.presentation.summary.kind === "software",
         ) ?? [],
     },
   ].filter(
@@ -173,7 +173,7 @@ function failureLabel(value: string) {
             >
               <span class="resource-icon"
                 ><Package
-                  v-if="offer.summary.kind === 'software'"
+                  v-if="offer.presentation.summary.kind === 'software'"
                   :size="22"
                   aria-hidden="true" /><Terminal
                   v-else
@@ -181,9 +181,9 @@ function failureLabel(value: string) {
                   aria-hidden="true"
               /></span>
               <span
-                ><strong>{{ offer.title }}</strong
+                ><strong>{{ offer.presentation.title }}</strong
                 ><small>{{
-                  offer.summary.kind === "software"
+                  offer.presentation.summary.kind === "software"
                     ? "软件资源"
                     : "后台固定脚本"
                 }}</small></span
@@ -209,21 +209,26 @@ function failureLabel(value: string) {
       </section>
       <section v-if="resource" class="resource-details" aria-label="资源详情">
         <div class="section-heading">
-          <h3 ref="resourceHeading" tabindex="-1">{{ resource.title }}</h3>
+          <h3 ref="resourceHeading" tabindex="-1">
+            {{ resource.presentation.title }}
+          </h3>
           <button type="button" @click="closeResource">关闭详情</button>
         </div>
         <p>
           {{
-            resource.summary.kind === "software"
+            resource.presentation.summary.kind === "software"
               ? "软件详情"
-              : resource.summary.kind === "collection"
+              : resource.presentation.summary.kind === "collection"
                 ? "采集详情"
                 : "脚本详情"
           }}
           · 未提供分类 · 后台未提供资源说明
         </p>
-        <ol v-if="resource.summary.kind === 'software'">
-          <li v-for="(step, index) in resource.summary.steps" :key="index">
+        <ol v-if="resource.presentation.summary.kind === 'software'">
+          <li
+            v-for="(step, index) in resource.presentation.summary.steps"
+            :key="index"
+          >
             {{ step.package }} · {{ step.version }} ·
             {{ step.identity === "system" ? "系统账号" : "当前用户" }}
             <button
@@ -236,9 +241,9 @@ function failureLabel(value: string) {
         </ol>
         <p v-else>
           运行身份：{{
-            resource.summary.kind === "collection" ||
-            (resource.summary.kind === "script" &&
-              resource.summary.identity === "system")
+            resource.presentation.summary.kind === "collection" ||
+            (resource.presentation.summary.kind === "script" &&
+              resource.presentation.summary.identity === "system")
               ? "系统账号"
               : "当前用户"
           }}
@@ -271,11 +276,14 @@ function failureLabel(value: string) {
         </div>
       </section>
       <section v-if="s.item" aria-label="操作确认">
-        <h2>确认执行 {{ s.item.title }}</h2>
-        <template v-if="s.item.summary.kind === 'software'">
-          <p>操作：{{ operationLabel(s.item.summary.intent) }}</p>
+        <h2>确认执行 {{ s.item.presentation.title }}</h2>
+        <template v-if="s.item.presentation.summary.kind === 'software'">
+          <p>操作：{{ operationLabel(s.item.presentation.summary.intent) }}</p>
           <ol>
-            <li v-for="(step, index) in s.item.summary.steps" :key="index">
+            <li
+              v-for="(step, index) in s.item.presentation.summary.steps"
+              :key="index"
+            >
               {{ step.package }} {{ step.version }} ·
               {{ step.identity === "system" ? "系统账号" : "当前用户" }}
             </li>
@@ -283,15 +291,15 @@ function failureLabel(value: string) {
         </template>
         <p v-else>
           {{
-            s.item.summary.kind === "collection"
+            s.item.presentation.summary.kind === "collection"
               ? "原生设备采集"
               : "后台固定脚本"
           }}
           ·
           {{
-            s.item.summary.kind === "collection" ||
-            (s.item.summary.kind === "script" &&
-              s.item.summary.identity === "system")
+            s.item.presentation.summary.kind === "collection" ||
+            (s.item.presentation.summary.kind === "script" &&
+              s.item.presentation.summary.identity === "system")
               ? "系统账号"
               : "当前用户"
           }}
@@ -315,14 +323,23 @@ function failureLabel(value: string) {
           v-show="pending.action.kind === 'offered'"
         >
           <template v-if="pending.action.kind === 'offered'">
-            <strong>{{ pending.action.offer.title }}</strong>
-            <template v-if="pending.action.offer.summary.kind === 'software'">
+            <strong>{{ pending.action.offer.presentation.title }}</strong>
+            <template
+              v-if="
+                pending.action.offer.presentation.summary.kind === 'software'
+              "
+            >
               <p>
-                操作：{{ operationLabel(pending.action.offer.summary.intent) }}
+                操作：{{
+                  operationLabel(
+                    pending.action.offer.presentation.summary.intent,
+                  )
+                }}
               </p>
               <ol>
                 <li
-                  v-for="(step, index) in pending.action.offer.summary.steps"
+                  v-for="(step, index) in pending.action.offer.presentation
+                    .summary.steps"
                   :key="index"
                 >
                   {{ step.package }} {{ step.version }} ·
@@ -332,15 +349,17 @@ function failureLabel(value: string) {
             </template>
             <p v-else>
               {{
-                pending.action.offer.summary.kind === "collection"
+                pending.action.offer.presentation.summary.kind === "collection"
                   ? "原生设备采集"
                   : "后台固定脚本"
               }}
               ·
               {{
-                pending.action.offer.summary.kind === "collection" ||
-                (pending.action.offer.summary.kind === "script" &&
-                  pending.action.offer.summary.identity === "system")
+                pending.action.offer.presentation.summary.kind ===
+                  "collection" ||
+                (pending.action.offer.presentation.summary.kind === "script" &&
+                  pending.action.offer.presentation.summary.identity ===
+                    "system")
                   ? "系统账号"
                   : "当前用户"
               }}

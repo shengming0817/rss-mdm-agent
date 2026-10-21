@@ -96,7 +96,7 @@ const schema31 = {
         },
       },
       required: ["id", "label", "component"],
-      additionalProperties: false,
+      additionalProperties: true,
     },
     OperationRule: {
       type: "object",
@@ -130,7 +130,7 @@ const schema31 = {
     OperationPresentation: {
       type: "object",
       properties: {
-        version: { const: 2 },
+        version: { const: 1 },
         template: {
           enum: [
             "SettingsForm",
@@ -202,7 +202,7 @@ const schema31 = {
         },
       },
       required: ["version", "template", "fields", "rules", "sections"],
-      additionalProperties: false,
+      additionalProperties: true,
     },
     OperationScope: {
       type: "object",
@@ -244,7 +244,7 @@ const schema31 = {
         status: { type: "string", maxLength: 256 },
       },
       required: ["id", "label", "detail"],
-      additionalProperties: false,
+      additionalProperties: true,
     },
     OperationInteraction: {
       type: "object",
@@ -285,10 +285,6 @@ const schema31 = {
         scope: { $ref: "#/$defs/OperationScope" },
         revision: { type: "integer", minimum: 0 },
         baseline: { type: "string", maxLength: 256 },
-        title: { type: "string", maxLength: 256 },
-        source: { type: "string", maxLength: 256 },
-        targetLabel: { type: "string", maxLength: 256 },
-        impact: { type: "string", maxLength: 4096 },
         current: {
           type: "object",
           maxProperties: 128,
@@ -364,15 +360,28 @@ const schema31 = {
         result: { type: "string", maxLength: 4096 },
         interaction: { $ref: "#/$defs/OperationInteraction" },
         expiresAtMs: { type: "integer", minimum: 0, maximum: 9007199254740991 },
+        presentation: {
+          type: "object",
+          properties: {
+            title: { type: "string", maxLength: 256 },
+            targetLabel: { type: "string", maxLength: 256 },
+            source: { type: "string", maxLength: 256 },
+            impact: { type: "string", maxLength: 4096 },
+          },
+          required: ["title", "targetLabel", "source", "impact"],
+          additionalProperties: true,
+        },
+        secretFields: {
+          type: "array",
+          items: { type: "string", minLength: 1, maxLength: 128 },
+          maxItems: 128,
+          uniqueItems: true,
+        },
       },
       required: [
         "scope",
         "revision",
         "baseline",
-        "title",
-        "source",
-        "targetLabel",
-        "impact",
         "current",
         "proposal",
         "phase",
@@ -380,6 +389,7 @@ const schema31 = {
         "approval",
         "objects",
         "logs",
+        "presentation",
       ],
       additionalProperties: false,
     },
@@ -470,10 +480,6 @@ const schema32 = {
     scope: { $ref: "#/$defs/OperationScope" },
     revision: { type: "integer", minimum: 0 },
     baseline: { type: "string", maxLength: 256 },
-    title: { type: "string", maxLength: 256 },
-    source: { type: "string", maxLength: 256 },
-    targetLabel: { type: "string", maxLength: 256 },
-    impact: { type: "string", maxLength: 4096 },
     current: {
       type: "object",
       maxProperties: 128,
@@ -549,15 +555,28 @@ const schema32 = {
     result: { type: "string", maxLength: 4096 },
     interaction: { $ref: "#/$defs/OperationInteraction" },
     expiresAtMs: { type: "integer", minimum: 0, maximum: 9007199254740991 },
+    presentation: {
+      type: "object",
+      properties: {
+        title: { type: "string", maxLength: 256 },
+        targetLabel: { type: "string", maxLength: 256 },
+        source: { type: "string", maxLength: 256 },
+        impact: { type: "string", maxLength: 4096 },
+      },
+      required: ["title", "targetLabel", "source", "impact"],
+      additionalProperties: true,
+    },
+    secretFields: {
+      type: "array",
+      items: { type: "string", minLength: 1, maxLength: 128 },
+      maxItems: 128,
+      uniqueItems: true,
+    },
   },
   required: [
     "scope",
     "revision",
     "baseline",
-    "title",
-    "source",
-    "targetLabel",
-    "impact",
     "current",
     "proposal",
     "phase",
@@ -565,6 +584,7 @@ const schema32 = {
     "approval",
     "objects",
     "logs",
+    "presentation",
   ],
   additionalProperties: false,
 };
@@ -625,7 +645,7 @@ const schema36 = {
     status: { type: "string", maxLength: 256 },
   },
   required: ["id", "label", "detail"],
-  additionalProperties: false,
+  additionalProperties: true,
 };
 const schema37 = {
   type: "object",
@@ -689,17 +709,14 @@ function validate21(
         (data.scope === undefined && (missing0 = "scope")) ||
         (data.revision === undefined && (missing0 = "revision")) ||
         (data.baseline === undefined && (missing0 = "baseline")) ||
-        (data.title === undefined && (missing0 = "title")) ||
-        (data.source === undefined && (missing0 = "source")) ||
-        (data.targetLabel === undefined && (missing0 = "targetLabel")) ||
-        (data.impact === undefined && (missing0 = "impact")) ||
         (data.current === undefined && (missing0 = "current")) ||
         (data.proposal === undefined && (missing0 = "proposal")) ||
         (data.phase === undefined && (missing0 = "phase")) ||
         (data.allowed === undefined && (missing0 = "allowed")) ||
         (data.approval === undefined && (missing0 = "approval")) ||
         (data.objects === undefined && (missing0 = "objects")) ||
-        (data.logs === undefined && (missing0 = "logs"))
+        (data.logs === undefined && (missing0 = "logs")) ||
+        (data.presentation === undefined && (missing0 = "presentation"))
       ) {
         validate21.errors = [
           {
@@ -1157,31 +1174,410 @@ function validate21(
                 var valid0 = true;
               }
               if (valid0) {
-                if (data.title !== undefined) {
-                  let data9 = data.title;
+                if (data.current !== undefined) {
+                  let data9 = data.current;
                   const _errs22 = errors;
                   if (errors === _errs22) {
-                    if (typeof data9 === "string") {
-                      if (func2(data9) > 256) {
+                    if (
+                      data9 &&
+                      typeof data9 == "object" &&
+                      !Array.isArray(data9)
+                    ) {
+                      if (Object.keys(data9).length > 128) {
                         validate21.errors = [
                           {
-                            instancePath: instancePath + "/title",
-                            schemaPath: "#/properties/title/maxLength",
-                            keyword: "maxLength",
-                            params: { limit: 256 },
-                            message: "must NOT have more than 256 characters",
+                            instancePath: instancePath + "/current",
+                            schemaPath: "#/properties/current/maxProperties",
+                            keyword: "maxProperties",
+                            params: { limit: 128 },
+                            message: "must NOT have more than 128 properties",
                           },
                         ];
                         return false;
+                      } else {
+                        for (const key2 in data9) {
+                          const _errs24 = errors;
+                          if (errors === _errs24) {
+                            if (typeof key2 === "string") {
+                              if (func2(key2) > 128) {
+                                const err0 = {
+                                  instancePath: instancePath + "/current",
+                                  schemaPath:
+                                    "#/properties/current/propertyNames/maxLength",
+                                  keyword: "maxLength",
+                                  params: { limit: 128 },
+                                  message:
+                                    "must NOT have more than 128 characters",
+                                  propertyName: key2,
+                                };
+                                if (vErrors === null) {
+                                  vErrors = [err0];
+                                } else {
+                                  vErrors.push(err0);
+                                }
+                                errors++;
+                              } else {
+                                if (func2(key2) < 1) {
+                                  const err1 = {
+                                    instancePath: instancePath + "/current",
+                                    schemaPath:
+                                      "#/properties/current/propertyNames/minLength",
+                                    keyword: "minLength",
+                                    params: { limit: 1 },
+                                    message:
+                                      "must NOT have fewer than 1 characters",
+                                    propertyName: key2,
+                                  };
+                                  if (vErrors === null) {
+                                    vErrors = [err1];
+                                  } else {
+                                    vErrors.push(err1);
+                                  }
+                                  errors++;
+                                } else {
+                                  if (!pattern4.test(key2)) {
+                                    const err2 = {
+                                      instancePath: instancePath + "/current",
+                                      schemaPath:
+                                        "#/properties/current/propertyNames/pattern",
+                                      keyword: "pattern",
+                                      params: { pattern: "^[a-zA-Z0-9_-]+$" },
+                                      message:
+                                        'must match pattern "' +
+                                        "^[a-zA-Z0-9_-]+$" +
+                                        '"',
+                                      propertyName: key2,
+                                    };
+                                    if (vErrors === null) {
+                                      vErrors = [err2];
+                                    } else {
+                                      vErrors.push(err2);
+                                    }
+                                    errors++;
+                                  }
+                                }
+                              }
+                            } else {
+                              const err3 = {
+                                instancePath: instancePath + "/current",
+                                schemaPath:
+                                  "#/properties/current/propertyNames/type",
+                                keyword: "type",
+                                params: { type: "string" },
+                                message: "must be string",
+                                propertyName: key2,
+                              };
+                              if (vErrors === null) {
+                                vErrors = [err3];
+                              } else {
+                                vErrors.push(err3);
+                              }
+                              errors++;
+                            }
+                          }
+                          var valid3 = _errs24 === errors;
+                          if (!valid3) {
+                            const err4 = {
+                              instancePath: instancePath + "/current",
+                              schemaPath: "#/properties/current/propertyNames",
+                              keyword: "propertyNames",
+                              params: { propertyName: key2 },
+                              message: "property name must be valid",
+                            };
+                            if (vErrors === null) {
+                              vErrors = [err4];
+                            } else {
+                              vErrors.push(err4);
+                            }
+                            errors++;
+                            validate21.errors = vErrors;
+                            return false;
+                            break;
+                          }
+                        }
+                        if (valid3) {
+                          for (const key3 in data9) {
+                            let data10 = data9[key3];
+                            const _errs27 = errors;
+                            const _errs29 = errors;
+                            let valid6 = false;
+                            const _errs30 = errors;
+                            const _errs31 = errors;
+                            let valid7 = false;
+                            const _errs32 = errors;
+                            if (typeof data10 !== "string") {
+                              const err5 = {
+                                instancePath:
+                                  instancePath +
+                                  "/current/" +
+                                  key3.replace(/~/g, "~0").replace(/\//g, "~1"),
+                                schemaPath:
+                                  "#/$defs/OperationValue/anyOf/0/anyOf/0/type",
+                                keyword: "type",
+                                params: { type: "string" },
+                                message: "must be string",
+                              };
+                              if (vErrors === null) {
+                                vErrors = [err5];
+                              } else {
+                                vErrors.push(err5);
+                              }
+                              errors++;
+                            }
+                            var _valid1 = _errs32 === errors;
+                            valid7 = valid7 || _valid1;
+                            const _errs34 = errors;
+                            if (
+                              !(typeof data10 == "number" && isFinite(data10))
+                            ) {
+                              const err6 = {
+                                instancePath:
+                                  instancePath +
+                                  "/current/" +
+                                  key3.replace(/~/g, "~0").replace(/\//g, "~1"),
+                                schemaPath:
+                                  "#/$defs/OperationValue/anyOf/0/anyOf/1/type",
+                                keyword: "type",
+                                params: { type: "number" },
+                                message: "must be number",
+                              };
+                              if (vErrors === null) {
+                                vErrors = [err6];
+                              } else {
+                                vErrors.push(err6);
+                              }
+                              errors++;
+                            }
+                            var _valid1 = _errs34 === errors;
+                            valid7 = valid7 || _valid1;
+                            const _errs36 = errors;
+                            if (typeof data10 !== "boolean") {
+                              const err7 = {
+                                instancePath:
+                                  instancePath +
+                                  "/current/" +
+                                  key3.replace(/~/g, "~0").replace(/\//g, "~1"),
+                                schemaPath:
+                                  "#/$defs/OperationValue/anyOf/0/anyOf/2/type",
+                                keyword: "type",
+                                params: { type: "boolean" },
+                                message: "must be boolean",
+                              };
+                              if (vErrors === null) {
+                                vErrors = [err7];
+                              } else {
+                                vErrors.push(err7);
+                              }
+                              errors++;
+                            }
+                            var _valid1 = _errs36 === errors;
+                            valid7 = valid7 || _valid1;
+                            const _errs38 = errors;
+                            if (data10 !== null) {
+                              const err8 = {
+                                instancePath:
+                                  instancePath +
+                                  "/current/" +
+                                  key3.replace(/~/g, "~0").replace(/\//g, "~1"),
+                                schemaPath:
+                                  "#/$defs/OperationValue/anyOf/0/anyOf/3/type",
+                                keyword: "type",
+                                params: { type: "null" },
+                                message: "must be null",
+                              };
+                              if (vErrors === null) {
+                                vErrors = [err8];
+                              } else {
+                                vErrors.push(err8);
+                              }
+                              errors++;
+                            }
+                            var _valid1 = _errs38 === errors;
+                            valid7 = valid7 || _valid1;
+                            if (!valid7) {
+                              const err9 = {
+                                instancePath:
+                                  instancePath +
+                                  "/current/" +
+                                  key3.replace(/~/g, "~0").replace(/\//g, "~1"),
+                                schemaPath:
+                                  "#/$defs/OperationValue/anyOf/0/anyOf",
+                                keyword: "anyOf",
+                                params: {},
+                                message: "must match a schema in anyOf",
+                              };
+                              if (vErrors === null) {
+                                vErrors = [err9];
+                              } else {
+                                vErrors.push(err9);
+                              }
+                              errors++;
+                            } else {
+                              errors = _errs31;
+                              if (vErrors !== null) {
+                                if (_errs31) {
+                                  vErrors.length = _errs31;
+                                } else {
+                                  vErrors = null;
+                                }
+                              }
+                            }
+                            var _valid0 = _errs30 === errors;
+                            valid6 = valid6 || _valid0;
+                            const _errs40 = errors;
+                            if (errors === _errs40) {
+                              if (Array.isArray(data10)) {
+                                if (data10.length > 128) {
+                                  const err10 = {
+                                    instancePath:
+                                      instancePath +
+                                      "/current/" +
+                                      key3
+                                        .replace(/~/g, "~0")
+                                        .replace(/\//g, "~1"),
+                                    schemaPath:
+                                      "#/$defs/OperationValue/anyOf/1/maxItems",
+                                    keyword: "maxItems",
+                                    params: { limit: 128 },
+                                    message:
+                                      "must NOT have more than 128 items",
+                                  };
+                                  if (vErrors === null) {
+                                    vErrors = [err10];
+                                  } else {
+                                    vErrors.push(err10);
+                                  }
+                                  errors++;
+                                } else {
+                                  var valid8 = true;
+                                  const len0 = data10.length;
+                                  for (let i0 = 0; i0 < len0; i0++) {
+                                    let data11 = data10[i0];
+                                    const _errs42 = errors;
+                                    if (errors === _errs42) {
+                                      if (typeof data11 === "string") {
+                                        if (func2(data11) > 4096) {
+                                          const err11 = {
+                                            instancePath:
+                                              instancePath +
+                                              "/current/" +
+                                              key3
+                                                .replace(/~/g, "~0")
+                                                .replace(/\//g, "~1") +
+                                              "/" +
+                                              i0,
+                                            schemaPath:
+                                              "#/$defs/OperationValue/anyOf/1/items/maxLength",
+                                            keyword: "maxLength",
+                                            params: { limit: 4096 },
+                                            message:
+                                              "must NOT have more than 4096 characters",
+                                          };
+                                          if (vErrors === null) {
+                                            vErrors = [err11];
+                                          } else {
+                                            vErrors.push(err11);
+                                          }
+                                          errors++;
+                                        }
+                                      } else {
+                                        const err12 = {
+                                          instancePath:
+                                            instancePath +
+                                            "/current/" +
+                                            key3
+                                              .replace(/~/g, "~0")
+                                              .replace(/\//g, "~1") +
+                                            "/" +
+                                            i0,
+                                          schemaPath:
+                                            "#/$defs/OperationValue/anyOf/1/items/type",
+                                          keyword: "type",
+                                          params: { type: "string" },
+                                          message: "must be string",
+                                        };
+                                        if (vErrors === null) {
+                                          vErrors = [err12];
+                                        } else {
+                                          vErrors.push(err12);
+                                        }
+                                        errors++;
+                                      }
+                                    }
+                                    var valid8 = _errs42 === errors;
+                                    if (!valid8) {
+                                      break;
+                                    }
+                                  }
+                                }
+                              } else {
+                                const err13 = {
+                                  instancePath:
+                                    instancePath +
+                                    "/current/" +
+                                    key3
+                                      .replace(/~/g, "~0")
+                                      .replace(/\//g, "~1"),
+                                  schemaPath:
+                                    "#/$defs/OperationValue/anyOf/1/type",
+                                  keyword: "type",
+                                  params: { type: "array" },
+                                  message: "must be array",
+                                };
+                                if (vErrors === null) {
+                                  vErrors = [err13];
+                                } else {
+                                  vErrors.push(err13);
+                                }
+                                errors++;
+                              }
+                            }
+                            var _valid0 = _errs40 === errors;
+                            valid6 = valid6 || _valid0;
+                            if (!valid6) {
+                              const err14 = {
+                                instancePath:
+                                  instancePath +
+                                  "/current/" +
+                                  key3.replace(/~/g, "~0").replace(/\//g, "~1"),
+                                schemaPath: "#/$defs/OperationValue/anyOf",
+                                keyword: "anyOf",
+                                params: {},
+                                message: "must match a schema in anyOf",
+                              };
+                              if (vErrors === null) {
+                                vErrors = [err14];
+                              } else {
+                                vErrors.push(err14);
+                              }
+                              errors++;
+                              validate21.errors = vErrors;
+                              return false;
+                            } else {
+                              errors = _errs29;
+                              if (vErrors !== null) {
+                                if (_errs29) {
+                                  vErrors.length = _errs29;
+                                } else {
+                                  vErrors = null;
+                                }
+                              }
+                            }
+                            var valid4 = _errs27 === errors;
+                            if (!valid4) {
+                              break;
+                            }
+                          }
+                        }
                       }
                     } else {
                       validate21.errors = [
                         {
-                          instancePath: instancePath + "/title",
-                          schemaPath: "#/properties/title/type",
+                          instancePath: instancePath + "/current",
+                          schemaPath: "#/properties/current/type",
                           keyword: "type",
-                          params: { type: "string" },
-                          message: "must be string",
+                          params: { type: "object" },
+                          message: "must be object",
                         },
                       ];
                       return false;
@@ -1192,88 +1588,481 @@ function validate21(
                   var valid0 = true;
                 }
                 if (valid0) {
-                  if (data.source !== undefined) {
-                    let data10 = data.source;
-                    const _errs24 = errors;
-                    if (errors === _errs24) {
-                      if (typeof data10 === "string") {
-                        if (func2(data10) > 256) {
+                  if (data.proposal !== undefined) {
+                    let data12 = data.proposal;
+                    const _errs44 = errors;
+                    if (errors === _errs44) {
+                      if (
+                        data12 &&
+                        typeof data12 == "object" &&
+                        !Array.isArray(data12)
+                      ) {
+                        if (Object.keys(data12).length > 128) {
                           validate21.errors = [
                             {
-                              instancePath: instancePath + "/source",
-                              schemaPath: "#/properties/source/maxLength",
-                              keyword: "maxLength",
-                              params: { limit: 256 },
-                              message: "must NOT have more than 256 characters",
+                              instancePath: instancePath + "/proposal",
+                              schemaPath: "#/properties/proposal/maxProperties",
+                              keyword: "maxProperties",
+                              params: { limit: 128 },
+                              message: "must NOT have more than 128 properties",
                             },
                           ];
                           return false;
+                        } else {
+                          for (const key4 in data12) {
+                            const _errs46 = errors;
+                            if (errors === _errs46) {
+                              if (typeof key4 === "string") {
+                                if (func2(key4) > 128) {
+                                  const err15 = {
+                                    instancePath: instancePath + "/proposal",
+                                    schemaPath:
+                                      "#/properties/proposal/propertyNames/maxLength",
+                                    keyword: "maxLength",
+                                    params: { limit: 128 },
+                                    message:
+                                      "must NOT have more than 128 characters",
+                                    propertyName: key4,
+                                  };
+                                  if (vErrors === null) {
+                                    vErrors = [err15];
+                                  } else {
+                                    vErrors.push(err15);
+                                  }
+                                  errors++;
+                                } else {
+                                  if (func2(key4) < 1) {
+                                    const err16 = {
+                                      instancePath: instancePath + "/proposal",
+                                      schemaPath:
+                                        "#/properties/proposal/propertyNames/minLength",
+                                      keyword: "minLength",
+                                      params: { limit: 1 },
+                                      message:
+                                        "must NOT have fewer than 1 characters",
+                                      propertyName: key4,
+                                    };
+                                    if (vErrors === null) {
+                                      vErrors = [err16];
+                                    } else {
+                                      vErrors.push(err16);
+                                    }
+                                    errors++;
+                                  } else {
+                                    if (!pattern4.test(key4)) {
+                                      const err17 = {
+                                        instancePath:
+                                          instancePath + "/proposal",
+                                        schemaPath:
+                                          "#/properties/proposal/propertyNames/pattern",
+                                        keyword: "pattern",
+                                        params: { pattern: "^[a-zA-Z0-9_-]+$" },
+                                        message:
+                                          'must match pattern "' +
+                                          "^[a-zA-Z0-9_-]+$" +
+                                          '"',
+                                        propertyName: key4,
+                                      };
+                                      if (vErrors === null) {
+                                        vErrors = [err17];
+                                      } else {
+                                        vErrors.push(err17);
+                                      }
+                                      errors++;
+                                    }
+                                  }
+                                }
+                              } else {
+                                const err18 = {
+                                  instancePath: instancePath + "/proposal",
+                                  schemaPath:
+                                    "#/properties/proposal/propertyNames/type",
+                                  keyword: "type",
+                                  params: { type: "string" },
+                                  message: "must be string",
+                                  propertyName: key4,
+                                };
+                                if (vErrors === null) {
+                                  vErrors = [err18];
+                                } else {
+                                  vErrors.push(err18);
+                                }
+                                errors++;
+                              }
+                            }
+                            var valid9 = _errs46 === errors;
+                            if (!valid9) {
+                              const err19 = {
+                                instancePath: instancePath + "/proposal",
+                                schemaPath:
+                                  "#/properties/proposal/propertyNames",
+                                keyword: "propertyNames",
+                                params: { propertyName: key4 },
+                                message: "property name must be valid",
+                              };
+                              if (vErrors === null) {
+                                vErrors = [err19];
+                              } else {
+                                vErrors.push(err19);
+                              }
+                              errors++;
+                              validate21.errors = vErrors;
+                              return false;
+                              break;
+                            }
+                          }
+                          if (valid9) {
+                            for (const key5 in data12) {
+                              let data13 = data12[key5];
+                              const _errs49 = errors;
+                              const _errs51 = errors;
+                              let valid12 = false;
+                              const _errs52 = errors;
+                              const _errs53 = errors;
+                              let valid13 = false;
+                              const _errs54 = errors;
+                              if (typeof data13 !== "string") {
+                                const err20 = {
+                                  instancePath:
+                                    instancePath +
+                                    "/proposal/" +
+                                    key5
+                                      .replace(/~/g, "~0")
+                                      .replace(/\//g, "~1"),
+                                  schemaPath:
+                                    "#/$defs/OperationValue/anyOf/0/anyOf/0/type",
+                                  keyword: "type",
+                                  params: { type: "string" },
+                                  message: "must be string",
+                                };
+                                if (vErrors === null) {
+                                  vErrors = [err20];
+                                } else {
+                                  vErrors.push(err20);
+                                }
+                                errors++;
+                              }
+                              var _valid3 = _errs54 === errors;
+                              valid13 = valid13 || _valid3;
+                              const _errs56 = errors;
+                              if (
+                                !(typeof data13 == "number" && isFinite(data13))
+                              ) {
+                                const err21 = {
+                                  instancePath:
+                                    instancePath +
+                                    "/proposal/" +
+                                    key5
+                                      .replace(/~/g, "~0")
+                                      .replace(/\//g, "~1"),
+                                  schemaPath:
+                                    "#/$defs/OperationValue/anyOf/0/anyOf/1/type",
+                                  keyword: "type",
+                                  params: { type: "number" },
+                                  message: "must be number",
+                                };
+                                if (vErrors === null) {
+                                  vErrors = [err21];
+                                } else {
+                                  vErrors.push(err21);
+                                }
+                                errors++;
+                              }
+                              var _valid3 = _errs56 === errors;
+                              valid13 = valid13 || _valid3;
+                              const _errs58 = errors;
+                              if (typeof data13 !== "boolean") {
+                                const err22 = {
+                                  instancePath:
+                                    instancePath +
+                                    "/proposal/" +
+                                    key5
+                                      .replace(/~/g, "~0")
+                                      .replace(/\//g, "~1"),
+                                  schemaPath:
+                                    "#/$defs/OperationValue/anyOf/0/anyOf/2/type",
+                                  keyword: "type",
+                                  params: { type: "boolean" },
+                                  message: "must be boolean",
+                                };
+                                if (vErrors === null) {
+                                  vErrors = [err22];
+                                } else {
+                                  vErrors.push(err22);
+                                }
+                                errors++;
+                              }
+                              var _valid3 = _errs58 === errors;
+                              valid13 = valid13 || _valid3;
+                              const _errs60 = errors;
+                              if (data13 !== null) {
+                                const err23 = {
+                                  instancePath:
+                                    instancePath +
+                                    "/proposal/" +
+                                    key5
+                                      .replace(/~/g, "~0")
+                                      .replace(/\//g, "~1"),
+                                  schemaPath:
+                                    "#/$defs/OperationValue/anyOf/0/anyOf/3/type",
+                                  keyword: "type",
+                                  params: { type: "null" },
+                                  message: "must be null",
+                                };
+                                if (vErrors === null) {
+                                  vErrors = [err23];
+                                } else {
+                                  vErrors.push(err23);
+                                }
+                                errors++;
+                              }
+                              var _valid3 = _errs60 === errors;
+                              valid13 = valid13 || _valid3;
+                              if (!valid13) {
+                                const err24 = {
+                                  instancePath:
+                                    instancePath +
+                                    "/proposal/" +
+                                    key5
+                                      .replace(/~/g, "~0")
+                                      .replace(/\//g, "~1"),
+                                  schemaPath:
+                                    "#/$defs/OperationValue/anyOf/0/anyOf",
+                                  keyword: "anyOf",
+                                  params: {},
+                                  message: "must match a schema in anyOf",
+                                };
+                                if (vErrors === null) {
+                                  vErrors = [err24];
+                                } else {
+                                  vErrors.push(err24);
+                                }
+                                errors++;
+                              } else {
+                                errors = _errs53;
+                                if (vErrors !== null) {
+                                  if (_errs53) {
+                                    vErrors.length = _errs53;
+                                  } else {
+                                    vErrors = null;
+                                  }
+                                }
+                              }
+                              var _valid2 = _errs52 === errors;
+                              valid12 = valid12 || _valid2;
+                              const _errs62 = errors;
+                              if (errors === _errs62) {
+                                if (Array.isArray(data13)) {
+                                  if (data13.length > 128) {
+                                    const err25 = {
+                                      instancePath:
+                                        instancePath +
+                                        "/proposal/" +
+                                        key5
+                                          .replace(/~/g, "~0")
+                                          .replace(/\//g, "~1"),
+                                      schemaPath:
+                                        "#/$defs/OperationValue/anyOf/1/maxItems",
+                                      keyword: "maxItems",
+                                      params: { limit: 128 },
+                                      message:
+                                        "must NOT have more than 128 items",
+                                    };
+                                    if (vErrors === null) {
+                                      vErrors = [err25];
+                                    } else {
+                                      vErrors.push(err25);
+                                    }
+                                    errors++;
+                                  } else {
+                                    var valid14 = true;
+                                    const len1 = data13.length;
+                                    for (let i1 = 0; i1 < len1; i1++) {
+                                      let data14 = data13[i1];
+                                      const _errs64 = errors;
+                                      if (errors === _errs64) {
+                                        if (typeof data14 === "string") {
+                                          if (func2(data14) > 4096) {
+                                            const err26 = {
+                                              instancePath:
+                                                instancePath +
+                                                "/proposal/" +
+                                                key5
+                                                  .replace(/~/g, "~0")
+                                                  .replace(/\//g, "~1") +
+                                                "/" +
+                                                i1,
+                                              schemaPath:
+                                                "#/$defs/OperationValue/anyOf/1/items/maxLength",
+                                              keyword: "maxLength",
+                                              params: { limit: 4096 },
+                                              message:
+                                                "must NOT have more than 4096 characters",
+                                            };
+                                            if (vErrors === null) {
+                                              vErrors = [err26];
+                                            } else {
+                                              vErrors.push(err26);
+                                            }
+                                            errors++;
+                                          }
+                                        } else {
+                                          const err27 = {
+                                            instancePath:
+                                              instancePath +
+                                              "/proposal/" +
+                                              key5
+                                                .replace(/~/g, "~0")
+                                                .replace(/\//g, "~1") +
+                                              "/" +
+                                              i1,
+                                            schemaPath:
+                                              "#/$defs/OperationValue/anyOf/1/items/type",
+                                            keyword: "type",
+                                            params: { type: "string" },
+                                            message: "must be string",
+                                          };
+                                          if (vErrors === null) {
+                                            vErrors = [err27];
+                                          } else {
+                                            vErrors.push(err27);
+                                          }
+                                          errors++;
+                                        }
+                                      }
+                                      var valid14 = _errs64 === errors;
+                                      if (!valid14) {
+                                        break;
+                                      }
+                                    }
+                                  }
+                                } else {
+                                  const err28 = {
+                                    instancePath:
+                                      instancePath +
+                                      "/proposal/" +
+                                      key5
+                                        .replace(/~/g, "~0")
+                                        .replace(/\//g, "~1"),
+                                    schemaPath:
+                                      "#/$defs/OperationValue/anyOf/1/type",
+                                    keyword: "type",
+                                    params: { type: "array" },
+                                    message: "must be array",
+                                  };
+                                  if (vErrors === null) {
+                                    vErrors = [err28];
+                                  } else {
+                                    vErrors.push(err28);
+                                  }
+                                  errors++;
+                                }
+                              }
+                              var _valid2 = _errs62 === errors;
+                              valid12 = valid12 || _valid2;
+                              if (!valid12) {
+                                const err29 = {
+                                  instancePath:
+                                    instancePath +
+                                    "/proposal/" +
+                                    key5
+                                      .replace(/~/g, "~0")
+                                      .replace(/\//g, "~1"),
+                                  schemaPath: "#/$defs/OperationValue/anyOf",
+                                  keyword: "anyOf",
+                                  params: {},
+                                  message: "must match a schema in anyOf",
+                                };
+                                if (vErrors === null) {
+                                  vErrors = [err29];
+                                } else {
+                                  vErrors.push(err29);
+                                }
+                                errors++;
+                                validate21.errors = vErrors;
+                                return false;
+                              } else {
+                                errors = _errs51;
+                                if (vErrors !== null) {
+                                  if (_errs51) {
+                                    vErrors.length = _errs51;
+                                  } else {
+                                    vErrors = null;
+                                  }
+                                }
+                              }
+                              var valid10 = _errs49 === errors;
+                              if (!valid10) {
+                                break;
+                              }
+                            }
+                          }
                         }
                       } else {
                         validate21.errors = [
                           {
-                            instancePath: instancePath + "/source",
-                            schemaPath: "#/properties/source/type",
+                            instancePath: instancePath + "/proposal",
+                            schemaPath: "#/properties/proposal/type",
                             keyword: "type",
-                            params: { type: "string" },
-                            message: "must be string",
+                            params: { type: "object" },
+                            message: "must be object",
                           },
                         ];
                         return false;
                       }
                     }
-                    var valid0 = _errs24 === errors;
+                    var valid0 = _errs44 === errors;
                   } else {
                     var valid0 = true;
                   }
                   if (valid0) {
-                    if (data.targetLabel !== undefined) {
-                      let data11 = data.targetLabel;
-                      const _errs26 = errors;
-                      if (errors === _errs26) {
-                        if (typeof data11 === "string") {
-                          if (func2(data11) > 256) {
-                            validate21.errors = [
-                              {
-                                instancePath: instancePath + "/targetLabel",
-                                schemaPath:
-                                  "#/properties/targetLabel/maxLength",
-                                keyword: "maxLength",
-                                params: { limit: 256 },
-                                message:
-                                  "must NOT have more than 256 characters",
-                              },
-                            ];
-                            return false;
-                          }
-                        } else {
-                          validate21.errors = [
-                            {
-                              instancePath: instancePath + "/targetLabel",
-                              schemaPath: "#/properties/targetLabel/type",
-                              keyword: "type",
-                              params: { type: "string" },
-                              message: "must be string",
+                    if (data.phase !== undefined) {
+                      let data15 = data.phase;
+                      const _errs66 = errors;
+                      if (
+                        !(
+                          data15 === "ready" ||
+                          data15 === "submitting" ||
+                          data15 === "waiting" ||
+                          data15 === "running" ||
+                          data15 === "execution_ended" ||
+                          data15 === "failed" ||
+                          data15 === "unknown" ||
+                          data15 === "succeeded" ||
+                          data15 === "pending_effect" ||
+                          data15 === "cancelled" ||
+                          data15 === "denied"
+                        )
+                      ) {
+                        validate21.errors = [
+                          {
+                            instancePath: instancePath + "/phase",
+                            schemaPath: "#/properties/phase/enum",
+                            keyword: "enum",
+                            params: {
+                              allowedValues: schema32.properties.phase.enum,
                             },
-                          ];
-                          return false;
-                        }
+                            message:
+                              "must be equal to one of the allowed values",
+                          },
+                        ];
+                        return false;
                       }
-                      var valid0 = _errs26 === errors;
+                      var valid0 = _errs66 === errors;
                     } else {
                       var valid0 = true;
                     }
                     if (valid0) {
-                      if (data.impact !== undefined) {
-                        let data12 = data.impact;
-                        const _errs28 = errors;
-                        if (errors === _errs28) {
-                          if (typeof data12 === "string") {
-                            if (func2(data12) > 4096) {
+                      if (data.reason !== undefined) {
+                        let data16 = data.reason;
+                        const _errs67 = errors;
+                        if (errors === _errs67) {
+                          if (typeof data16 === "string") {
+                            if (func2(data16) > 4096) {
                               validate21.errors = [
                                 {
-                                  instancePath: instancePath + "/impact",
-                                  schemaPath: "#/properties/impact/maxLength",
+                                  instancePath: instancePath + "/reason",
+                                  schemaPath: "#/properties/reason/maxLength",
                                   keyword: "maxLength",
                                   params: { limit: 4096 },
                                   message:
@@ -1285,8 +2074,8 @@ function validate21(
                           } else {
                             validate21.errors = [
                               {
-                                instancePath: instancePath + "/impact",
-                                schemaPath: "#/properties/impact/type",
+                                instancePath: instancePath + "/reason",
+                                schemaPath: "#/properties/reason/type",
                                 keyword: "type",
                                 params: { type: "string" },
                                 message: "must be string",
@@ -1295,874 +2084,266 @@ function validate21(
                             return false;
                           }
                         }
-                        var valid0 = _errs28 === errors;
+                        var valid0 = _errs67 === errors;
                       } else {
                         var valid0 = true;
                       }
                       if (valid0) {
-                        if (data.current !== undefined) {
-                          let data13 = data.current;
-                          const _errs30 = errors;
-                          if (errors === _errs30) {
-                            if (
-                              data13 &&
-                              typeof data13 == "object" &&
-                              !Array.isArray(data13)
-                            ) {
-                              if (Object.keys(data13).length > 128) {
+                        if (data.allowed !== undefined) {
+                          let data17 = data.allowed;
+                          const _errs69 = errors;
+                          if (errors === _errs69) {
+                            if (Array.isArray(data17)) {
+                              if (data17.length > 4) {
                                 validate21.errors = [
                                   {
-                                    instancePath: instancePath + "/current",
-                                    schemaPath:
-                                      "#/properties/current/maxProperties",
-                                    keyword: "maxProperties",
-                                    params: { limit: 128 },
-                                    message:
-                                      "must NOT have more than 128 properties",
+                                    instancePath: instancePath + "/allowed",
+                                    schemaPath: "#/properties/allowed/maxItems",
+                                    keyword: "maxItems",
+                                    params: { limit: 4 },
+                                    message: "must NOT have more than 4 items",
                                   },
                                 ];
                                 return false;
                               } else {
-                                for (const key2 in data13) {
-                                  const _errs32 = errors;
-                                  if (errors === _errs32) {
-                                    if (typeof key2 === "string") {
-                                      if (func2(key2) > 128) {
-                                        const err0 = {
-                                          instancePath:
-                                            instancePath + "/current",
-                                          schemaPath:
-                                            "#/properties/current/propertyNames/maxLength",
-                                          keyword: "maxLength",
-                                          params: { limit: 128 },
-                                          message:
-                                            "must NOT have more than 128 characters",
-                                          propertyName: key2,
-                                        };
-                                        if (vErrors === null) {
-                                          vErrors = [err0];
-                                        } else {
-                                          vErrors.push(err0);
-                                        }
-                                        errors++;
-                                      } else {
-                                        if (func2(key2) < 1) {
-                                          const err1 = {
-                                            instancePath:
-                                              instancePath + "/current",
-                                            schemaPath:
-                                              "#/properties/current/propertyNames/minLength",
-                                            keyword: "minLength",
-                                            params: { limit: 1 },
-                                            message:
-                                              "must NOT have fewer than 1 characters",
-                                            propertyName: key2,
-                                          };
-                                          if (vErrors === null) {
-                                            vErrors = [err1];
-                                          } else {
-                                            vErrors.push(err1);
-                                          }
-                                          errors++;
-                                        } else {
-                                          if (!pattern4.test(key2)) {
-                                            const err2 = {
-                                              instancePath:
-                                                instancePath + "/current",
-                                              schemaPath:
-                                                "#/properties/current/propertyNames/pattern",
-                                              keyword: "pattern",
-                                              params: {
-                                                pattern: "^[a-zA-Z0-9_-]+$",
-                                              },
-                                              message:
-                                                'must match pattern "' +
-                                                "^[a-zA-Z0-9_-]+$" +
-                                                '"',
-                                              propertyName: key2,
-                                            };
-                                            if (vErrors === null) {
-                                              vErrors = [err2];
-                                            } else {
-                                              vErrors.push(err2);
-                                            }
-                                            errors++;
-                                          }
-                                        }
-                                      }
-                                    } else {
-                                      const err3 = {
-                                        instancePath: instancePath + "/current",
+                                var valid15 = true;
+                                const len2 = data17.length;
+                                for (let i2 = 0; i2 < len2; i2++) {
+                                  let data18 = data17[i2];
+                                  const _errs71 = errors;
+                                  if (
+                                    !(
+                                      data18 === "submit" ||
+                                      data18 === "cancel" ||
+                                      data18 === "refresh" ||
+                                      data18 === "answer"
+                                    )
+                                  ) {
+                                    validate21.errors = [
+                                      {
+                                        instancePath:
+                                          instancePath + "/allowed/" + i2,
                                         schemaPath:
-                                          "#/properties/current/propertyNames/type",
-                                        keyword: "type",
-                                        params: { type: "string" },
-                                        message: "must be string",
-                                        propertyName: key2,
-                                      };
-                                      if (vErrors === null) {
-                                        vErrors = [err3];
-                                      } else {
-                                        vErrors.push(err3);
-                                      }
-                                      errors++;
-                                    }
-                                  }
-                                  var valid3 = _errs32 === errors;
-                                  if (!valid3) {
-                                    const err4 = {
-                                      instancePath: instancePath + "/current",
-                                      schemaPath:
-                                        "#/properties/current/propertyNames",
-                                      keyword: "propertyNames",
-                                      params: { propertyName: key2 },
-                                      message: "property name must be valid",
-                                    };
-                                    if (vErrors === null) {
-                                      vErrors = [err4];
-                                    } else {
-                                      vErrors.push(err4);
-                                    }
-                                    errors++;
-                                    validate21.errors = vErrors;
+                                          "#/properties/allowed/items/enum",
+                                        keyword: "enum",
+                                        params: {
+                                          allowedValues:
+                                            schema32.properties.allowed.items
+                                              .enum,
+                                        },
+                                        message:
+                                          "must be equal to one of the allowed values",
+                                      },
+                                    ];
                                     return false;
-                                    break;
                                   }
-                                }
-                                if (valid3) {
-                                  for (const key3 in data13) {
-                                    let data14 = data13[key3];
-                                    const _errs35 = errors;
-                                    const _errs37 = errors;
-                                    let valid6 = false;
-                                    const _errs38 = errors;
-                                    const _errs39 = errors;
-                                    let valid7 = false;
-                                    const _errs40 = errors;
-                                    if (typeof data14 !== "string") {
-                                      const err5 = {
-                                        instancePath:
-                                          instancePath +
-                                          "/current/" +
-                                          key3
-                                            .replace(/~/g, "~0")
-                                            .replace(/\//g, "~1"),
-                                        schemaPath:
-                                          "#/$defs/OperationValue/anyOf/0/anyOf/0/type",
-                                        keyword: "type",
-                                        params: { type: "string" },
-                                        message: "must be string",
-                                      };
-                                      if (vErrors === null) {
-                                        vErrors = [err5];
-                                      } else {
-                                        vErrors.push(err5);
-                                      }
-                                      errors++;
-                                    }
-                                    var _valid1 = _errs40 === errors;
-                                    valid7 = valid7 || _valid1;
-                                    const _errs42 = errors;
-                                    if (
-                                      !(
-                                        typeof data14 == "number" &&
-                                        isFinite(data14)
-                                      )
-                                    ) {
-                                      const err6 = {
-                                        instancePath:
-                                          instancePath +
-                                          "/current/" +
-                                          key3
-                                            .replace(/~/g, "~0")
-                                            .replace(/\//g, "~1"),
-                                        schemaPath:
-                                          "#/$defs/OperationValue/anyOf/0/anyOf/1/type",
-                                        keyword: "type",
-                                        params: { type: "number" },
-                                        message: "must be number",
-                                      };
-                                      if (vErrors === null) {
-                                        vErrors = [err6];
-                                      } else {
-                                        vErrors.push(err6);
-                                      }
-                                      errors++;
-                                    }
-                                    var _valid1 = _errs42 === errors;
-                                    valid7 = valid7 || _valid1;
-                                    const _errs44 = errors;
-                                    if (typeof data14 !== "boolean") {
-                                      const err7 = {
-                                        instancePath:
-                                          instancePath +
-                                          "/current/" +
-                                          key3
-                                            .replace(/~/g, "~0")
-                                            .replace(/\//g, "~1"),
-                                        schemaPath:
-                                          "#/$defs/OperationValue/anyOf/0/anyOf/2/type",
-                                        keyword: "type",
-                                        params: { type: "boolean" },
-                                        message: "must be boolean",
-                                      };
-                                      if (vErrors === null) {
-                                        vErrors = [err7];
-                                      } else {
-                                        vErrors.push(err7);
-                                      }
-                                      errors++;
-                                    }
-                                    var _valid1 = _errs44 === errors;
-                                    valid7 = valid7 || _valid1;
-                                    const _errs46 = errors;
-                                    if (data14 !== null) {
-                                      const err8 = {
-                                        instancePath:
-                                          instancePath +
-                                          "/current/" +
-                                          key3
-                                            .replace(/~/g, "~0")
-                                            .replace(/\//g, "~1"),
-                                        schemaPath:
-                                          "#/$defs/OperationValue/anyOf/0/anyOf/3/type",
-                                        keyword: "type",
-                                        params: { type: "null" },
-                                        message: "must be null",
-                                      };
-                                      if (vErrors === null) {
-                                        vErrors = [err8];
-                                      } else {
-                                        vErrors.push(err8);
-                                      }
-                                      errors++;
-                                    }
-                                    var _valid1 = _errs46 === errors;
-                                    valid7 = valid7 || _valid1;
-                                    if (!valid7) {
-                                      const err9 = {
-                                        instancePath:
-                                          instancePath +
-                                          "/current/" +
-                                          key3
-                                            .replace(/~/g, "~0")
-                                            .replace(/\//g, "~1"),
-                                        schemaPath:
-                                          "#/$defs/OperationValue/anyOf/0/anyOf",
-                                        keyword: "anyOf",
-                                        params: {},
-                                        message: "must match a schema in anyOf",
-                                      };
-                                      if (vErrors === null) {
-                                        vErrors = [err9];
-                                      } else {
-                                        vErrors.push(err9);
-                                      }
-                                      errors++;
-                                    } else {
-                                      errors = _errs39;
-                                      if (vErrors !== null) {
-                                        if (_errs39) {
-                                          vErrors.length = _errs39;
-                                        } else {
-                                          vErrors = null;
-                                        }
-                                      }
-                                    }
-                                    var _valid0 = _errs38 === errors;
-                                    valid6 = valid6 || _valid0;
-                                    const _errs48 = errors;
-                                    if (errors === _errs48) {
-                                      if (Array.isArray(data14)) {
-                                        if (data14.length > 128) {
-                                          const err10 = {
-                                            instancePath:
-                                              instancePath +
-                                              "/current/" +
-                                              key3
-                                                .replace(/~/g, "~0")
-                                                .replace(/\//g, "~1"),
-                                            schemaPath:
-                                              "#/$defs/OperationValue/anyOf/1/maxItems",
-                                            keyword: "maxItems",
-                                            params: { limit: 128 },
-                                            message:
-                                              "must NOT have more than 128 items",
-                                          };
-                                          if (vErrors === null) {
-                                            vErrors = [err10];
-                                          } else {
-                                            vErrors.push(err10);
-                                          }
-                                          errors++;
-                                        } else {
-                                          var valid8 = true;
-                                          const len0 = data14.length;
-                                          for (let i0 = 0; i0 < len0; i0++) {
-                                            let data15 = data14[i0];
-                                            const _errs50 = errors;
-                                            if (errors === _errs50) {
-                                              if (typeof data15 === "string") {
-                                                if (func2(data15) > 4096) {
-                                                  const err11 = {
-                                                    instancePath:
-                                                      instancePath +
-                                                      "/current/" +
-                                                      key3
-                                                        .replace(/~/g, "~0")
-                                                        .replace(/\//g, "~1") +
-                                                      "/" +
-                                                      i0,
-                                                    schemaPath:
-                                                      "#/$defs/OperationValue/anyOf/1/items/maxLength",
-                                                    keyword: "maxLength",
-                                                    params: { limit: 4096 },
-                                                    message:
-                                                      "must NOT have more than 4096 characters",
-                                                  };
-                                                  if (vErrors === null) {
-                                                    vErrors = [err11];
-                                                  } else {
-                                                    vErrors.push(err11);
-                                                  }
-                                                  errors++;
-                                                }
-                                              } else {
-                                                const err12 = {
-                                                  instancePath:
-                                                    instancePath +
-                                                    "/current/" +
-                                                    key3
-                                                      .replace(/~/g, "~0")
-                                                      .replace(/\//g, "~1") +
-                                                    "/" +
-                                                    i0,
-                                                  schemaPath:
-                                                    "#/$defs/OperationValue/anyOf/1/items/type",
-                                                  keyword: "type",
-                                                  params: { type: "string" },
-                                                  message: "must be string",
-                                                };
-                                                if (vErrors === null) {
-                                                  vErrors = [err12];
-                                                } else {
-                                                  vErrors.push(err12);
-                                                }
-                                                errors++;
-                                              }
-                                            }
-                                            var valid8 = _errs50 === errors;
-                                            if (!valid8) {
-                                              break;
-                                            }
-                                          }
-                                        }
-                                      } else {
-                                        const err13 = {
-                                          instancePath:
-                                            instancePath +
-                                            "/current/" +
-                                            key3
-                                              .replace(/~/g, "~0")
-                                              .replace(/\//g, "~1"),
-                                          schemaPath:
-                                            "#/$defs/OperationValue/anyOf/1/type",
-                                          keyword: "type",
-                                          params: { type: "array" },
-                                          message: "must be array",
-                                        };
-                                        if (vErrors === null) {
-                                          vErrors = [err13];
-                                        } else {
-                                          vErrors.push(err13);
-                                        }
-                                        errors++;
-                                      }
-                                    }
-                                    var _valid0 = _errs48 === errors;
-                                    valid6 = valid6 || _valid0;
-                                    if (!valid6) {
-                                      const err14 = {
-                                        instancePath:
-                                          instancePath +
-                                          "/current/" +
-                                          key3
-                                            .replace(/~/g, "~0")
-                                            .replace(/\//g, "~1"),
-                                        schemaPath:
-                                          "#/$defs/OperationValue/anyOf",
-                                        keyword: "anyOf",
-                                        params: {},
-                                        message: "must match a schema in anyOf",
-                                      };
-                                      if (vErrors === null) {
-                                        vErrors = [err14];
-                                      } else {
-                                        vErrors.push(err14);
-                                      }
-                                      errors++;
-                                      validate21.errors = vErrors;
-                                      return false;
-                                    } else {
-                                      errors = _errs37;
-                                      if (vErrors !== null) {
-                                        if (_errs37) {
-                                          vErrors.length = _errs37;
-                                        } else {
-                                          vErrors = null;
-                                        }
-                                      }
-                                    }
-                                    var valid4 = _errs35 === errors;
-                                    if (!valid4) {
-                                      break;
-                                    }
+                                  var valid15 = _errs71 === errors;
+                                  if (!valid15) {
+                                    break;
                                   }
                                 }
                               }
                             } else {
                               validate21.errors = [
                                 {
-                                  instancePath: instancePath + "/current",
-                                  schemaPath: "#/properties/current/type",
+                                  instancePath: instancePath + "/allowed",
+                                  schemaPath: "#/properties/allowed/type",
                                   keyword: "type",
-                                  params: { type: "object" },
-                                  message: "must be object",
+                                  params: { type: "array" },
+                                  message: "must be array",
                                 },
                               ];
                               return false;
                             }
                           }
-                          var valid0 = _errs30 === errors;
+                          var valid0 = _errs69 === errors;
                         } else {
                           var valid0 = true;
                         }
                         if (valid0) {
-                          if (data.proposal !== undefined) {
-                            let data16 = data.proposal;
-                            const _errs52 = errors;
-                            if (errors === _errs52) {
+                          if (data.approval !== undefined) {
+                            let data19 = data.approval;
+                            const _errs72 = errors;
+                            if (errors === _errs72) {
                               if (
-                                data16 &&
-                                typeof data16 == "object" &&
-                                !Array.isArray(data16)
+                                data19 &&
+                                typeof data19 == "object" &&
+                                !Array.isArray(data19)
                               ) {
-                                if (Object.keys(data16).length > 128) {
+                                let missing2;
+                                if (
+                                  (data19.user === undefined &&
+                                    (missing2 = "user")) ||
+                                  (data19.enterprise === undefined &&
+                                    (missing2 = "enterprise")) ||
+                                  (data19.elevation === undefined &&
+                                    (missing2 = "elevation"))
+                                ) {
                                   validate21.errors = [
                                     {
-                                      instancePath: instancePath + "/proposal",
+                                      instancePath: instancePath + "/approval",
                                       schemaPath:
-                                        "#/properties/proposal/maxProperties",
-                                      keyword: "maxProperties",
-                                      params: { limit: 128 },
+                                        "#/properties/approval/required",
+                                      keyword: "required",
+                                      params: { missingProperty: missing2 },
                                       message:
-                                        "must NOT have more than 128 properties",
+                                        "must have required property '" +
+                                        missing2 +
+                                        "'",
                                     },
                                   ];
                                   return false;
                                 } else {
-                                  for (const key4 in data16) {
-                                    const _errs54 = errors;
-                                    if (errors === _errs54) {
-                                      if (typeof key4 === "string") {
-                                        if (func2(key4) > 128) {
-                                          const err15 = {
-                                            instancePath:
-                                              instancePath + "/proposal",
-                                            schemaPath:
-                                              "#/properties/proposal/propertyNames/maxLength",
-                                            keyword: "maxLength",
-                                            params: { limit: 128 },
-                                            message:
-                                              "must NOT have more than 128 characters",
-                                            propertyName: key4,
-                                          };
-                                          if (vErrors === null) {
-                                            vErrors = [err15];
-                                          } else {
-                                            vErrors.push(err15);
-                                          }
-                                          errors++;
-                                        } else {
-                                          if (func2(key4) < 1) {
-                                            const err16 = {
-                                              instancePath:
-                                                instancePath + "/proposal",
-                                              schemaPath:
-                                                "#/properties/proposal/propertyNames/minLength",
-                                              keyword: "minLength",
-                                              params: { limit: 1 },
-                                              message:
-                                                "must NOT have fewer than 1 characters",
-                                              propertyName: key4,
-                                            };
-                                            if (vErrors === null) {
-                                              vErrors = [err16];
-                                            } else {
-                                              vErrors.push(err16);
-                                            }
-                                            errors++;
-                                          } else {
-                                            if (!pattern4.test(key4)) {
-                                              const err17 = {
-                                                instancePath:
-                                                  instancePath + "/proposal",
-                                                schemaPath:
-                                                  "#/properties/proposal/propertyNames/pattern",
-                                                keyword: "pattern",
-                                                params: {
-                                                  pattern: "^[a-zA-Z0-9_-]+$",
-                                                },
-                                                message:
-                                                  'must match pattern "' +
-                                                  "^[a-zA-Z0-9_-]+$" +
-                                                  '"',
-                                                propertyName: key4,
-                                              };
-                                              if (vErrors === null) {
-                                                vErrors = [err17];
-                                              } else {
-                                                vErrors.push(err17);
-                                              }
-                                              errors++;
-                                            }
-                                          }
-                                        }
-                                      } else {
-                                        const err18 = {
+                                  const _errs74 = errors;
+                                  for (const key6 in data19) {
+                                    if (
+                                      !(
+                                        key6 === "user" ||
+                                        key6 === "enterprise" ||
+                                        key6 === "elevation"
+                                      )
+                                    ) {
+                                      validate21.errors = [
+                                        {
                                           instancePath:
-                                            instancePath + "/proposal",
+                                            instancePath + "/approval",
                                           schemaPath:
-                                            "#/properties/proposal/propertyNames/type",
-                                          keyword: "type",
-                                          params: { type: "string" },
-                                          message: "must be string",
-                                          propertyName: key4,
-                                        };
-                                        if (vErrors === null) {
-                                          vErrors = [err18];
-                                        } else {
-                                          vErrors.push(err18);
-                                        }
-                                        errors++;
-                                      }
-                                    }
-                                    var valid9 = _errs54 === errors;
-                                    if (!valid9) {
-                                      const err19 = {
-                                        instancePath:
-                                          instancePath + "/proposal",
-                                        schemaPath:
-                                          "#/properties/proposal/propertyNames",
-                                        keyword: "propertyNames",
-                                        params: { propertyName: key4 },
-                                        message: "property name must be valid",
-                                      };
-                                      if (vErrors === null) {
-                                        vErrors = [err19];
-                                      } else {
-                                        vErrors.push(err19);
-                                      }
-                                      errors++;
-                                      validate21.errors = vErrors;
+                                            "#/properties/approval/additionalProperties",
+                                          keyword: "additionalProperties",
+                                          params: { additionalProperty: key6 },
+                                          message:
+                                            "must NOT have additional properties",
+                                        },
+                                      ];
                                       return false;
                                       break;
                                     }
                                   }
-                                  if (valid9) {
-                                    for (const key5 in data16) {
-                                      let data17 = data16[key5];
-                                      const _errs57 = errors;
-                                      const _errs59 = errors;
-                                      let valid12 = false;
-                                      const _errs60 = errors;
-                                      const _errs61 = errors;
-                                      let valid13 = false;
-                                      const _errs62 = errors;
-                                      if (typeof data17 !== "string") {
-                                        const err20 = {
-                                          instancePath:
-                                            instancePath +
-                                            "/proposal/" +
-                                            key5
-                                              .replace(/~/g, "~0")
-                                              .replace(/\//g, "~1"),
-                                          schemaPath:
-                                            "#/$defs/OperationValue/anyOf/0/anyOf/0/type",
-                                          keyword: "type",
-                                          params: { type: "string" },
-                                          message: "must be string",
-                                        };
-                                        if (vErrors === null) {
-                                          vErrors = [err20];
+                                  if (_errs74 === errors) {
+                                    if (data19.user !== undefined) {
+                                      let data20 = data19.user;
+                                      const _errs75 = errors;
+                                      if (errors === _errs75) {
+                                        if (typeof data20 === "string") {
+                                          if (func2(data20) > 256) {
+                                            validate21.errors = [
+                                              {
+                                                instancePath:
+                                                  instancePath +
+                                                  "/approval/user",
+                                                schemaPath:
+                                                  "#/properties/approval/properties/user/maxLength",
+                                                keyword: "maxLength",
+                                                params: { limit: 256 },
+                                                message:
+                                                  "must NOT have more than 256 characters",
+                                              },
+                                            ];
+                                            return false;
+                                          }
                                         } else {
-                                          vErrors.push(err20);
+                                          validate21.errors = [
+                                            {
+                                              instancePath:
+                                                instancePath + "/approval/user",
+                                              schemaPath:
+                                                "#/properties/approval/properties/user/type",
+                                              keyword: "type",
+                                              params: { type: "string" },
+                                              message: "must be string",
+                                            },
+                                          ];
+                                          return false;
                                         }
-                                        errors++;
                                       }
-                                      var _valid3 = _errs62 === errors;
-                                      valid13 = valid13 || _valid3;
-                                      const _errs64 = errors;
-                                      if (
-                                        !(
-                                          typeof data17 == "number" &&
-                                          isFinite(data17)
-                                        )
-                                      ) {
-                                        const err21 = {
-                                          instancePath:
-                                            instancePath +
-                                            "/proposal/" +
-                                            key5
-                                              .replace(/~/g, "~0")
-                                              .replace(/\//g, "~1"),
-                                          schemaPath:
-                                            "#/$defs/OperationValue/anyOf/0/anyOf/1/type",
-                                          keyword: "type",
-                                          params: { type: "number" },
-                                          message: "must be number",
-                                        };
-                                        if (vErrors === null) {
-                                          vErrors = [err21];
-                                        } else {
-                                          vErrors.push(err21);
-                                        }
-                                        errors++;
-                                      }
-                                      var _valid3 = _errs64 === errors;
-                                      valid13 = valid13 || _valid3;
-                                      const _errs66 = errors;
-                                      if (typeof data17 !== "boolean") {
-                                        const err22 = {
-                                          instancePath:
-                                            instancePath +
-                                            "/proposal/" +
-                                            key5
-                                              .replace(/~/g, "~0")
-                                              .replace(/\//g, "~1"),
-                                          schemaPath:
-                                            "#/$defs/OperationValue/anyOf/0/anyOf/2/type",
-                                          keyword: "type",
-                                          params: { type: "boolean" },
-                                          message: "must be boolean",
-                                        };
-                                        if (vErrors === null) {
-                                          vErrors = [err22];
-                                        } else {
-                                          vErrors.push(err22);
-                                        }
-                                        errors++;
-                                      }
-                                      var _valid3 = _errs66 === errors;
-                                      valid13 = valid13 || _valid3;
-                                      const _errs68 = errors;
-                                      if (data17 !== null) {
-                                        const err23 = {
-                                          instancePath:
-                                            instancePath +
-                                            "/proposal/" +
-                                            key5
-                                              .replace(/~/g, "~0")
-                                              .replace(/\//g, "~1"),
-                                          schemaPath:
-                                            "#/$defs/OperationValue/anyOf/0/anyOf/3/type",
-                                          keyword: "type",
-                                          params: { type: "null" },
-                                          message: "must be null",
-                                        };
-                                        if (vErrors === null) {
-                                          vErrors = [err23];
-                                        } else {
-                                          vErrors.push(err23);
-                                        }
-                                        errors++;
-                                      }
-                                      var _valid3 = _errs68 === errors;
-                                      valid13 = valid13 || _valid3;
-                                      if (!valid13) {
-                                        const err24 = {
-                                          instancePath:
-                                            instancePath +
-                                            "/proposal/" +
-                                            key5
-                                              .replace(/~/g, "~0")
-                                              .replace(/\//g, "~1"),
-                                          schemaPath:
-                                            "#/$defs/OperationValue/anyOf/0/anyOf",
-                                          keyword: "anyOf",
-                                          params: {},
-                                          message:
-                                            "must match a schema in anyOf",
-                                        };
-                                        if (vErrors === null) {
-                                          vErrors = [err24];
-                                        } else {
-                                          vErrors.push(err24);
-                                        }
-                                        errors++;
-                                      } else {
-                                        errors = _errs61;
-                                        if (vErrors !== null) {
-                                          if (_errs61) {
-                                            vErrors.length = _errs61;
+                                      var valid16 = _errs75 === errors;
+                                    } else {
+                                      var valid16 = true;
+                                    }
+                                    if (valid16) {
+                                      if (data19.enterprise !== undefined) {
+                                        let data21 = data19.enterprise;
+                                        const _errs77 = errors;
+                                        if (errors === _errs77) {
+                                          if (typeof data21 === "string") {
+                                            if (func2(data21) > 256) {
+                                              validate21.errors = [
+                                                {
+                                                  instancePath:
+                                                    instancePath +
+                                                    "/approval/enterprise",
+                                                  schemaPath:
+                                                    "#/properties/approval/properties/enterprise/maxLength",
+                                                  keyword: "maxLength",
+                                                  params: { limit: 256 },
+                                                  message:
+                                                    "must NOT have more than 256 characters",
+                                                },
+                                              ];
+                                              return false;
+                                            }
                                           } else {
-                                            vErrors = null;
+                                            validate21.errors = [
+                                              {
+                                                instancePath:
+                                                  instancePath +
+                                                  "/approval/enterprise",
+                                                schemaPath:
+                                                  "#/properties/approval/properties/enterprise/type",
+                                                keyword: "type",
+                                                params: { type: "string" },
+                                                message: "must be string",
+                                              },
+                                            ];
+                                            return false;
                                           }
                                         }
+                                        var valid16 = _errs77 === errors;
+                                      } else {
+                                        var valid16 = true;
                                       }
-                                      var _valid2 = _errs60 === errors;
-                                      valid12 = valid12 || _valid2;
-                                      const _errs70 = errors;
-                                      if (errors === _errs70) {
-                                        if (Array.isArray(data17)) {
-                                          if (data17.length > 128) {
-                                            const err25 = {
-                                              instancePath:
-                                                instancePath +
-                                                "/proposal/" +
-                                                key5
-                                                  .replace(/~/g, "~0")
-                                                  .replace(/\//g, "~1"),
-                                              schemaPath:
-                                                "#/$defs/OperationValue/anyOf/1/maxItems",
-                                              keyword: "maxItems",
-                                              params: { limit: 128 },
-                                              message:
-                                                "must NOT have more than 128 items",
-                                            };
-                                            if (vErrors === null) {
-                                              vErrors = [err25];
-                                            } else {
-                                              vErrors.push(err25);
-                                            }
-                                            errors++;
-                                          } else {
-                                            var valid14 = true;
-                                            const len1 = data17.length;
-                                            for (let i1 = 0; i1 < len1; i1++) {
-                                              let data18 = data17[i1];
-                                              const _errs72 = errors;
-                                              if (errors === _errs72) {
-                                                if (
-                                                  typeof data18 === "string"
-                                                ) {
-                                                  if (func2(data18) > 4096) {
-                                                    const err26 = {
-                                                      instancePath:
-                                                        instancePath +
-                                                        "/proposal/" +
-                                                        key5
-                                                          .replace(/~/g, "~0")
-                                                          .replace(
-                                                            /\//g,
-                                                            "~1",
-                                                          ) +
-                                                        "/" +
-                                                        i1,
-                                                      schemaPath:
-                                                        "#/$defs/OperationValue/anyOf/1/items/maxLength",
-                                                      keyword: "maxLength",
-                                                      params: { limit: 4096 },
-                                                      message:
-                                                        "must NOT have more than 4096 characters",
-                                                    };
-                                                    if (vErrors === null) {
-                                                      vErrors = [err26];
-                                                    } else {
-                                                      vErrors.push(err26);
-                                                    }
-                                                    errors++;
-                                                  }
-                                                } else {
-                                                  const err27 = {
+                                      if (valid16) {
+                                        if (data19.elevation !== undefined) {
+                                          let data22 = data19.elevation;
+                                          const _errs79 = errors;
+                                          if (errors === _errs79) {
+                                            if (typeof data22 === "string") {
+                                              if (func2(data22) > 256) {
+                                                validate21.errors = [
+                                                  {
                                                     instancePath:
                                                       instancePath +
-                                                      "/proposal/" +
-                                                      key5
-                                                        .replace(/~/g, "~0")
-                                                        .replace(/\//g, "~1") +
-                                                      "/" +
-                                                      i1,
+                                                      "/approval/elevation",
                                                     schemaPath:
-                                                      "#/$defs/OperationValue/anyOf/1/items/type",
-                                                    keyword: "type",
-                                                    params: { type: "string" },
-                                                    message: "must be string",
-                                                  };
-                                                  if (vErrors === null) {
-                                                    vErrors = [err27];
-                                                  } else {
-                                                    vErrors.push(err27);
-                                                  }
-                                                  errors++;
-                                                }
+                                                      "#/properties/approval/properties/elevation/maxLength",
+                                                    keyword: "maxLength",
+                                                    params: { limit: 256 },
+                                                    message:
+                                                      "must NOT have more than 256 characters",
+                                                  },
+                                                ];
+                                                return false;
                                               }
-                                              var valid14 = _errs72 === errors;
-                                              if (!valid14) {
-                                                break;
-                                              }
+                                            } else {
+                                              validate21.errors = [
+                                                {
+                                                  instancePath:
+                                                    instancePath +
+                                                    "/approval/elevation",
+                                                  schemaPath:
+                                                    "#/properties/approval/properties/elevation/type",
+                                                  keyword: "type",
+                                                  params: { type: "string" },
+                                                  message: "must be string",
+                                                },
+                                              ];
+                                              return false;
                                             }
                                           }
+                                          var valid16 = _errs79 === errors;
                                         } else {
-                                          const err28 = {
-                                            instancePath:
-                                              instancePath +
-                                              "/proposal/" +
-                                              key5
-                                                .replace(/~/g, "~0")
-                                                .replace(/\//g, "~1"),
-                                            schemaPath:
-                                              "#/$defs/OperationValue/anyOf/1/type",
-                                            keyword: "type",
-                                            params: { type: "array" },
-                                            message: "must be array",
-                                          };
-                                          if (vErrors === null) {
-                                            vErrors = [err28];
-                                          } else {
-                                            vErrors.push(err28);
-                                          }
-                                          errors++;
+                                          var valid16 = true;
                                         }
-                                      }
-                                      var _valid2 = _errs70 === errors;
-                                      valid12 = valid12 || _valid2;
-                                      if (!valid12) {
-                                        const err29 = {
-                                          instancePath:
-                                            instancePath +
-                                            "/proposal/" +
-                                            key5
-                                              .replace(/~/g, "~0")
-                                              .replace(/\//g, "~1"),
-                                          schemaPath:
-                                            "#/$defs/OperationValue/anyOf",
-                                          keyword: "anyOf",
-                                          params: {},
-                                          message:
-                                            "must match a schema in anyOf",
-                                        };
-                                        if (vErrors === null) {
-                                          vErrors = [err29];
-                                        } else {
-                                          vErrors.push(err29);
-                                        }
-                                        errors++;
-                                        validate21.errors = vErrors;
-                                        return false;
-                                      } else {
-                                        errors = _errs59;
-                                        if (vErrors !== null) {
-                                          if (_errs59) {
-                                            vErrors.length = _errs59;
-                                          } else {
-                                            vErrors = null;
-                                          }
-                                        }
-                                      }
-                                      var valid10 = _errs57 === errors;
-                                      if (!valid10) {
-                                        break;
                                       }
                                     }
                                   }
@@ -2170,8 +2351,8 @@ function validate21(
                               } else {
                                 validate21.errors = [
                                   {
-                                    instancePath: instancePath + "/proposal",
-                                    schemaPath: "#/properties/proposal/type",
+                                    instancePath: instancePath + "/approval",
+                                    schemaPath: "#/properties/approval/type",
                                     keyword: "type",
                                     params: { type: "object" },
                                     message: "must be object",
@@ -2180,262 +2361,151 @@ function validate21(
                                 return false;
                               }
                             }
-                            var valid0 = _errs52 === errors;
+                            var valid0 = _errs72 === errors;
                           } else {
                             var valid0 = true;
                           }
                           if (valid0) {
-                            if (data.phase !== undefined) {
-                              let data19 = data.phase;
-                              const _errs74 = errors;
-                              if (
-                                !(
-                                  data19 === "ready" ||
-                                  data19 === "submitting" ||
-                                  data19 === "waiting" ||
-                                  data19 === "running" ||
-                                  data19 === "execution_ended" ||
-                                  data19 === "failed" ||
-                                  data19 === "unknown" ||
-                                  data19 === "succeeded" ||
-                                  data19 === "pending_effect" ||
-                                  data19 === "cancelled" ||
-                                  data19 === "denied"
-                                )
-                              ) {
-                                validate21.errors = [
-                                  {
-                                    instancePath: instancePath + "/phase",
-                                    schemaPath: "#/properties/phase/enum",
-                                    keyword: "enum",
-                                    params: {
-                                      allowedValues:
-                                        schema32.properties.phase.enum,
-                                    },
-                                    message:
-                                      "must be equal to one of the allowed values",
-                                  },
-                                ];
-                                return false;
-                              }
-                              var valid0 = _errs74 === errors;
-                            } else {
-                              var valid0 = true;
-                            }
-                            if (valid0) {
-                              if (data.reason !== undefined) {
-                                let data20 = data.reason;
-                                const _errs75 = errors;
-                                if (errors === _errs75) {
-                                  if (typeof data20 === "string") {
-                                    if (func2(data20) > 4096) {
-                                      validate21.errors = [
-                                        {
-                                          instancePath:
-                                            instancePath + "/reason",
-                                          schemaPath:
-                                            "#/properties/reason/maxLength",
-                                          keyword: "maxLength",
-                                          params: { limit: 4096 },
-                                          message:
-                                            "must NOT have more than 4096 characters",
-                                        },
-                                      ];
-                                      return false;
-                                    }
-                                  } else {
+                            if (data.objects !== undefined) {
+                              let data23 = data.objects;
+                              const _errs81 = errors;
+                              if (errors === _errs81) {
+                                if (Array.isArray(data23)) {
+                                  if (data23.length > 128) {
                                     validate21.errors = [
                                       {
-                                        instancePath: instancePath + "/reason",
-                                        schemaPath: "#/properties/reason/type",
-                                        keyword: "type",
-                                        params: { type: "string" },
-                                        message: "must be string",
+                                        instancePath: instancePath + "/objects",
+                                        schemaPath:
+                                          "#/properties/objects/maxItems",
+                                        keyword: "maxItems",
+                                        params: { limit: 128 },
+                                        message:
+                                          "must NOT have more than 128 items",
                                       },
                                     ];
                                     return false;
-                                  }
-                                }
-                                var valid0 = _errs75 === errors;
-                              } else {
-                                var valid0 = true;
-                              }
-                              if (valid0) {
-                                if (data.allowed !== undefined) {
-                                  let data21 = data.allowed;
-                                  const _errs77 = errors;
-                                  if (errors === _errs77) {
-                                    if (Array.isArray(data21)) {
-                                      if (data21.length > 4) {
-                                        validate21.errors = [
-                                          {
-                                            instancePath:
-                                              instancePath + "/allowed",
-                                            schemaPath:
-                                              "#/properties/allowed/maxItems",
-                                            keyword: "maxItems",
-                                            params: { limit: 4 },
-                                            message:
-                                              "must NOT have more than 4 items",
-                                          },
-                                        ];
-                                        return false;
-                                      } else {
-                                        var valid15 = true;
-                                        const len2 = data21.length;
-                                        for (let i2 = 0; i2 < len2; i2++) {
-                                          let data22 = data21[i2];
-                                          const _errs79 = errors;
+                                  } else {
+                                    var valid17 = true;
+                                    const len3 = data23.length;
+                                    for (let i3 = 0; i3 < len3; i3++) {
+                                      let data24 = data23[i3];
+                                      const _errs83 = errors;
+                                      const _errs84 = errors;
+                                      if (errors === _errs84) {
+                                        if (
+                                          data24 &&
+                                          typeof data24 == "object" &&
+                                          !Array.isArray(data24)
+                                        ) {
+                                          let missing3;
                                           if (
-                                            !(
-                                              data22 === "submit" ||
-                                              data22 === "cancel" ||
-                                              data22 === "refresh" ||
-                                              data22 === "answer"
-                                            )
+                                            (data24.id === undefined &&
+                                              (missing3 = "id")) ||
+                                            (data24.label === undefined &&
+                                              (missing3 = "label")) ||
+                                            (data24.detail === undefined &&
+                                              (missing3 = "detail"))
                                           ) {
                                             validate21.errors = [
                                               {
                                                 instancePath:
                                                   instancePath +
-                                                  "/allowed/" +
-                                                  i2,
+                                                  "/objects/" +
+                                                  i3,
                                                 schemaPath:
-                                                  "#/properties/allowed/items/enum",
-                                                keyword: "enum",
+                                                  "#/$defs/OperationObject/required",
+                                                keyword: "required",
                                                 params: {
-                                                  allowedValues:
-                                                    schema32.properties.allowed
-                                                      .items.enum,
+                                                  missingProperty: missing3,
                                                 },
                                                 message:
-                                                  "must be equal to one of the allowed values",
+                                                  "must have required property '" +
+                                                  missing3 +
+                                                  "'",
                                               },
                                             ];
                                             return false;
-                                          }
-                                          var valid15 = _errs79 === errors;
-                                          if (!valid15) {
-                                            break;
-                                          }
-                                        }
-                                      }
-                                    } else {
-                                      validate21.errors = [
-                                        {
-                                          instancePath:
-                                            instancePath + "/allowed",
-                                          schemaPath:
-                                            "#/properties/allowed/type",
-                                          keyword: "type",
-                                          params: { type: "array" },
-                                          message: "must be array",
-                                        },
-                                      ];
-                                      return false;
-                                    }
-                                  }
-                                  var valid0 = _errs77 === errors;
-                                } else {
-                                  var valid0 = true;
-                                }
-                                if (valid0) {
-                                  if (data.approval !== undefined) {
-                                    let data23 = data.approval;
-                                    const _errs80 = errors;
-                                    if (errors === _errs80) {
-                                      if (
-                                        data23 &&
-                                        typeof data23 == "object" &&
-                                        !Array.isArray(data23)
-                                      ) {
-                                        let missing2;
-                                        if (
-                                          (data23.user === undefined &&
-                                            (missing2 = "user")) ||
-                                          (data23.enterprise === undefined &&
-                                            (missing2 = "enterprise")) ||
-                                          (data23.elevation === undefined &&
-                                            (missing2 = "elevation"))
-                                        ) {
-                                          validate21.errors = [
-                                            {
-                                              instancePath:
-                                                instancePath + "/approval",
-                                              schemaPath:
-                                                "#/properties/approval/required",
-                                              keyword: "required",
-                                              params: {
-                                                missingProperty: missing2,
-                                              },
-                                              message:
-                                                "must have required property '" +
-                                                missing2 +
-                                                "'",
-                                            },
-                                          ];
-                                          return false;
-                                        } else {
-                                          const _errs82 = errors;
-                                          for (const key6 in data23) {
-                                            if (
-                                              !(
-                                                key6 === "user" ||
-                                                key6 === "enterprise" ||
-                                                key6 === "elevation"
-                                              )
-                                            ) {
-                                              validate21.errors = [
-                                                {
-                                                  instancePath:
-                                                    instancePath + "/approval",
-                                                  schemaPath:
-                                                    "#/properties/approval/additionalProperties",
-                                                  keyword:
-                                                    "additionalProperties",
-                                                  params: {
-                                                    additionalProperty: key6,
-                                                  },
-                                                  message:
-                                                    "must NOT have additional properties",
-                                                },
-                                              ];
-                                              return false;
-                                              break;
-                                            }
-                                          }
-                                          if (_errs82 === errors) {
-                                            if (data23.user !== undefined) {
-                                              let data24 = data23.user;
-                                              const _errs83 = errors;
-                                              if (errors === _errs83) {
+                                          } else {
+                                            if (data24.id !== undefined) {
+                                              let data25 = data24.id;
+                                              const _errs87 = errors;
+                                              if (errors === _errs87) {
                                                 if (
-                                                  typeof data24 === "string"
+                                                  typeof data25 === "string"
                                                 ) {
-                                                  if (func2(data24) > 256) {
+                                                  if (func2(data25) > 128) {
                                                     validate21.errors = [
                                                       {
                                                         instancePath:
                                                           instancePath +
-                                                          "/approval/user",
+                                                          "/objects/" +
+                                                          i3 +
+                                                          "/id",
                                                         schemaPath:
-                                                          "#/properties/approval/properties/user/maxLength",
+                                                          "#/$defs/OperationObject/properties/id/maxLength",
                                                         keyword: "maxLength",
-                                                        params: { limit: 256 },
+                                                        params: { limit: 128 },
                                                         message:
-                                                          "must NOT have more than 256 characters",
+                                                          "must NOT have more than 128 characters",
                                                       },
                                                     ];
                                                     return false;
+                                                  } else {
+                                                    if (func2(data25) < 1) {
+                                                      validate21.errors = [
+                                                        {
+                                                          instancePath:
+                                                            instancePath +
+                                                            "/objects/" +
+                                                            i3 +
+                                                            "/id",
+                                                          schemaPath:
+                                                            "#/$defs/OperationObject/properties/id/minLength",
+                                                          keyword: "minLength",
+                                                          params: { limit: 1 },
+                                                          message:
+                                                            "must NOT have fewer than 1 characters",
+                                                        },
+                                                      ];
+                                                      return false;
+                                                    } else {
+                                                      if (
+                                                        !pattern4.test(data25)
+                                                      ) {
+                                                        validate21.errors = [
+                                                          {
+                                                            instancePath:
+                                                              instancePath +
+                                                              "/objects/" +
+                                                              i3 +
+                                                              "/id",
+                                                            schemaPath:
+                                                              "#/$defs/OperationObject/properties/id/pattern",
+                                                            keyword: "pattern",
+                                                            params: {
+                                                              pattern:
+                                                                "^[a-zA-Z0-9_-]+$",
+                                                            },
+                                                            message:
+                                                              'must match pattern "' +
+                                                              "^[a-zA-Z0-9_-]+$" +
+                                                              '"',
+                                                          },
+                                                        ];
+                                                        return false;
+                                                      }
+                                                    }
                                                   }
                                                 } else {
                                                   validate21.errors = [
                                                     {
                                                       instancePath:
                                                         instancePath +
-                                                        "/approval/user",
+                                                        "/objects/" +
+                                                        i3 +
+                                                        "/id",
                                                       schemaPath:
-                                                        "#/properties/approval/properties/user/type",
+                                                        "#/$defs/OperationObject/properties/id/type",
                                                       keyword: "type",
                                                       params: {
                                                         type: "string",
@@ -2446,28 +2516,28 @@ function validate21(
                                                   return false;
                                                 }
                                               }
-                                              var valid16 = _errs83 === errors;
+                                              var valid19 = _errs87 === errors;
                                             } else {
-                                              var valid16 = true;
+                                              var valid19 = true;
                                             }
-                                            if (valid16) {
-                                              if (
-                                                data23.enterprise !== undefined
-                                              ) {
-                                                let data25 = data23.enterprise;
-                                                const _errs85 = errors;
-                                                if (errors === _errs85) {
+                                            if (valid19) {
+                                              if (data24.label !== undefined) {
+                                                let data26 = data24.label;
+                                                const _errs89 = errors;
+                                                if (errors === _errs89) {
                                                   if (
-                                                    typeof data25 === "string"
+                                                    typeof data26 === "string"
                                                   ) {
-                                                    if (func2(data25) > 256) {
+                                                    if (func2(data26) > 256) {
                                                       validate21.errors = [
                                                         {
                                                           instancePath:
                                                             instancePath +
-                                                            "/approval/enterprise",
+                                                            "/objects/" +
+                                                            i3 +
+                                                            "/label",
                                                           schemaPath:
-                                                            "#/properties/approval/properties/enterprise/maxLength",
+                                                            "#/$defs/OperationObject/properties/label/maxLength",
                                                           keyword: "maxLength",
                                                           params: {
                                                             limit: 256,
@@ -2483,9 +2553,11 @@ function validate21(
                                                       {
                                                         instancePath:
                                                           instancePath +
-                                                          "/approval/enterprise",
+                                                          "/objects/" +
+                                                          i3 +
+                                                          "/label",
                                                         schemaPath:
-                                                          "#/properties/approval/properties/enterprise/type",
+                                                          "#/$defs/OperationObject/properties/label/type",
                                                         keyword: "type",
                                                         params: {
                                                           type: "string",
@@ -2497,29 +2569,1394 @@ function validate21(
                                                     return false;
                                                   }
                                                 }
-                                                var valid16 =
-                                                  _errs85 === errors;
+                                                var valid19 =
+                                                  _errs89 === errors;
                                               } else {
-                                                var valid16 = true;
+                                                var valid19 = true;
                                               }
-                                              if (valid16) {
+                                              if (valid19) {
                                                 if (
-                                                  data23.elevation !== undefined
+                                                  data24.detail !== undefined
                                                 ) {
-                                                  let data26 = data23.elevation;
-                                                  const _errs87 = errors;
-                                                  if (errors === _errs87) {
+                                                  let data27 = data24.detail;
+                                                  const _errs91 = errors;
+                                                  if (errors === _errs91) {
                                                     if (
-                                                      typeof data26 === "string"
+                                                      typeof data27 === "string"
                                                     ) {
-                                                      if (func2(data26) > 256) {
+                                                      if (
+                                                        func2(data27) > 4096
+                                                      ) {
                                                         validate21.errors = [
                                                           {
                                                             instancePath:
                                                               instancePath +
-                                                              "/approval/elevation",
+                                                              "/objects/" +
+                                                              i3 +
+                                                              "/detail",
                                                             schemaPath:
-                                                              "#/properties/approval/properties/elevation/maxLength",
+                                                              "#/$defs/OperationObject/properties/detail/maxLength",
+                                                            keyword:
+                                                              "maxLength",
+                                                            params: {
+                                                              limit: 4096,
+                                                            },
+                                                            message:
+                                                              "must NOT have more than 4096 characters",
+                                                          },
+                                                        ];
+                                                        return false;
+                                                      }
+                                                    } else {
+                                                      validate21.errors = [
+                                                        {
+                                                          instancePath:
+                                                            instancePath +
+                                                            "/objects/" +
+                                                            i3 +
+                                                            "/detail",
+                                                          schemaPath:
+                                                            "#/$defs/OperationObject/properties/detail/type",
+                                                          keyword: "type",
+                                                          params: {
+                                                            type: "string",
+                                                          },
+                                                          message:
+                                                            "must be string",
+                                                        },
+                                                      ];
+                                                      return false;
+                                                    }
+                                                  }
+                                                  var valid19 =
+                                                    _errs91 === errors;
+                                                } else {
+                                                  var valid19 = true;
+                                                }
+                                                if (valid19) {
+                                                  if (
+                                                    data24.disabledReason !==
+                                                    undefined
+                                                  ) {
+                                                    let data28 =
+                                                      data24.disabledReason;
+                                                    const _errs93 = errors;
+                                                    if (errors === _errs93) {
+                                                      if (
+                                                        typeof data28 ===
+                                                        "string"
+                                                      ) {
+                                                        if (
+                                                          func2(data28) > 4096
+                                                        ) {
+                                                          validate21.errors = [
+                                                            {
+                                                              instancePath:
+                                                                instancePath +
+                                                                "/objects/" +
+                                                                i3 +
+                                                                "/disabledReason",
+                                                              schemaPath:
+                                                                "#/$defs/OperationObject/properties/disabledReason/maxLength",
+                                                              keyword:
+                                                                "maxLength",
+                                                              params: {
+                                                                limit: 4096,
+                                                              },
+                                                              message:
+                                                                "must NOT have more than 4096 characters",
+                                                            },
+                                                          ];
+                                                          return false;
+                                                        }
+                                                      } else {
+                                                        validate21.errors = [
+                                                          {
+                                                            instancePath:
+                                                              instancePath +
+                                                              "/objects/" +
+                                                              i3 +
+                                                              "/disabledReason",
+                                                            schemaPath:
+                                                              "#/$defs/OperationObject/properties/disabledReason/type",
+                                                            keyword: "type",
+                                                            params: {
+                                                              type: "string",
+                                                            },
+                                                            message:
+                                                              "must be string",
+                                                          },
+                                                        ];
+                                                        return false;
+                                                      }
+                                                    }
+                                                    var valid19 =
+                                                      _errs93 === errors;
+                                                  } else {
+                                                    var valid19 = true;
+                                                  }
+                                                  if (valid19) {
+                                                    if (
+                                                      data24.status !==
+                                                      undefined
+                                                    ) {
+                                                      let data29 =
+                                                        data24.status;
+                                                      const _errs95 = errors;
+                                                      if (errors === _errs95) {
+                                                        if (
+                                                          typeof data29 ===
+                                                          "string"
+                                                        ) {
+                                                          if (
+                                                            func2(data29) > 256
+                                                          ) {
+                                                            validate21.errors =
+                                                              [
+                                                                {
+                                                                  instancePath:
+                                                                    instancePath +
+                                                                    "/objects/" +
+                                                                    i3 +
+                                                                    "/status",
+                                                                  schemaPath:
+                                                                    "#/$defs/OperationObject/properties/status/maxLength",
+                                                                  keyword:
+                                                                    "maxLength",
+                                                                  params: {
+                                                                    limit: 256,
+                                                                  },
+                                                                  message:
+                                                                    "must NOT have more than 256 characters",
+                                                                },
+                                                              ];
+                                                            return false;
+                                                          }
+                                                        } else {
+                                                          validate21.errors = [
+                                                            {
+                                                              instancePath:
+                                                                instancePath +
+                                                                "/objects/" +
+                                                                i3 +
+                                                                "/status",
+                                                              schemaPath:
+                                                                "#/$defs/OperationObject/properties/status/type",
+                                                              keyword: "type",
+                                                              params: {
+                                                                type: "string",
+                                                              },
+                                                              message:
+                                                                "must be string",
+                                                            },
+                                                          ];
+                                                          return false;
+                                                        }
+                                                      }
+                                                      var valid19 =
+                                                        _errs95 === errors;
+                                                    } else {
+                                                      var valid19 = true;
+                                                    }
+                                                  }
+                                                }
+                                              }
+                                            }
+                                          }
+                                        } else {
+                                          validate21.errors = [
+                                            {
+                                              instancePath:
+                                                instancePath + "/objects/" + i3,
+                                              schemaPath:
+                                                "#/$defs/OperationObject/type",
+                                              keyword: "type",
+                                              params: { type: "object" },
+                                              message: "must be object",
+                                            },
+                                          ];
+                                          return false;
+                                        }
+                                      }
+                                      var valid17 = _errs83 === errors;
+                                      if (!valid17) {
+                                        break;
+                                      }
+                                    }
+                                  }
+                                } else {
+                                  validate21.errors = [
+                                    {
+                                      instancePath: instancePath + "/objects",
+                                      schemaPath: "#/properties/objects/type",
+                                      keyword: "type",
+                                      params: { type: "array" },
+                                      message: "must be array",
+                                    },
+                                  ];
+                                  return false;
+                                }
+                              }
+                              var valid0 = _errs81 === errors;
+                            } else {
+                              var valid0 = true;
+                            }
+                            if (valid0) {
+                              if (data.logs !== undefined) {
+                                let data30 = data.logs;
+                                const _errs97 = errors;
+                                if (errors === _errs97) {
+                                  if (Array.isArray(data30)) {
+                                    if (data30.length > 200) {
+                                      validate21.errors = [
+                                        {
+                                          instancePath: instancePath + "/logs",
+                                          schemaPath:
+                                            "#/properties/logs/maxItems",
+                                          keyword: "maxItems",
+                                          params: { limit: 200 },
+                                          message:
+                                            "must NOT have more than 200 items",
+                                        },
+                                      ];
+                                      return false;
+                                    } else {
+                                      var valid20 = true;
+                                      const len4 = data30.length;
+                                      for (let i4 = 0; i4 < len4; i4++) {
+                                        let data31 = data30[i4];
+                                        const _errs99 = errors;
+                                        if (errors === _errs99) {
+                                          if (typeof data31 === "string") {
+                                            if (func2(data31) > 2048) {
+                                              validate21.errors = [
+                                                {
+                                                  instancePath:
+                                                    instancePath +
+                                                    "/logs/" +
+                                                    i4,
+                                                  schemaPath:
+                                                    "#/properties/logs/items/maxLength",
+                                                  keyword: "maxLength",
+                                                  params: { limit: 2048 },
+                                                  message:
+                                                    "must NOT have more than 2048 characters",
+                                                },
+                                              ];
+                                              return false;
+                                            }
+                                          } else {
+                                            validate21.errors = [
+                                              {
+                                                instancePath:
+                                                  instancePath + "/logs/" + i4,
+                                                schemaPath:
+                                                  "#/properties/logs/items/type",
+                                                keyword: "type",
+                                                params: { type: "string" },
+                                                message: "must be string",
+                                              },
+                                            ];
+                                            return false;
+                                          }
+                                        }
+                                        var valid20 = _errs99 === errors;
+                                        if (!valid20) {
+                                          break;
+                                        }
+                                      }
+                                    }
+                                  } else {
+                                    validate21.errors = [
+                                      {
+                                        instancePath: instancePath + "/logs",
+                                        schemaPath: "#/properties/logs/type",
+                                        keyword: "type",
+                                        params: { type: "array" },
+                                        message: "must be array",
+                                      },
+                                    ];
+                                    return false;
+                                  }
+                                }
+                                var valid0 = _errs97 === errors;
+                              } else {
+                                var valid0 = true;
+                              }
+                              if (valid0) {
+                                if (data.progress !== undefined) {
+                                  let data32 = data.progress;
+                                  const _errs101 = errors;
+                                  if (errors === _errs101) {
+                                    if (
+                                      data32 &&
+                                      typeof data32 == "object" &&
+                                      !Array.isArray(data32)
+                                    ) {
+                                      let missing4;
+                                      if (
+                                        (data32.completed === undefined &&
+                                          (missing4 = "completed")) ||
+                                        (data32.total === undefined &&
+                                          (missing4 = "total"))
+                                      ) {
+                                        validate21.errors = [
+                                          {
+                                            instancePath:
+                                              instancePath + "/progress",
+                                            schemaPath:
+                                              "#/properties/progress/required",
+                                            keyword: "required",
+                                            params: {
+                                              missingProperty: missing4,
+                                            },
+                                            message:
+                                              "must have required property '" +
+                                              missing4 +
+                                              "'",
+                                          },
+                                        ];
+                                        return false;
+                                      } else {
+                                        const _errs103 = errors;
+                                        for (const key7 in data32) {
+                                          if (
+                                            !(
+                                              key7 === "completed" ||
+                                              key7 === "total"
+                                            )
+                                          ) {
+                                            validate21.errors = [
+                                              {
+                                                instancePath:
+                                                  instancePath + "/progress",
+                                                schemaPath:
+                                                  "#/properties/progress/additionalProperties",
+                                                keyword: "additionalProperties",
+                                                params: {
+                                                  additionalProperty: key7,
+                                                },
+                                                message:
+                                                  "must NOT have additional properties",
+                                              },
+                                            ];
+                                            return false;
+                                            break;
+                                          }
+                                        }
+                                        if (_errs103 === errors) {
+                                          if (data32.completed !== undefined) {
+                                            let data33 = data32.completed;
+                                            const _errs104 = errors;
+                                            if (errors === _errs104) {
+                                              if (
+                                                typeof data33 == "number" &&
+                                                isFinite(data33)
+                                              ) {
+                                                if (
+                                                  data33 < 0 ||
+                                                  isNaN(data33)
+                                                ) {
+                                                  validate21.errors = [
+                                                    {
+                                                      instancePath:
+                                                        instancePath +
+                                                        "/progress/completed",
+                                                      schemaPath:
+                                                        "#/properties/progress/properties/completed/minimum",
+                                                      keyword: "minimum",
+                                                      params: {
+                                                        comparison: ">=",
+                                                        limit: 0,
+                                                      },
+                                                      message: "must be >= 0",
+                                                    },
+                                                  ];
+                                                  return false;
+                                                }
+                                              } else {
+                                                validate21.errors = [
+                                                  {
+                                                    instancePath:
+                                                      instancePath +
+                                                      "/progress/completed",
+                                                    schemaPath:
+                                                      "#/properties/progress/properties/completed/type",
+                                                    keyword: "type",
+                                                    params: { type: "number" },
+                                                    message: "must be number",
+                                                  },
+                                                ];
+                                                return false;
+                                              }
+                                            }
+                                            var valid21 = _errs104 === errors;
+                                          } else {
+                                            var valid21 = true;
+                                          }
+                                          if (valid21) {
+                                            if (data32.total !== undefined) {
+                                              let data34 = data32.total;
+                                              const _errs106 = errors;
+                                              if (errors === _errs106) {
+                                                if (
+                                                  typeof data34 == "number" &&
+                                                  isFinite(data34)
+                                                ) {
+                                                  if (
+                                                    data34 <= 0 ||
+                                                    isNaN(data34)
+                                                  ) {
+                                                    validate21.errors = [
+                                                      {
+                                                        instancePath:
+                                                          instancePath +
+                                                          "/progress/total",
+                                                        schemaPath:
+                                                          "#/properties/progress/properties/total/exclusiveMinimum",
+                                                        keyword:
+                                                          "exclusiveMinimum",
+                                                        params: {
+                                                          comparison: ">",
+                                                          limit: 0,
+                                                        },
+                                                        message: "must be > 0",
+                                                      },
+                                                    ];
+                                                    return false;
+                                                  }
+                                                } else {
+                                                  validate21.errors = [
+                                                    {
+                                                      instancePath:
+                                                        instancePath +
+                                                        "/progress/total",
+                                                      schemaPath:
+                                                        "#/properties/progress/properties/total/type",
+                                                      keyword: "type",
+                                                      params: {
+                                                        type: "number",
+                                                      },
+                                                      message: "must be number",
+                                                    },
+                                                  ];
+                                                  return false;
+                                                }
+                                              }
+                                              var valid21 = _errs106 === errors;
+                                            } else {
+                                              var valid21 = true;
+                                            }
+                                          }
+                                        }
+                                      }
+                                    } else {
+                                      validate21.errors = [
+                                        {
+                                          instancePath:
+                                            instancePath + "/progress",
+                                          schemaPath:
+                                            "#/properties/progress/type",
+                                          keyword: "type",
+                                          params: { type: "object" },
+                                          message: "must be object",
+                                        },
+                                      ];
+                                      return false;
+                                    }
+                                  }
+                                  var valid0 = _errs101 === errors;
+                                } else {
+                                  var valid0 = true;
+                                }
+                                if (valid0) {
+                                  if (data.result !== undefined) {
+                                    let data35 = data.result;
+                                    const _errs108 = errors;
+                                    if (errors === _errs108) {
+                                      if (typeof data35 === "string") {
+                                        if (func2(data35) > 4096) {
+                                          validate21.errors = [
+                                            {
+                                              instancePath:
+                                                instancePath + "/result",
+                                              schemaPath:
+                                                "#/properties/result/maxLength",
+                                              keyword: "maxLength",
+                                              params: { limit: 4096 },
+                                              message:
+                                                "must NOT have more than 4096 characters",
+                                            },
+                                          ];
+                                          return false;
+                                        }
+                                      } else {
+                                        validate21.errors = [
+                                          {
+                                            instancePath:
+                                              instancePath + "/result",
+                                            schemaPath:
+                                              "#/properties/result/type",
+                                            keyword: "type",
+                                            params: { type: "string" },
+                                            message: "must be string",
+                                          },
+                                        ];
+                                        return false;
+                                      }
+                                    }
+                                    var valid0 = _errs108 === errors;
+                                  } else {
+                                    var valid0 = true;
+                                  }
+                                  if (valid0) {
+                                    if (data.interaction !== undefined) {
+                                      let data36 = data.interaction;
+                                      const _errs110 = errors;
+                                      const _errs111 = errors;
+                                      if (errors === _errs111) {
+                                        if (
+                                          data36 &&
+                                          typeof data36 == "object" &&
+                                          !Array.isArray(data36)
+                                        ) {
+                                          let missing5;
+                                          if (
+                                            (data36.id === undefined &&
+                                              (missing5 = "id")) ||
+                                            (data36.question === undefined &&
+                                              (missing5 = "question")) ||
+                                            (data36.options === undefined &&
+                                              (missing5 = "options")) ||
+                                            (data36.expiresAtMs === undefined &&
+                                              (missing5 = "expiresAtMs"))
+                                          ) {
+                                            validate21.errors = [
+                                              {
+                                                instancePath:
+                                                  instancePath + "/interaction",
+                                                schemaPath:
+                                                  "#/$defs/OperationInteraction/required",
+                                                keyword: "required",
+                                                params: {
+                                                  missingProperty: missing5,
+                                                },
+                                                message:
+                                                  "must have required property '" +
+                                                  missing5 +
+                                                  "'",
+                                              },
+                                            ];
+                                            return false;
+                                          } else {
+                                            const _errs113 = errors;
+                                            for (const key8 in data36) {
+                                              if (
+                                                !(
+                                                  key8 === "id" ||
+                                                  key8 === "question" ||
+                                                  key8 === "options" ||
+                                                  key8 === "expiresAtMs"
+                                                )
+                                              ) {
+                                                validate21.errors = [
+                                                  {
+                                                    instancePath:
+                                                      instancePath +
+                                                      "/interaction",
+                                                    schemaPath:
+                                                      "#/$defs/OperationInteraction/additionalProperties",
+                                                    keyword:
+                                                      "additionalProperties",
+                                                    params: {
+                                                      additionalProperty: key8,
+                                                    },
+                                                    message:
+                                                      "must NOT have additional properties",
+                                                  },
+                                                ];
+                                                return false;
+                                                break;
+                                              }
+                                            }
+                                            if (_errs113 === errors) {
+                                              if (data36.id !== undefined) {
+                                                let data37 = data36.id;
+                                                const _errs114 = errors;
+                                                if (errors === _errs114) {
+                                                  if (
+                                                    typeof data37 === "string"
+                                                  ) {
+                                                    if (func2(data37) > 128) {
+                                                      validate21.errors = [
+                                                        {
+                                                          instancePath:
+                                                            instancePath +
+                                                            "/interaction/id",
+                                                          schemaPath:
+                                                            "#/$defs/OperationInteraction/properties/id/maxLength",
+                                                          keyword: "maxLength",
+                                                          params: {
+                                                            limit: 128,
+                                                          },
+                                                          message:
+                                                            "must NOT have more than 128 characters",
+                                                        },
+                                                      ];
+                                                      return false;
+                                                    } else {
+                                                      if (func2(data37) < 1) {
+                                                        validate21.errors = [
+                                                          {
+                                                            instancePath:
+                                                              instancePath +
+                                                              "/interaction/id",
+                                                            schemaPath:
+                                                              "#/$defs/OperationInteraction/properties/id/minLength",
+                                                            keyword:
+                                                              "minLength",
+                                                            params: {
+                                                              limit: 1,
+                                                            },
+                                                            message:
+                                                              "must NOT have fewer than 1 characters",
+                                                          },
+                                                        ];
+                                                        return false;
+                                                      } else {
+                                                        if (
+                                                          !pattern4.test(data37)
+                                                        ) {
+                                                          validate21.errors = [
+                                                            {
+                                                              instancePath:
+                                                                instancePath +
+                                                                "/interaction/id",
+                                                              schemaPath:
+                                                                "#/$defs/OperationInteraction/properties/id/pattern",
+                                                              keyword:
+                                                                "pattern",
+                                                              params: {
+                                                                pattern:
+                                                                  "^[a-zA-Z0-9_-]+$",
+                                                              },
+                                                              message:
+                                                                'must match pattern "' +
+                                                                "^[a-zA-Z0-9_-]+$" +
+                                                                '"',
+                                                            },
+                                                          ];
+                                                          return false;
+                                                        }
+                                                      }
+                                                    }
+                                                  } else {
+                                                    validate21.errors = [
+                                                      {
+                                                        instancePath:
+                                                          instancePath +
+                                                          "/interaction/id",
+                                                        schemaPath:
+                                                          "#/$defs/OperationInteraction/properties/id/type",
+                                                        keyword: "type",
+                                                        params: {
+                                                          type: "string",
+                                                        },
+                                                        message:
+                                                          "must be string",
+                                                      },
+                                                    ];
+                                                    return false;
+                                                  }
+                                                }
+                                                var valid23 =
+                                                  _errs114 === errors;
+                                              } else {
+                                                var valid23 = true;
+                                              }
+                                              if (valid23) {
+                                                if (
+                                                  data36.question !== undefined
+                                                ) {
+                                                  let data38 = data36.question;
+                                                  const _errs116 = errors;
+                                                  if (errors === _errs116) {
+                                                    if (
+                                                      typeof data38 === "string"
+                                                    ) {
+                                                      if (
+                                                        func2(data38) > 4096
+                                                      ) {
+                                                        validate21.errors = [
+                                                          {
+                                                            instancePath:
+                                                              instancePath +
+                                                              "/interaction/question",
+                                                            schemaPath:
+                                                              "#/$defs/OperationInteraction/properties/question/maxLength",
+                                                            keyword:
+                                                              "maxLength",
+                                                            params: {
+                                                              limit: 4096,
+                                                            },
+                                                            message:
+                                                              "must NOT have more than 4096 characters",
+                                                          },
+                                                        ];
+                                                        return false;
+                                                      }
+                                                    } else {
+                                                      validate21.errors = [
+                                                        {
+                                                          instancePath:
+                                                            instancePath +
+                                                            "/interaction/question",
+                                                          schemaPath:
+                                                            "#/$defs/OperationInteraction/properties/question/type",
+                                                          keyword: "type",
+                                                          params: {
+                                                            type: "string",
+                                                          },
+                                                          message:
+                                                            "must be string",
+                                                        },
+                                                      ];
+                                                      return false;
+                                                    }
+                                                  }
+                                                  var valid23 =
+                                                    _errs116 === errors;
+                                                } else {
+                                                  var valid23 = true;
+                                                }
+                                                if (valid23) {
+                                                  if (
+                                                    data36.options !== undefined
+                                                  ) {
+                                                    let data39 = data36.options;
+                                                    const _errs118 = errors;
+                                                    if (errors === _errs118) {
+                                                      if (
+                                                        Array.isArray(data39)
+                                                      ) {
+                                                        if (
+                                                          data39.length > 16
+                                                        ) {
+                                                          validate21.errors = [
+                                                            {
+                                                              instancePath:
+                                                                instancePath +
+                                                                "/interaction/options",
+                                                              schemaPath:
+                                                                "#/$defs/OperationInteraction/properties/options/maxItems",
+                                                              keyword:
+                                                                "maxItems",
+                                                              params: {
+                                                                limit: 16,
+                                                              },
+                                                              message:
+                                                                "must NOT have more than 16 items",
+                                                            },
+                                                          ];
+                                                          return false;
+                                                        } else {
+                                                          var valid24 = true;
+                                                          const len5 =
+                                                            data39.length;
+                                                          for (
+                                                            let i5 = 0;
+                                                            i5 < len5;
+                                                            i5++
+                                                          ) {
+                                                            let data40 =
+                                                              data39[i5];
+                                                            const _errs120 =
+                                                              errors;
+                                                            if (
+                                                              errors ===
+                                                              _errs120
+                                                            ) {
+                                                              if (
+                                                                data40 &&
+                                                                typeof data40 ==
+                                                                  "object" &&
+                                                                !Array.isArray(
+                                                                  data40,
+                                                                )
+                                                              ) {
+                                                                let missing6;
+                                                                if (
+                                                                  (data40.id ===
+                                                                    undefined &&
+                                                                    (missing6 =
+                                                                      "id")) ||
+                                                                  (data40.label ===
+                                                                    undefined &&
+                                                                    (missing6 =
+                                                                      "label"))
+                                                                ) {
+                                                                  validate21.errors =
+                                                                    [
+                                                                      {
+                                                                        instancePath:
+                                                                          instancePath +
+                                                                          "/interaction/options/" +
+                                                                          i5,
+                                                                        schemaPath:
+                                                                          "#/$defs/OperationInteraction/properties/options/items/required",
+                                                                        keyword:
+                                                                          "required",
+                                                                        params:
+                                                                          {
+                                                                            missingProperty:
+                                                                              missing6,
+                                                                          },
+                                                                        message:
+                                                                          "must have required property '" +
+                                                                          missing6 +
+                                                                          "'",
+                                                                      },
+                                                                    ];
+                                                                  return false;
+                                                                } else {
+                                                                  const _errs122 =
+                                                                    errors;
+                                                                  for (const key9 in data40) {
+                                                                    if (
+                                                                      !(
+                                                                        key9 ===
+                                                                          "id" ||
+                                                                        key9 ===
+                                                                          "label"
+                                                                      )
+                                                                    ) {
+                                                                      validate21.errors =
+                                                                        [
+                                                                          {
+                                                                            instancePath:
+                                                                              instancePath +
+                                                                              "/interaction/options/" +
+                                                                              i5,
+                                                                            schemaPath:
+                                                                              "#/$defs/OperationInteraction/properties/options/items/additionalProperties",
+                                                                            keyword:
+                                                                              "additionalProperties",
+                                                                            params:
+                                                                              {
+                                                                                additionalProperty:
+                                                                                  key9,
+                                                                              },
+                                                                            message:
+                                                                              "must NOT have additional properties",
+                                                                          },
+                                                                        ];
+                                                                      return false;
+                                                                      break;
+                                                                    }
+                                                                  }
+                                                                  if (
+                                                                    _errs122 ===
+                                                                    errors
+                                                                  ) {
+                                                                    if (
+                                                                      data40.id !==
+                                                                      undefined
+                                                                    ) {
+                                                                      let data41 =
+                                                                        data40.id;
+                                                                      const _errs123 =
+                                                                        errors;
+                                                                      if (
+                                                                        errors ===
+                                                                        _errs123
+                                                                      ) {
+                                                                        if (
+                                                                          typeof data41 ===
+                                                                          "string"
+                                                                        ) {
+                                                                          if (
+                                                                            func2(
+                                                                              data41,
+                                                                            ) >
+                                                                            128
+                                                                          ) {
+                                                                            validate21.errors =
+                                                                              [
+                                                                                {
+                                                                                  instancePath:
+                                                                                    instancePath +
+                                                                                    "/interaction/options/" +
+                                                                                    i5 +
+                                                                                    "/id",
+                                                                                  schemaPath:
+                                                                                    "#/$defs/OperationInteraction/properties/options/items/properties/id/maxLength",
+                                                                                  keyword:
+                                                                                    "maxLength",
+                                                                                  params:
+                                                                                    {
+                                                                                      limit: 128,
+                                                                                    },
+                                                                                  message:
+                                                                                    "must NOT have more than 128 characters",
+                                                                                },
+                                                                              ];
+                                                                            return false;
+                                                                          } else {
+                                                                            if (
+                                                                              func2(
+                                                                                data41,
+                                                                              ) <
+                                                                              1
+                                                                            ) {
+                                                                              validate21.errors =
+                                                                                [
+                                                                                  {
+                                                                                    instancePath:
+                                                                                      instancePath +
+                                                                                      "/interaction/options/" +
+                                                                                      i5 +
+                                                                                      "/id",
+                                                                                    schemaPath:
+                                                                                      "#/$defs/OperationInteraction/properties/options/items/properties/id/minLength",
+                                                                                    keyword:
+                                                                                      "minLength",
+                                                                                    params:
+                                                                                      {
+                                                                                        limit: 1,
+                                                                                      },
+                                                                                    message:
+                                                                                      "must NOT have fewer than 1 characters",
+                                                                                  },
+                                                                                ];
+                                                                              return false;
+                                                                            } else {
+                                                                              if (
+                                                                                !pattern4.test(
+                                                                                  data41,
+                                                                                )
+                                                                              ) {
+                                                                                validate21.errors =
+                                                                                  [
+                                                                                    {
+                                                                                      instancePath:
+                                                                                        instancePath +
+                                                                                        "/interaction/options/" +
+                                                                                        i5 +
+                                                                                        "/id",
+                                                                                      schemaPath:
+                                                                                        "#/$defs/OperationInteraction/properties/options/items/properties/id/pattern",
+                                                                                      keyword:
+                                                                                        "pattern",
+                                                                                      params:
+                                                                                        {
+                                                                                          pattern:
+                                                                                            "^[a-zA-Z0-9_-]+$",
+                                                                                        },
+                                                                                      message:
+                                                                                        'must match pattern "' +
+                                                                                        "^[a-zA-Z0-9_-]+$" +
+                                                                                        '"',
+                                                                                    },
+                                                                                  ];
+                                                                                return false;
+                                                                              }
+                                                                            }
+                                                                          }
+                                                                        } else {
+                                                                          validate21.errors =
+                                                                            [
+                                                                              {
+                                                                                instancePath:
+                                                                                  instancePath +
+                                                                                  "/interaction/options/" +
+                                                                                  i5 +
+                                                                                  "/id",
+                                                                                schemaPath:
+                                                                                  "#/$defs/OperationInteraction/properties/options/items/properties/id/type",
+                                                                                keyword:
+                                                                                  "type",
+                                                                                params:
+                                                                                  {
+                                                                                    type: "string",
+                                                                                  },
+                                                                                message:
+                                                                                  "must be string",
+                                                                              },
+                                                                            ];
+                                                                          return false;
+                                                                        }
+                                                                      }
+                                                                      var valid25 =
+                                                                        _errs123 ===
+                                                                        errors;
+                                                                    } else {
+                                                                      var valid25 = true;
+                                                                    }
+                                                                    if (
+                                                                      valid25
+                                                                    ) {
+                                                                      if (
+                                                                        data40.label !==
+                                                                        undefined
+                                                                      ) {
+                                                                        let data42 =
+                                                                          data40.label;
+                                                                        const _errs125 =
+                                                                          errors;
+                                                                        if (
+                                                                          errors ===
+                                                                          _errs125
+                                                                        ) {
+                                                                          if (
+                                                                            typeof data42 ===
+                                                                            "string"
+                                                                          ) {
+                                                                            if (
+                                                                              func2(
+                                                                                data42,
+                                                                              ) >
+                                                                              256
+                                                                            ) {
+                                                                              validate21.errors =
+                                                                                [
+                                                                                  {
+                                                                                    instancePath:
+                                                                                      instancePath +
+                                                                                      "/interaction/options/" +
+                                                                                      i5 +
+                                                                                      "/label",
+                                                                                    schemaPath:
+                                                                                      "#/$defs/OperationInteraction/properties/options/items/properties/label/maxLength",
+                                                                                    keyword:
+                                                                                      "maxLength",
+                                                                                    params:
+                                                                                      {
+                                                                                        limit: 256,
+                                                                                      },
+                                                                                    message:
+                                                                                      "must NOT have more than 256 characters",
+                                                                                  },
+                                                                                ];
+                                                                              return false;
+                                                                            }
+                                                                          } else {
+                                                                            validate21.errors =
+                                                                              [
+                                                                                {
+                                                                                  instancePath:
+                                                                                    instancePath +
+                                                                                    "/interaction/options/" +
+                                                                                    i5 +
+                                                                                    "/label",
+                                                                                  schemaPath:
+                                                                                    "#/$defs/OperationInteraction/properties/options/items/properties/label/type",
+                                                                                  keyword:
+                                                                                    "type",
+                                                                                  params:
+                                                                                    {
+                                                                                      type: "string",
+                                                                                    },
+                                                                                  message:
+                                                                                    "must be string",
+                                                                                },
+                                                                              ];
+                                                                            return false;
+                                                                          }
+                                                                        }
+                                                                        var valid25 =
+                                                                          _errs125 ===
+                                                                          errors;
+                                                                      } else {
+                                                                        var valid25 = true;
+                                                                      }
+                                                                    }
+                                                                  }
+                                                                }
+                                                              } else {
+                                                                validate21.errors =
+                                                                  [
+                                                                    {
+                                                                      instancePath:
+                                                                        instancePath +
+                                                                        "/interaction/options/" +
+                                                                        i5,
+                                                                      schemaPath:
+                                                                        "#/$defs/OperationInteraction/properties/options/items/type",
+                                                                      keyword:
+                                                                        "type",
+                                                                      params: {
+                                                                        type: "object",
+                                                                      },
+                                                                      message:
+                                                                        "must be object",
+                                                                    },
+                                                                  ];
+                                                                return false;
+                                                              }
+                                                            }
+                                                            var valid24 =
+                                                              _errs120 ===
+                                                              errors;
+                                                            if (!valid24) {
+                                                              break;
+                                                            }
+                                                          }
+                                                        }
+                                                      } else {
+                                                        validate21.errors = [
+                                                          {
+                                                            instancePath:
+                                                              instancePath +
+                                                              "/interaction/options",
+                                                            schemaPath:
+                                                              "#/$defs/OperationInteraction/properties/options/type",
+                                                            keyword: "type",
+                                                            params: {
+                                                              type: "array",
+                                                            },
+                                                            message:
+                                                              "must be array",
+                                                          },
+                                                        ];
+                                                        return false;
+                                                      }
+                                                    }
+                                                    var valid23 =
+                                                      _errs118 === errors;
+                                                  } else {
+                                                    var valid23 = true;
+                                                  }
+                                                  if (valid23) {
+                                                    if (
+                                                      data36.expiresAtMs !==
+                                                      undefined
+                                                    ) {
+                                                      let data43 =
+                                                        data36.expiresAtMs;
+                                                      const _errs127 = errors;
+                                                      if (
+                                                        !(
+                                                          typeof data43 ==
+                                                            "number" &&
+                                                          !(data43 % 1) &&
+                                                          !isNaN(data43) &&
+                                                          isFinite(data43)
+                                                        )
+                                                      ) {
+                                                        validate21.errors = [
+                                                          {
+                                                            instancePath:
+                                                              instancePath +
+                                                              "/interaction/expiresAtMs",
+                                                            schemaPath:
+                                                              "#/$defs/OperationInteraction/properties/expiresAtMs/type",
+                                                            keyword: "type",
+                                                            params: {
+                                                              type: "integer",
+                                                            },
+                                                            message:
+                                                              "must be integer",
+                                                          },
+                                                        ];
+                                                        return false;
+                                                      }
+                                                      if (errors === _errs127) {
+                                                        if (
+                                                          typeof data43 ==
+                                                            "number" &&
+                                                          isFinite(data43)
+                                                        ) {
+                                                          if (
+                                                            data43 < 0 ||
+                                                            isNaN(data43)
+                                                          ) {
+                                                            validate21.errors =
+                                                              [
+                                                                {
+                                                                  instancePath:
+                                                                    instancePath +
+                                                                    "/interaction/expiresAtMs",
+                                                                  schemaPath:
+                                                                    "#/$defs/OperationInteraction/properties/expiresAtMs/minimum",
+                                                                  keyword:
+                                                                    "minimum",
+                                                                  params: {
+                                                                    comparison:
+                                                                      ">=",
+                                                                    limit: 0,
+                                                                  },
+                                                                  message:
+                                                                    "must be >= 0",
+                                                                },
+                                                              ];
+                                                            return false;
+                                                          }
+                                                        }
+                                                      }
+                                                      var valid23 =
+                                                        _errs127 === errors;
+                                                    } else {
+                                                      var valid23 = true;
+                                                    }
+                                                  }
+                                                }
+                                              }
+                                            }
+                                          }
+                                        } else {
+                                          validate21.errors = [
+                                            {
+                                              instancePath:
+                                                instancePath + "/interaction",
+                                              schemaPath:
+                                                "#/$defs/OperationInteraction/type",
+                                              keyword: "type",
+                                              params: { type: "object" },
+                                              message: "must be object",
+                                            },
+                                          ];
+                                          return false;
+                                        }
+                                      }
+                                      var valid0 = _errs110 === errors;
+                                    } else {
+                                      var valid0 = true;
+                                    }
+                                    if (valid0) {
+                                      if (data.expiresAtMs !== undefined) {
+                                        let data44 = data.expiresAtMs;
+                                        const _errs129 = errors;
+                                        if (
+                                          !(
+                                            typeof data44 == "number" &&
+                                            !(data44 % 1) &&
+                                            !isNaN(data44) &&
+                                            isFinite(data44)
+                                          )
+                                        ) {
+                                          validate21.errors = [
+                                            {
+                                              instancePath:
+                                                instancePath + "/expiresAtMs",
+                                              schemaPath:
+                                                "#/properties/expiresAtMs/type",
+                                              keyword: "type",
+                                              params: { type: "integer" },
+                                              message: "must be integer",
+                                            },
+                                          ];
+                                          return false;
+                                        }
+                                        if (errors === _errs129) {
+                                          if (
+                                            typeof data44 == "number" &&
+                                            isFinite(data44)
+                                          ) {
+                                            if (
+                                              data44 > 9007199254740991 ||
+                                              isNaN(data44)
+                                            ) {
+                                              validate21.errors = [
+                                                {
+                                                  instancePath:
+                                                    instancePath +
+                                                    "/expiresAtMs",
+                                                  schemaPath:
+                                                    "#/properties/expiresAtMs/maximum",
+                                                  keyword: "maximum",
+                                                  params: {
+                                                    comparison: "<=",
+                                                    limit: 9007199254740991,
+                                                  },
+                                                  message:
+                                                    "must be <= 9007199254740991",
+                                                },
+                                              ];
+                                              return false;
+                                            } else {
+                                              if (data44 < 0 || isNaN(data44)) {
+                                                validate21.errors = [
+                                                  {
+                                                    instancePath:
+                                                      instancePath +
+                                                      "/expiresAtMs",
+                                                    schemaPath:
+                                                      "#/properties/expiresAtMs/minimum",
+                                                    keyword: "minimum",
+                                                    params: {
+                                                      comparison: ">=",
+                                                      limit: 0,
+                                                    },
+                                                    message: "must be >= 0",
+                                                  },
+                                                ];
+                                                return false;
+                                              }
+                                            }
+                                          }
+                                        }
+                                        var valid0 = _errs129 === errors;
+                                      } else {
+                                        var valid0 = true;
+                                      }
+                                      if (valid0) {
+                                        if (data.presentation !== undefined) {
+                                          let data45 = data.presentation;
+                                          const _errs131 = errors;
+                                          if (errors === _errs131) {
+                                            if (
+                                              data45 &&
+                                              typeof data45 == "object" &&
+                                              !Array.isArray(data45)
+                                            ) {
+                                              let missing7;
+                                              if (
+                                                (data45.title === undefined &&
+                                                  (missing7 = "title")) ||
+                                                (data45.targetLabel ===
+                                                  undefined &&
+                                                  (missing7 = "targetLabel")) ||
+                                                (data45.source === undefined &&
+                                                  (missing7 = "source")) ||
+                                                (data45.impact === undefined &&
+                                                  (missing7 = "impact"))
+                                              ) {
+                                                validate21.errors = [
+                                                  {
+                                                    instancePath:
+                                                      instancePath +
+                                                      "/presentation",
+                                                    schemaPath:
+                                                      "#/properties/presentation/required",
+                                                    keyword: "required",
+                                                    params: {
+                                                      missingProperty: missing7,
+                                                    },
+                                                    message:
+                                                      "must have required property '" +
+                                                      missing7 +
+                                                      "'",
+                                                  },
+                                                ];
+                                                return false;
+                                              } else {
+                                                if (
+                                                  data45.title !== undefined
+                                                ) {
+                                                  let data46 = data45.title;
+                                                  const _errs134 = errors;
+                                                  if (errors === _errs134) {
+                                                    if (
+                                                      typeof data46 === "string"
+                                                    ) {
+                                                      if (func2(data46) > 256) {
+                                                        validate21.errors = [
+                                                          {
+                                                            instancePath:
+                                                              instancePath +
+                                                              "/presentation/title",
+                                                            schemaPath:
+                                                              "#/properties/presentation/properties/title/maxLength",
                                                             keyword:
                                                               "maxLength",
                                                             params: {
@@ -2536,9 +3973,9 @@ function validate21(
                                                         {
                                                           instancePath:
                                                             instancePath +
-                                                            "/approval/elevation",
+                                                            "/presentation/title",
                                                           schemaPath:
-                                                            "#/properties/approval/properties/elevation/type",
+                                                            "#/properties/presentation/properties/title/type",
                                                           keyword: "type",
                                                           params: {
                                                             type: "string",
@@ -2550,227 +3987,165 @@ function validate21(
                                                       return false;
                                                     }
                                                   }
-                                                  var valid16 =
-                                                    _errs87 === errors;
+                                                  var valid26 =
+                                                    _errs134 === errors;
                                                 } else {
-                                                  var valid16 = true;
+                                                  var valid26 = true;
                                                 }
-                                              }
-                                            }
-                                          }
-                                        }
-                                      } else {
-                                        validate21.errors = [
-                                          {
-                                            instancePath:
-                                              instancePath + "/approval",
-                                            schemaPath:
-                                              "#/properties/approval/type",
-                                            keyword: "type",
-                                            params: { type: "object" },
-                                            message: "must be object",
-                                          },
-                                        ];
-                                        return false;
-                                      }
-                                    }
-                                    var valid0 = _errs80 === errors;
-                                  } else {
-                                    var valid0 = true;
-                                  }
-                                  if (valid0) {
-                                    if (data.objects !== undefined) {
-                                      let data27 = data.objects;
-                                      const _errs89 = errors;
-                                      if (errors === _errs89) {
-                                        if (Array.isArray(data27)) {
-                                          if (data27.length > 128) {
-                                            validate21.errors = [
-                                              {
-                                                instancePath:
-                                                  instancePath + "/objects",
-                                                schemaPath:
-                                                  "#/properties/objects/maxItems",
-                                                keyword: "maxItems",
-                                                params: { limit: 128 },
-                                                message:
-                                                  "must NOT have more than 128 items",
-                                              },
-                                            ];
-                                            return false;
-                                          } else {
-                                            var valid17 = true;
-                                            const len3 = data27.length;
-                                            for (let i3 = 0; i3 < len3; i3++) {
-                                              let data28 = data27[i3];
-                                              const _errs91 = errors;
-                                              const _errs92 = errors;
-                                              if (errors === _errs92) {
-                                                if (
-                                                  data28 &&
-                                                  typeof data28 == "object" &&
-                                                  !Array.isArray(data28)
-                                                ) {
-                                                  let missing3;
+                                                if (valid26) {
                                                   if (
-                                                    (data28.id === undefined &&
-                                                      (missing3 = "id")) ||
-                                                    (data28.label ===
-                                                      undefined &&
-                                                      (missing3 = "label")) ||
-                                                    (data28.detail ===
-                                                      undefined &&
-                                                      (missing3 = "detail"))
+                                                    data45.targetLabel !==
+                                                    undefined
                                                   ) {
-                                                    validate21.errors = [
-                                                      {
-                                                        instancePath:
-                                                          instancePath +
-                                                          "/objects/" +
-                                                          i3,
-                                                        schemaPath:
-                                                          "#/$defs/OperationObject/required",
-                                                        keyword: "required",
-                                                        params: {
-                                                          missingProperty:
-                                                            missing3,
-                                                        },
-                                                        message:
-                                                          "must have required property '" +
-                                                          missing3 +
-                                                          "'",
-                                                      },
-                                                    ];
-                                                    return false;
-                                                  } else {
-                                                    const _errs94 = errors;
-                                                    for (const key7 in data28) {
+                                                    let data47 =
+                                                      data45.targetLabel;
+                                                    const _errs136 = errors;
+                                                    if (errors === _errs136) {
                                                       if (
-                                                        !(
-                                                          key7 === "id" ||
-                                                          key7 === "label" ||
-                                                          key7 === "detail" ||
-                                                          key7 ===
-                                                            "disabledReason" ||
-                                                          key7 === "status"
-                                                        )
+                                                        typeof data47 ===
+                                                        "string"
                                                       ) {
+                                                        if (
+                                                          func2(data47) > 256
+                                                        ) {
+                                                          validate21.errors = [
+                                                            {
+                                                              instancePath:
+                                                                instancePath +
+                                                                "/presentation/targetLabel",
+                                                              schemaPath:
+                                                                "#/properties/presentation/properties/targetLabel/maxLength",
+                                                              keyword:
+                                                                "maxLength",
+                                                              params: {
+                                                                limit: 256,
+                                                              },
+                                                              message:
+                                                                "must NOT have more than 256 characters",
+                                                            },
+                                                          ];
+                                                          return false;
+                                                        }
+                                                      } else {
                                                         validate21.errors = [
                                                           {
                                                             instancePath:
                                                               instancePath +
-                                                              "/objects/" +
-                                                              i3,
+                                                              "/presentation/targetLabel",
                                                             schemaPath:
-                                                              "#/$defs/OperationObject/additionalProperties",
-                                                            keyword:
-                                                              "additionalProperties",
+                                                              "#/properties/presentation/properties/targetLabel/type",
+                                                            keyword: "type",
                                                             params: {
-                                                              additionalProperty:
-                                                                key7,
+                                                              type: "string",
                                                             },
                                                             message:
-                                                              "must NOT have additional properties",
+                                                              "must be string",
                                                           },
                                                         ];
                                                         return false;
-                                                        break;
                                                       }
                                                     }
-                                                    if (_errs94 === errors) {
-                                                      if (
-                                                        data28.id !== undefined
-                                                      ) {
-                                                        let data29 = data28.id;
-                                                        const _errs95 = errors;
+                                                    var valid26 =
+                                                      _errs136 === errors;
+                                                  } else {
+                                                    var valid26 = true;
+                                                  }
+                                                  if (valid26) {
+                                                    if (
+                                                      data45.source !==
+                                                      undefined
+                                                    ) {
+                                                      let data48 =
+                                                        data45.source;
+                                                      const _errs138 = errors;
+                                                      if (errors === _errs138) {
                                                         if (
-                                                          errors === _errs95
+                                                          typeof data48 ===
+                                                          "string"
                                                         ) {
                                                           if (
-                                                            typeof data29 ===
+                                                            func2(data48) > 256
+                                                          ) {
+                                                            validate21.errors =
+                                                              [
+                                                                {
+                                                                  instancePath:
+                                                                    instancePath +
+                                                                    "/presentation/source",
+                                                                  schemaPath:
+                                                                    "#/properties/presentation/properties/source/maxLength",
+                                                                  keyword:
+                                                                    "maxLength",
+                                                                  params: {
+                                                                    limit: 256,
+                                                                  },
+                                                                  message:
+                                                                    "must NOT have more than 256 characters",
+                                                                },
+                                                              ];
+                                                            return false;
+                                                          }
+                                                        } else {
+                                                          validate21.errors = [
+                                                            {
+                                                              instancePath:
+                                                                instancePath +
+                                                                "/presentation/source",
+                                                              schemaPath:
+                                                                "#/properties/presentation/properties/source/type",
+                                                              keyword: "type",
+                                                              params: {
+                                                                type: "string",
+                                                              },
+                                                              message:
+                                                                "must be string",
+                                                            },
+                                                          ];
+                                                          return false;
+                                                        }
+                                                      }
+                                                      var valid26 =
+                                                        _errs138 === errors;
+                                                    } else {
+                                                      var valid26 = true;
+                                                    }
+                                                    if (valid26) {
+                                                      if (
+                                                        data45.impact !==
+                                                        undefined
+                                                      ) {
+                                                        let data49 =
+                                                          data45.impact;
+                                                        const _errs140 = errors;
+                                                        if (
+                                                          errors === _errs140
+                                                        ) {
+                                                          if (
+                                                            typeof data49 ===
                                                             "string"
                                                           ) {
                                                             if (
-                                                              func2(data29) >
-                                                              128
+                                                              func2(data49) >
+                                                              4096
                                                             ) {
                                                               validate21.errors =
                                                                 [
                                                                   {
                                                                     instancePath:
                                                                       instancePath +
-                                                                      "/objects/" +
-                                                                      i3 +
-                                                                      "/id",
+                                                                      "/presentation/impact",
                                                                     schemaPath:
-                                                                      "#/$defs/OperationObject/properties/id/maxLength",
+                                                                      "#/properties/presentation/properties/impact/maxLength",
                                                                     keyword:
                                                                       "maxLength",
                                                                     params: {
-                                                                      limit: 128,
+                                                                      limit: 4096,
                                                                     },
                                                                     message:
-                                                                      "must NOT have more than 128 characters",
+                                                                      "must NOT have more than 4096 characters",
                                                                   },
                                                                 ];
                                                               return false;
-                                                            } else {
-                                                              if (
-                                                                func2(data29) <
-                                                                1
-                                                              ) {
-                                                                validate21.errors =
-                                                                  [
-                                                                    {
-                                                                      instancePath:
-                                                                        instancePath +
-                                                                        "/objects/" +
-                                                                        i3 +
-                                                                        "/id",
-                                                                      schemaPath:
-                                                                        "#/$defs/OperationObject/properties/id/minLength",
-                                                                      keyword:
-                                                                        "minLength",
-                                                                      params: {
-                                                                        limit: 1,
-                                                                      },
-                                                                      message:
-                                                                        "must NOT have fewer than 1 characters",
-                                                                    },
-                                                                  ];
-                                                                return false;
-                                                              } else {
-                                                                if (
-                                                                  !pattern4.test(
-                                                                    data29,
-                                                                  )
-                                                                ) {
-                                                                  validate21.errors =
-                                                                    [
-                                                                      {
-                                                                        instancePath:
-                                                                          instancePath +
-                                                                          "/objects/" +
-                                                                          i3 +
-                                                                          "/id",
-                                                                        schemaPath:
-                                                                          "#/$defs/OperationObject/properties/id/pattern",
-                                                                        keyword:
-                                                                          "pattern",
-                                                                        params:
-                                                                          {
-                                                                            pattern:
-                                                                              "^[a-zA-Z0-9_-]+$",
-                                                                          },
-                                                                        message:
-                                                                          'must match pattern "' +
-                                                                          "^[a-zA-Z0-9_-]+$" +
-                                                                          '"',
-                                                                      },
-                                                                    ];
-                                                                  return false;
-                                                                }
-                                                              }
                                                             }
                                                           } else {
                                                             validate21.errors =
@@ -2778,11 +4153,9 @@ function validate21(
                                                                 {
                                                                   instancePath:
                                                                     instancePath +
-                                                                    "/objects/" +
-                                                                    i3 +
-                                                                    "/id",
+                                                                    "/presentation/impact",
                                                                   schemaPath:
-                                                                    "#/$defs/OperationObject/properties/id/type",
+                                                                    "#/properties/presentation/properties/impact/type",
                                                                   keyword:
                                                                     "type",
                                                                   params: {
@@ -2795,637 +4168,11 @@ function validate21(
                                                             return false;
                                                           }
                                                         }
-                                                        var valid19 =
-                                                          _errs95 === errors;
+                                                        var valid26 =
+                                                          _errs140 === errors;
                                                       } else {
-                                                        var valid19 = true;
+                                                        var valid26 = true;
                                                       }
-                                                      if (valid19) {
-                                                        if (
-                                                          data28.label !==
-                                                          undefined
-                                                        ) {
-                                                          let data30 =
-                                                            data28.label;
-                                                          const _errs97 =
-                                                            errors;
-                                                          if (
-                                                            errors === _errs97
-                                                          ) {
-                                                            if (
-                                                              typeof data30 ===
-                                                              "string"
-                                                            ) {
-                                                              if (
-                                                                func2(data30) >
-                                                                256
-                                                              ) {
-                                                                validate21.errors =
-                                                                  [
-                                                                    {
-                                                                      instancePath:
-                                                                        instancePath +
-                                                                        "/objects/" +
-                                                                        i3 +
-                                                                        "/label",
-                                                                      schemaPath:
-                                                                        "#/$defs/OperationObject/properties/label/maxLength",
-                                                                      keyword:
-                                                                        "maxLength",
-                                                                      params: {
-                                                                        limit: 256,
-                                                                      },
-                                                                      message:
-                                                                        "must NOT have more than 256 characters",
-                                                                    },
-                                                                  ];
-                                                                return false;
-                                                              }
-                                                            } else {
-                                                              validate21.errors =
-                                                                [
-                                                                  {
-                                                                    instancePath:
-                                                                      instancePath +
-                                                                      "/objects/" +
-                                                                      i3 +
-                                                                      "/label",
-                                                                    schemaPath:
-                                                                      "#/$defs/OperationObject/properties/label/type",
-                                                                    keyword:
-                                                                      "type",
-                                                                    params: {
-                                                                      type: "string",
-                                                                    },
-                                                                    message:
-                                                                      "must be string",
-                                                                  },
-                                                                ];
-                                                              return false;
-                                                            }
-                                                          }
-                                                          var valid19 =
-                                                            _errs97 === errors;
-                                                        } else {
-                                                          var valid19 = true;
-                                                        }
-                                                        if (valid19) {
-                                                          if (
-                                                            data28.detail !==
-                                                            undefined
-                                                          ) {
-                                                            let data31 =
-                                                              data28.detail;
-                                                            const _errs99 =
-                                                              errors;
-                                                            if (
-                                                              errors === _errs99
-                                                            ) {
-                                                              if (
-                                                                typeof data31 ===
-                                                                "string"
-                                                              ) {
-                                                                if (
-                                                                  func2(
-                                                                    data31,
-                                                                  ) > 4096
-                                                                ) {
-                                                                  validate21.errors =
-                                                                    [
-                                                                      {
-                                                                        instancePath:
-                                                                          instancePath +
-                                                                          "/objects/" +
-                                                                          i3 +
-                                                                          "/detail",
-                                                                        schemaPath:
-                                                                          "#/$defs/OperationObject/properties/detail/maxLength",
-                                                                        keyword:
-                                                                          "maxLength",
-                                                                        params:
-                                                                          {
-                                                                            limit: 4096,
-                                                                          },
-                                                                        message:
-                                                                          "must NOT have more than 4096 characters",
-                                                                      },
-                                                                    ];
-                                                                  return false;
-                                                                }
-                                                              } else {
-                                                                validate21.errors =
-                                                                  [
-                                                                    {
-                                                                      instancePath:
-                                                                        instancePath +
-                                                                        "/objects/" +
-                                                                        i3 +
-                                                                        "/detail",
-                                                                      schemaPath:
-                                                                        "#/$defs/OperationObject/properties/detail/type",
-                                                                      keyword:
-                                                                        "type",
-                                                                      params: {
-                                                                        type: "string",
-                                                                      },
-                                                                      message:
-                                                                        "must be string",
-                                                                    },
-                                                                  ];
-                                                                return false;
-                                                              }
-                                                            }
-                                                            var valid19 =
-                                                              _errs99 ===
-                                                              errors;
-                                                          } else {
-                                                            var valid19 = true;
-                                                          }
-                                                          if (valid19) {
-                                                            if (
-                                                              data28.disabledReason !==
-                                                              undefined
-                                                            ) {
-                                                              let data32 =
-                                                                data28.disabledReason;
-                                                              const _errs101 =
-                                                                errors;
-                                                              if (
-                                                                errors ===
-                                                                _errs101
-                                                              ) {
-                                                                if (
-                                                                  typeof data32 ===
-                                                                  "string"
-                                                                ) {
-                                                                  if (
-                                                                    func2(
-                                                                      data32,
-                                                                    ) > 4096
-                                                                  ) {
-                                                                    validate21.errors =
-                                                                      [
-                                                                        {
-                                                                          instancePath:
-                                                                            instancePath +
-                                                                            "/objects/" +
-                                                                            i3 +
-                                                                            "/disabledReason",
-                                                                          schemaPath:
-                                                                            "#/$defs/OperationObject/properties/disabledReason/maxLength",
-                                                                          keyword:
-                                                                            "maxLength",
-                                                                          params:
-                                                                            {
-                                                                              limit: 4096,
-                                                                            },
-                                                                          message:
-                                                                            "must NOT have more than 4096 characters",
-                                                                        },
-                                                                      ];
-                                                                    return false;
-                                                                  }
-                                                                } else {
-                                                                  validate21.errors =
-                                                                    [
-                                                                      {
-                                                                        instancePath:
-                                                                          instancePath +
-                                                                          "/objects/" +
-                                                                          i3 +
-                                                                          "/disabledReason",
-                                                                        schemaPath:
-                                                                          "#/$defs/OperationObject/properties/disabledReason/type",
-                                                                        keyword:
-                                                                          "type",
-                                                                        params:
-                                                                          {
-                                                                            type: "string",
-                                                                          },
-                                                                        message:
-                                                                          "must be string",
-                                                                      },
-                                                                    ];
-                                                                  return false;
-                                                                }
-                                                              }
-                                                              var valid19 =
-                                                                _errs101 ===
-                                                                errors;
-                                                            } else {
-                                                              var valid19 = true;
-                                                            }
-                                                            if (valid19) {
-                                                              if (
-                                                                data28.status !==
-                                                                undefined
-                                                              ) {
-                                                                let data33 =
-                                                                  data28.status;
-                                                                const _errs103 =
-                                                                  errors;
-                                                                if (
-                                                                  errors ===
-                                                                  _errs103
-                                                                ) {
-                                                                  if (
-                                                                    typeof data33 ===
-                                                                    "string"
-                                                                  ) {
-                                                                    if (
-                                                                      func2(
-                                                                        data33,
-                                                                      ) > 256
-                                                                    ) {
-                                                                      validate21.errors =
-                                                                        [
-                                                                          {
-                                                                            instancePath:
-                                                                              instancePath +
-                                                                              "/objects/" +
-                                                                              i3 +
-                                                                              "/status",
-                                                                            schemaPath:
-                                                                              "#/$defs/OperationObject/properties/status/maxLength",
-                                                                            keyword:
-                                                                              "maxLength",
-                                                                            params:
-                                                                              {
-                                                                                limit: 256,
-                                                                              },
-                                                                            message:
-                                                                              "must NOT have more than 256 characters",
-                                                                          },
-                                                                        ];
-                                                                      return false;
-                                                                    }
-                                                                  } else {
-                                                                    validate21.errors =
-                                                                      [
-                                                                        {
-                                                                          instancePath:
-                                                                            instancePath +
-                                                                            "/objects/" +
-                                                                            i3 +
-                                                                            "/status",
-                                                                          schemaPath:
-                                                                            "#/$defs/OperationObject/properties/status/type",
-                                                                          keyword:
-                                                                            "type",
-                                                                          params:
-                                                                            {
-                                                                              type: "string",
-                                                                            },
-                                                                          message:
-                                                                            "must be string",
-                                                                        },
-                                                                      ];
-                                                                    return false;
-                                                                  }
-                                                                }
-                                                                var valid19 =
-                                                                  _errs103 ===
-                                                                  errors;
-                                                              } else {
-                                                                var valid19 = true;
-                                                              }
-                                                            }
-                                                          }
-                                                        }
-                                                      }
-                                                    }
-                                                  }
-                                                } else {
-                                                  validate21.errors = [
-                                                    {
-                                                      instancePath:
-                                                        instancePath +
-                                                        "/objects/" +
-                                                        i3,
-                                                      schemaPath:
-                                                        "#/$defs/OperationObject/type",
-                                                      keyword: "type",
-                                                      params: {
-                                                        type: "object",
-                                                      },
-                                                      message: "must be object",
-                                                    },
-                                                  ];
-                                                  return false;
-                                                }
-                                              }
-                                              var valid17 = _errs91 === errors;
-                                              if (!valid17) {
-                                                break;
-                                              }
-                                            }
-                                          }
-                                        } else {
-                                          validate21.errors = [
-                                            {
-                                              instancePath:
-                                                instancePath + "/objects",
-                                              schemaPath:
-                                                "#/properties/objects/type",
-                                              keyword: "type",
-                                              params: { type: "array" },
-                                              message: "must be array",
-                                            },
-                                          ];
-                                          return false;
-                                        }
-                                      }
-                                      var valid0 = _errs89 === errors;
-                                    } else {
-                                      var valid0 = true;
-                                    }
-                                    if (valid0) {
-                                      if (data.logs !== undefined) {
-                                        let data34 = data.logs;
-                                        const _errs105 = errors;
-                                        if (errors === _errs105) {
-                                          if (Array.isArray(data34)) {
-                                            if (data34.length > 200) {
-                                              validate21.errors = [
-                                                {
-                                                  instancePath:
-                                                    instancePath + "/logs",
-                                                  schemaPath:
-                                                    "#/properties/logs/maxItems",
-                                                  keyword: "maxItems",
-                                                  params: { limit: 200 },
-                                                  message:
-                                                    "must NOT have more than 200 items",
-                                                },
-                                              ];
-                                              return false;
-                                            } else {
-                                              var valid20 = true;
-                                              const len4 = data34.length;
-                                              for (
-                                                let i4 = 0;
-                                                i4 < len4;
-                                                i4++
-                                              ) {
-                                                let data35 = data34[i4];
-                                                const _errs107 = errors;
-                                                if (errors === _errs107) {
-                                                  if (
-                                                    typeof data35 === "string"
-                                                  ) {
-                                                    if (func2(data35) > 2048) {
-                                                      validate21.errors = [
-                                                        {
-                                                          instancePath:
-                                                            instancePath +
-                                                            "/logs/" +
-                                                            i4,
-                                                          schemaPath:
-                                                            "#/properties/logs/items/maxLength",
-                                                          keyword: "maxLength",
-                                                          params: {
-                                                            limit: 2048,
-                                                          },
-                                                          message:
-                                                            "must NOT have more than 2048 characters",
-                                                        },
-                                                      ];
-                                                      return false;
-                                                    }
-                                                  } else {
-                                                    validate21.errors = [
-                                                      {
-                                                        instancePath:
-                                                          instancePath +
-                                                          "/logs/" +
-                                                          i4,
-                                                        schemaPath:
-                                                          "#/properties/logs/items/type",
-                                                        keyword: "type",
-                                                        params: {
-                                                          type: "string",
-                                                        },
-                                                        message:
-                                                          "must be string",
-                                                      },
-                                                    ];
-                                                    return false;
-                                                  }
-                                                }
-                                                var valid20 =
-                                                  _errs107 === errors;
-                                                if (!valid20) {
-                                                  break;
-                                                }
-                                              }
-                                            }
-                                          } else {
-                                            validate21.errors = [
-                                              {
-                                                instancePath:
-                                                  instancePath + "/logs",
-                                                schemaPath:
-                                                  "#/properties/logs/type",
-                                                keyword: "type",
-                                                params: { type: "array" },
-                                                message: "must be array",
-                                              },
-                                            ];
-                                            return false;
-                                          }
-                                        }
-                                        var valid0 = _errs105 === errors;
-                                      } else {
-                                        var valid0 = true;
-                                      }
-                                      if (valid0) {
-                                        if (data.progress !== undefined) {
-                                          let data36 = data.progress;
-                                          const _errs109 = errors;
-                                          if (errors === _errs109) {
-                                            if (
-                                              data36 &&
-                                              typeof data36 == "object" &&
-                                              !Array.isArray(data36)
-                                            ) {
-                                              let missing4;
-                                              if (
-                                                (data36.completed ===
-                                                  undefined &&
-                                                  (missing4 = "completed")) ||
-                                                (data36.total === undefined &&
-                                                  (missing4 = "total"))
-                                              ) {
-                                                validate21.errors = [
-                                                  {
-                                                    instancePath:
-                                                      instancePath +
-                                                      "/progress",
-                                                    schemaPath:
-                                                      "#/properties/progress/required",
-                                                    keyword: "required",
-                                                    params: {
-                                                      missingProperty: missing4,
-                                                    },
-                                                    message:
-                                                      "must have required property '" +
-                                                      missing4 +
-                                                      "'",
-                                                  },
-                                                ];
-                                                return false;
-                                              } else {
-                                                const _errs111 = errors;
-                                                for (const key8 in data36) {
-                                                  if (
-                                                    !(
-                                                      key8 === "completed" ||
-                                                      key8 === "total"
-                                                    )
-                                                  ) {
-                                                    validate21.errors = [
-                                                      {
-                                                        instancePath:
-                                                          instancePath +
-                                                          "/progress",
-                                                        schemaPath:
-                                                          "#/properties/progress/additionalProperties",
-                                                        keyword:
-                                                          "additionalProperties",
-                                                        params: {
-                                                          additionalProperty:
-                                                            key8,
-                                                        },
-                                                        message:
-                                                          "must NOT have additional properties",
-                                                      },
-                                                    ];
-                                                    return false;
-                                                    break;
-                                                  }
-                                                }
-                                                if (_errs111 === errors) {
-                                                  if (
-                                                    data36.completed !==
-                                                    undefined
-                                                  ) {
-                                                    let data37 =
-                                                      data36.completed;
-                                                    const _errs112 = errors;
-                                                    if (errors === _errs112) {
-                                                      if (
-                                                        typeof data37 ==
-                                                          "number" &&
-                                                        isFinite(data37)
-                                                      ) {
-                                                        if (
-                                                          data37 < 0 ||
-                                                          isNaN(data37)
-                                                        ) {
-                                                          validate21.errors = [
-                                                            {
-                                                              instancePath:
-                                                                instancePath +
-                                                                "/progress/completed",
-                                                              schemaPath:
-                                                                "#/properties/progress/properties/completed/minimum",
-                                                              keyword:
-                                                                "minimum",
-                                                              params: {
-                                                                comparison:
-                                                                  ">=",
-                                                                limit: 0,
-                                                              },
-                                                              message:
-                                                                "must be >= 0",
-                                                            },
-                                                          ];
-                                                          return false;
-                                                        }
-                                                      } else {
-                                                        validate21.errors = [
-                                                          {
-                                                            instancePath:
-                                                              instancePath +
-                                                              "/progress/completed",
-                                                            schemaPath:
-                                                              "#/properties/progress/properties/completed/type",
-                                                            keyword: "type",
-                                                            params: {
-                                                              type: "number",
-                                                            },
-                                                            message:
-                                                              "must be number",
-                                                          },
-                                                        ];
-                                                        return false;
-                                                      }
-                                                    }
-                                                    var valid21 =
-                                                      _errs112 === errors;
-                                                  } else {
-                                                    var valid21 = true;
-                                                  }
-                                                  if (valid21) {
-                                                    if (
-                                                      data36.total !== undefined
-                                                    ) {
-                                                      let data38 = data36.total;
-                                                      const _errs114 = errors;
-                                                      if (errors === _errs114) {
-                                                        if (
-                                                          typeof data38 ==
-                                                            "number" &&
-                                                          isFinite(data38)
-                                                        ) {
-                                                          if (
-                                                            data38 <= 0 ||
-                                                            isNaN(data38)
-                                                          ) {
-                                                            validate21.errors =
-                                                              [
-                                                                {
-                                                                  instancePath:
-                                                                    instancePath +
-                                                                    "/progress/total",
-                                                                  schemaPath:
-                                                                    "#/properties/progress/properties/total/exclusiveMinimum",
-                                                                  keyword:
-                                                                    "exclusiveMinimum",
-                                                                  params: {
-                                                                    comparison:
-                                                                      ">",
-                                                                    limit: 0,
-                                                                  },
-                                                                  message:
-                                                                    "must be > 0",
-                                                                },
-                                                              ];
-                                                            return false;
-                                                          }
-                                                        } else {
-                                                          validate21.errors = [
-                                                            {
-                                                              instancePath:
-                                                                instancePath +
-                                                                "/progress/total",
-                                                              schemaPath:
-                                                                "#/properties/progress/properties/total/type",
-                                                              keyword: "type",
-                                                              params: {
-                                                                type: "number",
-                                                              },
-                                                              message:
-                                                                "must be number",
-                                                            },
-                                                          ];
-                                                          return false;
-                                                        }
-                                                      }
-                                                      var valid21 =
-                                                        _errs114 === errors;
-                                                    } else {
-                                                      var valid21 = true;
                                                     }
                                                   }
                                                 }
@@ -3434,9 +4181,10 @@ function validate21(
                                               validate21.errors = [
                                                 {
                                                   instancePath:
-                                                    instancePath + "/progress",
+                                                    instancePath +
+                                                    "/presentation",
                                                   schemaPath:
-                                                    "#/properties/progress/type",
+                                                    "#/properties/presentation/type",
                                                   keyword: "type",
                                                   params: { type: "object" },
                                                   message: "must be object",
@@ -3445,935 +4193,185 @@ function validate21(
                                               return false;
                                             }
                                           }
-                                          var valid0 = _errs109 === errors;
+                                          var valid0 = _errs131 === errors;
                                         } else {
                                           var valid0 = true;
                                         }
                                         if (valid0) {
-                                          if (data.result !== undefined) {
-                                            let data39 = data.result;
-                                            const _errs116 = errors;
-                                            if (errors === _errs116) {
-                                              if (typeof data39 === "string") {
-                                                if (func2(data39) > 4096) {
+                                          if (data.secretFields !== undefined) {
+                                            let data50 = data.secretFields;
+                                            const _errs142 = errors;
+                                            if (errors === _errs142) {
+                                              if (Array.isArray(data50)) {
+                                                if (data50.length > 128) {
                                                   validate21.errors = [
                                                     {
                                                       instancePath:
                                                         instancePath +
-                                                        "/result",
+                                                        "/secretFields",
                                                       schemaPath:
-                                                        "#/properties/result/maxLength",
-                                                      keyword: "maxLength",
-                                                      params: { limit: 4096 },
+                                                        "#/properties/secretFields/maxItems",
+                                                      keyword: "maxItems",
+                                                      params: { limit: 128 },
                                                       message:
-                                                        "must NOT have more than 4096 characters",
+                                                        "must NOT have more than 128 items",
                                                     },
                                                   ];
                                                   return false;
-                                                }
-                                              } else {
-                                                validate21.errors = [
-                                                  {
-                                                    instancePath:
-                                                      instancePath + "/result",
-                                                    schemaPath:
-                                                      "#/properties/result/type",
-                                                    keyword: "type",
-                                                    params: { type: "string" },
-                                                    message: "must be string",
-                                                  },
-                                                ];
-                                                return false;
-                                              }
-                                            }
-                                            var valid0 = _errs116 === errors;
-                                          } else {
-                                            var valid0 = true;
-                                          }
-                                          if (valid0) {
-                                            if (
-                                              data.interaction !== undefined
-                                            ) {
-                                              let data40 = data.interaction;
-                                              const _errs118 = errors;
-                                              const _errs119 = errors;
-                                              if (errors === _errs119) {
-                                                if (
-                                                  data40 &&
-                                                  typeof data40 == "object" &&
-                                                  !Array.isArray(data40)
-                                                ) {
-                                                  let missing5;
-                                                  if (
-                                                    (data40.id === undefined &&
-                                                      (missing5 = "id")) ||
-                                                    (data40.question ===
-                                                      undefined &&
-                                                      (missing5 =
-                                                        "question")) ||
-                                                    (data40.options ===
-                                                      undefined &&
-                                                      (missing5 = "options")) ||
-                                                    (data40.expiresAtMs ===
-                                                      undefined &&
-                                                      (missing5 =
-                                                        "expiresAtMs"))
+                                                } else {
+                                                  var valid27 = true;
+                                                  const len6 = data50.length;
+                                                  for (
+                                                    let i6 = 0;
+                                                    i6 < len6;
+                                                    i6++
                                                   ) {
-                                                    validate21.errors = [
-                                                      {
-                                                        instancePath:
-                                                          instancePath +
-                                                          "/interaction",
-                                                        schemaPath:
-                                                          "#/$defs/OperationInteraction/required",
-                                                        keyword: "required",
-                                                        params: {
-                                                          missingProperty:
-                                                            missing5,
-                                                        },
-                                                        message:
-                                                          "must have required property '" +
-                                                          missing5 +
-                                                          "'",
-                                                      },
-                                                    ];
-                                                    return false;
-                                                  } else {
-                                                    const _errs121 = errors;
-                                                    for (const key9 in data40) {
+                                                    let data51 = data50[i6];
+                                                    const _errs144 = errors;
+                                                    if (errors === _errs144) {
                                                       if (
-                                                        !(
-                                                          key9 === "id" ||
-                                                          key9 === "question" ||
-                                                          key9 === "options" ||
-                                                          key9 === "expiresAtMs"
-                                                        )
+                                                        typeof data51 ===
+                                                        "string"
                                                       ) {
-                                                        validate21.errors = [
-                                                          {
-                                                            instancePath:
-                                                              instancePath +
-                                                              "/interaction",
-                                                            schemaPath:
-                                                              "#/$defs/OperationInteraction/additionalProperties",
-                                                            keyword:
-                                                              "additionalProperties",
-                                                            params: {
-                                                              additionalProperty:
-                                                                key9,
-                                                            },
-                                                            message:
-                                                              "must NOT have additional properties",
-                                                          },
-                                                        ];
-                                                        return false;
-                                                        break;
-                                                      }
-                                                    }
-                                                    if (_errs121 === errors) {
-                                                      if (
-                                                        data40.id !== undefined
-                                                      ) {
-                                                        let data41 = data40.id;
-                                                        const _errs122 = errors;
                                                         if (
-                                                          errors === _errs122
+                                                          func2(data51) > 128
                                                         ) {
+                                                          validate21.errors = [
+                                                            {
+                                                              instancePath:
+                                                                instancePath +
+                                                                "/secretFields/" +
+                                                                i6,
+                                                              schemaPath:
+                                                                "#/properties/secretFields/items/maxLength",
+                                                              keyword:
+                                                                "maxLength",
+                                                              params: {
+                                                                limit: 128,
+                                                              },
+                                                              message:
+                                                                "must NOT have more than 128 characters",
+                                                            },
+                                                          ];
+                                                          return false;
+                                                        } else {
                                                           if (
-                                                            typeof data41 ===
-                                                            "string"
+                                                            func2(data51) < 1
                                                           ) {
-                                                            if (
-                                                              func2(data41) >
-                                                              128
-                                                            ) {
-                                                              validate21.errors =
-                                                                [
-                                                                  {
-                                                                    instancePath:
-                                                                      instancePath +
-                                                                      "/interaction/id",
-                                                                    schemaPath:
-                                                                      "#/$defs/OperationInteraction/properties/id/maxLength",
-                                                                    keyword:
-                                                                      "maxLength",
-                                                                    params: {
-                                                                      limit: 128,
-                                                                    },
-                                                                    message:
-                                                                      "must NOT have more than 128 characters",
-                                                                  },
-                                                                ];
-                                                              return false;
-                                                            } else {
-                                                              if (
-                                                                func2(data41) <
-                                                                1
-                                                              ) {
-                                                                validate21.errors =
-                                                                  [
-                                                                    {
-                                                                      instancePath:
-                                                                        instancePath +
-                                                                        "/interaction/id",
-                                                                      schemaPath:
-                                                                        "#/$defs/OperationInteraction/properties/id/minLength",
-                                                                      keyword:
-                                                                        "minLength",
-                                                                      params: {
-                                                                        limit: 1,
-                                                                      },
-                                                                      message:
-                                                                        "must NOT have fewer than 1 characters",
-                                                                    },
-                                                                  ];
-                                                                return false;
-                                                              } else {
-                                                                if (
-                                                                  !pattern4.test(
-                                                                    data41,
-                                                                  )
-                                                                ) {
-                                                                  validate21.errors =
-                                                                    [
-                                                                      {
-                                                                        instancePath:
-                                                                          instancePath +
-                                                                          "/interaction/id",
-                                                                        schemaPath:
-                                                                          "#/$defs/OperationInteraction/properties/id/pattern",
-                                                                        keyword:
-                                                                          "pattern",
-                                                                        params:
-                                                                          {
-                                                                            pattern:
-                                                                              "^[a-zA-Z0-9_-]+$",
-                                                                          },
-                                                                        message:
-                                                                          'must match pattern "' +
-                                                                          "^[a-zA-Z0-9_-]+$" +
-                                                                          '"',
-                                                                      },
-                                                                    ];
-                                                                  return false;
-                                                                }
-                                                              }
-                                                            }
-                                                          } else {
                                                             validate21.errors =
                                                               [
                                                                 {
                                                                   instancePath:
                                                                     instancePath +
-                                                                    "/interaction/id",
+                                                                    "/secretFields/" +
+                                                                    i6,
                                                                   schemaPath:
-                                                                    "#/$defs/OperationInteraction/properties/id/type",
+                                                                    "#/properties/secretFields/items/minLength",
                                                                   keyword:
-                                                                    "type",
+                                                                    "minLength",
                                                                   params: {
-                                                                    type: "string",
+                                                                    limit: 1,
                                                                   },
                                                                   message:
-                                                                    "must be string",
+                                                                    "must NOT have fewer than 1 characters",
                                                                 },
                                                               ];
                                                             return false;
                                                           }
                                                         }
-                                                        var valid23 =
-                                                          _errs122 === errors;
                                                       } else {
-                                                        var valid23 = true;
-                                                      }
-                                                      if (valid23) {
-                                                        if (
-                                                          data40.question !==
-                                                          undefined
-                                                        ) {
-                                                          let data42 =
-                                                            data40.question;
-                                                          const _errs124 =
-                                                            errors;
-                                                          if (
-                                                            errors === _errs124
-                                                          ) {
-                                                            if (
-                                                              typeof data42 ===
-                                                              "string"
-                                                            ) {
-                                                              if (
-                                                                func2(data42) >
-                                                                4096
-                                                              ) {
-                                                                validate21.errors =
-                                                                  [
-                                                                    {
-                                                                      instancePath:
-                                                                        instancePath +
-                                                                        "/interaction/question",
-                                                                      schemaPath:
-                                                                        "#/$defs/OperationInteraction/properties/question/maxLength",
-                                                                      keyword:
-                                                                        "maxLength",
-                                                                      params: {
-                                                                        limit: 4096,
-                                                                      },
-                                                                      message:
-                                                                        "must NOT have more than 4096 characters",
-                                                                    },
-                                                                  ];
-                                                                return false;
-                                                              }
-                                                            } else {
-                                                              validate21.errors =
-                                                                [
-                                                                  {
-                                                                    instancePath:
-                                                                      instancePath +
-                                                                      "/interaction/question",
-                                                                    schemaPath:
-                                                                      "#/$defs/OperationInteraction/properties/question/type",
-                                                                    keyword:
-                                                                      "type",
-                                                                    params: {
-                                                                      type: "string",
-                                                                    },
-                                                                    message:
-                                                                      "must be string",
-                                                                  },
-                                                                ];
-                                                              return false;
-                                                            }
-                                                          }
-                                                          var valid23 =
-                                                            _errs124 === errors;
-                                                        } else {
-                                                          var valid23 = true;
-                                                        }
-                                                        if (valid23) {
-                                                          if (
-                                                            data40.options !==
-                                                            undefined
-                                                          ) {
-                                                            let data43 =
-                                                              data40.options;
-                                                            const _errs126 =
-                                                              errors;
-                                                            if (
-                                                              errors ===
-                                                              _errs126
-                                                            ) {
-                                                              if (
-                                                                Array.isArray(
-                                                                  data43,
-                                                                )
-                                                              ) {
-                                                                if (
-                                                                  data43.length >
-                                                                  16
-                                                                ) {
-                                                                  validate21.errors =
-                                                                    [
-                                                                      {
-                                                                        instancePath:
-                                                                          instancePath +
-                                                                          "/interaction/options",
-                                                                        schemaPath:
-                                                                          "#/$defs/OperationInteraction/properties/options/maxItems",
-                                                                        keyword:
-                                                                          "maxItems",
-                                                                        params:
-                                                                          {
-                                                                            limit: 16,
-                                                                          },
-                                                                        message:
-                                                                          "must NOT have more than 16 items",
-                                                                      },
-                                                                    ];
-                                                                  return false;
-                                                                } else {
-                                                                  var valid24 = true;
-                                                                  const len5 =
-                                                                    data43.length;
-                                                                  for (
-                                                                    let i5 = 0;
-                                                                    i5 < len5;
-                                                                    i5++
-                                                                  ) {
-                                                                    let data44 =
-                                                                      data43[
-                                                                        i5
-                                                                      ];
-                                                                    const _errs128 =
-                                                                      errors;
-                                                                    if (
-                                                                      errors ===
-                                                                      _errs128
-                                                                    ) {
-                                                                      if (
-                                                                        data44 &&
-                                                                        typeof data44 ==
-                                                                          "object" &&
-                                                                        !Array.isArray(
-                                                                          data44,
-                                                                        )
-                                                                      ) {
-                                                                        let missing6;
-                                                                        if (
-                                                                          (data44.id ===
-                                                                            undefined &&
-                                                                            (missing6 =
-                                                                              "id")) ||
-                                                                          (data44.label ===
-                                                                            undefined &&
-                                                                            (missing6 =
-                                                                              "label"))
-                                                                        ) {
-                                                                          validate21.errors =
-                                                                            [
-                                                                              {
-                                                                                instancePath:
-                                                                                  instancePath +
-                                                                                  "/interaction/options/" +
-                                                                                  i5,
-                                                                                schemaPath:
-                                                                                  "#/$defs/OperationInteraction/properties/options/items/required",
-                                                                                keyword:
-                                                                                  "required",
-                                                                                params:
-                                                                                  {
-                                                                                    missingProperty:
-                                                                                      missing6,
-                                                                                  },
-                                                                                message:
-                                                                                  "must have required property '" +
-                                                                                  missing6 +
-                                                                                  "'",
-                                                                              },
-                                                                            ];
-                                                                          return false;
-                                                                        } else {
-                                                                          const _errs130 =
-                                                                            errors;
-                                                                          for (const key10 in data44) {
-                                                                            if (
-                                                                              !(
-                                                                                key10 ===
-                                                                                  "id" ||
-                                                                                key10 ===
-                                                                                  "label"
-                                                                              )
-                                                                            ) {
-                                                                              validate21.errors =
-                                                                                [
-                                                                                  {
-                                                                                    instancePath:
-                                                                                      instancePath +
-                                                                                      "/interaction/options/" +
-                                                                                      i5,
-                                                                                    schemaPath:
-                                                                                      "#/$defs/OperationInteraction/properties/options/items/additionalProperties",
-                                                                                    keyword:
-                                                                                      "additionalProperties",
-                                                                                    params:
-                                                                                      {
-                                                                                        additionalProperty:
-                                                                                          key10,
-                                                                                      },
-                                                                                    message:
-                                                                                      "must NOT have additional properties",
-                                                                                  },
-                                                                                ];
-                                                                              return false;
-                                                                              break;
-                                                                            }
-                                                                          }
-                                                                          if (
-                                                                            _errs130 ===
-                                                                            errors
-                                                                          ) {
-                                                                            if (
-                                                                              data44.id !==
-                                                                              undefined
-                                                                            ) {
-                                                                              let data45 =
-                                                                                data44.id;
-                                                                              const _errs131 =
-                                                                                errors;
-                                                                              if (
-                                                                                errors ===
-                                                                                _errs131
-                                                                              ) {
-                                                                                if (
-                                                                                  typeof data45 ===
-                                                                                  "string"
-                                                                                ) {
-                                                                                  if (
-                                                                                    func2(
-                                                                                      data45,
-                                                                                    ) >
-                                                                                    128
-                                                                                  ) {
-                                                                                    validate21.errors =
-                                                                                      [
-                                                                                        {
-                                                                                          instancePath:
-                                                                                            instancePath +
-                                                                                            "/interaction/options/" +
-                                                                                            i5 +
-                                                                                            "/id",
-                                                                                          schemaPath:
-                                                                                            "#/$defs/OperationInteraction/properties/options/items/properties/id/maxLength",
-                                                                                          keyword:
-                                                                                            "maxLength",
-                                                                                          params:
-                                                                                            {
-                                                                                              limit: 128,
-                                                                                            },
-                                                                                          message:
-                                                                                            "must NOT have more than 128 characters",
-                                                                                        },
-                                                                                      ];
-                                                                                    return false;
-                                                                                  } else {
-                                                                                    if (
-                                                                                      func2(
-                                                                                        data45,
-                                                                                      ) <
-                                                                                      1
-                                                                                    ) {
-                                                                                      validate21.errors =
-                                                                                        [
-                                                                                          {
-                                                                                            instancePath:
-                                                                                              instancePath +
-                                                                                              "/interaction/options/" +
-                                                                                              i5 +
-                                                                                              "/id",
-                                                                                            schemaPath:
-                                                                                              "#/$defs/OperationInteraction/properties/options/items/properties/id/minLength",
-                                                                                            keyword:
-                                                                                              "minLength",
-                                                                                            params:
-                                                                                              {
-                                                                                                limit: 1,
-                                                                                              },
-                                                                                            message:
-                                                                                              "must NOT have fewer than 1 characters",
-                                                                                          },
-                                                                                        ];
-                                                                                      return false;
-                                                                                    } else {
-                                                                                      if (
-                                                                                        !pattern4.test(
-                                                                                          data45,
-                                                                                        )
-                                                                                      ) {
-                                                                                        validate21.errors =
-                                                                                          [
-                                                                                            {
-                                                                                              instancePath:
-                                                                                                instancePath +
-                                                                                                "/interaction/options/" +
-                                                                                                i5 +
-                                                                                                "/id",
-                                                                                              schemaPath:
-                                                                                                "#/$defs/OperationInteraction/properties/options/items/properties/id/pattern",
-                                                                                              keyword:
-                                                                                                "pattern",
-                                                                                              params:
-                                                                                                {
-                                                                                                  pattern:
-                                                                                                    "^[a-zA-Z0-9_-]+$",
-                                                                                                },
-                                                                                              message:
-                                                                                                'must match pattern "' +
-                                                                                                "^[a-zA-Z0-9_-]+$" +
-                                                                                                '"',
-                                                                                            },
-                                                                                          ];
-                                                                                        return false;
-                                                                                      }
-                                                                                    }
-                                                                                  }
-                                                                                } else {
-                                                                                  validate21.errors =
-                                                                                    [
-                                                                                      {
-                                                                                        instancePath:
-                                                                                          instancePath +
-                                                                                          "/interaction/options/" +
-                                                                                          i5 +
-                                                                                          "/id",
-                                                                                        schemaPath:
-                                                                                          "#/$defs/OperationInteraction/properties/options/items/properties/id/type",
-                                                                                        keyword:
-                                                                                          "type",
-                                                                                        params:
-                                                                                          {
-                                                                                            type: "string",
-                                                                                          },
-                                                                                        message:
-                                                                                          "must be string",
-                                                                                      },
-                                                                                    ];
-                                                                                  return false;
-                                                                                }
-                                                                              }
-                                                                              var valid25 =
-                                                                                _errs131 ===
-                                                                                errors;
-                                                                            } else {
-                                                                              var valid25 = true;
-                                                                            }
-                                                                            if (
-                                                                              valid25
-                                                                            ) {
-                                                                              if (
-                                                                                data44.label !==
-                                                                                undefined
-                                                                              ) {
-                                                                                let data46 =
-                                                                                  data44.label;
-                                                                                const _errs133 =
-                                                                                  errors;
-                                                                                if (
-                                                                                  errors ===
-                                                                                  _errs133
-                                                                                ) {
-                                                                                  if (
-                                                                                    typeof data46 ===
-                                                                                    "string"
-                                                                                  ) {
-                                                                                    if (
-                                                                                      func2(
-                                                                                        data46,
-                                                                                      ) >
-                                                                                      256
-                                                                                    ) {
-                                                                                      validate21.errors =
-                                                                                        [
-                                                                                          {
-                                                                                            instancePath:
-                                                                                              instancePath +
-                                                                                              "/interaction/options/" +
-                                                                                              i5 +
-                                                                                              "/label",
-                                                                                            schemaPath:
-                                                                                              "#/$defs/OperationInteraction/properties/options/items/properties/label/maxLength",
-                                                                                            keyword:
-                                                                                              "maxLength",
-                                                                                            params:
-                                                                                              {
-                                                                                                limit: 256,
-                                                                                              },
-                                                                                            message:
-                                                                                              "must NOT have more than 256 characters",
-                                                                                          },
-                                                                                        ];
-                                                                                      return false;
-                                                                                    }
-                                                                                  } else {
-                                                                                    validate21.errors =
-                                                                                      [
-                                                                                        {
-                                                                                          instancePath:
-                                                                                            instancePath +
-                                                                                            "/interaction/options/" +
-                                                                                            i5 +
-                                                                                            "/label",
-                                                                                          schemaPath:
-                                                                                            "#/$defs/OperationInteraction/properties/options/items/properties/label/type",
-                                                                                          keyword:
-                                                                                            "type",
-                                                                                          params:
-                                                                                            {
-                                                                                              type: "string",
-                                                                                            },
-                                                                                          message:
-                                                                                            "must be string",
-                                                                                        },
-                                                                                      ];
-                                                                                    return false;
-                                                                                  }
-                                                                                }
-                                                                                var valid25 =
-                                                                                  _errs133 ===
-                                                                                  errors;
-                                                                              } else {
-                                                                                var valid25 = true;
-                                                                              }
-                                                                            }
-                                                                          }
-                                                                        }
-                                                                      } else {
-                                                                        validate21.errors =
-                                                                          [
-                                                                            {
-                                                                              instancePath:
-                                                                                instancePath +
-                                                                                "/interaction/options/" +
-                                                                                i5,
-                                                                              schemaPath:
-                                                                                "#/$defs/OperationInteraction/properties/options/items/type",
-                                                                              keyword:
-                                                                                "type",
-                                                                              params:
-                                                                                {
-                                                                                  type: "object",
-                                                                                },
-                                                                              message:
-                                                                                "must be object",
-                                                                            },
-                                                                          ];
-                                                                        return false;
-                                                                      }
-                                                                    }
-                                                                    var valid24 =
-                                                                      _errs128 ===
-                                                                      errors;
-                                                                    if (
-                                                                      !valid24
-                                                                    ) {
-                                                                      break;
-                                                                    }
-                                                                  }
-                                                                }
-                                                              } else {
-                                                                validate21.errors =
-                                                                  [
-                                                                    {
-                                                                      instancePath:
-                                                                        instancePath +
-                                                                        "/interaction/options",
-                                                                      schemaPath:
-                                                                        "#/$defs/OperationInteraction/properties/options/type",
-                                                                      keyword:
-                                                                        "type",
-                                                                      params: {
-                                                                        type: "array",
-                                                                      },
-                                                                      message:
-                                                                        "must be array",
-                                                                    },
-                                                                  ];
-                                                                return false;
-                                                              }
-                                                            }
-                                                            var valid23 =
-                                                              _errs126 ===
-                                                              errors;
-                                                          } else {
-                                                            var valid23 = true;
-                                                          }
-                                                          if (valid23) {
-                                                            if (
-                                                              data40.expiresAtMs !==
-                                                              undefined
-                                                            ) {
-                                                              let data47 =
-                                                                data40.expiresAtMs;
-                                                              const _errs135 =
-                                                                errors;
-                                                              if (
-                                                                !(
-                                                                  typeof data47 ==
-                                                                    "number" &&
-                                                                  !(
-                                                                    data47 % 1
-                                                                  ) &&
-                                                                  !isNaN(
-                                                                    data47,
-                                                                  ) &&
-                                                                  isFinite(
-                                                                    data47,
-                                                                  )
-                                                                )
-                                                              ) {
-                                                                validate21.errors =
-                                                                  [
-                                                                    {
-                                                                      instancePath:
-                                                                        instancePath +
-                                                                        "/interaction/expiresAtMs",
-                                                                      schemaPath:
-                                                                        "#/$defs/OperationInteraction/properties/expiresAtMs/type",
-                                                                      keyword:
-                                                                        "type",
-                                                                      params: {
-                                                                        type: "integer",
-                                                                      },
-                                                                      message:
-                                                                        "must be integer",
-                                                                    },
-                                                                  ];
-                                                                return false;
-                                                              }
-                                                              if (
-                                                                errors ===
-                                                                _errs135
-                                                              ) {
-                                                                if (
-                                                                  typeof data47 ==
-                                                                    "number" &&
-                                                                  isFinite(
-                                                                    data47,
-                                                                  )
-                                                                ) {
-                                                                  if (
-                                                                    data47 <
-                                                                      0 ||
-                                                                    isNaN(
-                                                                      data47,
-                                                                    )
-                                                                  ) {
-                                                                    validate21.errors =
-                                                                      [
-                                                                        {
-                                                                          instancePath:
-                                                                            instancePath +
-                                                                            "/interaction/expiresAtMs",
-                                                                          schemaPath:
-                                                                            "#/$defs/OperationInteraction/properties/expiresAtMs/minimum",
-                                                                          keyword:
-                                                                            "minimum",
-                                                                          params:
-                                                                            {
-                                                                              comparison:
-                                                                                ">=",
-                                                                              limit: 0,
-                                                                            },
-                                                                          message:
-                                                                            "must be >= 0",
-                                                                        },
-                                                                      ];
-                                                                    return false;
-                                                                  }
-                                                                }
-                                                              }
-                                                              var valid23 =
-                                                                _errs135 ===
-                                                                errors;
-                                                            } else {
-                                                              var valid23 = true;
-                                                            }
-                                                          }
-                                                        }
-                                                      }
-                                                    }
-                                                  }
-                                                } else {
-                                                  validate21.errors = [
-                                                    {
-                                                      instancePath:
-                                                        instancePath +
-                                                        "/interaction",
-                                                      schemaPath:
-                                                        "#/$defs/OperationInteraction/type",
-                                                      keyword: "type",
-                                                      params: {
-                                                        type: "object",
-                                                      },
-                                                      message: "must be object",
-                                                    },
-                                                  ];
-                                                  return false;
-                                                }
-                                              }
-                                              var valid0 = _errs118 === errors;
-                                            } else {
-                                              var valid0 = true;
-                                            }
-                                            if (valid0) {
-                                              if (
-                                                data.expiresAtMs !== undefined
-                                              ) {
-                                                let data48 = data.expiresAtMs;
-                                                const _errs137 = errors;
-                                                if (
-                                                  !(
-                                                    typeof data48 == "number" &&
-                                                    !(data48 % 1) &&
-                                                    !isNaN(data48) &&
-                                                    isFinite(data48)
-                                                  )
-                                                ) {
-                                                  validate21.errors = [
-                                                    {
-                                                      instancePath:
-                                                        instancePath +
-                                                        "/expiresAtMs",
-                                                      schemaPath:
-                                                        "#/properties/expiresAtMs/type",
-                                                      keyword: "type",
-                                                      params: {
-                                                        type: "integer",
-                                                      },
-                                                      message:
-                                                        "must be integer",
-                                                    },
-                                                  ];
-                                                  return false;
-                                                }
-                                                if (errors === _errs137) {
-                                                  if (
-                                                    typeof data48 == "number" &&
-                                                    isFinite(data48)
-                                                  ) {
-                                                    if (
-                                                      data48 >
-                                                        9007199254740991 ||
-                                                      isNaN(data48)
-                                                    ) {
-                                                      validate21.errors = [
-                                                        {
-                                                          instancePath:
-                                                            instancePath +
-                                                            "/expiresAtMs",
-                                                          schemaPath:
-                                                            "#/properties/expiresAtMs/maximum",
-                                                          keyword: "maximum",
-                                                          params: {
-                                                            comparison: "<=",
-                                                            limit: 9007199254740991,
-                                                          },
-                                                          message:
-                                                            "must be <= 9007199254740991",
-                                                        },
-                                                      ];
-                                                      return false;
-                                                    } else {
-                                                      if (
-                                                        data48 < 0 ||
-                                                        isNaN(data48)
-                                                      ) {
                                                         validate21.errors = [
                                                           {
                                                             instancePath:
                                                               instancePath +
-                                                              "/expiresAtMs",
+                                                              "/secretFields/" +
+                                                              i6,
                                                             schemaPath:
-                                                              "#/properties/expiresAtMs/minimum",
-                                                            keyword: "minimum",
+                                                              "#/properties/secretFields/items/type",
+                                                            keyword: "type",
                                                             params: {
-                                                              comparison: ">=",
-                                                              limit: 0,
+                                                              type: "string",
                                                             },
                                                             message:
-                                                              "must be >= 0",
+                                                              "must be string",
                                                           },
                                                         ];
                                                         return false;
                                                       }
                                                     }
+                                                    var valid27 =
+                                                      _errs144 === errors;
+                                                    if (!valid27) {
+                                                      break;
+                                                    }
+                                                  }
+                                                  if (valid27) {
+                                                    let i7 = data50.length;
+                                                    let j0;
+                                                    if (i7 > 1) {
+                                                      const indices0 = {};
+                                                      for (; i7--; ) {
+                                                        let item0 = data50[i7];
+                                                        if (
+                                                          typeof item0 !==
+                                                          "string"
+                                                        ) {
+                                                          continue;
+                                                        }
+                                                        if (
+                                                          typeof indices0[
+                                                            item0
+                                                          ] == "number"
+                                                        ) {
+                                                          j0 = indices0[item0];
+                                                          validate21.errors = [
+                                                            {
+                                                              instancePath:
+                                                                instancePath +
+                                                                "/secretFields",
+                                                              schemaPath:
+                                                                "#/properties/secretFields/uniqueItems",
+                                                              keyword:
+                                                                "uniqueItems",
+                                                              params: {
+                                                                i: i7,
+                                                                j: j0,
+                                                              },
+                                                              message:
+                                                                "must NOT have duplicate items (items ## " +
+                                                                j0 +
+                                                                " and " +
+                                                                i7 +
+                                                                " are identical)",
+                                                            },
+                                                          ];
+                                                          return false;
+                                                          break;
+                                                        }
+                                                        indices0[item0] = i7;
+                                                      }
+                                                    }
                                                   }
                                                 }
-                                                var valid0 =
-                                                  _errs137 === errors;
                                               } else {
-                                                var valid0 = true;
+                                                validate21.errors = [
+                                                  {
+                                                    instancePath:
+                                                      instancePath +
+                                                      "/secretFields",
+                                                    schemaPath:
+                                                      "#/properties/secretFields/type",
+                                                    keyword: "type",
+                                                    params: { type: "array" },
+                                                    message: "must be array",
+                                                  },
+                                                ];
+                                                return false;
                                               }
                                             }
+                                            var valid0 = _errs142 === errors;
+                                          } else {
+                                            var valid0 = true;
                                           }
                                         }
                                       }

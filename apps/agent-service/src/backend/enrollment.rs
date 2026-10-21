@@ -189,7 +189,7 @@ fn freeze(
     ));
     FrozenExecution::freeze(
         ExecutionInput {
-            schema_version: V8,
+            schema_version: V1,
             execution: ExecutionSpec::Process {},
             request: ExecutionRequest {
                 schema_version: V1,

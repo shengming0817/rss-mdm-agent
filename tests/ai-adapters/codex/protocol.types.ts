@@ -54,7 +54,7 @@ port.readHistory;
 port.fork;
 const unsafeDiagnostic: ProviderDiagnostic = {
   kind: "other",
-  dropped: 0,
+  attributes: { dropped: 0 },
   // @ts-expect-error Diagnostics expose no business payload.
   message: {},
 };

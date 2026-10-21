@@ -173,25 +173,34 @@ pub fn run(
 fn endpoint(system: bool) -> Result<(String, String), Error> {
     let (subject, session) = token_identity()?;
     Ok(if system {
-        (r"\\.\pipe\rss-mdm-execution-system-v9".into(), {
-            let mut sddl = String::from("D:P(A;;GA;;;SY)(A;;GA;;;BA)");
-            if let Some(subjects) = CLIENT_SUBJECTS.get() {
-                for subject in subjects {
-                    if !subject.starts_with("S-1-")
-                        || !subject
-                            .bytes()
-                            .all(|b| b.is_ascii_digit() || b == b'S' || b == b'-')
-                    {
-                        return Err(Error::Configuration);
+        (
+            format!(
+                r"\\.\pipe\rss-mdm-execution-system-v{}",
+                crate::host::IPC_VERSION
+            ),
+            {
+                let mut sddl = String::from("D:P(A;;GA;;;SY)(A;;GA;;;BA)");
+                if let Some(subjects) = CLIENT_SUBJECTS.get() {
+                    for subject in subjects {
+                        if !subject.starts_with("S-1-")
+                            || !subject
+                                .bytes()
+                                .all(|b| b.is_ascii_digit() || b == b'S' || b == b'-')
+                        {
+                            return Err(Error::Configuration);
+                        }
+                        sddl.push_str(&format!("(A;;0x0012019b;;;{subject})"));
                     }
-                    sddl.push_str(&format!("(A;;0x0012019b;;;{subject})"));
                 }
-            }
-            sddl
-        })
+                sddl
+            },
+        )
     } else {
         (
-            format!(r"\\.\pipe\rss-mdm-execution-{subject}-{session}-v9"),
+            format!(
+                r"\\.\pipe\rss-mdm-execution-{subject}-{session}-v{}",
+                crate::host::IPC_VERSION
+            ),
             format!("D:P(A;;GA;;;{subject})(A;;GA;;;SY)"),
         )
     })
@@ -618,7 +627,10 @@ pub fn query_session(
     query_at(
         bytes,
         Some(session),
-        format!(r"\\.\pipe\rss-mdm-execution-{subject}-{session}-v9"),
+        format!(
+            r"\\.\pipe\rss-mdm-execution-{subject}-{session}-v{}",
+            crate::host::IPC_VERSION
+        ),
         policy,
     )
 }

@@ -154,7 +154,7 @@ const budget = (timeoutMs = 30000): Budget => ({
   signal: new AbortController().signal,
 });
 const baseRecord = (record: CommandRecord) => ({
-  schemaVersion: 8 as const,
+  schemaVersion: 1 as const,
   kind: "commandRecord" as const,
   command: record.command,
   receipt: record.receipt,
@@ -375,7 +375,7 @@ export class SessionHost implements HostPort {
   }
   negotiate(offered: Negotiation): Result<Negotiation> {
     if (this.closed) return fail("unavailable");
-    if (offered.contractVersion !== 8 || offered.acp !== 1)
+    if (offered.contractVersion !== 1 || offered.acp !== 1)
       return fail("unsupported_version");
     if (
       offered.a2ui &&
@@ -692,7 +692,7 @@ export class SessionHost implements HostPort {
       if (b.signal.aborted || this.closing || !this.callerAvailable(caller))
         return fail("unavailable");
       return ok({
-        schemaVersion: 8,
+        schemaVersion: 1,
         kind: "connectionPage",
         connections: [...requireValue(await this.store.connections(caller))],
         preferences: requireValue(await this.store.preferences(caller)),
@@ -868,7 +868,7 @@ export class SessionHost implements HostPort {
           ),
         );
         const command: Command = {
-          schemaVersion: 8,
+          schemaVersion: 1,
           kind: "command",
           sessionId: probe.sessionId,
           commandId: randomUUID(),
@@ -1500,7 +1500,7 @@ export class SessionHost implements HostPort {
     )
       attemptId = undefined;
     return {
-      schemaVersion: 8,
+      schemaVersion: 1,
       kind: "event",
       namespace: session.namespace,
       eventId: randomUUID(),
@@ -1871,7 +1871,7 @@ export class SessionHost implements HostPort {
         append(observed.body);
       } else if (observed.type === "interaction") {
         const row: Interaction = {
-          schemaVersion: 8,
+          schemaVersion: 1,
           kind: "interaction",
           namespace,
           commandId: record.command.commandId,
@@ -2281,7 +2281,7 @@ export class SessionHost implements HostPort {
                 await this.accept(
                   caller,
                   {
-                    schemaVersion: 8,
+                    schemaVersion: 1,
                     kind: "command",
                     sessionId: namespace.sessionId,
                     commandId: randomUUID(),
@@ -2389,7 +2389,7 @@ export class SessionHost implements HostPort {
               this.accept(
                 namespace,
                 {
-                  schemaVersion: 8,
+                  schemaVersion: 1,
                   kind: "command",
                   sessionId,
                   commandId: randomUUID(),

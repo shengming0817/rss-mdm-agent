@@ -145,7 +145,7 @@ export function createAssistant(
     opening: false,
     connections: [] as Connection[],
     preferences: {
-      schemaVersion: 8,
+      schemaVersion: 1,
       kind: "userPreferences",
     } as import("@rss-mdm-agent/ai-contract/wire").UserPreferences,
     sessions: new Map<string, SessionItem>(),
@@ -188,7 +188,7 @@ export function createAssistant(
   function recordView(next: SessionView) {
     state.views.set(next.namespace.sessionId, next);
     state.sessions.set(next.namespace.sessionId, {
-      title: "新对话",
+      presentation: { title: "新对话" },
       lastActivityAtMs: 0,
       ...state.sessions.get(next.namespace.sessionId),
       namespace: next.namespace,
@@ -788,7 +788,7 @@ export function createAssistant(
       return;
     state.pending.set(id, {
       command: {
-        schemaVersion: 8,
+        schemaVersion: 1,
         kind: "command",
         sessionId: id,
         commandId,
@@ -992,7 +992,7 @@ export function createAssistant(
     state.taskLoading = false;
     state.task = undefined;
     state.connections = [];
-    state.preferences = { schemaVersion: 8, kind: "userPreferences" };
+    state.preferences = { schemaVersion: 1, kind: "userPreferences" };
     state.sessions.clear();
     state.views.clear();
     state.drafts.clear();

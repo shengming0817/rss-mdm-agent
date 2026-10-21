@@ -124,14 +124,17 @@ impl ExecutionServicePort for FixtureService {
     async fn tasks(&self, _: CancellationToken) -> Result<Vec<BackendTask>, ServiceError> {
         let s = self.selection();
         Ok(vec![BackendTask {
-            summary: BackendTaskSummary::Script {
-                identity: BackendIdentity::System,
+            presentation: execution_contract::BackendPresentation {
+                title: "Explicit S1 test task".into(),
+                summary: BackendTaskSummary::Script {
+                    identity: BackendIdentity::System,
+                },
+                extra: Default::default(),
             },
             task: s.task,
             attempt: s.attempt,
             revision: s.revision,
             request: s.request,
-            title: "Explicit S1 test task".into(),
             expires_at: 9_999_999_999,
             user_initiated: true,
         }])

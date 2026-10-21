@@ -1033,7 +1033,7 @@ impl Core {
         if !selection.matches(&offer)
             || !offer.user_initiated
             || !matches!(
-                offer.summary,
+                offer.presentation.summary,
                 execution_contract::BackendTaskSummary::Software {
                     intent: execution_contract::SoftwareOperation::Install
                         | execution_contract::SoftwareOperation::Uninstall,

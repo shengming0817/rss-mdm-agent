@@ -192,11 +192,11 @@ test(
           nativeDirectory: join(root, "native"),
         },
         connection: {
-          schemaVersion: 8,
+          schemaVersion: 1,
           kind: "connection",
           connectionId: "custom",
           configRevision: 1,
-          name: "fixture",
+          presentation: { name: "fixture" },
           provider: "codex",
           profile: "conversation",
           status: "ready",

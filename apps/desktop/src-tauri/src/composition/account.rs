@@ -563,8 +563,8 @@ impl EnterpriseSession {
                 authority, self.organization.tenant_id, self.principal
             ))
         );
-        serde_json::from_value(json!({"schemaVersion":8,"kind":"userContext","generation":Uuid::new_v4().to_string(),
-            "user":{"schemaVersion":8,"kind":"testUser","userId":actor,"displayName":self.organization.label,"nameKey":"enterprise"},
+        serde_json::from_value(json!({"schemaVersion":1,"kind":"userContext","generation":Uuid::new_v4().to_string(),
+            "user":{"schemaVersion":1,"kind":"testUser","userId":actor,"displayName":self.organization.label,"nameKey":"enterprise"},
             "identity":{"mode":"user_device","authorityId":authority,"tenantId":self.organization.tenant_id,"principalId":self.principal,"organizationId":self.organization.id,"expiresAtMs":self.expires}})).map_err(|_| failure(Stage::Session, Reason::Contract))
     }
 }

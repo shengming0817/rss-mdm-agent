@@ -20,7 +20,7 @@ export function productSession(
   selectedConnectionId?: string,
 ): Session {
   return {
-    schemaVersion: 8,
+    schemaVersion: 1,
     kind: "session",
     namespace: structuredClone(namespace),
     revision: 0,

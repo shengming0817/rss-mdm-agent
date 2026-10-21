@@ -155,7 +155,7 @@ pub fn policy_tool(
     object.insert("additionalProperties".into(), false.into());
     project_parameter_schema(&mut schema)?;
     Ok(
-        serde_json::json!({"name": policy_tool_name(item), "description": format!("{}\n{}\nCategory: {}\nKeywords: {}\nPrerequisites: {}\nSide effects: {}", item.self_service.display_name, item.self_service.description, item.self_service.category, item.self_service.keywords.join(", "), item.self_service.prerequisites, item.self_service.side_effects), "inputSchema": schema, "annotations": {"readOnlyHint": item.self_service.risk_level == 1 && matches!(item.task, rss_mdm_agent_wire::runtime::SelfServiceTask::Script {..}), "openWorldHint": false, "idempotentHint": false}}),
+        serde_json::json!({"name": policy_tool_name(item), "description": serde_json::to_string(&item.self_service.presentation).map_err(|_| ServiceError::Denied)?, "inputSchema": schema, "annotations": {"readOnlyHint": item.self_service.risk_level == 1 && matches!(item.task, rss_mdm_agent_wire::runtime::SelfServiceTask::Script {..}), "openWorldHint": false, "idempotentHint": false}}),
     )
 }
 

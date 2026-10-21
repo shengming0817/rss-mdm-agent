@@ -45,7 +45,7 @@ fn load(task: uuid::Uuid) -> Result<Recovery, Error> {
     Ok(record)
 }
 fn validate(r: &Recovery, task: uuid::Uuid) -> Result<(), Error> {
-    if r.version != 2 {
+    if r.version != 1 {
         return Err(Error::Configuration);
     }
     r.permit
@@ -77,7 +77,7 @@ pub(crate) fn supported(d: &Deployment) -> bool {
     Deployment::default_path()
         .and_then(|p| Candidate::retained(&p, d))
         .and_then(|c| c.format())
-        .is_ok_and(|f| matches!(f.as_str(), "macos_pkg" | "nsis_exe"))
+        .is_ok_and(|f| matches!(f.as_str(), "macos_pkg" | "windows_exe"))
 }
 fn prepare(d: &Deployment, permit: &UnmanagePermit, package_managed: bool) -> Result<(), Error> {
     if path(permit.task().task_id)?.exists() {
@@ -110,7 +110,7 @@ fn prepare(d: &Deployment, permit: &UnmanagePermit, package_managed: bool) -> Re
         return Err(Error::Denied);
     }
     let record = Recovery {
-        version: 2,
+        version: 1,
         deployment: d.clone(),
         candidate,
         permit: checked,

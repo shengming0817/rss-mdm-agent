@@ -11,11 +11,11 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
 }));
 const context = (mode: "device" | "test" | "user_device"): UserContext => ({
-  schemaVersion: 8,
+  schemaVersion: 1,
   kind: "userContext",
   generation: "old-generation",
   user: {
-    schemaVersion: 8,
+    schemaVersion: 1,
     kind: "testUser",
     userId: "actor",
     displayName: "Alice",
@@ -39,7 +39,7 @@ const context = (mode: "device" | "test" | "user_device"): UserContext => ({
         },
 });
 const status = {
-  schemaVersion: 8,
+  schemaVersion: 1,
   kind: "hostStatus",
   generation: 2,
   phase: "ready",
@@ -58,11 +58,11 @@ it.each(["device", "test", "user_device"] as const)(
     let current = context(mode);
     vi.mocked(invoke).mockImplementation(async (command) => {
       if (command === "test_users")
-        return { schemaVersion: 8, kind: "testUserPage", users: [], current };
+        return { schemaVersion: 1, kind: "testUserPage", users: [], current };
       if (command === "account_organizations")
-        return { schemaVersion: 8, kind: "accountSettings", organizations: [] };
+        return { schemaVersion: 1, kind: "accountSettings", organizations: [] };
       if (command === "account_status")
-        return { schemaVersion: 8, kind: "accountStatus", current };
+        return { schemaVersion: 1, kind: "accountStatus", current };
       if (command === "ai_host_status") return status;
       if (command === "ai_restart_host") {
         current = { ...current, generation: "new-generation" };
@@ -96,7 +96,7 @@ it("synchronizes a rotated identity even when Host startup fails", async () => {
   vi.mocked(invoke).mockImplementation(async (command) => {
     if (command === "ai_restart_host") throw Error("startup failed");
     if (command === "account_status")
-      return { schemaVersion: 8, kind: "accountStatus", current: next };
+      return { schemaVersion: 1, kind: "accountStatus", current: next };
     throw Error("unexpected command");
   });
   await expect(nativeHost()!.restart(1)).rejects.toThrow("startup failed");

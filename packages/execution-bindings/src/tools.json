@@ -27,6 +27,19 @@
             }
           ]
         },
+        "BackendPresentation": {
+          "additionalProperties": true,
+          "description": "Known display fields and bounded future presentation content.",
+          "properties": {
+            "summary": {
+              "$ref": "#/$defs/BackendTaskSummary",
+              "description": "Safe action preview, never executable input."
+            },
+            "title": { "description": "Display title.", "type": "string" }
+          },
+          "required": ["title", "summary"],
+          "type": "object"
+        },
         "BackendStepSummary": {
           "additionalProperties": false,
           "description": "Exact software coordinate displayed before user confirmation.",
@@ -60,6 +73,10 @@
               "format": "int64",
               "type": "integer"
             },
+            "presentation": {
+              "$ref": "#/$defs/BackendPresentation",
+              "description": "Extensible safe display snapshot; it never grants execution authority."
+            },
             "request": {
               "$ref": "#/$defs/RequestId",
               "description": "Deterministic original execution request used for status after response loss."
@@ -68,17 +85,9 @@
               "$ref": "#/$defs/Digest",
               "description": "Full signed offer revision."
             },
-            "summary": {
-              "$ref": "#/$defs/BackendTaskSummary",
-              "description": "Complete safe action preview, immutable with the offer revision."
-            },
             "task": {
               "$ref": "#/$defs/Id",
               "description": "Backend task identity."
-            },
-            "title": {
-              "description": "Safe display text selected by the backend.",
-              "type": "string"
             },
             "userInitiated": {
               "description": "Requires an explicit local user action before requesting Start.",
@@ -90,8 +99,7 @@
             "attempt",
             "revision",
             "request",
-            "title",
-            "summary",
+            "presentation",
             "expiresAt",
             "userInitiated"
           ],
@@ -489,6 +497,19 @@
             }
           ]
         },
+        "BackendPresentation": {
+          "additionalProperties": true,
+          "description": "Known display fields and bounded future presentation content.",
+          "properties": {
+            "summary": {
+              "$ref": "#/$defs/BackendTaskSummary",
+              "description": "Safe action preview, never executable input."
+            },
+            "title": { "description": "Display title.", "type": "string" }
+          },
+          "required": ["title", "summary"],
+          "type": "object"
+        },
         "BackendRequest": {
           "additionalProperties": false,
           "description": "User intent retained in the sole execution journal before a frozen execution exists.",
@@ -668,6 +689,10 @@
               "format": "int64",
               "type": "integer"
             },
+            "presentation": {
+              "$ref": "#/$defs/BackendPresentation",
+              "description": "Extensible safe display snapshot; it never grants execution authority."
+            },
             "request": {
               "$ref": "#/$defs/RequestId",
               "description": "Deterministic original execution request used for status after response loss."
@@ -676,17 +701,9 @@
               "$ref": "#/$defs/Digest",
               "description": "Full signed offer revision."
             },
-            "summary": {
-              "$ref": "#/$defs/BackendTaskSummary",
-              "description": "Complete safe action preview, immutable with the offer revision."
-            },
             "task": {
               "$ref": "#/$defs/Id",
               "description": "Backend task identity."
-            },
-            "title": {
-              "description": "Safe display text selected by the backend.",
-              "type": "string"
             },
             "userInitiated": {
               "description": "Requires an explicit local user action before requesting Start.",
@@ -698,8 +715,7 @@
             "attempt",
             "revision",
             "request",
-            "title",
-            "summary",
+            "presentation",
             "expiresAt",
             "userInitiated"
           ],
@@ -1332,26 +1348,10 @@
               "description": "Effective administrator AI switch.",
               "type": "boolean"
             },
-            "category": {
-              "description": "Presentation category.",
-              "type": "string"
-            },
-            "description": {
-              "description": "Intended purpose.",
-              "type": "string"
-            },
-            "displayName": {
-              "description": "Directory display name.",
-              "type": "string"
-            },
-            "keywords": {
-              "description": "Search terms.",
-              "items": { "type": "string" },
-              "type": "array"
-            },
-            "prerequisites": {
-              "description": "Preconditions shown before invocation.",
-              "type": "string"
+            "presentation": {
+              "additionalProperties": true,
+              "description": "Open directory presentation; never used as authorization or executable input.",
+              "type": "object"
             },
             "published": {
               "description": "Whether this script is published for self service.",
@@ -1361,23 +1361,9 @@
               "description": "Effective risk level, one or two.",
               "enum": [1, 2],
               "type": "integer"
-            },
-            "sideEffects": {
-              "description": "Expected effects shown before invocation.",
-              "type": "string"
             }
           },
-          "required": [
-            "published",
-            "displayName",
-            "description",
-            "prerequisites",
-            "sideEffects",
-            "category",
-            "keywords",
-            "allowAi",
-            "riskLevel"
-          ],
+          "required": ["published", "presentation", "allowAi", "riskLevel"],
           "type": "object"
         },
         "SelfServiceSubject": {
@@ -2051,6 +2037,19 @@
             }
           ]
         },
+        "BackendPresentation": {
+          "additionalProperties": true,
+          "description": "Known display fields and bounded future presentation content.",
+          "properties": {
+            "summary": {
+              "$ref": "#/$defs/BackendTaskSummary",
+              "description": "Safe action preview, never executable input."
+            },
+            "title": { "description": "Display title.", "type": "string" }
+          },
+          "required": ["title", "summary"],
+          "type": "object"
+        },
         "BackendRequest": {
           "additionalProperties": false,
           "description": "User intent retained in the sole execution journal before a frozen execution exists.",
@@ -2230,6 +2229,10 @@
               "format": "int64",
               "type": "integer"
             },
+            "presentation": {
+              "$ref": "#/$defs/BackendPresentation",
+              "description": "Extensible safe display snapshot; it never grants execution authority."
+            },
             "request": {
               "$ref": "#/$defs/RequestId",
               "description": "Deterministic original execution request used for status after response loss."
@@ -2238,17 +2241,9 @@
               "$ref": "#/$defs/Digest",
               "description": "Full signed offer revision."
             },
-            "summary": {
-              "$ref": "#/$defs/BackendTaskSummary",
-              "description": "Complete safe action preview, immutable with the offer revision."
-            },
             "task": {
               "$ref": "#/$defs/Id",
               "description": "Backend task identity."
-            },
-            "title": {
-              "description": "Safe display text selected by the backend.",
-              "type": "string"
             },
             "userInitiated": {
               "description": "Requires an explicit local user action before requesting Start.",
@@ -2260,8 +2255,7 @@
             "attempt",
             "revision",
             "request",
-            "title",
-            "summary",
+            "presentation",
             "expiresAt",
             "userInitiated"
           ],
@@ -2894,26 +2888,10 @@
               "description": "Effective administrator AI switch.",
               "type": "boolean"
             },
-            "category": {
-              "description": "Presentation category.",
-              "type": "string"
-            },
-            "description": {
-              "description": "Intended purpose.",
-              "type": "string"
-            },
-            "displayName": {
-              "description": "Directory display name.",
-              "type": "string"
-            },
-            "keywords": {
-              "description": "Search terms.",
-              "items": { "type": "string" },
-              "type": "array"
-            },
-            "prerequisites": {
-              "description": "Preconditions shown before invocation.",
-              "type": "string"
+            "presentation": {
+              "additionalProperties": true,
+              "description": "Open directory presentation; never used as authorization or executable input.",
+              "type": "object"
             },
             "published": {
               "description": "Whether this script is published for self service.",
@@ -2923,23 +2901,9 @@
               "description": "Effective risk level, one or two.",
               "enum": [1, 2],
               "type": "integer"
-            },
-            "sideEffects": {
-              "description": "Expected effects shown before invocation.",
-              "type": "string"
             }
           },
-          "required": [
-            "published",
-            "displayName",
-            "description",
-            "prerequisites",
-            "sideEffects",
-            "category",
-            "keywords",
-            "allowAi",
-            "riskLevel"
-          ],
+          "required": ["published", "presentation", "allowAi", "riskLevel"],
           "type": "object"
         },
         "SelfServiceSubject": {

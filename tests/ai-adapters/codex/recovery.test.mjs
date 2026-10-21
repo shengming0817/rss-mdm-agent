@@ -68,7 +68,7 @@ test(
 
     const initial = startStage(
       {
-        schemaVersion: 8,
+        schemaVersion: 1,
         kind: "session",
         namespace: first.configuration.namespace,
         revision: 0,

@@ -309,6 +309,7 @@ export interface BackendTask {
    * Exclusive UTC Unix expiry in seconds.
    */
   expiresAt: number;
+  presentation: BackendPresentation;
   /**
    * Deterministic original execution request used for status after response loss.
    */
@@ -318,7 +319,20 @@ export interface BackendTask {
    */
   revision: string;
   /**
-   * Complete safe action preview, immutable with the offer revision.
+   * Backend task identity.
+   */
+  task: string;
+  /**
+   * Requires an explicit local user action before requesting Start.
+   */
+  userInitiated: boolean;
+}
+/**
+ * Extensible safe display snapshot; it never grants execution authority.
+ */
+export interface BackendPresentation {
+  /**
+   * Safe action preview, never executable input.
    */
   summary:
     | {
@@ -349,17 +363,10 @@ export interface BackendTask {
         steps: BackendStepSummary[];
       };
   /**
-   * Backend task identity.
-   */
-  task: string;
-  /**
-   * Safe display text selected by the backend.
+   * Display title.
    */
   title: string;
-  /**
-   * Requires an explicit local user action before requesting Start.
-   */
-  userInitiated: boolean;
+  [k: string]: unknown;
 }
 /**
  * Exact software coordinate displayed before user confirmation.
@@ -529,25 +536,11 @@ export interface SelfServiceMetadata {
    */
   allowAi: boolean;
   /**
-   * Presentation category.
+   * Open directory presentation; never used as authorization or executable input.
    */
-  category: string;
-  /**
-   * Intended purpose.
-   */
-  description: string;
-  /**
-   * Directory display name.
-   */
-  displayName: string;
-  /**
-   * Search terms.
-   */
-  keywords: string[];
-  /**
-   * Preconditions shown before invocation.
-   */
-  prerequisites: string;
+  presentation: {
+    [k: string]: unknown;
+  };
   /**
    * Whether this script is published for self service.
    */
@@ -556,10 +549,6 @@ export interface SelfServiceMetadata {
    * Effective risk level, one or two.
    */
   riskLevel: 1 | 2;
-  /**
-   * Expected effects shown before invocation.
-   */
-  sideEffects: string;
 }
 /**
  * Authenticated enterprise coordinates, without a credential.
@@ -624,6 +613,7 @@ export interface BackendTask1 {
    * Exclusive UTC Unix expiry in seconds.
    */
   expiresAt: number;
+  presentation: BackendPresentation;
   /**
    * Deterministic original execution request used for status after response loss.
    */
@@ -633,44 +623,9 @@ export interface BackendTask1 {
    */
   revision: string;
   /**
-   * Complete safe action preview, immutable with the offer revision.
-   */
-  summary:
-    | {
-        kind: "credential";
-      }
-    | {
-        kind: "enrollment";
-      }
-    | {
-        kind: "collection";
-      }
-    | {
-        /**
-         * Account class selected by the backend.
-         */
-        identity: "system" | "user";
-        kind: "script";
-      }
-    | {
-        /**
-         * Install, uninstall or detection intent.
-         */
-        intent: "install" | "detect" | "uninstall";
-        kind: "software";
-        /**
-         * Ordered prerequisites and final package.
-         */
-        steps: BackendStepSummary[];
-      };
-  /**
    * Backend task identity.
    */
   task: string;
-  /**
-   * Safe display text selected by the backend.
-   */
-  title: string;
   /**
    * Requires an explicit local user action before requesting Start.
    */
@@ -1004,7 +959,7 @@ export interface FrozenExecutionSummary {
   /**
    * Version of the frozen execution plan, independent of the AI wire version.
    */
-  schemaVersion: 8;
+  schemaVersion: 1;
   /**
    * Required target user session.
    */

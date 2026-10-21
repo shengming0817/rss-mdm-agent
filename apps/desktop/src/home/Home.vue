@@ -42,7 +42,7 @@ const addressesOpen = ref(false);
           <span class="design-eyebrow">● YOUR EVERYDAY COMPANION</span>
           <h2>好状态，<br />开启好的一天。</h2>
           <p>
-            {{ device?.computerName ?? "你的电脑" }} · 设备概览<br />常用应用、设备状态，都在这里。
+            {{ device?.attributes.computerName ?? "你的电脑" }} · 设备概览<br />常用应用、设备状态，都在这里。
           </p>
           <button
             class="design-button"
@@ -179,26 +179,30 @@ const addressesOpen = ref(false);
     <div class="computer-identity" aria-label="本机信息">
       <span
         class="identity-name"
-        :aria-label="`计算机名：${device?.computerName ?? '未读取'}`"
-        >{{ device?.computerName ?? "计算机名未读取" }}</span
-      ><span :title="device?.ipAddresses?.join('、') || 'IP 地址未读取'"
-        >{{ device?.ipAddresses?.[0] ?? "IP 地址未读取"
+        :aria-label="`计算机名：${device?.attributes.computerName ?? '未读取'}`"
+        >{{ device?.attributes.computerName ?? "计算机名未读取" }}</span
+      ><span
+        :title="device?.attributes.ipAddresses?.join('、') || 'IP 地址未读取'"
+        >{{ device?.attributes.ipAddresses?.[0] ?? "IP 地址未读取"
         }}<UiPopover
-          v-if="device?.ipAddresses && device.ipAddresses.length > 1"
+          v-if="
+            device?.attributes.ipAddresses &&
+            device.attributes.ipAddresses.length > 1
+          "
           v-model:open="addressesOpen"
           label="全部 IP 地址"
           ><template #trigger
             ><button aria-label="查看所有 IP 地址" class="ip-more">
-              +{{ device.ipAddresses.length - 1 }}
+              +{{ device.attributes.ipAddresses.length - 1 }}
             </button></template
           >
           <ul>
-            <li v-for="address in device.ipAddresses" :key="address">
+            <li v-for="address in device.attributes.ipAddresses" :key="address">
               {{ address }}
             </li>
           </ul></UiPopover
         ></span
-      ><span>{{ device?.loginUser ?? "系统登录用户未读取" }}</span>
+      ><span>{{ device?.attributes.loginUser ?? "系统登录用户未读取" }}</span>
     </div>
   </div>
 </template>

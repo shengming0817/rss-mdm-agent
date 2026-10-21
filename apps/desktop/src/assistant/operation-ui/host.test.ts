@@ -39,12 +39,14 @@ function fixture() {
           published: true,
           allowAi: true,
           riskLevel: 2,
-          displayName: "Repair",
-          description: "Trusted repair",
-          category: "support",
-          keywords: [],
-          prerequisites: "device",
-          sideEffects: "Changes configuration",
+          presentation: {
+            displayName: "Repair",
+            description: "Trusted repair",
+            category: "support",
+            keywords: [],
+            prerequisites: "device",
+            sideEffects: "Changes configuration",
+          },
         },
         task: {
           kind: "script",
@@ -289,10 +291,12 @@ describe("production operation adapter", () => {
         "delivery",
         new AbortController().signal,
       );
-      expect(bridge.snapshot.targetLabel).toContain(
+      expect(bridge.snapshot.presentation.targetLabel).toContain(
         userTarget ? "S-1-5-21-OTHER / 登录会话 target-login2" : "本机设备",
       );
-      expect(bridge.snapshot.targetLabel).not.toContain("enterprise-user");
+      expect(bridge.snapshot.presentation.targetLabel).not.toContain(
+        "enterprise-user",
+      );
       expect(bridge.snapshot.approval.enterprise).toContain(
         userTarget ? "设备准入主体" : "enterprise-user",
       );

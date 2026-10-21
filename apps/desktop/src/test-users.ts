@@ -209,7 +209,7 @@ export function accountErrorMessage(error: unknown): string {
     try {
       const status = parsed(
         {
-          schemaVersion: 8,
+          schemaVersion: 1,
           kind: "accountStatus",
           failure: { stage, reason, observedAtMs: 0 },
         },

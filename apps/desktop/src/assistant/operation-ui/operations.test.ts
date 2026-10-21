@@ -437,7 +437,7 @@ describe("operation Vue templates", () => {
         },
       });
       await flushPromises();
-      expect(wrapper.text()).toContain(f.snapshot.targetLabel);
+      expect(wrapper.text()).toContain(f.snapshot.presentation.targetLabel);
       expect(wrapper.text()).toContain("企业批准");
       if (template === "TaskExecution")
         await button(wrapper, "继续").trigger("click");
@@ -547,4 +547,22 @@ describe("question TextField variants", () => {
       resolver.dispose();
       processor.model.dispose();
     });
+});
+
+it("unknown presentation survives while secret handling belongs to the trusted snapshot", () => {
+  const f = operationFixture();
+  f.presentation.brandColor = { nested: ["blue"] };
+  f.presentation.fields.find((field) => field.id === "secret")!.component =
+    "TextField";
+  const c = createOperationController(
+    f.presentation,
+    f.snapshot,
+    f.host,
+    new OperationDrafts(),
+  );
+  expect(c.presentation.brandColor).toEqual({ nested: ["blue"] });
+  expect(c.isSecret("secret")).toBe(true);
+  c.edit("secret", "must-not-persist");
+  expect(c.state.draft.values.secret).toBeUndefined();
+  c.dispose();
 });

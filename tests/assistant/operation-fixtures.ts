@@ -17,7 +17,7 @@ export function operationFixture(
   template: OperationPresentation["template"] = "SettingsForm",
 ) {
   const presentation: OperationPresentation = {
-    version: 2,
+    version: 1,
     template,
     layout: template === "ChangeReview" ? "disclosure" : "tabs",
     selection: template === "ObjectActions" ? "single" : "multiple",
@@ -131,6 +131,7 @@ export function operationFixture(
     ],
   };
   const snapshot: OperationSnapshot = {
+    secretFields: ["secret"],
     scope: {
       authority: "fixture",
       tenant: "test-tenant",
@@ -141,10 +142,13 @@ export function operationFixture(
     },
     revision: 1,
     baseline: "1",
-    title: `${template} 操作示例`,
-    source: "登记操作 · 开发 fixture",
-    targetLabel: "测试设备 / 当前用户",
-    impact: "仅修改测试内存，不操作真实系统",
+    presentation: {
+      title: `${template} 操作示例`,
+      source: "登记操作 · 开发 fixture",
+      targetLabel: "测试设备 / 当前用户",
+      impact: "仅修改测试内存，不操作真实系统",
+    },
+
     current: {
       name: "当前名称",
       enabled: false,

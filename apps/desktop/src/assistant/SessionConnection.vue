@@ -102,7 +102,7 @@ async function history() {
             :key="row.connectionId"
             :value="row.connectionId"
           >
-            {{ row.name }} · {{ labels.get(row.provider) }}
+            {{ row.presentation.name }} · {{ labels.get(row.provider) }}
           </option>
         </select></label
       >

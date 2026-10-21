@@ -22,7 +22,7 @@ const unwrap = (r) => {
 };
 const draft = {
   connectionId: "offline",
-  name: "Offline",
+  presentation: { name: "Offline" },
   provider: "codex",
   profile: "conversation",
   source: { type: "existing_config" },

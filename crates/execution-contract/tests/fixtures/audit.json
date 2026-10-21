@@ -6,7 +6,7 @@
     "id": "test-authority"
   },
   "requestId": "request-1",
-  "contentDigest": "709c197884447cee6ef6f30c3af97968663b91ff1b07f5aa537571f70dde71a3",
+  "contentDigest": "c50c9951c5c97509a2b248b6855cd00b6bc24a624fbc7134c951a5eca8b3b5f5",
   "actor": "actor-1",
   "initiator": {
     "kind": "human",

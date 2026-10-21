@@ -419,7 +419,7 @@ mod tests {
             serde_json::json!({"mode":"device","tenantId":"local-device","principalId":"device","authorityId":"desktop-device"}),
             serde_json::json!({"mode":"user_device","tenantId":"tenant","principalId":"principal","authorityId":"authority","organizationId":"org","expiresAtMs":1000}),
         ] {
-            let context = serde_json::from_value(serde_json::json!({"schemaVersion":8,"kind":"userContext","generation":"generation","user":{"schemaVersion":8,"kind":"testUser","userId":"profile","nameKey":"name","displayName":"Name"},"identity":identity})).unwrap();
+            let context = serde_json::from_value(serde_json::json!({"schemaVersion":1,"kind":"userContext","generation":"generation","user":{"schemaVersion":1,"kind":"testUser","userId":"profile","nameKey":"name","displayName":"Name"},"identity":identity})).unwrap();
             let owner = serde_json::to_value(
                 credential_owner(&credential_caller(&context), &draft).unwrap(),
             )
@@ -429,7 +429,7 @@ mod tests {
             assert_eq!(owner["authorityId"], identity["authorityId"]);
             assert_eq!(owner["endpoint"], "https://example.invalid/");
         }
-        let mut context = serde_json::json!({"schemaVersion":8,"kind":"userContext","generation":"generation","user":{"schemaVersion":8,"kind":"testUser","userId":"profile","nameKey":"name","displayName":"Name"},"identity":null});
+        let mut context = serde_json::json!({"schemaVersion":1,"kind":"userContext","generation":"generation","user":{"schemaVersion":1,"kind":"testUser","userId":"profile","nameKey":"name","displayName":"Name"},"identity":null});
         assert!(
             serde_json::from_value::<ai_session_contract::UserContext>(context.clone()).is_err()
         );

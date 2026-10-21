@@ -4,7 +4,7 @@ use rusqlite::{Connection, OpenFlags, TransactionBehavior};
 use std::path::Path;
 
 // Includes persisted lifecycle records and the journal fingerprint domain, not just DDL.
-pub(crate) const SCHEMA_VERSION: u32 = 13;
+pub(crate) const SCHEMA_VERSION: u32 = 1;
 const APPLICATION_ID: u32 = 0x52534558;
 
 // Only internal schema column names are accepted, never caller-provided SQL.
@@ -116,6 +116,7 @@ impl Store {
         limits.validate()?;
         protected_path(path, true)?;
         let reader = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        validate_schema(&reader)?;
         ensure_current(&reader, authority, limits)
     }
     /// Open ONLY an existing database after read-only identity/version inspection.
@@ -135,6 +136,7 @@ impl Store {
                 supported: SCHEMA_VERSION,
             });
         }
+        validate_schema(&reader)?;
         let encoded: Vec<u8> = reader.query_row(
             &format!(
                 "SELECT {} FROM metadata WHERE singleton=1",
@@ -150,6 +152,7 @@ impl Store {
         drop(reader);
         let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
         ensure_current(&conn, authority, limits)?;
+        validate_schema(&conn)?;
         configure(&conn, limits)?;
         protected_path(path, true)?;
         Ok(OpenOutcome::Ready(Box::new(Self {
@@ -492,4 +495,24 @@ mod tests {
             std::fs::remove_dir_all(root).unwrap();
         }
     }
+}
+
+fn validate_schema(conn: &Connection) -> Result<(), Error> {
+    fn catalog(conn: &Connection) -> Result<Vec<(String, String)>, rusqlite::Error> {
+        let mut query = conn.prepare(
+            "SELECT name,sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY name",
+        )?;
+        let rows = query.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        rows.collect()
+    }
+    let expected = Connection::open_in_memory()?;
+    expected.execute_batch(include_str!("schema.sql"))?;
+    if catalog(conn)? != catalog(&expected)? {
+        return Err(Error::Schema);
+    }
+    let integrity: String = conn.query_row("PRAGMA quick_check(1)", [], |r| r.get(0))?;
+    if integrity != "ok" || conn.prepare("PRAGMA foreign_key_check")?.exists([])? {
+        return Err(Error::Schema);
+    }
+    Ok(())
 }

@@ -485,10 +485,13 @@ export interface ProviderForkPort {
     budget: Budget,
   ): Promise<ProviderForkResult>;
 }
-/** Closed metadata only. No native method names, identifiers, paths or payloads. */
+/** Safe adapter observations only. No native method names, identifiers, paths or payloads. */
 export interface ProviderDiagnostic {
   readonly kind: "text_delta" | "item_completed" | "turn_completed" | "other";
-  readonly dropped: number;
+  readonly attributes: {
+    readonly dropped: number;
+    readonly [key: string]: unknown;
+  };
 }
 export interface ProviderDiagnosticsPort {
   observe(binding: Binding, budget: Budget): AsyncIterable<ProviderDiagnostic>;

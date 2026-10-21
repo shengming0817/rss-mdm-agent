@@ -1,6 +1,6 @@
 use super::*;
 #[test]
-fn candidate_rejects_previous_version_and_retired_fields() {
+fn candidate_requires_current_format_and_valid_identity() {
     let root = crate::protocol_test_support::Root::new();
     let image = Artifact {
         path: root.path.join("service"),
@@ -8,8 +8,8 @@ fn candidate_rejects_previous_version_and_retired_fields() {
         cdhash: None,
     };
     let candidate = Candidate {
-        version: 3,
-        publication_sha256: "d".repeat(64),
+        version: 1,
+        format: rss_mdm_agent_wire::enroll::configuration::InstallerFormat::MacosPkg,
         product_version: "test".into(),
         target: Target::current().unwrap(),
         root: root.path.clone(),
@@ -35,11 +35,11 @@ fn candidate_rejects_previous_version_and_retired_fields() {
     // Current metadata reaches native artifact checks; this pure fixture has no installed images.
     assert_eq!(decoded.validate(), Err(Error::Identity));
     let mut old = current.clone();
-    old["version"] = 1.into();
+    old["version"] = 99.into();
     let decoded: Candidate = serde_json::from_value(old).unwrap();
     assert_eq!(decoded.validate(), Err(Error::Configuration));
     let mut old_field = current;
-    old_field["device_ca_pem"] = "retired-device-ca".into();
+    old_field["unexpected"] = true.into();
     assert!(serde_json::from_value::<Candidate>(old_field).is_err());
     assert_eq!(std::fs::read_dir(&root.path).unwrap().count(), 0);
 }

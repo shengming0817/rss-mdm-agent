@@ -3412,7 +3412,7 @@ fn moved_application_identity_reopens_v7_and_replays_without_dispatch_authority(
     let db = Database::new();
     let host = TestHost::new(0);
     let scope = host.scope();
-    // Fixed identities from the pre-refactor V8 canonical encoding, independent of Rust owner.
+    // Fixed identities from the pre-refactor V1 canonical encoding, independent of Rust owner.
     assert_eq!(
         scope.interaction_subject().as_str(),
         "99067cdd0ad2a17d2e877ff170f147a0f77746d87f7fa66b19d756497763000b"
@@ -3516,4 +3516,19 @@ fn current_satisfied_targets_complete_without_inventing_mutation_facts_in_sqlite
         assert_eq!(db.count("process_evidence"), 0);
         assert_eq!(db.count("attempts"), 1);
     }
+}
+
+#[test]
+fn current_number_does_not_accept_a_different_execution_layout() {
+    let db = Database::new();
+    drop(db.create());
+    db.sql()
+        .execute_batch("ALTER TABLE executions ADD COLUMN unexpected TEXT")
+        .unwrap();
+    let bytes = std::fs::read(&db.path).unwrap();
+    assert!(matches!(
+        Store::validate_existing(&db.path, &plan().spec().request.authority, limits()),
+        Err(execution_sqlite::Error::Schema)
+    ));
+    assert_eq!(std::fs::read(&db.path).unwrap(), bytes);
 }

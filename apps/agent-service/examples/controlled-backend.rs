@@ -41,8 +41,7 @@ async fn main() {
                 let Some(line) = line else { break };
                 let command: serde_json::Value = serde_json::from_str(&line).unwrap();
                 if command["kind"] == "configuration" {
-                    let candidate: [u8;32] = serde_json::from_value(command["candidateSha256"].clone()).unwrap();
-                    println!("{}", serde_json::to_string(&server.configuration(candidate)).unwrap());
+                    println!("{}", serde_json::to_string(&server.configuration()).unwrap());
                     std::io::stdout().flush().unwrap();
                     continue;
                 }

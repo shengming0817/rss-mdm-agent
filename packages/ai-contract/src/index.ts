@@ -1,4 +1,4 @@
-/** V8 product reliability contracts. Data never grants execution authority. */
+/** V1 product reliability contracts. Data never grants execution authority. */
 export {
   decode,
   isId,

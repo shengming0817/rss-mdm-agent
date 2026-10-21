@@ -44,19 +44,19 @@ function setup(now = () => 100) {
   view.connection = "attached";
   const submit = vi.fn().mockResolvedValue({ kind: "receipt" });
   const client = {
-    initialize: vi.fn().mockResolvedValue({ contractVersion: 8, acp: 1 }),
+    initialize: vi.fn().mockResolvedValue({ contractVersion: 1, acp: 1 }),
     connections: vi.fn().mockResolvedValue({
       preferences: {
-        schemaVersion: 8,
+        schemaVersion: 1,
         kind: "userPreferences",
         defaultConnectionId: "config-1",
       },
       connections: [
         {
-          schemaVersion: 8,
+          schemaVersion: 1,
           kind: "connection",
           connectionId: "config-1",
-          name: "Fixture",
+          presentation: { name: "Fixture" },
           provider: "codex",
           configRevision: 1,
 
@@ -68,13 +68,13 @@ function setup(now = () => 100) {
     }),
     savePreferences: vi
       .fn()
-      .mockResolvedValue({ schemaVersion: 8, kind: "userPreferences" }),
+      .mockResolvedValue({ schemaVersion: 1, kind: "userPreferences" }),
     listSessions: vi.fn().mockResolvedValue({
       items: [
         {
           namespace: session.namespace,
           status: session.status,
-          title: "已有对话",
+          presentation: { title: "已有对话" },
           lastActivityAtMs: 0,
         },
       ],
@@ -120,12 +120,12 @@ describe("assistant application ownership", () => {
   it("loads and retries older resource target sessions without losing the explicit choice or candidate", async () => {
     const t = setup();
     vi.mocked(t.client.listSessions).mockResolvedValueOnce({
-      schemaVersion: 8,
+      schemaVersion: 1,
       kind: "sessionPage",
       items: Array.from({ length: 20 }, (_, i) => ({
         namespace: { ...t.view.namespace, sessionId: `session-${i + 1}` },
         status: "active",
-        title: `会话 ${i + 1}`,
+        presentation: { title: `会话 ${i + 1}` },
         lastActivityAtMs: i,
       })),
       next: "older-page",
@@ -163,13 +163,13 @@ describe("assistant application ownership", () => {
     await flushPromises();
     expect(wrapper.get('[role="alert"]').text()).toContain("暂时无法读取会话");
     vi.mocked(t.client.listSessions).mockResolvedValueOnce({
-      schemaVersion: 8,
+      schemaVersion: 1,
       kind: "sessionPage",
       items: [
         {
           namespace: { ...t.view.namespace, sessionId: "older-session" },
           status: "active",
-          title: "较早会话",
+          presentation: { title: "较早会话" },
           lastActivityAtMs: -1,
         },
       ],
@@ -280,7 +280,7 @@ describe("assistant application ownership", () => {
     await t.c.select("session-1");
     t.view.commands.p = {
       command: {
-        schemaVersion: 8,
+        schemaVersion: 1,
         kind: "command",
         sessionId: "session-1",
         commandId: "p",
@@ -697,7 +697,7 @@ it("aborts an in-flight connection on disposal and suppresses its late permissio
 it("connection panel sends exactly the confirmed preview once and never includes unconfirmed history", async () => {
   const t = setup();
   const preview = {
-    schemaVersion: 8 as const,
+    schemaVersion: 1 as const,
     kind: "historyPreview" as const,
     sessionId: "session-1",
     connectionId: "config-1",
@@ -783,7 +783,7 @@ it("drops a history preview that completes after the selected session changed", 
   t.c.state.selected = "session-2";
   await wrapper.vm.$nextTick();
   finish({
-    schemaVersion: 8,
+    schemaVersion: 1,
     kind: "historyPreview",
     sessionId: "session-1",
     connectionId: "config-1",
@@ -830,9 +830,9 @@ it("deleting the selected connection preserves history and immediately disables 
       wrapper.get('button[aria-label="将连接 Fixture 设为默认"]'),
     ).toBeTruthy();
     vi.mocked(t.client.connections).mockResolvedValue({
-      schemaVersion: 8,
+      schemaVersion: 1,
       kind: "connectionPage",
-      preferences: { schemaVersion: 8, kind: "userPreferences" },
+      preferences: { schemaVersion: 1, kind: "userPreferences" },
       connections: [],
     });
     await deleteButton.trigger("click");

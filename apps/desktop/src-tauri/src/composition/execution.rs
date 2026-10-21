@@ -844,12 +844,15 @@ mod selection_tests {
                     task: selection.task.clone(),
                     attempt: selection.attempt.clone(),
                     revision: selection.revision.clone(),
-                    title: "original".into(),
+                    presentation: execution_contract::BackendPresentation {
+                        title: "original".into(),
+                        summary: BackendTaskSummary::Script {
+                            identity: BackendIdentity::System,
+                        },
+                        extra: Default::default(),
+                    },
                     expires_at: 100,
                     user_initiated: true,
-                    summary: BackendTaskSummary::Script {
-                        identity: BackendIdentity::System,
-                    },
                 },
             },
             trigger: BackendTrigger::Automatic {},

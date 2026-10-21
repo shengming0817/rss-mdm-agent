@@ -21,7 +21,7 @@
         "totalOutputBytes": 4096,
         "totalTimeoutMs": 1000
       },
-      "contentDigest": "c75e9ced5b8e71d099f6ec20da15878ac650d8cfa41e28793bb69015b26ab6de",
+      "contentDigest": "32b826cd60fa353c90b7d4750b94cdd8a14bf34e3501c72f00503cd84077ba54",
       "execution": { "kind": "process" },
       "initiator": {
         "kind": "policy",
@@ -44,7 +44,7 @@
         "account": { "platform": "linux", "subject": "uid:1000" },
         "kind": "user"
       },
-      "schemaVersion": 8,
+      "schemaVersion": 1,
       "sessionRequirement": { "kind": "notRequired" },
       "target": {
         "device": "device-1",
@@ -62,7 +62,7 @@
       "attemptId": null,
       "attempts": 0,
       "cancelRequested": false,
-      "contentDigest": "c75e9ced5b8e71d099f6ec20da15878ac650d8cfa41e28793bb69015b26ab6de",
+      "contentDigest": "32b826cd60fa353c90b7d4750b94cdd8a14bf34e3501c72f00503cd84077ba54",
       "dispatchCause": null,
       "evidence": [],
       "mode": "test",
@@ -95,7 +95,7 @@
         "totalOutputBytes": 4096,
         "totalTimeoutMs": 1000
       },
-      "contentDigest": "c75e9ced5b8e71d099f6ec20da15878ac650d8cfa41e28793bb69015b26ab6de",
+      "contentDigest": "32b826cd60fa353c90b7d4750b94cdd8a14bf34e3501c72f00503cd84077ba54",
       "execution": { "kind": "process" },
       "initiator": {
         "kind": "policy",
@@ -118,7 +118,7 @@
         "account": { "platform": "linux", "subject": "uid:1000" },
         "kind": "user"
       },
-      "schemaVersion": 8,
+      "schemaVersion": 1,
       "sessionRequirement": { "kind": "notRequired" },
       "target": {
         "device": "device-1",
@@ -136,7 +136,7 @@
       "attemptId": "app-fd5e6aca451fdab554517dcc42aea4609d7c916efc7f7f5102c14914556715fa",
       "attempts": 1,
       "cancelRequested": true,
-      "contentDigest": "c75e9ced5b8e71d099f6ec20da15878ac650d8cfa41e28793bb69015b26ab6de",
+      "contentDigest": "32b826cd60fa353c90b7d4750b94cdd8a14bf34e3501c72f00503cd84077ba54",
       "dispatchCause": null,
       "evidence": [
         {
@@ -186,7 +186,7 @@
         "totalOutputBytes": 4096,
         "totalTimeoutMs": 1000
       },
-      "contentDigest": "c75e9ced5b8e71d099f6ec20da15878ac650d8cfa41e28793bb69015b26ab6de",
+      "contentDigest": "32b826cd60fa353c90b7d4750b94cdd8a14bf34e3501c72f00503cd84077ba54",
       "execution": { "kind": "process" },
       "initiator": {
         "kind": "policy",
@@ -209,7 +209,7 @@
         "account": { "platform": "linux", "subject": "uid:1000" },
         "kind": "user"
       },
-      "schemaVersion": 8,
+      "schemaVersion": 1,
       "sessionRequirement": { "kind": "notRequired" },
       "target": {
         "device": "device-1",
@@ -227,7 +227,7 @@
       "attemptId": "app-fd5e6aca451fdab554517dcc42aea4609d7c916efc7f7f5102c14914556715fa",
       "attempts": 1,
       "cancelRequested": true,
-      "contentDigest": "c75e9ced5b8e71d099f6ec20da15878ac650d8cfa41e28793bb69015b26ab6de",
+      "contentDigest": "32b826cd60fa353c90b7d4750b94cdd8a14bf34e3501c72f00503cd84077ba54",
       "dispatchCause": null,
       "evidence": [],
       "mode": "test",
@@ -244,17 +244,19 @@
       "offer": {
         "attempt": "backend-attempt",
         "expiresAt": 9999999999,
+        "presentation": {
+          "summary": {
+            "intent": "install",
+            "kind": "software",
+            "steps": [
+              { "identity": "system", "package": "办公套件", "version": "1.0" }
+            ]
+          },
+          "title": "办公套件"
+        },
         "request": "request-1",
         "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "summary": {
-          "intent": "install",
-          "kind": "software",
-          "steps": [
-            { "identity": "system", "package": "办公套件", "version": "1.0" }
-          ]
-        },
         "task": "backend-task",
-        "title": "办公套件",
         "userInitiated": true
       }
     },
@@ -289,17 +291,19 @@
   "offer": {
     "attempt": "backend-attempt",
     "expiresAt": 9999999999,
+    "presentation": {
+      "summary": {
+        "intent": "install",
+        "kind": "software",
+        "steps": [
+          { "identity": "system", "package": "办公套件", "version": "1.0" }
+        ]
+      },
+      "title": "办公套件"
+    },
     "request": "request-1",
     "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    "summary": {
-      "intent": "install",
-      "kind": "software",
-      "steps": [
-        { "identity": "system", "package": "办公套件", "version": "1.0" }
-      ]
-    },
     "task": "backend-task",
-    "title": "办公套件",
     "userInitiated": true
   },
   "outcomeUnknown": {
@@ -324,7 +328,7 @@
         "totalOutputBytes": 4096,
         "totalTimeoutMs": 1000
       },
-      "contentDigest": "c75e9ced5b8e71d099f6ec20da15878ac650d8cfa41e28793bb69015b26ab6de",
+      "contentDigest": "32b826cd60fa353c90b7d4750b94cdd8a14bf34e3501c72f00503cd84077ba54",
       "execution": { "kind": "process" },
       "initiator": {
         "kind": "policy",
@@ -347,7 +351,7 @@
         "account": { "platform": "linux", "subject": "uid:1000" },
         "kind": "user"
       },
-      "schemaVersion": 8,
+      "schemaVersion": 1,
       "sessionRequirement": { "kind": "notRequired" },
       "target": {
         "device": "device-1",
@@ -365,7 +369,7 @@
       "attemptId": "app-fd5e6aca451fdab554517dcc42aea4609d7c916efc7f7f5102c14914556715fa",
       "attempts": 1,
       "cancelRequested": false,
-      "contentDigest": "c75e9ced5b8e71d099f6ec20da15878ac650d8cfa41e28793bb69015b26ab6de",
+      "contentDigest": "32b826cd60fa353c90b7d4750b94cdd8a14bf34e3501c72f00503cd84077ba54",
       "dispatchCause": "deliveryUnknown",
       "evidence": [],
       "mode": "test",
@@ -382,17 +386,19 @@
       "offer": {
         "attempt": "backend-attempt",
         "expiresAt": 9999999999,
+        "presentation": {
+          "summary": {
+            "intent": "install",
+            "kind": "software",
+            "steps": [
+              { "identity": "system", "package": "办公套件", "version": "1.0" }
+            ]
+          },
+          "title": "办公套件"
+        },
         "request": "request-1",
         "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "summary": {
-          "intent": "install",
-          "kind": "software",
-          "steps": [
-            { "identity": "system", "package": "办公套件", "version": "1.0" }
-          ]
-        },
         "task": "backend-task",
-        "title": "办公套件",
         "userInitiated": true
       }
     },
@@ -446,7 +452,7 @@
         "totalOutputBytes": 4096,
         "totalTimeoutMs": 1000
       },
-      "contentDigest": "c75e9ced5b8e71d099f6ec20da15878ac650d8cfa41e28793bb69015b26ab6de",
+      "contentDigest": "32b826cd60fa353c90b7d4750b94cdd8a14bf34e3501c72f00503cd84077ba54",
       "execution": { "kind": "process" },
       "initiator": {
         "kind": "policy",
@@ -469,7 +475,7 @@
         "account": { "platform": "linux", "subject": "uid:1000" },
         "kind": "user"
       },
-      "schemaVersion": 8,
+      "schemaVersion": 1,
       "sessionRequirement": { "kind": "notRequired" },
       "target": {
         "device": "device-1",
@@ -487,7 +493,7 @@
       "attemptId": "app-fd5e6aca451fdab554517dcc42aea4609d7c916efc7f7f5102c14914556715fa",
       "attempts": 1,
       "cancelRequested": false,
-      "contentDigest": "c75e9ced5b8e71d099f6ec20da15878ac650d8cfa41e28793bb69015b26ab6de",
+      "contentDigest": "32b826cd60fa353c90b7d4750b94cdd8a14bf34e3501c72f00503cd84077ba54",
       "dispatchCause": null,
       "evidence": [],
       "mode": "test",
@@ -512,7 +518,7 @@
         "totalOutputBytes": 4096,
         "totalTimeoutMs": 1000
       },
-      "contentDigest": "3d783cf40966c552ea16c3f1d6139d2448f969c1996fc1fe2788125d71590b38",
+      "contentDigest": "22833de4e98e0a5759d17d5e3b0a1457c26e3d9fed3b608c8eb0ee8b67dc189b",
       "execution": {
         "intent": "install",
         "kind": "softwareProgram",
@@ -544,7 +550,7 @@
       "policy": { "id": "policy-1", "revision": "1" },
       "requestId": "request-1",
       "runAs": { "kind": "system", "platform": "macos" },
-      "schemaVersion": 8,
+      "schemaVersion": 1,
       "sessionRequirement": { "kind": "notRequired" },
       "target": {
         "device": "device-1",
@@ -559,7 +565,7 @@
       "attemptId": "app-fd5e6aca451fdab554517dcc42aea4609d7c916efc7f7f5102c14914556715fa",
       "attempts": 1,
       "cancelRequested": false,
-      "contentDigest": "3d783cf40966c552ea16c3f1d6139d2448f969c1996fc1fe2788125d71590b38",
+      "contentDigest": "22833de4e98e0a5759d17d5e3b0a1457c26e3d9fed3b608c8eb0ee8b67dc189b",
       "dispatchCause": null,
       "evidence": [],
       "mode": "test",
@@ -592,7 +598,7 @@
         "totalOutputBytes": 4096,
         "totalTimeoutMs": 1000
       },
-      "contentDigest": "c75e9ced5b8e71d099f6ec20da15878ac650d8cfa41e28793bb69015b26ab6de",
+      "contentDigest": "32b826cd60fa353c90b7d4750b94cdd8a14bf34e3501c72f00503cd84077ba54",
       "execution": { "kind": "process" },
       "initiator": {
         "kind": "policy",
@@ -615,7 +621,7 @@
         "account": { "platform": "linux", "subject": "uid:1000" },
         "kind": "user"
       },
-      "schemaVersion": 8,
+      "schemaVersion": 1,
       "sessionRequirement": { "kind": "notRequired" },
       "target": {
         "device": "device-1",
@@ -633,7 +639,7 @@
       "attemptId": "app-fd5e6aca451fdab554517dcc42aea4609d7c916efc7f7f5102c14914556715fa",
       "attempts": 1,
       "cancelRequested": false,
-      "contentDigest": "c75e9ced5b8e71d099f6ec20da15878ac650d8cfa41e28793bb69015b26ab6de",
+      "contentDigest": "32b826cd60fa353c90b7d4750b94cdd8a14bf34e3501c72f00503cd84077ba54",
       "dispatchCause": null,
       "evidence": [
         {

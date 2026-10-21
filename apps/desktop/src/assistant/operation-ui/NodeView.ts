@@ -176,7 +176,7 @@ export const NodeView = defineComponent({
       const n = props.node,
         propsValue = p.value;
       if (n.state !== "resolved") throw new Error("操作组件无法解析");
-      const type = n.type,
+      const type = c?.isSecret(fieldId) ? "SecretField" : n.type,
         s = c?.state;
       if (type === "Text")
         return h(UiText, {}, () => display(valueOf(propsValue.text)));
@@ -200,7 +200,10 @@ export const NodeView = defineComponent({
       if (type === "OperationSurface")
         return h(
           "section",
-          { class: "operation-surface", "aria-label": s?.snapshot.title },
+          {
+            class: "operation-surface",
+            "aria-label": s?.snapshot.presentation.title,
+          },
           children(),
         );
       if (type === "Section")
@@ -266,7 +269,7 @@ export const NodeView = defineComponent({
           return null;
         const binding = propsValue.text ?? propsValue.value;
         const current = field ? s!.draft.values[fieldId] : valueOf(binding);
-        const secret = type === "SecretField";
+        const secret = c ? c.isSecret(fieldId) : type === "SecretField";
         const variant =
           !field && type === "TextField" ? propsValue.variant : undefined;
         const disabled = c
@@ -424,13 +427,13 @@ export const NodeView = defineComponent({
       if (type === "ReadonlyRow")
         return h("dl", { class: "operation-summary" }, [
           h("dt", "操作"),
-          h("dd", snapshot.title),
+          h("dd", snapshot.presentation.title),
           h("dt", "来源"),
-          h("dd", snapshot.source),
+          h("dd", snapshot.presentation.source),
           h("dt", "目标"),
-          h("dd", snapshot.targetLabel),
+          h("dd", snapshot.presentation.targetLabel),
           h("dt", "影响"),
-          h("dd", snapshot.impact),
+          h("dd", snapshot.presentation.impact),
         ]);
       if (type === "ApprovalStatus")
         return h("dl", { class: "operation-summary" }, [

@@ -348,7 +348,7 @@ impl Data {
         })
         .unwrap();
         let task = CollectionTaskSpec {
-            wire_version: 3,
+            wire_version: rss_mdm_agent_wire::runtime::WIRE_VERSION,
             tenant_id: self.tenant,
             device_id: "device-1".into(),
             platform: TaskPlatform::Windows,
@@ -829,7 +829,7 @@ impl Server {
             ca_pem: data.tls_required.then(pki::ca),
         }
     }
-    pub fn configuration(&self, candidate: [u8; 32]) -> enroll::configuration::ConfigurationFile {
+    pub fn configuration(&self) -> enroll::configuration::ConfigurationFile {
         use enroll::configuration as w;
         let cfg = self.config();
         let mut data = self.data.lock().unwrap();
@@ -869,17 +869,10 @@ impl Server {
                 platform: cfg.platform,
                 architecture: cfg.architecture,
             },
-            version: "test".into(),
+            version: "1.0.0".into(),
             filename: "fixture.pkg".into(),
             length: 1,
             installer_sha256: [9; 32],
-            candidate_sha256: candidate,
-            origin: cfg.origin.origin().ascii_serialization(),
-            signing_keys: BTreeMap::from([(
-                "test".into(),
-                base64::engine::general_purpose::URL_SAFE_NO_PAD
-                    .encode(data.signer.public_key().as_ref()),
-            )]),
         }];
         data.configuration_file = Some(file.clone());
         file
@@ -1122,8 +1115,12 @@ fn configuration_response(d: &mut Data, action: &str, value: Value) -> Response 
                 serde_json::to_value(d.configuration_file.as_ref().unwrap()).unwrap()
             );
             assert_eq!(
-                request.installation.candidate_sha256,
-                d.packages[0].candidate_sha256
+                request.installation.release_id,
+                d.packages
+                    .iter()
+                    .find(|p| p.release_id == request.installation.release_id)
+                    .unwrap()
+                    .release_id
             );
             assert_ne!(request.secret.expose(), request.file.secret.expose());
             if d.operation.is_some_and(|v| v != request.operation_id) {
@@ -1701,7 +1698,7 @@ pub fn policy_directory_fixture(tenant: Uuid) -> SelfServiceDirectoryItem {
     serde_json::from_value(json!({
         "policyId": Uuid::new_v4(), "policyRevision": 2, "policyVersion": Uuid::new_v4(),
         "subject":{"kind":"user","user":{"tenantId":tenant,"instanceId":Uuid::from_u128(2),"principalId":Uuid::from_u128(3)}},
-        "selfService": {"published":true, "displayName":"Repair", "description":"Test repair", "prerequisites":"Employee session", "sideEffects":"Restarts a fixture", "category":"Support", "keywords":["repair"], "allowAi":true, "riskLevel":2},
+        "selfService": {"published": true, "allowAi": true, "riskLevel": 2, "presentation": {"displayName": "Repair", "description": "Test repair", "category": "Support", "keywords": ["repair"], "prerequisites": "Employee session", "sideEffects": "Restarts a fixture"}},
         "task":{"kind":"script","runAs":"system","resource":{"id":Uuid::new_v4().to_string(),"version":"v1","variant":"default"},
         "parameterSources":{"name":{"kind":"input"}, "path":{"kind":"fixed","value":"/Applications"}},
         "parameterSchema":{"type":"object","properties":{"name":{"type":"string","minLength":1,"maxLength":32},"path":{"type":"string","const":"/Applications"}},"required":["name","path"],"additionalProperties":false}}

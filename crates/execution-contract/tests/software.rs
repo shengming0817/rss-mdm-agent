@@ -15,15 +15,15 @@ fn limits() -> ExecutionLimits {
 }
 
 #[test]
-fn v8_requires_explicit_execution_kind_and_rejects_old_plans() {
+fn requires_explicit_execution_kind() {
     let mut value: serde_json::Value =
         serde_json::from_str(include_str!("fixtures/plan.json")).unwrap();
-    value["schemaVersion"] = 8.into();
+    value["schemaVersion"] = 1.into();
     value["execution"] = serde_json::json!({"kind":"process"});
     assert!(decode_execution(&serde_json::to_vec(&value).unwrap(), &limits()).is_ok());
     value["schemaVersion"] = 2.into();
     assert!(decode_execution(&serde_json::to_vec(&value).unwrap(), &limits()).is_err());
-    value["schemaVersion"] = 8.into();
+    value["schemaVersion"] = 1.into();
     value.as_object_mut().unwrap().remove("execution");
     assert!(decode_execution(&serde_json::to_vec(&value).unwrap(), &limits()).is_err());
 }
@@ -32,14 +32,14 @@ fn v8_requires_explicit_execution_kind_and_rejects_old_plans() {
 fn process_cannot_impersonate_software_operation() {
     let mut value: serde_json::Value =
         serde_json::from_str(include_str!("fixtures/plan.json")).unwrap();
-    value["schemaVersion"] = 8.into();
+    value["schemaVersion"] = 1.into();
     value["execution"] = serde_json::json!({"kind":"process"});
     value["request"]["operation"]["action"] = "software.install".into();
     assert!(decode_execution(&serde_json::to_vec(&value).unwrap(), &limits()).is_err());
 }
 
 #[test]
-fn software_steps_bind_order_materials_and_context_without_legacy_parser() {
+fn software_steps_bind_order_materials_and_context_with_exact_material_binding() {
     let value: serde_json::Value =
         serde_json::from_str(include_str!("fixtures/software.json")).unwrap();
     let freeze = |v: &serde_json::Value| {
@@ -287,9 +287,6 @@ fn approved_exit_policy_and_update_invocation_are_frozen_and_closed() {
     assert!(FrozenExecution::freeze(invalid, &limits()).is_err());
     let mut old: serde_json::Value =
         serde_json::from_slice(include_bytes!("fixtures/software.json")).unwrap();
-    old["schemaVersion"] = 5.into();
-    assert!(decode_execution(&serde_json::to_vec(&old).unwrap(), &limits()).is_err());
-    old["schemaVersion"] = 8.into();
     old["execution"]["program"]["steps"][0]["adapter"] = "exe".into();
     assert!(decode_execution(&serde_json::to_vec(&old).unwrap(), &limits()).is_err());
 }

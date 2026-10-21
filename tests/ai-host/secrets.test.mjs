@@ -13,11 +13,11 @@ import { unwrap } from "../../packages/ai-contract/dist/testing/index.js";
 const caller = { tenantId: "t", principalId: "alice", authorityId: "a" };
 const budget = { timeoutMs: 1000, signal: new AbortController().signal };
 const row = (revision = 1) => ({
-  schemaVersion: 8,
+  schemaVersion: 1,
   kind: "connection",
   connectionId: "one",
   configRevision: revision,
-  name: "Custom",
+  presentation: { name: "Custom" },
   provider: "codex",
   source: {
     type: "custom_api",
@@ -206,7 +206,7 @@ test("credential activation passes the raw caller and draft to the native owner"
       assert.deepEqual(actualCaller, caller);
       assert.deepEqual(draft, {
         connectionId: connection.connectionId,
-        name: connection.name,
+        presentation: { name: connection.name },
         provider: connection.provider,
         profile: connection.profile,
         source: connection.source,

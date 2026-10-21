@@ -111,13 +111,13 @@ enum Command {
     },
     Configuration {
         file: Box<rss_mdm_agent_wire::enroll::configuration::ConfigurationFile>,
-        candidate_sha256: [u8; 32],
+        installer_format: rss_mdm_agent_wire::enroll::configuration::InstallerFormat,
     },
 }
 /// Native callbacks read a public snapshot and enqueue an explicit fixed-context request.
 pub(crate) struct RegistrationOwner {
     network: agent_client::Config,
-    candidate_sha256: Option<[u8; 32]>,
+    installer_format: Option<rss_mdm_agent_wire::enroll::configuration::InstallerFormat>,
     origin: String,
     tenant_id: String,
     policy: PeerPolicy,
@@ -152,7 +152,7 @@ impl RegistrationOwner {
         let stop = stopping.clone();
         let shared = snapshot.clone();
         let network = deployment.network()?;
-        let candidate_sha256 = crate::installation::publication_digest(&deployment).ok();
+        let installer_format = crate::installation::installer_format(&deployment).ok();
         let origin = deployment.origin.clone();
         let tenant_id = deployment.tenant.to_string();
         let policy = deployment.clients.clone();
@@ -174,7 +174,7 @@ impl RegistrationOwner {
             })?;
         Ok(Self {
             network,
-            candidate_sha256,
+            installer_format,
             origin,
             tenant_id,
             policy,
@@ -256,9 +256,9 @@ fn run<S: agent_client::IdentityProvider, C: agent_client::Clock, O>(
                     ),
                     Command::Configuration {
                         file,
-                        candidate_sha256,
+                        installer_format,
                     } => (
-                        value.prepare_configuration(*file, candidate_sha256, capabilities.clone()),
+                        value.prepare_configuration(*file, installer_format, capabilities.clone()),
                         None,
                     ),
                 };
@@ -374,7 +374,7 @@ impl Handler for RegistrationOwner {
                 {
                     return Reply::Rejected;
                 }
-                let Some(candidate_sha256) = self.candidate_sha256 else {
+                let Some(installer_format) = self.installer_format else {
                     return Reply::Rejected;
                 };
                 let valid = SystemClock::new()
@@ -387,7 +387,7 @@ impl Handler for RegistrationOwner {
                     .commands
                     .try_send(Command::Configuration {
                         file: Box::new(file),
-                        candidate_sha256,
+                        installer_format,
                     })
                     .is_err()
                 {
@@ -811,7 +811,7 @@ mod tests {
         };
         let mut owner = RegistrationOwner {
             network: server.config(),
-            candidate_sha256: None,
+            installer_format: None,
             origin: server.url.origin().ascii_serialization(),
             tenant_id: server.config().tenant.to_string(),
             policy: policy.clone(),

@@ -12,7 +12,7 @@ const props = withDefaults(
 );
 const sessions = computed(() =>
   props.controller.sessions.value.filter((session) =>
-    session.title
+    session.presentation.title
       .toLocaleLowerCase()
       .includes(props.query.trim().toLocaleLowerCase()),
   ),
@@ -50,7 +50,7 @@ function select(id?: string) {
         >
           <MessageSquare :size="15" aria-hidden="true" /><span
             class="conversation-title"
-            >{{ session.title }}</span
+            >{{ session.presentation.title }}</span
           ><small v-if="session.status === 'retired'">已结束</small>
         </button>
       </li>
