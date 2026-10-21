@@ -180,7 +180,7 @@ fn native_vectors_bind_independent_signing_domains_and_result_identity() {
     use base64::Engine;
     use rss_mdm_agent_wire::runtime::*;
     let vectors: serde_json::Value =
-        serde_json::from_str(include_str!("../fixtures/native-v3-vectors.json")).unwrap();
+        serde_json::from_str(include_str!("../fixtures/native-vectors.json")).unwrap();
     for vectors in vectors.as_array().unwrap() {
         let plan: NativeCollectionPlan = serde_json::from_value(vectors["plan"].clone()).unwrap();
         let result: NativeCollectionResult =

@@ -428,6 +428,11 @@ async fn gap_retry_is_fixed_bounded_fenced_and_expires_without_recreating_loss()
     assert!(p.bytes() <= w::TELEMETRY_GAP_MAX_BYTES);
     let report: w::TelemetryGapReport = decode(p.body()).unwrap();
     assert_eq!(report.gaps.len(), 10);
+    // Durable gap payloads must retain exact integers across storage and recovery.
+    assert!(report
+        .gaps
+        .iter()
+        .all(|gap| gap.count == i64::MAX as u64 && gap.first == 0 && gap.last == i64::MAX - 1));
     server.data.lock().unwrap().telemetry.throttled = true;
     let f = client.telemetry_gap_submit(&p).await.unwrap_err();
     assert_eq!(f.retry_after, Some(90));

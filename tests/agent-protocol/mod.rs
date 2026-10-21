@@ -350,7 +350,7 @@ impl Data {
         })
         .unwrap();
         let task = CollectionTaskSpec {
-            wire_version: 3,
+            wire_version: COLLECTION_TASK_VERSION,
             tenant_id: self.tenant,
             device_id: "device-1".into(),
             platform: TaskPlatform::Windows,
@@ -937,10 +937,10 @@ impl Server {
         client
             .request_authorization(vec![
                 Capability::InventoryCollectionV1,
-                Capability::TelemetryCollectV1,
-                Capability::TelemetryCounterLocalV1,
                 Capability::TaskExecuteV1,
                 Capability::SoftwarePkgSystemV1,
+                Capability::TelemetryCollectV1,
+                Capability::TelemetryCounterLocalV1,
             ])
             .await
             .unwrap();

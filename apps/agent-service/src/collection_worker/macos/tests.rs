@@ -70,7 +70,7 @@ pub(super) fn input(q: w::NativeQuery) -> Input {
         }
     };
     let task = w::CollectionTaskSpec {
-        wire_version: 3,
+        wire_version: w::COLLECTION_TASK_VERSION,
         tenant_id: id,
         device_id: "fixture-device".into(),
         platform: w::TaskPlatform::Macos,

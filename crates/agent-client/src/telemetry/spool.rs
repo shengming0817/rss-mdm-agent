@@ -1,6 +1,6 @@
 //! Fixed sampling identities and atomic batch membership, outside the command journal.
 use super::{w, Configuration, Error};
-use crate::store::{decode, encode, hash};
+use crate::store::{decode, hash};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -8,6 +8,15 @@ use std::{
     path::{Path, PathBuf},
 };
 use uuid::Uuid;
+
+// Local persistence and frozen transport bodies are not wire signature domains.
+// Preserve exact integers while retaining sorted object keys used by existing
+// ordinary field/source identities. ref: serde_json 1.0.151 value::Value::sort_all_objects.
+fn encode(value: &impl Serialize) -> Result<Vec<u8>, Error> {
+    let mut value = serde_json::to_value(value).map_err(|_| Error::Protocol)?;
+    value.sort_all_objects();
+    serde_json::to_vec(&value).map_err(|_| Error::Protocol)
+}
 
 /// Explicit product limits; the spool never consumes the command journal's quota.
 #[derive(Clone, Copy)]

@@ -364,3 +364,153 @@ async fn full_metadata_budget_uses_final_membership_independent_of_field_order()
         );
     }
 }
+
+#[tokio::test]
+async fn native_integer_baselines_samples_and_configuration_remain_exact_after_reopen() {
+    let server = Server::new().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    let r = server.register(&mut client).await;
+    let mut signed = fixture::native_network_configuration(&server, &r);
+    // Ordinary identities retain their previous bytes when no precision correction is needed.
+    let w::TelemetryCollector::Native { plan, mappings } = &signed.configuration.collector else {
+        unreachable!()
+    };
+    assert_eq!(
+        encode(&signed.configuration.fields[0]).unwrap(),
+        crate::store::encode(&signed.configuration.fields[0]).unwrap()
+    );
+    assert_eq!(
+        encode(&(
+            signed.configuration.registration_id,
+            signed.configuration.generation,
+            signed.configuration.source,
+            signed.configuration.source_epoch
+        ))
+        .unwrap(),
+        crate::store::encode(&(
+            signed.configuration.registration_id,
+            signed.configuration.generation,
+            signed.configuration.source,
+            signed.configuration.source_epoch
+        ))
+        .unwrap()
+    );
+    assert_eq!(
+        encode(&(
+            &signed.configuration.fields[0],
+            &mappings["custom.load"],
+            plan
+        ))
+        .unwrap(),
+        crate::store::encode(&(
+            &signed.configuration.fields[0],
+            &mappings["custom.load"],
+            plan
+        ))
+        .unwrap()
+    );
+    signed.configuration.fields[0].version = i64::MAX as u64;
+    let c = client
+        .verify_telemetry(fixture::sign(
+            &server.data.lock().unwrap(),
+            signed.configuration,
+        ))
+        .unwrap();
+    let mut spool = client.telemetry_spool(Limits::production()).unwrap();
+    spool.install(&c).unwrap();
+    let t = server.time.now().unwrap() * 1_000_000;
+    let base = (1_i64 << 53) + 1;
+    append(
+        &mut spool,
+        &c,
+        t,
+        &[("a", base), ("b", i64::MAX - 1), ("c", 0)],
+        "boot",
+    );
+    assert_items(
+        append(
+            &mut spool,
+            &c,
+            t + 1,
+            &[("a", base + 2), ("b", i64::MAX), ("c", i64::MAX)],
+            "boot",
+        ),
+        false,
+        &[("a", 2, t), ("b", 1, t), ("c", i64::MAX, t)],
+    );
+    drop(spool);
+    let mut spool = client.telemetry_spool(Limits::production()).unwrap();
+    let restored = spool.configurations().unwrap().pop().unwrap();
+    assert_eq!(restored.configuration.fields[0].version, i64::MAX as u64);
+    client.verify_telemetry(restored).unwrap();
+    let pending = spool.pending(t / 1_000_000, false).unwrap().unwrap();
+    let mut upload: w::TelemetryUpload = decode(pending.body()).unwrap();
+    assert_items(
+        upload
+            .observations
+            .last_mut()
+            .unwrap()
+            .values
+            .remove(&w::FieldKey::parse("custom.load").unwrap())
+            .unwrap(),
+        false,
+        &[("a", 2, t), ("b", 1, t), ("c", i64::MAX, t)],
+    );
+    assert_items(
+        append(
+            &mut spool,
+            &c,
+            t + 2,
+            &[("a", base + 5), ("b", i64::MAX), ("c", i64::MAX)],
+            "boot",
+        ),
+        false,
+        &[("a", 5, t), ("b", 1, t), ("c", i64::MAX, t)],
+    );
+}
+
+#[tokio::test]
+async fn scalar_counter_baseline_above_double_precision_survives_reopen() {
+    let server = Server::new().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    let r = server.register(&mut client).await;
+    let mut config = fixture::configuration(&server, &r).configuration;
+    let binding = config.fields[0].time_series.as_mut().unwrap();
+    binding.kind = w::TelemetryKind::CumulativeCounter;
+    binding.aggregations = [w::TelemetryAggregation::Increase].into();
+    let c = client
+        .verify_telemetry(fixture::sign(&server.data.lock().unwrap(), config))
+        .unwrap();
+    let mut spool = client.telemetry_spool(Limits::production()).unwrap();
+    spool.install(&c).unwrap();
+    let t = server.time.now().unwrap() * 1_000_000;
+    let base = i64::MAX - 2;
+    let scalar = |n| {
+        [(
+            w::FieldKey::parse("custom.load").unwrap(),
+            w::TelemetryReading::Valid {
+                value: w::Scalar::Integer(n),
+                interval_start: None,
+            },
+        )]
+        .into()
+    };
+    spool.append(&c, t, scalar(base), "boot").unwrap();
+    drop(spool);
+    let mut spool = client.telemetry_spool(Limits::production()).unwrap();
+    let id = spool.append(&c, t + 1, scalar(i64::MAX), "boot").unwrap();
+    let bytes: Vec<u8> = spool
+        .conn
+        .query_row(
+            "SELECT body FROM samples WHERE id=?1",
+            [id.to_string()],
+            |r| r.get(0),
+        )
+        .unwrap();
+    let sample: w::TelemetryObservation = decode(&bytes).unwrap();
+    assert!(
+        matches!(sample.values[&w::FieldKey::parse("custom.load").unwrap()], w::TelemetryReading::Valid { value: w::Scalar::Integer(2), interval_start: Some(start) } if start == t)
+    );
+}

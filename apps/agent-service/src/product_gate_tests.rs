@@ -31,6 +31,13 @@ async fn stage_gate_offer(service: &mut DeviceService<protocol::Secrets>) {
 }
 
 impl Case {
+    pub(crate) fn take_telemetry(&mut self) -> crate::telemetry::Telemetry {
+        self.service
+            .core
+            .telemetry
+            .take()
+            .expect("registered telemetry owner")
+    }
     pub(crate) async fn new(level: Option<RiskLevel>) -> Self {
         Self::with_offer_lifetime(level, 60).await
     }

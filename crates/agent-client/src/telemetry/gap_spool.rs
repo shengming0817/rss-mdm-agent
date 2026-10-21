@@ -167,7 +167,9 @@ impl Spool {
             gaps,
         };
         report.validate()?;
-        let body = encode(&report)?;
+        // A frozen transport body is not a signing canonicalization domain. Preserve
+        // exact i64/u64 values; JCS converts integers through f64 and can round them.
+        let body = serde_json::to_vec(&report).map_err(|_| Error::Protocol)?;
         tx.execute("INSERT INTO gap_reports(id,registration,generation,body,digest,expires) VALUES(?1,?2,?3,?4,?5,?6)",params![report.report_id.to_string(),registration.to_string(),generation,body,hash(&body),created_at+w::TELEMETRY_GAP_WINDOW_MICROS])?;
         tx.execute(
             "DELETE FROM gap_pending WHERE registration=?1 AND generation=?2",

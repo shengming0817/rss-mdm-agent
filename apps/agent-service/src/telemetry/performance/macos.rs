@@ -48,26 +48,58 @@ pub(super) fn cpu() -> Result<Cpu, Error> {
             }
         }
         let _host = Host(host);
-        let mut cpu: libc::host_cpu_load_info_data_t = zeroed();
-        let mut count = libc::HOST_CPU_LOAD_INFO_COUNT;
-        if libc::host_statistics(
+        // host_statistics may return cached CPU ticks across a short sampling interval.
+        // Read the per-processor allocation as sysinfo does, and release it on every exit.
+        let mut processors = 0;
+        let mut info = std::ptr::null_mut();
+        let mut count = 0;
+        if libc::host_processor_info(
             host,
-            libc::HOST_CPU_LOAD_INFO,
-            (&mut cpu as *mut libc::host_cpu_load_info_data_t).cast(),
+            libc::PROCESSOR_CPU_LOAD_INFO,
+            &mut processors,
+            &mut info,
             &mut count,
         ) != libc::KERN_SUCCESS
-            || count != libc::HOST_CPU_LOAD_INFO_COUNT
         {
             return Err(Error::Unavailable);
         }
-        let total = cpu.cpu_ticks.iter().map(|v| u64::from(*v)).sum::<u64>();
-        let busy = total
-            .checked_sub(u64::from(cpu.cpu_ticks[libc::CPU_STATE_IDLE as usize]))
-            .ok_or(Error::Protocol)?;
+        struct Allocation(*mut libc::integer_t, u32);
+        impl Drop for Allocation {
+            fn drop(&mut self) {
+                if !self.0.is_null() {
+                    unsafe {
+                        libc::vm_deallocate(
+                            libc::mach_task_self(),
+                            self.0 as libc::vm_address_t,
+                            self.1 as libc::vm_size_t
+                                * size_of::<libc::integer_t>() as libc::vm_size_t,
+                        );
+                    }
+                }
+            }
+        }
+        let _allocation = Allocation(info, count);
+        if info.is_null()
+            || processors == 0
+            || processors > 4096
+            || count != processors * libc::CPU_STATE_MAX as u32
+        {
+            return Err(Error::Unavailable);
+        }
+        let counters: Vec<u64> = std::slice::from_raw_parts(info, count as usize)
+            .iter()
+            .map(|v| u64::from(*v as u32))
+            .collect();
+        let total = counters.iter().sum::<u64>();
+        let idle = counters
+            .chunks_exact(libc::CPU_STATE_MAX as usize)
+            .map(|ticks| ticks[libc::CPU_STATE_IDLE as usize])
+            .sum::<u64>();
+        let busy = total.checked_sub(idle).ok_or(Error::Protocol)?;
         Ok(Cpu {
             boot: boot()?,
-            processors: sysctl(c"hw.logicalcpu")?,
-            counters: cpu.cpu_ticks.iter().map(|v| u64::from(*v)).collect(),
+            processors,
+            counters,
             busy,
             total,
         })
@@ -139,12 +171,12 @@ pub(super) fn volumes() -> Result<BTreeMap<String, Space>, Error> {
             // their fallback is scoped to this boot and native mount-source domain.
             // f_fsid is stable only for the mounted instance, never a permanent volume ID.
             let mut attributes: libc::attrlist = zeroed();
-            attributes.bitmapcount = libc::ATTR_BIT_MAP_COUNT as u16;
+            attributes.bitmapcount = libc::ATTR_BIT_MAP_COUNT;
             attributes.volattr = libc::ATTR_VOL_UUID | libc::ATTR_VOL_INFO;
             let mut uuid_bytes = [0u8; 20];
             let persistent = if libc::getattrlist(
                 m.f_mntonname.as_ptr(),
-                &mut attributes,
+                std::ptr::addr_of_mut!(attributes).cast(),
                 uuid_bytes.as_mut_ptr().cast(),
                 uuid_bytes.len(),
                 0,

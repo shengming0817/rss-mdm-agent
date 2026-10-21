@@ -31,7 +31,7 @@ async fn withdrawal_expiry_and_clock_jump_preserve_gaps_without_restarting_work(
             &case.service.client.registration().unwrap(),
         ))
         .unwrap();
-    let mut t = Telemetry::open(&case.service.client).unwrap();
+    let mut t = case.take_telemetry();
     t.install(c.clone()).unwrap();
     t.environment.force(true, false);
     t.slots.get_mut(&c.payload().policy).unwrap().due = Instant::now();
