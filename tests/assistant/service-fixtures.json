@@ -9,7 +9,8 @@
       "build": "0.1.0",
       "platform": "macos",
       "protocol": 18,
-      "readiness": { "phase": "notReady" }
+      "readiness": { "phase": "notReady" },
+      "telemetry": null
     }
   },
   "ready": {
@@ -18,7 +19,8 @@
       "build": "0.1.0",
       "platform": "macos",
       "protocol": 18,
-      "readiness": { "phase": "ready" }
+      "readiness": { "phase": "ready" },
+      "telemetry": null
     }
   },
   "registrationRequired": {
@@ -27,7 +29,8 @@
       "build": "0.1.0",
       "platform": "macos",
       "protocol": 18,
-      "readiness": { "phase": "registrationRequired" }
+      "readiness": { "phase": "registrationRequired" },
+      "telemetry": null
     }
   },
   "serviceRejected": { "phase": "rejected" }
