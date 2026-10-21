@@ -265,9 +265,9 @@ impl Telemetry {
                 .is_some_and(|s| s.configuration.payload().binding == p.binding)
             && at / 1_000_000 < p.expires_at;
         if current {
-            match mapping::readings(p, &evidence, at).and_then(|values| {
+            match mapping::readings(p, evidence, at).and_then(|values| {
                 self.spool
-                    .append(&configuration, observed, values, &performance::boot()?)
+                    .append(configuration, observed, values, &performance::boot()?)
             }) {
                 Ok(_) => (),
                 Err(e) => {
@@ -415,7 +415,7 @@ impl Telemetry {
                     }
                 }
                 self.request_at = Instant::now()
-                    + Duration::from_secs(f.retry_after.unwrap_or(5).max(1).min(86400));
+                    + Duration::from_secs(f.retry_after.unwrap_or(5).clamp(1, 86400));
             }
         }
         Ok(())

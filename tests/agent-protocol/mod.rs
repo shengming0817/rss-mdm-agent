@@ -1707,7 +1707,7 @@ pub fn policy_directory_fixture(tenant: Uuid) -> SelfServiceDirectoryItem {
     serde_json::from_value(json!({
         "policyId": Uuid::new_v4(), "policyRevision": 2, "policyVersion": Uuid::new_v4(),
         "subject":{"kind":"user","user":{"tenantId":tenant,"instanceId":Uuid::from_u128(2),"principalId":Uuid::from_u128(3)}},
-        "selfService": {"published":true, "displayName":"Repair", "description":"Test repair", "prerequisites":"Employee session", "sideEffects":"Restarts a fixture", "category":"Support", "keywords":["repair"], "allowAi":true, "riskLevel":2},
+        "selfService":{"published": true, "allowAi": true, "riskLevel": 2, "presentation": {"displayName": "Repair", "description": "Test repair", "prerequisites": "Employee session", "sideEffects": "Restarts a fixture", "category": "Support", "keywords": ["repair"]}},
         "task":{"kind":"script","runAs":"system","resource":{"id":Uuid::new_v4().to_string(),"version":"v1","variant":"default"},
         "parameterSources":{"name":{"kind":"input"}, "path":{"kind":"fixed","value":"/Applications"}},
         "parameterSchema":{"type":"object","properties":{"name":{"type":"string","minLength":1,"maxLength":32},"path":{"type":"string","const":"/Applications"}},"required":["name","path"],"additionalProperties":false}}

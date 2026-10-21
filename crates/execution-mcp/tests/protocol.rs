@@ -712,7 +712,7 @@ fn policy_mcp_descriptor_preserves_resource_input_constraints_and_versions() {
     let mut item: SelfServiceDirectoryItem = serde_json::from_value(json!({
         "policyId":"00000000-0000-4000-a000-000000000001","policyRevision":3,"policyVersion":"00000000-0000-4000-a000-000000000002",
             "subject":{"kind":"device"},
-        "selfService":{"published":true,"allowAi":true,"riskLevel":2,"displayName":"Repair","description":"Repair app","prerequisites":"Employee","sideEffects":"Restart","category":"Support","keywords":[]},
+        "selfService":{"published": true, "allowAi": true, "riskLevel": 2, "presentation": {"displayName": "Repair", "description": "Repair app", "prerequisites": "Employee", "sideEffects": "Restart", "category": "Support", "keywords": []}},
         "task":{"kind":"script","runAs":"system","resource":{"id":"r","version":"v1","variant":"default"},
         "parameterSources":{"name":{"kind":"input"},"path":{"kind":"fixed","value":"/Applications"}},
         "parameterSchema":{"type":"object","properties":{"name":{"type":"string","maxLength":32},"path":{"type":"string"}},"required":["name","path"],"additionalProperties":false}}
