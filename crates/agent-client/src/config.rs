@@ -172,7 +172,7 @@ impl Config {
 }
 /// Platform-owned bootstrap secrets and non-exportable device signing keys.
 /// References are frozen by the communication owner before network operations.
-pub trait IdentityProvider: MachineTrust {
+pub trait IdentityProvider {
     /// Resolve an existing source-scoped software read token. This never provisions credentials.
     /// The client separately authorizes the exact source/reference against its local configuration.
     fn software_read_token(
@@ -199,35 +199,6 @@ pub trait IdentityProvider: MachineTrust {
     ) -> Result<std::sync::Arc<dyn rustls::sign::SigningKey>, Error>;
     /// Open the exact existing key. Missing/denied must not create a replacement.
     fn key(&self, reference: &str) -> Result<std::sync::Arc<dyn rustls::sign::SigningKey>, Error>;
-}
-/// Precise machine certificate location; intermediates must never become standalone anchors.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum MachineStore {
-    /// Windows LocalMachine Root or macOS System Keychain with Admin root trust.
-    Root,
-    /// Windows LocalMachine CA or macOS System Keychain without standalone trust.
-    Intermediate,
-}
-/// Outcome of an add-only native operation; an existing certificate remains externally owned.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CertificateAdd {
-    /// This completed operation added the exact certificate.
-    Created,
-    /// Exact material was already present; ownership cannot be inferred.
-    Present,
-}
-/// Machine trust adapter. Durable ownership and installation intent belong to the client owner.
-pub trait MachineTrust {
-    /// Read exact physical material in the selected machine store, independently of trust readiness.
-    fn certificate_present(&self, store: MachineStore, der: &[u8]) -> Result<bool, Error>;
-    /// Independently read exact DER and the required machine trust settings.
-    fn read_certificate(&self, store: MachineStore, der: &[u8]) -> Result<bool, Error>;
-    /// Add exact DER without replacing pre-existing material or settings.
-    fn add_certificate(&self, store: MachineStore, der: &[u8]) -> Result<CertificateAdd, Error>;
-    /// Configure trust only after the caller persists ownership of this exact material.
-    fn configure_certificate(&self, store: MachineStore, der: &[u8]) -> Result<(), Error>;
-    /// Delete this exact DER; caller must first prove its durable ownership and retirement.
-    fn delete_certificate(&self, store: MachineStore, der: &[u8]) -> Result<(), Error>;
 }
 /// Independently reliable UTC.
 pub trait Clock {

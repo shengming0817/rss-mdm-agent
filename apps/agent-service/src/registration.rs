@@ -355,6 +355,17 @@ impl Handler for RegistrationOwner {
     }
     fn handle(&mut self, peer: &Peer, request: Request) -> Reply {
         match request {
+            Request::RevokeContext {} if self.owner.is_none() => {
+                // Before activation there are no execution contexts to retire. Acknowledge
+                // the authenticated desktop's fence so first login can reach registration.
+                match peer
+                    .authenticate(&self.policy)
+                    .and_then(|_| peer.session_binding())
+                {
+                    Ok(_) => Reply::ContextRevoked,
+                    Err(_) => Reply::Rejected,
+                }
+            }
             Request::ImportRegistration { file } => {
                 use agent_client::Clock;
                 if peer.authenticate(&self.registration_policy).is_err()
@@ -517,43 +528,6 @@ mod tests {
     use agent_client::{IdentityProvider, OpenMode};
     use rss_mdm_agent_wire::runtime::Capability;
     struct InterruptedSecret(crate::protocol_test_support::Secrets);
-    impl agent_client::MachineTrust for InterruptedSecret {
-        fn certificate_present(
-            &self,
-            store: agent_client::MachineStore,
-            der: &[u8],
-        ) -> Result<bool, Error> {
-            self.0.certificate_present(store, der)
-        }
-        fn read_certificate(
-            &self,
-            store: agent_client::MachineStore,
-            der: &[u8],
-        ) -> Result<bool, Error> {
-            self.0.read_certificate(store, der)
-        }
-        fn add_certificate(
-            &self,
-            store: agent_client::MachineStore,
-            der: &[u8],
-        ) -> Result<agent_client::CertificateAdd, Error> {
-            self.0.add_certificate(store, der)
-        }
-        fn configure_certificate(
-            &self,
-            store: agent_client::MachineStore,
-            der: &[u8],
-        ) -> Result<(), Error> {
-            self.0.configure_certificate(store, der)
-        }
-        fn delete_certificate(
-            &self,
-            store: agent_client::MachineStore,
-            der: &[u8],
-        ) -> Result<(), Error> {
-            self.0.delete_certificate(store, der)
-        }
-    }
     impl agent_client::IdentityProvider for InterruptedSecret {
         fn resolve(&self, reference: &str) -> Result<rss_mdm_agent_wire::runtime::Secret, Error> {
             self.0.resolve(reference)
@@ -710,21 +684,13 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn registration_owner_recovers_transient_failure_without_another_request() {
         let _budget = crate::scenario_budget::enter();
-        for fault in ["registration", "trust", "machine"] {
+        for fault in ["registration", "trust"] {
             for restart in [false, true] {
                 let server = Server::tls().await;
                 let root = Root::new();
                 match fault {
                     "registration" => server.data.lock().unwrap().registration_failure = true,
                     "trust" => server.data.lock().unwrap().trust_failure = true,
-                    "machine" => {
-                        server
-                            .secrets
-                            .0
-                            .lock()
-                            .unwrap()
-                            .insert("machine/configure-failure".into(), "injected".into());
-                    }
                     _ => unreachable!(),
                 }
                 let client = if restart {
@@ -737,14 +703,10 @@ mod tests {
                     None
                 };
                 let moving_time = server.time.clone();
-                let native = server.secrets.clone();
                 let clock_task = tokio::spawn(async move {
                     let start = std::time::Instant::now();
                     loop {
                         moving_time.set(1 + start.elapsed().as_secs() as i64);
-                        if start.elapsed() >= std::time::Duration::from_secs(1) {
-                            native.0.lock().unwrap().remove("machine/configure-failure");
-                        }
                         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
                     }
                 });

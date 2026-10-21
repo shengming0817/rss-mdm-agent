@@ -33,3 +33,5 @@ python3 scripts/build-run.py -- cargo test --locked -p agent-client --test accep
 ```
 
 构建、生成与测试只消费本仓输入及公开依赖，不读取或构建 rss-mdm checkout。完整产品联调由独立验收任务连接已部署服务或固定服务制品，不作为客户端常规 CI 前提。
+
+Agent PKI 使用私有通信 SQLite 中的完整证书链与 CRL，不依赖系统全局根信任。Applied/ACK 确认私有存储读回及当前凭证校验；OS 保护的不可导出设备私钥与既有身份保持不变。

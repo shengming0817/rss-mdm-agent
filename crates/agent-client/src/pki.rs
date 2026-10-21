@@ -1,7 +1,7 @@
 use crate::{
     client::json_transport,
     trust::{VerifiedTrust, Watermark},
-    CertificateAdd, Client, Clock, Error, IdentityProvider, MachineStore,
+    Client, Clock, Error, IdentityProvider,
 };
 use rss_mdm_agent_wire::pki::{
     Acknowledgement, Observation, ObservationReason, ObservationState, Trust,
@@ -33,7 +33,13 @@ impl RuntimeGate {
 pub(crate) struct State {
     pub document: Option<Trust>,
     watermarks: BTreeMap<String, Watermark>,
-    installations: BTreeMap<String, Installation>,
+    // Retain prior installation receipts as history; they grant no trust or native effects.
+    #[serde(
+        default,
+        rename = "installations",
+        skip_serializing_if = "BTreeMap::is_empty"
+    )]
+    historical_machine_receipts: BTreeMap<String, serde_json::Value>,
     ack: Option<Ack>,
     refresh_at: i64,
     attempts: u8,
@@ -43,21 +49,6 @@ pub(crate) struct State {
     observation: Option<Observation>,
     pending_observation: Option<Observation>,
     installed: Option<(u64, String)>,
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Installation {
-    store: MachineStore,
-    der: Vec<u8>,
-    ownership: Ownership,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-enum Ownership {
-    Intent,
-    Owned,
-    Borrowed,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -182,7 +173,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         );
         state.document = Some(verified.document);
         state.blocked = false;
-        // Approved revision and all historical CRL watermarks commit together before native effects.
+        // Approved revision and all historical CRL watermarks commit together before enrollment or acknowledgement.
         self.runtime_gate.close();
         self.store.put("pki", &state)?;
         self.publish_runtime_gate();
@@ -193,78 +184,12 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         Ok(())
     }
 
-    pub(crate) fn install_trust(&mut self) -> Result<(), Error> {
-        let mut state = self.pki_state()?;
-        let approved = state.verified(&self.store.cfg, self.now()?)?.certificates();
-        for (id, (store, der)) in &approved {
-            let recorded = state.installations.get(id);
-            if let Some(installation) = recorded {
-                if installation.store != *store || installation.der != *der {
-                    return Err(Error::Storage);
-                }
-            }
-            let present = self.secrets.certificate_present(*store, der)?;
-            if recorded.is_none_or(|v| v.ownership == Ownership::Intent) || !present {
-                // Missing physical material starts a new intent, even if an earlier item was Owned.
-                // Presence after an unresolved intent is Borrowed; only this add's Created owns it.
-                let ownership = if present {
-                    Ownership::Borrowed
-                } else {
-                    Ownership::Intent
-                };
-                state.installations.insert(
-                    id.clone(),
-                    Installation {
-                        store: *store,
-                        der: der.clone(),
-                        ownership,
-                    },
-                );
-                self.store.put("pki", &state)?;
-                if ownership == Ownership::Intent {
-                    let outcome = self.secrets.add_certificate(*store, der)?;
-                    state
-                        .installations
-                        .get_mut(id)
-                        .ok_or(Error::Storage)?
-                        .ownership = match outcome {
-                        CertificateAdd::Created => Ownership::Owned,
-                        CertificateAdd::Present => Ownership::Borrowed,
-                    };
-                    self.store.put("pki", &state)?;
-                }
-            }
-            if state.installations.get(id).ok_or(Error::Storage)?.ownership == Ownership::Owned {
-                self.secrets.configure_certificate(*store, der)?;
-            }
-            if !self.secrets.read_certificate(*store, der)? {
-                return Err(Error::Untrusted);
-            }
-        }
-        let retired = state
-            .installations
-            .keys()
-            .filter(|id| !approved.contains_key(*id))
-            .cloned()
-            .collect::<Vec<_>>();
-        for id in retired {
-            let installation = state.installations.get(&id).ok_or(Error::Storage)?;
-            if installation.ownership == Ownership::Owned {
-                self.secrets
-                    .delete_certificate(installation.store, &installation.der)?;
-            }
-            state.installations.remove(&id);
-            self.store.put("pki", &state)?;
-        }
-        Ok(())
-    }
-
     async fn acknowledge_trust(&mut self) -> Result<(), Error> {
         if self.identity_state()?.active.is_none() {
             return Ok(());
         }
+        // Re-read persisted private trust and validate the current identity before every ACK.
         self.restore_runtime_transport()?;
-        self.install_trust()?; // Independent readback before every ACK, including replay after response loss.
         let registration = self.registration()?.registration_id;
         let mut state = self.pki_state()?;
         let document = state.document.as_ref().ok_or(Error::Identity)?;
@@ -371,7 +296,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
     async fn drive_pki_once(&mut self) -> Result<(), Error> {
         self.publish_runtime_gate();
         self.refresh_trust().await?;
-        self.install_trust()?;
+        self.verified_trust()?;
         if self.has_pending_enrollment()? {
             self.drive_enrollment().await?;
         } else if let Some(active) = self.identity_state()?.active {
@@ -390,11 +315,11 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
 }
 
 impl<S: IdentityProvider, C: Clock> Client<S, C> {
-    /// Last PKI installation observation; it is not evidence of current CRL freshness.
+    /// Last private PKI application observation; it is not evidence of current CRL freshness.
     pub fn pki_observation(&self) -> Result<Option<Observation>, Error> {
         Ok(self.pki_state()?.observation)
     }
-    /// Whether the current installed PKI revision has a confirmed server ACK.
+    /// Whether the current applied PKI revision has a confirmed server ACK.
     pub fn pki_acknowledged(&self) -> Result<bool, Error> {
         let state = self.pki_state()?;
         let registration = self

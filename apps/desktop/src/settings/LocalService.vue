@@ -129,7 +129,7 @@ onMounted(() => {
   void refresh();
   timer = setInterval(() => {
     if (props.active) void refresh();
-  }, 2000);
+  }, 30000);
 });
 onUnmounted(() => {
   clearInterval(timer);
@@ -148,7 +148,7 @@ onUnmounted(() => {
       }}</span>
     </header>
     <p v-if="!native">请在桌面应用中查询本机服务。</p>
-    <p v-else-if="pending">
+    <p v-else-if="pending && (!view || registering)">
       {{
         registering
           ? "正在继续原注册请求，网络恢复后将自动授权…"
@@ -173,7 +173,7 @@ onUnmounted(() => {
           ? "已连接，执行服务就绪。"
           : view.status.readiness.phase === "registrationRequired"
             ? "已连接，尚未完成可信注册。"
-            : "已连接，持久状态尚未就绪；请保留数据并由管理员检查。"
+            : "已连接，执行服务暂未就绪。已有设备身份保留，请查看诊断后重新查询。"
       }}
     </p>
     <p v-else>服务不可用或对端认证未通过，请检查服务状态与访问许可。</p>

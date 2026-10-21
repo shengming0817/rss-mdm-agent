@@ -178,7 +178,6 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                             .collect()
                     && v.target.platform == self.store.cfg.platform
                     && v.target.architecture == self.store.cfg.architecture
-                    && c.configuration.channels.contains(&v.channel)
             });
             let package = matching.next().ok_or(Error::Denied)?;
             if matching.next().is_some() {

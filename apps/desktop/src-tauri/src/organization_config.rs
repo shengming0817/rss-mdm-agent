@@ -6,6 +6,9 @@ use serde::{Deserialize, Serialize};
 #[serde(deny_unknown_fields)]
 pub struct OrganizationConfiguration {
     pub origin: String,
+    /// Agent transport paired with this business origin by the trusted build configuration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_origin: Option<String>,
     pub tenant: String,
     pub label: String,
     /// Optional deployment CA public certificate, embedded only in the native binary.
@@ -26,34 +29,43 @@ impl std::fmt::Display for ConfigurationError {
 }
 impl std::error::Error for ConfigurationError {}
 
+fn normalize_origin(origin: &str) -> Result<String, ConfigurationError> {
+    let invalid_origin = || ConfigurationError("RSS_MDM_ORIGIN (a real HTTPS origin)");
+    let mut url = url::Url::parse(origin).map_err(|_| invalid_origin())?;
+    if origin.len() > 2048
+        || url.scheme() != "https"
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || url.path() != "/"
+    {
+        return Err(invalid_origin());
+    }
+    let host = url
+        .host_str()
+        .ok_or_else(invalid_origin)?
+        .trim_end_matches('.')
+        .to_owned();
+    if host.is_empty() || host == "example" || host.ends_with(".example") {
+        return Err(invalid_origin());
+    }
+    // Normalize a DNS root dot as well as case/default port before deriving identity.
+    if !host.starts_with('[') {
+        url.set_host(Some(&host)).map_err(|_| invalid_origin())?;
+    }
+    Ok(url.origin().ascii_serialization())
+}
+
 impl OrganizationConfiguration {
     pub fn normalize(mut self) -> Result<Self, ConfigurationError> {
-        let invalid_origin = || ConfigurationError("RSS_MDM_ORIGIN (a real HTTPS origin)");
-        let mut url = url::Url::parse(&self.origin).map_err(|_| invalid_origin())?;
-        if self.origin.len() > 2048
-            || url.scheme() != "https"
-            || url.host_str().is_none()
-            || !url.username().is_empty()
-            || url.password().is_some()
-            || url.query().is_some()
-            || url.fragment().is_some()
-            || url.path() != "/"
-        {
-            return Err(invalid_origin());
-        }
-        let host = url
-            .host_str()
-            .ok_or_else(invalid_origin)?
-            .trim_end_matches('.')
-            .to_owned();
-        if host.is_empty() || host == "example" || host.ends_with(".example") {
-            return Err(invalid_origin());
-        }
-        // Normalize a DNS root dot as well as case/default port before deriving identity.
-        if !host.starts_with('[') {
-            url.set_host(Some(&host)).map_err(|_| invalid_origin())?;
-        }
-        self.origin = url.origin().ascii_serialization();
+        self.origin = normalize_origin(&self.origin)?;
+        self.agent_origin = self
+            .agent_origin
+            .as_deref()
+            .map(normalize_origin)
+            .transpose()?;
         let tenant = uuid::Uuid::parse_str(&self.tenant)
             .map_err(|_| ConfigurationError("RSS_MDM_TENANT_ID (a non-zero UUID)"))?;
         if tenant.is_nil() {
@@ -82,6 +94,7 @@ mod tests {
             tenant: "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA".into(),
             label: " Organization ".into(),
             ca_pem: None,
+            agent_origin: None,
         }
     }
     #[test]
@@ -104,6 +117,9 @@ mod tests {
             let mut value = config();
             value.origin = origin.into();
             assert!(value.normalize().is_err(), "{origin}");
+            let mut value = config();
+            value.agent_origin = Some(origin.into());
+            assert!(value.normalize().is_err(), "agent {origin}");
         }
         for tenant in ["", "invalid", "00000000-0000-0000-0000-000000000000"] {
             let mut value = config();

@@ -911,7 +911,7 @@ export function checkTree(treeRoot = root, executable) {
         // Build-time validation reuses the same serialization and URL parser as native connections.
         "serde.workspace = true",
         "url.workspace = true",
-        'tauri = { workspace = true, features = ["macos-private-api"] }',
+        'tauri = { workspace = true, features = ["macos-private-api", "process-relaunch-dangerous-allow-symlink-macos"] }',
         "serde.workspace = true",
         'serde_json = { workspace = true, features = ["raw_value"] }',
         "serde_json.workspace = true",

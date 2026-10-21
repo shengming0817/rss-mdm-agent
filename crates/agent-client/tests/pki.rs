@@ -15,6 +15,52 @@ fn state(root: &Root, key: &str) -> Value {
     serde_json::from_slice(&body).unwrap()
 }
 
+fn idp(only_ca: bool) -> Vec<u8> {
+    use der::Encode;
+    use x509_cert::ext::pkix::{
+        crl::IssuingDistributionPoint,
+        name::{DistributionPointName, GeneralName},
+    };
+    IssuingDistributionPoint {
+        distribution_point: Some(DistributionPointName::FullName(vec![
+            GeneralName::UniformResourceIdentifier(
+                der::asn1::Ia5String::new("https://step-ca/1.0/crl").unwrap(),
+            ),
+        ])),
+        only_contains_user_certs: false,
+        only_contains_ca_certs: only_ca,
+        only_some_reasons: None,
+        indirect_crl: false,
+        only_contains_attribute_certs: false,
+    }
+    .to_der()
+    .unwrap()
+}
+
+#[tokio::test]
+async fn full_direct_critical_idp_allows_registration_and_refresh() {
+    let server = Server::tls().await;
+    let root = Root::new();
+    {
+        let mut data = server.data.lock().unwrap();
+        let crl = support::pki::crl_with_extension(1, "2.5.29.28", true, idp(false));
+        data.trust["issuers"][0]["crl"] = crl.clone().into();
+        data.trust["issuers"][0]["root_crl"] = crl.into();
+    }
+    let mut client = server.client(&root, OpenMode::Create);
+    let binding = server.register(&mut client).await;
+    {
+        let mut data = server.data.lock().unwrap();
+        let crl = support::pki::crl_with_extension(2, "2.5.29.28", true, idp(false));
+        data.trust["issuers"][0]["crl"] = crl.clone().into();
+        data.trust["issuers"][0]["root_crl"] = crl.into();
+    }
+    server.time.set(301);
+    client.drive_pki().await.unwrap();
+    client.runtime_readiness().unwrap();
+    assert_eq!(client.registration().unwrap(), binding);
+}
+
 #[tokio::test]
 async fn committed_renewal_is_recovered_over_anonymous_https_after_expiry_without_old_signer() {
     let server = Server::tls().await;
@@ -78,37 +124,22 @@ async fn committed_renewal_is_recovered_over_anonymous_https_after_expiry_withou
 }
 
 #[tokio::test]
-async fn ack_requires_native_readback_and_replays_the_original_operation_after_restart() {
+async fn ack_replays_the_original_operation_after_private_trust_readback_and_restart() {
     let server = Server::tls().await;
     let root = Root::new();
     let mut client = server.client(&root, OpenMode::Create);
     let binding = server.register(&mut client).await;
     server.data.lock().unwrap().trust["revision"] = 2.into();
-    server
-        .secrets
-        .0
-        .lock()
-        .unwrap()
-        .insert("machine/read-failure".into(), "injected".into());
-    server.time.set(301);
-    assert_eq!(client.drive_pki().await.unwrap_err(), Error::Storage);
-    assert_eq!(server.data.lock().unwrap().trust_ack_calls.len(), 1);
-    server
-        .secrets
-        .0
-        .lock()
-        .unwrap()
-        .remove("machine/read-failure");
     server.data.lock().unwrap().trust_ack_failure = true;
-    server.time.set(303);
+    server.time.set(301);
     assert_eq!(client.drive_pki().await.unwrap_err(), Error::Unavailable);
     let ack = state(&root, "pki")["ack"]["request"].clone();
     drop(client);
     let mut client = server.client(&root, OpenMode::Existing);
-    server.time.set(304);
-    client.drive_pki().await.unwrap(); // Durable exponential backoff prevents a premature retry.
+    server.time.set(302);
+    client.drive_pki().await.unwrap(); // Original durable backoff still applies.
     assert_eq!(server.data.lock().unwrap().trust_ack_calls.len(), 2);
-    server.time.set(307);
+    server.time.set(305);
     client.drive_pki().await.unwrap();
     assert_eq!(client.registration().unwrap(), binding);
     let data = server.data.lock().unwrap();
@@ -128,6 +159,10 @@ async fn invalid_complete_trust_set_blocks_runtime_without_replacing_registratio
         "signature",
         "future",
         "expired",
+        "partitioned-idp",
+        "noncritical-idp",
+        "unknown-critical",
+        "delta",
     ] {
         let server = Server::tls().await;
         let root = Root::new();
@@ -158,7 +193,37 @@ async fn invalid_complete_trust_set_blocks_runtime_without_replacing_registratio
                 "expired" => {
                     data.trust["issuers"][0]["crl"] = support::pki::crl(2, 0, 301, &[]).into()
                 }
+                "partitioned-idp" | "noncritical-idp" => {
+                    data.trust["issuers"][0]["crl"] = support::pki::crl_with_extension(
+                        2,
+                        "2.5.29.28",
+                        fault != "noncritical-idp",
+                        idp(fault == "partitioned-idp"),
+                    )
+                    .into();
+                }
+                "unknown-critical" | "delta" => {
+                    data.trust["issuers"][0]["crl"] = support::pki::crl_with_extension(
+                        2,
+                        if fault == "delta" {
+                            "2.5.29.27"
+                        } else {
+                            "1.2.3.4"
+                        },
+                        true,
+                        vec![2, 1, 1],
+                    )
+                    .into();
+                }
                 _ => unreachable!(),
+            }
+            if matches!(
+                fault,
+                "partitioned-idp" | "noncritical-idp" | "unknown-critical" | "delta"
+            ) {
+                // This fixture uses one self-signed CA for both roles: keep the
+                // CRL identical so rejection cannot come from watermark conflict.
+                data.trust["issuers"][0]["root_crl"] = data.trust["issuers"][0]["crl"].clone();
             }
         }
         server.time.set(301);
@@ -217,53 +282,6 @@ async fn crl_watermarks_reject_rollback_and_conflict_and_revocation_survives_res
 }
 
 #[tokio::test]
-async fn an_interrupted_native_add_never_becomes_durable_ownership_from_presence() {
-    let server = Server::tls().await;
-    let root = Root::new();
-    let mut client = server.client(&root, OpenMode::Create);
-    server
-        .secrets
-        .0
-        .lock()
-        .unwrap()
-        .insert("machine/add-response-lost".into(), "injected".into());
-    assert_eq!(client.drive_pki().await.unwrap_err(), Error::Storage);
-    assert!(state(&root, "pki")["installations"]
-        .as_object()
-        .unwrap()
-        .values()
-        .all(|v| v["ownership"] == "Intent"));
-    drop(client);
-    server.time.set(3);
-    let mut client = server.client(&root, OpenMode::Existing);
-    assert_eq!(client.drive_pki().await.unwrap_err(), Error::Untrusted);
-    // Physical presence after an interrupted add is ambiguous. Administrator completes the exact setting.
-    use agent_client::MachineTrust;
-    let der: Vec<u8> = serde_json::from_value(
-        state(&root, "pki")["installations"]
-            .as_object()
-            .unwrap()
-            .values()
-            .next()
-            .unwrap()["der"]
-            .clone(),
-    )
-    .unwrap();
-    server
-        .secrets
-        .configure_certificate(agent_client::MachineStore::Root, &der)
-        .unwrap();
-    server.time.set(7);
-    client.drive_pki().await.unwrap();
-    assert!(state(&root, "pki")["installations"]
-        .as_object()
-        .unwrap()
-        .values()
-        .all(|v| v["ownership"] == "Borrowed"));
-    assert!(server.data.lock().unwrap().trust_ack_calls.is_empty());
-}
-
-#[tokio::test]
 async fn overlap_renews_under_new_issuer_and_root_crl_revocation_is_enforced() {
     let server = Server::tls().await;
     let root = Root::new();
@@ -279,17 +297,6 @@ async fn overlap_renews_under_new_issuer_and_root_crl_revocation_is_enforced() {
     }
     server.time.set(301);
     client.drive_pki().await.unwrap();
-    let installed = state(&root, "pki")["installations"].clone();
-    assert_eq!(installed.as_object().unwrap().len(), 3);
-    assert_eq!(
-        installed
-            .as_object()
-            .unwrap()
-            .values()
-            .filter(|v| v["store"] == "Root")
-            .count(),
-        2
-    );
     {
         let mut data = server.data.lock().unwrap();
         data.trust["revision"] = 3.into();
@@ -319,24 +326,6 @@ async fn overlap_renews_under_new_issuer_and_root_crl_revocation_is_enforced() {
         Error::CredentialRevoked
     );
     assert_eq!(client.registration().unwrap(), binding);
-    assert_eq!(
-        state(&root, "pki")["installations"]
-            .as_object()
-            .unwrap()
-            .len(),
-        2
-    );
-    assert_eq!(
-        server
-            .secrets
-            .0
-            .lock()
-            .unwrap()
-            .keys()
-            .filter(|key| key.starts_with("machine/"))
-            .count(),
-        2
-    );
 }
 
 #[tokio::test]
@@ -435,250 +424,41 @@ async fn expired_trust_blocks_during_durable_backoff_without_new_http() {
 }
 
 #[tokio::test]
-async fn retiring_approved_material_preserves_a_preexisting_machine_root() {
-    use agent_client::{MachineStore, MachineTrust};
-    use der::{DecodePem, Encode};
-    let server = Server::tls().await;
-    let old = x509_cert::Certificate::from_pem(support::pki::ca())
-        .unwrap()
-        .to_der()
-        .unwrap();
-    server
-        .secrets
-        .add_certificate(MachineStore::Root, &old)
-        .unwrap();
-    server
-        .secrets
-        .configure_certificate(MachineStore::Root, &old)
-        .unwrap();
-    let root = Root::new();
-    let mut client = server.client(&root, OpenMode::Create);
-    client.drive_pki().await.unwrap();
-    assert_eq!(
-        state(&root, "pki")["installations"]
-            .as_object()
-            .unwrap()
-            .values()
-            .next()
-            .unwrap()["ownership"],
-        "Borrowed"
-    );
-    let mut issuer = support::pki::rotation_issuer(false);
-    issuer["mode"] = "active".into();
-    {
-        let mut data = server.data.lock().unwrap();
-        data.trust["revision"] = 2.into();
-        data.trust["issuers"] = serde_json::json!([issuer]);
-    }
-    server.time.set(301);
-    client.drive_pki().await.unwrap();
-    assert_eq!(
-        state(&root, "pki")["installations"]
-            .as_object()
-            .unwrap()
-            .len(),
-        2
-    );
-    assert!(server
-        .secrets
-        .read_certificate(MachineStore::Root, &old)
-        .unwrap());
-}
-
-#[tokio::test]
-async fn machine_root_configuration_failure_retries_only_after_durable_ownership() {
-    let server = Server::tls().await;
-    let root = Root::new();
-    server
-        .secrets
-        .0
-        .lock()
-        .unwrap()
-        .insert("machine/configure-failure".into(), "injected".into());
-    let mut client = server.client(&root, OpenMode::Create);
-    assert_eq!(client.drive_pki().await.unwrap_err(), Error::Storage);
-    assert!(state(&root, "pki")["installations"]
-        .as_object()
-        .unwrap()
-        .values()
-        .all(|v| v["ownership"] == "Owned"));
-    drop(client);
-    server
-        .secrets
-        .0
-        .lock()
-        .unwrap()
-        .remove("machine/configure-failure");
-    server.time.set(3);
-    let mut client = server.client(&root, OpenMode::Existing);
-    client.drive_pki().await.unwrap();
-    assert!(state(&root, "pki")["installations"]
-        .as_object()
-        .unwrap()
-        .values()
-        .all(|v| v["ownership"] == "Owned"));
-}
-
-#[tokio::test]
-async fn rebuilding_preserves_external_and_ambiguous_material_through_restart_and_retirement() {
-    use agent_client::{MachineStore, MachineTrust};
-    use der::{DecodePem, Encode};
-    for (fault, recorded, error) in [
-        ("machine/add-present-race", "Borrowed", Error::Untrusted),
-        ("machine/add-response-lost", "Intent", Error::Storage),
-    ] {
-        let server = Server::tls().await;
-        let root = Root::new();
-        let mut client = server.client(&root, OpenMode::Create);
-        let binding = server.register(&mut client).await;
-        let old = x509_cert::Certificate::from_pem(support::pki::ca())
-            .unwrap()
-            .to_der()
-            .unwrap();
-        // External removal invalidates the previous physical creation fact.
-        server
-            .secrets
-            .delete_certificate(MachineStore::Root, &old)
-            .unwrap();
-        server
-            .secrets
-            .0
-            .lock()
-            .unwrap()
-            .insert(fault.into(), "injected".into());
-        server.time.set(301);
-        assert_eq!(client.drive_pki().await.unwrap_err(), error);
-        assert!(state(&root, "pki")["installations"]
-            .as_object()
-            .unwrap()
-            .values()
-            .all(|v| v["ownership"] == recorded));
-        assert!(server
-            .secrets
-            .certificate_present(MachineStore::Root, &old)
-            .unwrap());
-        assert!(!server
-            .secrets
-            .read_certificate(MachineStore::Root, &old)
-            .unwrap());
-        drop(client);
-        server.time.set(303);
-        let mut client = server.client(&root, OpenMode::Existing);
-        assert_eq!(client.drive_pki().await.unwrap_err(), Error::Untrusted);
-        assert!(state(&root, "pki")["installations"]
-            .as_object()
-            .unwrap()
-            .values()
-            .all(|v| v["ownership"] == "Borrowed"));
-        // Only an administrator repairs externally owned/uncertain root settings.
-        server
-            .secrets
-            .configure_certificate(MachineStore::Root, &old)
-            .unwrap();
-        server.time.set(307);
-        client.drive_pki().await.unwrap();
-        let mut next = support::pki::rotation_issuer(false);
-        next["mode"] = "active".into();
-        {
-            let mut data = server.data.lock().unwrap();
-            data.trust["revision"] = 2.into();
-            data.trust["issuers"] = serde_json::json!([next]);
-        }
-        server.time.set(901);
-        assert_eq!(client.drive_pki().await.unwrap_err(), Error::Untrusted);
-        assert!(server
-            .secrets
-            .certificate_present(MachineStore::Root, &old)
-            .unwrap());
-        assert_eq!(client.registration().unwrap(), binding);
-    }
-}
-
-#[tokio::test]
-async fn rebuilding_created_material_gets_fresh_ownership_and_can_be_retired() {
-    use agent_client::{MachineStore, MachineTrust};
-    use der::{DecodePem, Encode};
-    let server = Server::tls().await;
-    let root = Root::new();
-    let mut client = server.client(&root, OpenMode::Create);
-    server.register(&mut client).await;
-    let old = x509_cert::Certificate::from_pem(support::pki::ca())
-        .unwrap()
-        .to_der()
-        .unwrap();
-    server
-        .secrets
-        .delete_certificate(MachineStore::Root, &old)
-        .unwrap();
-    server.time.set(301);
-    client.drive_pki().await.unwrap();
-    assert!(state(&root, "pki")["installations"]
-        .as_object()
-        .unwrap()
-        .values()
-        .all(|v| v["ownership"] == "Owned"));
-    assert!(server
-        .secrets
-        .read_certificate(MachineStore::Root, &old)
-        .unwrap());
-    let mut next = support::pki::rotation_issuer(false);
-    next["mode"] = "active".into();
-    {
-        let mut data = server.data.lock().unwrap();
-        data.trust["revision"] = 2.into();
-        data.trust["issuers"] = serde_json::json!([next]);
-    }
-    server.time.set(601);
-    assert_eq!(client.drive_pki().await.unwrap_err(), Error::Untrusted);
-    assert!(!server
-        .secrets
-        .certificate_present(MachineStore::Root, &old)
-        .unwrap());
-}
-
-#[tokio::test]
-async fn same_revision_refresh_and_readback_recovery_publish_applied() {
+async fn retained_identity_and_private_trust_refresh_ignore_historical_machine_receipts() {
     use rss_mdm_agent_wire::pki::ObservationState;
     let server = Server::tls().await;
     let root = Root::new();
     let mut client = server.client(&root, OpenMode::Create);
-    server.register(&mut client).await;
+    let binding = server.register(&mut client).await;
     let original = client.pki_observation().unwrap().unwrap();
+    let identity = state(&root, "identity");
+    let mut pki = state(&root, "pki");
+    let watermarks = pki["watermarks"].clone();
+    let history = serde_json::json!({"root/previous-installation": {
+        "store":"Root", "der":[1,2,3], "ownership":"Owned"
+    }});
+    pki["installations"] = history.clone();
+    drop(client);
+    let connection = rusqlite::Connection::open(root.path.join("communication.sqlite")).unwrap();
+    connection
+        .execute(
+            "UPDATE state SET body=?1 WHERE key='pki'",
+            [serde_json::to_vec(&pki).unwrap()],
+        )
+        .unwrap();
+    drop(connection);
+    let mut client = server.client(&root, OpenMode::Existing);
+    client.runtime_readiness().unwrap();
     server.time.set(301);
     client.drive_pki().await.unwrap();
     let refreshed = client.pki_observation().unwrap().unwrap();
     assert_eq!(refreshed.state, ObservationState::Applied);
     assert_eq!(refreshed.actual_revision, original.actual_revision);
     assert!(refreshed.sequence > original.sequence);
-    server
-        .secrets
-        .0
-        .lock()
-        .unwrap()
-        .insert("machine/read-failure".into(), "injected".into());
-    server.time.set(601);
-    assert_eq!(client.drive_pki().await.unwrap_err(), Error::Storage);
-    assert_eq!(
-        client.pki_observation().unwrap().unwrap().state,
-        ObservationState::Failed
-    );
-    server
-        .secrets
-        .0
-        .lock()
-        .unwrap()
-        .remove("machine/read-failure");
-    server.time.set(603);
-    client.drive_pki().await.unwrap();
-    let recovered = client.pki_observation().unwrap().unwrap();
-    assert_eq!(recovered.state, ObservationState::Applied);
-    assert_eq!(recovered.actual_revision, original.actual_revision);
     assert!(client.pki_acknowledged().unwrap());
-    server.time.set(605);
-    client.drive_pki().await.unwrap();
-    let data = server.data.lock().unwrap();
-    assert!(data
-        .observations
-        .iter()
-        .any(|v| v["operation"] == recovered.operation.to_string()));
+    assert_eq!(client.registration().unwrap(), binding);
+    assert_eq!(state(&root, "identity"), identity);
+    assert_eq!(state(&root, "pki")["watermarks"], watermarks);
+    assert_eq!(state(&root, "pki")["installations"], history);
+    assert_eq!(server.data.lock().unwrap().certificate_calls.len(), 1);
 }

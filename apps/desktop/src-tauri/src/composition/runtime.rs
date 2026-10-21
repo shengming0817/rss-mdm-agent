@@ -61,6 +61,23 @@ impl DesktopRuntime {
             super::users::Users::open(root).map_err(|_| "user registry unavailable")?,
         ));
         let execution = ExecutionHandle::new().with_trusted_users(users.clone());
+        // Unit lifecycle/ACL tests must not contact the developer's installed Agent.
+        #[cfg(test)]
+        let execution = execution.with_context_transport(|request| {
+            use execution_ipc::host::{Reply, Request};
+            match request {
+                Request::BindContext { value, expected } => Ok(Reply::ContextBound {
+                    value: execution_contract::NativeContextRef {
+                        id: expected.unwrap_or_else(|| {
+                            execution_contract::Id::new(uuid::Uuid::new_v4().to_string()).unwrap()
+                        }),
+                        generation: value.generation,
+                    },
+                }),
+                Request::RevokeContext {} => Ok(Reply::ContextRevoked),
+                _ => Err(execution_app::Error::Unavailable),
+            }
+        });
         let runtime = Self {
             execution,
             identity: super::identity::IdentityOwner::new(users.clone()),

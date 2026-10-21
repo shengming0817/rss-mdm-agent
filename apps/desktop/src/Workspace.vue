@@ -496,7 +496,7 @@ onBeforeUnmount(() => {
     :designed="designedPages.includes(page)"
     :narrow="chromeNarrow"
     @search="searchRequest++"
-    :navigation-enabled="ready"
+    :navigation-enabled="true"
     :navigation-key="page"
     :content-mode="
       ready &&

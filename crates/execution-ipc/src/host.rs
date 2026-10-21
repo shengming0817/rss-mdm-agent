@@ -348,6 +348,19 @@ pub fn monotonic_millis() -> Result<u64, execution_app::Error> {
     }
 }
 
+/// Select the actual console account before its user helper has been installed.
+/// This grants no session or IPC authority; callers still enforce the configured peer policy.
+pub fn active_user_subject() -> Result<String, execution_app::Error> {
+    #[cfg(target_os = "macos")]
+    {
+        Ok(crate::macos_identity::console_account()?.to_string())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        active_user_session().map(|(subject, _)| subject)
+    }
+}
+
 /// Select an actual active OS login. Ambiguous or absent sessions are unavailable.
 pub fn active_user_session() -> Result<(String, u32), execution_app::Error> {
     #[cfg(target_os = "macos")]

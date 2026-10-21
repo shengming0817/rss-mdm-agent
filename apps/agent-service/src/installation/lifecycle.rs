@@ -526,7 +526,7 @@ mod configuration_restart_tests {
 }
 
 pub(super) fn initial_profile() -> Result<Profile, Error> {
-    if execution_ipc::host::active_user_session().is_err() {
+    if execution_ipc::host::active_user_subject().is_err() {
         // No interactive subject gains IPC access merely because a machine is being enrolled.
         return Ok(Profile {
             subjects: vec![],

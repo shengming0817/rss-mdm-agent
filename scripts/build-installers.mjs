@@ -17,6 +17,7 @@ import { cargoTargetDir } from "./cargo-target.mjs";
 import { runtimeTreeSha256 } from "./ai-host-artifacts.mjs";
 import { sourceEvidence } from "./native-evidence.mjs";
 import { msiSource, msixManifest } from "./windows-packages.mjs";
+import { organizationConfiguration } from "./desktop-organization.mjs";
 const root = fileURLToPath(new URL("../", import.meta.url));
 const args = process.argv.slice(2);
 const input = args.indexOf("--organization");
@@ -85,13 +86,20 @@ if (!organization.ca_pem)
 for (const key of Object.values(organization.signing_keys))
   if (Buffer.from(key, "base64url").length !== 32)
     throw Error("Ed25519 public key required");
+// Reuse the existing website configuration; never send user login to the device TLS listener.
+const desktopConfiguration = organizationConfiguration(root);
+if (desktopConfiguration.tenant.toLowerCase() !== organization.tenant)
+  throw Error("Desktop and Agent must belong to the same tenant");
 const env = {
   ...process.env,
   RSS_BUILD_MDM_ORGANIZATION: JSON.stringify({
-    origin: organization.origin,
+    origin: desktopConfiguration.origin,
+    agent_origin: organization.origin,
     tenant: organization.tenant,
     label: organization.label,
-    ...(organization.ca_pem ? { ca_pem: organization.ca_pem } : {}),
+    ...(desktopConfiguration.ca_pem
+      ? { ca_pem: desktopConfiguration.ca_pem }
+      : {}),
   }),
 };
 // The outer build runner retains the worktree/target locks for this entire package build.
@@ -306,6 +314,15 @@ const publication = {
       }
     : {
         kind: "macos_pkg",
+        bundle: execFileSync(
+          "/usr/libexec/PlistBuddy",
+          [
+            "-c",
+            "Print :CFBundleIdentifier",
+            join(payload, "RSS MDM Agent.app/Contents/Info.plist"),
+          ],
+          { encoding: "utf8" },
+        ).trim(),
         team: release
           ? (/^TeamIdentifier=(.+)$/m.exec(
               spawnSync("/usr/bin/codesign", ["-d", "--verbose=4", desktop], {

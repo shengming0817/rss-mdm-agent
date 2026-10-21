@@ -135,6 +135,22 @@ pub fn crl(number: u64, this_update: u64, next_update: u64, revoked: &[u8]) -> S
         this_update,
         next_update,
         revoked,
+        vec![],
+    )
+}
+pub fn crl_with_extension(number: u64, oid: &str, critical: bool, der: Vec<u8>) -> String {
+    crl_signed(
+        signing_key(ROOT),
+        "CN=Agent fixture CA",
+        number,
+        0,
+        4_102_444_800,
+        &[],
+        vec![Extension {
+            extn_id: oid.parse().unwrap(),
+            critical,
+            extn_value: der::asn1::OctetString::new(der).unwrap(),
+        }],
     )
 }
 fn crl_signed(
@@ -144,6 +160,7 @@ fn crl_signed(
     this_update: u64,
     next_update: u64,
     revoked: &[u8],
+    mut extensions: Vec<Extension>,
 ) -> String {
     use x509_cert::{
         crl::{CertificateList, RevokedCert, TbsCertList},
@@ -156,6 +173,10 @@ fn crl_signed(
     let time = |value| {
         Time::try_from(std::time::UNIX_EPOCH + std::time::Duration::from_secs(value)).unwrap()
     };
+    extensions.push(extension(
+        CrlNumber(der::asn1::Uint::new(&number.to_be_bytes()).unwrap()),
+        false,
+    ));
     let tbs = TbsCertList {
         version: Version::V2,
         signature: algorithm.clone(),
@@ -172,10 +193,7 @@ fn crl_signed(
                 })
                 .collect()
         }),
-        crl_extensions: Some(vec![extension(
-            CrlNumber(der::asn1::Uint::new(&number.to_be_bytes()).unwrap()),
-            false,
-        )]),
+        crl_extensions: Some(extensions),
     };
     let signature = root
         .choose_scheme(&[rustls::SignatureScheme::RSA_PKCS1_SHA256])
@@ -282,8 +300,8 @@ pub fn rotation_issuer(root_revoked: bool) -> serde_json::Value {
     let der = issuer.to_der().unwrap();
     serde_json::json!({ "digest":format!("{:x}",Sha256::digest(&der)), "mode":"prepared", "certificate":base64::engine::general_purpose::STANDARD.encode(der),
         "root":base64::engine::general_purpose::STANDARD.encode(root.to_der().unwrap()),
-        "crl":crl_signed(key(), "CN=Agent rotation issuer", 1, 0, 4_102_444_800, &[]),
-        "root_crl":crl_signed(renewal_key(), "CN=Agent rotation root", if root_revoked {2} else {1}, 0, 4_102_444_800, if root_revoked {&[7]} else {&[]}),
+        "crl":crl_signed(key(), "CN=Agent rotation issuer", 1, 0, 4_102_444_800, &[], vec![]),
+        "root_crl":crl_signed(renewal_key(), "CN=Agent rotation root", if root_revoked {2} else {1}, 0, 4_102_444_800, if root_revoked {&[7]} else {&[]}, vec![]),
         "provisioner":"rss-agent","kid":"fixture-rotation" })
 }
 pub fn rotation_chain(tenant: uuid::Uuid, public: Vec<u8>, until: u64) -> Vec<String> {
