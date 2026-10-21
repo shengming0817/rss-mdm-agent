@@ -30,14 +30,42 @@ function resolved() {
     ),
   );
 }
+function presentationText(value: unknown, fallback = "未提供"): string {
+  return typeof value === "string" && value.trim() ? value.trim() : fallback;
+}
 </script>
 <template>
   <article class="policy-preparation" aria-label="原请求与确认">
     <template v-if="record.action.kind === 'policy'">
-      <h3>{{ record.action.directory.selfService.displayName }}</h3>
-      <p>{{ record.action.directory.selfService.description }}</p>
-      <p>前置条件：{{ record.action.directory.selfService.prerequisites }}</p>
-      <p>副作用：{{ record.action.directory.selfService.sideEffects }}</p>
+      <h3>
+        {{
+          presentationText(
+            record.action.directory.selfService.presentation.displayName,
+            `策略 ${record.action.directory.policyId}`,
+          )
+        }}
+      </h3>
+      <p>
+        {{
+          presentationText(
+            record.action.directory.selfService.presentation.description,
+          )
+        }}
+      </p>
+      <p>
+        前置条件：{{
+          presentationText(
+            record.action.directory.selfService.presentation.prerequisites,
+          )
+        }}
+      </p>
+      <p>
+        副作用：{{
+          presentationText(
+            record.action.directory.selfService.presentation.sideEffects,
+          )
+        }}
+      </p>
       <dl>
         <dt>请求</dt>
         <dd>{{ request() }}</dd>

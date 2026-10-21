@@ -10,9 +10,9 @@ use execution_ipc::host::{ClientOrigin, Reply};
 use rss_mdm_agent_wire::runtime as wire;
 use sha2::{Digest as _, Sha256};
 
-struct Case {
-    service: DeviceService<protocol::Secrets>,
-    _server: protocol::Server,
+pub(crate) struct Case {
+    pub(crate) service: DeviceService<protocol::Secrets>,
+    pub(crate) _server: protocol::Server,
     _root: protocol::Root,
     offer: Offer,
     selection: Selection,
@@ -31,7 +31,14 @@ async fn stage_gate_offer(service: &mut DeviceService<protocol::Secrets>) {
 }
 
 impl Case {
-    async fn new(level: Option<RiskLevel>) -> Self {
+    pub(crate) fn take_telemetry(&mut self) -> crate::telemetry::Telemetry {
+        self.service
+            .core
+            .telemetry
+            .take()
+            .expect("registered telemetry owner")
+    }
+    pub(crate) async fn new(level: Option<RiskLevel>) -> Self {
         Self::with_offer_lifetime(level, 60).await
     }
     async fn with_offer_lifetime(level: Option<RiskLevel>, seconds: i64) -> Self {

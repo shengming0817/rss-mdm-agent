@@ -53,6 +53,12 @@ export interface ServiceStatus {
     | {
         phase: "notReady";
       };
+  /**
+   * Bounded local telemetry health; diagnostic values grant no authority.
+   */
+  telemetry?: {
+    [k: string]: unknown;
+  };
 }
 
 /**

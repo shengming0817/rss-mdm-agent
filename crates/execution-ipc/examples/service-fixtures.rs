@@ -3,6 +3,7 @@ fn sample(readiness: Readiness) -> ServiceStatus {
     ServiceStatus {
         build: env!("CARGO_PKG_VERSION").into(),
         protocol: IPC_VERSION,
+        telemetry: None,
         platform: "macos".into(),
         readiness,
     }

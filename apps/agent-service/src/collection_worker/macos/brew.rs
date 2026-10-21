@@ -152,7 +152,7 @@ pub(super) fn collect(
     taps: &BTreeSet<String>,
     rows: &mut Rows<'_>,
 ) -> Result<()> {
-    let w::SoftwareExecutionTarget::User { identity, .. } = &c.input.task.execution.target else {
+    let w::SoftwareExecutionTarget::User { identity, .. } = &c.input.read.execution.target else {
         return Err(Status::Denied.into());
     };
     let uid = identity.parse::<u32>().map_err(|_| Status::Denied)?;

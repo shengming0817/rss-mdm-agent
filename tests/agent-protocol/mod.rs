@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 pub(crate) mod pki;
 pub mod software_native;
+pub mod telemetry;
 use agent_client::*;
 use axum::{
     body::{Body, Bytes},
@@ -144,6 +145,7 @@ impl IdentityProvider for Secrets {
     }
 }
 pub struct Data {
+    pub telemetry: telemetry::State,
     pub software_source: Option<software_native::Source>,
     pub trust: Value,
     pub task_trust: Value,
@@ -348,7 +350,7 @@ impl Data {
         })
         .unwrap();
         let task = CollectionTaskSpec {
-            wire_version: 3,
+            wire_version: COLLECTION_TASK_VERSION,
             tenant_id: self.tenant,
             device_id: "device-1".into(),
             platform: TaskPlatform::Windows,
@@ -621,6 +623,7 @@ impl Server {
         let time = Time(Arc::new(AtomicI64::new(1)));
         let signer = Ed25519KeyPair::from_seed_unchecked(&[7; 32]).unwrap();
         let data = Arc::new(Mutex::new(Data {
+            telemetry: Default::default(),
             software_source: None,
             trust: Value::Null,
             task_trust: Value::Null,
@@ -903,6 +906,7 @@ impl Server {
                         (NativeEngine::WindowsWmi, 1),
                         (NativeEngine::WindowsUpdates, 1),
                         (NativeEngine::WindowsCertificates, 1),
+                        (NativeEngine::WindowsPerformance, 1),
                     ]
                     .into(),
                 })
@@ -919,6 +923,7 @@ impl Server {
                         NativeEngine::MacosAccounts,
                         NativeEngine::MacosCertificates,
                         NativeEngine::MacosUpdates,
+                        NativeEngine::MacosPerformance,
                     ]
                     .into_iter()
                     .map(|engine| (engine, engine.contract_version()))
@@ -934,6 +939,8 @@ impl Server {
                 Capability::InventoryCollectionV1,
                 Capability::TaskExecuteV1,
                 Capability::SoftwarePkgSystemV1,
+                Capability::TelemetryCollectV1,
+                Capability::TelemetryCounterLocalV1,
             ])
             .await
             .unwrap();
@@ -1039,6 +1046,9 @@ fn runtime_response(d: &mut Data, path: &str, headers: HeaderMap, value: Value) 
     }
     if d.activation.is_none() {
         return runtime_error(StatusCode::UNAUTHORIZED, ErrorCode::InvalidIdentity);
+    }
+    if path.contains("/runtime/telemetry/") {
+        return telemetry::response(d, path, value);
     }
     let response = if path.ends_with("/runtime/task-trust") {
         task_trust_response(d, value)
@@ -1701,7 +1711,7 @@ pub fn policy_directory_fixture(tenant: Uuid) -> SelfServiceDirectoryItem {
     serde_json::from_value(json!({
         "policyId": Uuid::new_v4(), "policyRevision": 2, "policyVersion": Uuid::new_v4(),
         "subject":{"kind":"user","user":{"tenantId":tenant,"instanceId":Uuid::from_u128(2),"principalId":Uuid::from_u128(3)}},
-        "selfService": {"published":true, "displayName":"Repair", "description":"Test repair", "prerequisites":"Employee session", "sideEffects":"Restarts a fixture", "category":"Support", "keywords":["repair"], "allowAi":true, "riskLevel":2},
+        "selfService":{"published": true, "allowAi": true, "riskLevel": 2, "presentation": {"displayName": "Repair", "description": "Test repair", "prerequisites": "Employee session", "sideEffects": "Restarts a fixture", "category": "Support", "keywords": ["repair"]}},
         "task":{"kind":"script","runAs":"system","resource":{"id":Uuid::new_v4().to_string(),"version":"v1","variant":"default"},
         "parameterSources":{"name":{"kind":"input"}, "path":{"kind":"fixed","value":"/Applications"}},
         "parameterSchema":{"type":"object","properties":{"name":{"type":"string","minLength":1,"maxLength":32},"path":{"type":"string","const":"/Applications"}},"required":["name","path"],"additionalProperties":false}}

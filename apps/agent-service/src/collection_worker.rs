@@ -14,6 +14,8 @@ use std::path::Path;
 mod macos;
 #[cfg(target_os = "macos")]
 mod macos_supervisor;
+#[cfg(any(windows, target_os = "macos", test))]
+mod performance;
 #[cfg(windows)]
 mod supervisor;
 #[cfg(any(windows, test))]
@@ -29,7 +31,7 @@ pub(crate) const PROFILE: &str = "native-collection-worker";
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Input {
-    pub task: w::CollectionTaskSpec,
+    pub read: ReadPlan,
     pub finish_by_unix_ms: u64,
     pub image_sha256: Digest,
     pub run_as: RunAs,
@@ -37,6 +39,26 @@ pub(crate) struct Input {
     pub tools: BTreeMap<String, SoftwareMaterial>,
     #[serde(skip)]
     pub observed: std::sync::Arc<std::sync::atomic::AtomicU64>,
+}
+/// Physical read instructions shared by verified commands and signed periodic leases.
+/// Remote authorization is verified by the service before publishing this protected artifact.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ReadPlan {
+    pub plan: w::NativeCollectionPlan,
+    pub execution: w::NativeExecutionBinding,
+    pub platform: w::TaskPlatform,
+    pub deadline: i64,
+}
+impl From<w::CollectionTaskSpec> for ReadPlan {
+    fn from(task: w::CollectionTaskSpec) -> Self {
+        Self {
+            plan: task.plan,
+            execution: task.execution,
+            platform: task.platform,
+            deadline: task.deadline,
+        }
+    }
 }
 pub(crate) fn engines() -> w::NativeEngines {
     #[cfg(windows)]
@@ -53,6 +75,7 @@ pub(crate) fn engines() -> w::NativeEngines {
             WindowsSoftware,
             WindowsNetwork,
             WindowsBattery,
+            WindowsPerformance,
         ]
         .into_iter()
         .map(|e| (e, e.contract_version()))
@@ -66,6 +89,7 @@ pub(crate) fn engines() -> w::NativeEngines {
             w::NativeEngine::MacosCertificates,
             w::NativeEngine::MacosUpdates,
             w::NativeEngine::MacosHardware,
+            w::NativeEngine::MacosPerformance,
             w::NativeEngine::MacosApplications,
             w::NativeEngine::MacosPkgReceipts,
             w::NativeEngine::MacosBrew,
@@ -183,37 +207,37 @@ pub fn run(path: &Path, query: Option<&str>) -> Result<i32, Error> {
     let bytes = execution_runner::staging::read_worker_input(path, 256 * 1024)
         .map_err(crate::error::app_error)?;
     let input: Input = serde_json::from_slice(&bytes).map_err(|_| Error::Protocol)?;
-    input.task.validate()?;
-    preflight(&input.task.plan)?;
-    if !input.task.plan.supported_by(&engines()) {
+    input.read.execution.validate(&input.read.plan)?;
+    preflight(&input.read.plan)?;
+    if !input.read.plan.supported_by(&engines()) {
         return Err(Error::Unsupported);
     }
     verify_identity(&input)?;
     let image = std::env::current_exe()?;
     let _lease = execution_runner::staging::verify_retained(&image, &input.image_sha256)
         .map_err(crate::error::app_error)?;
-    if input.task.permit != w::TaskPermit::Start || now()? >= input.task.deadline {
+    if now()? >= input.read.deadline {
         return Err(Error::Expired);
     }
     #[cfg(any(windows, target_os = "macos"))]
     {
         let output = if let Some(id) = query {
             let q = input
-                .task
+                .read
                 .plan
                 .spec()
                 .queries
                 .get(id)
                 .ok_or(Error::Untrusted)?;
             #[cfg(windows)]
-            let result = windows::execute(&input, q, input.task.deadline);
+            let result = windows::execute(&input, q, input.read.deadline);
             #[cfg(target_os = "macos")]
             let result = macos::execute(&input, q)?;
             serde_json::to_vec(&result).map_err(|_| Error::Protocol)?
         } else {
             let result = collect(
-                &input.task.plan,
-                input.task.deadline,
+                &input.read.plan,
+                input.read.deadline,
                 input.finish_by_unix_ms,
                 &input.observed,
                 |id, q, remaining, raw_allowance| {
@@ -243,7 +267,7 @@ pub fn run(path: &Path, query: Option<&str>) -> Result<i32, Error> {
                 .len()
                 .saturating_add(control.len())
                 .saturating_add(completion.native_output_bytes as usize)
-                > input.task.plan.spec().budget.output_bytes as usize
+                > input.read.plan.spec().budget.output_bytes as usize
         {
             return Err(Error::Capacity);
         }
@@ -266,14 +290,14 @@ fn verify_identity(input: &Input) -> Result<(), Error> {
         .map_err(crate::error::app_error)
 }
 fn verify_identity_binding(input: &Input) -> Result<(), Error> {
-    input.task.execution.validate(&input.task.plan)?;
-    let valid = match (&input.task.execution.target, &input.run_as, &input.session) {
+    input.read.execution.validate(&input.read.plan)?;
+    let valid = match (&input.read.execution.target, &input.run_as, &input.session) {
         (
             w::SoftwareExecutionTarget::Device,
             RunAs::System { platform },
             SessionRequirement::NotRequired {},
         ) => matches!(
-            (input.task.platform, platform),
+            (input.read.platform, platform),
             (w::TaskPlatform::Macos, execution_contract::Platform::Macos)
                 | (
                     w::TaskPlatform::Windows,
@@ -289,7 +313,7 @@ fn verify_identity_binding(input: &Input) -> Result<(), Error> {
         ) => {
             account == active
                 && account.subject.as_str() == identity
-                && match (input.task.platform, account.platform) {
+                && match (input.read.platform, account.platform) {
                     (w::TaskPlatform::Windows, execution_contract::Platform::Windows) => {
                         !matches!(identity.as_str(), "S-1-5-18" | "S-1-5-19" | "S-1-5-20")
                     }
@@ -298,7 +322,7 @@ fn verify_identity_binding(input: &Input) -> Result<(), Error> {
                             && crate::account_identity::generated_uid(identity)
                                 .ok()
                                 .flatten()
-                                == input.task.execution.generated_uid
+                                == input.read.execution.generated_uid
                     }
                     _ => false,
                 }

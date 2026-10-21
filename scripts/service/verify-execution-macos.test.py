@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Ensure the OS acceptance harness cannot accept failed or unacknowledged results."""
 import copy
+from contextlib import contextmanager
 import importlib.util
 from pathlib import Path
 import unittest
@@ -19,6 +20,18 @@ from unittest.mock import patch, MagicMock
 spec = importlib.util.spec_from_file_location('acceptance', Path(__file__).with_name('verify-execution-macos.py'))
 acceptance = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(acceptance)
+
+
+@contextmanager
+def absent_execution_registration():
+    # Preparation fixtures must not depend on the host's installed services.
+    actual_run = subprocess.run
+    def run(command, *args, **kwargs):
+        if command[:2] == ['/bin/launchctl', 'print']:
+            return subprocess.CompletedProcess(command, 113, b'', b'')
+        return actual_run(command, *args, **kwargs)
+    with patch.object(acceptance.subprocess, 'run', side_effect=run):
+        yield
 
 
 class BackendLifecycleTests(unittest.TestCase):
@@ -128,7 +141,7 @@ class BackendLifecycleTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);backend=root/'backend';pid=root/'pid';output=root/'output'
             backend.write_text('#!/usr/bin/python3\nimport os,time\nfrom pathlib import Path\nPath('+repr(str(pid))+').write_text(str(os.getpid()))\nprint("[]",flush=True)\ntime.sleep(60)\n');backend.chmod(0o700)
-            with patch.object(acceptance.sys,'argv',['verify','--binary','/bin/sh','--backend',str(backend),'--output',str(output)]), patch.object(acceptance,'AdministratorSession') as administrator:
+            with absent_execution_registration(), patch.object(acceptance.sys,'argv',['verify','--binary','/bin/sh','--backend',str(backend),'--output',str(output)]), patch.object(acceptance,'AdministratorSession') as administrator:
                 with self.assertRaisesRegex(RuntimeError,'invalid controlled backend response'): acceptance.main()
                 administrator.assert_not_called()
             receipt=json.loads((output/'receipt.json').read_text())
@@ -229,7 +242,7 @@ finally: connection.close()
                 def no_git(*args,**kwargs):
                     self.assertNotIn('git',Path(args[0]).name)
                     return actual_run(*args,**kwargs)
-                with patch.object(acceptance,'DEFAULT_CONFIG',root/'absent-default.json'), patch.object(acceptance.sys,'argv',argv),patch.object(acceptance,'AdministratorSession',NoAuthority),patch.object(acceptance,'verify_candidate',return_value=frozen) as verify,patch.object(acceptance,'run',side_effect=no_git):
+                with absent_execution_registration(), patch.object(acceptance,'DEFAULT_CONFIG',root/'absent-default.json'), patch.object(acceptance.sys,'argv',argv),patch.object(acceptance,'AdministratorSession',NoAuthority),patch.object(acceptance,'verify_candidate',return_value=frozen) as verify,patch.object(acceptance,'run',side_effect=no_git):
                     with self.assertRaisesRegex(RuntimeError,'stop before administrator authority'): acceptance.main()
                 self.assertEqual(len(programs),4)
                 receipt=json.loads((output/'receipt.json').read_text());self.assertEqual(receipt['cleanup'],'complete');self.assertFalse(receipt['installationCreated'])

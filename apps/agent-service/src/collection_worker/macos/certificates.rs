@@ -8,7 +8,7 @@ pub(super) fn collect(
     let owner = match store {
         w::MacosCertificateStore::Login => c
             .input
-            .task
+            .read
             .execution
             .generated_uid
             .as_deref()
@@ -21,7 +21,7 @@ pub(super) fn collect(
             PathBuf::from("/System/Library/Keychains/SystemRootCertificates.keychain")
         }
         w::MacosCertificateStore::Login => {
-            let w::SoftwareExecutionTarget::User { identity, .. } = &c.input.task.execution.target
+            let w::SoftwareExecutionTarget::User { identity, .. } = &c.input.read.execution.target
             else {
                 return Err(Status::Denied.into());
             };

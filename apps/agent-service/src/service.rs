@@ -198,9 +198,19 @@ impl<S: IdentityProvider> DeviceService<S> {
         let material_root = open_materials(&config.material_root, &owner, journal)
             .map_err(crate::error::app_error)?;
         let output = client.output_policy()?;
+        let telemetry = if client
+            .registration()?
+            .capabilities
+            .contains(&wire::Capability::TelemetryCollectV1)
+        {
+            Some(crate::telemetry::Telemetry::open(&client)?)
+        } else {
+            None
+        };
         Ok(Self {
             client,
             core: Core {
+                telemetry,
                 app,
                 host,
                 config,
@@ -260,6 +270,7 @@ impl<S: IdentityProvider> DeviceService<S> {
         if self.core.stopping {
             return Ok(());
         }
+        self.core.step_telemetry();
         self.reclaim_owner_step();
         if std::time::Instant::now() >= self.next_enrollment {
             self.core.reconcile()?;
@@ -275,6 +286,24 @@ impl<S: IdentityProvider> DeviceService<S> {
             self.core.revoke_preparations()?;
             self.core.reconcile()?;
             return Ok(());
+        }
+        if let Some(action) = self
+            .core
+            .telemetry
+            .as_mut()
+            .map(|t| t.action())
+            .transpose()?
+            .flatten()
+        {
+            let result = network(
+                async { Ok(crate::telemetry::request(&self.client, &action).await) },
+                &mut self.core,
+                commands,
+            )
+            .await;
+            if let Some(telemetry) = &mut self.core.telemetry {
+                telemetry.apply(&action, result.unwrap_or_else(|e| Err(e.into())))?;
+            }
         }
         self.prune_credentials()?;
         self.drive_policy(commands).await?;
@@ -849,10 +878,19 @@ impl<S: IdentityProvider> DeviceService<S> {
     }
     /// Stop accepted work. Stopping never claims process termination or effect rollback.
     pub fn stop(&mut self) -> Result<(), Error> {
-        self.core
+        let telemetry = self
+            .core
+            .telemetry
+            .as_mut()
+            .map(|t| t.shutdown())
+            .transpose();
+        let commands = self
+            .core
             .app
             .stop_active(128)
-            .map_err(crate::error::app_error)
+            .map_err(crate::error::app_error);
+        commands?;
+        telemetry.map(|_| ())
     }
 }
 
@@ -874,6 +912,7 @@ pub(crate) struct Selection {
     pub(crate) origin: execution_ipc::host::ClientOrigin,
 }
 pub(crate) struct Core {
+    telemetry: Option<crate::telemetry::Telemetry>,
     pub(crate) app: ExecutionApp<EnterpriseHost, NativeRunner, execution_sqlite::Store>,
     pub(crate) host: EnterpriseHost,
     pub(crate) config: ExecutionConfig,
@@ -892,6 +931,14 @@ pub(crate) struct Core {
     policy_commands: policy::Commands,
 }
 impl Core {
+    fn step_telemetry(&mut self) {
+        if let Some(mut telemetry) = self.telemetry.take() {
+            if let Err(error) = telemetry.step(self) {
+                eprintln!("agent_telemetry: {error}");
+            }
+            self.telemetry = Some(telemetry);
+        }
+    }
     fn enforce_identity_gate(&mut self) -> Result<(), Error> {
         if !self.host.identity_ready() {
             self.host.revoked.store(true, Ordering::Release);
@@ -902,6 +949,7 @@ impl Core {
     }
 
     fn reconcile(&mut self) -> Result<(), Error> {
+        self.step_telemetry();
         // Each network tick advances one request. Historical pages must not monopolize
         // the single owner while an HTTP deadline or revocation command is pending.
         let page = self
@@ -1261,7 +1309,11 @@ impl Core {
                         execution_ipc::host::Readiness::Ready
                     };
                     Ok(Reply::ServiceStatus {
-                        value: execution_ipc::host::ServiceStatus::new(readiness),
+                        value: {
+                            let mut value = execution_ipc::host::ServiceStatus::new(readiness);
+                            value.telemetry = self.telemetry.as_ref().map(|t| t.summary.clone());
+                            value
+                        },
                     })
                 }
                 None => {
@@ -1856,7 +1908,7 @@ pub(crate) fn assemble_journal<H: execution_app::AppHost, R: execution_app::Runn
 
 #[cfg(all(test, target_os = "macos"))]
 #[path = "product_gate_tests.rs"]
-mod product_gate_tests;
+pub(crate) mod product_gate_tests;
 
 fn is_policy_offer(offer: &Offer) -> bool {
     matches!(offer.payload(), wire::TaskPayload::Enrollment(p)

@@ -14,6 +14,7 @@ mod recovery;
 mod registration;
 mod service;
 pub mod software_worker;
+mod telemetry;
 use agent_client::{Clock, Error, IdentityProvider};
 pub use backend::plan::{Interpreter, SoftwareManager, SoftwareManagerKind};
 use base64::Engine;
@@ -164,3 +165,8 @@ pub mod installation;
 
 /// Fixed recovery credential worker entry.
 pub mod credential_worker;
+
+/// Read local performance diagnostics without publishing unconfigured remote telemetry.
+pub fn telemetry_probe() -> Result<serde_json::Value, Error> {
+    telemetry::performance::probe()
+}

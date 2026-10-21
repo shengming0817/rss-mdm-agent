@@ -25,7 +25,7 @@ pub(super) fn collect(
             (PathBuf::from("/System/Applications"), String::new())
         }
         w::MacosApplicationRoot::UserApplications => {
-            let w::SoftwareExecutionTarget::User { identity, .. } = &c.input.task.execution.target
+            let w::SoftwareExecutionTarget::User { identity, .. } = &c.input.read.execution.target
             else {
                 return Err(Status::Denied.into());
             };

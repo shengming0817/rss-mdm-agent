@@ -69,7 +69,7 @@ pub(super) fn collect(c: &Context<'_>, section: S, rows: &mut Rows<'_>) -> Resul
                 S::BootstrapToken => ("profiles", vec!["status", "-type", "bootstraptoken"]),
                 S::SecureToken => {
                     let w::SoftwareExecutionTarget::User { identity, .. } =
-                        &c.input.task.execution.target
+                        &c.input.read.execution.target
                     else {
                         return Err(Status::Denied.into());
                     };
@@ -88,7 +88,7 @@ pub(super) fn collect(c: &Context<'_>, section: S, rows: &mut Rows<'_>) -> Resul
                 r.insert(
                     "owner".into(),
                     c.input
-                        .task
+                        .read
                         .execution
                         .generated_uid
                         .as_deref()

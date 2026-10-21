@@ -37,12 +37,14 @@ const record = (id: string): BackendRequest => ({
         published: true,
         allowAi: true,
         riskLevel: 1,
-        displayName: "Policy",
-        description: "Read selected state",
-        category: "Tools",
-        keywords: [],
-        prerequisites: "Current login",
-        sideEffects: "Read only",
+        presentation: {
+          displayName: "Policy",
+          description: "Read selected state",
+          category: "Tools",
+          keywords: [],
+          prerequisites: "Current login",
+          sideEffects: "Read only",
+        },
       },
     },
     access: {
@@ -421,3 +423,47 @@ test("MDM settings expose only an authorized enrollment and do not auto invoke",
   );
   closed.unmount();
 });
+
+test.each([undefined, 12, "   "])(
+  "unnamed policies remain distinguishable in selection and confirmation: %s",
+  async (displayName) => {
+    const original = record("unnamed-request");
+    if (original.action.kind !== "policy") throw Error("fixture");
+    const item = original.action.directory;
+    item.selfService.presentation =
+      displayName === undefined ? {} : { displayName };
+    const second = structuredClone(item);
+    second.policyId = "other-policy";
+    const port = {
+      policy_directory: async () => ({
+        items: [item, second],
+        nextCursor: null,
+        asOf: 1,
+      }),
+    } as unknown as SelfServicePort;
+    const human = mount(PolicySelfService, { props: { port, records: [] } });
+    const preparation = mount(PolicyPreparation, {
+      props: { record: original },
+    });
+    try {
+      await flushPromises();
+      expect(human.findAll("button").map((b) => b.text())).toContain(
+        "策略 other-policy",
+      );
+      await human
+        .findAll("button")
+        .find((b) => b.text() === "策略 policy")!
+        .trigger("click");
+      await human.get("textarea").setValue(JSON.stringify("Acme"));
+      await human.get("form").trigger("submit");
+      expect(human.get('[aria-label="人工执行确认"]').text()).toContain(
+        "策略 policy",
+      );
+      expect(preparation.get("h3").text()).toBe("策略 policy");
+      expect(preparation.text()).toContain("未提供");
+    } finally {
+      human.unmount();
+      preparation.unmount();
+    }
+  },
+);

@@ -85,7 +85,7 @@ impl Context<'_> {
                 .load(std::sync::atomic::Ordering::Relaxed)
                 > self
                     .input
-                    .task
+                    .read
                     .plan
                     .spec()
                     .budget
@@ -162,7 +162,7 @@ pub(super) fn execute(
         until: Instant::now() + remaining,
         bytes: Cell::new(0),
         cap: input
-            .task
+            .read
             .plan
             .spec()
             .budget
@@ -179,6 +179,10 @@ pub(super) fn execute(
         context.check()?;
         use w::NativeQueryDefinition::*;
         match &q.definition {
+            MacosPerformance { section } => {
+                super::performance::read(*section, context.until, |row| rows.push(row))
+                    .map_err(Fault::Query)
+            }
             MacosHardware { section } => hardware::collect(&context, *section, &mut rows),
             MacosApplications { root, max_depth } => {
                 applications::collect(&context, *root, *max_depth, &mut rows)
@@ -225,14 +229,14 @@ pub(super) fn execute(
     Ok(result)
 }
 fn owner_matches(input: &Input, q: &w::NativeQuery, result: &w::NativeQueryResult) -> bool {
-    let w::SoftwareExecutionTarget::User { identity, .. } = &input.task.execution.target else {
+    let w::SoftwareExecutionTarget::User { identity, .. } = &input.read.execution.target else {
         return true;
     };
     let expected = match &q.definition {
         w::NativeQueryDefinition::System {
             query: w::NativeSystemQuery::MacosApplication { .. },
         } => return true,
-        w::NativeQueryDefinition::System { .. } => input.task.execution.generated_uid.as_deref(),
+        w::NativeQueryDefinition::System { .. } => input.read.execution.generated_uid.as_deref(),
         _ => Some(identity.as_str()),
     };
     expected.is_some_and(|owner| {
