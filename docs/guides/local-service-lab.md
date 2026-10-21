@@ -10,7 +10,7 @@
 
 组织输入仅含 `origin`（规范 HTTPS origin）、`tenant`（非零 UUID）、`label`、`signing_keys`（仅用于注册配置验签的 key ID → base64url Ed25519 公钥）与必填 `ca_pem`（HTTPS bootstrap CA）。设备 CA/CRL 从该 HTTPS origin 的公开 trust API 获取；HTTPS bootstrap CA 与程序签名证书独立；输入不允许 grant、secret、账号目录或私钥。包内固定相同组织上下文的生产服务、桌面、Node、AI Host、worker 和资源。产物及其 `package-manifest.json` 位于忽略的 `.local-ci-runs/installers/`，记录源码、锁文件、平台、候选及最终包摘要。
 
-默认 macOS 为 ad-hoc 开发签名，Windows 为明确标记的开发包。正式包增加 `--release`：macOS 设置 `RSS_MACOS_APP_SIGNING_IDENTITY`、`RSS_MACOS_INSTALLER_SIGNING_IDENTITY` 和已存在的 `RSS_MACOS_NOTARY_PROFILE` Keychain 引用；Windows 设置 `RSS_WINDOWS_SIGNING_THUMBPRINT`，可选 `RSS_SIGNTOOL` 完整路径。构建不会接收证书密码；正式 macOS 包完成 notarization / stapling，正式 Windows 包与原生资源进行 Authenticode 签名。缺少正式签名配置会失败。
+默认 macOS 为 ad-hoc 开发签名，Windows 为明确标记的开发包。正式包增加 `--release`：macOS 设置 `RSS_MACOS_APP_SIGNING_IDENTITY`、`RSS_MACOS_INSTALLER_SIGNING_IDENTITY` 和已存在的 `RSS_MACOS_NOTARY_PROFILE` Keychain 引用；Windows 设置 `RSS_WINDOWS_SIGNING_THUMBPRINT`，可选 `RSS_SIGNTOOL` 完整路径。构建不会接收证书密码；正式 macOS 包完成 notarization / stapling，正式 Windows 包与原生资源进行 Authenticode 签名。只有显式请求 `--release` 时才要求这些正式签名材料；默认包可正常上传、发布和注册，无测试/试点/生产环门槛。
 
 每次构建安装到独立版本目录，升级先核对完整候选、原生架构、签名及持久状态，再停旧服务和原子发布当前格式部署配置。失败保留可核实的注册与状态；候选活动未确认停止时不切回旧配置。ad-hoc 服务更换代码身份后无法读取旧 Keychain 项，会在停机前拒绝升级，不重建凭据或放宽 ACL。旧格式配置不会迁移或兼容读取。
 
@@ -51,7 +51,7 @@ Windows 安装操作返回 UUID 和不含输入内容的阶段回执。等待超
 node scripts/agent-organization.mjs --config /private/execution-template.json --output /private/execution.json --ca-output /private/organization-ca.pem
 ```
 
-`--ca-output` 是 CA 在设备上的最终绝对路径，生成器写入同一公共证书并记录该路径；Agent 必须提供该参数。输出配置与 CA 为 0644（公开信息），安装后的父目录须允许用户 helper 遍历、文件由管理员持有且普通用户不可写；凭据和状态目录保持原有保护。输出文件必须不存在，不覆盖既有部署；保持模板的其它字段，仅替换组织地址、租户和 CA。按原安装要求将配置与证书置于管理员保护的最终路径，再进行首次注册。部署不同设备时使用目标设备对应的绝对路径。现有设备不要通过生成新身份或重新注册来更新 CA；沿用原身份，按受控刷新流程发布新配置。更新 CA 后桌面重新构建、Agent 重新加载；HTTPS bootstrap 配置不改系统信任；设备 CA 的机器安装由 PKI owner 驱动。CA 私钥不分发，任务签名公钥与组织 HTTPS CA 分开管理。
+`--ca-output` 是 CA 在设备上的最终绝对路径，生成器写入同一公共证书并记录该路径；Agent 必须提供该参数。输出配置与 CA 为 0644（公开信息），安装后的父目录须允许用户 helper 遍历、文件由管理员持有且普通用户不可写；凭据和状态目录保持原有保护。输出文件必须不存在，不覆盖既有部署；保持模板的其它字段，仅替换组织地址、租户和 CA。按原安装要求将配置与证书置于管理员保护的最终路径，再进行首次注册。部署不同设备时使用目标设备对应的绝对路径。现有设备不要通过生成新身份或重新注册来更新 CA；沿用原身份，按受控刷新流程发布新配置。更新 CA 后桌面重新构建、Agent 重新加载；HTTPS bootstrap 配置不改系统信任；设备 CA 和 CRL 由 Agent PKI owner 在私有通信存储中应用，不安装系统全局根。CA 私钥不分发，任务签名公钥与组织 HTTPS CA 分开管理。
 
 首次注册使用上文的 Agent 内企业登录或完整签名配置。机器请求、CSR、公钥引用与签发/激活操作由系统服务持久保存；重试使用原操作。人工换证仍保持原 Registration、存储位置和 journal。初始化遇到不支持的数据库或缺失的原状态时保留原文件并拒绝，不通过清库或换目录绕过未决任务。
 
@@ -202,7 +202,7 @@ HTTPS 认证服务端、设备证书认证设备、任务签名检查持久任�
 
 已接受卸载在原受保护恢复载体中冻结当时的签名证据，只能继续原 installation/task/attempt；旧钥退出后该证据仍可完成原卸载，但不能成为新任务信任。升级前由原候选完成旧版未决操作；不转换历史恢复载体，不清库、改版本号或重新注册绕过拒绝。当前格式内重启和重复安装保留原身份及 journal。
 
-设备 PKI 由现有系统服务和通信 lease 持有。服务获取并验证完整 Agent trust 集合、签名 CRL、有效期和持久化防回退水位后，把 root/issuer 分别安装到机器 Root/CA 存储（macOS System Keychain 的 Admin root trust，issuer 不设独立 anchor）。只有独立回读成功、当前设备 mTLS 凭证有效时才 ACK；重试保留同一操作。原有或崩溃后无法证明归属的证书不删除；物理证书添加完成后先持久化 Owned，再配置其机器 trust，暂态设置失败可沿原归属重试。若崩溃发生在持久化 Owned 前且材料存在但设置缺失，保持拒绝，由管理员核对同一 DER 后修复机器设置，不把 presence 推断为 ownership。
+设备 PKI 由现有系统服务和通信 lease 持有。服务验证完整 Agent trust 集合、独立 root/issuer 链、签名 CRL、有效期和持久化防回退水位，写入既有私有通信 SQLite。只有从该存储独立读回并确认当前设备 mTLS 凭证有效才 ACK；响应丢失重放原操作。注册、续期和刷新不要求写入或信任 macOS System Keychain / Windows LocalMachine Root。HTTPS 仍只信任部署提供的 bootstrap CA，设备 CA 不扩大 HTTPS 信任；不可导出设备私钥继续由 OS Keychain/CNG 持有。升级保留原设备、注册、证书、journal 和历史机器证书归属记录；历史记录不参与当前信任判断，也不触发删除外部证书。
 
 服务每五分钟刷新 trust，并提前检查 CRL 到期；设备凭证进入 `min(20% 生命周期, 30 天)` 窗口后自动续签。恢复沿用持久化操作、CSR、密钥和注册；创建 renewal grant 的响应丢失后，可通过 bootstrap HTTPS 查询原 grant。过期、吊销或无法验证的 trust 会关闭执行准入并停止已有工作，执行日志和副作用证据保留。
 

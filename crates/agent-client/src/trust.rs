@@ -402,21 +402,4 @@ impl VerifiedTrust {
             Error::Untrusted
         })
     }
-
-    pub fn certificates(&self) -> BTreeMap<String, (crate::MachineStore, Vec<u8>)> {
-        let mut out = BTreeMap::new();
-        for g in &self.generations {
-            out.insert(
-                format!("root/{}", hash(&g.root)),
-                (crate::MachineStore::Root, g.root.clone()),
-            );
-            if g.issuer != g.root {
-                out.insert(
-                    format!("ca/{}", hash(&g.issuer)),
-                    (crate::MachineStore::Intermediate, g.issuer.clone()),
-                );
-            }
-        }
-        out
-    }
 }

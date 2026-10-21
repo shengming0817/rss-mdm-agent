@@ -517,43 +517,6 @@ mod tests {
     use agent_client::{IdentityProvider, OpenMode};
     use rss_mdm_agent_wire::runtime::Capability;
     struct InterruptedSecret(crate::protocol_test_support::Secrets);
-    impl agent_client::MachineTrust for InterruptedSecret {
-        fn certificate_present(
-            &self,
-            store: agent_client::MachineStore,
-            der: &[u8],
-        ) -> Result<bool, Error> {
-            self.0.certificate_present(store, der)
-        }
-        fn read_certificate(
-            &self,
-            store: agent_client::MachineStore,
-            der: &[u8],
-        ) -> Result<bool, Error> {
-            self.0.read_certificate(store, der)
-        }
-        fn add_certificate(
-            &self,
-            store: agent_client::MachineStore,
-            der: &[u8],
-        ) -> Result<agent_client::CertificateAdd, Error> {
-            self.0.add_certificate(store, der)
-        }
-        fn configure_certificate(
-            &self,
-            store: agent_client::MachineStore,
-            der: &[u8],
-        ) -> Result<(), Error> {
-            self.0.configure_certificate(store, der)
-        }
-        fn delete_certificate(
-            &self,
-            store: agent_client::MachineStore,
-            der: &[u8],
-        ) -> Result<(), Error> {
-            self.0.delete_certificate(store, der)
-        }
-    }
     impl agent_client::IdentityProvider for InterruptedSecret {
         fn resolve(&self, reference: &str) -> Result<rss_mdm_agent_wire::runtime::Secret, Error> {
             self.0.resolve(reference)

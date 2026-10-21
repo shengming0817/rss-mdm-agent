@@ -143,90 +143,6 @@ impl IdentityProvider for Secrets {
         }
     }
 }
-fn certificate_key(store: agent_client::MachineStore, der: &[u8]) -> String {
-    use sha2::{Digest, Sha256};
-    format!("machine/{store:?}/{:x}", Sha256::digest(der))
-}
-impl agent_client::MachineTrust for Secrets {
-    fn certificate_present(
-        &self,
-        store: agent_client::MachineStore,
-        der: &[u8],
-    ) -> Result<bool, Error> {
-        let values = self.0.lock().unwrap();
-        if values.contains_key("machine/read-failure") {
-            return Err(Error::Storage);
-        }
-        Ok(values
-            .get(&certificate_key(store, der))
-            .is_some_and(|value| *value == base64::engine::general_purpose::STANDARD.encode(der)))
-    }
-    fn read_certificate(
-        &self,
-        store: agent_client::MachineStore,
-        der: &[u8],
-    ) -> Result<bool, Error> {
-        let values = self.0.lock().unwrap();
-        if values.contains_key("machine/read-failure") {
-            return Err(Error::Storage);
-        }
-        let key = certificate_key(store, der);
-        Ok(values
-            .get(&key)
-            .is_some_and(|value| *value == base64::engine::general_purpose::STANDARD.encode(der))
-            && (store != agent_client::MachineStore::Root
-                || values.contains_key(&format!("configured/{key}"))))
-    }
-    fn add_certificate(
-        &self,
-        store: agent_client::MachineStore,
-        der: &[u8],
-    ) -> Result<agent_client::CertificateAdd, Error> {
-        let mut values = self.0.lock().unwrap();
-        if values.contains_key("machine/add-failure") {
-            return Err(Error::Storage);
-        }
-        let key = certificate_key(store, der);
-        if values.contains_key(&key) {
-            return Ok(agent_client::CertificateAdd::Present);
-        }
-        values.insert(key, base64::engine::general_purpose::STANDARD.encode(der));
-        if values.remove("machine/add-present-race").is_some() {
-            return Ok(agent_client::CertificateAdd::Present);
-        }
-        if values.remove("machine/add-response-lost").is_some() {
-            return Err(Error::Storage);
-        }
-        Ok(agent_client::CertificateAdd::Created)
-    }
-    fn configure_certificate(
-        &self,
-        store: agent_client::MachineStore,
-        der: &[u8],
-    ) -> Result<(), Error> {
-        let mut values = self.0.lock().unwrap();
-        if values.contains_key("machine/configure-failure") {
-            return Err(Error::Storage);
-        }
-        let key = certificate_key(store, der);
-        if !values.contains_key(&key) {
-            return Err(Error::Storage);
-        }
-        values.insert(format!("configured/{key}"), "configured".into());
-        Ok(())
-    }
-    fn delete_certificate(
-        &self,
-        store: agent_client::MachineStore,
-        der: &[u8],
-    ) -> Result<(), Error> {
-        let key = certificate_key(store, der);
-        let mut values = self.0.lock().unwrap();
-        values.remove(&key);
-        values.remove(&format!("configured/{key}"));
-        Ok(())
-    }
-}
 pub struct Data {
     pub software_source: Option<software_native::Source>,
     pub trust: Value,
@@ -926,7 +842,6 @@ impl Server {
                 platform: cfg.platform,
                 architecture: cfg.architecture,
             }],
-            channels: vec![w::Channel::Test],
             expires_at: cfg!(test)
                 .then_some(100)
                 .unwrap_or(data.time.now().unwrap() + 3600),
@@ -950,7 +865,6 @@ impl Server {
             release_id: Uuid::new_v4(),
             format: w::InstallerFormat::MacosPkg,
             tenant_id: cfg.tenant,
-            channel: w::Channel::Test,
             target: w::Target {
                 platform: cfg.platform,
                 architecture: cfg.architecture,
