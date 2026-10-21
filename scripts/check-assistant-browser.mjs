@@ -291,7 +291,7 @@ try {
   const sessionId = await page.evaluate(
       async () =>
         (await window.assistantRuntime.listSessions()).items.find((row) =>
-          row.title.startsWith("第一轮"),
+          row.presentation.title.startsWith("第一轮"),
         ).namespace.sessionId,
     ),
     command = await fixture.command(sessionId);

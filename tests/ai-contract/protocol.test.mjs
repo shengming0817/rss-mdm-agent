@@ -146,7 +146,7 @@ test("negotiation permits basic ACP without A2UI and rejects unselected versions
     cursorAttach: false,
   };
   assert.deepEqual(host.negotiate(basic), { ok: true, value: basic });
-  assert.equal(host.negotiate({ ...basic, contractVersion: 1 }).ok, false);
+  assert.equal(host.negotiate({ ...basic, contractVersion: 99 }).ok, false);
 });
 
 test("A2UI constructed inputs are bounded before upstream validation", async () => {

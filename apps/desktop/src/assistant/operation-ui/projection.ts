@@ -229,11 +229,10 @@ export function operationProjection(
         ? action.offer.expiresAt * 1000
         : action.expiresAtUnixMs;
     const expired = now >= snapshot.expiresAtMs;
-    snapshot.reason = record.failure
-      ? `执行服务拒绝：${record.failure}`
-      : expired
-        ? "原准备已过期；草稿保留，不能沿用旧确认"
-        : undefined;
+    if (record.failure) snapshot.reason = `执行服务拒绝：${record.failure}`;
+    else if (expired)
+      snapshot.reason = "原准备已过期；草稿保留，不能沿用旧确认";
+    else delete snapshot.reason;
     snapshot.approval.user = record.confirmation
       ? "已确认原请求最终参数"
       : editable

@@ -273,7 +273,7 @@ describe("operation controllers", () => {
     expect(f.events[0].instance).toBe(f.snapshot.scope.instance);
     c.dispose();
   });
-  it("rejects duplicate fields, unsafe keys, arbitrary trees and invalid event kinds", () => {
+  it("rejects duplicate fields, unsafe keys and invalid actions while retaining inert display extensions", () => {
     const f = operationFixture();
     expect(() =>
       operationPresentation({
@@ -281,9 +281,14 @@ describe("operation controllers", () => {
         fields: [...f.presentation.fields, f.presentation.fields[0]],
       }),
     ).toThrow();
-    expect(() =>
-      operationPresentation({ ...f.presentation, html: "<script>" }),
-    ).toThrow();
+    const extended = operationPresentation({
+      ...f.presentation,
+      html: "<script>",
+    });
+    expect(extended.html).toBe("<script>");
+    const surface = createOperationSurface(extended);
+    expect(getValue(surface.root)?.type).toBe("OperationSurface");
+    surface.dispose();
     expect(() =>
       operationPresentation({
         ...f.presentation,

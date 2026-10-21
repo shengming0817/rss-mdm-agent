@@ -298,6 +298,26 @@ fn check_metadata(path: &Path, directory: bool) -> Result<(), Error> {
     Ok(())
 }
 
+fn validate_schema(conn: &Connection) -> Result<(), Error> {
+    fn catalog(conn: &Connection) -> Result<Vec<(String, String)>, rusqlite::Error> {
+        let mut query = conn.prepare(
+            "SELECT name,sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY name",
+        )?;
+        let rows = query.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        rows.collect()
+    }
+    let expected = Connection::open_in_memory()?;
+    expected.execute_batch(include_str!("schema.sql"))?;
+    if catalog(conn)? != catalog(&expected)? {
+        return Err(Error::Schema);
+    }
+    let integrity: String = conn.query_row("PRAGMA quick_check(1)", [], |r| r.get(0))?;
+    if integrity != "ok" || conn.prepare("PRAGMA foreign_key_check")?.exists([])? {
+        return Err(Error::Schema);
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -495,24 +515,4 @@ mod tests {
             std::fs::remove_dir_all(root).unwrap();
         }
     }
-}
-
-fn validate_schema(conn: &Connection) -> Result<(), Error> {
-    fn catalog(conn: &Connection) -> Result<Vec<(String, String)>, rusqlite::Error> {
-        let mut query = conn.prepare(
-            "SELECT name,sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY name",
-        )?;
-        let rows = query.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
-        rows.collect()
-    }
-    let expected = Connection::open_in_memory()?;
-    expected.execute_batch(include_str!("schema.sql"))?;
-    if catalog(conn)? != catalog(&expected)? {
-        return Err(Error::Schema);
-    }
-    let integrity: String = conn.query_row("PRAGMA quick_check(1)", [], |r| r.get(0))?;
-    if integrity != "ok" || conn.prepare("PRAGMA foreign_key_check")?.exists([])? {
-        return Err(Error::Schema);
-    }
-    Ok(())
 }

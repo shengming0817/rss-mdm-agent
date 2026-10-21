@@ -401,7 +401,10 @@ test("connection management crosses RuntimeClient and access with exact revision
   assert.equal(tested.status, "ready");
   assert.equal(tested.configRevision, 2);
   await assert.rejects(
-    runtime.saveConnection({ ...draft, name: "Stale" }, 1),
+    runtime.saveConnection(
+      { ...draft, presentation: { ...draft.presentation, name: "Stale" } },
+      1,
+    ),
     (error) => error.code === "revision_conflict",
   );
   await assert.rejects(

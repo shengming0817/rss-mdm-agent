@@ -13,7 +13,10 @@ it("clears obsolete device facts after a failed read and recovers", async () => 
     .fn()
     .mockResolvedValueOnce(sample)
     .mockRejectedValueOnce(new Error("unavailable"))
-    .mockResolvedValueOnce({ ...sample, ipAddresses: [], loginUser: null });
+    .mockResolvedValueOnce({
+      ...sample,
+      attributes: { ...sample.attributes, ipAddresses: [], loginUser: null },
+    });
   const c = createDeviceOverview({ read });
   await c.refresh();
   expect(c.state.value).toEqual(sample);

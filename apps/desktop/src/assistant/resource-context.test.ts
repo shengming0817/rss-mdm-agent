@@ -60,8 +60,10 @@ describe("resource context projection", () => {
   it("projects scripts without invention and blocks empty, stale or over-budget submissions", () => {
     const item = {
       ...resourceOffer(),
-      title: "诊断脚本",
-      summary: { kind: "script" as const, identity: "system" as const },
+      presentation: {
+        title: "诊断脚本",
+        summary: { kind: "script" as const, identity: "system" as const },
+      },
     };
     const c = resourceContext(item, "s1");
     expect(c.path).toEqual(["工具中心", "未提供分类", "诊断脚本", "脚本详情"]);

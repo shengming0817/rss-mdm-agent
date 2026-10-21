@@ -302,6 +302,7 @@ async fn highest_applicable_version_is_frozen_before_unknown_exchange() {
     drop(client);
     // A new release cannot change the already submitted operation or its recovery binding.
     server.data.lock().unwrap().packages[0].version = "100.0.0".into();
+    server.time.set(101);
     let mut client = server.client(&root, OpenMode::Existing);
     client.drive_pki().await.unwrap();
     assert!(client.enrollment_status().unwrap().registered);
