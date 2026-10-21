@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 pub(crate) mod pki;
 pub mod software_native;
+pub mod telemetry;
 use agent_client::*;
 use axum::{
     body::{Body, Bytes},
@@ -144,6 +145,7 @@ impl IdentityProvider for Secrets {
     }
 }
 pub struct Data {
+    pub telemetry: telemetry::State,
     pub software_source: Option<software_native::Source>,
     pub trust: Value,
     pub task_trust: Value,
@@ -621,6 +623,7 @@ impl Server {
         let time = Time(Arc::new(AtomicI64::new(1)));
         let signer = Ed25519KeyPair::from_seed_unchecked(&[7; 32]).unwrap();
         let data = Arc::new(Mutex::new(Data {
+            telemetry: Default::default(),
             software_source: None,
             trust: Value::Null,
             task_trust: Value::Null,
@@ -1039,6 +1042,9 @@ fn runtime_response(d: &mut Data, path: &str, headers: HeaderMap, value: Value) 
     }
     if d.activation.is_none() {
         return runtime_error(StatusCode::UNAUTHORIZED, ErrorCode::InvalidIdentity);
+    }
+    if path.contains("/runtime/telemetry/") {
+        return telemetry::response(d, path, value);
     }
     let response = if path.ends_with("/runtime/task-trust") {
         task_trust_response(d, value)

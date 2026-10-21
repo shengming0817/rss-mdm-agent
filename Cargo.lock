@@ -55,6 +55,7 @@ dependencies = [
  "flate2",
  "fs2",
  "futures-util",
+ "httpdate",
  "libc",
  "platform-private-storage",
  "reqwest",
@@ -99,6 +100,7 @@ dependencies = [
  "execution-runner",
  "execution-sqlite",
  "fs2",
+ "futures-util",
  "installation-security",
  "jsonschema",
  "libc",
@@ -121,6 +123,7 @@ dependencies = [
  "sha2",
  "spki",
  "thiserror 2.0.20",
+ "time",
  "tokio",
  "tokio-rustls",
  "url",
@@ -4036,7 +4039,7 @@ dependencies = [
 [[package]]
 name = "rss-mdm-agent-wire"
 version = "1.0.0"
-source = "git+https://dev.azure.com/shengming0923/rss/_git/rss-mdm?rev=0ddf42d4fd57305e4f52bad01fbba82942121951#0ddf42d4fd57305e4f52bad01fbba82942121951"
+source = "git+https://dev.azure.com/shengming0923/rss/_git/rss-mdm?rev=9bd540c5d1bdf9e1d3145684e40f089fdc0c3b01#9bd540c5d1bdf9e1d3145684e40f089fdc0c3b01"
 dependencies = [
  "base64 0.22.1",
  "ordered-float",
