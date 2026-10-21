@@ -218,6 +218,7 @@ impl<S: IdentityProvider> DeviceService<S> {
                 helpers,
                 available: None,
                 available_risk: None,
+                available_start: None,
                 selected: None,
                 stopping: false,
                 recovery_cursor: None,
@@ -365,6 +366,7 @@ impl<S: IdentityProvider> DeviceService<S> {
                 let result = backend::submit(self, offer, materials, selection, commands).await;
                 self.core.available = None;
                 self.core.available_risk = None;
+                self.core.available_start = None;
                 self.submission_result(&request, result)?;
             }
         }
@@ -523,6 +525,7 @@ impl<S: IdentityProvider> DeviceService<S> {
                     let materials =
                         network(self.client.prepare(&offer), &mut self.core, commands).await?;
                     self.core.available_risk = backend::gate::TrustedRisk::from_offer(&offer);
+                    self.core.available_start = backend::gate::TrustedStart::from_offer(&offer);
                     self.core.available = Some(offered(&offer)?);
                     self.waiting = Some((offer, materials));
                 } else {
@@ -651,6 +654,7 @@ impl<S: IdentityProvider> DeviceService<S> {
                 return Ok(());
             }
             self.core.available_risk = backend::gate::TrustedRisk::from_offer(&offer);
+            self.core.available_start = backend::gate::TrustedStart::from_offer(&offer);
             self.core.available = Some(offered(&offer)?);
             network(self.client.received(&offer), &mut self.core, commands).await?;
             let materials = network(self.client.prepare(&offer), &mut self.core, commands).await?;
@@ -667,6 +671,7 @@ impl<S: IdentityProvider> DeviceService<S> {
             backend::submit(self, offer, materials, None, commands).await?;
             self.core.available = None;
             self.core.available_risk = None;
+            self.core.available_start = None;
         }
         Ok(())
     }
@@ -749,6 +754,7 @@ impl<S: IdentityProvider> DeviceService<S> {
         self.waiting = None;
         self.core.available = None;
         self.core.available_risk = None;
+        self.core.available_start = None;
         self.core.selected = None;
     }
     async fn abandon(
@@ -920,6 +926,7 @@ pub(crate) struct Core {
     pub(crate) helpers: UserResources,
     pub(crate) available: Option<execution_contract::BackendTask>,
     pub(crate) available_risk: Option<backend::gate::TrustedRisk>,
+    pub(crate) available_start: Option<backend::gate::TrustedStart>,
     pub(crate) selected: Option<Selection>,
     pub(crate) stopping: bool,
     pub(crate) recovery_cursor: Option<RequestId>,
@@ -1079,15 +1086,10 @@ impl Core {
         let offer = self.available.as_ref().ok_or(Error::Unavailable)?.clone();
         let now = self.host.clock.millis()?;
         if !selection.matches(&offer)
-            || !offer.user_initiated
-            || !matches!(
-                offer.presentation.summary,
-                execution_contract::BackendTaskSummary::Software {
-                    intent: execution_contract::SoftwareOperation::Install
-                        | execution_contract::SoftwareOperation::Uninstall,
-                    ..
-                }
-            )
+            || !self
+                .available_start
+                .as_ref()
+                .is_some_and(|start| start.permits(&offer.revision))
             || now / 1000 >= u64::try_from(offer.expires_at).map_err(|_| Error::Clock)?
         {
             return Err(Error::Denied);

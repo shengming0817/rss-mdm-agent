@@ -27,6 +27,7 @@ async fn stage_gate_offer(service: &mut DeviceService<protocol::Secrets>) {
     let materials = service.client.prepare(&offer).await.unwrap();
     service.core.available = Some(offered(&offer).unwrap());
     service.core.available_risk = TrustedRisk::from_offer(&offer);
+    service.core.available_start = backend::gate::TrustedStart::from_offer(&offer);
     service.waiting = Some((offer, materials));
 }
 
@@ -3766,4 +3767,39 @@ async fn full_report_queue_after_restart_drains_before_retrying_native_observati
         service.core.mdm.state.as_str()
     );
     assert_eq!(service.core.mdm_reported, Some(service.core.mdm.state));
+}
+
+#[tokio::test]
+async fn startup_authority_uses_verified_payload_not_presentation() {
+    let _budget = crate::scenario_budget::enter();
+    let mut c = Case::new(None).await;
+    let selection = c.selection(true);
+    let view = c.service.core.available.as_mut().unwrap();
+    view.presentation.title = "Ordinary display change".into();
+    view.presentation.summary = BackendTaskSummary::Credential {};
+    view.presentation
+        .extra
+        .insert("future".into(), serde_json::json!({"layout":"compact"}));
+    c.service.core.start_task(selection).unwrap();
+    assert_eq!(c.record().state, BackendRequestState::Ready);
+}
+
+#[tokio::test]
+async fn startup_authority_requires_current_verified_revision() {
+    let _budget = crate::scenario_budget::enter();
+    for missing in [true, false] {
+        let mut c = Case::new(None).await;
+        let mut selection = c.selection(true);
+        if missing {
+            c.service.core.available_start = None;
+        } else {
+            let changed = Digest::new("a".repeat(64)).unwrap();
+            c.service.core.available.as_mut().unwrap().revision = changed.clone();
+            selection.revision = changed;
+        }
+        assert!(matches!(
+            c.service.core.start_task(selection),
+            Err(Error::Denied)
+        ));
+    }
 }
