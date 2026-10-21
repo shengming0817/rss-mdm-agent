@@ -63,6 +63,7 @@ pub(super) fn normalize(
     let w::TelemetryCollector::Native { mappings, plan } = &c.collector else {
         return Ok(());
     };
+    let mut fields = Vec::new();
     for field in &c.fields {
         let Some(mapping) = mappings.get(field.key.as_str()).filter(|m| {
             m.counter_normalization == Some(w::NativeCounterNormalization::LocalCumulativeV1)
@@ -70,8 +71,23 @@ pub(super) fn normalize(
             continue;
         };
         let key = field_key(source, field, mapping, plan)?;
+        let old = db
+            .prepare("SELECT item,body FROM native_counters WHERE field=?1")?
+            .query_map([&key], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, Vec<u8>>(1)?))
+            })?
+            .collect::<Result<BTreeMap<_, _>, _>>()?;
+        fields.push((field, key, old));
+    }
+    // Release every replaced membership before checking final-state quotas. Otherwise
+    // an earlier growing field can exhaust space that a later shrinking field releases.
+    // The old bodies are bounded by the persisted 4 MiB metadata budget.
+    for (_, key, _) in &fields {
+        db.execute("DELETE FROM native_counters WHERE field=?1", [key])?;
+    }
+    for (field, key, old) in fields {
         if let Some(reading) = values.get_mut(&field.key) {
-            normalize_field(db, &key, field, boot, at, reading)?;
+            normalize_field(db, &key, field, boot, at, reading, old)?;
         }
     }
     Ok(())
@@ -84,15 +100,8 @@ fn normalize_field(
     boot: &str,
     at: i64,
     reading: &mut w::TelemetryReading,
+    old: BTreeMap<String, Vec<u8>>,
 ) -> Result<(), Error> {
-    let old = db
-        .prepare("SELECT item,body FROM native_counters WHERE field=?1")?
-        .query_map([&key], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, Vec<u8>>(1)?))
-        })?
-        .collect::<Result<BTreeMap<_, _>, _>>()?;
-    // Replacing the membership set breaks continuity after missing samples or removal.
-    db.execute("DELETE FROM native_counters WHERE field=?1", [&key])?;
     let binding = field.time_series.as_ref().ok_or(Error::Protocol)?;
     let start_key = binding
         .interval_start_path

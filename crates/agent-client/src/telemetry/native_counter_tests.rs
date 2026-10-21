@@ -231,3 +231,136 @@ async fn failed_append_rolls_back_baselines_and_recipe_changes_reclaim_state() {
         0
     );
 }
+
+#[tokio::test]
+async fn full_metadata_budget_uses_final_membership_independent_of_field_order() {
+    for reverse in [false, true] {
+        let server = Server::new().await;
+        let root = Root::new();
+        let mut client = server.client(&root, OpenMode::Create);
+        let r = server.register(&mut client).await;
+        let mut config = fixture::native_network_configuration(&server, &r).configuration;
+        let load = w::FieldKey::parse("custom.load").unwrap();
+        let other = w::FieldKey::parse("custom.other").unwrap();
+        let mut second = config.fields[0].clone();
+        second.key = other;
+        config.fields.push(second);
+        let w::TelemetryCollector::Native { mappings, .. } = &mut config.collector else {
+            unreachable!()
+        };
+        mappings.insert(other.as_str().into(), mappings[load.as_str()].clone());
+        if reverse {
+            config.fields.reverse();
+        }
+        let c = client
+            .verify_telemetry(fixture::sign(&server.data.lock().unwrap(), config))
+            .unwrap();
+        let mut spool = client.telemetry_spool(Limits::production()).unwrap();
+        spool.install(&c).unwrap();
+        let t = server.time.now().unwrap() * 1_000_000;
+        let pair = |left: &[(&str, i64)], right: &[(&str, i64)]| {
+            let mut readings = values(left);
+            readings.insert(other, values(right).remove(&load).unwrap());
+            readings
+        };
+        spool
+            .append(
+                &c,
+                t,
+                pair(&[("a", 100)], &[("b", 200), ("c", 300)]),
+                "boot",
+            )
+            .unwrap();
+        // Fill the unrelated retained-state budget: the two fields may exchange slots,
+        // but their final combined membership must remain at most three.
+        {
+            let tx = spool.conn.transaction().unwrap();
+            for n in 0..4093 {
+                tx.execute(
+                    "INSERT INTO native_counters VALUES('unrelated',?1,?2)",
+                    params![n.to_string(), b"{}".as_slice()],
+                )
+                .unwrap();
+            }
+            tx.commit().unwrap();
+        }
+        let id = spool
+            .append(
+                &c,
+                t + 1,
+                pair(&[("a", 110), ("d", 400)], &[("b", 220)]),
+                "boot",
+            )
+            .unwrap();
+        let body: Vec<u8> = spool
+            .conn
+            .query_row(
+                "SELECT body FROM samples WHERE id=?1",
+                [id.to_string()],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let mut observation: w::TelemetryObservation = decode(&body).unwrap();
+        assert_items(
+            observation.values.remove(&load).unwrap(),
+            true,
+            &[("a", 10, t), ("d", 0, t + 1)],
+        );
+        assert_items(
+            observation.values.remove(&other).unwrap(),
+            false,
+            &[("b", 20, t)],
+        );
+        let snapshot = || {
+            spool
+                .conn
+                .prepare("SELECT field,item,body FROM native_counters ORDER BY field,item")
+                .unwrap()
+                .query_map([], |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, Vec<u8>>(2)?,
+                    ))
+                })
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+        };
+        let before = snapshot();
+        assert_eq!(before.len(), 4096);
+        // The final membership genuinely exceeds capacity. Deletions and all earlier
+        // inserts must roll back, including the original cumulative baselines.
+        assert_eq!(
+            spool.append(
+                &c,
+                t + 2,
+                pair(&[("a", 120), ("d", 410)], &[("b", 230), ("e", 500)]),
+                "boot"
+            ),
+            Err(Error::Capacity)
+        );
+        let after = spool
+            .conn
+            .prepare("SELECT field,item,body FROM native_counters ORDER BY field,item")
+            .unwrap()
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, Vec<u8>>(2)?,
+                ))
+            })
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(after, before);
+        assert_eq!(
+            spool
+                .conn
+                .query_row("SELECT count(*) FROM samples", [], |r| r.get::<_, u64>(0))
+                .unwrap(),
+            2
+        );
+    }
+}
