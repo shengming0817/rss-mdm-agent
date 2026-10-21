@@ -58,6 +58,11 @@ pub(super) fn execute(input: &Input, q: &w::NativeQuery, deadline: i64) -> w::Na
             w::NativeQueryDefinition::WindowsRegistry { .. } => {
                 registry::read(&q.definition, &budget, |row| rows.push(row))
             }
+            w::NativeQueryDefinition::WindowsPerformance { section } => {
+                super::performance::read(*section, budget.start + budget.timeout, |row| {
+                    rows.push(row)
+                })
+            }
             w::NativeQueryDefinition::WindowsSoftware => software::read(&mut rows, &budget),
             _ => standard::read(&q.definition, &budget, |row| rows.push(row)),
         }?;

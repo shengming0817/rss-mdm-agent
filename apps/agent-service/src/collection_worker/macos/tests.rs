@@ -30,6 +30,7 @@ fn partial_file_read_failure_accounts_observed_bytes() {
 pub(super) fn query(definition: w::NativeQueryDefinition) -> w::NativeQuery {
     let cardinality = match &definition {
         w::NativeQueryDefinition::MacosHardware { section } => section.cardinality(),
+        w::NativeQueryDefinition::MacosPerformance { section } => section.cardinality(),
         w::NativeQueryDefinition::System { query } => query.cardinality(),
         _ => w::NativeCardinality::List,
     };

@@ -179,6 +179,10 @@ pub(super) fn execute(
         context.check()?;
         use w::NativeQueryDefinition::*;
         match &q.definition {
+            MacosPerformance { section } => {
+                super::performance::read(*section, context.until, |row| rows.push(row))
+                    .map_err(Fault::Query)
+            }
             MacosHardware { section } => hardware::collect(&context, *section, &mut rows),
             MacosApplications { root, max_depth } => {
                 applications::collect(&context, *root, *max_depth, &mut rows)

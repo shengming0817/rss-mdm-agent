@@ -14,6 +14,8 @@ use std::path::Path;
 mod macos;
 #[cfg(target_os = "macos")]
 mod macos_supervisor;
+#[cfg(any(windows, target_os = "macos", test))]
+mod performance;
 #[cfg(windows)]
 mod supervisor;
 #[cfg(any(windows, test))]
@@ -73,6 +75,7 @@ pub(crate) fn engines() -> w::NativeEngines {
             WindowsSoftware,
             WindowsNetwork,
             WindowsBattery,
+            WindowsPerformance,
         ]
         .into_iter()
         .map(|e| (e, e.contract_version()))
@@ -86,6 +89,7 @@ pub(crate) fn engines() -> w::NativeEngines {
             w::NativeEngine::MacosCertificates,
             w::NativeEngine::MacosUpdates,
             w::NativeEngine::MacosHardware,
+            w::NativeEngine::MacosPerformance,
             w::NativeEngine::MacosApplications,
             w::NativeEngine::MacosPkgReceipts,
             w::NativeEngine::MacosBrew,

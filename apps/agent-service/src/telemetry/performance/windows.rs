@@ -4,7 +4,13 @@ use windows_sys::Win32::{
     Foundation::FILETIME,
     NetworkManagement::IpHelper::*,
     Storage::FileSystem::*,
-    System::{SystemInformation::*, Threading::GetSystemTimes},
+    System::{
+        SystemInformation::*,
+        Threading::{
+            GetActiveProcessorCount, GetActiveProcessorGroupCount, GetSystemTimes,
+            ALL_PROCESSOR_GROUPS,
+        },
+    },
 };
 fn ticks(t: FILETIME) -> u64 {
     u64::from(t.dwHighDateTime) << 32 | u64::from(t.dwLowDateTime)
@@ -17,8 +23,16 @@ pub(super) fn boot() -> Result<String, Error> {
         .get_or_init(|| uuid::Uuid::new_v4().to_string())
         .clone())
 }
-pub(super) fn read() -> Result<Snapshot, Error> {
+pub(super) fn cpu() -> Result<Cpu, Error> {
     unsafe {
+        // GetSystemTimes covers one processor group; never mislabel a partial group as device-wide.
+        if GetActiveProcessorGroupCount() != 1 {
+            return Err(Error::Unsupported);
+        }
+        let processors = GetActiveProcessorCount(ALL_PROCESSOR_GROUPS);
+        if processors == 0 {
+            return Err(Error::Unavailable);
+        }
         let mut idle = std::mem::zeroed();
         let mut kernel = std::mem::zeroed();
         let mut user = std::mem::zeroed();
@@ -29,11 +43,30 @@ pub(super) fn read() -> Result<Snapshot, Error> {
             .checked_add(ticks(user))
             .ok_or(Error::Capacity)?;
         let busy = total.checked_sub(ticks(idle)).ok_or(Error::Protocol)?;
+        Ok(Cpu {
+            boot: boot()?,
+            processors,
+            counters: vec![ticks(idle), ticks(kernel), ticks(user)],
+            busy,
+            total,
+        })
+    }
+}
+pub(super) fn memory() -> Result<(u64, u64), Error> {
+    unsafe {
         let mut memory: MEMORYSTATUSEX = std::mem::zeroed();
         memory.dwLength = std::mem::size_of::<MEMORYSTATUSEX>() as u32;
         if GlobalMemoryStatusEx(&mut memory) == 0 {
             return Err(Error::Unavailable);
         }
+        if memory.ullTotalPhys == 0 || memory.ullAvailPhys > memory.ullTotalPhys {
+            return Err(Error::Protocol);
+        }
+        Ok((memory.ullTotalPhys, memory.ullAvailPhys))
+    }
+}
+pub(super) fn interfaces() -> Result<BTreeMap<String, Traffic>, Error> {
+    unsafe {
         let mut table = std::ptr::null_mut();
         if GetIfTable2(&mut table) != 0 || table.is_null() {
             return Err(Error::Unavailable);
@@ -55,17 +88,40 @@ pub(super) fn read() -> Result<Snapshot, Error> {
         for row in std::slice::from_raw_parts((*table).Table.as_ptr(), n) {
             let g = row.InterfaceGuid;
             let key = format!(
-                "{:08x}-{:04x}-{:04x}-{:02x?}",
-                g.data1, g.data2, g.data3, g.data4
+                "{:08x}-{:04x}-{:04x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+                g.data1,
+                g.data2,
+                g.data3,
+                g.data4[0],
+                g.data4[1],
+                g.data4[2],
+                g.data4[3],
+                g.data4[4],
+                g.data4[5],
+                g.data4[6],
+                g.data4[7]
             );
-            interfaces.insert(
-                key,
-                Traffic {
-                    received_bytes: row.InOctets,
-                    sent_bytes: row.OutOctets,
-                },
-            );
+            if g.data1 == 0 && g.data2 == 0 && g.data3 == 0 && g.data4 == [0; 8] {
+                return Err(Error::Protocol);
+            }
+            if interfaces
+                .insert(
+                    key,
+                    Traffic {
+                        received_bytes: row.InOctets,
+                        sent_bytes: row.OutOctets,
+                    },
+                )
+                .is_some()
+            {
+                return Err(Error::Protocol);
+            }
         }
+        Ok(interfaces)
+    }
+}
+pub(super) fn volumes() -> Result<BTreeMap<String, Space>, Error> {
+    unsafe {
         let mut volumes = BTreeMap::new();
         let mut volume = [0u16; 1024];
         let handle = FindFirstVolumeW(volume.as_mut_ptr(), volume.len() as u32);
@@ -82,7 +138,7 @@ pub(super) fn read() -> Result<Snapshot, Error> {
         }
         let _volumes = Volumes(handle);
         loop {
-            if GetDriveTypeW(volume.as_ptr()) == DRIVE_FIXED {
+            {
                 let mut available = 0;
                 let mut total = 0;
                 let mut free = 0;
@@ -92,13 +148,21 @@ pub(super) fn read() -> Result<Snapshot, Error> {
                 }
                 let end = volume.iter().position(|v| *v == 0).ok_or(Error::Protocol)?;
                 let key = String::from_utf16(&volume[..end]).map_err(|_| Error::Protocol)?;
-                volumes.insert(
-                    key,
-                    Space {
-                        total_bytes: total,
-                        free_bytes: free,
-                    },
-                );
+                if free > total {
+                    return Err(Error::Protocol);
+                }
+                if volumes
+                    .insert(
+                        key,
+                        Space {
+                            total_bytes: total,
+                            free_bytes: free,
+                        },
+                    )
+                    .is_some()
+                {
+                    return Err(Error::Protocol);
+                }
                 if volumes.len() > 128 {
                     return Err(Error::Capacity);
                 }
@@ -112,14 +176,6 @@ pub(super) fn read() -> Result<Snapshot, Error> {
                 break;
             }
         }
-        Ok(Snapshot {
-            boot: boot()?,
-            cpu_busy: busy,
-            cpu_total: total,
-            memory_total: memory.ullTotalPhys,
-            memory_available: memory.ullAvailPhys,
-            volumes,
-            interfaces,
-        })
+        Ok(volumes)
     }
 }

@@ -769,6 +769,44 @@ mod tests {
             .unwrap();
         std::process::exit(0);
     }
+    #[test]
+    #[ignore = "actual macOS restricted worker performance acceptance; run explicitly"]
+    fn host_performance_queries_through_confined_broker() {
+        let _budget = crate::scenario_budget::enter();
+        for section in [
+            w::PerformanceSection::Cpu,
+            w::PerformanceSection::Memory,
+            w::PerformanceSection::FileSystems,
+            w::PerformanceSection::Network,
+        ] {
+            let definition = w::NativeQueryDefinition::MacosPerformance { section };
+            assert_eq!(
+                engines().get(&definition.engine()),
+                Some(&definition.engine().contract_version())
+            );
+            let input = macos::test_input(definition);
+            let q = input.read.plan.spec().queries["items"].clone();
+            assert!(input.read.plan.supported_by(&engines()));
+            let began = Instant::now();
+            let (result, observed) = broker_input("broker", 1024 * 1024, input).unwrap();
+            assert_eq!(
+                result.status,
+                w::NativeQueryStatus::Complete,
+                "{section:?}: {result:?}"
+            );
+            assert!(result.evidence_matches(&q));
+            assert!(result.complete_for(&q, now().unwrap()));
+            assert!(began.elapsed() < Duration::from_secs(q.budget.timeout_seconds.into()));
+            assert!(observed <= u64::from(q.budget.output_bytes));
+            assert!(serde_json::to_vec(&result).unwrap().len() <= q.budget.output_bytes as usize);
+            if section == w::PerformanceSection::Cpu {
+                assert!(began.elapsed() >= Duration::from_millis(w::PERFORMANCE_CPU_SAMPLE_MILLIS));
+            }
+            for row in &result.rows {
+                assert!(q.definition.accepts_row(row));
+            }
+        }
+    }
     fn broker_case(mode: &str, raw_allowance: usize) -> Result<(w::NativeQueryResult, u64), Error> {
         let mut input = macos::test_input(w::NativeQueryDefinition::MacosHardware {
             section: w::MacosHardwareSection::Identity,

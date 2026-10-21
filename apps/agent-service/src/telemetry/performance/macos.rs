@@ -1,4 +1,5 @@
 //! Bounded native Mach/sysctl reads; failed APIs never turn into successful zeroes.
+//! ref: apple-oss-distributions/xnu bsd/sys/mount.h (statfs filesystem identity).
 use super::*;
 use std::{
     ffi::CStr,
@@ -33,15 +34,14 @@ pub(super) fn boot() -> Result<String, Error> {
     let value: libc::timeval = sysctl(c"kern.boottime")?;
     Ok(format!("{}:{}", value.tv_sec, value.tv_usec))
 }
-pub(super) fn read() -> Result<Snapshot, Error> {
-    // SAFETY: exact Mach ABI structures/counts; each owned port is released once.
-    #[allow(deprecated)]
+#[allow(deprecated)]
+pub(super) fn cpu() -> Result<Cpu, Error> {
+    // SAFETY: fixed Mach ABI and owned host port, released on every exit.
     unsafe {
         let host = libc::mach_host_self();
         struct Host(libc::mach_port_t);
         impl Drop for Host {
             fn drop(&mut self) {
-                #[allow(deprecated)]
                 unsafe {
                     mach_port_deallocate(libc::mach_task_self(), self.0);
                 }
@@ -64,6 +64,29 @@ pub(super) fn read() -> Result<Snapshot, Error> {
         let busy = total
             .checked_sub(u64::from(cpu.cpu_ticks[libc::CPU_STATE_IDLE as usize]))
             .ok_or(Error::Protocol)?;
+        Ok(Cpu {
+            boot: boot()?,
+            processors: sysctl(c"hw.logicalcpu")?,
+            counters: cpu.cpu_ticks.iter().map(|v| u64::from(*v)).collect(),
+            busy,
+            total,
+        })
+    }
+}
+#[allow(deprecated)]
+pub(super) fn memory() -> Result<(u64, u64), Error> {
+    // SAFETY: fixed Mach ABI and owned host port, released on every exit.
+    unsafe {
+        let host = libc::mach_host_self();
+        struct Host(libc::mach_port_t);
+        impl Drop for Host {
+            fn drop(&mut self) {
+                unsafe {
+                    mach_port_deallocate(libc::mach_task_self(), self.0);
+                }
+            }
+        }
+        let _host = Host(host);
         let mut vm: libc::vm_statistics64_data_t = zeroed();
         let mut count = libc::HOST_VM_INFO64_COUNT;
         if libc::host_statistics64(
@@ -86,44 +109,76 @@ pub(super) fn read() -> Result<Snapshot, Error> {
             .checked_mul(page as u64)
             .filter(|v| *v <= memory_total)
             .ok_or(Error::Protocol)?;
-        Ok(Snapshot {
-            boot: boot()?,
-            cpu_busy: busy,
-            cpu_total: total,
-            memory_total,
-            memory_available,
-            volumes: volumes()?,
-            interfaces: interfaces()?,
-        })
+        if memory_total == 0 {
+            return Err(Error::Protocol);
+        }
+        Ok((memory_total, memory_available))
     }
 }
-fn volumes() -> Result<BTreeMap<String, Space>, Error> {
+pub(super) fn volumes() -> Result<BTreeMap<String, Space>, Error> {
     let mut result = BTreeMap::new();
+    let boot = boot()?;
     // SAFETY: getfsstat writes only into our bounded owned array; concurrent readers share no buffer.
     unsafe {
         let capacity = libc::getfsstat(std::ptr::null_mut(), 0, libc::MNT_NOWAIT);
         if capacity <= 0 || capacity > 4096 {
             return Err(Error::Unavailable);
         }
-        let mut mounts: Vec<libc::statfs> = vec![zeroed(); capacity as usize];
+        let slots = (capacity as usize + 16).min(4097);
+        let mut mounts: Vec<libc::statfs> = vec![zeroed(); slots];
         let count = libc::getfsstat(
             mounts.as_mut_ptr(),
             (mounts.len() * size_of::<libc::statfs>()) as i32,
             libc::MNT_NOWAIT,
         );
-        if count <= 0 || count > capacity {
+        if count <= 0 || count as usize >= mounts.len() {
             return Err(Error::Unavailable);
         }
         for m in &mounts[..count as usize] {
-            if m.f_flags & libc::MNT_LOCAL as u32 == 0 {
-                continue;
-            }
-            let key = CStr::from_ptr(m.f_mntfromname.as_ptr())
-                .to_str()
-                .map_err(|_| Error::Protocol)?;
-            if key.len() > 256 {
-                return Err(Error::Capacity);
-            }
+            // Prefer the native volume UUID. Pseudo filesystems need not expose one;
+            // their fallback is scoped to this boot and native mount-source domain.
+            // f_fsid is stable only for the mounted instance, never a permanent volume ID.
+            let mut attributes: libc::attrlist = zeroed();
+            attributes.bitmapcount = libc::ATTR_BIT_MAP_COUNT as u16;
+            attributes.volattr = libc::ATTR_VOL_UUID | libc::ATTR_VOL_INFO;
+            let mut uuid_bytes = [0u8; 20];
+            let persistent = if libc::getattrlist(
+                m.f_mntonname.as_ptr(),
+                &mut attributes,
+                uuid_bytes.as_mut_ptr().cast(),
+                uuid_bytes.len(),
+                0,
+            ) == 0
+                && u32::from_ne_bytes(uuid_bytes[..4].try_into().unwrap()) == 20
+            {
+                uuid::Uuid::from_slice(&uuid_bytes[4..])
+                    .ok()
+                    .filter(|id| !id.is_nil())
+            } else {
+                None
+            };
+            let key = if let Some(id) = persistent {
+                format!("volume:{id}")
+            } else {
+                let fsid = std::slice::from_raw_parts(
+                    std::ptr::addr_of!(m.f_fsid).cast::<u8>(),
+                    size_of::<libc::fsid_t>(),
+                );
+                if fsid.iter().all(|byte| *byte == 0) {
+                    return Err(Error::Protocol);
+                }
+                let source = CStr::from_ptr(m.f_mntfromname.as_ptr())
+                    .to_str()
+                    .map_err(|_| Error::Protocol)?;
+                if source.is_empty() || source.len() > 256 || source.chars().any(char::is_control) {
+                    return Err(Error::Protocol);
+                }
+                let id = fsid
+                    .iter()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect::<String>();
+                format!("boot:{boot}:fsid:{id}:source:{source}")
+            };
             let total = m
                 .f_blocks
                 .checked_mul(u64::from(m.f_bsize))
@@ -133,13 +188,18 @@ fn volumes() -> Result<BTreeMap<String, Space>, Error> {
                 .checked_mul(u64::from(m.f_bsize))
                 .filter(|v| *v <= total)
                 .ok_or(Error::Protocol)?;
-            result.insert(
-                key.into(),
-                Space {
-                    total_bytes: total,
-                    free_bytes: free,
-                },
-            );
+            if result
+                .insert(
+                    key,
+                    Space {
+                        total_bytes: total,
+                        free_bytes: free,
+                    },
+                )
+                .is_some()
+            {
+                return Err(Error::Protocol);
+            }
             if result.len() > 128 {
                 return Err(Error::Capacity);
             }
@@ -147,7 +207,7 @@ fn volumes() -> Result<BTreeMap<String, Space>, Error> {
     }
     Ok(result)
 }
-fn interfaces() -> Result<BTreeMap<String, Traffic>, Error> {
+pub(super) fn interfaces() -> Result<BTreeMap<String, Traffic>, Error> {
     let mut mib = [libc::CTL_NET, libc::PF_ROUTE, 0, 0, libc::NET_RT_IFLIST2, 0];
     let mut size = 0usize;
     // SAFETY: a bounded sysctl byte buffer is parsed using checked message lengths and unaligned copies.
@@ -200,13 +260,21 @@ fn interfaces() -> Result<BTreeMap<String, Traffic>, Error> {
                 let name = CStr::from_ptr(name.as_ptr())
                     .to_str()
                     .map_err(|_| Error::Protocol)?;
-                result.insert(
-                    name.to_owned(),
-                    Traffic {
-                        received_bytes: m.ifm_data.ifi_ibytes,
-                        sent_bytes: m.ifm_data.ifi_obytes,
-                    },
-                );
+                if name.is_empty() {
+                    return Err(Error::Protocol);
+                }
+                if result
+                    .insert(
+                        format!("{}:{name}", m.ifm_index),
+                        Traffic {
+                            received_bytes: m.ifm_data.ifi_ibytes,
+                            sent_bytes: m.ifm_data.ifi_obytes,
+                        },
+                    )
+                    .is_some()
+                {
+                    return Err(Error::Protocol);
+                }
                 if result.len() > 128 {
                     return Err(Error::Capacity);
                 }
