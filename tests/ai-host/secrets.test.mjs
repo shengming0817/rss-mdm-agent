@@ -73,7 +73,7 @@ test("native ciphertext persists atomically, is retained without decryption and 
       caller,
       {
         ...row(2),
-        name: "Edited",
+        presentation: { ...row().presentation, name: "Edited" },
         source: { ...row().source, model: "other" },
       },
       1,
@@ -206,7 +206,7 @@ test("credential activation passes the raw caller and draft to the native owner"
       assert.deepEqual(actualCaller, caller);
       assert.deepEqual(draft, {
         connectionId: connection.connectionId,
-        presentation: { name: connection.name },
+        presentation: connection.presentation,
         provider: connection.provider,
         profile: connection.profile,
         source: connection.source,

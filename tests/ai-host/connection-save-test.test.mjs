@@ -69,13 +69,13 @@ test("save persists without resolving a provider; failed testing cannot block su
   const edited = unwrap(
     await host.saveConnection(
       caller,
-      { ...draft, name: "Edited" },
+      { ...draft, presentation: { ...draft.presentation, name: "Edited" } },
       1,
       budget(),
     ),
   );
   assert.equal(edited.configRevision, 2);
-  assert.equal(edited.name, "Edited");
+  assert.equal(edited.presentation.name, "Edited");
   assert.equal(edited.status, "unverified");
   assert.equal(edited.lastTest, null);
   assert.equal(resolutions, 1);
@@ -132,7 +132,7 @@ test("testing never locks editing and a delayed result cannot overwrite an edit 
         )
       : await host.saveConnection(
           caller,
-          { ...draft, name: "New" },
+          { ...draft, presentation: { ...draft.presentation, name: "New" } },
           revision,
           budget(),
         );

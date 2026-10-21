@@ -167,8 +167,8 @@ test("session summaries derive bounded first-prompt titles and freeze recent ord
   assert.deepEqual(Object.keys(first.items[0]).sort(), [
     "lastActivityAtMs",
     "namespace",
+    "presentation",
     "status",
-    "title",
   ]);
   await accept(a, "a-second", "不改标题", 30);
   const continuation = unwrap(

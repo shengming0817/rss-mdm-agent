@@ -635,12 +635,12 @@ fn actual_sqlite_full_rolls_back_and_preserves_existing_authority() {
     host.prepare(&mut store);
     drop(store);
     let conn = db.sql();
-    conn.execute_batch("CREATE TABLE ballast(bytes BLOB); CREATE TRIGGER consume_pages AFTER INSERT ON receipts BEGIN INSERT INTO ballast VALUES(zeroblob(1048576)); END; PRAGMA wal_checkpoint(TRUNCATE);").unwrap();
     let mut bounds = limits();
     bounds.max_database_pages = conn
         .pragma_query_value(None, "page_count", |r| r.get(0))
         .unwrap();
     let mut store = db.open_with(bounds);
+    conn.execute_batch("CREATE TABLE ballast(bytes BLOB); CREATE TRIGGER consume_pages AFTER INSERT ON receipts BEGIN INSERT INTO ballast VALUES(zeroblob(1048576)); END; PRAGMA wal_checkpoint(TRUNCATE);").unwrap();
     let before = db.count("receipts");
     assert_eq!(
         store
@@ -1943,7 +1943,7 @@ fn confirmation_commit_failure_has_its_own_recovery_and_is_retryable() {
     assert_eq!(error, JournalError::ConfirmationCommitUnknown);
     assert_eq!(db.count("confirmations"), 0);
     db.sql()
-        .execute_batch("DROP TRIGGER fail_confirm;")
+        .execute_batch("DROP TRIGGER fail_confirm; DROP TABLE commit_fault;")
         .unwrap();
     store
         .confirm(&host.scope(), &consumer, &receipt.event_id, &host)
@@ -2622,7 +2622,7 @@ fn software_checkpoints_commit_atomically_and_survive_reopen_without_replay() {
     ));
     assert_eq!(db.count("software_progress"), 0);
     db.sql()
-        .execute_batch("DROP TRIGGER fail_progress")
+        .execute_batch("DROP TRIGGER fail_progress; DROP TABLE progress_fault")
         .unwrap();
     let receipt = store
         .record_software_progress(&host.scope(), &progress, &host)

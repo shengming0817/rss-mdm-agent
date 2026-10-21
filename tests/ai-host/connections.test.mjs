@@ -779,7 +779,10 @@ test("application persistence retains ciphertext without decrypting and lets onl
   const second = unwrap(
     await host.saveConnection(
       caller,
-      { ...draftOf(first), name: "edited" },
+      {
+        ...draftOf(first),
+        presentation: { ...first.presentation, name: "edited" },
+      },
       1,
       budget(),
     ),
@@ -791,13 +794,19 @@ test("application persistence retains ciphertext without decrypting and lets onl
   const candidates = await Promise.all([
     host.saveConnection(
       caller,
-      { ...draftOf(second), name: "winner-a" },
+      {
+        ...draftOf(second),
+        presentation: { ...second.presentation, name: "winner-a" },
+      },
       2,
       budget(),
     ),
     host.saveConnection(
       caller,
-      { ...draftOf(second), name: "winner-b" },
+      {
+        ...draftOf(second),
+        presentation: { ...second.presentation, name: "winner-b" },
+      },
       2,
       budget(),
     ),

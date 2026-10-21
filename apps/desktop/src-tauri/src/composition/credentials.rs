@@ -451,7 +451,7 @@ mod tests {
         let owner = credential_owner(&caller, &draft).unwrap();
         let encrypted = keys.seal(&owner, "fixture-secret", false).unwrap();
         let mut metadata = original.clone();
-        metadata["name"] = "Renamed".into();
+        metadata["presentation"]["name"] = "Renamed".into();
         metadata["source"]["model"] = "other".into();
         metadata["source"]["apiUrl"] = "https://example.invalid/".into();
         metadata["source"]["credentialType"] = "api_key".into();
