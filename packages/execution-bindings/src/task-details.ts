@@ -529,25 +529,11 @@ export interface SelfServiceMetadata {
    */
   allowAi: boolean;
   /**
-   * Presentation category.
+   * Open directory presentation; never used as authorization or executable input.
    */
-  category: string;
-  /**
-   * Intended purpose.
-   */
-  description: string;
-  /**
-   * Directory display name.
-   */
-  displayName: string;
-  /**
-   * Search terms.
-   */
-  keywords: string[];
-  /**
-   * Preconditions shown before invocation.
-   */
-  prerequisites: string;
+  presentation: {
+    [k: string]: unknown;
+  };
   /**
    * Whether this script is published for self service.
    */
@@ -556,10 +542,6 @@ export interface SelfServiceMetadata {
    * Effective risk level, one or two.
    */
   riskLevel: 1 | 2;
-  /**
-   * Expected effects shown before invocation.
-   */
-  sideEffects: string;
 }
 /**
  * Authenticated enterprise coordinates, without a credential.

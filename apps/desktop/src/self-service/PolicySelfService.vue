@@ -1,6 +1,4 @@
 <script setup lang="ts">
-import { presentationText } from "./presentation";
-
 import PolicyExecutionContext from "./PolicyExecutionContext.vue";
 import { computed, onMounted, ref, watch } from "vue";
 import Ajv, { type AnySchema } from "ajv";
@@ -319,6 +317,9 @@ watch(
     void refresh();
   },
 );
+function presentationText(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
 </script>
 <template>
   <section class="policy-self-service" aria-label="企业自助任务">
@@ -352,12 +353,12 @@ watch(
           {{
             kind === "enrollment"
               ? "注册 MDM"
-              : presentationText(item.selfService, "displayName")
+              : presentationText(item.selfService.presentation.displayName)
           }}
         </button>
-        <p>{{ presentationText(item.selfService, "description") }}</p>
+        <p>{{ presentationText(item.selfService.presentation.description) }}</p>
         <p>
-          {{ presentationText(item.selfService, "category") }} · 风险
+          {{ presentationText(item.selfService.presentation.category) }} · 风险
           {{ item.selfService.riskLevel }}
         </p>
         <p>
@@ -374,7 +375,9 @@ watch(
       v-if="selected && !choice && allowNewRequests !== false"
       @submit.prevent="preview"
     >
-      <h3>{{ presentationText(selected.selfService, "displayName") }}</h3>
+      <h3>
+        {{ presentationText(selected.selfService.presentation.displayName) }}
+      </h3>
       <label v-for="field in fields" :key="field.name"
         >{{ field.schema.title ?? field.name
         }}<span>{{ field.schema.description }}</span
@@ -422,7 +425,10 @@ watch(
       v-if="choice && !request && allowNewRequests !== false"
       aria-label="人工执行确认"
     >
-      <h3>确认 {{ presentationText(selected?.selfService, "displayName") }}</h3>
+      <h3>
+        确认
+        {{ presentationText(selected?.selfService.presentation.displayName) }}
+      </h3>
       <p>
         准入主体：{{
           selected?.subject.kind === "device"
@@ -435,10 +441,14 @@ watch(
         {{ selected.subject.user.principalId }}
       </p>
       <p>
-        前置条件：{{ presentationText(selected?.selfService, "prerequisites") }}
+        前置条件：{{
+          presentationText(selected?.selfService.presentation.prerequisites)
+        }}
       </p>
       <p>
-        副作用：{{ presentationText(selected?.selfService, "sideEffects") }}
+        副作用：{{
+          presentationText(selected?.selfService.presentation.sideEffects)
+        }}
       </p>
       <p>
         策略 {{ choice.policyId }} / revision {{ choice.policyRevision }} /

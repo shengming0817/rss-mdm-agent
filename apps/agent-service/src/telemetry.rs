@@ -39,7 +39,7 @@ pub(crate) struct Telemetry {
 pub(crate) enum Action {
     Directory,
     Configuration(uuid::Uuid, uuid::Uuid),
-    Content(Configuration),
+    Content(Box<Configuration>),
     Send(Pending),
 }
 pub(crate) enum Event {
@@ -319,7 +319,7 @@ impl Telemetry {
                                 > timestamp().unwrap_or(i64::MAX) / 1_000_000
                     }) {
                         slot.content_at = now + Duration::from_secs(60);
-                        return Ok(Some(Action::Content(slot.configuration.clone())));
+                        return Ok(Some(Action::Content(Box::new(slot.configuration.clone()))));
                     }
                 }
                 _ => {
@@ -462,7 +462,7 @@ pub(crate) async fn request<S: IdentityProvider, C: Clock>(
         Action::Content(c) => client
             .telemetry_content(c)
             .await
-            .map(|b| Event::Content(c.clone(), b)),
+            .map(|b| Event::Content((**c).clone(), b)),
         Action::Send(p) => {
             if p.attempted() {
                 if let Some(r) = client.telemetry_status(p).await? {

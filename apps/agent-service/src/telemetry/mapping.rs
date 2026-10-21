@@ -340,6 +340,52 @@ pub(super) fn validate_budget(
     Ok(())
 }
 
+/// Restrict remote validation to bounded, non-recursive structural schemas.
+pub(super) fn admit_schema(schema: &Json) -> Result<(), Error> {
+    fn walk(v: &Json, depth: usize, nodes: &mut usize, literal: bool) -> Result<(), Error> {
+        *nodes += 1;
+        if depth > 12 || *nodes > 256 {
+            return Err(Error::Capacity);
+        }
+        match v {
+            Json::Object(map) => {
+                for (key, value) in map {
+                    if literal {
+                        walk(value, depth + 1, nodes, true)?;
+                        continue;
+                    }
+                    match key.as_str() {
+                        "properties" => {
+                            let fields = value.as_object().ok_or(Error::Unsupported)?;
+                            for schema in fields.values() {
+                                walk(schema, depth + 1, nodes, false)?;
+                            }
+                        }
+                        "items" => walk(value, depth + 1, nodes, false)?,
+                        "type" | "required" | "enum" | "const" | "minimum" | "maximum"
+                        | "exclusiveMinimum" | "exclusiveMaximum" | "minLength" | "maxLength"
+                        | "minItems" | "maxItems" | "minProperties" | "maxProperties" | "title"
+                        | "description" | "$schema" => walk(value, depth + 1, nodes, true)?,
+                        "additionalProperties" if value.is_boolean() => (),
+                        _ => return Err(Error::Unsupported),
+                    }
+                }
+            }
+            Json::Array(items) => {
+                if !literal {
+                    return Err(Error::Unsupported);
+                }
+                for item in items {
+                    walk(item, depth + 1, nodes, true)?;
+                }
+            }
+            _ => (),
+        }
+        Ok(())
+    }
+    walk(schema, 0, &mut 0, false)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -402,50 +448,4 @@ mod tests {
         assert!(cim_time("20260230010000.000000+000").is_err());
         assert!(cim_time("2026**********.******+***").is_err());
     }
-}
-
-/// Restrict remote validation to bounded, non-recursive structural schemas.
-pub(super) fn admit_schema(schema: &Json) -> Result<(), Error> {
-    fn walk(v: &Json, depth: usize, nodes: &mut usize, literal: bool) -> Result<(), Error> {
-        *nodes += 1;
-        if depth > 12 || *nodes > 256 {
-            return Err(Error::Capacity);
-        }
-        match v {
-            Json::Object(map) => {
-                for (key, value) in map {
-                    if literal {
-                        walk(value, depth + 1, nodes, true)?;
-                        continue;
-                    }
-                    match key.as_str() {
-                        "properties" => {
-                            let fields = value.as_object().ok_or(Error::Unsupported)?;
-                            for schema in fields.values() {
-                                walk(schema, depth + 1, nodes, false)?;
-                            }
-                        }
-                        "items" => walk(value, depth + 1, nodes, false)?,
-                        "type" | "required" | "enum" | "const" | "minimum" | "maximum"
-                        | "exclusiveMinimum" | "exclusiveMaximum" | "minLength" | "maxLength"
-                        | "minItems" | "maxItems" | "minProperties" | "maxProperties" | "title"
-                        | "description" | "$schema" => walk(value, depth + 1, nodes, true)?,
-                        "additionalProperties" if value.is_boolean() => (),
-                        _ => return Err(Error::Unsupported),
-                    }
-                }
-            }
-            Json::Array(items) => {
-                if !literal {
-                    return Err(Error::Unsupported);
-                }
-                for item in items {
-                    walk(item, depth + 1, nodes, true)?;
-                }
-            }
-            _ => (),
-        }
-        Ok(())
-    }
-    walk(schema, 0, &mut 0, false)
 }

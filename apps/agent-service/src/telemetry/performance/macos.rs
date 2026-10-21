@@ -72,7 +72,8 @@ pub(super) fn read() -> Result<Snapshot, Error> {
             (&mut vm as *mut libc::vm_statistics64_data_t).cast(),
             &mut count,
         ) != libc::KERN_SUCCESS
-            || count != libc::HOST_VM_INFO64_COUNT
+            // Kernels return the supported ABI prefix, not necessarily the newest libc layout.
+            || count < ((std::mem::offset_of!(libc::vm_statistics64_data_t, inactive_count) + size_of::<u32>()) / size_of::<libc::integer_t>()) as u32
         {
             return Err(Error::Unavailable);
         }
@@ -98,14 +99,22 @@ pub(super) fn read() -> Result<Snapshot, Error> {
 }
 fn volumes() -> Result<BTreeMap<String, Space>, Error> {
     let mut result = BTreeMap::new();
-    // SAFETY: getmntinfo owns its static array until the next invocation on this owner thread.
+    // SAFETY: getfsstat writes only into our bounded owned array; concurrent readers share no buffer.
     unsafe {
-        let mut mounts = std::ptr::null_mut();
-        let count = libc::getmntinfo(&mut mounts, libc::MNT_NOWAIT);
-        if count <= 0 || mounts.is_null() || count > 4096 {
+        let capacity = libc::getfsstat(std::ptr::null_mut(), 0, libc::MNT_NOWAIT);
+        if capacity <= 0 || capacity > 4096 {
             return Err(Error::Unavailable);
         }
-        for m in std::slice::from_raw_parts(mounts, count as usize) {
+        let mut mounts: Vec<libc::statfs> = vec![zeroed(); capacity as usize];
+        let count = libc::getfsstat(
+            mounts.as_mut_ptr(),
+            (mounts.len() * size_of::<libc::statfs>()) as i32,
+            libc::MNT_NOWAIT,
+        );
+        if count <= 0 || count > capacity {
+            return Err(Error::Unavailable);
+        }
+        for m in &mounts[..count as usize] {
             if m.f_flags & libc::MNT_LOCAL as u32 == 0 {
                 continue;
             }

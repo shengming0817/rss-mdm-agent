@@ -1,4 +1,3 @@
-import { presentationText } from "../../self-service/presentation";
 import type {
   BackendTaskView,
   BackendRequest,
@@ -251,13 +250,11 @@ export function operationProjection(
         form.fields,
       );
       snapshot.title = presentationText(
-        action.directory.selfService,
-        "displayName",
+        action.directory.selfService.presentation.displayName,
       );
       snapshot.source = `登记策略 ${action.choice.policyId} / ${action.choice.policyRevision}`;
       snapshot.impact = presentationText(
-        action.directory.selfService,
-        "sideEffects",
+        action.directory.selfService.presentation.sideEffects,
       );
       snapshot.reason ??= "当前系统设置未由此策略读取；建议不是当前状态。";
       snapshot.approval.elevation =
@@ -283,7 +280,7 @@ export function operationProjection(
         action.directory.task.kind === "enrollment"
           ? `原生 MDM 注册：${action.directory.task.organization}`
           : `资源：${action.directory.task.resource.id} / ${action.directory.task.resource.version}`,
-        `前置条件：${presentationText(action.directory.selfService, "prerequisites")}`,
+        `前置条件：${presentationText(action.directory.selfService.presentation.prerequisites)}`,
       ];
       if (form.blocked) {
         snapshot.allowed = snapshot.allowed.filter((a) => a !== "submit");
@@ -312,4 +309,8 @@ export function operationProjection(
     );
   }
   return { snapshot, presentation: ui, bindings };
+}
+
+function presentationText(value: unknown): string {
+  return typeof value === "string" ? value : "";
 }
