@@ -121,6 +121,28 @@ function fixture() {
 }
 
 describe("production operation adapter", () => {
+  it.each([undefined, 12, "   "])(
+    "shows a stable policy title when presentation has no usable name: %s",
+    async (displayName) => {
+      const f = fixture();
+      if (f.record.action.kind !== "policy") throw Error("fixture");
+      f.record.action.directory.selfService.presentation =
+        displayName === undefined ? {} : { displayName };
+      const stop = new AbortController();
+      const bridge = await connectOperation(
+        f.controller,
+        "delivery",
+        stop.signal,
+      );
+      try {
+        expect(bridge.snapshot.title).toBe("策略 policy-1");
+        expect(bridge.snapshot.impact).toBe("未提供");
+      } finally {
+        stop.abort();
+      }
+    },
+  );
+
   it("submits edited current values and preserves fixed parameters at the service boundary", async () => {
     const f = fixture(),
       stop = new AbortController();

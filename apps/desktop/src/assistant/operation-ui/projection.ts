@@ -251,6 +251,7 @@ export function operationProjection(
       );
       snapshot.title = presentationText(
         action.directory.selfService.presentation.displayName,
+        `策略 ${action.directory.policyId}`,
       );
       snapshot.source = `登记策略 ${action.choice.policyId} / ${action.choice.policyRevision}`;
       snapshot.impact = presentationText(
@@ -311,6 +312,6 @@ export function operationProjection(
   return { snapshot, presentation: ui, bindings };
 }
 
-function presentationText(value: unknown): string {
-  return typeof value === "string" ? value : "";
+function presentationText(value: unknown, fallback = "未提供"): string {
+  return typeof value === "string" && value.trim() ? value.trim() : fallback;
 }

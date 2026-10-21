@@ -317,8 +317,8 @@ watch(
     void refresh();
   },
 );
-function presentationText(value: unknown): string {
-  return typeof value === "string" ? value : "";
+function presentationText(value: unknown, fallback = "未提供"): string {
+  return typeof value === "string" && value.trim() ? value.trim() : fallback;
 }
 </script>
 <template>
@@ -353,7 +353,10 @@ function presentationText(value: unknown): string {
           {{
             kind === "enrollment"
               ? "注册 MDM"
-              : presentationText(item.selfService.presentation.displayName)
+              : presentationText(
+                  item.selfService.presentation.displayName,
+                  `策略 ${item.policyId}`,
+                )
           }}
         </button>
         <p>{{ presentationText(item.selfService.presentation.description) }}</p>
@@ -376,7 +379,12 @@ function presentationText(value: unknown): string {
       @submit.prevent="preview"
     >
       <h3>
-        {{ presentationText(selected.selfService.presentation.displayName) }}
+        {{
+          presentationText(
+            selected.selfService.presentation.displayName,
+            `策略 ${selected.policyId}`,
+          )
+        }}
       </h3>
       <label v-for="field in fields" :key="field.name"
         >{{ field.schema.title ?? field.name
@@ -427,7 +435,12 @@ function presentationText(value: unknown): string {
     >
       <h3>
         确认
-        {{ presentationText(selected?.selfService.presentation.displayName) }}
+        {{
+          presentationText(
+            selected?.selfService.presentation.displayName,
+            `策略 ${selected?.policyId}`,
+          )
+        }}
       </h3>
       <p>
         准入主体：{{

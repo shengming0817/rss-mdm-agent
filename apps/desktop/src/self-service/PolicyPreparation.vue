@@ -30,8 +30,8 @@ function resolved() {
     ),
   );
 }
-function presentationText(value: unknown): string {
-  return typeof value === "string" ? value : "";
+function presentationText(value: unknown, fallback = "未提供"): string {
+  return typeof value === "string" && value.trim() ? value.trim() : fallback;
 }
 </script>
 <template>
@@ -41,6 +41,7 @@ function presentationText(value: unknown): string {
         {{
           presentationText(
             record.action.directory.selfService.presentation.displayName,
+            `策略 ${record.action.directory.policyId}`,
           )
         }}
       </h3>
