@@ -39,7 +39,7 @@ pub(crate) struct State {
         rename = "installations",
         skip_serializing_if = "BTreeMap::is_empty"
     )]
-    historical_machine_receipts: BTreeMap<String, Installation>,
+    historical_machine_receipts: BTreeMap<String, serde_json::Value>,
     ack: Option<Ack>,
     refresh_at: i64,
     attempts: u8,
@@ -49,27 +49,6 @@ pub(crate) struct State {
     observation: Option<Observation>,
     pending_observation: Option<Observation>,
     installed: Option<(u64, String)>,
-}
-
-#[derive(Serialize, Deserialize)]
-enum HistoricalStore {
-    Root,
-    Intermediate,
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Installation {
-    store: HistoricalStore,
-    der: Vec<u8>,
-    ownership: Ownership,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-enum Ownership {
-    Intent,
-    Owned,
-    Borrowed,
 }
 
 #[derive(Serialize, Deserialize)]

@@ -8,11 +8,11 @@
 
 `pnpm build:installer --organization /absolute/public-organization.json` 在当前原生平台构建 macOS arm64 PKG 或 Windows amd64 / arm64 的 perMachine NSIS EXE，不套用 MSI。macOS 构建命令通过 `python3 scripts/build-run.py -- pnpm build:installer ...` 复用本地 Cargo 槽位；Windows 使用 `pnpm exec node scripts/build-installers.mjs ...`。Windows 构建进程、Rust 工具链和 Node 必须为目标原生架构，不接受仿真进程或混合 PE。目标设备须预装 machine-wide WebView2；安装器缺失时明确拒绝。当前机器有匹配架构、受保护的 PowerShell 7 时才登记该解释器与相关能力。
 
-组织输入仅含 `origin`（规范 HTTPS origin）、`tenant`（非零 UUID）、`label`、`signing_keys`（仅用于注册配置验签的 key ID → base64url Ed25519 公钥）与必填 `ca_pem`（HTTPS bootstrap CA）。设备 CA/CRL 从该 HTTPS origin 的公开 trust API 获取；HTTPS bootstrap CA 与程序签名证书独立；输入不允许 grant、secret、账号目录或私钥。包内固定相同组织上下文的生产服务、桌面、Node、AI Host、worker 和资源。产物及其 `package-manifest.json` 位于忽略的 `.local-ci-runs/installers/`，记录源码、锁文件、平台、候选及最终包摘要。
+组织输入仅含 `origin`（Agent 通信 HTTPS origin）、`tenant`（非零 UUID）、`label`、`signing_keys`（仅用于注册配置验签的 key ID → base64url Ed25519 公钥）与必填 `ca_pem`（HTTPS bootstrap CA）。设备 CA/CRL 从 Agent origin 的公开 trust API 获取。桌面登录、会话与注册授权复用根 `.env` 中已有的 `RSS_MDM_ORIGIN`、租户和可选 `RSS_MDM_CA_FILE` 网站配置，机器通信使用组织输入的 Agent origin。构建时核对同一租户并固定两者关系，不通过端口猜测或失败回退；Agent bootstrap CA 不会自动用于网站，公共网站证书不需要额外 CA。HTTPS bootstrap CA 与程序签名证书独立；输入不允许 grant、secret、账号目录或私钥。包内固定相同组织上下文的生产服务、桌面、Node、AI Host、worker 和资源。产物及其 `package-manifest.json` 位于忽略的 `.local-ci-runs/installers/`，记录源码、锁文件、平台、候选及最终包摘要。
 
 默认 macOS 为 ad-hoc 开发签名，Windows 为明确标记的开发包。正式包增加 `--release`：macOS 设置 `RSS_MACOS_APP_SIGNING_IDENTITY`、`RSS_MACOS_INSTALLER_SIGNING_IDENTITY` 和已存在的 `RSS_MACOS_NOTARY_PROFILE` Keychain 引用；Windows 设置 `RSS_WINDOWS_SIGNING_THUMBPRINT`，可选 `RSS_SIGNTOOL` 完整路径。构建不会接收证书密码；正式 macOS 包完成 notarization / stapling，正式 Windows 包与原生资源进行 Authenticode 签名。只有显式请求 `--release` 时才要求这些正式签名材料；默认包可正常上传、发布和注册，无测试/试点/生产环门槛。
 
-每次构建安装到独立版本目录，升级先核对完整候选、原生架构、签名及持久状态，再停旧服务和原子发布当前格式部署配置。失败保留可核实的注册与状态；候选活动未确认停止时不切回旧配置。ad-hoc 服务更换代码身份后无法读取旧 Keychain 项，会在停机前拒绝升级，不重建凭据或放宽 ACL。旧格式配置不会迁移或兼容读取。
+默认部署验收是首次安装、首次注册；已注册设备保持现状，不用于重复试装。每个安装包使用独立版本目录。检测到既有部署时会进入已有升级校验；凭据不可读或候选活动未确认停止时拒绝切换，不清库、重注册或自动放宽钥匙串授权。旧格式配置不迁移或兼容读取。
 
 无配置的固定安装包可以匿名下载并保持未注册。安装后在 Agent 中选择“登录并注册此设备”，复用已有企业会话或通过原生密码输入登录；注册授权不经过网页，也不向系统服务传递用户会话。
 
@@ -202,7 +202,7 @@ HTTPS 认证服务端、设备证书认证设备、任务签名检查持久任�
 
 已接受卸载在原受保护恢复载体中冻结当时的签名证据，只能继续原 installation/task/attempt；旧钥退出后该证据仍可完成原卸载，但不能成为新任务信任。升级前由原候选完成旧版未决操作；不转换历史恢复载体，不清库、改版本号或重新注册绕过拒绝。当前格式内重启和重复安装保留原身份及 journal。
 
-设备 PKI 由现有系统服务和通信 lease 持有。服务验证完整 Agent trust 集合、独立 root/issuer 链、签名 CRL、有效期和持久化防回退水位，写入既有私有通信 SQLite。只有从该存储独立读回并确认当前设备 mTLS 凭证有效才 ACK；响应丢失重放原操作。注册、续期和刷新不要求写入或信任 macOS System Keychain / Windows LocalMachine Root。HTTPS 仍只信任部署提供的 bootstrap CA，设备 CA 不扩大 HTTPS 信任；不可导出设备私钥继续由 OS Keychain/CNG 持有。升级保留原设备、注册、证书、journal 和历史机器证书归属记录；历史记录不参与当前信任判断，也不触发删除外部证书。
+设备 PKI 由现有系统服务和通信 lease 持有。服务验证完整 Agent trust 集合、独立 root/issuer 链、签名 CRL、有效期和持久化防回退水位，写入既有私有通信 SQLite。只有从该存储独立读回并确认当前设备 mTLS 凭证有效才 ACK；响应丢失重放原操作。注册、续期和刷新不要求写入或信任 macOS System Keychain / Windows LocalMachine Root。HTTPS 仍只信任部署提供的 bootstrap CA，设备 CA 不扩大 HTTPS 信任；不可导出设备私钥继续由 OS Keychain/CNG 持有。现有设备、注册、证书、journal 和历史机器证书归属数据保留；历史数据不参与当前信任判断，也不触发删除外部证书。
 
 服务每五分钟刷新 trust，并提前检查 CRL 到期；设备凭证进入 `min(20% 生命周期, 30 天)` 窗口后自动续签。恢复沿用持久化操作、CSR、密钥和注册；创建 renewal grant 的响应丢失后，可通过 bootstrap HTTPS 查询原 grant。过期、吊销或无法验证的 trust 会关闭执行准入并停止已有工作，执行日志和副作用证据保留。
 

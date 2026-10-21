@@ -226,3 +226,24 @@ it("opens system settings separately from application settings and preserves ass
   expect(assistant.draft.value).toBe("保留这个问题");
   w.unmount();
 });
+
+it("keeps navigation and account access after login failure without displaying authenticated content", async () => {
+  const w = mount(Workspace, {
+    props: {
+      ready: false,
+      busy: false,
+      page: "settings",
+      host: createHostSettings(undefined),
+    },
+  });
+  try {
+    await flushPromises();
+    expect(w.find(".workspace-primary-navigation").exists()).toBe(true);
+    expect(w.find(".workspace-settings-footer").exists()).toBe(true);
+    expect(w.findComponent(SelfService).exists()).toBe(false);
+    expect(w.findComponent(Assistant).exists()).toBe(false);
+    expect(w.get(".workspace-page-header h1").text()).toBe("设置");
+  } finally {
+    w.unmount();
+  }
+});

@@ -51,7 +51,8 @@ impl DesktopRuntime {
                 .lock()
                 .map_err(|_| unavailable())?
                 .get(&id)?;
-            if organization.origin != initial.origin || organization.tenant_id != initial.tenant_id
+            if super::super::account::registration_origin(&organization)? != initial.origin
+                || organization.tenant_id != initial.tenant_id
             {
                 return Err(error(
                     "registration_organization_mismatch",

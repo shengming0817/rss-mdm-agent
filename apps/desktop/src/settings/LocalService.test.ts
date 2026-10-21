@@ -159,20 +159,73 @@ it("automatically recovers registration facts after a temporary read failure wit
     await flushPromises();
     expect(wrapper.text()).toContain("original");
     read.mockRejectedValueOnce(new Error("temporary outage"));
-    await vi.advanceTimersByTimeAsync(2000);
+    await vi.advanceTimersByTimeAsync(30000);
     expect(wrapper.text()).not.toContain("original");
     read.mockResolvedValue(structuredClone(serviceViews.ready));
-    await vi.advanceTimersByTimeAsync(2000);
+    await vi.advanceTimersByTimeAsync(30000);
     expect(wrapper.text()).toContain("original");
     expect(wrapper.find(".registration-badge.ready").exists()).toBe(true);
     read.mockResolvedValue({ phase: "unavailable" });
-    await vi.advanceTimersByTimeAsync(2000);
+    await vi.advanceTimersByTimeAsync(30000);
     expect(wrapper.find(".registration-badge.ready").exists()).toBe(false);
     expect(request).not.toHaveBeenCalled();
     await wrapper.setProps({ active: false });
     const calls = read.mock.calls.length;
     await vi.advanceTimersByTimeAsync(10000);
     expect(read).toHaveBeenCalledTimes(calls);
+  } finally {
+    wrapper.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it("keeps registration facts visible during background refresh and does not call generic unreadiness a persistence failure", async () => {
+  vi.useFakeTimers();
+  let finish: ((view: ServiceView) => void) | undefined;
+  const read = vi
+    .fn()
+    .mockResolvedValueOnce(structuredClone(serviceViews.ready))
+    .mockImplementation(
+      () =>
+        new Promise<ServiceView>((resolve) => {
+          finish = resolve;
+        }),
+    );
+  const request = vi.fn();
+  const wrapper = mount(LocalService, {
+    props: {
+      fixture: true,
+      port: {
+        read,
+        registration: async () => ({
+          phase: "active",
+          registered: true,
+          credential: "active",
+          grantId: "existing-identity",
+        }),
+        requestRegistration: request,
+        mdmStatus: async () => ({ state: "unknown" }),
+        importRegistration: async () => null,
+        cancelRegistration: async () => {},
+      },
+    },
+  });
+  try {
+    await flushPromises();
+    await vi.advanceTimersByTimeAsync(30000);
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(wrapper.text()).toContain("existing-identity");
+    expect(wrapper.text()).not.toContain("正在验证服务连接");
+    const notReady = structuredClone(serviceViews.ready) as ServiceView;
+    if (notReady.phase !== "connected")
+      throw Error("connected fixture required");
+    notReady.status.readiness.phase = "notReady";
+    finish!(notReady);
+    await flushPromises();
+    expect(wrapper.text()).toContain("执行服务暂未就绪");
+    expect(wrapper.text()).not.toContain("持久");
+    expect(wrapper.text()).toContain("existing-identity");
+    expect(request).not.toHaveBeenCalled();
   } finally {
     wrapper.unmount();
     vi.useRealTimers();
