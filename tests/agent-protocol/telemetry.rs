@@ -8,8 +8,12 @@ pub struct State {
     pub uploads: Vec<Value>,
     pub lose_response: bool,
     pub throttled: bool,
+    pub timed_out: bool,
 }
 pub fn response(d: &mut Data, path: &str, value: Value) -> Response {
+    if d.telemetry.timed_out {
+        return StatusCode::REQUEST_TIMEOUT.into_response();
+    }
     if d.telemetry.throttled {
         return (
             StatusCode::TOO_MANY_REQUESTS,

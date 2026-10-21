@@ -241,7 +241,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             404 => Error::NotFound,
             401 | 403 => Error::Denied,
             409 => Error::Conflict,
-            429 | 503 => Error::Unavailable,
+            408 | 429 | 503 => Error::Unavailable,
             500..=599 => Error::Unavailable,
             _ => Error::Protocol,
         };

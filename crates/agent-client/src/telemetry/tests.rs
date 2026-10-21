@@ -269,3 +269,42 @@ async fn expired_collection_lease_still_recovers_unfrozen_retained_observations(
     let receipt = client.telemetry_submit(&pending).await.unwrap();
     assert_eq!(receipt.batch_id, pending.id());
 }
+
+#[tokio::test]
+async fn interrupted_initialization_recovers_only_a_blank_database() {
+    for rollback in [false, true] {
+        let server = Server::new().await;
+        let root = Root::new();
+        let client = server.client(&root, OpenMode::Create);
+        let path = root.path.join("telemetry.sqlite");
+        drop(platform_private_storage::create_new(&path).unwrap());
+        if rollback {
+            let mut conn = rusqlite::Connection::open(&path).unwrap();
+            let tx = conn.transaction().unwrap();
+            tx.execute_batch("CREATE TABLE identity(binding BLOB); PRAGMA application_id=1381192781; PRAGMA user_version=1;").unwrap();
+            tx.rollback().unwrap();
+        }
+        let spool = client.telemetry_spool(Limits::production()).unwrap();
+        assert_eq!(spool.summary().unwrap().pending, 0);
+        drop(spool);
+        assert!(client.telemetry_spool(Limits::production()).is_ok());
+    }
+    for sql in [
+        "CREATE TABLE foreign_data(value TEXT)",
+        "PRAGMA application_id=42",
+        "PRAGMA user_version=42",
+    ] {
+        let server = Server::new().await;
+        let root = Root::new();
+        let client = server.client(&root, OpenMode::Create);
+        let path = root.path.join("telemetry.sqlite");
+        drop(platform_private_storage::create_new(&path).unwrap());
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute_batch(sql).unwrap();
+        drop(conn);
+        assert!(matches!(
+            client.telemetry_spool(Limits::production()),
+            Err(Error::Schema)
+        ));
+    }
+}

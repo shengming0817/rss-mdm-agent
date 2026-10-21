@@ -150,14 +150,12 @@ impl Spool {
         };
         fs2::FileExt::try_lock_exclusive(&lease).map_err(|_| Error::Storage)?;
         let path = root.join("telemetry.sqlite");
-        let new = match platform_private_storage::create_new(&path) {
+        match platform_private_storage::create_new(&path) {
             Ok(file) => {
                 drop(file);
-                true
             }
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
                 drop(platform_private_storage::open_existing(&path)?);
-                false
             }
             Err(_) => return Err(Error::Storage),
         };
@@ -177,7 +175,13 @@ impl Spool {
             cfg.platform,
             cfg.architecture,
         ))?;
-        if new {
+        // A crash before the schema transaction commits leaves a protected blank database.
+        // ref: rusqlite src/transaction.rs (schema and identity commit atomically).
+        let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
+        let application: i64 = conn.pragma_query_value(None, "application_id", |r| r.get(0))?;
+        let objects: i64 =
+            conn.query_row("SELECT count(*) FROM sqlite_schema", [], |r| r.get(0))?;
+        if version == 0 && application == 0 && objects == 0 {
             let tx = conn.unchecked_transaction()?;
             tx.execute_batch("CREATE TABLE identity(binding BLOB NOT NULL);
                 CREATE TABLE configurations(policy TEXT PRIMARY KEY,body BLOB NOT NULL);

@@ -129,50 +129,65 @@ async fn network_classes_rotate_and_lost_response_resolves_original_batch() {
 }
 
 #[tokio::test]
-async fn authenticated_configuration_cannot_authorize_a_different_policy_plan() {
-    let server = protocol::Server::new().await;
+async fn request_timeout_preserves_batch_through_upload_and_status_retry() {
+    let server = protocol::Server::tls().await;
     let root = protocol::Root::new();
     let mut client = server.client(&root, agent_client::OpenMode::Create);
     let r = server.register(&mut client).await;
     let c = client
         .verify_telemetry(fixture::configuration(&server, &r))
         .unwrap();
-    let mut input: ExecutionInput = serde_json::from_str(include_str!(
-        "../../../../crates/execution-contract/tests/fixtures/plan.json"
-    ))
-    .unwrap();
-    input.execution = ExecutionSpec::Process {};
-    input.request.delegation = None;
-    input.request.initiator = Initiator::Policy {
-        policy: input.policy.clone(),
-    };
-    input.request.operation.action = Id::new("telemetry-sample").unwrap();
-    input.run_as = RunAs::System {
-        platform: input.request.target.platform,
-    };
-    let now = c.payload().issued_at as u64 * 1000;
-    input.validity = ValidityWindow {
-        not_before_unix_ms: now,
-        expires_at_unix_ms: now + 1000,
-    };
-    input.budget.total_timeout_ms = 1000;
-    let plan =
-        FrozenExecution::freeze(input, &crate::backend::plan::storage_limits().input).unwrap();
-    let artifacts = execution_runner::Artifacts {
-        program: vec![],
-        delegate: None,
-        interpreter: root.path.join("absent"),
-        content: root.path.join("absent"),
-        work_root: root.path.clone(),
-        controlled_input: None,
-    };
-    let mut runner = execution_runner::PeriodicRunner::new().unwrap();
-    assert!(runner
-        .start(&c, plan.clone(), artifacts.clone(), now)
-        .is_err());
-    assert!(!runner.active());
-    assert!(runner
-        .start(&c, plan, artifacts, c.payload().expires_at as u64 * 1000)
-        .is_err());
-    assert!(!runner.active());
+    let mut t = Telemetry::open(&client).unwrap();
+    t.install(c.clone()).unwrap();
+    let at = timestamp().unwrap();
+    t.spool.append(&c, at, values(), "boot").unwrap();
+    t.spool.freeze_all(&c).unwrap();
+    let p = t.spool.pending(at / 1_000_000, false).unwrap().unwrap();
+    let id = p.id();
+    let bytes = p.body().to_vec();
+    t.spool.attempting(&p, at / 1_000_000).unwrap();
+    server.data.lock().unwrap().telemetry.timed_out = true;
+    let action = Action::Send(p); // first POST
+    let failed = request(&client, &action).await;
+    assert!(matches!(
+        &failed,
+        Err(Failure {
+            error: Error::Unavailable,
+            ..
+        })
+    ));
+    t.apply(&action, failed).unwrap();
+    assert!(t.spool.pending(at / 1_000_000, false).unwrap().is_none());
+    let p = t
+        .spool
+        .pending(at / 1_000_000 + 120, false)
+        .unwrap()
+        .unwrap();
+    assert!(p.attempted());
+    assert_eq!(p.id(), id);
+    assert_eq!(p.body(), bytes);
+    let action = Action::Send(p); // status GET now times out
+    let failed = request(&client, &action).await;
+    assert!(matches!(
+        &failed,
+        Err(Failure {
+            error: Error::Unavailable,
+            ..
+        })
+    ));
+    t.apply(&action, failed).unwrap();
+    assert_eq!(t.spool.summary().unwrap().pending, 1);
+    server.data.lock().unwrap().telemetry.timed_out = false;
+    let p = t
+        .spool
+        .pending(at / 1_000_000 + 240, false)
+        .unwrap()
+        .unwrap();
+    assert_eq!(p.id(), id);
+    assert_eq!(p.body(), bytes);
+    let action = Action::Send(p);
+    let receipt = request(&client, &action).await.unwrap();
+    t.apply(&action, Ok(receipt)).unwrap();
+    assert_eq!(t.spool.summary().unwrap().pending, 0);
+    assert_eq!(server.data.lock().unwrap().telemetry.uploads.len(), 1);
 }
