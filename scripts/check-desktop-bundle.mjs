@@ -74,10 +74,13 @@ function owned(command, args, options, signal) {
   };
 }
 async function command(root, args, signal, env = process.env) {
+  // The outer build runner retains the locks; pnpm descendants do not inherit their descriptors.
+  const childEnv = { ...env };
+  delete childEnv._AGENT_BUILD_LEASE;
   const owner = owned(
     "pnpm",
     args,
-    { cwd: root, env, stdio: "inherit" },
+    { cwd: root, env: childEnv, stdio: "inherit" },
     signal,
   );
   try {
