@@ -906,6 +906,7 @@ impl Server {
                         (NativeEngine::WindowsWmi, 1),
                         (NativeEngine::WindowsUpdates, 1),
                         (NativeEngine::WindowsCertificates, 1),
+                        (NativeEngine::WindowsPerformance, 1),
                     ]
                     .into(),
                 })
@@ -922,6 +923,7 @@ impl Server {
                         NativeEngine::MacosAccounts,
                         NativeEngine::MacosCertificates,
                         NativeEngine::MacosUpdates,
+                        NativeEngine::MacosPerformance,
                     ]
                     .into_iter()
                     .map(|engine| (engine, engine.contract_version()))

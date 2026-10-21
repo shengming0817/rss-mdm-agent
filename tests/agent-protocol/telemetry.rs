@@ -4,6 +4,9 @@ use super::*;
 pub struct State {
     pub configuration: Option<SignedTelemetryConfiguration>,
     pub receipts: BTreeMap<Uuid, TelemetryReceipt>,
+    pub gap_receipts: BTreeMap<Uuid, TelemetryGapReceipt>,
+    pub gap_bodies: BTreeMap<Uuid, Value>,
+    pub gap_attempts: Vec<Value>,
     pub bodies: BTreeMap<Uuid, Value>,
     pub uploads: Vec<Value>,
     pub upload_attempts: Vec<Value>,
@@ -25,6 +28,57 @@ pub fn response(d: &mut Data, path: &str, value: Value) -> Response {
             axum::Json(json!({"code":"service_unavailable"})),
         )
             .into_response();
+    }
+    if path.ends_with("/gaps") {
+        d.telemetry.gap_attempts.push(value.clone());
+        let Ok(report) = serde_json::from_value::<TelemetryGapReport>(value.clone()) else {
+            return StatusCode::BAD_REQUEST.into_response();
+        };
+        let now = d.time.now().unwrap() * 1_000_000;
+        if report.validate().is_err()
+            || report.created_at + TELEMETRY_GAP_WINDOW_MICROS <= now
+            || report.created_at > now + 300_000_000
+        {
+            return StatusCode::BAD_REQUEST.into_response();
+        }
+        if d.telemetry
+            .gap_bodies
+            .get(&report.report_id)
+            .is_some_and(|old| old != &value)
+        {
+            return StatusCode::CONFLICT.into_response();
+        }
+        let replayed = d.telemetry.gap_receipts.contains_key(&report.report_id);
+        d.telemetry.gap_bodies.insert(report.report_id, value);
+        let mut receipt = d
+            .telemetry
+            .gap_receipts
+            .entry(report.report_id)
+            .or_insert(TelemetryGapReceipt {
+                report_id: report.report_id,
+                received_at: now,
+                replayed: false,
+            })
+            .clone();
+        receipt.replayed = replayed;
+        if std::mem::take(&mut d.telemetry.lose_response) {
+            return Response::builder()
+                .status(200)
+                .body(Body::from_stream(futures_util::stream::once(async {
+                    Err::<Bytes, _>(std::io::Error::other("lost gap response"))
+                })))
+                .unwrap();
+        }
+        return axum::Json(receipt).into_response();
+    }
+    if path.contains("/gaps/") {
+        return path
+            .rsplit('/')
+            .next()
+            .and_then(|v| Uuid::parse_str(v).ok())
+            .and_then(|id| d.telemetry.gap_receipts.get(&id))
+            .map(|r| axum::Json(r.clone()).into_response())
+            .unwrap_or_else(|| StatusCode::NOT_FOUND.into_response());
     }
     if path.ends_with("/configurations") {
         let assignments = d
@@ -185,4 +239,60 @@ pub fn sign(d: &Data, configuration: TelemetryConfiguration) -> SignedTelemetryC
         key_id,
         signature,
     }
+}
+
+/// One native performance lease for the real Agent wire/signature consumer seam.
+pub fn native_performance_configuration(
+    server: &Server,
+    registration: &BindingProfile,
+) -> SignedTelemetryConfiguration {
+    let mut c = configuration(server, registration).configuration;
+    let budget = NativeBudget {
+        timeout_seconds: 2,
+        output_bytes: 4096,
+        max_rows: 1,
+    };
+    let section = PerformanceSection::Memory;
+    let definition = if cfg!(target_os = "windows") {
+        NativeQueryDefinition::WindowsPerformance { section }
+    } else {
+        NativeQueryDefinition::MacosPerformance { section }
+    };
+    let plan = NativeCollectionPlan::try_from(NativePlanSpec {
+        version: 1,
+        scope: rss_mdm_agent_wire::CollectionScope::Device,
+        queries: [(
+            "memory".into(),
+            NativeQuery {
+                version: 1,
+                definition,
+                cardinality: NativeCardinality::ExactlyOne,
+                instance_keys: vec![],
+                budget,
+            },
+        )]
+        .into(),
+        budget,
+    })
+    .unwrap();
+    c.source = Source::AgentNative;
+    c.fields[0].sources = [(Source::AgentNative, 0)].into();
+    c.fields[0].unit = Some("bytes".into());
+    c.execution_millis = 2000;
+    c.collector = TelemetryCollector::Native {
+        plan,
+        mappings: [(
+            "custom.load".into(),
+            TelemetryNativeMapping {
+                query: "memory".into(),
+                mapping: TelemetryValueMapping {
+                    pointer: "/total_bytes".into(),
+                    conversion: TelemetryConversion::Integer,
+                    columns: Default::default(),
+                },
+            },
+        )]
+        .into(),
+    };
+    sign(&server.data.lock().unwrap(), c)
 }

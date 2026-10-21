@@ -5,7 +5,7 @@ use base64::Engine;
 use reqwest::Method;
 use uuid::Uuid;
 mod spool;
-pub use spool::{GapReason, Limits, Pending, Spool, Summary};
+pub use spool::{GapReason, Limits, Pending, PendingGap, Spool, Summary};
 
 /// A configuration authenticated against this device's acknowledged signing authority.
 #[derive(Clone)]
@@ -172,6 +172,49 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             .await?;
         receipt(&bytes, pending.id()).map_err(Into::into)
     }
+    /// Resolve an uncertain report using its original registration and fixed report identity.
+    pub async fn telemetry_gap_status(
+        &self,
+        pending: &PendingGap,
+    ) -> Result<Option<w::TelemetryGapReceipt>, Failure> {
+        self.check_gap_owner(pending)?;
+        match self
+            .telemetry_request(
+                Method::GET,
+                &format!("telemetry/gaps/{}", pending.id()),
+                None,
+            )
+            .await
+        {
+            Ok(bytes) => Ok(Some(gap_receipt(&bytes, pending.id())?)),
+            Err(Failure {
+                error: Error::NotFound,
+                ..
+            }) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+    /// Submit the exact frozen report; neither identity nor creation time is regenerated.
+    pub async fn telemetry_gap_submit(
+        &self,
+        pending: &PendingGap,
+    ) -> Result<w::TelemetryGapReceipt, Failure> {
+        self.check_gap_owner(pending)?;
+        let bytes = self
+            .telemetry_request(Method::POST, "telemetry/gaps", Some(pending.body()))
+            .await?;
+        gap_receipt(&bytes, pending.id()).map_err(Into::into)
+    }
+    fn check_gap_owner(&self, pending: &PendingGap) -> Result<(), Error> {
+        self.active()?;
+        if !pending.belongs_to(&self.registration()?) {
+            return Err(Error::Untrusted);
+        }
+        if self.now()?.checked_mul(1_000_000).ok_or(Error::Clock)? >= pending.expires() {
+            return Err(Error::Expired);
+        }
+        Ok(())
+    }
     fn check_telemetry_owner(&self, pending: &Pending) -> Result<(), Error> {
         self.active()?;
         let r = self.registration()?;
@@ -251,6 +294,14 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
 fn receipt(bytes: &[u8], id: Uuid) -> Result<w::TelemetryReceipt, Error> {
     let value: w::TelemetryReceipt = decode(bytes)?;
     if value.batch_id != id || value.received_at < 0 || value.received_at == i64::MAX {
+        return Err(Error::Protocol);
+    }
+    Ok(value)
+}
+
+fn gap_receipt(bytes: &[u8], id: Uuid) -> Result<w::TelemetryGapReceipt, Error> {
+    let value: w::TelemetryGapReceipt = decode(bytes)?;
+    if value.report_id != id || value.received_at < 0 || value.received_at == i64::MAX {
         return Err(Error::Protocol);
     }
     Ok(value)

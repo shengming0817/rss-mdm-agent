@@ -308,3 +308,392 @@ async fn interrupted_initialization_recovers_only_a_blank_database() {
         ));
     }
 }
+
+#[tokio::test]
+async fn gap_snapshot_survives_reopen_and_lost_receipt_without_consuming_new_loss() {
+    let server = Server::tls().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    let r = server.register(&mut client).await;
+    let at = server.time.now().unwrap() * 1_000_000;
+    let mut spool = client.telemetry_spool(Limits::production()).unwrap();
+    // Historical unowned loss remains local and is never inferred to belong to r.
+    spool.gap(GapReason::Clock, 99, at, at).unwrap();
+    spool
+        .gap_for(
+            r.registration_id,
+            r.generation,
+            GapReason::Capacity,
+            2,
+            at,
+            at,
+        )
+        .unwrap();
+    spool
+        .freeze_gaps(r.registration_id, r.generation, at)
+        .unwrap();
+    let p = spool
+        .pending_gap(r.registration_id, r.generation, at)
+        .unwrap()
+        .unwrap();
+    let bytes = p.body().to_vec();
+    let id = p.id();
+    let report: w::TelemetryGapReport = decode(&bytes).unwrap();
+    assert_eq!(report.gaps.len(), 1);
+    assert_eq!(report.gaps[0].count, 2);
+    spool
+        .gap_for(
+            r.registration_id,
+            r.generation,
+            GapReason::Capacity,
+            3,
+            at,
+            at + 1,
+        )
+        .unwrap();
+    spool.attempting_gap(&p, at / 1_000_000).unwrap();
+    server.data.lock().unwrap().telemetry.lose_response = true;
+    assert!(client.telemetry_gap_submit(&p).await.is_err());
+    drop(spool);
+    server.time.set(at / 1_000_000 + 3);
+    let mut spool = client.telemetry_spool(Limits::production()).unwrap();
+    let p = spool
+        .pending_gap(r.registration_id, r.generation, at + 3_000_000)
+        .unwrap()
+        .unwrap();
+    assert_eq!(p.id(), id);
+    assert_eq!(p.body(), bytes);
+    assert!(p.attempted());
+    let receipt = client.telemetry_gap_status(&p).await.unwrap().unwrap();
+    let mut wrong = receipt.clone();
+    wrong.report_id = Uuid::new_v4();
+    assert_eq!(spool.acknowledge_gap(&p, &wrong), Err(Error::Protocol));
+    assert!(spool
+        .pending_gap(r.registration_id, r.generation, at + 3_000_000)
+        .unwrap()
+        .is_some());
+    spool.acknowledge_gap(&p, &receipt).unwrap();
+    spool
+        .freeze_gaps(r.registration_id, r.generation, at + 3_000_000)
+        .unwrap();
+    let next = spool
+        .pending_gap(r.registration_id, r.generation, at + 3_000_000)
+        .unwrap()
+        .unwrap();
+    assert_ne!(next.id(), id);
+    let report: w::TelemetryGapReport = decode(next.body()).unwrap();
+    assert_eq!(report.gaps[0].count, 3);
+    assert_eq!(spool.summary().unwrap().gaps["capacity"].count, 5);
+    assert_eq!(server.data.lock().unwrap().telemetry.gap_attempts.len(), 1);
+}
+
+#[tokio::test]
+async fn gap_retry_is_fixed_bounded_fenced_and_expires_without_recreating_loss() {
+    let server = Server::tls().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    let r = server.register(&mut client).await;
+    let at = server.time.now().unwrap() * 1_000_000;
+    let mut spool = client.telemetry_spool(Limits::production()).unwrap();
+    for reason in [
+        GapReason::Expired,
+        GapReason::Capacity,
+        GapReason::Lease,
+        GapReason::Power,
+        GapReason::Suspended,
+        GapReason::Clock,
+        GapReason::Collection,
+        GapReason::Rejected,
+        GapReason::Registration,
+        GapReason::Configuration,
+    ] {
+        spool
+            .gap_for(
+                r.registration_id,
+                r.generation,
+                reason,
+                i64::MAX as u64,
+                0,
+                i64::MAX - 1,
+            )
+            .unwrap();
+    }
+    spool
+        .freeze_gaps(r.registration_id, r.generation, at)
+        .unwrap();
+    let p = spool
+        .pending_gap(r.registration_id, r.generation, at)
+        .unwrap()
+        .unwrap();
+    assert!(p.bytes() <= w::TELEMETRY_GAP_MAX_BYTES);
+    let report: w::TelemetryGapReport = decode(p.body()).unwrap();
+    assert_eq!(report.gaps.len(), 10);
+    server.data.lock().unwrap().telemetry.throttled = true;
+    let f = client.telemetry_gap_submit(&p).await.unwrap_err();
+    assert_eq!(f.retry_after, Some(90));
+    spool.attempting_gap(&p, at / 1_000_000).unwrap();
+    spool.retry_gap(&p, at / 1_000_000, f.retry_after).unwrap();
+    assert!(spool
+        .pending_gap(r.registration_id, r.generation, at + 89_000_000)
+        .unwrap()
+        .is_none());
+    server.data.lock().unwrap().telemetry.throttled = false;
+    server.time.set(at / 1_000_000 + 90);
+    let p = spool
+        .pending_gap(r.registration_id, r.generation, at + 90_000_000)
+        .unwrap()
+        .unwrap();
+    assert!(client.telemetry_gap_status(&p).await.unwrap().is_none());
+    let first = client.telemetry_gap_submit(&p).await.unwrap();
+    let replay = client.telemetry_gap_submit(&p).await.unwrap();
+    assert!(!first.replayed && replay.replayed);
+    {
+        let attempts = &server.data.lock().unwrap().telemetry.gap_attempts;
+        assert_eq!(attempts.len(), 2);
+        assert_eq!(attempts[0], attempts[1]);
+    }
+    let other = Uuid::new_v4();
+    assert!(spool
+        .pending_gap(other, r.generation, at + 90_000_000)
+        .unwrap()
+        .is_none());
+    let mut wrong = r.clone();
+    wrong.generation += 1;
+    assert!(!p.belongs_to(&wrong));
+    let end = at + w::TELEMETRY_GAP_WINDOW_MICROS;
+    server.time.set(end / 1_000_000);
+    assert_eq!(
+        client.telemetry_gap_submit(&p).await.unwrap_err().error,
+        Error::Expired
+    );
+    spool
+        .freeze_gaps(r.registration_id, r.generation, end)
+        .unwrap();
+    assert!(spool
+        .pending_gap(r.registration_id, r.generation, end)
+        .unwrap()
+        .is_none());
+    assert_eq!(
+        spool.summary().unwrap().gaps["capacity"].count,
+        i64::MAX as u64
+    );
+    // Permanent rejection does not mint another report or increment local loss.
+    spool
+        .gap_for(
+            r.registration_id,
+            r.generation,
+            GapReason::Power,
+            1,
+            end,
+            end,
+        )
+        .unwrap();
+    spool
+        .freeze_gaps(r.registration_id, r.generation, end)
+        .unwrap();
+    let p = spool
+        .pending_gap(r.registration_id, r.generation, end)
+        .unwrap()
+        .unwrap();
+    spool.reject_gap(&p).unwrap();
+    spool
+        .freeze_gaps(r.registration_id, r.generation, end + 1)
+        .unwrap();
+    assert!(spool
+        .pending_gap(r.registration_id, r.generation, end + 1)
+        .unwrap()
+        .is_none());
+}
+
+#[tokio::test]
+async fn signed_native_performance_configuration_is_consumed_from_the_runtime_route() {
+    let server = Server::tls().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    let r = server.register(&mut client).await;
+    let signed = fixture::native_performance_configuration(&server, &r);
+    server.data.lock().unwrap().telemetry.configuration = Some(signed.clone());
+    let c = client
+        .telemetry_configuration(
+            signed.configuration.policy,
+            signed.configuration.policy_version,
+        )
+        .await
+        .unwrap();
+    assert_eq!(c.payload().source, w::Source::AgentNative);
+    let w::TelemetryCollector::Native { plan, mappings } = &c.payload().collector else {
+        panic!("native configuration was not retained");
+    };
+    assert!(matches!(
+        plan.spec().queries["memory"].definition,
+        w::NativeQueryDefinition::WindowsPerformance {
+            section: w::PerformanceSection::Memory
+        } | w::NativeQueryDefinition::MacosPerformance {
+            section: w::PerformanceSection::Memory
+        }
+    ));
+    assert_eq!(mappings["custom.load"].query, "memory");
+    let mut changed = signed;
+    changed.configuration.execution_millis += 1;
+    assert!(client.verify_telemetry(changed).is_err());
+}
+
+#[tokio::test]
+async fn dropped_sample_ownership_and_invalid_gap_input_cannot_poison_pending_reports() {
+    let server = Server::new().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    let r = server.register(&mut client).await;
+    let c = client
+        .verify_telemetry(fixture::configuration(&server, &r))
+        .unwrap();
+    let at = server.time.now().unwrap() * 1_000_000;
+    let mut spool = client.telemetry_spool(Limits::production()).unwrap();
+    spool.append(&c, at, values(1), "boot").unwrap();
+    let other = Uuid::new_v4();
+    spool
+        .prune(at / 1_000_000, other, r.generation + 1)
+        .unwrap();
+    // The rejected old sample is still attributed to its original registration.
+    spool
+        .freeze_gaps(r.registration_id, r.generation, at)
+        .unwrap();
+    let old = spool
+        .pending_gap(r.registration_id, r.generation, at)
+        .unwrap()
+        .unwrap();
+    let report: w::TelemetryGapReport = decode(old.body()).unwrap();
+    assert_eq!(report.gaps[0].reason, GapReason::Registration);
+    assert_eq!(report.gaps[0].count, 1);
+    assert!(spool
+        .pending_gap(other, r.generation + 1, at)
+        .unwrap()
+        .is_none());
+    for (count, first, last) in [(u64::MAX, 0, 1), (1, -1, 1), (1, 2, 1), (1, 0, i64::MAX)] {
+        assert!(spool
+            .gap_for(
+                r.registration_id,
+                r.generation,
+                GapReason::Capacity,
+                count,
+                first,
+                last
+            )
+            .is_err());
+    }
+    spool.reject_gap(&old).unwrap();
+    spool
+        .freeze_gaps(r.registration_id, r.generation, at)
+        .unwrap();
+    assert!(spool
+        .pending_gap(r.registration_id, r.generation, at)
+        .unwrap()
+        .is_none());
+    assert!(!spool.summary().unwrap().gaps.contains_key("capacity"));
+    spool
+        .gap_for(other, r.generation + 1, GapReason::Lease, 1, at, at)
+        .unwrap();
+    spool.freeze_gaps(other, r.generation + 1, at).unwrap();
+    let foreign = spool
+        .pending_gap(other, r.generation + 1, at)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        client
+            .telemetry_gap_submit(&foreign)
+            .await
+            .unwrap_err()
+            .error,
+        Error::Untrusted
+    );
+    assert_eq!(
+        client
+            .telemetry_gap_status(&foreign)
+            .await
+            .unwrap_err()
+            .error,
+        Error::Untrusted
+    );
+    assert!(server
+        .data
+        .lock()
+        .unwrap()
+        .telemetry
+        .gap_attempts
+        .is_empty());
+}
+
+#[tokio::test]
+async fn gap_storage_bound_keeps_new_loss_pending_until_a_snapshot_slot_is_released() {
+    let server = Server::new().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    let r = server.register(&mut client).await;
+    let at = server.time.now().unwrap() * 1_000_000;
+    let mut spool = client.telemetry_spool(Limits::production()).unwrap();
+    for offset in 0..65 {
+        spool
+            .gap_for(
+                r.registration_id,
+                r.generation,
+                GapReason::Capacity,
+                1,
+                at,
+                at,
+            )
+            .unwrap();
+        spool
+            .freeze_gaps(r.registration_id, r.generation, at + offset)
+            .unwrap();
+    }
+    // SQLite evidence counts the actual frozen bodies, rather than an in-memory approximation.
+    let db = rusqlite::Connection::open(root.path.join("telemetry.sqlite")).unwrap();
+    let (reports, bytes): (u64, u64) = db
+        .query_row(
+            "SELECT count(*),sum(length(body)) FROM gap_reports",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(reports, 64);
+    assert!(bytes <= 64 * w::TELEMETRY_GAP_MAX_BYTES as u64);
+    let pending: u64 = db
+        .query_row("SELECT sum(count) FROM gap_pending", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(pending, 1);
+    let oldest = spool
+        .pending_gap(r.registration_id, r.generation, at + 100)
+        .unwrap()
+        .unwrap();
+    spool
+        .acknowledge_gap(
+            &oldest,
+            &w::TelemetryGapReceipt {
+                report_id: oldest.id(),
+                received_at: at,
+                replayed: false,
+            },
+        )
+        .unwrap();
+    spool
+        .freeze_gaps(r.registration_id, r.generation, at + 101)
+        .unwrap();
+    let pending: u64 = db
+        .query_row("SELECT count(*) FROM gap_pending", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(pending, 0);
+    assert_eq!(spool.summary().unwrap().gaps["capacity"].count, 65);
+    let other = Uuid::new_v4();
+    spool
+        .freeze_gaps(other, r.generation + 1, at + 102)
+        .unwrap();
+    assert!(spool
+        .pending_gap(other, r.generation + 1, at + 102)
+        .unwrap()
+        .is_none());
+    assert!(spool
+        .pending_gap(r.registration_id, r.generation, at + 102)
+        .unwrap()
+        .is_none());
+    assert_eq!(spool.summary().unwrap().gaps["capacity"].count, 65);
+}

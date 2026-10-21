@@ -1,6 +1,6 @@
 //! Periodic device reads owned by the existing service; HTTP and sampling advance independently.
 use agent_client::{
-    telemetry::{Configuration, Failure, GapReason, Limits, Pending, Spool},
+    telemetry::{Configuration, Failure, GapReason, Limits, Pending, PendingGap, Spool},
     Client, Clock, Error, IdentityProvider,
 };
 use rss_mdm_agent_wire::runtime as w;
@@ -41,12 +41,14 @@ pub(crate) enum Action {
     Configuration(uuid::Uuid, uuid::Uuid),
     Content(Box<Configuration>),
     Send(Pending),
+    SendGap(PendingGap),
 }
 pub(crate) enum Event {
     Directory(w::TelemetryDirectory),
     Configuration(Configuration),
     Content(Configuration, Vec<u8>),
     Receipt(w::TelemetryReceipt),
+    GapReceipt(w::TelemetryGapReceipt),
 }
 impl Telemetry {
     pub fn open<S: IdentityProvider, C: Clock>(client: &Client<S, C>) -> Result<Self, Error> {
@@ -131,7 +133,9 @@ impl Telemetry {
                     > 2_000_000
             {
                 self.collector.cancel()?;
-                self.spool.gap(
+                self.spool.gap_for(
+                    self.registration.registration_id,
+                    self.registration.generation,
                     if at < wall {
                         GapReason::Clock
                     } else {
@@ -183,7 +187,9 @@ impl Telemetry {
                 );
                 let elapsed = now.saturating_duration_since(slot.due).as_millis();
                 if elapsed >= u128::from(cadence) {
-                    self.spool.gap(
+                    self.spool.gap_for(
+                        p.registration_id,
+                        p.generation,
                         GapReason::Suspended,
                         (elapsed / u128::from(cadence)).min(i64::MAX as u128) as u64,
                         at.saturating_sub((elapsed * 1000).min(at as u128) as i64),
@@ -193,7 +199,9 @@ impl Telemetry {
                 slot.due = now + Duration::from_millis(u64::from(cadence));
                 let allowed = environment.collect && at / 1_000_000 < p.expires_at;
                 if !allowed {
-                    self.spool.gap(
+                    self.spool.gap_for(
+                        p.registration_id,
+                        p.generation,
                         if at / 1_000_000 >= p.expires_at {
                             GapReason::Lease
                         } else if environment.capacity {
@@ -214,7 +222,9 @@ impl Telemetry {
                         core,
                         at,
                     ) {
-                        self.spool.gap(
+                        self.spool.gap_for(
+                            p.registration_id,
+                            p.generation,
                             if e == Error::Capacity {
                                 GapReason::Capacity
                             } else {
@@ -226,7 +236,14 @@ impl Telemetry {
                         )?;
                     }
                 } else {
-                    self.spool.gap(GapReason::Collection, 1, at, at)?;
+                    self.spool.gap_for(
+                        p.registration_id,
+                        p.generation,
+                        GapReason::Collection,
+                        1,
+                        at,
+                        at,
+                    )?;
                 }
             }
         }
@@ -271,20 +288,29 @@ impl Telemetry {
             }) {
                 Ok(_) => (),
                 Err(e) => {
-                    self.spool.gap(
+                    self.spool.gap_for(
+                        p.registration_id,
+                        p.generation,
                         if e == Error::Capacity {
                             GapReason::Capacity
                         } else {
                             GapReason::Collection
                         },
                         1,
-                        observed,
-                        at,
+                        observed.min(at),
+                        observed.max(at),
                     )?;
                 }
             }
         } else {
-            self.spool.gap(GapReason::Configuration, 1, observed, at)?;
+            self.spool.gap_for(
+                p.registration_id,
+                p.generation,
+                GapReason::Configuration,
+                1,
+                observed.min(at),
+                observed.max(at),
+            )?;
         }
         Ok(())
     }
@@ -298,9 +324,9 @@ impl Telemetry {
             self.directory_at = now + Duration::from_secs(60);
             return Ok(Some(Action::Directory));
         }
-        for _ in 0..3 {
+        for _ in 0..4 {
             let turn = self.network_turn;
-            self.network_turn = (turn + 1) % 3;
+            self.network_turn = (turn + 1) % 4;
             match turn {
                 0 => {
                     if let Some((p, v)) = self.refresh.pop_front() {
@@ -322,7 +348,7 @@ impl Telemetry {
                         return Ok(Some(Action::Content(Box::new(slot.configuration.clone()))));
                     }
                 }
-                _ => {
+                2 => {
                     if now >= self.send_at && self.environment.observe(self.spool.root()).upload {
                         if let Some(p) =
                             self.spool.pending(timestamp()? / 1_000_000, self.newest)?
@@ -332,6 +358,26 @@ impl Telemetry {
                                 + Duration::from_secs_f64((p.bytes() as f64 / 65536.0).max(0.05));
                             self.spool.attempting(&p, timestamp()? / 1_000_000)?;
                             return Ok(Some(Action::Send(p)));
+                        }
+                    }
+                }
+                _ => {
+                    if now >= self.send_at && self.environment.observe(self.spool.root()).upload {
+                        let at = timestamp()?;
+                        self.spool.freeze_gaps(
+                            self.registration.registration_id,
+                            self.registration.generation,
+                            at,
+                        )?;
+                        if let Some(p) = self.spool.pending_gap(
+                            self.registration.registration_id,
+                            self.registration.generation,
+                            at,
+                        )? {
+                            self.send_at = now
+                                + Duration::from_secs_f64((p.bytes() as f64 / 65536.0).max(0.05));
+                            self.spool.attempting_gap(&p, at / 1_000_000)?;
+                            return Ok(Some(Action::SendGap(p)));
                         }
                     }
                 }
@@ -402,7 +448,28 @@ impl Telemetry {
                 };
                 self.spool.acknowledge(p, &r)?;
             }
+            Ok(Event::GapReceipt(r)) => {
+                let Action::SendGap(p) = action else {
+                    return Err(Error::Protocol);
+                };
+                self.spool.acknowledge_gap(p, &r)?;
+            }
             Err(f) => {
+                if let Action::SendGap(p) = action {
+                    if matches!(
+                        f.error,
+                        Error::Conflict
+                            | Error::Protocol
+                            | Error::Denied
+                            | Error::Untrusted
+                            | Error::Expired
+                    ) {
+                        self.spool.reject_gap(p)?;
+                    } else {
+                        self.spool
+                            .retry_gap(p, timestamp()? / 1_000_000, f.retry_after)?;
+                    }
+                }
                 if let Action::Send(p) = action {
                     if matches!(
                         f.error,
@@ -435,7 +502,9 @@ impl Telemetry {
                 },
             ) {
                 Ok(_) => (),
-                Err(_) => self.spool.gap(
+                Err(_) => self.spool.gap_for(
+                    active.configuration.payload().registration_id,
+                    active.configuration.payload().generation,
                     GapReason::Collection,
                     1,
                     active.observed,
@@ -463,6 +532,14 @@ pub(crate) async fn request<S: IdentityProvider, C: Clock>(
             .telemetry_content(c)
             .await
             .map(|b| Event::Content((**c).clone(), b)),
+        Action::SendGap(p) => {
+            if p.attempted() {
+                if let Some(r) = client.telemetry_gap_status(p).await? {
+                    return Ok(Event::GapReceipt(r));
+                }
+            }
+            client.telemetry_gap_submit(p).await.map(Event::GapReceipt)
+        }
         Action::Send(p) => {
             if p.attempted() {
                 if let Some(r) = client.telemetry_status(p).await? {

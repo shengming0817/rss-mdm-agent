@@ -198,3 +198,49 @@ async fn request_timeout_preserves_batch_through_upload_and_status_retry() {
         d.telemetry.upload_attempts[1]
     );
 }
+
+#[tokio::test]
+async fn gap_network_turn_recovers_unknown_receipt_and_does_not_starve() {
+    let server = protocol::Server::tls().await;
+    let root = protocol::Root::new();
+    server.time.set(timestamp().unwrap() / 1_000_000);
+    let mut client = server.client(&root, agent_client::OpenMode::Create);
+    let r = server.register(&mut client).await;
+    let mut t = Telemetry::open(&client).unwrap();
+    t.environment.force(true, true);
+    t.directory_at = Instant::now() + Duration::from_secs(60);
+    let at = timestamp().unwrap();
+    t.spool
+        .gap_for(r.registration_id, r.generation, GapReason::Lease, 1, at, at)
+        .unwrap();
+    t.refresh
+        .push_back((uuid::Uuid::new_v4(), uuid::Uuid::new_v4()));
+    assert!(matches!(
+        t.action().unwrap(),
+        Some(Action::Configuration(..))
+    ));
+    t.request_at = Instant::now();
+    let action = t.action().unwrap().unwrap();
+    assert!(matches!(action, Action::SendGap(_)));
+    server.data.lock().unwrap().telemetry.lose_response = true;
+    let result = request(&client, &action).await;
+    assert!(result.is_err());
+    t.apply(&action, result).unwrap();
+    let p = t
+        .spool
+        .pending_gap(r.registration_id, r.generation, at + 1_000_000_000)
+        .unwrap()
+        .unwrap();
+    assert!(p.attempted());
+    let retry = Action::SendGap(p);
+    let result = request(&client, &retry).await;
+    assert!(matches!(result, Ok(Event::GapReceipt(_))));
+    t.apply(&retry, result).unwrap();
+    assert!(t
+        .spool
+        .pending_gap(r.registration_id, r.generation, at + 1_000_000_000)
+        .unwrap()
+        .is_none());
+    assert_eq!(server.data.lock().unwrap().telemetry.gap_attempts.len(), 1);
+    assert_eq!(t.spool.summary().unwrap().gaps["lease"].count, 1);
+}

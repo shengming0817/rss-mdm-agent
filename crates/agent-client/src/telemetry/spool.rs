@@ -29,47 +29,11 @@ impl Limits {
         }
     }
 }
-/// Local evidence reasons. No server gap endpoint is implied by these values.
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum GapReason {
-    /// Retention window elapsed.
-    Expired,
-    /// Local storage or collection budget exhausted.
-    Capacity,
-    /// Sampling lease no longer permits execution.
-    Lease,
-    /// Local power policy paused collection.
-    Power,
-    /// Suspension or missed scheduling instants.
-    Suspended,
-    /// Reliable UTC time was unavailable.
-    Clock,
-    /// Collector failed or was unsupported.
-    Collection,
-    /// A permanent receiver rejection isolated a batch.
-    Rejected,
-    /// Original registration no longer matches.
-    Registration,
-    /// A configuration was withdrawn or replaced before completion.
-    Configuration,
-}
-impl GapReason {
-    fn key(self) -> &'static str {
-        match self {
-            Self::Expired => "expired",
-            Self::Capacity => "capacity",
-            Self::Lease => "lease",
-            Self::Power => "power",
-            Self::Suspended => "suspended",
-            Self::Clock => "clock",
-            Self::Collection => "collection",
-            Self::Rejected => "rejected",
-            Self::Registration => "registration",
-            Self::Configuration => "configuration",
-        }
-    }
-}
+/// Loss vocabulary belongs to the shared protocol owner.
+pub use w::TelemetryGapReason as GapReason;
+#[path = "gap_spool.rs"]
+mod gap_spool;
+pub use gap_spool::PendingGap;
 /// Aggregate loss evidence. Bounds describe the span, not continuous coverage.
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
 pub struct Gap {
@@ -204,6 +168,8 @@ impl Spool {
         if original != binding {
             return Err(Error::Untrusted);
         }
+        // Add diagnostic tables without altering existing samples, batches or unowned legacy gaps.
+        gap_spool::install(&conn)?;
         conn.pragma_update(None, "max_page_count", limits.pages)?;
         let mut spool = Self {
             conn,
@@ -541,7 +507,15 @@ impl Spool {
     /// A permanent failure leaves bounded loss evidence rather than blocking the queue.
     pub fn reject(&mut self, p: &Pending, reason: GapReason) -> Result<(), Error> {
         let tx = self.conn.transaction()?;
-        gap(&tx, reason, p.count, p.first, p.last)?;
+        gap_spool::record(
+            &tx,
+            p.registration,
+            p.generation,
+            reason,
+            p.count,
+            p.first,
+            p.last,
+        )?;
         tx.execute("DELETE FROM batches WHERE id=?1", [p.id.to_string()])?;
         tx.commit()?;
         Ok(())
@@ -572,22 +546,33 @@ impl Spool {
                 ),
                 ("expires<=?3", GapReason::Expired),
             ] {
-                let select=format!("SELECT coalesce({count},0),coalesce({first},0),coalesce({last},0) FROM {table} WHERE {predicate} AND ?1 IS NOT NULL AND ?2 IS NOT NULL AND ?3 IS NOT NULL");
-                let (n, a, b) = tx.query_row(
-                    &select,
-                    params![registration.to_string(), generation, now],
-                    |r| {
+                let select = format!(
+                    "SELECT registration,generation,coalesce({count},0),coalesce({first},0),coalesce({last},0) FROM {table} WHERE {predicate} AND ?1 IS NOT NULL AND ?2 IS NOT NULL AND ?3 IS NOT NULL GROUP BY registration,generation"
+                );
+                let rows = tx
+                    .prepare(&select)?
+                    .query_map(params![registration.to_string(), generation, now], |r| {
                         Ok((
-                            r.get::<_, u64>(0)?,
-                            r.get::<_, i64>(1)?,
-                            r.get::<_, i64>(2)?,
+                            r.get::<_, String>(0)?,
+                            r.get::<_, u64>(1)?,
+                            r.get::<_, u64>(2)?,
+                            r.get::<_, i64>(3)?,
+                            r.get::<_, i64>(4)?,
                         ))
-                    },
-                )?;
-                if n > 0 {
-                    gap(&tx, reason, n, a, b)?;
-                    tx.execute(&format!("DELETE FROM {table} WHERE {predicate} AND ?1 IS NOT NULL AND ?2 IS NOT NULL AND ?3 IS NOT NULL"),params![registration.to_string(),generation,now])?;
+                    })?
+                    .collect::<Result<Vec<_>, _>>()?;
+                for (owner, owner_generation, n, a, b) in rows {
+                    gap_spool::record(
+                        &tx,
+                        Uuid::parse_str(&owner).map_err(|_| Error::Storage)?,
+                        owner_generation,
+                        reason,
+                        n,
+                        a,
+                        b,
+                    )?;
                 }
+                tx.execute(&format!("DELETE FROM {table} WHERE {predicate} AND ?1 IS NOT NULL AND ?2 IS NOT NULL AND ?3 IS NOT NULL"),params![registration.to_string(),generation,now])?;
             }
         }
         tx.commit()?;
@@ -641,7 +626,7 @@ fn gap(c: &Connection, reason: GapReason, count: u64, first: i64, last: i64) -> 
     if first < 0 || last < first || count > i64::MAX as u64 {
         return Err(Error::Clock);
     }
-    c.execute("INSERT INTO gaps VALUES(?1,?2,?3,?4) ON CONFLICT(reason) DO UPDATE SET count=min(9223372036854775807-gaps.count,excluded.count)+gaps.count,first=min(gaps.first,excluded.first),last=max(gaps.last,excluded.last)",params![reason.key(),count,first,last])?;
+    c.execute("INSERT INTO gaps VALUES(?1,?2,?3,?4) ON CONFLICT(reason) DO UPDATE SET count=min(9223372036854775807-gaps.count,excluded.count)+gaps.count,first=min(gaps.first,excluded.first),last=max(gaps.last,excluded.last)",params![gap_spool::reason_key(reason)?,count,first,last])?;
     Ok(())
 }
 fn room(
@@ -649,7 +634,7 @@ fn room(
     limits: Limits,
     extra: usize,
     observations: usize,
-    at: i64,
+    _at: i64,
 ) -> Result<(), Error> {
     if extra > limits.bytes || observations > limits.observations {
         return Err(Error::Capacity);
@@ -678,15 +663,14 @@ fn room(
             .optional()?;
         match (sample, batch) {
             (Some((id, time)), b) if b.as_ref().is_none_or(|v| time <= v.2) => {
-                gap(c, GapReason::Capacity, 1, time, time)?;
+                gap_spool::record_object(c, "samples", &id, GapReason::Capacity, 1, time, time)?;
                 c.execute("DELETE FROM samples WHERE id=?1", [id])?;
             }
             (_, Some((id, n, first, last))) => {
-                gap(c, GapReason::Capacity, n, first, last)?;
+                gap_spool::record_object(c, "batches", &id, GapReason::Capacity, n, first, last)?;
                 c.execute("DELETE FROM batches WHERE id=?1", [id])?;
             }
             _ => {
-                gap(c, GapReason::Capacity, 1, at, at)?;
                 return Err(Error::Capacity);
             }
         }
