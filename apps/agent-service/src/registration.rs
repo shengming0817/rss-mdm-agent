@@ -355,6 +355,17 @@ impl Handler for RegistrationOwner {
     }
     fn handle(&mut self, peer: &Peer, request: Request) -> Reply {
         match request {
+            Request::RevokeContext {} if self.owner.is_none() => {
+                // Before activation there are no execution contexts to retire. Acknowledge
+                // the authenticated desktop's fence so first login can reach registration.
+                match peer
+                    .authenticate(&self.policy)
+                    .and_then(|_| peer.session_binding())
+                {
+                    Ok(_) => Reply::ContextRevoked,
+                    Err(_) => Reply::Rejected,
+                }
+            }
             Request::ImportRegistration { file } => {
                 use agent_client::Clock;
                 if peer.authenticate(&self.registration_policy).is_err()

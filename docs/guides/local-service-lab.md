@@ -39,6 +39,8 @@
 
 Windows 安装操作返回 UUID 和不含输入内容的阶段回执。等待超时表示结果未知，worker 可能仍在运行；使用 `--installation operation-status --operation <UUID>` 核实，确认进程退出后回收该 worker。回执保留失败阶段、闭合错误、可得的原生退出码和补偿结果；超时后不要据命令退出自行删除正在使用的程序。
 
+需要在开发 Mac 重复验证全新安装时，使用 `sudo python3 scripts/service/reinstall-macos-sit.py --package /absolute/agent.pkg --sha256 <发布包摘要> --tenant <SIT租户UUID>`。加 `--plan` 可先查看清理范围。脚本校验已安装的开发包与目标租户，停止本产品进程，删除该安装名下的设备 Keychain 条目、本地注册和桌面状态，再调用系统安装器安装校验过的 PKG；不归档，不删除其他应用凭据或服务端记录。清理后按首次注册流程生成新设备身份，不能把它记录为原身份升级验证。
+
 ## 后台授权执行服务
 
 构建 `cargo build --release -p agent-service --bin rss-execution-service`。生产服务与 user helper 使用同一二进制；原 execution-runner 二进制装配已删除。系统服务独占凭据和执行 journal，helper 不初始化业务数据库。
