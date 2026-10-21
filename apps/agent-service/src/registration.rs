@@ -703,13 +703,25 @@ mod tests {
             let mut client = server.client(&root, OpenMode::Create);
             client.set_collection_environment(environment).unwrap();
             let command = if configuration {
-                Command::Configuration {
-                    file: Box::new(server.configuration()),
-                    installer_format: if cfg!(windows) {
-                        rss_mdm_agent_wire::enroll::configuration::InstallerFormat::WindowsMsi
+                let installer_format = if cfg!(windows) {
+                    rss_mdm_agent_wire::enroll::configuration::InstallerFormat::WindowsMsi
+                } else {
+                    rss_mdm_agent_wire::enroll::configuration::InstallerFormat::MacosPkg
+                };
+                let file = Box::new(server.configuration());
+                {
+                    let mut data = server.data.lock().unwrap();
+                    data.packages[0].format = installer_format;
+                    data.packages[0].filename = if cfg!(windows) {
+                        "fixture.msi"
                     } else {
-                        rss_mdm_agent_wire::enroll::configuration::InstallerFormat::MacosPkg
-                    },
+                        "fixture.pkg"
+                    }
+                    .into();
+                }
+                Command::Configuration {
+                    file,
+                    installer_format,
                 }
             } else {
                 Command::Request { prepared: None }
