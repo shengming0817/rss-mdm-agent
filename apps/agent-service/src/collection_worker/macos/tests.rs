@@ -105,7 +105,7 @@ pub(super) fn input(q: w::NativeQuery) -> Input {
         plan,
     };
     Input {
-        task,
+        read: task.into(),
         finish_by_unix_ms: (time as u64 + 20) * 1000,
         image_sha256: Digest::new("00".repeat(32)).unwrap(),
         run_as: RunAs::System {
@@ -276,9 +276,9 @@ fn signed_generated_uid_is_checked_against_the_local_directory() {
         account,
         session: Id::new("identity-boundary-test").unwrap(),
     };
-    input.task.execution.generated_uid = Some(observed);
+    input.read.execution.generated_uid = Some(observed);
     super::super::verify_identity_binding(&input).unwrap();
-    input.task.execution.generated_uid = Some(uuid::Uuid::new_v4().to_string());
+    input.read.execution.generated_uid = Some(uuid::Uuid::new_v4().to_string());
     assert_eq!(
         super::super::verify_identity_binding(&input),
         Err(Error::Untrusted)

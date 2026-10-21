@@ -60,7 +60,7 @@ pub(super) fn read(
         return Err(Status::Invalid);
     };
     let owner = if *user {
-        let w::SoftwareExecutionTarget::User { identity, .. } = &input.task.execution.target else {
+        let w::SoftwareExecutionTarget::User { identity, .. } = &input.read.execution.target else {
             return Err(Status::Denied);
         };
         if matches!(identity.as_str(), "S-1-5-18" | "S-1-5-19" | "S-1-5-20") {

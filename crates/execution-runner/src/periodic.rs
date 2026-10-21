@@ -1,0 +1,108 @@
+//! Host-authorized periodic reads reuse the native process owner, outside command dispatch.
+//! ref: tokio tokio/src/time/interval.rs (skip missed ticks, no catch-up execution).
+use crate::{Artifacts, NativeRunner};
+use execution_app::Error;
+use execution_contract::*;
+use execution_lifecycle::DispatchAllowance;
+use std::sync::atomic::Ordering;
+
+/// Single-flight physical collector. The trusted service must verify its signed lease first.
+/// This adapter cannot accept IPC input or claim a remote task/command receipt.
+pub struct PeriodicRunner {
+    runner: NativeRunner,
+    active: Option<AttemptId>,
+}
+impl PeriodicRunner {
+    /// Allocate an independent process slot so collection cannot occupy command permits.
+    pub fn new() -> Result<Self, Error> {
+        Ok(Self {
+            runner: NativeRunner::new(
+                Id::new("periodic-collector").map_err(|_| Error::Configuration)?,
+                Default::default(),
+                1,
+            )?,
+            active: None,
+        })
+    }
+    /// Launch an immutable Policy read prepared by the trusted service.
+    pub fn start(
+        &mut self,
+        plan: FrozenExecution,
+        artifacts: Artifacts,
+        now_ms: u64,
+    ) -> Result<(), Error> {
+        if self.active.is_some()
+            || !matches!(plan.spec().request.initiator, Initiator::Policy { .. })
+            || plan.spec().request.operation.action.as_str() != "telemetry-sample"
+            || !matches!(plan.spec().execution, ExecutionSpec::Process {})
+            || plan.spec().validity.not_before_unix_ms > now_ms
+            || plan.spec().validity.expires_at_unix_ms <= now_ms
+            || !matches!(plan.spec().run_as, RunAs::System { .. })
+            || artifacts.delegate.is_some()
+        {
+            return Err(Error::Denied);
+        }
+        let timeout = plan
+            .spec()
+            .budget
+            .total_timeout_ms
+            .min(plan.spec().validity.expires_at_unix_ms - now_ms);
+        let attempt = AttemptId::new(plan.spec().request.request_id.as_str())
+            .map_err(|_| Error::InvalidInput)?;
+        self.runner.artifacts.register(&plan, artifacts)?;
+        if let Err(error) = self.runner.launch_bounded(
+            &plan,
+            &attempt,
+            DispatchAllowance {
+                deadline_unix_ms: plan.spec().validity.expires_at_unix_ms,
+                remaining_timeout_ms: timeout,
+                remaining_output_bytes: plan.spec().budget.total_output_bytes,
+            },
+            Some(execution_ipc::host::monotonic_millis()?.saturating_add(timeout)),
+        ) {
+            self.runner.artifacts.retire(plan.digest())?;
+            return Err(error);
+        }
+        self.active = Some(attempt);
+        Ok(())
+    }
+    /// Obtain completed, physically quiescent output exactly once and release its slot.
+    pub fn take(&mut self) -> Result<Option<ProcessEvidence>, Error> {
+        let Some(id) = &self.active else {
+            return Ok(None);
+        };
+        let mut records = self.runner.records.lock().map_err(|_| Error::Unavailable)?;
+        let record = records.get(id).ok_or(Error::Unavailable)?;
+        let result = record.facts.lock().map_err(|_| Error::Unavailable)?.clone();
+        let Some(result) = result.filter(|v| v.finished && v.quiescent) else {
+            return Ok(None);
+        };
+        let digest = record.plan.digest().clone();
+        records.remove(id);
+        drop(records);
+        self.runner.artifacts.retire(&digest)?;
+        self.active = None;
+        Ok(Some(result))
+    }
+    /// Request cancellation; completion still requires quiescence evidence.
+    pub fn cancel(&self) -> Result<(), Error> {
+        let records = self.runner.records.lock().map_err(|_| Error::Unavailable)?;
+        if let Some(record) = self.active.as_ref().and_then(|id| records.get(id)) {
+            record.cancel.store(true, Ordering::Release);
+        }
+        Ok(())
+    }
+    /// Whether the owner still retains a physical operation.
+    pub fn active(&self) -> bool {
+        self.active.is_some()
+    }
+    /// Bounded real cleanup through the same owner used by command executions.
+    pub fn shutdown(&mut self) -> Result<(), Error> {
+        self.runner.shutdown()
+    }
+}
+impl Drop for PeriodicRunner {
+    fn drop(&mut self) {
+        let _ = self.cancel();
+    }
+}

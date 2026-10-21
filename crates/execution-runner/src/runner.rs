@@ -18,19 +18,19 @@ pub(crate) mod invocation;
 pub(crate) mod program;
 mod progress;
 
-struct Record {
-    plan: FrozenExecution,
+pub(crate) struct Record {
+    pub(crate) plan: FrozenExecution,
     _materials: Option<Arc<Artifacts>>,
-    cancel: Arc<AtomicBool>,
-    facts: Arc<Mutex<Option<ProcessEvidence>>>,
+    pub(crate) cancel: Arc<AtomicBool>,
+    pub(crate) facts: Arc<Mutex<Option<ProcessEvidence>>>,
     progress: Arc<progress::Progress>,
     cleanup_running: Arc<AtomicBool>,
 }
 /// One bounded OS runner. Its inventory is supplied by trusted host code, never IPC DTOs.
 pub struct NativeRunner {
     id: Id,
-    artifacts: crate::MaterialRegistry,
-    records: Mutex<BTreeMap<AttemptId, Record>>,
+    pub(crate) artifacts: crate::MaterialRegistry,
+    pub(crate) records: Mutex<BTreeMap<AttemptId, Record>>,
     capacity: usize,
 }
 
@@ -180,7 +180,7 @@ impl NativeRunner {
         };
         self.launch_bounded(plan, attempt, allowance, start_before)
     }
-    fn launch_bounded(
+    pub(crate) fn launch_bounded(
         &self,
         plan: &FrozenExecution,
         attempt: &AttemptId,

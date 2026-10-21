@@ -343,12 +343,12 @@ fn production_collect_enforces_current_nonroot_user_without_tools() {
         assert!(matches!(attempt(&input), Err(Fault::Query(Status::Denied))));
     }
     for identity in ["0".to_owned(), uid.saturating_add(1).to_string()] {
-        input.task.execution.target = w::SoftwareExecutionTarget::User {
+        input.read.execution.target = w::SoftwareExecutionTarget::User {
             identity,
             session_id: uuid::Uuid::new_v4(),
         };
         assert!(matches!(attempt(&input), Err(Fault::Query(Status::Denied))));
     }
-    input.task.execution.target = w::SoftwareExecutionTarget::Device;
+    input.read.execution.target = w::SoftwareExecutionTarget::Device;
     assert!(matches!(attempt(&input), Err(Fault::Query(Status::Denied))));
 }

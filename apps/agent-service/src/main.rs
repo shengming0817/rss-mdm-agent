@@ -111,6 +111,18 @@ fn run() -> Result<(), Error> {
             .map_err(|_| Error::Unavailable)?
             .block_on(deployment.renew());
     }
+    if args.len() == 1 && args[0] == "--telemetry-probe" {
+        deployment
+            .service
+            .verify(&std::env::current_exe()?)
+            .map_err(|_| Error::Identity)?;
+        println!(
+            "{}",
+            serde_json::to_string(&agent_service::telemetry_probe()?)
+                .map_err(|_| Error::Protocol)?
+        );
+        return Ok(());
+    }
     let request = match args.as_slice() {
         [arg] if arg == "--query" => Some(Request::Tasks { after: None }),
         [arg] if arg == "--service-status" => Some(Request::ServiceStatus {}),

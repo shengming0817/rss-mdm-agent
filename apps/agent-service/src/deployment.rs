@@ -443,6 +443,7 @@ impl Deployment {
         use wire::Capability as C;
         let mut values = vec![
             C::InventoryCollectionV1,
+            C::TelemetryCollectV1,
             C::TaskExecuteV1,
             C::MdmEnrollmentV1,
         ];

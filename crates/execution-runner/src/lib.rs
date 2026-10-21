@@ -8,7 +8,9 @@ mod materialize;
 /// Controlled osquery invocation from an immutable template artifact and literal parameters.
 pub mod osquery;
 mod output;
+mod periodic;
 mod runner;
+pub use periodic::PeriodicRunner;
 /// Software materialization and independent ecosystem facts.
 pub mod software;
 /// Protected execution-owned artifact publication.

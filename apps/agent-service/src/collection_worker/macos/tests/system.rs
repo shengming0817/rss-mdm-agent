@@ -74,7 +74,7 @@ fn tool_authorization_is_bound_to_recipe_and_never_enables_online_update() {
         ("sh", vec!["-c".into(), "true".into()], false),
     ] {
         assert_eq!(
-            tool::allowed(&q.definition, name, &args, &input.task.execution),
+            tool::allowed(&q.definition, name, &args, &input.read.execution),
             allowed
         );
     }
@@ -146,7 +146,7 @@ fn system_user_results_bind_generated_uid_without_rewriting_software_identity() 
         section: S::SecureToken,
     });
     let input = input(q.clone());
-    let guid = input.task.execution.generated_uid.as_deref().unwrap();
+    let guid = input.read.execution.generated_uid.as_deref().unwrap();
     let mut result = failure(&q, Status::Partial, 100);
     result
         .rows

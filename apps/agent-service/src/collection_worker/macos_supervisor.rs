@@ -243,7 +243,7 @@ pub(super) fn query(
     let allowance = remaining
         .min(Duration::from_secs(q.budget.timeout_seconds.into()))
         .min(Duration::from_secs(
-            u64::try_from(input.task.deadline.saturating_sub(now()?)).unwrap_or(0),
+            u64::try_from(input.read.deadline.saturating_sub(now()?)).unwrap_or(0),
         ));
     if allowance <= CLEANUP {
         return Ok(failure(q, w::NativeQueryStatus::Timeout, now()?));
@@ -537,7 +537,7 @@ fn run_tool(
             observed: 0,
         });
     }
-    if !super::macos::tool::allowed(&query.definition, name, args, &input.task.execution) {
+    if !super::macos::tool::allowed(&query.definition, name, args, &input.read.execution) {
         return Err(Error::Untrusted);
     }
     let tool = input.tools.get(name).ok_or(Error::Unavailable)?;
@@ -747,7 +747,7 @@ mod tests {
             execution_runner::staging::read_worker_input(Path::new("/dev/fd/199"), 256 * 1024)
                 .unwrap();
         let input: Input = serde_json::from_slice(&material).unwrap();
-        let q = &input.task.plan.spec().queries["items"];
+        let q = &input.read.plan.spec().queries["items"];
         if mode == "broker_read_hang" {
             begin_read().unwrap();
             let _bytes = std::fs::read("/System/Library/CoreServices/SystemVersion.plist").unwrap();
@@ -851,7 +851,7 @@ mod tests {
         nonblocking(writer.as_raw_fd()).unwrap();
         send(&mut writer, &material, work_until).unwrap();
         drop(writer);
-        let q = &input.task.plan.spec().queries["items"];
+        let q = &input.read.plan.spec().queries["items"];
         let result = supervise(
             owner,
             channel,
@@ -944,7 +944,7 @@ mod tests {
             let mut input = macos::test_input(w::NativeQueryDefinition::System {
                 query: query.clone(),
             });
-            for name in macos::tool::required(&input.task.plan) {
+            for name in macos::tool::required(&input.read.plan) {
                 let path = Path::new(macos::tool::path(name).unwrap());
                 if path.exists() {
                     input
@@ -952,7 +952,7 @@ mod tests {
                         .insert(name.into(), crate::backend::plan::pin(path).unwrap());
                 }
             }
-            let q = input.task.plan.spec().queries["items"].clone();
+            let q = input.read.plan.spec().queries["items"].clone();
             let (result, observed) = broker_input("broker", 1024 * 1024, input).unwrap();
             eprintln!(
                 "host {:?}: {:?}; rows={}; raw={observed}",
@@ -1079,8 +1079,8 @@ mod tests {
         let input = macos::test_input(w::NativeQueryDefinition::MacosHardware {
             section: w::MacosHardwareSection::Disks,
         });
-        let d = &input.task.plan.spec().queries["items"].definition;
-        let binding = &input.task.execution;
+        let d = &input.read.plan.spec().queries["items"].definition;
+        let binding = &input.read.execution;
         assert!(!allowed(d, "sh", &["-c".into(), "true".into()], binding));
         assert!(!allowed(
             d,
