@@ -148,6 +148,9 @@ def main():
     user = pwd.getpwuid(uid)
     desktop = Path(user.pw_dir) / 'Library/Application Support/com.rss.mdmagent'
     helper = Path(user.pw_dir) / 'Library/Application Support/RSS MDM Agent/helper'
+    args.package = args.package.resolve(strict=True)
+    if any(args.package.is_relative_to(path.resolve()) for path in [BASE, desktop, helper]):
+        raise RuntimeError('The installation package must be outside every directory being cleared')
     app = Path('/Applications/RSS MDM Agent.app')
     if not app.is_symlink() or not app.resolve().is_relative_to(BASE / 'versions'):
         raise RuntimeError('The desktop entry is not owned by this installation')
