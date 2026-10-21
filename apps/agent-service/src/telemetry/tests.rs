@@ -251,10 +251,6 @@ fn network_evidence(
     bytes: u64,
     complete: bool,
 ) -> ProcessEvidence {
-    use sha2::{Digest as _, Sha256};
-    let w::TelemetryCollector::Native { plan, .. } = &c.collector else {
-        unreachable!()
-    };
     let rows = if complete {
         vec![serde_json::from_value(
             serde_json::json!({"id":"en0","received_bytes":bytes.to_string(),"sent_bytes":"900"}),
@@ -262,6 +258,18 @@ fn network_evidence(
         .unwrap()]
     } else {
         vec![]
+    };
+    native_evidence(c, at, rows, complete)
+}
+fn native_evidence(
+    c: &w::TelemetryConfiguration,
+    at: i64,
+    rows: Vec<BTreeMap<String, serde_json::Value>>,
+    complete: bool,
+) -> ProcessEvidence {
+    use sha2::{Digest as _, Sha256};
+    let w::TelemetryCollector::Native { plan, .. } = &c.collector else {
+        unreachable!()
     };
     let result = w::NativeCollectionResult {
         plan_digest: plan.digest(),
@@ -434,4 +442,75 @@ async fn signed_native_network_mapping_normalizes_two_observations_and_preserves
         batch.observations[2].values[&key],
         w::TelemetryReading::Failed { .. }
     ));
+}
+
+#[tokio::test]
+async fn native_memory_version_withdrawal_survives_restart_and_preserves_upload() {
+    let server = protocol::Server::tls().await;
+    let root = protocol::Root::new();
+    server.time.set(timestamp().unwrap() / 1_000_000);
+    let mut client = server.client(&root, agent_client::OpenMode::Create);
+    let r = server.register(&mut client).await;
+    let c = client
+        .verify_telemetry(fixture::native_performance_configuration(&server, &r))
+        .unwrap();
+    let at = timestamp().unwrap();
+    let evidence = native_evidence(
+        c.payload(),
+        at,
+        vec![serde_json::from_value(
+            serde_json::json!({"total_bytes":"1024","available_bytes":"512"}),
+        )
+        .unwrap()],
+        true,
+    );
+    let mapped = mapping::readings(c.payload(), &evidence, at).unwrap();
+    assert!(matches!(
+        mapped[&c.payload().fields[0].key],
+        w::TelemetryReading::Valid {
+            value: w::Scalar::Integer(1024),
+            interval_start: None
+        }
+    ));
+    let mut t = Telemetry::open(&client).unwrap();
+    t.install(c.clone()).unwrap();
+    t.spool.append(&c, at, mapped, "boot").unwrap();
+    let current = w::TelemetryDirectory {
+        assignments: vec![w::TelemetryAssignment {
+            policy: c.payload().policy,
+            version: c.payload().policy_version,
+            supported: true,
+        }],
+    };
+    t.apply(&Action::Directory, Ok(Event::Directory(current)))
+        .unwrap();
+    drop(t);
+    let mut t = Telemetry::open(&client).unwrap();
+    assert_eq!(t.slots.len(), 1, "current exact version survives restart");
+    let original = t.spool.pending(at / 1_000_000, false).unwrap().unwrap();
+    let next = w::TelemetryDirectory {
+        assignments: vec![w::TelemetryAssignment {
+            policy: c.payload().policy,
+            version: uuid::Uuid::new_v4(),
+            supported: true,
+        }],
+    };
+    t.apply(&Action::Directory, Ok(Event::Directory(next)))
+        .unwrap();
+    assert!(t.slots.is_empty());
+    drop(t); // V2 is not fetched; the V1 signature and lease are still valid.
+    assert!(client.verify_telemetry(c.signed().clone()).is_ok());
+    let t = Telemetry::open(&client).unwrap();
+    assert!(
+        t.slots.is_empty(),
+        "withdrawn native V1 cannot resume execution"
+    );
+    assert!(t.spool.configurations().unwrap().is_empty());
+    let preserved = t.spool.pending(at / 1_000_000, false).unwrap().unwrap();
+    assert_eq!(preserved.id(), original.id());
+    assert_eq!(
+        preserved.bytes(),
+        original.bytes(),
+        "history is still uploadable"
+    );
 }

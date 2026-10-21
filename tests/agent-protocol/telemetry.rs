@@ -287,7 +287,7 @@ pub fn native_performance_configuration(
                 counter_normalization: None,
                 query: "memory".into(),
                 mapping: TelemetryValueMapping {
-                    pointer: "/total_bytes".into(),
+                    pointer: "/0/total_bytes".into(),
                     conversion: TelemetryConversion::Integer,
                     columns: Default::default(),
                 },

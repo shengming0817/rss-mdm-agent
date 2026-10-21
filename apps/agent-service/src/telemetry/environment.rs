@@ -30,6 +30,8 @@ impl Environment {
     pub fn new() -> Self {
         Self {
             #[cfg(target_os = "macos")]
+            // SAFETY: the fixed C shim returns a retained process-local monitor;
+            // this owner keeps the handle alive until its single matching stop.
             monitor: unsafe { rss_telemetry_environment_new() } as usize,
             next: Instant::now(),
             evidence: Evidence::default(),
@@ -74,6 +76,7 @@ fn observe(handle: usize) -> Evidence {
 #[cfg(windows)]
 fn observe() -> Evidence {
     use windows_sys::Win32::System::Power::{GetSystemPowerStatus, SYSTEM_POWER_STATUS};
+    // SAFETY: SYSTEM_POWER_STATUS contains only integer fields, all valid at zero.
     let mut status = unsafe { std::mem::zeroed::<SYSTEM_POWER_STATUS>() };
     // SAFETY: writable fixed-size OS structure; no pointers retained by the API.
     let known = unsafe { GetSystemPowerStatus(&mut status) } != 0;
@@ -114,11 +117,16 @@ fn windows_cost() -> Option<bool> {
     let (tx, rx) = std::sync::mpsc::channel();
     *query = Some(rx);
     std::thread::spawn(move || {
+        // SAFETY: COM initialization, interface calls and destruction stay on this
+        // dedicated thread. Interfaces are dropped before the apartment guard;
+        // GetCost receives a live initialized output and no borrowed pointers escape.
         let value = (|| unsafe {
             CoInitializeEx(None, COINIT_MULTITHREADED).ok().ok()?;
             struct Apartment;
             impl Drop for Apartment {
                 fn drop(&mut self) {
+                    // SAFETY: balances successful CoInitializeEx on this same
+                    // thread after the interfaces have been dropped.
                     unsafe {
                         CoUninitialize();
                     }
@@ -147,6 +155,9 @@ fn observe() -> Evidence {
 impl Drop for Environment {
     fn drop(&mut self) {
         #[cfg(target_os = "macos")]
+        // SAFETY: this is the unique matching release of the retained shim handle.
+        // No Rust observer can borrow self during Drop; the shim cancels the monitor,
+        // and its weak callback reference cannot outlive the Objective-C owner.
         unsafe {
             rss_telemetry_environment_stop(self.monitor as *mut _);
         }

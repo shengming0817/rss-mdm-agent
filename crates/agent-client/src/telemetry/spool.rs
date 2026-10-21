@@ -286,18 +286,21 @@ impl Spool {
     ) -> Result<(), Error> {
         let tx = self.conn.transaction()?;
         let keys = {
-            let mut q = tx.prepare("SELECT policy FROM configurations")?;
+            let mut q = tx.prepare("SELECT policy,body FROM configurations")?;
             let rows = q
-                .query_map([], |r| r.get::<_, String>(0))?
+                .query_map([], |r| {
+                    Ok((r.get::<_, String>(0)?, r.get::<_, Vec<u8>>(1)?))
+                })?
                 .collect::<Result<Vec<_>, _>>()?;
             rows
         };
-        for key in keys {
-            if !directory
-                .assignments
-                .iter()
-                .any(|a| a.supported && a.policy.to_string() == key)
-            {
+        for (key, body) in keys {
+            let signed: w::SignedTelemetryConfiguration = decode(&body)?;
+            if !directory.assignments.iter().any(|a| {
+                a.supported
+                    && a.policy.to_string() == key
+                    && a.version == signed.configuration.policy_version
+            }) {
                 tx.execute("DELETE FROM configurations WHERE policy=?1", [key])?;
             }
         }

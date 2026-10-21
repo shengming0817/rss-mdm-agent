@@ -24,6 +24,8 @@ pub(super) fn boot() -> Result<String, Error> {
         .clone())
 }
 pub(super) fn cpu() -> Result<Cpu, Error> {
+    // SAFETY: these APIs retain no pointers; three initialized FILETIME outputs stay
+    // writable for the call and are read only after GetSystemTimes succeeds.
     unsafe {
         // GetSystemTimes covers one processor group; never mislabel a partial group as device-wide.
         if GetActiveProcessorGroupCount() != 1 {
@@ -53,6 +55,8 @@ pub(super) fn cpu() -> Result<Cpu, Error> {
     }
 }
 pub(super) fn memory() -> Result<(u64, u64), Error> {
+    // SAFETY: MEMORYSTATUSEX is a plain C structure, zero-initialized with its
+    // required byte length. The API writes within it and retains no reference.
     unsafe {
         let mut memory: MEMORYSTATUSEX = std::mem::zeroed();
         memory.dwLength = std::mem::size_of::<MEMORYSTATUSEX>() as u32;
@@ -66,6 +70,9 @@ pub(super) fn memory() -> Result<(u64, u64), Error> {
     }
 }
 pub(super) fn interfaces() -> Result<BTreeMap<String, Traffic>, Error> {
+    // SAFETY: successful GetIfTable2 supplies one initialized, aligned OS allocation
+    // containing NumEntries rows. The Table guard owns it throughout slice iteration;
+    // no row reference escapes, and the guard frees it exactly once on every exit.
     unsafe {
         let mut table = std::ptr::null_mut();
         if GetIfTable2(&mut table) != 0 || table.is_null() {
@@ -74,6 +81,7 @@ pub(super) fn interfaces() -> Result<BTreeMap<String, Traffic>, Error> {
         struct Table(*mut MIB_IF_TABLE2);
         impl Drop for Table {
             fn drop(&mut self) {
+                // SAFETY: uniquely owns the successful GetIfTable2 allocation.
                 unsafe {
                     FreeMibTable(self.0.cast());
                 }
@@ -121,6 +129,10 @@ pub(super) fn interfaces() -> Result<BTreeMap<String, Traffic>, Error> {
     }
 }
 pub(super) fn volumes() -> Result<BTreeMap<String, Space>, Error> {
+    // SAFETY: the initialized UTF-16 buffer remains writable at the supplied length.
+    // Successful enumeration returns a terminated volume name used synchronously;
+    // numeric outputs are initialized and no API retains these stack pointers.
+    // The valid enumeration handle is uniquely owned by the Volumes guard.
     unsafe {
         let mut volumes = BTreeMap::new();
         let mut volume = [0u16; 1024];
@@ -131,6 +143,7 @@ pub(super) fn volumes() -> Result<BTreeMap<String, Space>, Error> {
         struct Volumes(windows_sys::Win32::Foundation::HANDLE);
         impl Drop for Volumes {
             fn drop(&mut self) {
+                // SAFETY: closes the successful FindFirstVolumeW handle once.
                 unsafe {
                     FindVolumeClose(self.0);
                 }
