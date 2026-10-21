@@ -454,6 +454,7 @@ test.each([undefined, 12, "   "])(
         .findAll("button")
         .find((b) => b.text() === "策略 policy")!
         .trigger("click");
+      await human.get("textarea").setValue(JSON.stringify("Acme"));
       await human.get("form").trigger("submit");
       expect(human.get('[aria-label="人工执行确认"]').text()).toContain(
         "策略 policy",

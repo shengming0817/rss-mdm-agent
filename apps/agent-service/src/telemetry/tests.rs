@@ -132,6 +132,7 @@ async fn network_classes_rotate_and_lost_response_resolves_original_batch() {
 async fn request_timeout_preserves_batch_through_upload_and_status_retry() {
     let server = protocol::Server::tls().await;
     let root = protocol::Root::new();
+    server.time.set(timestamp().unwrap() / 1_000_000);
     let mut client = server.client(&root, agent_client::OpenMode::Create);
     let r = server.register(&mut client).await;
     let c = client
@@ -144,7 +145,7 @@ async fn request_timeout_preserves_batch_through_upload_and_status_retry() {
     t.spool.freeze_all(&c).unwrap();
     let p = t.spool.pending(at / 1_000_000, false).unwrap().unwrap();
     let id = p.id();
-    let bytes = p.body().to_vec();
+    let bytes = p.bytes();
     t.spool.attempting(&p, at / 1_000_000).unwrap();
     server.data.lock().unwrap().telemetry.timed_out = true;
     let action = Action::Send(p); // first POST
@@ -165,7 +166,7 @@ async fn request_timeout_preserves_batch_through_upload_and_status_retry() {
         .unwrap();
     assert!(p.attempted());
     assert_eq!(p.id(), id);
-    assert_eq!(p.body(), bytes);
+    assert_eq!(p.bytes(), bytes);
     let action = Action::Send(p); // status GET now times out
     let failed = request(&client, &action).await;
     assert!(matches!(
@@ -184,10 +185,16 @@ async fn request_timeout_preserves_batch_through_upload_and_status_retry() {
         .unwrap()
         .unwrap();
     assert_eq!(p.id(), id);
-    assert_eq!(p.body(), bytes);
+    assert_eq!(p.bytes(), bytes);
     let action = Action::Send(p);
     let receipt = request(&client, &action).await.unwrap();
     t.apply(&action, Ok(receipt)).unwrap();
     assert_eq!(t.spool.summary().unwrap().pending, 0);
     assert_eq!(server.data.lock().unwrap().telemetry.uploads.len(), 1);
+    let d = server.data.lock().unwrap();
+    assert_eq!(d.telemetry.upload_attempts.len(), 2);
+    assert_eq!(
+        d.telemetry.upload_attempts[0],
+        d.telemetry.upload_attempts[1]
+    );
 }

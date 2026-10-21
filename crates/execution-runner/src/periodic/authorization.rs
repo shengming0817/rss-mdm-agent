@@ -225,7 +225,7 @@ mod tests {
             tenant: Id::new(id).unwrap(),
             id: Id::new("enterprise").unwrap(),
         };
-        p.request.actor = Id::new(format!("registration:{id}")).unwrap();
+        p.request.actor = ActorId::new(format!("registration:{id}")).unwrap();
         p.request.target.device = DeviceId::new(&c.device_id).unwrap();
         p.request.target.scope = TargetScope::Device {};
         p.request.delegation = None;

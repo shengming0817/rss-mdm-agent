@@ -6,11 +6,15 @@ pub struct State {
     pub receipts: BTreeMap<Uuid, TelemetryReceipt>,
     pub bodies: BTreeMap<Uuid, Value>,
     pub uploads: Vec<Value>,
+    pub upload_attempts: Vec<Value>,
     pub lose_response: bool,
     pub throttled: bool,
     pub timed_out: bool,
 }
 pub fn response(d: &mut Data, path: &str, value: Value) -> Response {
+    if path.ends_with("/batches") {
+        d.telemetry.upload_attempts.push(value.clone());
+    }
     if d.telemetry.timed_out {
         return StatusCode::REQUEST_TIMEOUT.into_response();
     }
