@@ -84,15 +84,22 @@ impl PeriodicRunner {
             return Ok(None);
         };
         let mut records = self.runner.records.lock().map_err(|_| Error::Unavailable)?;
-        let record = records.get(id).ok_or(Error::Unavailable)?;
+        let record = records.get_mut(id).ok_or(Error::Unavailable)?;
         let result = record.facts.lock().map_err(|_| Error::Unavailable)?.clone();
         let Some(result) = result.filter(|v| v.finished && v.quiescent) else {
             return Ok(None);
         };
         let digest = record.plan.digest().clone();
+        // Final capture may precede the owner's last material lease release. Keep the
+        // completed record retryable until retirement succeeds; never strand active on a missing record.
+        drop(record._materials.take());
+        match self.runner.artifacts.retire(&digest) {
+            Ok(()) => (),
+            Err(Error::Conflict) => return Ok(None),
+            Err(error) => return Err(error),
+        }
         records.remove(id);
         drop(records);
-        self.runner.artifacts.retire(&digest)?;
         self.active = None;
         Ok(Some(result))
     }
@@ -137,15 +144,31 @@ mod tests {
             .unwrap()
             .unwrap();
         let mut runner = PeriodicRunner::new().unwrap();
-        let now = fixture.plan.spec().validity.not_before_unix_ms;
-        // Unprivileged mechanics use the private admitted seam; no test grants production authority.
-        runner
-            .start_admitted(fixture.plan.clone(), (*materials).clone(), now)
-            .unwrap();
+        let start_fixture = |runner: &mut PeriodicRunner| {
+            let plan = &fixture.plan;
+            let attempt = AttemptId::new(plan.spec().request.request_id.as_str()).unwrap();
+            // Explicit unprivileged material fixture, just as NativeRunner's OS mechanics tests.
+            // Production registration still requires protected System-owned material.
+            runner.runner.artifacts.entries.lock().unwrap().insert(
+                plan.digest().as_str().into(),
+                std::sync::Arc::new((*materials).clone()),
+            );
+            runner.runner.launch_bounded(
+                plan,
+                &attempt,
+                DispatchAllowance {
+                    deadline_unix_ms: plan.spec().validity.expires_at_unix_ms,
+                    remaining_timeout_ms: 5000,
+                    remaining_output_bytes: 1024,
+                },
+                None,
+            )?;
+            runner.active = Some(attempt);
+            Ok::<_, Error>(())
+        };
+        start_fixture(&mut runner).unwrap();
         assert!(runner.active());
-        assert!(runner
-            .start_admitted(fixture.plan.clone(), (*materials).clone(), now)
-            .is_err());
+        assert!(start_fixture(&mut runner).is_err());
         runner.cancel().unwrap();
         runner.shutdown().unwrap();
         let id = runner.active.clone().unwrap();
@@ -154,14 +177,30 @@ mod tests {
         assert!(runner.take().unwrap().is_none());
         assert!(runner.active());
         facts.lock().unwrap().as_mut().unwrap().quiescent = true;
-        assert!(runner.take().unwrap().is_some());
+        let lease = runner
+            .runner
+            .artifacts
+            .get(fixture.plan.digest().as_str())
+            .unwrap()
+            .unwrap();
+        assert!(runner.take().unwrap().is_none());
+        assert!(runner.active());
+        drop(lease);
+        let take = |runner: &mut PeriodicRunner| {
+            for _ in 0..100 {
+                if let Some(e) = runner.take().unwrap() {
+                    return e;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            panic!("finished owner did not release material lease");
+        };
+        assert!(take(&mut runner).quiescent);
         assert!(runner.take().unwrap().is_none());
         assert!(!runner.active());
-        runner
-            .start_admitted(fixture.plan.clone(), (*materials).clone(), now)
-            .unwrap();
+        start_fixture(&mut runner).unwrap();
         runner.cancel().unwrap();
         runner.shutdown().unwrap();
-        assert!(runner.take().unwrap().is_some());
+        assert!(take(&mut runner).quiescent);
     }
 }

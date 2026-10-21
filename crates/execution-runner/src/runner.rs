@@ -20,7 +20,7 @@ mod progress;
 
 pub(crate) struct Record {
     pub(crate) plan: FrozenExecution,
-    _materials: Option<Arc<Artifacts>>,
+    pub(crate) _materials: Option<Arc<Artifacts>>,
     pub(crate) cancel: Arc<AtomicBool>,
     pub(crate) facts: Arc<Mutex<Option<ProcessEvidence>>>,
     progress: Arc<progress::Progress>,

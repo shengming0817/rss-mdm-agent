@@ -9,6 +9,7 @@ use std::{collections::BTreeMap, path::PathBuf};
 pub(super) struct Collector {
     runner: PeriodicRunner,
     active: Option<Active>,
+    completed: Option<ProcessEvidence>,
 }
 pub(super) struct Active {
     pub configuration: Configuration,
@@ -21,6 +22,7 @@ impl Collector {
         Ok(Self {
             runner: PeriodicRunner::new().map_err(crate::error::app_error)?,
             active: None,
+            completed: None,
         })
     }
     pub fn active(&self) -> bool {
@@ -33,10 +35,26 @@ impl Collector {
         self.runner.cancel().map_err(crate::error::app_error)
     }
     pub fn shutdown(&mut self) -> Result<(), Error> {
-        self.runner.shutdown().map_err(crate::error::app_error)
+        self.runner.shutdown().map_err(crate::error::app_error)?;
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(1);
+        while self.runner.active() {
+            if let Some(evidence) = self.runner.take().map_err(crate::error::app_error)? {
+                self.completed = Some(evidence);
+                break;
+            }
+            if std::time::Instant::now() >= until {
+                return Err(Error::Unavailable);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        Ok(())
     }
     pub fn take(&mut self) -> Result<Option<(Active, ProcessEvidence)>, Error> {
-        let Some(evidence) = self.runner.take().map_err(crate::error::app_error)? else {
+        let evidence = match self.completed.take() {
+            Some(value) => Some(value),
+            None => self.runner.take().map_err(crate::error::app_error)?,
+        };
+        let Some(evidence) = evidence else {
             return Ok(None);
         };
         let active = self.active.take().ok_or(Error::Storage)?;
