@@ -8,6 +8,7 @@ publish = false
 
 [dependencies]
 version-compare = "=0.2.1"
+httpdate = "=1.0.3"
 ring = "=0.17.14"
 zeroize.workspace = true
 rustls.workspace = true

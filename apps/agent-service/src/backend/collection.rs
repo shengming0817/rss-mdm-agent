@@ -106,7 +106,7 @@ pub(crate) fn compile(
         .ok_or(Error::Clock)?;
     let image = plan::pin(&std::env::current_exe()?)?;
     let input = crate::collection_worker::Input {
-        task: payload.clone(),
+        read: payload.clone().into(),
         finish_by_unix_ms,
         image_sha256: image.artifact.sha256.clone(),
         run_as: run_as.clone(),
@@ -224,7 +224,7 @@ pub(crate) fn verify_input(
     task: &w::CollectionTaskSpec,
 ) -> Result<(), Error> {
     let input = crate::collection_worker::Input {
-        task: task.clone(),
+        read: task.clone().into(),
         finish_by_unix_ms: plan
             .spec()
             .validity

@@ -11,6 +11,8 @@ publish = false
 test-support = []
 
 [dependencies]
+agent-client = { path = "../agent-client" }
+rss-mdm-agent-wire.workspace = true
 fs2 = "=0.4.3"
 script-plan = { path = "../script-plan" }
 sqlparser = { version = "=0.63.0", default-features = false, features = ["std", "visitor"] }

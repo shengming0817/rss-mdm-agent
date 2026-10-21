@@ -252,17 +252,14 @@ export function operationProjection(
         form.specialized ? "SettingsForm" : "OperationApproval",
         form.fields,
       );
-      snapshot.presentation.title =
-        typeof action.directory.selfService.presentation.displayName ===
-        "string"
-          ? action.directory.selfService.presentation.displayName
-          : "设备操作";
+      snapshot.presentation.title = presentationText(
+        action.directory.selfService.presentation.displayName,
+        `策略 ${action.directory.policyId}`,
+      );
       snapshot.presentation.source = `登记策略 ${action.choice.policyId} / ${action.choice.policyRevision}`;
-      snapshot.presentation.impact =
-        typeof action.directory.selfService.presentation.sideEffects ===
-        "string"
-          ? action.directory.selfService.presentation.sideEffects
-          : "";
+      snapshot.presentation.impact = presentationText(
+        action.directory.selfService.presentation.sideEffects,
+      );
       snapshot.reason ??= "当前系统设置未由此策略读取；建议不是当前状态。";
       snapshot.approval.elevation =
         action.directory.task.kind !== "enrollment" &&
@@ -287,7 +284,7 @@ export function operationProjection(
         action.directory.task.kind === "enrollment"
           ? `原生 MDM 注册：${action.directory.task.organization}`
           : `资源：${action.directory.task.resource.id} / ${action.directory.task.resource.version}`,
-        `前置条件：${action.directory.selfService.presentation.prerequisites}`,
+        `前置条件：${presentationText(action.directory.selfService.presentation.prerequisites)}`,
       ];
       if (form.blocked) {
         snapshot.allowed = snapshot.allowed.filter((a) => a !== "submit");
@@ -316,4 +313,8 @@ export function operationProjection(
     );
   }
   return { snapshot, presentation: ui, bindings };
+}
+
+function presentationText(value: unknown, fallback = "未提供"): string {
+  return typeof value === "string" && value.trim() ? value.trim() : fallback;
 }

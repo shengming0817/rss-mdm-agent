@@ -2,6 +2,7 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 pub mod protocol;
+pub mod telemetry;
 
 use rss_mdm_agent_wire::runtime::Secret;
 mod credential_escrow;

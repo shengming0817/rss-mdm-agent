@@ -30,6 +30,8 @@ pub enum Readiness {
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ServiceStatus {
+    /// Bounded local telemetry health; diagnostic values grant no authority.
+    pub telemetry: Option<serde_json::Value>,
     /// Actual binary build version.
     pub build: String,
     /// Actual local IPC version.
@@ -45,6 +47,7 @@ impl ServiceStatus {
         Self {
             build: env!("CARGO_PKG_VERSION").into(),
             protocol: IPC_VERSION,
+            telemetry: None,
             platform: std::env::consts::OS.into(),
             readiness,
         }

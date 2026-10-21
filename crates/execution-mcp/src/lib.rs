@@ -154,8 +154,26 @@ pub fn policy_tool(
     }
     object.insert("additionalProperties".into(), false.into());
     project_parameter_schema(&mut schema)?;
+    let presentation = &item.self_service.presentation;
+    let text = |key: &str| {
+        presentation
+            .get(key)
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("")
+    };
+    let keywords = presentation
+        .get("keywords")
+        .and_then(serde_json::Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
+        .unwrap_or_default();
     Ok(
-        serde_json::json!({"name": policy_tool_name(item), "description": serde_json::to_string(&item.self_service.presentation).map_err(|_| ServiceError::Denied)?, "inputSchema": schema, "annotations": {"readOnlyHint": item.self_service.risk_level == 1 && matches!(item.task, rss_mdm_agent_wire::runtime::SelfServiceTask::Script {..}), "openWorldHint": false, "idempotentHint": false}}),
+        serde_json::json!({"name": policy_tool_name(item), "description": format!("{}\n{}\nCategory: {}\nKeywords: {}\nPrerequisites: {}\nSide effects: {}", text("displayName"), text("description"), text("category"), keywords, text("prerequisites"), text("sideEffects")), "inputSchema": schema, "annotations": {"readOnlyHint": item.self_service.risk_level == 1 && matches!(item.task, rss_mdm_agent_wire::runtime::SelfServiceTask::Script {..}), "openWorldHint": false, "idempotentHint": false}}),
     )
 }
 

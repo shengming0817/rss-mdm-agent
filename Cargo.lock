@@ -55,6 +55,7 @@ dependencies = [
  "flate2",
  "fs2",
  "futures-util",
+ "httpdate",
  "libc",
  "platform-private-storage",
  "reqwest",
@@ -100,6 +101,7 @@ dependencies = [
  "execution-runner",
  "execution-sqlite",
  "fs2",
+ "futures-util",
  "installation-security",
  "jsonschema",
  "libc",
@@ -122,6 +124,7 @@ dependencies = [
  "sha2",
  "spki",
  "thiserror 2.0.20",
+ "time",
  "tokio",
  "tokio-rustls",
  "url",
@@ -1324,6 +1327,7 @@ dependencies = [
 name = "execution-runner"
 version = "0.1.0"
 dependencies = [
+ "agent-client",
  "cc",
  "execution-admission",
  "execution-app",
@@ -1339,6 +1343,7 @@ dependencies = [
  "native-process",
  "platform-private-storage",
  "plist",
+ "rss-mdm-agent-wire",
  "rusqlite",
  "script-plan",
  "serde",

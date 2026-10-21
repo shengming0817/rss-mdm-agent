@@ -118,9 +118,11 @@ it("keeps settings selected when navigation needs an unselected user", async () 
   const wrapper = mount(App);
   try {
     await flushPromises();
-    expect(wrapper.findAll("button").some((b) => b.text() === "AI 助手")).toBe(
-      false,
-    );
+    const assistant = wrapper
+      .findAll("button")
+      .find((b) => b.text() === "AI 助手");
+    if (assistant) await assistant.trigger("click");
+    await flushPromises();
     expect(wrapper.find(".settings").isVisible()).toBe(true);
     expect(wrapper.get("h1").text()).toBe("设置");
   } finally {

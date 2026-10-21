@@ -30,6 +30,7 @@ fn partial_file_read_failure_accounts_observed_bytes() {
 pub(super) fn query(definition: w::NativeQueryDefinition) -> w::NativeQuery {
     let cardinality = match &definition {
         w::NativeQueryDefinition::MacosHardware { section } => section.cardinality(),
+        w::NativeQueryDefinition::MacosPerformance { section } => section.cardinality(),
         w::NativeQueryDefinition::System { query } => query.cardinality(),
         _ => w::NativeCardinality::List,
     };
@@ -69,7 +70,7 @@ pub(super) fn input(q: w::NativeQuery) -> Input {
         }
     };
     let task = w::CollectionTaskSpec {
-        wire_version: rss_mdm_agent_wire::runtime::WIRE_VERSION,
+        wire_version: w::COLLECTION_TASK_VERSION,
         tenant_id: id,
         device_id: "fixture-device".into(),
         platform: w::TaskPlatform::Macos,
@@ -105,7 +106,7 @@ pub(super) fn input(q: w::NativeQuery) -> Input {
         plan,
     };
     Input {
-        task,
+        read: task.into(),
         finish_by_unix_ms: (time as u64 + 20) * 1000,
         image_sha256: Digest::new("00".repeat(32)).unwrap(),
         run_as: RunAs::System {
@@ -276,9 +277,9 @@ fn signed_generated_uid_is_checked_against_the_local_directory() {
         account,
         session: Id::new("identity-boundary-test").unwrap(),
     };
-    input.task.execution.generated_uid = Some(observed);
+    input.read.execution.generated_uid = Some(observed);
     super::super::verify_identity_binding(&input).unwrap();
-    input.task.execution.generated_uid = Some(uuid::Uuid::new_v4().to_string());
+    input.read.execution.generated_uid = Some(uuid::Uuid::new_v4().to_string());
     assert_eq!(
         super::super::verify_identity_binding(&input),
         Err(Error::Untrusted)
