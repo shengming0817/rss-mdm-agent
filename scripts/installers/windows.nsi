@@ -7,7 +7,7 @@ InstallDir "$PROGRAMFILES64\RSS MDM Agent"
 ShowInstDetails show
 !include "LogicLib.nsh"
 !include "FileFunc.nsh"
-Var Profile
+Var InstallProfile
 Var Result
 Var RootPin
 Var VersionsPin
@@ -255,7 +255,7 @@ Function .onInit
     Abort
   ${EndIf}
   ${GetParameters} $0
-  ${GetOptions} $0 "/PROFILE=" $Profile
+  ${GetOptions} $0 "/PROFILE=" $InstallProfile
 FunctionEnd
 Section "Install"
   ${If} $INSTDIR != "$PROGRAMFILES64\RSS MDM Agent"
@@ -288,8 +288,8 @@ Section "Install"
   Call PinnedImage
   Pop $ImagePin
   StrCpy $Invocation '"$INSTDIR\versions\@ID@\rss-execution-service.exe" --installation apply --package-path "$EXEPATH" --candidate "$INSTDIR\versions\@ID@\candidate.json"'
-  ${If} $Profile != ""
-    StrCpy $Invocation '$Invocation --profile "$Profile"'
+  ${If} $InstallProfile != ""
+    StrCpy $Invocation '$Invocation --profile "$InstallProfile"'
   ${EndIf}
   ExecWait $Invocation $Result
   System::Call 'kernel32::CloseHandle(p $ImagePin)'
