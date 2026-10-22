@@ -26,7 +26,7 @@ pnpm desktop:build       # 自动打包 Node/依赖、stage、构建 .app
 
 高级诊断可用 `RSS_AI_HOST_RUNTIME=/absolute/verified/ai-host-runtime pnpm dev` 显式选择并验证运行包。打包直接复用源 lock 的外部依赖图，并绑定本地 tarball 的完整性摘要；冻结安装优先使用缓存，缺失的包或策略检查 metadata 可联网补齐，不要求不同 pnpm 版本共享缓存格式，也不重新解析依赖。缺依赖先运行 `pnpm install --frozen-lockfile`；构建失败查看命令输出；运行包损坏时删除开发 runtime 目录后重试。准备进程异常中止留下锁时，确认没有其他准备进程后删除 `.cache/desktop-dev.lock`。开发包不进入发布 stage；release 忽略该 override，并校验实际运行包完整性。
 
-普通 Cargo/schema 检查使用基础 Tauri 配置，不依赖运行包；发布构建显式合并 `tauri.bundle.conf.json`。打包脚本先校验固定 Node archive、锁定部署依赖、真实 SDK 生命周期，再将通过的当前候选复制到被忽略的 resources 目录。macOS bundle 通过 `bundle.macOS.files` 整目录复制 runtime，以保留 pnpm 依赖符号链接；普通 resources 文件枚举会漏掉这些链接，不能用于该 runtime。发布应用只从自身资源目录启动 AI Host。缺失或不可用的 AI 不影响 Rust 任务读取，也不会降级为虚构对话。
+普通 Cargo/schema 检查使用基础 Tauri 配置，不依赖运行包；macOS 发布构建显式合并 `tauri.bundle.conf.json`，Windows 显式合并 `tauri.runtime.windows.conf.json`。自动加载的 `tauri.windows.conf.json` 仅保留平台窗口设置，不要求尚未生成的运行资源，避免 schema/验收辅助程序与运行包生成形成循环依赖。打包脚本先校验固定 Node archive、锁定部署依赖、真实 SDK 生命周期，再将通过的当前候选复制到被忽略的 resources 目录。macOS bundle 通过 `bundle.macOS.files` 整目录复制 runtime，以保留 pnpm 依赖符号链接；普通 resources 文件枚举会漏掉这些链接，不能用于该 runtime。发布应用只从自身资源目录启动 AI Host。缺失或不可用的 AI 不影响 Rust 任务读取，也不会降级为虚构对话。
 
 第一次启动在应用数据目录 `desktop` 创建私有用户注册表、Host 路径配置和 AI 库；执行 journal 只属于系统服务。旧 `test-users` 数据原样保留，不自动迁移。用户在底部“设置”选择测试名称，再保存个人连接后单独测试；无凭据也能进入空白对话、保留草稿和读取已有历史。旧 `s1/client.json` 不读取、不迁移。AI 会话协议和数据库格式升级后明确拒绝旧格式，保留旧文件，不自动迁移或重建；只有显式 `native-e2e` 测试构建支持 `--test-data-dir <新的绝对目录>`，旧历史不能直接导入。连接来源、版本和认证约束见 [AI Host](../../apps/ai-host/README.md)。
 

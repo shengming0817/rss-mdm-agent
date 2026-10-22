@@ -226,7 +226,7 @@ pnpm(
     JSON.stringify({ build: { beforeBuildCommand: "pnpm -w build" } }),
     "--config",
     windows
-      ? "src-tauri/tauri.windows.conf.json"
+      ? "src-tauri/tauri.runtime.windows.conf.json"
       : "src-tauri/tauri.bundle.conf.json",
     ...(windows ? ["--no-bundle"] : []),
   ],

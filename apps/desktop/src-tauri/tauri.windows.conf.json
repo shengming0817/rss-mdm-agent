@@ -15,7 +15,6 @@
     ]
   },
   "bundle": {
-    "active": false,
-    "resources": { "resources/ai-host-runtime": "ai-host-runtime" }
+    "active": false
   }
 }

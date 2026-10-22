@@ -1,0 +1,7 @@
+{
+  "bundle": {
+    "resources": {
+      "resources/ai-host-runtime": "ai-host-runtime"
+    }
+  }
+}
