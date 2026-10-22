@@ -230,7 +230,12 @@ impl DeviceKey {
                 return Err(denied());
             }
             let ace = &*raw.cast::<ACCESS_ALLOWED_ACE>();
-            if ace.Header.AceType != 0 || ace.Header.AceFlags != 0 || ace.Mask != 0x10000000 {
+            // CNG may retain GENERIC_ALL together with redundant standard/generic rights.
+            // ref: Microsoft Generic Access Rights: GENERIC_ALL grants all possible rights.
+            if ace.Header.AceType != 0
+                || ace.Header.AceFlags != 0
+                || ace.Mask & windows_sys::Win32::Foundation::GENERIC_ALL == 0
+            {
                 return Err(denied());
             }
             let mut system = [0u32; 17];
@@ -490,5 +495,125 @@ impl DeviceKey {
             identities.push((certificates, key));
         }
         Ok(identities)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    struct Cleanup(String);
+    impl Drop for Cleanup {
+        fn drop(&mut self) {
+            // Only this test's fresh name; bypass validation solely to remove a negative fixture.
+            unsafe {
+                let mut provider = 0;
+                if NCryptOpenStorageProvider(&mut provider, MS_KEY_STORAGE_PROVIDER, 0) != 0 {
+                    return;
+                }
+                let mut key = 0;
+                if NCryptOpenKey(
+                    provider,
+                    &mut key,
+                    wide(&self.0).as_ptr(),
+                    0,
+                    NCRYPT_MACHINE_KEY_FLAG | NCRYPT_SILENT_FLAG,
+                ) == 0
+                    && NCryptDeleteKey(key, NCRYPT_SILENT_FLAG) != 0
+                {
+                    NCryptFreeObject(key);
+                }
+                NCryptFreeObject(provider);
+            }
+        }
+    }
+    #[test]
+    #[ignore = "requires a native Windows LocalSystem test process"]
+    fn native_system_key_reopens_signs_and_rejects_additional_principals() {
+        let name = format!(
+            "rss-agent-key-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let _cleanup = Cleanup(name.clone());
+        let key = DeviceKey::create(&name).unwrap();
+        let public = key.public_spki().unwrap();
+        assert!(!public.is_empty());
+        let reopened = DeviceKey::open(&name).unwrap();
+        assert_eq!(public, reopened.public_spki().unwrap());
+        for scheme in [SignatureScheme::Pkcs1Sha256, SignatureScheme::PssSha256] {
+            let message = b"native machine key regression";
+            let digest = Sha256::digest(message);
+            let signature = reopened.sign(scheme, message).unwrap();
+            let pkcs1 = BCRYPT_PKCS1_PADDING_INFO {
+                pszAlgId: BCRYPT_SHA256_ALGORITHM,
+            };
+            let pss = BCRYPT_PSS_PADDING_INFO {
+                pszAlgId: BCRYPT_SHA256_ALGORITHM,
+                cbSalt: 32,
+            };
+            let (padding, flag) = match scheme {
+                SignatureScheme::Pkcs1Sha256 => (
+                    (&pkcs1 as *const BCRYPT_PKCS1_PADDING_INFO).cast(),
+                    NCRYPT_PAD_PKCS1_FLAG,
+                ),
+                SignatureScheme::PssSha256 => (
+                    (&pss as *const BCRYPT_PSS_PADDING_INFO).cast(),
+                    NCRYPT_PAD_PSS_FLAG,
+                ),
+            };
+            assert_eq!(
+                unsafe {
+                    NCryptVerifySignature(
+                        key.key,
+                        padding,
+                        digest.as_ptr(),
+                        32,
+                        signature.as_ptr(),
+                        signature.len() as u32,
+                        flag | NCRYPT_SILENT_FLAG,
+                    )
+                },
+                0
+            );
+            let wrong = Sha256::digest(b"another message");
+            assert_ne!(
+                unsafe {
+                    NCryptVerifySignature(
+                        key.key,
+                        padding,
+                        wrong.as_ptr(),
+                        32,
+                        signature.as_ptr(),
+                        signature.len() as u32,
+                        flag | NCRYPT_SILENT_FLAG,
+                    )
+                },
+                0
+            );
+        }
+        let mut sd = null_mut();
+        assert_ne!(
+            unsafe {
+                windows_sys::Win32::Security::Authorization::ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            wide("D:P(A;;GA;;;SY)(A;;GA;;;BA)").as_ptr(), 1, &mut sd, null_mut())
+            },
+            0
+        );
+        let length = unsafe { GetSecurityDescriptorLength(sd) };
+        let result = property(
+            key.key,
+            NCRYPT_SECURITY_DESCR_PROPERTY,
+            unsafe { std::slice::from_raw_parts(sd.cast(), length as usize) },
+            DACL_SECURITY_INFORMATION,
+        );
+        unsafe {
+            windows_sys::Win32::Foundation::LocalFree(sd);
+        }
+        result.unwrap();
+        assert!(key.validate().is_err());
+        assert!(DeviceKey::open(&name).is_err());
     }
 }
