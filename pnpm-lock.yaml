@@ -150,6 +150,9 @@ importers:
       '@rss-mdm-agent/ai-contract':
         specifier: workspace:*
         version: link:../../ai-contract
+      '@rss-mdm-agent/platform-private-storage':
+        specifier: workspace:*
+        version: link:../../platform-private-storage
       zod:
         specifier: 4.6.5
         version: 4.6.5

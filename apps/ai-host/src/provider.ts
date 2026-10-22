@@ -1,9 +1,13 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { WorkerFactory } from "@rss-mdm-agent/ai-host/worker";
 import { startEgressProxy, type EgressProxy } from "./egress.js";
-import { readPrivateFile } from "@rss-mdm-agent/platform-private-storage";
+import {
+  readPrivateFile,
+  privateDirectory,
+  createPrivateFile,
+} from "@rss-mdm-agent/platform-private-storage";
 import { resolveConnection, type ProviderActivation } from "./connection.js";
 /** Activated worker composition; this is the sole credential/SDK loading entry. */
 export const createProvider: WorkerFactory = async ({
@@ -31,7 +35,7 @@ export const createProvider: WorkerFactory = async ({
     .update(JSON.stringify(configuration.namespace))
     .digest("hex");
   const root = join(local.nativeDirectory, "contexts", owner);
-  await mkdir(root, { recursive: true, mode: 0o700 });
+  await privateDirectory(root);
   const key = (nativeId: string) =>
     join(root, createHash("sha256").update(nativeId).digest("hex") + ".json");
   const contextId = previous
@@ -41,7 +45,7 @@ export const createProvider: WorkerFactory = async ({
   if (typeof contextId !== "string" || !/^[a-f0-9-]{36}$/.test(contextId))
     throw new Error("context_unavailable");
   const directory = join(root, contextId);
-  await mkdir(directory, { recursive: true, mode: 0o700 });
+  await privateDirectory(directory);
   const egress = connection.apiUrl
     ? await startEgressProxy(connection.apiUrl)
     : undefined;
@@ -65,12 +69,14 @@ export const createProvider: WorkerFactory = async ({
   ): import("@rss-mdm-agent/ai-contract/ports").ProviderAgentPort => ({
     async createSession(...args) {
       const result = await port.createSession(...args);
-      if (result.ok)
+      if (result.ok) {
+        await createPrivateFile(key(result.value.binding.nativeSessionId));
         await writeFile(
           key(result.value.binding.nativeSessionId),
           JSON.stringify({ contextId }),
-          { flag: "wx", mode: 0o600 },
+          { flag: "r+" },
         );
+      }
       return result;
     },
     ...(port.resume ? { resume: port.resume.bind(port) } : {}),
