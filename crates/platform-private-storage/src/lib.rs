@@ -160,7 +160,7 @@ pub fn validate_sqlite_file(path: &Path) -> io::Result<()> {
     #[cfg(unix)]
     unix::sqlite_file(path)?;
     #[cfg(windows)]
-    validate(path)?;
+    win::sqlite_file(path)?;
     Ok(())
 }
 

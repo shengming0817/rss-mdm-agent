@@ -27,6 +27,7 @@ thiserror.workspace = true
 
 [dev-dependencies]
 execution-sqlite = { path = "../execution-sqlite", features = ["test-support"] }
+platform-private-storage = { path = "../platform-private-storage" }
 rusqlite.workspace = true
 
 [[example]]

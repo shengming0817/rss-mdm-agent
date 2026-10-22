@@ -94,10 +94,7 @@ impl Store {
             return Err(Error::Busy);
         }
         conn.close().map_err(|_| Error::Storage)?;
-        platform_private_storage::open_existing(&staged)
-            .and_then(|f| f.sync_all())
-            .map_err(|_| Error::Storage)?;
-        // A hard link is an atomic no-replace publication on the same filesystem.
+        // The storage owner flushes with the platform's required access before publication.
         platform_private_storage::publish_new(&staged, path).map_err(|_| Error::Storage)?;
         sync_parent(path)?;
         std::fs::remove_file(&staged).map_err(|_| Error::Storage)?;
