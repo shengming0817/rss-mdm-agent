@@ -12,6 +12,30 @@ mod unix;
 #[cfg(windows)]
 mod win;
 
+/// Require the literal canonical location, allowing Windows' extended-length prefix only.
+/// Symlink/reparse aliases and other path spelling differences remain rejected.
+pub fn is_canonical_path(path: &Path) -> io::Result<bool> {
+    if !path.is_absolute() {
+        return Ok(false);
+    }
+    let canonical = path.canonicalize()?;
+    if canonical == path {
+        return Ok(true);
+    }
+    #[cfg(windows)]
+    {
+        Ok(canonical
+            .as_os_str()
+            .as_encoded_bytes()
+            .strip_prefix(br"\\?\")
+            == Some(path.as_os_str().as_encoded_bytes()))
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(false)
+    }
+}
+
 /// A validated private directory. Relative operations cannot select another directory.
 pub struct PrivateDirectory {
     handle: File,

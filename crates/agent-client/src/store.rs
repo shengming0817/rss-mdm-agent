@@ -34,21 +34,7 @@ pub(crate) fn private(p: &Path) -> Result<(), Error> {
     Ok(())
 }
 pub(crate) fn private_root(root: &Path) -> Result<(), Error> {
-    if !root.is_absolute() {
-        return Err(Error::Storage);
-    }
-    let canonical = root.canonicalize()?;
-    // ref: Rust std::fs::canonicalize: Windows adds an extended-length prefix.
-    // Accept that spelling difference only; resolved aliases still fail closed.
-    let same = canonical == root;
-    #[cfg(windows)]
-    let same = same
-        || canonical
-            .as_os_str()
-            .as_encoded_bytes()
-            .strip_prefix(br"\\?\")
-            == Some(root.as_os_str().as_encoded_bytes());
-    if !same {
+    if !platform_private_storage::is_canonical_path(root)? {
         return Err(Error::Storage);
     }
     private(root)

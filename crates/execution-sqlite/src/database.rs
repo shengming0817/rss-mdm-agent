@@ -260,7 +260,7 @@ fn protected_path(path: &Path, existing: bool) -> Result<(), Error> {
         return Err(Error::Storage);
     }
     let parent = path.parent().ok_or(Error::Storage)?;
-    if parent.canonicalize().map_err(|_| Error::Storage)? != parent {
+    if !platform_private_storage::is_canonical_path(parent).map_err(|_| Error::Storage)? {
         return Err(Error::Storage);
     }
     check_metadata(parent, true)?;
@@ -413,6 +413,8 @@ mod tests {
             .canonicalize()
             .unwrap()
             .join(format!("refresh-inspect-{}", std::process::id()));
+        #[cfg(windows)]
+        let root = std::path::PathBuf::from(root.to_str().unwrap().strip_prefix(r"\\?\").unwrap());
         platform_private_storage::directory(&root).unwrap();
         let path = root.join("journal.sqlite");
         let store = Store::initialize_test(&path, authority(), test_limits()).unwrap();
@@ -424,6 +426,10 @@ mod tests {
         assert!(Store::validate_existing(&path, &wrong, test_limits()).is_err());
         assert_eq!(before, std::fs::read(&path).unwrap());
         drop(store);
+        assert!(matches!(
+            Store::open(&path, &authority(), test_limits()).unwrap(),
+            OpenOutcome::Ready(_)
+        ));
         std::fs::remove_dir_all(root).unwrap();
     }
     #[test]

@@ -137,11 +137,7 @@ impl<S: IdentityProvider> DeviceService<S> {
         )
             -> Result<execution_runner::staging::MaterialRoot, execution_app::Error>,
     ) -> Result<Self, Error> {
-        if config.interpreters.is_empty()
-            || config.interpreters.len() > 8
-            || config.processes == 0
-            || config.processes > 128
-        {
+        if config.interpreters.len() > 8 || config.processes == 0 || config.processes > 128 {
             return Err(Error::Configuration);
         }
         let mut profiles = Vec::new();
