@@ -144,6 +144,8 @@ for (const signal of ["SIGTERM", "SIGINT"]) {
           [
             "-NoProfile",
             "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
             "-File",
             fileURLToPath(
               new URL("./worker-scopes-windows.ps1", import.meta.url),
