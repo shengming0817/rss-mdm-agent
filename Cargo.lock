@@ -130,6 +130,7 @@ dependencies = [
  "url",
  "uuid",
  "windows",
+ "windows-core",
  "windows-sys 0.61.2",
  "x509-cert",
  "zeroize",
