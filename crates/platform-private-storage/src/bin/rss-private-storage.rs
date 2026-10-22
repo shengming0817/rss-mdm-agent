@@ -32,8 +32,8 @@ fn run(args: &[std::ffi::OsString]) -> io::Result<()> {
             for suffix in ["-wal", "-shm", "-journal"] {
                 let mut sidecar = path.clone();
                 sidecar.push(suffix);
-                match platform_private_storage::open_existing(Path::new(&sidecar)) {
-                    Ok(_) => (),
+                match platform_private_storage::validate_sqlite_file(Path::new(&sidecar)) {
+                    Ok(()) => (),
                     Err(error) if error.kind() == io::ErrorKind::NotFound => (),
                     Err(error) => return Err(error),
                 }
