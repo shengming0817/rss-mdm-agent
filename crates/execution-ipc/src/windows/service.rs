@@ -640,15 +640,34 @@ fn query_at(
     name: String,
     policy: &crate::host::PeerPolicy,
 ) -> Result<Vec<u8>, Error> {
-    policy.validate()?;
     if bytes.len() > host::FRAME_LIMIT {
         return Err(Error::InvalidInput);
     }
+    // This synchronous boundary is also called by the asynchronous device owner.
+    // A joined OS thread owns the short-lived pipe reactor, so neither block_on nor
+    // Runtime::drop re-enters the caller's Tokio runtime. Nothing is detached.
+    // ref: tokio 1.53.1 Runtime::block_on (panics in an asynchronous context).
+    std::thread::scope(|scope| {
+        std::thread::Builder::new()
+            .name("execution-pipe-query".into())
+            .spawn_scoped(scope, || query_pipe(bytes, expected_session, name, policy))
+            .map_err(|_| Error::Unavailable)?
+            .join()
+            .map_err(|_| Error::Unavailable)?
+    })
+}
+fn query_pipe(
+    bytes: &[u8],
+    expected_session: Option<u32>,
+    name: String,
+    policy: &crate::host::PeerPolicy,
+) -> Result<Vec<u8>, Error> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .map_err(|_| Error::Unavailable)?;
     runtime.block_on(async {
+        policy.validate()?;
         tokio::time::timeout(Duration::from_secs(5), async {
             let mut client = ClientOptions::new()
                 .security_qos_flags(SECURITY_IDENTIFICATION)
@@ -719,6 +738,23 @@ fn query_at(
 mod tests {
     use super::*;
     #[tokio::test]
+    async fn synchronous_query_from_async_owner_rejects_untrusted_pin_without_runtime_panic() {
+        let (subject, _) = token_identity().unwrap();
+        let policy = host::PeerPolicy {
+            subjects: vec![subject],
+            images: vec![installation_security::Artifact {
+                path: std::env::current_exe().unwrap(),
+                sha256: "a".repeat(64),
+                cdhash: None,
+            }],
+            interactive: false,
+        };
+        // Reject the untrusted image before opening a pipe, even when this
+        // synchronous API is invoked by the asynchronous device owner.
+        let name = format!(r"\\.\pipe\rss-absent-helper-{}", nonce().unwrap());
+        assert_eq!(query_at(b"probe", None, name, &policy), Err(Error::Denied));
+    }
+    #[tokio::test]
     async fn named_pipe_frames_are_bounded_and_unbound_calls_are_rejected() {
         let (subject, _) = token_identity().unwrap();
         let name = format!(r"\\.\pipe\rss-execution-test-{}", nonce().unwrap());
@@ -737,8 +773,11 @@ mod tests {
         let size = client.read_u32_le().await.unwrap();
         let mut reply = vec![0; size as usize];
         client.read_exact(&mut reply).await.unwrap();
-        assert_eq!(reply, br#"{"version":9,"reply":{"kind":"rejected"}}"#);
-        client.write_u32_le(65537).await.unwrap();
+        assert_eq!(reply, host::encode_reply(host::Reply::Rejected));
+        client
+            .write_u32_le(host::FRAME_LIMIT as u32 + 1)
+            .await
+            .unwrap();
         assert!(matches!(
             call(&mut pipe, &owner).await,
             Err(Error::InvalidInput)
@@ -770,9 +809,9 @@ mod deadline_tests {
         let mut pipe = listener(&name, &format!("D:P(A;;GA;;;{subject})")).unwrap();
         let mut client = ClientOptions::new().open(&name).unwrap();
         pipe.connect().await.unwrap();
-        let bytes = br#"{"version":4,"request":{"method":"status","request":"probe"}}"#;
+        let bytes = host::encode(host::Request::ServiceStatus {}).unwrap();
         client.write_u32_le(bytes.len() as u32).await.unwrap();
-        client.write_all(bytes).await.unwrap();
+        client.write_all(&bytes).await.unwrap();
         let mut owner = OwnerThread::new(Box::new(Slow(Duration::from_millis(300)))).unwrap();
         let before = std::time::Instant::now();
         assert!(exchange(&mut pipe, &owner, Duration::from_millis(30))

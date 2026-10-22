@@ -6,7 +6,7 @@ use std::{
         ffi::OsStrExt,
         io::{AsRawHandle, FromRawHandle, OwnedHandle},
     },
-    ptr::{null, null_mut},
+    ptr::null_mut,
 };
 use windows_sys::Win32::{
     Foundation::*,
