@@ -251,12 +251,18 @@ pub fn validate_stored_identity(
 }
 fn read_identity(root: &Path, cfg: &Config) -> Result<crate::identity::IdentityState, Error> {
     let reader = read_existing(root, cfg)?;
-    let body: Vec<u8> = reader.query_row(
-        "SELECT CASE WHEN length(body)<=?1 THEN body END FROM state WHERE key='identity'",
-        [cfg.limits.response_bytes],
-        |r| r.get(0),
-    )?;
-    decode(&body)
+    let body: Option<Vec<u8>> = reader
+        .query_row(
+            "SELECT CASE WHEN length(body)<=?1 THEN body END FROM state WHERE key='identity'",
+            [cfg.limits.response_bytes],
+            |r| r.get(0),
+        )
+        .optional()?;
+    // Match the communication owner's identity_state: initialization precedes enrollment.
+    body.as_deref()
+        .map(decode)
+        .transpose()
+        .map(Option::unwrap_or_default)
 }
 
 fn sidecars(path: &Path) -> Result<(), Error> {

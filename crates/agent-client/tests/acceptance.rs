@@ -45,6 +45,21 @@ async fn refresh_inspection_reads_live_binding_without_locking_or_creating_state
     let server = Server::new().await;
     let root = Root::new();
     let mut client = server.client(&root, OpenMode::Create);
+    let cfg = client.configuration().clone();
+    let unregistered = std::fs::read(root.path.join("communication.sqlite")).unwrap();
+    assert!(
+        agent_client::validate_stored_identity(&root.path, &cfg, &server.secrets)
+            .unwrap()
+            .is_none()
+    );
+    assert!(matches!(
+        agent_client::inspect_binding(&root.path, &cfg),
+        Err(Error::Identity)
+    ));
+    assert_eq!(
+        unregistered,
+        std::fs::read(root.path.join("communication.sqlite")).unwrap()
+    );
     server.register(&mut client).await;
     let cfg = client.configuration().clone();
     let before = std::fs::read(root.path.join("communication.sqlite")).unwrap();

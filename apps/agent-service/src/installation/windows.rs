@@ -91,6 +91,7 @@ fn state(handle: &Sc) -> Result<SERVICE_STATUS_PROCESS, Error> {
         )
     } == 0
     {
+        outcome::native_failure(Some(unsafe { GetLastError() } as i32));
         return Err(Error::Unavailable);
     }
     Ok(status)
@@ -106,7 +107,8 @@ fn program(binary: &Path, config: &Path) -> Result<String, Error> {
     Ok(format!("{} --config {}", quote(binary)?, quote(config)?))
 }
 fn owned(handle: &Sc, binary: &Path, config: &Path) -> Result<(), Error> {
-    let mut buffer = vec![0usize; 8192];
+    // ref: Microsoft QueryServiceConfigW: the buffer is limited to 8K bytes.
+    let mut buffer = vec![0usize; 8192 / std::mem::size_of::<usize>()];
     let mut needed = 0;
     if unsafe {
         QueryServiceConfigW(
@@ -132,6 +134,7 @@ fn wait_stopped(handle: &Sc) -> Result<(), Error> {
     let process = if before.dwProcessId != 0 {
         let h = unsafe { OpenProcess(SYNCHRONIZE, 0, before.dwProcessId) };
         if h.is_null() {
+            outcome::native_failure(Some(unsafe { GetLastError() } as i32));
             return Err(Error::Unavailable);
         }
         Some(Handle(h))
@@ -143,6 +146,7 @@ fn wait_stopped(handle: &Sc) -> Result<(), Error> {
         if unsafe { ControlService(handle.0, SERVICE_CONTROL_STOP, &mut receipt) } == 0
             && unsafe { GetLastError() } != ERROR_SERVICE_NOT_ACTIVE
         {
+            outcome::native_failure(Some(unsafe { GetLastError() } as i32));
             return Err(Error::Unavailable);
         }
     }
@@ -846,7 +850,8 @@ fn read_result(path: &Path) -> Result<Option<outcome::Report>, Error> {
     Ok(Some(report))
 }
 fn worker_owned(handle: &Sc, name: &str, path: &Path) -> Result<(), Error> {
-    let mut buffer = vec![0usize; 8192];
+    // ref: Microsoft QueryServiceConfigW: the buffer is limited to 8K bytes.
+    let mut buffer = vec![0usize; 8192 / std::mem::size_of::<usize>()];
     let mut needed = 0;
     if unsafe {
         QueryServiceConfigW(
