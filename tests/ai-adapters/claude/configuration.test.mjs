@@ -10,7 +10,7 @@ import {
   rmSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, toNamespacedPath } from "node:path";
 import { execFileSync } from "node:child_process";
 import { privateDirectory } from "../../../packages/platform-private-storage/dist/index.js";
 import { sdkOptions } from "../../../packages/ai-adapters/claude/dist/configuration.js";
@@ -49,6 +49,13 @@ test("Claude persistence accepts only private owned real directories before SDK 
   );
   if (process.platform !== "win32")
     assert.equal(statSync(fresh).mode & 0o777, 0o700);
+  if (process.platform === "win32") {
+    const native = toNamespacedPath(join(directory, "namespace"));
+    assert.equal(
+      (await sdkOptions(resolved(native))).env.CLAUDE_CONFIG_DIR,
+      realpathSync.native(native),
+    );
+  }
   assert.equal(
     (await sdkOptions(resolved(shared))).env.CLAUDE_CONFIG_DIR,
     realpathSync(shared),

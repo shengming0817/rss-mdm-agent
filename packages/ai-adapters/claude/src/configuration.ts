@@ -62,7 +62,7 @@ async function privateDirectory(path: string): Promise<string> {
   try {
     if (!isAbsolute(path)) throw new Error();
     await protectDirectory(path);
-    return realpathSync(path);
+    return realpathSync.native(path);
   } catch {
     throw new Error("invalid configuration directory");
   }
