@@ -7,12 +7,13 @@ import {
   nativePeer,
   clientAt,
   executionGeneration,
+  privateTemporaryDirectory,
 } from "../tests/ai-provider-conformance/support.mjs";
 import { preparedArtifact } from "./preparation.mjs";
 import assert from "node:assert/strict";
 import { spawn, execFileSync } from "node:child_process";
 import { once } from "node:events";
-import { mkdtemp, mkdir, writeFile, rm, realpath } from "node:fs/promises";
+import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -43,9 +44,7 @@ const workerRuntime = {
     .digest("hex"),
 };
 for (const signal of ["SIGTERM", "SIGINT"]) {
-  const directory = await realpath(
-    await mkdtemp(join(tmpdir(), "rss bundled host-")),
-  );
+  const directory = await privateTemporaryDirectory("rss bundled host-");
   const requests = [],
     server = createModelServer(
       [[{ type: "text", text: "bundled runtime" }]],
