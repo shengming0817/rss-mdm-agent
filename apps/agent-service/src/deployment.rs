@@ -448,6 +448,9 @@ impl Deployment {
             C::TaskExecuteV1,
             C::MdmEnrollmentV1,
         ];
+        if !crate::collection_worker::engines().is_empty() {
+            values.push(C::InventoryNativeV1);
+        }
         if crate::installation::unmanage_supported(self) {
             values.push(C::DeviceUnmanageV1);
         }
@@ -617,7 +620,7 @@ impl execution_ipc::host::Handler for Diagnostic {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     #[test]
     fn startup_failure_mapping_is_closed_and_retains_identity_schema_storage_distinctions() {
@@ -691,14 +694,13 @@ mod tests {
         );
         std::fs::remove_dir_all(root).unwrap();
     }
-    #[test]
-    fn review_regression_native_capability_requires_its_interpreter() {
+    pub(crate) fn deployment() -> Deployment {
         let image = installation_security::Artifact {
             path: "/unused".into(),
             sha256: "a".repeat(64),
             cdhash: None,
         };
-        let mut deployment = Deployment {
+        Deployment {
             software_read_grants: vec![],
             version: execution_ipc::host::DEPLOYMENT_VERSION,
             ipc_version: execution_ipc::host::IPC_VERSION,
@@ -738,7 +740,28 @@ mod tests {
                     image: image.clone(),
                 }],
             },
-        };
+        }
+    }
+    #[tokio::test]
+    async fn native_capability_matches_production_engines_without_interpreters_or_managers() {
+        let mut deployment = deployment();
+        deployment.execution.interpreters.clear();
+        deployment.execution.managers.clear();
+        let capabilities = deployment.capabilities();
+        let environment = crate::collection_environment::observe(&[]).await.unwrap();
+        assert_eq!(
+            environment.native_engines,
+            crate::collection_worker::engines()
+        );
+        let native = capabilities.contains(&wire::Capability::InventoryNativeV1);
+        assert_eq!(native, cfg!(any(windows, target_os = "macos")));
+        assert_eq!(native, !environment.native_engines.is_empty());
+        assert!(capabilities.windows(2).all(|pair| pair[0] < pair[1]));
+    }
+    #[test]
+    fn software_capability_requires_its_interpreter() {
+        let mut deployment = deployment();
+        let image = deployment.service.clone();
         assert!(!deployment.capabilities().iter().any(|v| v.is_software()));
         deployment.execution.interpreters.push(crate::Interpreter {
             profile: if cfg!(windows) {

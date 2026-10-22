@@ -682,6 +682,89 @@ mod tests {
         vec![Capability::InventoryCollectionV1, Capability::TaskExecuteV1]
     }
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn production_native_capability_reaches_authorization_and_configuration_registrations() {
+        let _budget = crate::scenario_budget::enter();
+        for configuration in [false, true] {
+            let server = Server::tls().await;
+            if cfg!(windows) {
+                server.data.lock().unwrap().native_collection();
+            }
+            let root = Root::new();
+            let mut deployment = crate::deployment::tests::deployment();
+            deployment.execution.interpreters.clear();
+            deployment.execution.managers.clear();
+            let capabilities = deployment.capabilities();
+            let expected = capabilities.clone();
+            let environment = crate::collection_environment::observe(&[]).await.unwrap();
+            assert_eq!(
+                capabilities.contains(&Capability::InventoryNativeV1),
+                !environment.native_engines.is_empty()
+            );
+            let mut client = server.client(&root, OpenMode::Create);
+            client.set_collection_environment(environment).unwrap();
+            let command = if configuration {
+                let installer_format = if cfg!(windows) {
+                    rss_mdm_agent_wire::enroll::configuration::InstallerFormat::WindowsMsi
+                } else {
+                    rss_mdm_agent_wire::enroll::configuration::InstallerFormat::MacosPkg
+                };
+                let file = Box::new(server.configuration());
+                {
+                    let mut data = server.data.lock().unwrap();
+                    data.packages[0].format = installer_format;
+                    data.packages[0].filename = if cfg!(windows) {
+                        "fixture.msi"
+                    } else {
+                        "fixture.pkg"
+                    }
+                    .into();
+                }
+                Command::Configuration {
+                    file,
+                    installer_format,
+                }
+            } else {
+                Command::Request { prepared: None }
+            };
+            let (sender, receiver) = mpsc::sync_channel(8);
+            sender.send(command).unwrap();
+            let stopping = Arc::new(AtomicBool::new(false));
+            let stop = stopping.clone();
+            let shared = snapshot();
+            let published = shared.clone();
+            let (completed, completion) = mpsc::channel();
+            let worker = std::thread::spawn(move || {
+                let result = run(
+                    Some(client),
+                    capabilities,
+                    published,
+                    receiver,
+                    stop,
+                    || unreachable!("new registration already owns its client"),
+                    |client| client.registration(),
+                );
+                let _ = completed.send(result);
+            });
+            let result = tokio::task::spawn_blocking(move || {
+                completion.recv_timeout(std::time::Duration::from_secs(8))
+            })
+            .await
+            .unwrap();
+            stopping.store(true, Ordering::Release);
+            worker.join().unwrap();
+            let binding = result.unwrap().unwrap().unwrap();
+            assert!(shared.lock().unwrap().status.registered);
+            assert_eq!(binding.capabilities, expected);
+            let data = server.data.lock().unwrap();
+            assert_eq!(data.certificate_calls.len(), 1);
+            let profile: rss_mdm_agent_wire::enroll::RuntimeProfile =
+                serde_json::from_value(data.certificate_calls[0]["runtime"].clone()).unwrap();
+            assert_eq!(profile.capabilities, expected);
+            assert_eq!(data.activation.as_ref().unwrap().runtime, binding);
+            assert_eq!(data.configuration_calls.len(), usize::from(configuration));
+        }
+    }
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn registration_owner_recovers_transient_failure_without_another_request() {
         let _budget = crate::scenario_budget::enter();
         for fault in ["registration", "trust"] {
