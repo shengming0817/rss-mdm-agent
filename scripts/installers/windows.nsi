@@ -74,7 +74,7 @@ Function ${Prefix}ProtectedDirectory
   ${AndIf} $R2 == 0
     Goto directory_rejected
   ${EndIf}
-  System::Call 'advapi32::GetSecurityDescriptorControl(p r3, *i 0 .R1, *i .R2) i.R3'
+  System::Call 'advapi32::GetSecurityDescriptorControl(p r3, *i 0 R1, *i .R2) i.R3'
   ${If} $R3 == 0
     Goto directory_rejected
   ${EndIf}
@@ -194,7 +194,7 @@ Function ${Prefix}PinnedImage
   ${If} $R1 != 0
     Goto image_rejected
   ${EndIf}
-  System::Call 'crypt32::CryptBinaryToStringW(p r4, i 32, i 0x4000000c, w .R2, *i 65 .R3) i.R1'
+  System::Call 'crypt32::CryptBinaryToStringW(p r4, i 32, i 0x4000000c, w .R2, *i 65 R3) i.R1'
   ${If} $R1 == 0
     Goto image_rejected
   ${EndIf}
@@ -240,7 +240,7 @@ Function .onInit
   SetShellVarContext all
   System::Call 'kernel32::GetCurrentProcess() p.r0'
   ; The plug-in supports *i pointers; zero the upper half before WORD outputs are written.
-  System::Call 'kernel32::IsWow64Process2(p r0, *i 0 .r1, *i 0 .r2) i.r3'
+  System::Call 'kernel32::IsWow64Process2(p r0, *i 0 r1, *i 0 r2) i.r3'
   ${If} $3 == 0
   ${OrIf} $2 <> @MACHINE@
     MessageBox MB_ICONSTOP "This package requires its native Windows architecture."
