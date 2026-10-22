@@ -8,7 +8,7 @@
 
 `pnpm build:installer --organization /absolute/public-organization.json` 在当前原生平台构建 macOS arm64 PKG 或 Windows amd64 / arm64 的 perMachine NSIS EXE，不套用 MSI。macOS 构建命令通过 `python3 scripts/build-run.py -- pnpm build:installer ...` 复用本地 Cargo 槽位；Windows 使用 `pnpm exec node scripts/build-installers.mjs ...`。Windows 构建进程、Rust 工具链和 Node 必须为目标原生架构，不接受仿真进程或混合 PE。目标设备须预装 machine-wide WebView2；安装器缺失时明确拒绝。当前机器有匹配架构、受保护的 PowerShell 7 时才登记该解释器与相关能力。
 
-组织输入仅含 `origin`（Agent 通信 HTTPS origin）、`tenant`（非零 UUID）、`label`、`signing_keys`（仅用于注册配置验签的 key ID → base64url Ed25519 公钥）与必填 `ca_pem`（HTTPS bootstrap CA）。设备 CA/CRL 从 Agent origin 的公开 trust API 获取。桌面登录、会话与注册授权复用根 `.env` 中已有的 `RSS_MDM_ORIGIN`、租户和可选 `RSS_MDM_CA_FILE` 网站配置，机器通信使用组织输入的 Agent origin。构建时核对同一租户并固定两者关系，不通过端口猜测或失败回退；Agent bootstrap CA 不会自动用于网站，公共网站证书不需要额外 CA。HTTPS bootstrap CA 与程序签名证书独立；输入不允许 grant、secret、账号目录或私钥。包内固定相同组织上下文的生产服务、桌面、Node、AI Host、worker 和资源。产物及其 `package-manifest.json` 位于忽略的 `.local-ci-runs/installers/`，记录源码、锁文件、平台、本地安装资源及最终包摘要。上传仅需要实际安装文件，不需要公开候选 manifest 或签名/公证证明文件。本地资源清单保留部署与代码身份完整性，不是后端发布合同。
+组织输入仅含 `origin`（Agent 通信 HTTPS origin）、`tenant`（非零 UUID）、`label`、`signing_keys`（仅用于注册配置验签的 key ID → base64url Ed25519 公钥）、必填 `ca_pem`（HTTPS bootstrap CA）与可选 `task_trust_origins`（受保护的完整任务信任 origin 白名单）。设备 CA/CRL 从 Agent origin 的公开 trust API 获取。桌面登录、会话与注册授权复用根 `.env` 中已有的 `RSS_MDM_ORIGIN`、租户和可选 `RSS_MDM_CA_FILE` 网站配置，机器通信使用组织输入的 Agent origin。构建时核对同一租户并固定两者关系，不通过端口猜测或失败回退；Agent bootstrap CA 不会自动用于网站，公共网站证书不需要额外 CA。HTTPS bootstrap CA 与程序签名证书独立；输入不允许 grant、secret、账号目录或私钥。包内固定相同组织上下文的生产服务、桌面、Node、AI Host、worker 和资源。产物及其 `package-manifest.json` 位于忽略的 `.local-ci-runs/installers/`，记录源码、锁文件、平台、本地安装资源及最终包摘要。上传仅需要实际安装文件，不需要公开候选 manifest 或签名/公证证明文件。本地资源清单保留部署与代码身份完整性，不是后端发布合同。
 
 默认 macOS 为 ad-hoc 开发签名，Windows 为明确标记的开发包。正式包增加 `--release`：macOS 设置 `RSS_MACOS_APP_SIGNING_IDENTITY`、`RSS_MACOS_INSTALLER_SIGNING_IDENTITY` 和已存在的 `RSS_MACOS_NOTARY_PROFILE` Keychain 引用；Windows 设置 `RSS_WINDOWS_SIGNING_THUMBPRINT`，可选 `RSS_SIGNTOOL` 完整路径。构建不会接收证书密码；正式 macOS 包完成 notarization / stapling，正式 Windows 包与原生资源进行 Authenticode 签名。只有显式请求 `--release` 时才要求这些正式签名材料；默认包可正常上传、发布和注册，无测试/试点/生产环门槛。
 
@@ -304,3 +304,10 @@ Windows CPU 当前仅接纳单 processor group，多组系统报告 unsupported�
 
 远端输出 schema 只接纳有界的结构、类型、必填、枚举和数值/长度约束；
 不接纳引用、正则、组合分支或自定义关键字。复杂度或本地输出验证预算超限时拒绝采集结果并记录缺口。
+
+
+## 独立通信入口与任务信任地址
+
+Agent 仅连接组织输入的 `origin`。若部署通过独立入口提供 Agent 通信，任务信任文档仍标识另一个已授权的 HTTPS origin，管理员可在安装包的公共组织 JSON 中增加 `task_trust_origins`，列出需要额外信任的完整 origin（例如 `https://mdm.example.org`）。最多 8 项，不接受通配符、路径、用户信息、查询或片段；端口参与精确匹配。省略或空数组只信任通信入口自身。
+
+该列表随固定候选写入受保护的系统部署配置，普通用户与网络响应不能修改。它只授权同一租户、已认证 Agent 通道交付的任务信任标识，不增加 HTTP 目的地址，不影响 PKI、注册签名、下载权限或 TLS 验证。已安装的任务信任仍禁止换 origin、回退版本或复用 key ID 更换公钥；移除已用地址会关闭就绪状态，保留原设备身份和执行历史。当前桌面登录/控制台地址由根 `.env` 持有，Agent 通信地址由组织 JSON 持有，制品地址由签名任务及既有软件源授权约束。

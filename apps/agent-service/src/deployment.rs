@@ -20,6 +20,8 @@ pub struct Deployment {
     pub version: u32,
     pub ipc_version: u8,
     pub origin: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub task_trust_origins: Vec<String>,
     pub tenant: uuid::Uuid,
     pub signing_keys: BTreeMap<String, String>,
     pub ca_file: Option<PathBuf>,
@@ -199,6 +201,7 @@ impl Deployment {
             })
             .collect::<Result<_, Error>>()?;
         Ok(Config {
+            task_trust_origins: self.task_trust_origins.clone(),
             software_read_grants: self.software_read_grants.clone(),
             execution_context: wire::SoftwareExecutionContext {
                 revision: 1,
@@ -701,6 +704,7 @@ pub(crate) mod tests {
             cdhash: None,
         };
         Deployment {
+            task_trust_origins: vec![],
             software_read_grants: vec![],
             version: execution_ipc::host::DEPLOYMENT_VERSION,
             ipc_version: execution_ipc::host::IPC_VERSION,

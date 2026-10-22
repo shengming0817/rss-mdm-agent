@@ -52,6 +52,8 @@ pub struct Candidate {
     pub runtime_root: PathBuf,
     pub runtime_sha256: String,
     pub origin: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub task_trust_origins: Vec<String>,
     pub tenant: uuid::Uuid,
     pub signing_keys: BTreeMap<String, String>,
     pub ca_pem: Option<String>,
@@ -93,6 +95,7 @@ impl Candidate {
         if candidate.version != 1
             || candidate.service.path != deployment.service.path
             || candidate.origin != deployment.origin
+            || candidate.task_trust_origins != deployment.task_trust_origins
             || candidate.tenant != deployment.tenant
             || candidate.signing_keys != deployment.signing_keys
             || candidate.ca_pem.as_deref().map(str::as_bytes)
@@ -111,6 +114,7 @@ impl Candidate {
         Ok((candidate, hash(&bytes)))
     }
     fn validate(&self) -> Result<(), Error> {
+        agent_client::validate_task_trust_origins(&self.task_trust_origins)?;
         if self.version != 1
             || self.target != Target::current().map_err(|_| Error::Unsupported)?
             || !self.root.is_absolute()
@@ -225,6 +229,7 @@ impl Candidate {
             interactive: true,
         };
         Ok(Deployment {
+            task_trust_origins: self.task_trust_origins.clone(),
             software_read_grants: vec![],
             version: execution_ipc::host::DEPLOYMENT_VERSION,
             ipc_version: execution_ipc::host::IPC_VERSION,

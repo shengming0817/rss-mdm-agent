@@ -139,10 +139,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         self.now()?;
         let artifacts = artifacts(offer.payload())?;
         let root = self.store.root.join("content");
-        private(&root)?;
-        if root.canonicalize()? != root {
-            return Err(Error::Storage);
-        }
+        crate::store::private_root(&root)?;
         let mut total = 0u64;
         let mut files = Vec::new();
         for (key, length, sha256) in artifacts {
@@ -195,9 +192,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         }
         let root = self.store.root.join("content");
         platform_private_storage::directory(&root)?;
-        if root.canonicalize()? != root {
-            return Err(Error::Storage);
-        }
+        crate::store::private_root(&root)?;
         let mut files = Vec::new();
         for (key, length, sha256) in artifacts {
             self.verify(&offer.signed, wire::TaskPermit::Offer)?;

@@ -33,7 +33,7 @@ pub(crate) fn private(p: &Path) -> Result<(), Error> {
     platform_private_storage::validate(p)?;
     Ok(())
 }
-fn private_root(root: &Path) -> Result<(), Error> {
+pub(crate) fn private_root(root: &Path) -> Result<(), Error> {
     if !root.is_absolute() {
         return Err(Error::Storage);
     }

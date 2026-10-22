@@ -59,7 +59,14 @@ if (
 if (format === "windows_msix" && !process.env.RSS_WINDOWS_PUBLISHER)
   throw Error("MSIX requires a Publisher identity");
 const organization = JSON.parse(readFileSync(resolve(args[input + 1]), "utf8"));
-const allowed = ["origin", "tenant", "label", "signing_keys", "ca_pem"];
+const allowed = [
+  "origin",
+  "tenant",
+  "label",
+  "signing_keys",
+  "ca_pem",
+  "task_trust_origins",
+];
 if (Object.keys(organization).some((key) => !allowed.includes(key)))
   throw Error("Organization input accepts public trust fields only");
 if (
@@ -70,6 +77,21 @@ if (
   !Object.keys(organization.signing_keys ?? {}).length
 )
   throw Error("Invalid organization identity or signing keys");
+const taskTrustOrigins = organization.task_trust_origins ?? [];
+if (
+  !Array.isArray(taskTrustOrigins) ||
+  taskTrustOrigins.length > 8 ||
+  new Set(taskTrustOrigins).size !== taskTrustOrigins.length ||
+  taskTrustOrigins.some(
+    (value) =>
+      typeof value !== "string" ||
+      value.length > 2048 ||
+      value.includes("*") ||
+      !value.startsWith("https://") ||
+      new URL(value).origin !== value,
+  )
+)
+  throw Error("Task trust origins must be at most eight exact HTTPS origins");
 for (const pem of [organization.ca_pem].filter(Boolean)) {
   if (
     !/^\s*-----BEGIN CERTIFICATE-----[A-Za-z0-9+/=\s]+-----END CERTIFICATE-----\s*$/.test(
@@ -298,6 +320,7 @@ const candidate = {
   runtime_root: join(installed, packagedRuntime.slice(payload.length + 1)),
   runtime_sha256: runtimeTreeSha256(packagedRuntime),
   origin: organization.origin,
+  task_trust_origins: taskTrustOrigins,
   tenant: organization.tenant,
   signing_keys: organization.signing_keys,
   ca_pem: organization.ca_pem ?? null,
