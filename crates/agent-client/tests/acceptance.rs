@@ -6,6 +6,34 @@ use uuid::Uuid;
 mod support;
 use rss_mdm_agent_wire::runtime::{TaskArchitecture, TaskPlatform};
 use support::*;
+#[cfg(windows)]
+#[tokio::test]
+async fn ordinary_windows_path_creates_and_reopens_the_same_private_database() {
+    let server = Server::new().await;
+    let root = Root::new();
+    let ordinary =
+        std::path::PathBuf::from(root.path.to_str().unwrap().strip_prefix(r"\\?\").unwrap());
+    let cfg = server.config();
+    let client = Client::open(
+        &ordinary,
+        cfg.clone(),
+        OpenMode::Create,
+        server.secrets.clone(),
+        server.time.clone(),
+    )
+    .unwrap();
+    drop(client);
+    agent_client::validate_existing(&ordinary, &cfg).unwrap();
+    let client = Client::open(
+        &ordinary,
+        cfg,
+        OpenMode::Existing,
+        server.secrets.clone(),
+        server.time.clone(),
+    )
+    .unwrap();
+    assert!(!client.enrollment_status().unwrap().registered);
+}
 #[tokio::test]
 async fn refresh_inspection_reads_live_binding_without_locking_or_creating_state() {
     let server = Server::new().await;

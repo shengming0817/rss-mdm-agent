@@ -33,13 +33,30 @@ pub(crate) fn private(p: &Path) -> Result<(), Error> {
     platform_private_storage::validate(p)?;
     Ok(())
 }
+fn private_root(root: &Path) -> Result<(), Error> {
+    if !root.is_absolute() {
+        return Err(Error::Storage);
+    }
+    let canonical = root.canonicalize()?;
+    // ref: Rust std::fs::canonicalize: Windows adds an extended-length prefix.
+    // Accept that spelling difference only; resolved aliases still fail closed.
+    let same = canonical == root;
+    #[cfg(windows)]
+    let same = same
+        || canonical
+            .as_os_str()
+            .as_encoded_bytes()
+            .strip_prefix(br"\\?\")
+            == Some(root.as_os_str().as_encoded_bytes());
+    if !same {
+        return Err(Error::Storage);
+    }
+    private(root)
+}
 impl Store {
     pub fn open(root: &Path, cfg: Config, mode: OpenMode) -> Result<Self, Error> {
         cfg.validate()?;
-        if !root.is_absolute() || root.canonicalize()? != root {
-            return Err(Error::Storage);
-        }
-        private(root)?;
+        private_root(root)?;
         if !root.is_dir() {
             return Err(Error::Storage);
         }
@@ -138,10 +155,7 @@ impl Store {
 
 pub(crate) fn read_existing(root: &Path, cfg: &Config) -> Result<Connection, Error> {
     cfg.validate()?;
-    if !root.is_absolute() || root.canonicalize()? != root {
-        return Err(Error::Storage);
-    }
-    private(root)?;
+    private_root(root)?;
     let path = root.join("communication.sqlite");
     platform_private_storage::validate_sqlite_file(&path)?;
     sidecars(&path)?;
