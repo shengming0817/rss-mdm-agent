@@ -176,11 +176,12 @@ unsafe fn convert(
             let mut bytes = 0usize;
             for index in lower..=upper {
                 let mut value = Variant(VARIANT::default());
-                value.0.Anonymous.Anonymous.vt = element;
+                let element_value = &mut *value.0.Anonymous.Anonymous;
+                element_value.vt = element;
                 SafeArrayGetElement(
                     array,
                     &index,
-                    (&mut value.0.Anonymous.Anonymous.Anonymous as *mut VARIANT_0_0_0).cast(),
+                    (&mut element_value.Anonymous as *mut VARIANT_0_0_0).cast(),
                 )
                 .map_err(error)?;
                 let value = scalar(&value.0, p.cim_type)?;
@@ -254,7 +255,7 @@ fn connect(namespace: &str) -> Result<IWbemServices, Status> {
             CoCreateInstance(&WbemLocator, None, CLSCTX_INPROC_SERVER).map_err(error)?;
         let services = locator
             .ConnectServer(
-                &BSTR::from(namespace.as_str()),
+                &BSTR::from(namespace),
                 &BSTR::new(),
                 &BSTR::new(),
                 &BSTR::new(),

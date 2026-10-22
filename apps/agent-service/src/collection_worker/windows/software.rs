@@ -20,7 +20,7 @@ fn text(value: HSTRING) -> Result<String, Status> {
     if value.len() > 65536 {
         return Err(Status::Truncated);
     }
-    String::from_utf16(value.as_wide()).map_err(|_| Status::Invalid)
+    String::from_utf16(&value).map_err(|_| Status::Invalid)
 }
 fn profiles(budget: &Budget) -> Result<BTreeMap<String, bool>, Status> {
     let raw = standard::query(

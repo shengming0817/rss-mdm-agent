@@ -141,7 +141,7 @@ fn windows_cost() -> Option<bool> {
             }
             let cost: INetworkCostManager = manager.cast().ok()?;
             let mut value = 0;
-            cost.GetCost(&mut value, None).ok()?;
+            cost.GetCost(&mut value, std::ptr::null()).ok()?;
             Some(value == NLM_CONNECTION_COST_UNRESTRICTED.0 as u32)
         })();
         let _ = tx.send(value);
