@@ -179,16 +179,37 @@ impl PathLease {
             .into_iter()
             .rev()
         {
-            let file = OpenOptions::new()
-                .access_mode(if part == path {
-                    FILE_GENERIC_READ
-                } else {
-                    READ_CONTROL | FILE_READ_ATTRIBUTES
-                })
-                .share_mode(FILE_SHARE_READ)
+            // Pin the namespace before inspecting its type. Directory handles
+            // must allow child creation/hard links; withholding delete sharing
+            // still prevents replacing this pinned component. A regular leaf is
+            // reopened below with the stronger read-only sharing lease.
+            let metadata = OpenOptions::new()
+                .access_mode(READ_CONTROL | FILE_READ_ATTRIBUTES)
+                .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
                 .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS)
                 .open(part)
                 .map_err(|_| Error::Unavailable)?;
+            let directory = metadata
+                .metadata()
+                .map_err(|_| Error::Unavailable)?
+                .is_dir();
+            if part != path && !directory {
+                return Err(Error::Denied);
+            }
+            let file = if directory {
+                metadata
+            } else {
+                // metadata remains live through open: the exact leaf cannot be
+                // renamed or replaced between inspection and the data lease.
+                let file = OpenOptions::new()
+                    .access_mode(FILE_GENERIC_READ)
+                    .share_mode(FILE_SHARE_READ)
+                    .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+                    .open(part)
+                    .map_err(|_| Error::Unavailable)?;
+                drop(metadata);
+                file
+            };
             check(&file, immutable, part == path, &current)?;
             handles.push(file);
         }

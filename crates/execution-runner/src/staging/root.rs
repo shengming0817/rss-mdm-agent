@@ -341,6 +341,43 @@ fn pending_name(root: &Path, path: &Path) -> bool {
         && pid.bytes().chain(nonce.bytes()).all(|b| b.is_ascii_digit())
 }
 
+#[cfg(all(test, windows))]
+mod windows_tests {
+    use super::*;
+
+    #[test]
+    fn publish_under_directory_lease_preserves_file_write_and_namespace_exclusion() {
+        let path = std::env::temp_dir().join(format!(
+            "rss-native-material-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        platform_private_storage::directory(&path).unwrap();
+        let path = path.canonicalize().unwrap();
+        let mut root = MaterialRoot::open_bound(&path, &"a".repeat(64), false).unwrap();
+        let bytes = b"native collection worker input";
+        let digest = Digest::new(format!("{:x}", Sha256::digest(bytes))).unwrap();
+        let published = root
+            .publish(None, &bytes[..], &digest, bytes.len() as u64)
+            .unwrap();
+        assert_eq!(std::fs::read(&published).unwrap(), bytes);
+        let native = root
+            .native_export(&published, &digest, "payload.json", None)
+            .unwrap();
+        assert_eq!(std::fs::read(native).unwrap(), bytes);
+        let (file, lease) = root.verified(&published, &digest).unwrap();
+        assert!(OpenOptions::new().write(true).open(&published).is_err());
+        assert!(std::fs::rename(&path, path.with_extension("replaced")).is_err());
+        drop(file);
+        drop(lease);
+        drop(root);
+        std::fs::remove_dir_all(path).unwrap();
+    }
+}
+
 #[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::*;

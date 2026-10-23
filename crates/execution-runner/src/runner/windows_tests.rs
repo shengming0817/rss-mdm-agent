@@ -30,13 +30,12 @@ impl Drop for Fixture {
     }
 }
 fn fixture(script: &str, argv: Vec<LaunchArg>, budget: u64, timeout: u64) -> Fixture {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!(
-        "../../.cache/runner-test-{}-{}",
+    let root = std::env::temp_dir().join(format!(
+        "rss-runner-test-{}-{}",
         std::process::id(),
         NEXT.fetch_add(1, Ordering::Relaxed)
     ));
     platform_private_storage::directory(&root).unwrap();
-    let root = root.canonicalize().unwrap();
 
     let content = root.join("source");
     std::fs::write(&content, script).unwrap();
@@ -68,7 +67,11 @@ fn fixture(script: &str, argv: Vec<LaunchArg>, budget: u64, timeout: u64) -> Fix
     args.extend(argv);
     value["launch"]["argv"] = serde_json::to_value(args).unwrap();
     value["launch"]["stdin"] = serde_json::json!({"kind":"closed"});
-    value["launch"]["env"] = serde_json::json!({});
+    // PowerShell policy initialization loads Windows system libraries. Keep this
+    // dependency explicit in the frozen fixture; production inherits no environment.
+    value["launch"]["env"] = serde_json::json!({
+        "SystemRoot": {"kind":"literal","value":std::env::var("SystemRoot").unwrap()}
+    });
     value["launch"]["cwd"] = root.to_str().unwrap().into();
     value["budget"] =
         serde_json::json!({"totalTimeoutMs":timeout,"totalOutputBytes":budget,"maxAttempts":1});
@@ -188,7 +191,12 @@ fn powershell_literals_dual_streams_and_exit_evidence() {
     );
     let id = start(&f, 4096, 15000);
     let facts = finish(&f, &id);
-    assert_eq!(facts.stdout, b"$(Write-Host bad); spaced");
+    assert_eq!(
+        facts.stdout,
+        b"$(Write-Host bad); spaced",
+        "{}",
+        serde_json::to_string(&facts).unwrap()
+    );
     assert_eq!(facts.stderr, b"err");
     assert_eq!(facts.end, ProcessEnd::Exited);
     assert_eq!(facts.exit_code, Some(0));
@@ -291,9 +299,21 @@ fn windows_controlled_stdin_and_early_close_quality() {
         let facts = finish(&f, &id);
         assert!(facts.quiescent);
         if early {
-            assert_ne!(facts.quality, OutputQuality::Complete)
+            // An early exit may still accept all bytes into the OS pipe buffer.
+            // Delivery completion does not prove that the script consumed stdin.
+            assert!(matches!(
+                facts.quality,
+                OutputQuality::Complete | OutputQuality::Failed
+            ));
+            assert!(facts.stdout.is_empty());
+            assert_eq!(facts.exit_code, Some(0));
         } else {
-            assert_eq!(facts.stdout, b"literal input");
+            assert_eq!(
+                facts.stdout,
+                b"literal input",
+                "{}",
+                serde_json::to_string(&facts).unwrap()
+            );
             assert_eq!(facts.quality, OutputQuality::Complete)
         }
     }
@@ -378,7 +398,7 @@ fn windows_capture_is_durable_and_reopened_attempt_does_not_launch() {
         actor: f.plan.spec().request.actor.clone(),
     };
     let request = &f.plan.spec().request.request_id;
-    let database = f.root.join("execution.sqlite");
+    let database = f.root.canonicalize().unwrap().join("execution.sqlite");
     let mut app = create_app(
         &database,
         host.clone(),

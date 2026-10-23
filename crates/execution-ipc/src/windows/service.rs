@@ -18,7 +18,7 @@ use std::{
 };
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
-    net::windows::named_pipe::{ClientOptions, NamedPipeServer},
+    net::windows::named_pipe::{ClientOptions, NamedPipeClient, NamedPipeServer},
 };
 use windows_sys::Win32::{Foundation::*, Security::*, System::Threading::*};
 use windows_sys::Win32::{
@@ -272,6 +272,9 @@ pub(crate) fn authenticate(
     Ok(subject)
 }
 fn listener(name: &str, sddl: &str) -> Result<NamedPipeServer, Error> {
+    pipe_instance(name, sddl, true)
+}
+fn pipe_instance(name: &str, sddl: &str, first: bool) -> Result<NamedPipeServer, Error> {
     let descriptor = security(sddl)?;
     let attributes = SECURITY_ATTRIBUTES {
         nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
@@ -282,9 +285,15 @@ fn listener(name: &str, sddl: &str) -> Result<NamedPipeServer, Error> {
     let handle = unsafe {
         own(CreateNamedPipeW(
             wide(name).as_ptr(),
-            PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED | FILE_FLAG_FIRST_PIPE_INSTANCE,
+            PIPE_ACCESS_DUPLEX
+                | FILE_FLAG_OVERLAPPED
+                | if first {
+                    FILE_FLAG_FIRST_PIPE_INSTANCE
+                } else {
+                    0
+                },
             PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
-            1,
+            2,
             65536,
             65536,
             5000,
@@ -464,16 +473,33 @@ async fn call(pipe: &mut NamedPipeServer, owner: &OwnerThread) -> Result<(), Err
             .map_err(|_| Error::Capacity)?;
         received.await.map_err(|_| Error::Unavailable)?
     };
+    reply_and_wait_closed(pipe, &reply).await
+}
+// DisconnectNamedPipe discards unread bytes. The one-query client closes its
+// handle after consuming the response; await that closure under the existing
+// exchange deadline before the caller disconnects/reuses this instance.
+// ref: Microsoft DisconnectNamedPipe / FlushFileBuffers remarks.
+async fn reply_and_wait_closed(pipe: &mut NamedPipeServer, reply: &[u8]) -> Result<(), Error> {
     if reply.len() > host::FRAME_LIMIT {
         return Err(Error::Unavailable);
     }
     pipe.write_u32_le(reply.len() as u32)
         .await
         .map_err(|_| Error::Unavailable)?;
-    pipe.write_all(&reply)
+    pipe.write_all(reply)
         .await
         .map_err(|_| Error::Unavailable)?;
-    Ok(())
+    let mut tail = [0];
+    match pipe.read(&mut tail).await {
+        Ok(0) => Ok(()),
+        Err(error)
+            if error.kind() == std::io::ErrorKind::BrokenPipe
+                || matches!(error.raw_os_error(), Some(109 | 232 | 233)) =>
+        {
+            Ok(())
+        }
+        _ => Err(Error::Unavailable),
+    }
 }
 // A timeout is a terminal host outcome, not permission to reuse a pipe whose old
 // handler may still hold its duplicate. Normal completion proves the callback returned.
@@ -522,14 +548,14 @@ fn drive_fence(
                         pipe.read_exact(&mut bytes).await.map_err(|_| Error::Unavailable)?;
                         let peer = Peer { pid, session, uid: None, native: pipe.as_raw_handle() as usize };
                         let reply = host::dispatch_fence(fence.as_ref(), &peer, &bytes).unwrap_or_else(|| host::encode_reply(host::Reply::Rejected));
-                        pipe.write_u32_le(reply.len() as u32).await.map_err(|_| Error::Unavailable)?;
-                        pipe.write_all(&reply).await.map_err(|_| Error::Unavailable)?;
-                        Ok::<(), Error>(())
+                        reply_and_wait_closed(&mut pipe, &reply).await
                     };
                     // A control peer owns no execution or journal work. Its timeout may close
                     // just this connection without interrupting the business owner.
                     let _ = tokio::time::timeout(Duration::from_secs(3), request).await;
+                    let next = pipe_instance(&name, &sddl, false)?;
                     pipe.disconnect().map_err(|_| Error::Unavailable)?;
+                    pipe = next;
                 },
                 _ = tokio::time::sleep(Duration::from_millis(100)) => (),
             }
@@ -577,9 +603,14 @@ fn drive(handler: Box<dyn Handler>, system: bool) -> Result<(), Error> {
                 connected=pipe.connect()=>{
                     connected.map_err(|_|Error::Unavailable)?;
                     let result=exchange(&mut pipe,&owner,Duration::from_secs(5)).await;
-                    pipe.disconnect().map_err(|_|Error::Unavailable)?;
                     // Sticky failure: never reconnect this instance after its callback timed out.
                     result?;
+                    // Tokio/mio retains per-instance read state, including EOF.
+                    // Keep the protected namespace live while creating one fresh
+                    // successor. The client ACL excludes FILE_CREATE_PIPE_INSTANCE.
+                    let next=pipe_instance(&name,&sddl,false)?;
+                    pipe.disconnect().map_err(|_|Error::Unavailable)?;
+                    pipe=next;
                 },
                 _=tokio::time::sleep(Duration::from_millis(100))=>{}
             }
@@ -669,10 +700,7 @@ fn query_pipe(
     runtime.block_on(async {
         policy.validate()?;
         tokio::time::timeout(Duration::from_secs(5), async {
-            let mut client = ClientOptions::new()
-                .security_qos_flags(SECURITY_IDENTIFICATION)
-                .open(name)
-                .map_err(|_| Error::Unavailable)?;
+            let mut client = connect_client(&name).await?;
             let pipe = client.as_raw_handle();
             let mut pid = 0;
             if unsafe { GetNamedPipeServerProcessId(pipe, &mut pid) } == 0 {
@@ -734,9 +762,55 @@ fn query_pipe(
     })
 }
 
+// A prior connection may still be draining. Retry only that busy condition
+// within the caller's single connection/response deadline.
+async fn connect_client(name: &str) -> Result<NamedPipeClient, Error> {
+    loop {
+        match ClientOptions::new()
+            .security_qos_flags(SECURITY_IDENTIFICATION)
+            .open(name)
+        {
+            Ok(client) => return Ok(client),
+            Err(error) if error.raw_os_error() == Some(ERROR_PIPE_BUSY as i32) => {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            Err(_) => return Err(Error::Unavailable),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn client_data_access_does_not_authorize_server_instance_creation() {
+        let (subject, _) = token_identity().unwrap();
+        let name = format!(r"\\.\pipe\rss-data-rights-test-{}", nonce().unwrap());
+        let sddl = format!("D:P(A;;0x0012019b;;;{subject})");
+        let mut pipe = listener(&name, &sddl).unwrap();
+        assert!(pipe_instance(&name, &sddl, false).is_err());
+        let mut client = connect_client(&name).await.unwrap();
+        pipe.connect().await.unwrap();
+        let frame = host::encode(host::Request::ServiceStatus {}).unwrap();
+        client.write_u32_le(frame.len() as u32).await.unwrap();
+        client.write_all(&frame).await.unwrap();
+        let mut owner = OwnerThread::new(Box::new(host::Unbound)).unwrap();
+        let reader = async {
+            let size = client.read_u32_le().await.unwrap();
+            let mut reply = vec![0; size as usize];
+            client.read_exact(&mut reply).await.unwrap();
+            drop(client);
+            reply
+        };
+        let (sent, reply) = tokio::time::timeout(Duration::from_secs(3), async {
+            tokio::join!(call(&mut pipe, &owner), reader)
+        })
+        .await
+        .unwrap();
+        sent.unwrap();
+        assert_eq!(reply, host::encode_reply(host::Reply::Rejected));
+        owner.finish().unwrap();
+    }
     #[tokio::test]
     async fn synchronous_query_from_async_owner_rejects_untrusted_pin_without_runtime_panic() {
         let (subject, _) = token_identity().unwrap();
@@ -765,23 +839,43 @@ mod tests {
         );
         let mut client = ClientOptions::new().open(&name).unwrap();
         pipe.connect().await.unwrap();
-        let frame = br#"{"version":4,"request":{"method":"status","request":"probe"}}"#;
+        let frame = host::encode(host::Request::ServiceStatus {}).unwrap();
         client.write_u32_le(frame.len() as u32).await.unwrap();
-        client.write_all(frame).await.unwrap();
+        client.write_all(&frame).await.unwrap();
         let mut owner = OwnerThread::new(Box::new(host::Unbound)).unwrap();
-        call(&mut pipe, &owner).await.unwrap();
-        let size = client.read_u32_le().await.unwrap();
-        let mut reply = vec![0; size as usize];
-        client.read_exact(&mut reply).await.unwrap();
+        let server = async {
+            let result = call(&mut pipe, &owner).await;
+            let next = pipe_instance(&name, &format!("D:P(A;;GA;;;{subject})"), false).unwrap();
+            pipe.disconnect().unwrap();
+            pipe = next;
+            result
+        };
+        let reader = async {
+            // Exercise the production disconnect immediately after call, while
+            // this real native client deliberately consumes the reply later.
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            let size = client.read_u32_le().await.unwrap();
+            let mut reply = vec![0; size as usize];
+            client.read_exact(&mut reply).await.unwrap();
+            drop(client);
+            reply
+        };
+        let (sent, reply) = tokio::time::timeout(Duration::from_secs(3), async {
+            tokio::join!(server, reader)
+        })
+        .await
+        .unwrap();
+        sent.unwrap();
         assert_eq!(reply, host::encode_reply(host::Reply::Rejected));
+        let (connected, client) =
+            tokio::join!(pipe.connect(), async { ClientOptions::new().open(&name) });
+        connected.unwrap();
+        let mut client = client.unwrap();
         client
             .write_u32_le(host::FRAME_LIMIT as u32 + 1)
             .await
             .unwrap();
-        assert!(matches!(
-            call(&mut pipe, &owner).await,
-            Err(Error::InvalidInput)
-        ));
+        assert_eq!(call(&mut pipe, &owner).await, Err(Error::InvalidInput));
         owner.finish().unwrap();
     }
 }
