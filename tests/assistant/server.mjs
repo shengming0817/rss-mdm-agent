@@ -359,9 +359,11 @@ export async function createFixture() {
         const sessions = unwrap(
           await host.store.listSessions(fixtureCaller, { limit: 50 }),
         );
-        const sessionId = sessions.items.find((row) =>
-          row.title?.startsWith("原生视觉验收"),
-        ).namespace.sessionId;
+        const session = sessions.items.find((row) =>
+          row.presentation.title.startsWith("原生视觉验收"),
+        );
+        if (!session) throw new Error("native visual session not found");
+        const sessionId = session.namespace.sessionId;
         const command = await fixture.command(sessionId);
         await fixture.executionDelivery(sessionId, command.commandId);
         unwrap(
