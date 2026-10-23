@@ -176,7 +176,7 @@ fn reports_sort_fields_and_preserve_explicit_nullable_metadata() {
 }
 
 #[test]
-// Formal agent-wire protocol vectors at 4b0cd11be629be390e8fea6a3d187921ea3a7ec4.
+// Formal agent-wire protocol vectors at d6f647e2c02503d93ccb6288016978056f0fc28c.
 fn native_vectors_bind_independent_signing_domains_and_result_identity() {
     use base64::Engine;
     use rss_mdm_agent_wire::runtime::*;
