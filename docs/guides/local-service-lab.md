@@ -8,7 +8,7 @@
 
 `pnpm build:installer --organization /absolute/public-organization.json` 在当前原生平台构建 macOS arm64 PKG 或 Windows amd64 / arm64 的 perMachine NSIS EXE，不套用 MSI。macOS 构建命令通过 `python3 scripts/build-run.py -- pnpm build:installer ...` 复用本地 Cargo 槽位；Windows 使用 `pnpm exec node scripts/build-installers.mjs ...`。Windows 构建进程、Rust 工具链和 Node 必须为目标原生架构，不接受仿真进程或混合 PE。目标设备须预装 machine-wide WebView2；安装器缺失时明确拒绝。当前机器有匹配架构、受保护的 PowerShell 7 时才登记该解释器与相关能力。
 
-组织输入仅含 `origin`（Agent 通信 HTTPS origin）、`tenant`（非零 UUID）、`label`、`signing_keys`（仅用于注册配置验签的 key ID → base64url Ed25519 公钥）、必填 `ca_pem`（HTTPS bootstrap CA）与可选 `task_trust_origins`（受保护的完整任务信任 origin 白名单）。设备 CA/CRL 从 Agent origin 的公开 trust API 获取。桌面登录、会话与注册授权复用根 `.env` 中已有的 `RSS_MDM_ORIGIN`、租户和可选 `RSS_MDM_CA_FILE` 网站配置，机器通信使用组织输入的 Agent origin。构建时核对同一租户并固定两者关系，不通过端口猜测或失败回退；Agent bootstrap CA 不会自动用于网站，公共网站证书不需要额外 CA。HTTPS bootstrap CA 与程序签名证书独立；输入不允许 grant、secret、账号目录或私钥。包内固定相同组织上下文的生产服务、桌面、Node、AI Host、worker 和资源。产物及其 `package-manifest.json` 位于忽略的 `.local-ci-runs/installers/`，记录源码、锁文件、平台、本地安装资源及最终包摘要。上传仅需要实际安装文件，不需要公开候选 manifest 或签名/公证证明文件。本地资源清单保留部署与代码身份完整性，不是后端发布合同。
+组织输入使用当前格式的 `service_id`（后端安装 instance_id）、`tenant`、`connections`（后端下载的完整签名 Agent 连接配置）、`label`、`signing_keys`（安装时独立保护的注册/配置验签公钥）与必填 `ca_pem`（HTTPS bootstrap CA）。打包器把连接文件交给生产 Rust 校验器验签和核对身份，不在 Node 重写 wire 验证器。设备 CA/CRL 经已授权 Agent HTTPS 入口获取；任务公钥由已认证设备通道提供，独立于安装公钥。桌面登录和会话仍使用根 `.env` 的 `RSS_MDM_ORIGIN`、租户与可选 `RSS_MDM_CA_FILE`，通过登录会话中的稳定实例与租户核对机器身份，地址变化不授权披露网站 Cookie。Agent bootstrap CA 不用于网站，签名地址更新不扩大 CA 或软件源凭据权限。输入不允许 grant、secret、账号目录或私钥。包内固定生产服务、桌面、Node、AI Host、worker 和资源；安装文件与 `package-manifest.json` 位于忽略的 `.local-ci-runs/installers/`。上传后端仅需要实际安装文件；本地资源清单用于部署与代码身份完整性。
 
 默认 macOS 为 ad-hoc 开发签名，Windows 为明确标记的开发包。正式包增加 `--release`：macOS 设置 `RSS_MACOS_APP_SIGNING_IDENTITY`、`RSS_MACOS_INSTALLER_SIGNING_IDENTITY` 和已存在的 `RSS_MACOS_NOTARY_PROFILE` Keychain 引用；Windows 设置 `RSS_WINDOWS_SIGNING_THUMBPRINT`，可选 `RSS_SIGNTOOL` 完整路径。构建不会接收证书密码；正式 macOS 包完成 notarization / stapling，正式 Windows 包与原生资源进行 Authenticode 签名。只有显式请求 `--release` 时才要求这些正式签名材料；默认包可正常上传、发布和注册，无测试/试点/生产环门槛。
 
@@ -45,7 +45,7 @@ Windows 安装操作返回 UUID 和不含输入内容的阶段回执。等待超
 
 构建 `cargo build --release -p agent-service --bin rss-execution-service`。生产服务与 user helper 使用同一二进制；原 execution-runner 二进制装配已删除。系统服务独占凭据和执行 journal，helper 不初始化业务数据库。
 
-由管理员准备受保护的部署 JSON：macOS 默认 `/Library/Application Support/RSS MDM Agent/execution.json`，Windows 为 ProgramData 下同一产品目录的 `execution.json`。格式由 `apps/agent-service/src/deployment.rs` 持有，使用当前格式显式配置 version、ipc_version、HTTPS origin、tenant、signing_keys、installation_id、installation_artifact、ca_file（受保护的 HTTPS bootstrap CA）、registration_clients 桌面程序/用户 pin、state_root、service 产物 pin、clients OS 主体/程序 pin、execution 的 work_root/material_root/interpreters/managers/processes，必填 software_read_grants（不使用源凭据时为 []），以及每个已登记用户的 helper_work_roots。解释器和包管理器使用完整路径和固定摘要，不使用 PATH 查找。material_root 与 state_root 分离。
+由管理员准备受保护的部署 JSON：macOS 默认 `/Library/Application Support/RSS MDM Agent/execution.json`，Windows 为 ProgramData 下同一产品目录的 `execution.json`。格式由 `apps/agent-service/src/deployment.rs` 持有，使用当前格式显式配置 version、ipc_version、service_id、签名 connections、tenant、signing_keys、installation_id、installation_artifact、ca_file（受保护的 HTTPS bootstrap CA）、registration_clients 桌面程序/用户 pin、state_root、service 产物 pin、clients OS 主体/程序 pin、execution 的 work_root/material_root/interpreters/managers/processes，必填 software_read_grants（不使用源凭据时为 []），以及每个已登记用户的 helper_work_roots。解释器和包管理器使用完整路径和固定摘要，不使用 PATH 查找。material_root 与 state_root 分离。
 
 桌面使用根 `.env` 的可选 `RSS_MDM_CA_FILE`；后台 Agent 必须配置独立的 `RSS_AGENT_CA_FILE`，指向部署方明确提供的单个 HTTPS bootstrap CA 公共证书。桌面构建嵌入其公共证书，Agent 的 `execution.json.ca_file` 由 Agent 输入生成。生成新安装配置时先准备包含程序 pins、工作目录、注册身份等完整字段的模板，然后执行：
 
@@ -194,9 +194,9 @@ resume 同样在拒绝前后核验这些前提，不把撤销、旧产物或 off
 脚本不创建账户、不自动注销，不使用 sudo 切 UID 代替 GUI 登录。缺环境时保留未执行，
 不得把这两个场景或 Windows 计为通过。
 
-Agent 部署生成使用 `.env` 的 RSS_AGENT_ORIGIN、必填 RSS_AGENT_CA_FILE；桌面管理 origin/CA 继续独立配置。部署与候选格式以当前生成器为准；生成器只写新文件，不覆盖原身份材料。设备证书经原生 CNG/daemon Keychain 签名完成 mTLS；HTTPS 只信任部署时保护的 bootstrap CA，下载的设备 CA 不扩展 HTTPS 信任；任务签名验证始终保留。
+Agent 部署生成使用 `.env` 的 RSS_AGENT_CONNECTIONS_FILE（后端下载的签名文件绝对路径）、必填 RSS_AGENT_CA_FILE；桌面管理 origin/CA 继续独立配置。部署与候选格式以当前生成器为准；生成器只写新文件，不覆盖原身份材料。设备证书经原生 CNG/daemon Keychain 签名完成 mTLS；HTTPS 只信任部署时保护的 bootstrap CA，下载的设备 CA 不扩展 HTTPS 信任；任务签名验证始终保留。
 
-任务运行验签只读取通信 SQLite 中通过已认证设备 HTTPS 通道取得的任务公钥集合，安装 `signing_keys` 不参与运行验签。首次同步失败保留原注册身份并暂停任务准入；刷新失败保留仍可验证的旧集合，未知 key ID 拒绝执行。集合绑定 tenant/origin，拒绝回退、同版本异内容、同 ID 换钥和非法生命周期变化。完整集合与 ACK 意图持久提交并读回后才 ACK，丢失响应或重启重试同一操作。Prepared、Active 和 VerifyOnly 公钥均可验签；执行仍须取得有效 Start 许可并满足身份、期限和输入一致性检查。离线设备可使密钥轮换待完成，不阻塞后端部署、启动或租户开通。
+任务运行验签只读取通信 SQLite 中通过已认证设备 HTTPS 通道取得的任务公钥集合，安装 `signing_keys` 不参与运行验签。首次同步失败保留原注册身份并暂停任务准入；刷新失败保留仍可验证的旧集合，未知 key ID 拒绝执行。集合绑定 service_id/tenant，拒绝回退、同版本异内容、同 ID 换钥和非法生命周期变化。完整集合与 ACK 意图持久提交并读回后才 ACK，丢失响应或重启重试同一操作。Prepared、Active 和 VerifyOnly 公钥均可验签；执行仍须取得有效 Start 许可并满足身份、期限和输入一致性检查。离线设备可使密钥轮换待完成，不阻塞后端部署、启动或租户开通。
 
 HTTPS 认证服务端、设备证书认证设备、任务签名检查持久任务内容、Start 决定执行许可。通过 HTTPS 更新的任务信任不构成独立于该通道的批准权威，也不防御客户端完整失陷。任务信任和 PKI 各自上报接收、应用、失败或未知观察；认证 IPC 只投影脱敏状态及独立 ACK 确认。失联时观察仅代表最后一次结果；PKI 安装摘要不代表 CRL 仍新鲜。磁盘写入失败不报告已应用。
 
@@ -306,8 +306,18 @@ Windows CPU 当前仅接纳单 processor group，多组系统报告 unsupported�
 不接纳引用、正则、组合分支或自定义关键字。复杂度或本地输出验证预算超限时拒绝采集结果并记录缺口。
 
 
-## 独立通信入口与任务信任地址
+## 连接配置发布、更新与离线恢复
 
-Agent 仅连接组织输入的 `origin`。若部署通过独立入口提供 Agent 通信，任务信任文档仍标识另一个已授权的 HTTPS origin，管理员可在安装包的公共组织 JSON 中增加 `task_trust_origins`，列出需要额外信任的完整 origin（例如 `https://mdm.example.org`）。最多 8 项，不接受通配符、路径、用户信息、查询或片段；端口参与精确匹配。省略或空数组只信任通信入口自身。
+仅支持当前格式的全新安装；旧部署、旧持久格式和旧 origin 白名单明确拒绝，不自动转换或重注册。首次安装保护稳定服务身份、租户、独立验签公钥和 HTTPS CA，签名连接配置只改变 HTTPS 地址。通信 SQLite、凭据命名空间、执行 authority、内容缓存和遥测 spool 均绑定稳定身份。
 
-该列表随固定候选写入受保护的系统部署配置，普通用户与网络响应不能修改。它只授权同一租户、已认证 Agent 通道交付的任务信任标识，不增加 HTTP 目的地址，不影响 PKI、注册签名、下载权限或 TLS 验证。已安装的任务信任仍禁止换 origin、回退版本或复用 key ID 更换公钥；移除已用地址会关闭就绪状态，保留原设备身份和执行历史。当前桌面登录/控制台地址由根 `.env` 持有，Agent 通信地址由组织 JSON 持有，制品地址由签名任务及既有软件源授权约束。
+管理员先在 Nginx 部署并完成真实 HTTPS 观察，再通过后端发布 `A → A+B → B`。Agent 在现有服务循环中获取配置、验签、防回滚、原子落盘并读回，随后使用首选地址上报 revision/digest 与实际入口 ACK。ACK 响应丢失重试原操作；换地址产生新 ACK 操作。仅 DNS/TCP/网络超时或断连允许在已签名候选内切换；TLS、HTTP 拒绝或限流、非法响应和签名错误不触发切换。写操作继续由原业务操作查询/重试，传输层不自动重放。
+
+所有已知入口失联时，管理员从后端取得绑定相同服务与租户的签名连接文件，将其放在管理员保护且无符号链接的路径，调用已安装服务镜像：
+
+```sh
+<固定服务镜像> --installation import-connections --connections <受保护签名文件绝对路径>
+```
+
+该操作使用现有管理员安装操作、安装锁与独占通信租约，停止服务后验证并持久化文件，然后恢复原服务注册；失败同样尝试恢复服务。它保留原设备、密钥、registration/generation、执行日志、内容缓存和未决操作。无私钥导入，无身份重新初始化。安装程序正常刷新也保留这些状态、软件源读取授权及已安装连接配置；旧安装包的较低 revision 不覆盖本机更高 revision。
+
+原生 Windows/Apple MDM 注册 URL 继续由各自协议材料持有，Agent 连接配置不承担原生客户端换址。软件源凭据仍按原 source/reference 与精确 HTTPS origin 独立授权；桌面网站登录入口由既有组织配置持有。

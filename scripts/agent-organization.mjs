@@ -6,6 +6,7 @@ import {
   existsSync,
   chmodSync,
   realpathSync,
+  statSync,
 } from "node:fs";
 import { join, isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -27,11 +28,22 @@ export function agentOrganizationConfiguration(root, template, caOutput) {
     throw new Error(
       "Agent template must use current deployment and IPC versions",
     );
-  let origin;
+  if (values.RSS_AGENT_ORIGIN?.trim())
+    throw new Error(
+      "RSS_AGENT_ORIGIN is retired; use a signed RSS_AGENT_CONNECTIONS_FILE",
+    );
+  if ("origin" in template || "task_trust_origins" in template)
+    throw new Error("Retired Agent deployment fields");
+  let connections;
   try {
-    origin = new URL(values.RSS_AGENT_ORIGIN);
+    const path = values.RSS_AGENT_CONNECTIONS_FILE;
+    if (!path || !isAbsolute(path) || statSync(path).size > 65536)
+      throw new Error();
+    connections = JSON.parse(readFileSync(path, "utf8"));
   } catch {
-    throw new Error("Configure a real HTTPS RSS_AGENT_ORIGIN");
+    throw new Error(
+      "RSS_AGENT_CONNECTIONS_FILE must name a bounded signed connection file",
+    );
   }
   const publicCa = (name, required = false) => {
     const source = values[name]?.trim();
@@ -56,21 +68,6 @@ export function agentOrganizationConfiguration(root, template, caOutput) {
     }
   };
   const ca = publicCa("RSS_AGENT_CA_FILE", true);
-  const hostname = origin.hostname.replace(/\.+$/u, "");
-  if (!hostname) throw new Error("Configure a real HTTPS RSS_AGENT_ORIGIN");
-  if (!hostname.startsWith("[")) origin.hostname = hostname;
-  if (
-    origin.protocol !== "https:" ||
-    !origin.hostname ||
-    origin.username ||
-    origin.password ||
-    origin.search ||
-    origin.hash ||
-    origin.pathname !== "/" ||
-    origin.hostname === "example" ||
-    origin.hostname.endsWith(".example")
-  )
-    throw new Error("Configure a real HTTPS RSS_AGENT_ORIGIN");
   if (
     !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
       organization.tenant,
@@ -83,7 +80,7 @@ export function agentOrganizationConfiguration(root, template, caOutput) {
   return {
     config: {
       ...template,
-      origin: origin.origin,
+      connections,
       tenant: organization.tenant.toLowerCase(),
       ca_file: ca ? caOutput : null,
     },
