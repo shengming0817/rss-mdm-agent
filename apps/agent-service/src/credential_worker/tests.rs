@@ -757,13 +757,66 @@ fn rss_rotation_changes_only_recovery_after_ack_and_verification_reuses_material
         &None,
     )
     .unwrap();
-    let ack = rss_ack(&verify, receipt);
+    let ack = rss_ack(&verify, receipt.clone());
     assert!(
         super::rss::execute(&verify, &native, &mut store)
             .unwrap()
             .complete
     );
     ack.join().unwrap();
+
+    // Crash after the SQLite commit, before a verified result: terminal Unknown is ACKed.
+    let mut original: state::Record =
+        state::read_optional(&root.0, &state::name(&task.task, "state"))
+            .unwrap()
+            .unwrap();
+    original.phase = state::Phase::Issued;
+    state::write(&root.0, &state::name(&task.task, "state"), &original).unwrap();
+    let unknown = failure_with_materials(&root.0, &task.task, Failure::RecoveryState).unwrap();
+    state::write(&root.0, &state::name(&task.task, "result"), &unknown).unwrap();
+    retire(&root.0, &task.task).unwrap();
+    assert!(state::read_optional::<Vec<w::CredentialReceipt>>(
+        &root.0,
+        &state::name(&task.task, "receipts")
+    )
+    .unwrap()
+    .is_some());
+    verify.task.task_id = uuid::Uuid::new_v4();
+    verify.task.attempt_id = uuid::Uuid::new_v4();
+    verify.task.recovery = Some(w::CredentialRecovery {
+        task_id: task.task.task_id,
+        attempt_id: task.task.attempt_id,
+    });
+    verify.task.definition_digest = w::CredentialTaskSpec::digest(
+        &verify.task.operation,
+        &verify.task.recipient,
+        &verify.task.expected,
+        &verify.task.recovery,
+    )
+    .unwrap();
+    let ack = rss_ack(&verify, receipt.clone());
+    let recovered = super::rss::execute(&verify, &native, &mut store).unwrap();
+    ack.join().unwrap();
+    assert!(recovered.complete);
+    assert_eq!(
+        recovered.recovery,
+        Some(w::CredentialRecoveryOutcome::Applied)
+    );
+    state::write(&root.0, &state::name(&verify.task, "result"), &recovered).unwrap();
+    retire(&root.0, &verify.task).unwrap();
+    assert!(state::read_optional::<Vec<w::CredentialReceipt>>(
+        &root.0,
+        &state::name(&task.task, "receipts")
+    )
+    .unwrap()
+    .is_none());
+    assert_eq!(
+        store
+            .recovery_material(&task.task, &receipt.subject, &native)
+            .unwrap()
+            .1,
+        receipt
+    );
     assert_eq!(
         native.state.lock().unwrap().changes,
         0,

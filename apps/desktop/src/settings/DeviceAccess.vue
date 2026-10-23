@@ -198,6 +198,17 @@ onUnmounted(() => {
         </li>
       </ul>
       <div v-for="policy in directory?.policies" :key="policy.policy">
+        <p>策略 {{ policy.policy }} · 版本 {{ policy.version }}</p>
+        <p>
+          RSS 登录：{{ policy.configuration.enabled ? "启用" : "停用" }}；
+          账户角色：{{
+            policy.configuration.role === "administrator"
+              ? "管理员"
+              : policy.configuration.role === "standard"
+                ? "标准用户"
+                : "保留现有角色"
+          }}
+        </p>
         <button :disabled="busy" @click="enroll(policy.policy)">
           关联当前 Windows 账户
         </button>

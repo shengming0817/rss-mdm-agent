@@ -128,7 +128,7 @@ pub fn inspect(expected: &str) -> Result<Account, F> {
         return Err(F::AccountChanged);
     }
     // UF_NORMAL_ACCOUNT excludes trust, machine, and temporary duplicate accounts.
-    if info.usri23_flags.0 & UF_NORMAL_ACCOUNT.0 == 0 {
+    if info.usri23_flags.0 & UF_NORMAL_ACCOUNT == 0 {
         return Err(F::AccountChanged);
     }
     let role = if administrators()?.iter().any(|sid| sid == expected) {
@@ -248,7 +248,7 @@ pub fn create(name: &str, password: &str) -> Result<String, F> {
         usri1_name: PWSTR(name.as_mut_ptr()),
         usri1_password: PWSTR(password.as_mut_ptr()),
         usri1_priv: USER_PRIV_USER,
-        usri1_flags: USER_ACCOUNT_FLAGS(UF_NORMAL_ACCOUNT.0 | UF_SCRIPT.0 | UF_ACCOUNTDISABLE.0),
+        usri1_flags: USER_ACCOUNT_FLAGS(UF_NORMAL_ACCOUNT | UF_SCRIPT.0 | UF_ACCOUNTDISABLE.0),
         ..Default::default()
     };
     let status = unsafe {
@@ -259,8 +259,21 @@ pub fn create(name: &str, password: &str) -> Result<String, F> {
             None,
         )
     };
-    if status == 2224 {
+    if status == NERR_UserExists {
         return Err(F::NameConflict);
+    }
+    if [
+        ERROR_PASSWORD_RESTRICTION.0,
+        NERR_PasswordTooShort,
+        NERR_PasswordTooLong,
+        NERR_PasswordNotComplexEnough,
+        NERR_PasswordHistConflict,
+        NERR_PasswordTooRecent,
+    ]
+    .contains(&status)
+    {
+        // These statuses explicitly reject NetUserAdd; no account was created.
+        return Err(F::NeedsUser);
     }
     if status != 0 {
         return Err(F::NativeFailure);

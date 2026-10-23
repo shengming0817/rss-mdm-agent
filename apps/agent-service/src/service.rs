@@ -312,6 +312,7 @@ impl<S: IdentityProvider> DeviceService<S> {
         self.core.step_telemetry();
         self.reclaim_owner_step();
         if std::time::Instant::now() >= self.next_enrollment {
+            self.core.access.prune();
             let access_ready = self.waiting.as_ref().is_some_and(|(offer, _)| {
             matches!(offer.payload(), wire::TaskPayload::DeviceAccess(task) if self.core.access.ready(task).is_ok())
         });
@@ -529,10 +530,13 @@ impl<S: IdentityProvider> DeviceService<S> {
                     .bridge
                     .finish(&mut self.client, task, &self.core.app, &caller)
                 {
-                    Ok(()) => match self.core.host.materials.retire(input.digest()) {
-                        Ok(()) | Err(execution_app::Error::Conflict) => (),
-                        Err(error) => return Err(map_app_error(error)),
-                    },
+                    Ok(()) => {
+                        self.core.access.retire(task);
+                        match self.core.host.materials.retire(input.digest()) {
+                            Ok(()) | Err(execution_app::Error::Conflict) => (),
+                            Err(error) => return Err(map_app_error(error)),
+                        }
+                    }
                     Err(Error::Conflict) => {
                         // Only unresolved original work needs recovery material. Settled tasks
                         // must release first, without rebuilding every native phase after ACK.

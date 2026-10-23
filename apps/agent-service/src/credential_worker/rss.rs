@@ -59,7 +59,9 @@ pub(super) fn execute(
         original.attempt_id = reference.attempt_id;
         let record: Record = state::read_optional(&input.root, &state::name(&original, "state"))?
             .ok_or(Error::Storage)?;
-        if record.task.tenant_id != task.tenant_id
+        if record.task.task_id != reference.task_id
+            || record.task.attempt_id != reference.attempt_id
+            || record.task.tenant_id != task.tenant_id
             || record.task.device_id != task.device_id
             || record.task.registration_id != task.registration_id
             || record.task.generation != task.generation

@@ -222,7 +222,7 @@ pub(crate) fn retire(root: &Path, task: &w::CredentialTaskSpec) -> Result<(), Er
             r.complete && r.recovery == Some(w::CredentialRecoveryOutcome::NotAttempted)
         });
     let no_effect = effect == Some(execution_lifecycle::EffectAssessment::NoEffect);
-    // Uncertain mutations retain only the protected original, for a future signed recovery.
+    // Uncertain mutations retain their protected original, for a future signed recovery.
     // Current account material is independently retained in the registration-bound .account.
     if success || no_effect {
         state::remove(root, &state::name(task, "state"))?;
@@ -236,6 +236,17 @@ pub(crate) fn retire(root: &Path, task: &w::CredentialTaskSpec) -> Result<(), Er
         }
     }
     for suffix in ["escrow", "ack", "receipts", "result"] {
+        // RSS recovery must prove the exact material/version committed by SQLite.
+        if suffix == "receipts"
+            && !success
+            && !no_effect
+            && matches!(
+                task.operation,
+                w::CredentialOperation::RotateRssLogin { .. }
+            )
+        {
+            continue;
+        }
         state::remove(root, &state::name(task, suffix))?;
     }
     // A held owner lock proves no worker is staging a write; the service owner is sequential.

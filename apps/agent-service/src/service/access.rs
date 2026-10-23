@@ -46,6 +46,17 @@ impl State {
             fences,
         })
     }
+    pub fn prune(&mut self) {
+        self.setups
+            .retain(|_, setup| setup.owner.validate(&self.fences).is_ok());
+        self.passwords.retain(|id, _| self.setups.contains_key(id));
+        self.challenges
+            .retain(|_, challenge| challenge.owner.validate(&self.fences).is_ok());
+    }
+    pub fn retire(&mut self, task: Uuid) {
+        self.setups.remove(&task);
+        self.passwords.remove(&task);
+    }
     pub fn ready(&self, task: &w::AccessTaskSpec) -> Result<(), Error> {
         if matches!(task.windows, Some(w::AccessWindowsPlan::Initialize { .. })) {
             let setup = self.setups.get(&task.task_id).ok_or(Error::Unavailable)?;
@@ -104,6 +115,25 @@ impl execution_runner::InputResolver for Password {
             || reference.revision.as_str() != self.attempt.to_string()
             || !matches!(&plan.spec().request.initiator, execution_contract::Initiator::Backend { task, attempt, .. } if task.as_str() == self.task.to_string() && attempt.as_str() == self.attempt.to_string())
         {
+            return Err(E::Denied);
+        }
+        self.take_admitted(max_bytes)
+    }
+}
+impl Password {
+    fn take_admitted(
+        &self,
+        max_bytes: u64,
+    ) -> Result<execution_runner::InputBytes, execution_app::Error> {
+        use execution_app::Error as E;
+        let scope =
+            super::policy::SessionKey::new(self.owner.subject.clone(), self.owner.binding.clone());
+        // Linearize material release with context retirement after native account checks.
+        let _admission = self
+            .fences
+            .admit(&scope, self.owner.epoch)
+            .map_err(|_| E::Denied)?;
+        if crate::wall().map_err(|_| E::Unavailable)? >= self.owner.expires {
             return Err(E::Denied);
         }
         let bytes = self
@@ -239,18 +269,7 @@ impl<S: agent_client::IdentityProvider> super::DeviceService<S> {
                 .min(crate::wall()?.saturating_add(600_000)),
         };
         owner.validate(&self.core.access.fences)?;
-        self.core
-            .access
-            .setups
-            .retain(|_, s| s.owner.validate(&self.core.access.fences).is_ok());
-        self.core
-            .access
-            .passwords
-            .retain(|id, _| self.core.access.setups.contains_key(id));
-        self.core
-            .access
-            .challenges
-            .retain(|_, c| c.owner.validate(&self.core.access.fences).is_ok());
+        self.core.access.prune();
         let output = match input {
             Op::Directory { after } => Out::Directory(
                 super::network(
@@ -459,5 +478,49 @@ impl<S: agent_client::IdentityProvider> super::DeviceService<S> {
             return Err(Error::Identity);
         }
         Ok(Reply::DeviceAccess { value: output })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn revocation_between_validation_and_release_keeps_password_private() {
+        use execution_contract::{Id, NativeContextRef};
+        let fences = Arc::new(super::super::policy::Fences::default());
+        let binding = Id::new("native-login").unwrap();
+        let scope = super::super::policy::SessionKey::new("local-sid".into(), binding.clone());
+        let password = Arc::new(Password {
+            owner: Owner {
+                subject: "local-sid".into(),
+                session: 1,
+                binding,
+                context: NativeContextRef {
+                    id: Id::new("context").unwrap(),
+                    generation: Id::new("1").unwrap(),
+                },
+                epoch: 0,
+                expires: crate::wall().unwrap() + 60_000,
+            },
+            fences: fences.clone(),
+            task: Uuid::new_v4(),
+            attempt: Uuid::new_v4(),
+            bytes: Mutex::new(Some(Zeroizing::new(b"local-password".to_vec()))),
+        });
+        let (checked, observed) = std::sync::mpsc::channel();
+        let (resume, resumed) = std::sync::mpsc::channel();
+        let worker = password.clone();
+        let worker_scope = scope.clone();
+        let thread = std::thread::spawn(move || {
+            assert_eq!(worker.fences.current(&worker_scope).unwrap(), 0);
+            checked.send(()).unwrap();
+            resumed.recv().unwrap();
+            assert!(worker.take_admitted(1024).is_err());
+        });
+        observed.recv().unwrap();
+        fences.revoke(&scope).unwrap();
+        resume.send(()).unwrap();
+        thread.join().unwrap();
+        assert!(password.bytes.lock().unwrap().is_some());
     }
 }
