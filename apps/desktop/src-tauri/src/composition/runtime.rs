@@ -347,8 +347,28 @@ impl DesktopRuntime {
         self.identity.set_session(Some(account))?;
         *self.identity.pending.lock().map_err(|_| unavailable())? = Some(next.clone());
         let result = self.activate_context(next).await;
+        let result = match result {
+            Err(error)
+                if !matches!(
+                    error.code,
+                    "binding_unknown"
+                        | "binding_conflict"
+                        | "binding_invalidated"
+                        | "cleanup_pending"
+                        | "execution_unavailable"
+                ) =>
+            {
+                match self.retire_locked().await {
+                    Ok(()) => Err(error),
+                    Err(retired) => Err(retired),
+                }
+            }
+            other => other,
+        };
         if let Err(error) = &result {
-            self.record_binding_error(error)?;
+            if self.identity.session()?.is_some() {
+                self.record_binding_error(error)?;
+            }
         }
         self.account_result(result)
     }
@@ -673,6 +693,9 @@ mod tests {
                         },
                     })
                 }
+                Request::RetireEnterpriseContext { .. } => Ok(Reply::CurrentUserSync {
+                    value: Default::default(),
+                }),
                 Request::RevokeContext {} => {
                     if native_bound.load(Ordering::Acquire) && lost_ack.load(Ordering::Acquire) {
                         return Err(execution_app::Error::OutcomeUnknown);
@@ -753,7 +776,7 @@ mod tests {
                         reqwest::Client::new(),
                         org,
                         "Alice",
-                        "password".into(),
+                        zeroize::Zeroizing::new("password".into()),
                     )
                 })
                 .await
@@ -779,6 +802,94 @@ mod tests {
             runtime.shutdown().await;
             std::fs::remove_dir_all(root).unwrap();
         }
+    }
+    #[tokio::test]
+    async fn unknown_relation_keeps_login_private_and_retries_the_original_generation() {
+        use super::super::account::{
+            http_tests::{access, identity, server},
+            EnterpriseSession,
+        };
+        use execution_ipc::host::{Reply, Request};
+        let root = std::env::temp_dir().join(format!("rss-relation-{}", uuid::Uuid::new_v4()));
+        let mut runtime = DesktopRuntime::start_with_key_backend(
+            &root,
+            &root.join("missing"),
+            ai_session_contract::HostStatusSource::DevelopmentOverride,
+            NoKey,
+        )
+        .await
+        .unwrap();
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let requests = seen.clone();
+        runtime.execution = runtime
+            .execution
+            .clone()
+            .with_context_transport(move |request| match request {
+                Request::RevokeContext {} => Ok(Reply::ContextRevoked),
+                Request::RetireEnterpriseContext { .. } => Ok(Reply::CurrentUserSync {
+                    value: Default::default(),
+                }),
+                Request::BindContext { value, .. } => {
+                    let mut seen = requests.lock().unwrap();
+                    seen.push(value.generation.clone());
+                    if seen.len() == 1 {
+                        Ok(Reply::CurrentUserSync {
+                            value: execution_contract::CurrentUserSync {
+                                phase: execution_contract::CurrentUserSyncPhase::BindingUnknown,
+                                current: None,
+                            },
+                        })
+                    } else {
+                        Ok(Reply::ContextBound {
+                            value: execution_contract::NativeContextRef {
+                                id: value.generation.clone(),
+                                generation: value.generation,
+                            },
+                        })
+                    }
+                }
+                _ => panic!("unexpected context request"),
+            });
+        let (org, server) = server(vec![
+            (200, identity()),
+            (200, identity()),
+            (200, access()),
+            (200, identity()),
+            (200, access()),
+            (200, json!({})),
+        ])
+        .await;
+        let error = runtime
+            .login_with(|| {
+                EnterpriseSession::login_with_client(
+                    reqwest::Client::new(),
+                    org,
+                    "Alice",
+                    zeroize::Zeroizing::new("password".into()),
+                )
+            })
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "binding_unknown");
+        assert!(runtime.identity.snapshot().is_err());
+        assert!(runtime.identity.session().unwrap().is_some());
+        assert_eq!(
+            runtime.account_status().unwrap().binding,
+            ai_session_contract::AccountBindingState::BindingUnknown
+        );
+        let published = runtime.recover_account(false).await.unwrap().unwrap();
+        assert_eq!(
+            runtime.identity.snapshot().unwrap().generation,
+            published.generation
+        );
+        let seen = seen.lock().unwrap().clone();
+        assert_eq!(seen.len(), 2);
+        assert_eq!(seen[0], seen[1]);
+        assert_eq!(published.generation.as_str(), seen[0].as_str());
+        runtime.logout().await.unwrap();
+        server.await.unwrap();
+        runtime.shutdown().await;
+        std::fs::remove_dir_all(root).unwrap();
     }
     #[tokio::test]
     async fn missing_runtime_preserves_users_and_execution_and_coalesces_restart() {
@@ -877,7 +988,7 @@ mod tests {
                         reqwest::Client::new(),
                         a_org,
                         "Alice",
-                        "password".into(),
+                        zeroize::Zeroizing::new("password".into()),
                     )
                 })
                 .await
@@ -903,7 +1014,7 @@ mod tests {
                         reqwest::Client::new(),
                         b_org,
                         "Alice",
-                        "password".into(),
+                        zeroize::Zeroizing::new("password".into()),
                     )
                     .await
                 })
@@ -958,7 +1069,7 @@ mod tests {
                         reqwest::Client::new(),
                         org,
                         "Alice",
-                        "password".into(),
+                        zeroize::Zeroizing::new("password".into()),
                     )
                 })
                 .await
@@ -1006,7 +1117,7 @@ mod tests {
                     reqwest::Client::new(),
                     org,
                     "Alice",
-                    "password".into(),
+                    zeroize::Zeroizing::new("password".into()),
                 )
             })
             .await
@@ -1057,7 +1168,7 @@ mod tests {
                         reqwest::Client::new(),
                         org,
                         "Alice",
-                        "password".into(),
+                        zeroize::Zeroizing::new("password".into()),
                     )
                 })
                 .await

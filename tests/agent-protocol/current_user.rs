@@ -14,8 +14,8 @@ pub struct RelationFixture {
 pub fn user(tenant: Uuid) -> SelfServiceUser {
     SelfServiceUser {
         tenant_id: tenant,
-        instance_id: Uuid::from_u128(12),
-        principal_id: Uuid::from_u128(13),
+        instance_id: Uuid::from_u128(2),
+        principal_id: Uuid::from_u128(3),
     }
 }
 pub fn response(

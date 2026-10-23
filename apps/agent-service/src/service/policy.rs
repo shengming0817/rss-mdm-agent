@@ -281,7 +281,10 @@ impl Core {
             .values()
             .find(|bound| bound.scope == scope && &bound.context == session_binding)
             .ok_or(Error::Identity)?;
-        if self.fences.current(&scope)? != current.epoch || current.user() != Some(user) {
+        if !current.ready
+            || self.fences.current(&scope)? != current.epoch
+            || current.user() != Some(user)
+        {
             return Err(Error::Identity);
         }
         if self.host.clock.millis()? >= current.expires_at_unix_ms {
@@ -564,7 +567,7 @@ impl<S: IdentityProvider> DeviceService<S> {
                     .is_some_and(|g| *g == owner.context.generation);
                 if !*recover && (owner.peer != key || !own_generation) {
                     return Ok(Reply::CurrentUserSync {
-                        value: self.client.current_user_status()?,
+                        value: Default::default(),
                     });
                 }
                 if *recover
@@ -635,7 +638,8 @@ impl<S: IdentityProvider> DeviceService<S> {
             let old = self.core.contexts.get(&key);
             let context = match (expected, old) {
                 (Some(id), Some(old))
-                    if &old.context.id == id
+                    if old.ready
+                        && &old.context.id == id
                         && old.epoch == epoch
                         && old.expires_at_unix_ms > self.core.host.clock.millis()?
                         && old.generation == value.generation
@@ -651,7 +655,7 @@ impl<S: IdentityProvider> DeviceService<S> {
                 }
                 (None, Some(old)) if old.epoch != epoch && old.generation != value.generation => {
                     execution_contract::NativeContextRef {
-                        id: plan::id(Uuid::new_v4().to_string())?,
+                        id: value.generation.clone(),
                         generation: value.generation.clone(),
                     }
                 }
@@ -696,10 +700,12 @@ impl<S: IdentityProvider> DeviceService<S> {
                         commands,
                     )
                     .await;
-                    if result.is_err() {
-                        return Ok(Reply::CurrentUserSync {
-                            value: self.client.current_user_status()?,
-                        });
+                    if let Err(error) = result {
+                        let mut status = self.client.current_user_status()?;
+                        if error == Error::Conflict {
+                            status.phase = agent_client::current_user::Phase::Conflict;
+                        }
+                        return Ok(Reply::CurrentUserSync { value: status });
                     }
                     // A successful HTTP write can outlive immediate native revocation.
                     if self.core.fences.current(&scope)? != epoch {

@@ -3801,3 +3801,82 @@ async fn startup_authority_requires_current_verified_revision() {
         ));
     }
 }
+
+#[tokio::test]
+async fn current_user_lost_ack_keeps_context_closed_and_resumes_original_login() {
+    let _budget = crate::scenario_budget::enter();
+    use execution_ipc::host::{NativeAccess, NativeContextSession, Request};
+    let mut c = Case::new(None).await;
+    c.policy_call(Request::RevokeContext {}).await;
+    let value = NativeContextSession {
+        access: NativeAccess::User {
+            credential: zeroize::Zeroizing::new("c".repeat(64)),
+            credential_origin: c.service.client.configuration().origin.to_string(),
+            user: protocol::current_user::user(c.service.client.configuration().tenant),
+        },
+        generation: plan::id("pending-enterprise").unwrap(),
+        expires_at_unix_ms: c.service.core.host.clock.millis().unwrap() + 60000,
+    };
+    c._server.data.lock().unwrap().current_user.lose_reply = true;
+    let reply = c
+        .policy_call(Request::BindContext {
+            value: value.clone(),
+            expected: None,
+        })
+        .await;
+    assert!(
+        matches!(reply,Reply::CurrentUserSync{value} if value.phase==execution_contract::CurrentUserSyncPhase::BindingUnknown)
+    );
+    assert!(matches!(
+        c.policy_call(Request::PolicyDirectory {
+            context: c.context(),
+            after: None,
+            origin: ClientOrigin::Desktop {}
+        })
+        .await,
+        Reply::Rejected
+    ));
+    // Refresh cannot turn a pending, unpublished binding into a usable context.
+    assert!(matches!(
+        c.policy_call(Request::BindContext {
+            value: value.clone(),
+            expected: Some(value.generation.clone())
+        })
+        .await,
+        Reply::Rejected
+    ));
+    let calls = c._server.data.lock().unwrap().current_user.inputs.len();
+    assert!(matches!(
+        c.policy_call(Request::BindContext {
+            value,
+            expected: None
+        })
+        .await,
+        Reply::ContextBound { .. }
+    ));
+    let d = c._server.data.lock().unwrap();
+    assert_eq!(d.current_user.inputs.len(), calls + 1);
+    assert_eq!(
+        d.current_user.inputs[calls - 1],
+        d.current_user.inputs[calls]
+    );
+}
+#[tokio::test]
+async fn raw_context_fence_does_not_delete_the_server_relation() {
+    let _budget = crate::scenario_budget::enter();
+    let mut c = Case::new(None).await;
+    let before = c._server.data.lock().unwrap().current_user.revision;
+    c.policy_call(execution_ipc::host::Request::RevokeContext {})
+        .await;
+    assert_eq!(c._server.data.lock().unwrap().current_user.revision, before);
+    let reply = c
+        .policy_call(execution_ipc::host::Request::RetireEnterpriseContext {
+            generation: Some(plan::id("initial").unwrap()),
+            proof: Some(zeroize::Zeroizing::new("c".repeat(64))),
+            recover: false,
+        })
+        .await;
+    assert!(
+        matches!(reply,Reply::CurrentUserSync{value} if value.phase==execution_contract::CurrentUserSyncPhase::Unbound)
+    );
+}

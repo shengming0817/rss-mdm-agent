@@ -1649,6 +1649,7 @@ try {
     result.status = "passed";
   } else {
     mark("account and saved unverified connection");
+    if (await browser.$('[aria-label="登录工作空间"]').isExisting()) await click("设置与诊断");
     await browser.$(".account-local-workspaces > summary").click();
     await browser.$('[aria-label="测试用户名"]').setValue("Golden Alice");
     await click("进入");

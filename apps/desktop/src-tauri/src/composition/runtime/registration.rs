@@ -304,7 +304,7 @@ mod tests {
             reqwest::Client::new(),
             organization,
             "Alice",
-            "password".into(),
+            zeroize::Zeroizing::new("password".into()),
         )
         .await
         .unwrap();
@@ -320,6 +320,9 @@ mod tests {
             .execution
             .clone()
             .with_context_transport(move |request| match request {
+                Request::RetireEnterpriseContext { .. } => Ok(Reply::CurrentUserSync {
+                    value: Default::default(),
+                }),
                 Request::RevokeContext {} => {
                     bound.store(false, Ordering::Release);
                     Ok(Reply::ContextRevoked)

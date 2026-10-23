@@ -89,7 +89,11 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             } else {
                 state.phase
             },
-            current: state.confirmed.map(|c| c.value),
+            current: if stale {
+                None
+            } else {
+                state.confirmed.map(|c| c.value)
+            },
         })
     }
     /// Retained original owner, used only by authenticated service retirement/recovery.
@@ -109,7 +113,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         Ok(value)
     }
     fn check_relation(value: &wire::CurrentUser) -> Result<(), Error> {
-        if value.revision >= i64::MAX as u64
+        if value.revision > i64::MAX as u64
             || value.confirmed_at.is_some_and(|v| v < 0)
             || (value.state == wire::CurrentUserState::Active) != value.user.is_some()
             || value.user.as_ref().is_some_and(|u| {

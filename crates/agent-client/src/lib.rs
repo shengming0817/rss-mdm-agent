@@ -24,9 +24,9 @@ mod identity;
 mod pki;
 mod task_trust;
 
-mod self_service;
 /// Device-bound enterprise relation and durable recovery.
 pub mod current_user;
+mod self_service;
 mod tls;
 mod trust;
 pub use enrollment::{EnrollmentPhase, EnrollmentStatus, GrantImport};

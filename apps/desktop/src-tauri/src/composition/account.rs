@@ -1070,7 +1070,7 @@ pub(super) mod http_tests {
             Client::new(),
             organization,
             "Alice",
-            "password-canary".into(),
+            zeroize::Zeroizing::new("password-canary".into()),
         )
         .await
         .unwrap();
@@ -1131,7 +1131,7 @@ pub(super) mod http_tests {
             Client::new(),
             organization.clone(),
             "Alice",
-            "password-canary".into(),
+            zeroize::Zeroizing::new("password-canary".into()),
         )
         .await
         .unwrap();
@@ -1171,7 +1171,7 @@ pub(super) mod http_tests {
                 Client::new(),
                 organization,
                 "Alice",
-                "password-canary".into(),
+                zeroize::Zeroizing::new("password-canary".into()),
             )
             .await
             .unwrap();
@@ -1206,7 +1206,7 @@ pub(super) mod http_tests {
                 Client::new(),
                 organization,
                 "Alice",
-                "password-canary".into()
+                zeroize::Zeroizing::new("password-canary".into())
             )
             .await
             .is_err());
@@ -1227,7 +1227,7 @@ pub(super) mod http_tests {
             Client::new(),
             organization,
             "Alice",
-            "password-canary".into(),
+            zeroize::Zeroizing::new("password-canary".into()),
         )
         .await
         .unwrap();
@@ -1250,7 +1250,7 @@ pub(super) mod http_tests {
             Client::new(),
             organization,
             "Alice",
-            "password-canary".into(),
+            zeroize::Zeroizing::new("password-canary".into()),
         )
         .await
         .unwrap();

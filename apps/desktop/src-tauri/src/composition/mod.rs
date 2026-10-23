@@ -21,8 +21,6 @@ pub mod account;
 
 pub mod appearance;
 
-
-
 mod identity;
 
 mod supervisor;

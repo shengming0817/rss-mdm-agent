@@ -128,6 +128,8 @@ function submit() {
 }
 async function changeMethod(next: typeof method.value) {
   if (props.loading || (!alternative.value && next !== "password")) return;
+  password.value = "";
+  reveal.value = false;
   method.value = next;
   localMessage.value = "";
   props.fixture?.cancel();

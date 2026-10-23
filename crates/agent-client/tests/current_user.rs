@@ -167,3 +167,28 @@ async fn another_local_owner_logout_cannot_clear_the_later_login() {
         Error::Identity
     );
 }
+
+#[tokio::test]
+async fn renewed_device_certificate_invalidates_the_retained_receipt() {
+    let server = Server::tls().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    let registration = server.register(&mut client).await;
+    let user = current_user::user(server.data.lock().unwrap().tenant);
+    client
+        .bind_current_user(&owner(), &user, &"a".repeat(64))
+        .await
+        .unwrap();
+    server.time.set(4_070_908_700);
+    server.data.lock().unwrap().candidate_not_after = 4_071_000_000;
+    client.drive_pki().await.unwrap();
+    assert_eq!(client.registration().unwrap(), registration);
+    let status = client.current_user_status().unwrap();
+    assert_eq!(status.phase, Phase::Invalidated);
+    assert!(status.current.is_none());
+    client
+        .bind_current_user(&owner(), &user, &"b".repeat(64))
+        .await
+        .unwrap();
+    assert_eq!(client.current_user_status().unwrap().phase, Phase::Bound);
+}
