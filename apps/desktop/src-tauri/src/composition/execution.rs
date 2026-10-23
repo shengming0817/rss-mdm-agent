@@ -736,6 +736,13 @@ fn operation(s: ExecutionStatus) -> mcp::OperationStatus {
         evidence: s.evidence.into_iter().map(|e| e.reference.id).collect(),
     }
 }
+fn local_software_result(value: execution_app::LocalSoftwareStatus) -> mcp::LocalSoftwareResult {
+    mcp::LocalSoftwareResult {
+        detected: value.detected,
+        prepared: value.prepared,
+        operation: operation(value.execution),
+    }
+}
 impl mcp::ExecutionServicePort for ExecutionHandle {
     fn bind_call(
         self: &Arc<Self>,
@@ -854,10 +861,7 @@ impl mcp::ExecutionServicePort for ExecutionHandle {
             Reply::SoftwareStatus { value } => value,
             _ => return Err(mcp::ServiceError::Unavailable),
         };
-        Ok(mcp::LocalSoftwareResult {
-            prepared: value.prepared,
-            operation: operation(value.execution),
-        })
+        Ok(local_software_result(value))
     }
     async fn software_cancel(
         &self,
@@ -871,10 +875,7 @@ impl mcp::ExecutionServicePort for ExecutionHandle {
             Reply::SoftwareStatus { value } => value,
             _ => return Err(mcp::ServiceError::Unavailable),
         };
-        Ok(mcp::LocalSoftwareResult {
-            prepared: value.prepared,
-            operation: operation(value.execution),
-        })
+        Ok(local_software_result(value))
     }
     async fn policy_tools(
         &self,
@@ -1282,6 +1283,49 @@ mod selection_tests {
 #[cfg(test)]
 mod local_software_error_tests {
     use super::*;
+    #[test]
+    fn verified_detection_facts_survive_the_native_mcp_projection() {
+        use serde_json::json;
+        let mut value: execution_app::LocalSoftwareStatus = serde_json::from_value(json!({
+            "detected":null,
+            "prepared":{
+                "request":"local-detection","digest":"a".repeat(64),
+                "choice":{"request":"local-detection","software":{"query":{"id":"native:apps","revision":"b".repeat(64)},"cursor":{"snapshot":"c".repeat(64),"offset":0},"installation":"app"},"action":"detect"},
+                "name":"App","initiator":{"kind":"human","osSession":{"device":"device","account":{"platform":"macos","subject":"uid:501"},"session":"login"}},
+                "identity":"system","targetVersion":null,"startBeforeUnixMs":1000
+            },
+            "execution":{
+                "operationRequestId":"local-detection","contentDigest":"a".repeat(64),
+                "phase":"executionEnded","mode":"test","process":null,"software":null,
+                "attemptId":null,"attempts":1,"cancelRequested":false,"admission":null,
+                "dispatchCause":null,"stopOutcome":null,"assessment":null,"evidence":[]
+            }
+        })).unwrap();
+        for detected in [
+            Some(SoftwareState::Present {
+                version: PackageValue::new("1.2.3").unwrap(),
+            }),
+            Some(SoftwareState::Absent {}),
+            Some(SoftwareState::Unknown {
+                reason: SoftwareDetectionFailure::Unavailable,
+            }),
+            None,
+        ] {
+            value.detected = detected.clone();
+            let projected = local_software_result(value.clone());
+            assert_eq!(projected.detected, detected);
+            assert_eq!(projected.prepared.request, value.prepared.request);
+            assert_eq!(
+                projected.operation.operation_request_id,
+                value.execution.operation_request_id
+            );
+            assert_eq!(
+                projected.operation.phase,
+                mcp::OperationPhase::ExecutionEnded
+            );
+        }
+    }
+
     #[test]
     fn definitive_software_absence_survives_the_mcp_boundary() {
         assert!(matches!(

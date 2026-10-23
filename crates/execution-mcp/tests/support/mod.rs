@@ -28,6 +28,7 @@ pub fn limits() -> McpLimits {
 }
 #[derive(Default)]
 pub struct TestStore {
+    software: HashMap<(TestNamespace, RequestId), LocalSoftwareResult>,
     queries: HashMap<(TestNamespace, RequestId), execution_contract::QuerySubmit>,
     query_cancellations: HashSet<(TestNamespace, RequestId)>,
     accepted: HashMap<(TestNamespace, RequestId), OperationStatus>,
@@ -94,6 +95,13 @@ impl TestService {
     }
     fn key(&self, id: &RequestId) -> (TestNamespace, RequestId) {
         (self.namespace.clone(), id.clone())
+    }
+    pub fn software_result(&self, value: LocalSoftwareResult) {
+        self.store
+            .lock()
+            .unwrap()
+            .software
+            .insert(self.key(&value.prepared.request), value);
     }
     pub fn complete_test_result(&self, id: &str) {
         let mut db = self.store.lock().unwrap();
@@ -226,11 +234,17 @@ impl ExecutionServicePort for TestService {
     }
     async fn software_status(
         &self,
-        _: execution_contract::QueryRequest,
+        input: execution_contract::QueryRequest,
         _: CancellationToken,
     ) -> Result<LocalSoftwareResult, ServiceError> {
         self.capabilities(CancellationToken::new()).await?;
-        Err(ServiceError::NotFound)
+        self.store
+            .lock()
+            .unwrap()
+            .software
+            .get(&self.key(&input.request))
+            .cloned()
+            .ok_or(ServiceError::NotFound)
     }
     async fn software_cancel(
         &self,

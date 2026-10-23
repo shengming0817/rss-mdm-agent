@@ -1646,6 +1646,13 @@
           "additionalProperties": false,
           "description": "Existing execution status with its original safe software preview.",
           "properties": {
+            "detected": {
+              "anyOf": [
+                { "$ref": "#/$defs/SoftwareState" },
+                { "type": "null" }
+              ],
+              "description": "Independently observed native state; null means no verified observation is available."
+            },
             "operation": {
               "$ref": "#/$defs/OperationStatus",
               "description": "Projection of the sole execution journal."
@@ -1836,6 +1843,10 @@
               "type": "string"
             }
           ]
+        },
+        "PackageValue": {
+          "description": "Exact ecosystem text: no SemVer, case folding, alias lookup or normalization.\nAccepts 1..=1024 UTF-8 bytes without control characters, including '+' and '~'.",
+          "type": "string"
         },
         "Platform": {
           "description": "Target OS semantics for validation; an enum value is not a platform support claim.",
@@ -2111,6 +2122,26 @@
             }
           ]
         },
+        "SoftwareDetectionFailure": {
+          "description": "Closed independent detection failures.",
+          "oneOf": [
+            {
+              "const": "unavailable",
+              "description": "Target or protected ancestor cannot be inspected.",
+              "type": "string"
+            },
+            {
+              "const": "unrecognizedVersion",
+              "description": "Installed bytes do not match a declared version.",
+              "type": "string"
+            },
+            {
+              "const": "budgetExceeded",
+              "description": "The independent observation exhausted its time, cancellation or byte bound.",
+              "type": "string"
+            }
+          ]
+        },
         "SoftwareRef": {
           "additionalProperties": false,
           "description": "Exact observed installation in an authorized immutable data snapshot.",
@@ -2130,6 +2161,44 @@
           },
           "required": ["query", "cursor", "installation"],
           "type": "object"
+        },
+        "SoftwareState": {
+          "description": "Independently observed software state; installer exit is never a value of this type.",
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "Declared installed target is authoritatively absent.",
+              "properties": { "kind": { "const": "absent", "type": "string" } },
+              "required": ["kind"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Installed bytes match one exact declared version proof.",
+              "properties": {
+                "kind": { "const": "present", "type": "string" },
+                "version": {
+                  "$ref": "#/$defs/PackageValue",
+                  "description": "Ecosystem version, preserved exactly."
+                }
+              },
+              "required": ["kind", "version"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Target is unreadable, changed concurrently, or contains unknown bytes.",
+              "properties": {
+                "kind": { "const": "unknown", "type": "string" },
+                "reason": {
+                  "$ref": "#/$defs/SoftwareDetectionFailure",
+                  "description": "Closed detection failure, without paths or backend text."
+                }
+              },
+              "required": ["kind", "reason"],
+              "type": "object"
+            }
+          ]
         },
         "VersionedRef": {
           "additionalProperties": false,

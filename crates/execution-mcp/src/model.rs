@@ -216,6 +216,8 @@ pub struct LocalSoftwareProposal {
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct LocalSoftwareResult {
+    /// Independently observed native state; null means no verified observation is available.
+    pub detected: Option<execution_contract::SoftwareState>,
     /// Immutable service-owned preview.
     pub prepared: execution_contract::LocalSoftwarePrepared,
     /// Projection of the sole execution journal.

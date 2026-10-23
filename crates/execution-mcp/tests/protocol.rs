@@ -904,3 +904,64 @@ async fn data_tools_preserve_original_request_and_typed_results_through_real_mcp
     assert_eq!(s.attempts.load(Ordering::SeqCst), 1);
     w.close().await;
 }
+
+#[tokio::test]
+async fn local_software_status_preserves_verified_state_in_the_real_mcp_response() {
+    use execution_contract::*;
+    let s = service();
+    let request = RequestId::new("local-detection").unwrap();
+    let prepared: LocalSoftwarePrepared = serde_json::from_value(json!({
+        "request":request,"digest":"a".repeat(64),
+        "choice":{"request":request,"software":{"query":{"id":"native:apps","revision":"b".repeat(64)},"cursor":{"snapshot":"c".repeat(64),"offset":0},"installation":"app"},"action":"detect"},
+        "name":"App","initiator":{"kind":"human","osSession":{"device":"device","account":{"platform":"macos","subject":"uid:501"},"session":"login"}},
+        "identity":"system","targetVersion":null,"startBeforeUnixMs":1000
+    })).unwrap();
+    let mut w = Wire::open(s.clone(), limits()).await;
+    w.send(json!({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}))
+        .await;
+    let list = w.recv().await;
+    let output = &list["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|tool| tool["name"] == "execution_software_status")
+        .unwrap()["outputSchema"];
+    let validator = jsonschema::validator_for(output).unwrap();
+    for detected in [
+        Some(SoftwareState::Present {
+            version: PackageValue::new("1.2.3").unwrap(),
+        }),
+        Some(SoftwareState::Absent {}),
+        Some(SoftwareState::Unknown {
+            reason: SoftwareDetectionFailure::Unavailable,
+        }),
+        None,
+    ] {
+        s.software_result(LocalSoftwareResult {
+            detected: detected.clone(),
+            prepared: prepared.clone(),
+            operation: OperationStatus {
+                mode: execution_lifecycle::ExecutionMode::Test,
+                process: None,
+                assessment: None,
+                cancel_requested: false,
+                operation_request_id: request.clone(),
+                content_digest: prepared.digest.clone(),
+                phase: OperationPhase::ExecutionEnded,
+                attempt_id: None,
+                evidence: vec![],
+            },
+        });
+        let reply = w
+            .call(3, "execution_software_status", json!({"request":request}))
+            .await;
+        assert_eq!(
+            value(&reply)["detected"],
+            serde_json::to_value(detected).unwrap()
+        );
+        assert_eq!(value(&reply)["operation"]["phase"], "executionEnded");
+        assert!(validator.is_valid(&reply["result"]["structuredContent"]));
+    }
+    assert_eq!(s.attempts.load(Ordering::SeqCst), 0);
+    w.close().await;
+}
