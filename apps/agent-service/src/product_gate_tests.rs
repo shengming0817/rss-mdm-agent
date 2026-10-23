@@ -3969,3 +3969,112 @@ async fn expired_other_peer_with_the_same_generation_cannot_retire_latest_owner(
         revision
     );
 }
+
+#[tokio::test]
+async fn service_restart_retires_confirmed_relation_and_replays_cleanup_but_preserves_unknown_put()
+{
+    let _budget = crate::scenario_budget::enter();
+    use execution_ipc::host::{NativeAccess, NativeContextSession, Request};
+    for unknown_put in [false, true] {
+        let mut c = Case::new(None).await;
+        if unknown_put {
+            c.policy_call(Request::RevokeContext {}).await;
+            c._server.data.lock().unwrap().current_user.lose_reply = true;
+            let reply = c
+                .policy_call(Request::BindContext {
+                    value: NativeContextSession {
+                        access: NativeAccess::User {
+                            credential: zeroize::Zeroizing::new("c".repeat(64)),
+                            credential_origin: c.service.client.configuration().origin.to_string(),
+                            user: protocol::current_user::user(
+                                c.service.client.configuration().tenant,
+                            ),
+                        },
+                        generation: plan::id("unconfirmed-login").unwrap(),
+                        expires_at_unix_ms: c.service.core.host.clock.millis().unwrap() + 60_000,
+                    },
+                    expected: None,
+                })
+                .await;
+            assert!(
+                matches!(reply,Reply::CurrentUserSync{value} if value.phase==execution_contract::CurrentUserSyncPhase::BindingUnknown)
+            );
+        }
+        let config = c.service.core.config.clone();
+        let helpers = c.service.core.helpers.clone();
+        let Case {
+            _server: server,
+            _root: root,
+            service,
+            ..
+        } = c;
+        drop(service);
+        let assemble = || {
+            let clock = SystemClock::new().unwrap();
+            let client = Client::open(
+                &root.path,
+                server.config(),
+                OpenMode::Existing,
+                server.secrets.clone(),
+                clock.clone(),
+            )
+            .unwrap();
+            DeviceService::assemble(
+                client,
+                &root.path.join("execution.sqlite"),
+                ProductionStartup::Open,
+                config.clone(),
+                clock,
+                helpers.clone(),
+                execution_runner::staging::MaterialRoot::open_fixture,
+            )
+            .unwrap()
+        };
+        let mut service = assemble();
+        assert!(service.core.contexts.is_empty());
+        let before = server.data.lock().unwrap().current_user.inputs.len();
+        let (_sender, mut commands) = tokio::sync::mpsc::channel(1);
+        if unknown_put {
+            service
+                .retire_expired_current_user(&mut commands)
+                .await
+                .unwrap();
+            assert_eq!(
+                service.client.current_user_status().unwrap().phase,
+                execution_contract::CurrentUserSyncPhase::BindingUnknown
+            );
+            assert_eq!(
+                server.data.lock().unwrap().current_user.inputs.len(),
+                before
+            );
+            continue;
+        }
+        server.data.lock().unwrap().current_user.lose_reply = true;
+        service
+            .retire_expired_current_user(&mut commands)
+            .await
+            .unwrap();
+        assert_eq!(
+            service.client.current_user_status().unwrap().phase,
+            execution_contract::CurrentUserSyncPhase::CleanupPending
+        );
+        drop(service);
+        let mut service = assemble();
+        service
+            .retire_expired_current_user(&mut commands)
+            .await
+            .unwrap();
+        assert_eq!(
+            service.client.current_user_status().unwrap().phase,
+            execution_contract::CurrentUserSyncPhase::Unbound
+        );
+        let data = server.data.lock().unwrap();
+        assert_eq!(data.current_user.inputs.len(), before + 2);
+        assert_eq!(
+            data.current_user.inputs[before],
+            data.current_user.inputs[before + 1]
+        );
+        assert!(data.current_user.user.is_none());
+        assert!(data.current_user.owner.is_some());
+    }
+}
