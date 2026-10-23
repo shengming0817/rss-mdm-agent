@@ -208,6 +208,50 @@ impl ExecutionServicePort for TestService {
         }
     }
 
+    async fn software_read(
+        &self,
+        _: execution_contract::SoftwareRead,
+        _: CancellationToken,
+    ) -> Result<execution_contract::SoftwarePage, ServiceError> {
+        self.capabilities(CancellationToken::new()).await?;
+        Err(ServiceError::Denied)
+    }
+    async fn software_prepare(
+        &self,
+        _: LocalSoftwareProposal,
+        _: CancellationToken,
+    ) -> Result<execution_contract::LocalSoftwarePrepared, ServiceError> {
+        self.prepare_operation(serde_json::from_value(serde_json::json!({"scene":"policy.parameters.v1","tool":"policy_fixture","locator":{"after":null},"parameters":{}})).unwrap(),CancellationToken::new()).await?;
+        Err(ServiceError::Denied)
+    }
+    async fn software_status(
+        &self,
+        _: execution_contract::QueryRequest,
+        _: CancellationToken,
+    ) -> Result<LocalSoftwareResult, ServiceError> {
+        self.capabilities(CancellationToken::new()).await?;
+        Err(ServiceError::NotFound)
+    }
+    async fn software_cancel(
+        &self,
+        input: execution_contract::QueryRequest,
+        wait: CancellationToken,
+    ) -> Result<LocalSoftwareResult, ServiceError> {
+        self.software_status(input, wait).await
+    }
+    async fn invoke_policy(
+        &self,
+        _: &str,
+        _: PolicyToolInput,
+        _: CancellationToken,
+    ) -> Result<execution_contract::BackendRequest, ServiceError> {
+        self.authorize()?;
+        tokio::time::sleep(Duration::from_millis(
+            self.submit_delay_ms.load(Ordering::SeqCst) as u64,
+        ))
+        .await;
+        Err(ServiceError::Denied)
+    }
     fn bind_call(
         self: &Arc<Self>,
         _: &serde_json::Map<String, serde_json::Value>,

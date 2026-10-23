@@ -11,6 +11,13 @@ fn text<'a>(row: &'a Value, key: &str) -> Option<&'a str> {
         .filter(|v| !v.is_empty())
 }
 impl Core {
+    fn software_policy(&self) -> Result<crate::local_software::Policy, Error> {
+        #[cfg(test)]
+        if let Some(open) = self.local_policy_fixture {
+            return open(&self.config.local_software);
+        }
+        crate::local_software::Policy::open(&self.config.local_software)
+    }
     pub(super) fn read_software(
         &mut self,
         command: &Command,
@@ -45,7 +52,7 @@ impl Core {
             return Err(Error::Unsupported);
         }
         let offset = input.read.after.as_ref().map_or(0, |c| c.offset);
-        let policy = crate::local_software::Policy::open(&self.config.local_software).ok();
+        let policy = self.software_policy().ok();
         let usable =
             !data.stale && data.quality == DataQuality::Complete && data.enumeration_complete;
         let mut items = Vec::new();
@@ -373,7 +380,7 @@ impl Core {
                 }
                 let (item, row) =
                     self.resolve_software(command, context, origin, &choice.software)?;
-                let policy = crate::local_software::Policy::open(&self.config.local_software)?;
+                let policy = self.software_policy()?;
                 if policy.rules.protects(&item)
                     && matches!(
                         choice.action,
@@ -445,9 +452,14 @@ impl Core {
                 );
                 let fences = self.fences.clone();
                 let _fence = fences.admit(&scope, command.fence_epoch)?;
-                self.app
-                    .stage_execution(&self.caller(), &frozen)
+                let staged = self.app.stage_execution(&self.caller(), &frozen);
+                // Preparation has no running attempt. Keep the canonical input in the journal;
+                // submission reconstructs and rechecks materials instead of pinning registry capacity.
+                self.host
+                    .materials
+                    .retire(frozen.digest())
                     .map_err(map_app_error)?;
+                staged.map_err(map_app_error)?;
                 Ok(Reply::SoftwarePrepared {
                     value: software_preview(&frozen)?,
                 })
@@ -465,7 +477,7 @@ impl Core {
                     .status(&self.caller(), &submit.request)
                     .map_err(map_app_error)?;
                 // Once admitted, reconciliation owns recovery. No source refresh can start it again.
-                if before.attempts > 0 || before.cancel_requested {
+                if before.attempts > 0 || before.cancel_requested || before.admission.is_some() {
                     return self.software_status(&frozen);
                 }
                 let preview = software_preview(&frozen)?;
@@ -474,7 +486,7 @@ impl Core {
                 }
                 let (item, row) =
                     self.resolve_software(command, context, origin, &preview.choice.software)?;
-                let policy = crate::local_software::Policy::open(&self.config.local_software)?;
+                let policy = self.software_policy()?;
                 if (policy.rules.protects(&item)
                     && matches!(
                         preview.choice.action,
@@ -524,10 +536,22 @@ impl Core {
                         .unwrap_or_else(|| self.config.work_root.clone());
                     crate::local_software::compile::materials(&frozen, recipe, helper, root)?
                 };
-                self.host
+                if self
+                    .host
                     .materials
-                    .register(&frozen, artifacts)
-                    .map_err(map_app_error)?;
+                    .registered(&frozen)
+                    .map_err(map_app_error)?
+                {
+                    self.host
+                        .materials
+                        .inspect(&frozen)
+                        .map_err(map_app_error)?;
+                } else {
+                    self.host
+                        .materials
+                        .register(&frozen, artifacts)
+                        .map_err(map_app_error)?;
+                }
                 let permit = Arc::new(crate::local_software::Permit::new(frozen.clone(), policy)?);
                 let scope = policy::SessionKey::new(
                     command.subject.clone(),

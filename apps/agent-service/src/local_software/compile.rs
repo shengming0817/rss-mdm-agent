@@ -63,7 +63,7 @@ pub(crate) fn recipe(
         },
         operation: Operation {
             action: plan::id(match choice.action {
-                LocalSoftwareAction::Update => "software.update",
+                LocalSoftwareAction::Update => "software.install",
                 LocalSoftwareAction::Uninstall => "software.uninstall",
                 LocalSoftwareAction::Detect => "software.detect",
                 _ => return Err(Error::Unsupported),

@@ -469,42 +469,138 @@ test.each([undefined, 12, "   "])(
   },
 );
 
-
 test("discovery continues beyond sixteen pages and invokes using the actual page", async () => {
   let page = 0;
-  const item = (record("fixture").action as Extract<BackendRequest["action"], {kind:"policy"}>).directory;
-  item.task = { kind: "software", resource: {id:"resource",version:"1",variant:"macos"},runAs:"system",target:{kind:"device"} };
-  const policy_directory = vi.fn(async ({after}: {after:string|null}) => {
-    expect(after).toBe(page === 0 ? null : `cursor-${page}`);
-    ++page;
-    return {items:page === 18 ? [item] : [],nextCursor:page < 18 ? `cursor-${page}` : null,asOf:1};
-  });
+  const item = (
+    record("fixture").action as Extract<
+      BackendRequest["action"],
+      { kind: "policy" }
+    >
+  ).directory;
+  item.task = {
+    kind: "software",
+    resource: { id: "resource", version: "1", variant: "macos" },
+    runAs: "system",
+    target: { kind: "device" },
+  };
+  const policy_directory = vi.fn(
+    async ({ after }: { after: string | null }) => {
+      expect(after).toBe(page === 0 ? null : `cursor-${page}`);
+      ++page;
+      return {
+        items: page === 18 ? [item] : [],
+        nextCursor: page < 18 ? `cursor-${page}` : null,
+        asOf: 1,
+      };
+    },
+  );
   const policy_invoke = vi.fn(async () => record("original"));
-  const w = mount(PolicySelfService, {props:{port:{policy_directory,policy_invoke} as unknown as SelfServicePort,records:[]}});
+  const w = mount(PolicySelfService, {
+    props: {
+      port: { policy_directory, policy_invoke } as unknown as SelfServicePort,
+      records: [],
+    },
+  });
   try {
     await flushPromises();
     expect(w.text()).toContain("目录尚未完整");
-    for (let n=1;n<18;n++) { await w.findAll("button").find(b=>b.text()==="继续加载")!.trigger("click"); await flushPromises(); }
+    for (let n = 1; n < 18; n++) {
+      await w
+        .findAll("button")
+        .find((b) => b.text() === "继续加载")!
+        .trigger("click");
+      await flushPromises();
+    }
     expect(w.text()).toContain("目录已读取完毕");
-    await w.findAll("button").find(b=>b.text()==="Policy")!.trigger("click");
+    await w
+      .findAll("button")
+      .find((b) => b.text() === "Policy")!
+      .trigger("click");
     await w.get("form").trigger("submit");
-    await w.findAll("button").find(b=>b.text()==="确认并执行")!.trigger("click");
+    await w
+      .findAll("button")
+      .find((b) => b.text() === "确认并执行")!
+      .trigger("click");
     await flushPromises();
-    expect(policy_invoke).toHaveBeenCalledWith(expect.objectContaining({locator:{after:"cursor-17"}}));
+    expect(policy_invoke).toHaveBeenCalledWith(
+      expect.objectContaining({ locator: { after: "cursor-17" } }),
+    );
     expect(policy_directory).toHaveBeenCalledTimes(18);
-  } finally { w.unmount(); }
+  } finally {
+    w.unmount();
+  }
 });
 
 test("a repeated cursor does not falsely complete the catalog or discard loaded items", async () => {
-  const item = (record("fixture").action as Extract<BackendRequest["action"], {kind:"policy"}>).directory;
-  const policy_directory = vi.fn().mockResolvedValueOnce({items:[item],nextCursor:"same",asOf:1})
-    .mockResolvedValue({items:[],nextCursor:"same",asOf:1});
-  const w = mount(PolicySelfService,{props:{port:{policy_directory} as unknown as SelfServicePort,records:[]}});
+  const item = (
+    record("fixture").action as Extract<
+      BackendRequest["action"],
+      { kind: "policy" }
+    >
+  ).directory;
+  const policy_directory = vi
+    .fn()
+    .mockResolvedValueOnce({ items: [item], nextCursor: "same", asOf: 1 })
+    .mockResolvedValue({ items: [], nextCursor: "same", asOf: 1 });
+  const w = mount(PolicySelfService, {
+    props: {
+      port: { policy_directory } as unknown as SelfServicePort,
+      records: [],
+    },
+  });
   try {
     await flushPromises();
-    await w.findAll("button").find(b=>b.text()==="继续加载")!.trigger("click"); await flushPromises();
+    await w
+      .findAll("button")
+      .find((b) => b.text() === "继续加载")!
+      .trigger("click");
+    await flushPromises();
     expect(w.text()).toContain("目录读取未完成");
     expect(w.text()).toContain("当前加载 1 条");
     expect(w.text()).not.toContain("目录已读取完毕");
-  } finally {w.unmount();}
+  } finally {
+    w.unmount();
+  }
+});
+
+test("a bounded directory window never claims the full catalog is searchable", async () => {
+  const action = record("fixture").action;
+  if (action.kind !== "policy") throw Error("fixture");
+  const item = action.directory;
+  item.task = {
+    kind: "software",
+    resource: { id: "resource", version: "1", variant: "macos" },
+    runAs: "system",
+    target: { kind: "device" },
+  };
+  let page = 0;
+  const policy_directory = vi.fn(async () => ({
+    items: Array.from({ length: 64 }, (_, i) => ({
+      ...item,
+      policyId: `policy-${page * 64 + i}`,
+    })),
+    nextCursor: ++page < 17 ? `cursor-${page}` : null,
+    asOf: 1,
+  }));
+  const wrapper = mount(PolicySelfService, {
+    props: {
+      port: { policy_directory } as unknown as SelfServicePort,
+      records: [],
+      kind: "software",
+    },
+  });
+  try {
+    await flushPromises();
+    for (let i = 1; i < 17; i++) {
+      await wrapper
+        .findAll("button")
+        .find((b) => b.text() === "继续加载")!
+        .trigger("click");
+      await flushPromises();
+    }
+    expect(wrapper.text()).toContain("仅保留最近加载的 1024 项");
+    expect(wrapper.text()).not.toContain("目录已读取完毕");
+  } finally {
+    wrapper.unmount();
+  }
 });

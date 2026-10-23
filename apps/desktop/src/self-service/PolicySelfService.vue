@@ -134,6 +134,7 @@ const resolved = computed(() =>
 );
 const nextCursor = ref<string | null>(null);
 const directoryComplete = ref(false);
+const directoryWindowed = ref(false);
 const locators = new Map<string, string | null>();
 const visited = new Set<string>();
 async function refresh() {
@@ -149,6 +150,7 @@ async function loadDirectory(append: boolean) {
     directory.value = [];
     nextCursor.value = null;
     directoryComplete.value = false;
+    directoryWindowed.value = false;
     locators.clear();
     visited.clear();
     if (!request.value) {
@@ -179,13 +181,14 @@ async function loadDirectory(append: boolean) {
       directory.value.map((item) => [item.policyId, item]),
     );
     for (const item of items) merged.set(item.policyId, item);
+    if (merged.size > 1024) directoryWindowed.value = true;
     directory.value = [...merged.values()].slice(-1024);
     const retained = new Set(directory.value.map((item) => item.policyId));
     for (const id of locators.keys())
       if (!retained.has(id) && id !== selected.value?.policyId)
         locators.delete(id);
     nextCursor.value = value.nextCursor;
-    directoryComplete.value = !value.nextCursor;
+    directoryComplete.value = !value.nextCursor && !directoryWindowed.value;
     error.value = "";
   } catch {
     if (current === epoch)
@@ -387,6 +390,9 @@ function presentationText(value: unknown, fallback = "未提供"): string {
     >
     <p v-if="kind === 'software'">
       企业发布目标与本机安装记录独立显示。当前发布接口未提供可核实的安装关联时，关联状态为未知。
+    </p>
+    <p v-if="directoryWindowed">
+      仅保留最近加载的 1024 项；搜索与计数不代表完整目录，可刷新重新浏览。
     </p>
     <p role="status">
       当前加载 {{ directory.length }} 条；{{

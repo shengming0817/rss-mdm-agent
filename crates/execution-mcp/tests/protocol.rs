@@ -108,7 +108,7 @@ async fn discovery_exposes_backend_references_and_rejects_old_script_and_catalog
         .await;
     let list = w.recv().await;
     let tools = list["result"]["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 14);
+    assert_eq!(tools.len(), 19);
     for tool in tools {
         jsonschema::draft202012::new(&tool["inputSchema"]).unwrap();
         jsonschema::draft202012::new(&tool["outputSchema"]).unwrap();
@@ -559,6 +559,36 @@ async fn every_tool_advertises_and_times_out_according_to_its_effects() {
     let operation = json!({"operationRequestId":"original-id"});
     let cases = [
         (
+            "execution_policy_invoke",
+            json!({"tool":"policy_fixture","locator":{"after":null},"parameters":{}}),
+            false,
+            "outcomeUnknown",
+        ),
+        (
+            "execution_software_read",
+            json!({"read":{"selection":{"kind":"query","query":{"id":"native:test","revision":"a".repeat(64)}},"after":null,"limit":16,"maxAgeSeconds":null}}),
+            true,
+            "unavailable",
+        ),
+        (
+            "execution_software_prepare",
+            json!({"software":{"query":{"id":"native:test","revision":"a".repeat(64)},"cursor":{"snapshot":"b".repeat(64),"offset":0},"installation":"test-app"},"action":"uninstall"}),
+            false,
+            "outcomeUnknown",
+        ),
+        (
+            "execution_software_status",
+            json!({"request":"original-id"}),
+            true,
+            "unavailable",
+        ),
+        (
+            "execution_software_cancel",
+            json!({"request":"original-id"}),
+            false,
+            "outcomeUnknown",
+        ),
+        (
             "execution_query_directory",
             json!({"after":null,"limit":16,"policyPage":null}),
             true,
@@ -594,7 +624,12 @@ async fn every_tool_advertises_and_times_out_according_to_its_effects() {
             false,
             "outcomeUnknown",
         ),
-        ("execution_policy_tools", json!({}), true, "unavailable"),
+        (
+            "execution_policy_tools",
+            json!({"after":null}),
+            true,
+            "unavailable",
+        ),
         (
             "execution_policy_status",
             operation.clone(),

@@ -206,6 +206,8 @@ pub(crate) struct Policy {
     pub(crate) rules: Rules,
     pub(crate) revision: Digest,
     pub(crate) path: PathBuf,
+    #[cfg(test)]
+    fixture: bool,
 }
 impl Policy {
     pub(crate) fn open(config: &LocalSoftwareConfig) -> Result<Self, Error> {
@@ -220,12 +222,37 @@ impl Policy {
             rules,
             revision: crate::collected_data::digest(&bytes)?,
             path: config.policy_file.clone(),
+            #[cfg(test)]
+            fixture: false,
+        })
+    }
+    #[cfg(test)]
+    pub(crate) fn fixture(config: &LocalSoftwareConfig) -> Result<Self, Error> {
+        let bytes = std::fs::read(&config.policy_file)?;
+        if bytes.len() > 65536 {
+            return Err(Error::Capacity);
+        }
+        let rules: Rules = serde_json::from_slice(&bytes).map_err(|_| Error::Configuration)?;
+        rules.validate()?;
+        Ok(Self {
+            rules,
+            revision: crate::collected_data::digest(&bytes)?,
+            path: config.policy_file.clone(),
+            fixture: true,
         })
     }
     pub(crate) fn current(&self) -> Result<(), Error> {
-        let current = Self::open(&LocalSoftwareConfig {
+        let config = LocalSoftwareConfig {
             policy_file: self.path.clone(),
-        })?;
+        };
+        #[cfg(test)]
+        let current = if self.fixture {
+            Self::fixture(&config)
+        } else {
+            Self::open(&config)
+        }?;
+        #[cfg(not(test))]
+        let current = Self::open(&config)?;
         if current.revision != self.revision {
             return Err(Error::Conflict);
         }

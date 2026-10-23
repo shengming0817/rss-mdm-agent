@@ -139,8 +139,7 @@ export function createSoftware(
       if (
         page.next &&
         (key === JSON.stringify(after) ||
-          source.seen.has(key) ||
-          source.seen.size >= 2048)
+          (append && (source.seen.has(key) || source.seen.size >= 2048)))
       )
         throw Error("cursor");
       if (!append) source.seen.clear();
@@ -175,8 +174,8 @@ export function createSoftware(
       if (
         page.next &&
         (page.next === after ||
-          seenDirectory.has(page.next) ||
-          seenDirectory.size >= 2048)
+          (append &&
+            (seenDirectory.has(page.next) || seenDirectory.size >= 2048)))
       )
         throw Error("cursor");
       if (!append) {
@@ -237,8 +236,7 @@ export function createSoftware(
       if (
         page.next &&
         (page.next === after ||
-          seenHistory.has(page.next) ||
-          seenHistory.size >= 2048)
+          (append && (seenHistory.has(page.next) || seenHistory.size >= 2048)))
       )
         throw Error("cursor");
       if (!append) seenHistory.clear();
@@ -390,6 +388,10 @@ export function createSoftware(
     state.operations.clear();
     state.prepared.clear();
     state.requests.clear();
+    state.queries.clear();
+    state.busy.clear();
+    state.error = "";
+    state.historyError = "";
   }
   return {
     state,

@@ -242,6 +242,8 @@ impl<S: IdentityProvider> DeviceService<S> {
         Ok(Self {
             client,
             core: Core {
+                #[cfg(test)]
+                local_policy_fixture: None,
                 telemetry,
                 data,
                 app,
@@ -986,6 +988,13 @@ pub(crate) struct Selection {
     pub(crate) origin: execution_ipc::host::ClientOrigin,
 }
 pub(crate) struct Core {
+    // Explicit test-owned authority source, absent from every production build and IPC DTO.
+    #[cfg(test)]
+    pub(crate) local_policy_fixture: Option<
+        fn(
+            &crate::local_software::LocalSoftwareConfig,
+        ) -> Result<crate::local_software::Policy, Error>,
+    >,
     telemetry: Option<crate::telemetry::Telemetry>,
     data: crate::collected_data::Data,
     pub(crate) app: ExecutionApp<EnterpriseHost, NativeRunner, execution_sqlite::Store>,

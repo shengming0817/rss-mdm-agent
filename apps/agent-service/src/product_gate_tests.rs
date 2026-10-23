@@ -4453,3 +4453,342 @@ async fn late_policy_page_is_revalidated_for_invoke_draft_and_confirmation_witho
             .contains_key(&uuid::Uuid::parse_str(choice.request.as_str()).unwrap()));
     }
 }
+
+/// Explicit policy authority fixture with real service/SQLite; native detector is read-only.
+/// This never establishes System privilege, a real install/uninstall or Windows acceptance.
+#[cfg(target_os = "macos")]
+async fn local_software_case() -> (Case, LocalSoftwareChoice) {
+    use crate::local_software::{LocalScope, Recipe, Rules};
+    use execution_ipc::host::Request;
+    let mut c = Case::new(None).await;
+    let context = c.context();
+    let Reply::Data {
+        value: DataResponse::Directory(directory),
+    } = c
+        .policy_call(Request::Data {
+            context: context.clone(),
+            origin: ClientOrigin::Desktop {},
+            input: DataOperation::Directory(QueryDirectory {
+                after: None,
+                limit: 128,
+                policy_page: None,
+            }),
+        })
+        .await
+    else {
+        panic!("directory");
+    };
+    let query = directory
+        .items
+        .into_iter()
+        .find(|d| d.domains.contains(&"software.receipts".into()))
+        .unwrap()
+        .reference;
+    let receipt = format!("org.rss.fixture.never-installed.{}", uuid::Uuid::new_v4());
+    c.service.core.data.snapshot(&CollectedData{
+        query:query.clone(),scope:DataScope::Device,request:None,collected_at:Some(c.service.core.host.clock.millis().unwrap()/1000),quality:DataQuality::Complete,enumeration_complete:true,mapping_version:Some(1),fields:Default::default(),
+        rows:vec![serde_json::json!({"id":"fixture-receipt","native_id":receipt,"name":"Explicit receipt fixture","version":"1.0.0","scope":"device","owner":"","origin":"pkg_receipt"})],stale:false,next:None,
+    }).unwrap();
+    let Reply::SoftwarePage { value: page } = c
+        .policy_call(Request::SoftwareRead {
+            context: context.clone(),
+            origin: ClientOrigin::Desktop {},
+            input: SoftwareRead {
+                read: DataRead {
+                    selection: DataSelection::Query { query },
+                    after: None,
+                    limit: 16,
+                    max_age_seconds: Some(300),
+                },
+            },
+        })
+        .await
+    else {
+        panic!("software facts");
+    };
+    let item = page.items.into_iter().next().unwrap();
+    let material = plan::pin(std::path::Path::new("/bin/sh")).unwrap();
+    let mut input: ExecutionInput = serde_json::from_slice(include_bytes!(
+        "../../../crates/execution-contract/tests/fixtures/plan.json"
+    ))
+    .unwrap();
+    input.request.target.platform = Platform::Macos;
+    input.request.target.scope = TargetScope::Device {};
+    input.run_as = RunAs::System {
+        platform: Platform::Macos,
+    };
+    input.session_requirement = SessionRequirement::NotRequired {};
+    input.constraints = IsolationPolicy::OsIdentity {};
+    input.budget = ExecutionBudget {
+        total_timeout_ms: 10_000,
+        total_output_bytes: 65536,
+        max_attempts: 1,
+    };
+    input.launch.cwd = c._root.path.to_str().unwrap().into();
+    input.launch.env.clear();
+    input.launch.stdin = StandardInput::Closed {};
+    input.launch.artifact = material.artifact.clone();
+    input.launch.interpreter.artifact = material.artifact.clone();
+    input.launch.interpreter.profile = script_plan::ScriptProfile::PosixSh.reference();
+    input.launch.argv = vec![LaunchArg::ArtifactPath {}];
+    let invocation = SoftwareInvocation {
+        launch: input.launch.clone(),
+        run_as: input.run_as.clone(),
+        session_requirement: input.session_requirement.clone(),
+        timeout_ms: 1000,
+        output_bytes: 4096,
+        exit_codes: SoftwareExitCodes {
+            success: [0].into(),
+            reboot: Default::default(),
+        },
+    };
+    input.launch.interpreter.profile = plan::reference("native-software-sequence", "1").unwrap();
+    input.request.parameters.clear();
+    input.request.operation.action = plan::id("software.uninstall").unwrap();
+    let version = PackageValue::new("1.0.0").unwrap();
+    input.execution = ExecutionSpec::SoftwareProgram {
+        program: Box::new(SoftwareProgram {
+            definition_digest: Digest::new("8".repeat(64)).unwrap(),
+            intent: SoftwareOperation::Uninstall,
+            steps: vec![SoftwareProgramStep {
+                format: SoftwareFormat::Pkg {},
+                package: PackageValue::new(&receipt).unwrap(),
+                version: version.clone(),
+                architecture: PackageValue::new("aarch64").unwrap(),
+                payload: material.artifact.clone(),
+                materials: vec![],
+                signatures: vec![],
+                upgrade: SoftwareUpgrade::Deny {},
+                install: invocation.clone(),
+                auxiliary: Default::default(),
+                uninstall: Some(invocation),
+                detection: SoftwareDetector::PkgReceipt { receipt, version },
+                allow_downgrade: false,
+                allow_reboot: false,
+            }],
+        }),
+    };
+    let mut rules = Rules::installation_default();
+    rules.recipes.push(Recipe {
+        native_id: item.native_id.clone(),
+        kind: item.kind,
+        scope: LocalScope::Device,
+        action: LocalSoftwareAction::Uninstall,
+        publisher: None,
+        from_versions: vec![],
+        target_version: None,
+        input,
+        files: vec![material],
+    });
+    let path = c._root.path.join("explicit-fixture-policy.json");
+    std::fs::write(&path, serde_json::to_vec(&rules).unwrap()).unwrap();
+    c.service.core.config.local_software.policy_file = path;
+    c.service.core.local_policy_fixture = Some(crate::local_software::Policy::fixture);
+    let choice = LocalSoftwareChoice {
+        request: RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap(),
+        software: item.reference,
+        action: LocalSoftwareAction::Detect,
+    };
+    (c, choice)
+}
+#[cfg(target_os = "macos")]
+impl Case {
+    async fn local_software_call(&mut self, input: LocalSoftwareOperation, ai: bool) -> Reply {
+        self.policy_call(execution_ipc::host::Request::LocalSoftware {
+            context: self.context(),
+            origin: if ai {
+                self.selection.origin.clone()
+            } else {
+                ClientOrigin::Desktop {}
+            },
+            input,
+        })
+        .await
+    }
+}
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn local_software_api_stages_no_attempt_and_replays_the_original_after_lost_ack() {
+    let _budget = crate::scenario_budget::enter();
+    let (mut c, choice) = local_software_case().await;
+    let Reply::SoftwarePrepared { value: prepared } = c
+        .local_software_call(LocalSoftwareOperation::Prepare(choice.clone()), true)
+        .await
+    else {
+        panic!("prepare");
+    };
+    assert_eq!(
+        c.service
+            .core
+            .app
+            .status(&c.service.core.caller(), &choice.request)
+            .unwrap()
+            .attempts,
+        0
+    );
+    let original = c
+        .service
+        .core
+        .app
+        .frozen_input(&c.service.core.caller(), &choice.request)
+        .unwrap();
+    assert!(!c.service.core.host.materials.registered(&original).unwrap());
+    // Discarded acknowledgement, repeated prepare and explicit status reuse the retained UUID/digest.
+    let Reply::SoftwarePrepared { value: replay } = c
+        .local_software_call(LocalSoftwareOperation::Prepare(choice.clone()), true)
+        .await
+    else {
+        panic!("replay");
+    };
+    assert_eq!(prepared.digest, replay.digest);
+    let submit = LocalSoftwareSubmission {
+        request: choice.request.clone(),
+        digest: prepared.digest.clone(),
+    };
+    assert!(matches!(
+        c.local_software_call(LocalSoftwareOperation::Submit(submit.clone()), true)
+            .await,
+        Reply::DataFailure {
+            reason: DataError::Denied
+        }
+    ));
+    let mut wrong = submit.clone();
+    wrong.digest = Digest::new("9".repeat(64)).unwrap();
+    assert!(matches!(
+        c.local_software_call(LocalSoftwareOperation::Submit(wrong), false)
+            .await,
+        Reply::DataFailure {
+            reason: DataError::Conflict
+        }
+    ));
+    let Reply::SoftwareStatus { value: started } = c
+        .local_software_call(LocalSoftwareOperation::Submit(submit.clone()), false)
+        .await
+    else {
+        panic!("submit");
+    };
+    assert_eq!(started.execution.attempts, 1);
+    assert!(matches!(started.prepared.initiator, Initiator::Ai { .. }));
+    let Reply::SoftwareStatus { value: again } = c
+        .local_software_call(LocalSoftwareOperation::Submit(submit), false)
+        .await
+    else {
+        panic!("submit replay");
+    };
+    assert_eq!(again.execution.attempts, 1);
+    assert_eq!(again.prepared.digest, prepared.digest);
+    let Reply::SoftwareHistory { value: history } = c
+        .local_software_call(
+            LocalSoftwareOperation::History(SoftwareHistoryQuery {
+                after: None,
+                limit: 64,
+            }),
+            false,
+        )
+        .await
+    else {
+        panic!("history");
+    };
+    assert!(history
+        .items
+        .iter()
+        .any(|i| i.prepared.request == choice.request));
+    let Reply::SoftwareStatus { value: cancel } = c
+        .local_software_call(
+            LocalSoftwareOperation::Cancel(QueryRequest {
+                request: choice.request.clone(),
+            }),
+            false,
+        )
+        .await
+    else {
+        panic!("cancel");
+    };
+    assert!(cancel.execution.cancel_requested);
+    assert_eq!(cancel.execution.attempts, 1);
+    // A retired context cannot use a retained intent to read or cancel a request.
+    let context = c.context();
+    c.policy_call(execution_ipc::host::Request::RevokeContext {})
+        .await;
+    assert!(matches!(
+        c.policy_call(execution_ipc::host::Request::LocalSoftware {
+            context,
+            origin: ClientOrigin::Desktop {},
+            input: LocalSoftwareOperation::Status(QueryRequest {
+                request: choice.request
+            })
+        })
+        .await,
+        Reply::DataFailure {
+            reason: DataError::Denied
+        }
+    ));
+}
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn local_software_api_rechecks_rules_and_snapshot_before_any_attempt() {
+    let _budget = crate::scenario_budget::enter();
+    for changed_rules in [false, true] {
+        let (mut c, choice) = local_software_case().await;
+        let Reply::SoftwarePrepared { value: prepared } = c
+            .local_software_call(LocalSoftwareOperation::Prepare(choice.clone()), false)
+            .await
+        else {
+            panic!("prepare");
+        };
+        if changed_rules {
+            let path = &c.service.core.config.local_software.policy_file;
+            let mut rules: crate::local_software::Rules =
+                serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+            rules.allow_launch = false;
+            std::fs::write(path, serde_json::to_vec(&rules).unwrap()).unwrap();
+        } else {
+            // Changing the immutable observation selected by the original cursor is not a new grant.
+            let read = DataRead {
+                selection: DataSelection::Query {
+                    query: choice.software.query.clone(),
+                },
+                after: None,
+                limit: 16,
+                max_age_seconds: None,
+            };
+            let mut value = c
+                .service
+                .core
+                .data
+                .read(
+                    &read,
+                    &c.selection.subject,
+                    &c.selection.binding,
+                    c.service.core.host.clock.millis().unwrap() / 1000,
+                )
+                .unwrap();
+            value.rows[0]["version"] = serde_json::json!("2.0.0");
+            c.service.core.data.snapshot(&value).unwrap();
+        }
+        let reply = c
+            .local_software_call(
+                LocalSoftwareOperation::Submit(LocalSoftwareSubmission {
+                    request: choice.request.clone(),
+                    digest: prepared.digest,
+                }),
+                false,
+            )
+            .await;
+        assert!(matches!(
+            reply,
+            Reply::DataFailure {
+                reason: DataError::Denied | DataError::Conflict
+            }
+        ));
+        assert_eq!(
+            c.service
+                .core
+                .app
+                .status(&c.service.core.caller(), &choice.request)
+                .unwrap()
+                .attempts,
+            0
+        );
+    }
+}

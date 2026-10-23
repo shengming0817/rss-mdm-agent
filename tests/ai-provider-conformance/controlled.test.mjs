@@ -161,7 +161,11 @@ for (const provider of engines) {
         const policy = JSON.parse(
           await readFile(join(f.directory, "policy-tool.json"), "utf8"),
         );
-        f.model.tool(policy.name, { name: "Acme" }, "policy-call");
+        f.model.tool(
+          policy.name,
+          { locator: { after: null }, parameters: { name: "Acme" } },
+          "policy-call",
+        );
         f.model.text("native policy tool delivered");
         await peer.client.submit(command(id, "policy-projection"));
         await until(
@@ -177,7 +181,10 @@ for (const provider of engines) {
           policyCall,
           "actual dynamic Policy MCP call crosses the SDK/Host/Rust boundary",
         );
-        assert.deepEqual(policyCall.arguments, { name: "Acme" });
+        assert.deepEqual(policyCall.arguments, {
+          locator: { after: null },
+          parameters: { name: "Acme" },
+        });
         assert.equal(policyCall.result.disposition, "rejected");
         assert.equal(JSON.parse(policyCall.result.text).error.code, "denied");
         assert.equal(

@@ -96,9 +96,27 @@ function ports() {
       policyNext: null,
     })),
     data_read: vi.fn(),
-    query_submit: vi.fn(),
-    query_status: vi.fn(),
-    query_cancel: vi.fn(),
+    query_submit: vi.fn(async (input) => ({
+      request: input.request,
+      query: input.query,
+      phase: "accepted" as const,
+      cancelRequested: false,
+      preparation: null,
+    })),
+    query_status: vi.fn(async (input) => ({
+      request: input.request,
+      query,
+      phase: "completed" as const,
+      cancelRequested: false,
+      preparation: null,
+    })),
+    query_cancel: vi.fn(async (input) => ({
+      request: input.request,
+      query,
+      phase: "accepted" as const,
+      cancelRequested: true,
+      preparation: null,
+    })),
   };
   const port: SoftwarePort = {
     read: vi.fn(async () => structuredClone(page)),
@@ -205,4 +223,39 @@ it("late data from a retired user generation cannot repopulate the software proj
   await pending;
   expect(c.installed.value).toEqual([]);
   expect(c.state.sources).toEqual([]);
+});
+
+it("a fresh traversal accepts the same first-page cursor after reading later pages", async () => {
+  const { data, port } = ports();
+  vi.mocked(data.query_directory).mockImplementation(async (input) => ({
+    items: input.after ? [] : [descriptor],
+    next: input.after ? null : "next-source",
+    policyNext: null,
+  }));
+  vi.mocked(port.read).mockImplementation(async (input) => ({
+    ...page,
+    next: input.read.after ? null : { snapshot: "2".repeat(64), offset: 128 },
+    items: input.read.after ? [] : [item],
+  }));
+  vi.mocked(port.history).mockImplementation(async (input) => ({
+    items: [],
+    next: input.after ? null : "next-history",
+  }));
+  const c = createSoftware(data, port);
+  await c.discover();
+  const source = c.state.sources[0];
+  await c.read(source, true);
+  await c.read(source);
+  expect(source.error).toBe("");
+  expect(source.after?.offset).toBe(128);
+  await c.discover(true);
+  await c.discover();
+  expect(c.state.error).toBe("");
+  expect(c.state.directoryNext).toBe("next-source");
+  await c.history();
+  await c.history(true);
+  await c.history();
+  expect(c.state.historyError).toBe("");
+  expect(c.state.historyNext).toBe("next-history");
+  c.dispose();
 });
