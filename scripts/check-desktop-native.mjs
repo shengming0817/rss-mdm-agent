@@ -1094,7 +1094,9 @@ try {
     await navigate("AI 助手");
     await wait(() => browser.$(".composer textarea").isDisplayed());
     await click("新会话");
-    await assertEmptyHistory();
+    // This fixture intentionally seeds paginated history; a new draft preserves it.
+    mark("visual fixture new draft with existing history");
+    assert.equal(await browser.$(".composer textarea").getValue(), "");
     await browser.setWindowSize(1100, 760);
     await browser.saveScreenshot(
       join(reports, "desktop-native-start-default.png"),

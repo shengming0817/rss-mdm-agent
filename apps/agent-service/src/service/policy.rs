@@ -1623,11 +1623,10 @@ impl<S: IdentityProvider> DeviceService<S> {
         };
         let now = self.core.host.clock.millis()?;
         let status = self.client.current_user_status()?;
-        let expired = self
-            .core
-            .contexts
-            .values()
-            .any(|bound| bound.context == owner.context && now >= bound.expires_at_unix_ms);
+        let expired =
+            self.core.contexts.get(&owner.peer).is_some_and(|bound| {
+                bound.context == owner.context && now >= bound.expires_at_unix_ms
+            });
         if status.phase == agent_client::current_user::Phase::CleanupPending
             || (expired && status.phase == agent_client::current_user::Phase::Bound)
         {

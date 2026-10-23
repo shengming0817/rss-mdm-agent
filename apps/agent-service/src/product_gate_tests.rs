@@ -3929,3 +3929,43 @@ async fn expired_enterprise_lease_settles_current_user_without_a_live_desktop() 
     assert!(data.current_user.user.is_none());
     assert!(data.current_user.owner.is_some());
 }
+
+#[tokio::test]
+async fn expired_other_peer_with_the_same_generation_cannot_retire_latest_owner() {
+    let _budget = crate::scenario_budget::enter();
+    use execution_ipc::host::{NativeAccess, NativeContextSession, Request};
+    let mut c = Case::new(None).await;
+    let context = c.context();
+    let reply = c
+        .policy_call(Request::BindContext {
+            value: NativeContextSession {
+                access: NativeAccess::User {
+                    credential: zeroize::Zeroizing::new("c".repeat(64)),
+                    credential_origin: c.service.client.configuration().origin.to_string(),
+                    user: protocol::current_user::user(c.service.client.configuration().tenant),
+                },
+                generation: context.generation.clone(),
+                expires_at_unix_ms: c.service.core.host.clock.millis().unwrap() + 100,
+            },
+            expected: Some(context.id),
+        })
+        .await;
+    assert!(matches!(reply, Reply::ContextBound { .. }));
+    c.selection.binding = plan::id("another-authenticated-login").unwrap();
+    c.employee("initial").await;
+    let revision = c._server.data.lock().unwrap().current_user.revision;
+    tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+    let (_sender, mut commands) = tokio::sync::mpsc::channel(1);
+    c.service
+        .retire_expired_current_user(&mut commands)
+        .await
+        .unwrap();
+    assert_eq!(
+        c.service.client.current_user_status().unwrap().phase,
+        execution_contract::CurrentUserSyncPhase::Bound
+    );
+    assert_eq!(
+        c._server.data.lock().unwrap().current_user.revision,
+        revision
+    );
+}
