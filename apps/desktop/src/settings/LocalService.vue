@@ -77,15 +77,14 @@ async function refresh() {
     pending.value = false;
   }
 }
-async function requestRegistration(organizationId?: string, login?: string) {
+async function requestRegistration(
+  input?: import("../account/types").EnterpriseLogin,
+) {
   if (!native || pending.value) return;
   pending.value = true;
   registering.value = true;
   try {
-    registration.value = await native.requestRegistration(
-      organizationId,
-      login,
-    );
+    registration.value = await native.requestRegistration(input);
     registrationError.value = "";
     showLogin.value = false;
   } catch (error) {

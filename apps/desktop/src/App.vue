@@ -25,10 +25,13 @@ import {
   loginEnterprise,
   logoutAccount,
   refreshAccount,
+  recoverAccount,
 } from "./test-users";
 import type { TestUser, UserContext } from "@rss-mdm-agent/ai-contract/wire";
 import TestUsers from "./settings/TestUsers.vue";
 import Account from "./settings/Account.vue";
+import LoginScreen from "./account/LoginScreen.vue";
+import type { EnterpriseLogin } from "./account/types";
 import { nativeHost } from "./settings/native";
 import { createHostSettings } from "./settings/controller";
 import { assertFixtureAssembly, type FixtureEnvironment } from "./assembly";
@@ -48,6 +51,7 @@ const users = ref<TestUser[]>([]),
   message = ref(""),
   accountMessage = ref("");
 const page = ref(accountEnabled ? "settings" : "home");
+const loginOpen = ref(accountEnabled);
 const content = ref<HTMLElement>();
 const host = createHostSettings(
   props.environment ? props.environment.host : nativeHost(),
@@ -58,6 +62,7 @@ async function refresh() {
   try {
     users.value = (await loadTestUsers()).users;
     await refreshAccount();
+    if (selectedUser.value) loginOpen.value = false;
     if (selectedUser.value && page.value === "settings" && loading.value)
       page.value = "assistant";
   } catch {
@@ -91,13 +96,37 @@ async function accountAction(action: () => Promise<unknown>) {
   accountNotice.value = "";
   try {
     await action();
-    page.value = "settings";
+    loginOpen.value = !selectedUser.value;
+    page.value = selectedUser.value ? "home" : "settings";
   } catch (error) {
     accountMessage.value = accountErrorMessage(error);
   } finally {
     loading.value = false;
     await focusSettings();
   }
+}
+async function login(input: EnterpriseLogin) {
+  await accountAction(async () => {
+    if (props.environment?.account)
+      selectedUser.value = await props.environment.account.password(input);
+    else await loginEnterprise(input);
+  });
+}
+function fixtureAuthenticated(context: UserContext) {
+  selectedUser.value = context;
+  loginOpen.value = false;
+  page.value = "home";
+}
+function showLogin() {
+  props.environment?.account?.cancel();
+  loginOpen.value = true;
+}
+async function guest() {
+  if (props.environment) {
+    selectedUser.value = await props.environment.identity.read();
+    loginOpen.value = false;
+    page.value = "home";
+  } else await accountAction(enterGuest);
 }
 async function focusSettings() {
   await nextTick();
@@ -118,6 +147,7 @@ async function navigate(id: string) {
 watch(selectedUser, (next, previous) => {
   if (accountEnabled && previous && !next) {
     page.value = "settings";
+    loginOpen.value = true;
     void focusSettings();
   }
 });
@@ -165,7 +195,26 @@ onBeforeUnmount(() => {
         'high-contrast': appearance.state.highContrast,
       }"
     >
+      <LoginScreen
+        v-if="loginOpen"
+        :loading="loading"
+        :message="accountMessage || accountNotice"
+        :fixture="environment?.account"
+        @login="login"
+        @guest="guest"
+        @recover="(clear) => accountAction(() => recoverAccount(clear))"
+        @authenticated="fixtureAuthenticated"
+        @settings="
+          loginOpen = false;
+          page = 'settings';
+        "
+      >
+        <template v-if="selectedUser" #back
+          ><button @click="loginOpen = false">返回工作区</button></template
+        >
+      </LoginScreen>
       <Workspace
+        v-else
         :inert="loading ? true : undefined"
         :key="selectedUser?.generation ?? 'anonymous'"
         :ready="
@@ -212,20 +261,31 @@ onBeforeUnmount(() => {
             aria-label="开发 fixture"
           >
             <summary>场景与测试工具</summary>
-            <div><slot name="fixture-controls" :navigate="navigate" /></div>
+            <div>
+              <slot
+                name="fixture-controls"
+                :navigate="navigate"
+                :login="showLogin"
+              />
+            </div>
           </details>
         </template>
         <template #user>
-          <p v-if="environment">开发 fixture 身份，不访问生产账户。</p>
+          <div v-if="environment">
+            <p>开发 fixture 身份，不访问生产账户。</p>
+            <button v-if="environment.account" @click="showLogin">
+              预览企业登录
+            </button>
+          </div>
           <template v-else>
             <Account
+              summary
               :loading="loading"
               :message="accountMessage || accountNotice"
               @guest="accountAction(enterGuest)"
               @logout="accountAction(logoutAccount)"
-              @login="
-                (org, login) => accountAction(() => loginEnterprise(org, login))
-              "
+              @open-login="showLogin"
+              @login="login"
             />
             <details class="account-local-workspaces">
               <summary>本地测试工作区</summary>
@@ -245,6 +305,32 @@ onBeforeUnmount(() => {
           </template>
         </template>
       </Workspace>
+    </div>
+    <div
+      v-if="loginOpen && environment?.account"
+      class="login-fixture-controls"
+      aria-label="Fixture 登录事件"
+    >
+      <span>Fixture 登录演示</span>
+      <button @click="environment.account.scan()">模拟扫码</button
+      ><button @click="environment.account.confirm()">手机确认</button
+      ><button @click="environment.account.reject()">手机拒绝</button
+      ><button @click="environment.account.expire()">二维码过期</button>
+      <select
+        aria-label="本机应用登录场景"
+        @change="
+          environment.account.scenario(
+            ($event.target as HTMLSelectElement).value as 'normal',
+          )
+        "
+      >
+        <option value="normal">已登录</option>
+        <option value="signed_out">全部未登录</option>
+        <option value="missing">未检测到应用</option>
+        <option value="mismatch">组织不匹配</option>
+        <option value="expired">授权时失效</option>
+        <option value="error">检测失败</option>
+      </select>
     </div>
     <p v-if="loading" class="account-progress" role="status">
       正在读取或切换账户…
@@ -281,6 +367,35 @@ onBeforeUnmount(() => {
   max-width: min(620px, 85vw);
   padding: 12px;
   border-top: 1px solid var(--rss-color-border);
+}
+.login-fixture-controls {
+  position: fixed;
+  bottom: 5px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  width: max-content;
+  max-width: 95vw;
+  border: 1px dashed var(--rss-color-accent);
+  border-radius: 7px;
+  padding: 7px 10px;
+  background: var(--rss-color-surface);
+  color: var(--rss-color-text-muted);
+  font-size: 10px;
+  z-index: 20;
+}
+.login-fixture-controls button,
+.login-fixture-controls select {
+  font: inherit;
+  color: var(--rss-color-text);
+  background: var(--rss-color-bg);
+  border: 1px solid var(--rss-color-border);
+  border-radius: 5px;
+  padding: 4px 7px;
+  cursor: pointer;
 }
 .account-progress {
   position: fixed;
