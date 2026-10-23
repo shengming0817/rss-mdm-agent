@@ -1062,39 +1062,8 @@ async fn handler(
     if headers.contains_key("authorization") {
         return runtime_error(StatusCode::UNAUTHORIZED, ErrorCode::InvalidIdentity);
     }
-    if path == "/api/v1/agent/enroll/connections" {
-        d.connection_get_calls += 1;
-        if let Some(status) = d.connection_get_fault.take() {
-            return (status, axum::Json(json!({"code":"service_unavailable"}))).into_response();
-        }
-        return axum::Json(d.connection_configuration.as_ref().unwrap()).into_response();
-    }
-    if path == "/api/v1/agent/enroll/connections/acknowledgements" {
-        let ack: rss_mdm_agent_wire::connections::Acknowledgement =
-            serde_json::from_value(value.clone()).unwrap();
-        ack.validate_for(&d.connection_configuration.as_ref().unwrap().configuration)
-            .unwrap();
-        assert_eq!(
-            ack.origin,
-            format!("https://{}", headers.get("host").unwrap().to_str().unwrap())
-        );
-        if let Some(previous) = d
-            .connection_ack_calls
-            .iter()
-            .find(|a| a["operationId"] == value["operationId"])
-        {
-            assert_eq!(previous, &value);
-        }
-        d.connection_ack_calls.push(value);
-        return if std::mem::take(&mut d.connection_ack_reply_lost) {
-            interrupted_response()
-        } else {
-            StatusCode::NO_CONTENT.into_response()
-        };
-    }
-    if path == "/api/v1/agent/enroll/connections/failures" {
-        d.connection_failure_calls.push(value);
-        return StatusCode::NO_CONTENT.into_response();
+    if path.starts_with("/api/v1/agent/enroll/connections") {
+        return connection_response(&mut d, path, &headers, value);
     }
     if path.contains("/self-service") {
         return self_service_response(&mut d, &uri, &headers, value);
@@ -1129,6 +1098,44 @@ async fn handler(
     } else {
         response
     }
+}
+
+fn connection_response(d: &mut Data, path: &str, headers: &HeaderMap, value: Value) -> Response {
+    if path == "/api/v1/agent/enroll/connections" {
+        d.connection_get_calls += 1;
+        if let Some(status) = d.connection_get_fault.take() {
+            return (status, axum::Json(json!({"code":"service_unavailable"}))).into_response();
+        }
+        return axum::Json(d.connection_configuration.as_ref().unwrap()).into_response();
+    }
+    if path == "/api/v1/agent/enroll/connections/acknowledgements" {
+        let ack: rss_mdm_agent_wire::connections::Acknowledgement =
+            serde_json::from_value(value.clone()).unwrap();
+        ack.validate_for(&d.connection_configuration.as_ref().unwrap().configuration)
+            .unwrap();
+        assert_eq!(
+            ack.origin,
+            format!("https://{}", headers.get("host").unwrap().to_str().unwrap())
+        );
+        if let Some(previous) = d
+            .connection_ack_calls
+            .iter()
+            .find(|a| a["operationId"] == value["operationId"])
+        {
+            assert_eq!(previous, &value);
+        }
+        d.connection_ack_calls.push(value);
+        return if std::mem::take(&mut d.connection_ack_reply_lost) {
+            interrupted_response()
+        } else {
+            StatusCode::NO_CONTENT.into_response()
+        };
+    }
+    if path == "/api/v1/agent/enroll/connections/failures" {
+        d.connection_failure_calls.push(value);
+        return StatusCode::NO_CONTENT.into_response();
+    }
+    StatusCode::NOT_FOUND.into_response()
 }
 
 // Commit at the handler, send actual headers and a partial body, then break the TLS stream.

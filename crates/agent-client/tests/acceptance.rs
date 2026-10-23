@@ -70,6 +70,8 @@ async fn refresh_inspection_reads_live_binding_without_locking_or_creating_state
     );
     let mut wrong = cfg.clone();
     wrong.tenant = Uuid::new_v4();
+    wrong.connections.configuration.tenant_id = wrong.tenant;
+    wrong.connections = support::sign_connections(wrong.connections.configuration);
     assert!(matches!(
         agent_client::inspect_binding(&root.path, &wrong),
         Err(Error::Identity)
@@ -203,6 +205,8 @@ async fn queue_capacity_clock_rollback_and_namespace_change_fail_closed() {
     drop(client);
     let mut cfg = server.config();
     cfg.tenant = Uuid::new_v4();
+    cfg.connections.configuration.tenant_id = cfg.tenant;
+    cfg.connections = support::sign_connections(cfg.connections.configuration);
     assert!(matches!(
         Client::open(
             &root.path,

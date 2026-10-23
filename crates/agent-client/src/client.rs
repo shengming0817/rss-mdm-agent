@@ -868,7 +868,28 @@ pub(crate) fn same_input(a: &wire::TaskPayload, b: &wire::TaskPayload) -> bool {
 // reqwest preserves the underlying rustls error; TLS failures must never authorize failover.
 // ref: hyper-util src/client/legacy/connect/dns.rs (GaiResolver returns io::Error);
 // tokio-rustls src/common/mod.rs (TLS protocol errors remain in the error source chain).
+// io::Error::source can skip a wrapped custom error; inspect get_ref as well.
+// A bounded walk fails closed if a future transport adds an unexpectedly deep wrapper.
+fn contains_tls_error(error: &(dyn std::error::Error + 'static), depth: u8) -> bool {
+    if depth == 0 || error.downcast_ref::<rustls::Error>().is_some() {
+        return true;
+    }
+    if let Some(io) = error.downcast_ref::<std::io::Error>() {
+        if io
+            .get_ref()
+            .is_some_and(|inner| contains_tls_error(inner, depth - 1))
+        {
+            return true;
+        }
+    }
+    error
+        .source()
+        .is_some_and(|source| contains_tls_error(source, depth - 1))
+}
 pub(crate) fn transport_error(error: reqwest::Error) -> Error {
+    if contains_tls_error(&error, 16) {
+        return Error::Unavailable;
+    }
     let mut source: Option<&(dyn std::error::Error + 'static)> = Some(&error);
     let mut network = error.is_timeout();
     while let Some(current) = source {

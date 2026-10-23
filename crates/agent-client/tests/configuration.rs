@@ -161,7 +161,11 @@ async fn signed_foreign_expired_and_wrong_target_files_are_rejected_before_machi
     for kind in ["tenant", "service", "target", "expiry"] {
         let mut changed = file.clone();
         match kind {
-            "tenant" => changed.configuration.tenant_id = uuid::Uuid::new_v4(),
+            "tenant" => {
+                changed.configuration.tenant_id = uuid::Uuid::new_v4();
+                changed.configuration.connections.configuration.tenant_id =
+                    changed.configuration.tenant_id;
+            }
             "service" => {
                 changed.configuration.connections.configuration.service_id = uuid::Uuid::new_v4()
             }
@@ -171,6 +175,8 @@ async fn signed_foreign_expired_and_wrong_target_files_are_rejected_before_machi
             }
             _ => changed.configuration.expires_at = 1,
         }
+        changed.configuration.connections =
+            support::sign_connections(changed.configuration.connections.configuration);
         changed.signature = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(
             server
                 .data

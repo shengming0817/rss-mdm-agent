@@ -73,7 +73,10 @@ impl State {
             &cfg.registration_keys,
         )?;
         self.ack.validate_for(&self.document.configuration)?;
-        if self.ack.origin != self.origin
+        if self.next_drive < 0
+            || self.refresh_at < 0
+            || self.attempts > 6
+            || self.ack.origin != self.origin
             || (self.confirmed && self.registration.is_none())
             || self
                 .registration

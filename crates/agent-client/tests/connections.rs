@@ -239,7 +239,7 @@ async fn offline_import_rejects_forgery_identity_rollback_and_revision_reuse_wit
     let keys = server.secrets.0.lock().unwrap().clone();
     let mut invalid = vec![cfg.connections.clone()];
     let mut forged = newer.clone();
-    forged.signature.replace_range(..1, "A");
+    forged.signature = "A".repeat(86);
     invalid.push(forged);
     for field in ["tenant", "service", "same_revision", "unknown_key"] {
         let mut c = newer.configuration.clone();
@@ -453,4 +453,26 @@ async fn failing_refresh_and_unknown_ack_wait_for_the_persisted_retry_schedule()
     client.drive_connections().await.unwrap();
     assert_eq!(stored(&root)["ack"], ack);
     assert!(client.connection_status().unwrap().acknowledged);
+}
+
+#[tokio::test]
+async fn dns_failure_selects_only_a_signed_candidate_without_replaying_the_request() {
+    let server = Server::tls().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    let known = server.url.origin().ascii_serialization();
+    let unavailable = "https://rss-agent-unreachable.invalid".to_string();
+    let doc = publish(
+        &server,
+        vec![known.clone(), unavailable.clone()],
+        unavailable,
+        2,
+    );
+    client
+        .import_connections(&serde_json::to_vec(&doc).unwrap())
+        .unwrap();
+    assert_eq!(client.drive_connections().await, Err(Error::Unavailable));
+    assert_eq!(client.connection_status().unwrap().origin, known);
+    assert_eq!(server.data.lock().unwrap().connection_get_calls, 0);
 }

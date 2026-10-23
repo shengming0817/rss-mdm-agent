@@ -153,7 +153,7 @@ async fn invalid_complete_trust_set_blocks_runtime_without_replacing_registratio
     for fault in [
         "windows-purpose",
         "apple-purpose",
-        "origin",
+        "service",
         "tenant",
         "mode",
         "signature",
@@ -176,7 +176,7 @@ async fn invalid_complete_trust_set_blocks_runtime_without_replacing_registratio
             match fault {
                 "windows-purpose" => data.trust["purpose"] = "windows".into(),
                 "apple-purpose" => data.trust["purpose"] = "apple".into(),
-                "origin" => data.trust["origin"] = "https://another.example.test".into(),
+                "service" => data.trust["service_id"] = uuid::Uuid::new_v4().to_string().into(),
                 "tenant" => data.trust["tenant"] = uuid::Uuid::new_v4().to_string().into(),
                 "mode" => data.trust["issuers"][0]["mode"] = "retired".into(),
                 "signature" => {
@@ -461,4 +461,24 @@ async fn retained_identity_and_private_trust_refresh_ignore_historical_machine_r
     assert_eq!(state(&root, "pki")["watermarks"], watermarks);
     assert_eq!(state(&root, "pki")["installations"], history);
     assert_eq!(server.data.lock().unwrap().certificate_calls.len(), 1);
+}
+
+#[tokio::test]
+async fn native_locator_change_preserves_the_agent_service_binding() {
+    let server = Server::tls().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    let binding = server.register(&mut client).await;
+    {
+        let mut data = server.data.lock().unwrap();
+        data.trust["origin"] = "https://native-entry.example.test:9445".into();
+        data.trust["revision"] = 2.into();
+    }
+    server.time.set(400);
+    client.drive_pki().await.unwrap();
+    assert_eq!(client.registration().unwrap(), binding);
+    assert_eq!(
+        state(&root, "pki")["document"]["origin"],
+        "https://native-entry.example.test:9445"
+    );
 }

@@ -76,7 +76,15 @@ fn installation_image_reader_is_not_the_small_configuration_reader() {
 
 #[test]
 fn program_refresh_keeps_stable_namespace_and_source_grants_across_signed_seed_changes() {
-    let old = crate::deployment::tests::deployment();
+    let mut old = crate::deployment::tests::deployment();
+    old.software_read_grants
+        .push(agent_client::SoftwareReadGrant {
+            credential: rss_mdm_agent_wire::runtime::SoftwareReadCredential {
+                source: "private-source".into(),
+                reference: "read-only-token".into(),
+            },
+            origin: "https://software.example.org".into(),
+        });
     let mut next = old.clone();
     next.connections.configuration.revision += 1;
     next.connections.configuration.origins = vec!["https://new-agent.example.org:9445".into()];
@@ -89,6 +97,9 @@ fn program_refresh_keeps_stable_namespace_and_source_grants_across_signed_seed_c
     next.service_id = uuid::Uuid::new_v4();
     assert_eq!(lifecycle::preserved(&old, &next), Err(Error::Identity));
     assert_ne!(old.namespace().unwrap(), next.namespace().unwrap());
+    next = old.clone();
+    next.software_read_grants.clear();
+    assert_eq!(lifecycle::preserved(&old, &next), Err(Error::Identity));
     next = old.clone();
     next.signing_keys
         .insert("new-root".into(), "unapproved".into());

@@ -335,8 +335,9 @@ fn compile(
     Error,
 > {
     match payload {
-        wire::TaskPayload::DeviceAccess(_) => return Err(Error::Unsupported),
-        wire::TaskPayload::Unmanage(_) => Err(Error::Unsupported),
+        wire::TaskPayload::DeviceAccess(_) | wire::TaskPayload::Unmanage(_) => {
+            Err(Error::Unsupported)
+        }
         wire::TaskPayload::Credential(payload) => super::credential::compile(
             offer,
             materials,

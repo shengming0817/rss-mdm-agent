@@ -67,7 +67,7 @@ pub enum Error {
     /// Retry the same operation in a later bounded drive.
     #[error("Agent transport unavailable")]
     Unavailable,
-    /// Classified network failure before application or TLS protocol acceptance.
+    /// Classified network failure, including an uncertain response; never authorizes write replay.
     #[error("Agent network unavailable")]
     Network,
     /// The device certificate is expired; retain its registration and journal.
