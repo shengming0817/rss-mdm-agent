@@ -266,11 +266,12 @@ impl<S: IdentityProvider> DeviceService<S> {
             .map_err(crate::error::app_error)
     }
     fn project_material_fact(
-        &self,
+        &mut self,
         pass: &mut Pass,
         fact: execution_app::ServiceMaterialFact,
     ) -> Result<(), Error> {
         let input = fact.input;
+        self.core.remember_data(&input)?;
         let request = &input.spec().request.request_id;
         pass.associated.remove(request);
         let communicating = pass.key.associated.contains(request);

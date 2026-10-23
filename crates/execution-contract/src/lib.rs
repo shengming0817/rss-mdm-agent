@@ -5,6 +5,8 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 mod audit;
+mod collected_data;
+pub use collected_data::*;
 mod current_user;
 pub use current_user::*;
 mod backend_task;

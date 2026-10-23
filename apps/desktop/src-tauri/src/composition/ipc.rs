@@ -55,6 +55,11 @@ macro_rules! commands {
     }
 }
 commands! {
+    query_directory(execution_contract::QueryDirectory) -> execution_contract::QueryPage = query_directory, employee = false,
+    data_read(execution_contract::DataRead) -> execution_contract::CollectedData = data_read, employee = false,
+    query_submit(execution_contract::QuerySubmit) -> execution_contract::QueryStatus = query_submit, employee = false,
+    query_status(execution_contract::QueryRequest) -> execution_contract::QueryStatus = query_status, employee = false,
+    query_cancel(execution_contract::QueryRequest) -> execution_contract::QueryStatus = query_cancel, employee = false,
     self_service_observe_software(execution_contract::SoftwareReadChoice) -> execution_contract::BackendRequest = observe_software, employee = false,
     self_service_policy_directory(PolicyDirectoryQuery) -> rss_mdm_agent_wire::runtime::SelfServiceDirectoryResponse = policy_directory, employee = true,
     self_service_policy_invoke(execution_contract::PolicyChoice) -> execution_contract::BackendRequest = invoke_policy, employee = true,
@@ -403,6 +408,11 @@ pub fn register<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder
         save_connection,
         test_users,
         select_test_user,
+        query_directory,
+        data_read,
+        query_submit,
+        query_status,
+        query_cancel,
         self_service_observe_software,
         self_service_policy_directory,
         self_service_policy_invoke,

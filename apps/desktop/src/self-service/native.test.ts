@@ -1,7 +1,7 @@
 import { beforeEach, expect, it, vi } from "vitest";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { currentUser } from "../test-users";
-import { nativePort } from "./native";
+import { nativePort, nativeDataPort } from "./native";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(), isTauri: vi.fn() }));
 beforeEach(() => {
@@ -52,3 +52,17 @@ it.each(["snapshot", "execute", "cancel"] as const)(
     );
   },
 );
+
+it("keeps local reads and explicit queries on the same authenticated data adapter", async () => {
+  const port = nativeDataPort()!;
+  const input = { after: null, limit: 16, refreshPolicies: false };
+  vi.mocked(invoke).mockResolvedValueOnce({ items: [], next: null });
+  await port.query_directory(input);
+  expect(invoke).toHaveBeenLastCalledWith("query_directory", {
+    input,
+    generation: "generation-alice",
+  });
+  expect(vi.mocked(invoke).mock.calls).toHaveLength(1);
+  vi.mocked(isTauri).mockReturnValue(false);
+  expect(nativeDataPort()).toBeNull();
+});

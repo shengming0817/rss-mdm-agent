@@ -24,6 +24,7 @@ pub(crate) struct EnterpriseHost {
     pub materials: MaterialRegistry,
     pub subject: String,
     pub current: Arc<Mutex<Option<Arc<BackendPermit>>>>,
+    pub local_query: Arc<Mutex<Option<FrozenExecution>>>,
     pub identity_until: agent_client::RuntimeGate,
     pub revoked: Arc<std::sync::atomic::AtomicBool>,
 }
@@ -64,6 +65,36 @@ impl AuthorityVerifier for EnterpriseHost {
         plan: &FrozenExecution,
         _: &AttemptId,
     ) -> Result<AuthorityFacts, VerificationError> {
+        if self.identity_ready()
+            && self
+                .local_query
+                .lock()
+                .map_err(|_| VerificationError::Subject)?
+                .as_ref()
+                .is_some_and(|p| p.digest() == plan.digest())
+        {
+            let p = plan.spec();
+            return Ok(AuthorityFacts {
+                verified_origin: p.request.initiator.clone(),
+                risk: Some(RiskLevel::One),
+                subject: SubjectFacts {
+                    authority: self.binding.authority.clone(),
+                    actor: self.actor.clone(),
+                    validity: p.validity,
+                    budget: p.budget,
+                },
+                delegation: None,
+                policy: p.policy.clone(),
+                rules: vec![Rule {
+                    id: p.policy.id.clone(),
+                    template: plan.clone(),
+                    effect: RuleEffect::Allow,
+                }],
+                now_unix_ms: self.clock.millis().map_err(|_| VerificationError::Clock)?,
+                verification_revision: p.policy.clone(),
+                fresh_until_unix_ms: p.validity.expires_at_unix_ms,
+            });
+        }
         let grant = self.permit(plan).map_err(|_| VerificationError::Subject)?;
         let p = grant.plan.spec();
         let now = self.clock.millis().map_err(|_| VerificationError::Clock)?;

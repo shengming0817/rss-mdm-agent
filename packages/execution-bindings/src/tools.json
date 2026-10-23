@@ -1,6 +1,2747 @@
 [
   {
     "annotations": { "openWorldHint": false, "readOnlyHint": true },
+    "description": "Discover exact local query definitions. Descriptors are not execution grants.",
+    "inputSchema": {
+      "$defs": {
+        "Id": {
+          "description": "Opaque local reference identifier; syntax validity is not authenticity.",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+          "type": "string"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "description": "Bounded query directory.",
+      "properties": {
+        "after": {
+          "anyOf": [{ "$ref": "#/$defs/Id" }, { "type": "null" }],
+          "description": "Exclusive stable query cursor."
+        },
+        "limit": {
+          "description": "Requested page size, from one through 128.",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "refreshPolicies": {
+          "description": "Explicitly refresh authorized published Policies over the existing backend channel.",
+          "type": "boolean"
+        }
+      },
+      "required": ["refreshPolicies", "limit"],
+      "title": "QueryDirectory",
+      "type": "object"
+    },
+    "name": "execution_query_directory",
+    "outputSchema": {
+      "$defs": {
+        "CollectedData": {
+          "additionalProperties": false,
+          "description": "Authorized, bounded observation projection.",
+          "properties": {
+            "collectedAt": {
+              "description": "UTC collection time in seconds, absent for unobserved values.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": ["integer", "null"]
+            },
+            "enumerationComplete": {
+              "description": "Whether the original enumeration was complete.",
+              "type": "boolean"
+            },
+            "fields": {
+              "additionalProperties": true,
+              "description": "Allowlisted local field projection.",
+              "type": "object"
+            },
+            "mappingVersion": {
+              "description": "Version of the local domain mapping; absent when unavailable.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": ["integer", "null"]
+            },
+            "next": {
+              "anyOf": [{ "$ref": "#/$defs/DataCursor" }, { "type": "null" }],
+              "description": "Continuation for this exact snapshot."
+            },
+            "quality": {
+              "$ref": "#/$defs/DataQuality",
+              "description": "Actual evidence quality."
+            },
+            "query": {
+              "$ref": "#/$defs/QueryRef",
+              "description": "Source definition."
+            },
+            "request": {
+              "anyOf": [{ "$ref": "#/$defs/RequestId" }, { "type": "null" }],
+              "description": "Original business request, if the source has one."
+            },
+            "rows": {
+              "description": "Structured rows; no raw process streams.",
+              "items": true,
+              "type": "array"
+            },
+            "scope": {
+              "$ref": "#/$defs/DataScope",
+              "description": "Required local read boundary."
+            },
+            "stale": {
+              "description": "Whether the consumer's freshness requirement was exceeded.",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "query",
+            "scope",
+            "quality",
+            "enumerationComplete",
+            "fields",
+            "rows",
+            "stale"
+          ],
+          "type": "object"
+        },
+        "DataCursor": {
+          "additionalProperties": false,
+          "description": "A cursor is only a position; every read rechecks caller authorization.",
+          "properties": {
+            "offset": {
+              "description": "Exclusive row position.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "snapshot": {
+              "$ref": "#/$defs/Digest",
+              "description": "Exact snapshot digest, preventing pages from mixing observations."
+            }
+          },
+          "required": ["snapshot", "offset"],
+          "type": "object"
+        },
+        "DataQuality": {
+          "description": "Observation quality; absence and a complete empty collection are different.",
+          "oneOf": [
+            {
+              "const": "complete",
+              "description": "Complete validated observation.",
+              "type": "string"
+            },
+            {
+              "const": "partial",
+              "description": "Some data or sources are missing.",
+              "type": "string"
+            },
+            {
+              "const": "truncated",
+              "description": "A declared output budget was reached.",
+              "type": "string"
+            },
+            {
+              "const": "failed",
+              "description": "Collection failed.",
+              "type": "string"
+            },
+            {
+              "const": "notCollected",
+              "description": "No observation has been collected.",
+              "type": "string"
+            },
+            {
+              "const": "definitionUnavailable",
+              "description": "The definition cannot be recovered.",
+              "type": "string"
+            },
+            {
+              "const": "unsupported",
+              "description": "This collector or mapping is unsupported.",
+              "type": "string"
+            },
+            {
+              "const": "denied",
+              "description": "New collection permission is absent.",
+              "type": "string"
+            },
+            {
+              "const": "expired",
+              "description": "A configuration or result reference expired.",
+              "type": "string"
+            },
+            {
+              "const": "unknown",
+              "description": "An existing execution outcome is unknown.",
+              "type": "string"
+            }
+          ]
+        },
+        "DataResponse": {
+          "description": "Typed result of the shared data boundary.",
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "Directory page.",
+              "properties": {
+                "kind": { "const": "directory", "type": "string" },
+                "value": { "$ref": "#/$defs/QueryPage" }
+              },
+              "required": ["kind", "value"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Existing result page.",
+              "properties": {
+                "kind": { "const": "read", "type": "string" },
+                "value": { "$ref": "#/$defs/CollectedData" }
+              },
+              "required": ["kind", "value"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Original request state.",
+              "properties": {
+                "kind": { "const": "status", "type": "string" },
+                "value": { "$ref": "#/$defs/QueryStatus" }
+              },
+              "required": ["kind", "value"],
+              "type": "object"
+            }
+          ]
+        },
+        "DataScope": {
+          "description": "Visibility of a local result, independent of the service's execution identity.",
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "Product-authorized device facts.",
+              "properties": { "kind": { "const": "device", "type": "string" } },
+              "required": ["kind"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Facts private to one authenticated OS account.",
+              "properties": {
+                "kind": { "const": "user", "type": "string" },
+                "subject": {
+                  "$ref": "#/$defs/Id",
+                  "description": "Exact OS account identity."
+                }
+              },
+              "required": ["kind", "subject"],
+              "type": "object"
+            }
+          ]
+        },
+        "Digest": {
+          "description": "Lowercase SHA-256 bytes expressed as hex; a digest alone grants no trust.",
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "ErrorView": {
+          "description": "Protocol error payload; optional catalog diagnostic is produced only from static C03 errors.",
+          "properties": { "code": { "$ref": "#/$defs/ServiceError" } },
+          "required": ["code"],
+          "type": "object"
+        },
+        "Id": {
+          "description": "Opaque local reference identifier; syntax validity is not authenticity.",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+          "type": "string"
+        },
+        "QueryDescriptor": {
+          "additionalProperties": false,
+          "description": "Safe query discovery; an unavailable query can still have retained data.",
+          "properties": {
+            "available": {
+              "description": "Whether a new invocation is currently available.",
+              "type": "boolean"
+            },
+            "kind": {
+              "$ref": "#/$defs/QueryKind",
+              "description": "Source family."
+            },
+            "reason": {
+              "anyOf": [{ "$ref": "#/$defs/DataQuality" }, { "type": "null" }],
+              "description": "Closed unavailability reason."
+            },
+            "reference": {
+              "$ref": "#/$defs/QueryRef",
+              "description": "Exact definition."
+            },
+            "scope": {
+              "$ref": "#/$defs/DataScope",
+              "description": "Required local read boundary."
+            },
+            "title": {
+              "description": "Display text; never an executable selector.",
+              "type": "string"
+            }
+          },
+          "required": ["reference", "title", "kind", "scope", "available"],
+          "type": "object"
+        },
+        "QueryKind": {
+          "description": "Physical source, distinct from caller identity and execution permission.",
+          "oneOf": [
+            {
+              "const": "native",
+              "description": "Published native collection.",
+              "type": "string"
+            },
+            {
+              "const": "policy",
+              "description": "Employee-authorized script or osquery Policy.",
+              "type": "string"
+            },
+            {
+              "const": "telemetry",
+              "description": "Signed periodic observation.",
+              "type": "string"
+            }
+          ]
+        },
+        "QueryPage": {
+          "additionalProperties": false,
+          "description": "Directory page, scoped by the authenticated service.",
+          "properties": {
+            "items": {
+              "description": "Visible queries.",
+              "items": { "$ref": "#/$defs/QueryDescriptor" },
+              "type": "array"
+            },
+            "next": {
+              "anyOf": [{ "$ref": "#/$defs/Id" }, { "type": "null" }],
+              "description": "Exclusive continuation."
+            }
+          },
+          "required": ["items"],
+          "type": "object"
+        },
+        "QueryPhase": {
+          "description": "Query state is a projection of the original execution, not another lifecycle.",
+          "oneOf": [
+            {
+              "const": "accepted",
+              "description": "Submission accepted.",
+              "type": "string"
+            },
+            {
+              "const": "awaitingConfirmation",
+              "description": "Existing business confirmation is required.",
+              "type": "string"
+            },
+            {
+              "const": "running",
+              "description": "Physical collection is running.",
+              "type": "string"
+            },
+            {
+              "const": "completed",
+              "description": "A terminal, validated result is available.",
+              "type": "string"
+            },
+            {
+              "const": "failed",
+              "description": "Execution failed.",
+              "type": "string"
+            },
+            {
+              "const": "cancelled",
+              "description": "Cancellation was observed.",
+              "type": "string"
+            },
+            {
+              "const": "unknown",
+              "description": "Physical outcome is not known.",
+              "type": "string"
+            }
+          ]
+        },
+        "QueryPreparationRef": {
+          "additionalProperties": false,
+          "description": "Reference to the existing Policy preparation; use its existing confirmation UI.",
+          "properties": {
+            "request": {
+              "$ref": "#/$defs/RequestId",
+              "description": "Original Policy request; never a new approval identity."
+            },
+            "revision": {
+              "description": "Exact preparation revision.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": ["request", "revision"],
+          "type": "object"
+        },
+        "QueryRef": {
+          "additionalProperties": false,
+          "description": "Exact service-owned query definition.",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/Id",
+              "description": "Stable resource identity."
+            },
+            "revision": {
+              "$ref": "#/$defs/Digest",
+              "description": "Digest of the complete current definition."
+            }
+          },
+          "required": ["id", "revision"],
+          "type": "object"
+        },
+        "QueryStatus": {
+          "additionalProperties": false,
+          "description": "Status of the same original request.",
+          "properties": {
+            "cancelRequested": {
+              "description": "Cancellation request; this does not prove termination.",
+              "type": "boolean"
+            },
+            "phase": {
+              "$ref": "#/$defs/QueryPhase",
+              "description": "Actual state projection."
+            },
+            "preparation": {
+              "anyOf": [
+                { "$ref": "#/$defs/QueryPreparationRef" },
+                { "type": "null" }
+              ],
+              "description": "Existing Policy preparation/confirmation, when applicable."
+            },
+            "query": {
+              "$ref": "#/$defs/QueryRef",
+              "description": "Exact query."
+            },
+            "request": {
+              "$ref": "#/$defs/RequestId",
+              "description": "Original request."
+            }
+          },
+          "required": ["request", "query", "phase", "cancelRequested"],
+          "type": "object"
+        },
+        "RequestId": {
+          "description": "Local execution request identity.",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+          "type": "string"
+        },
+        "ServiceError": {
+          "description": "Static safe errors. An implementation must never attach raw backend diagnostics.",
+          "oneOf": [
+            {
+              "const": "invalidLimits",
+              "description": "Invalid host configuration.",
+              "type": "string"
+            },
+            {
+              "const": "unbound",
+              "description": "No authenticated host/service binding; startup must fail.",
+              "type": "string"
+            },
+            {
+              "const": "denied",
+              "description": "Subject/delegation/target is not authorized.",
+              "type": "string"
+            },
+            {
+              "const": "notFound",
+              "description": "Object absent within the authorized namespace; do not reveal another namespace.",
+              "type": "string"
+            },
+            {
+              "const": "conflict",
+              "description": "Stable operation ID already names different content.",
+              "type": "string"
+            },
+            {
+              "const": "expired",
+              "description": "Exact reference or trusted authorization is no longer current.",
+              "type": "string"
+            },
+            {
+              "const": "unsupported",
+              "description": "Capability not implemented; never weaken required protection.",
+              "type": "string"
+            },
+            {
+              "const": "unavailable",
+              "description": "Service unavailable; submission may require querying the original ID.",
+              "type": "string"
+            },
+            {
+              "const": "outcomeUnknown",
+              "description": "Acceptance cannot be determined; query/retry the original operationRequestId.",
+              "type": "string"
+            },
+            {
+              "const": "invalidInput",
+              "description": "Invalid request data.",
+              "type": "string"
+            },
+            {
+              "const": "limit",
+              "description": "A configured byte, collection or concurrency budget was exceeded.",
+              "type": "string"
+            },
+            {
+              "const": "cancelled",
+              "description": "Current RPC wait ended. This is not business cancellation.",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "One output schema for both success and tool-level failure.",
+      "oneOf": [
+        {
+          "properties": {
+            "result": { "$ref": "#/$defs/DataResponse" },
+            "status": { "const": "ok", "type": "string" }
+          },
+          "required": ["status", "result"],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "error": { "$ref": "#/$defs/ErrorView" },
+            "status": { "const": "error", "type": "string" }
+          },
+          "required": ["status", "error"],
+          "type": "object"
+        }
+      ],
+      "title": "ToolOutput",
+      "type": "object"
+    }
+  },
+  {
+    "annotations": { "openWorldHint": false, "readOnlyHint": true },
+    "description": "Read retained local data by query or original request, with snapshot pagination. This never starts collection.",
+    "inputSchema": {
+      "$defs": {
+        "DataCursor": {
+          "additionalProperties": false,
+          "description": "A cursor is only a position; every read rechecks caller authorization.",
+          "properties": {
+            "offset": {
+              "description": "Exclusive row position.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "snapshot": {
+              "$ref": "#/$defs/Digest",
+              "description": "Exact snapshot digest, preventing pages from mixing observations."
+            }
+          },
+          "required": ["snapshot", "offset"],
+          "type": "object"
+        },
+        "DataSelection": {
+          "description": "Select an existing snapshot without starting collection.",
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "Latest retained observation for an exact query.",
+              "properties": {
+                "kind": { "const": "query", "type": "string" },
+                "query": {
+                  "$ref": "#/$defs/QueryRef",
+                  "description": "Current query identity."
+                }
+              },
+              "required": ["kind", "query"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Result of one original request.",
+              "properties": {
+                "kind": { "const": "request", "type": "string" },
+                "request": {
+                  "$ref": "#/$defs/RequestId",
+                  "description": "Stable request identity."
+                }
+              },
+              "required": ["kind", "request"],
+              "type": "object"
+            }
+          ]
+        },
+        "Digest": {
+          "description": "Lowercase SHA-256 bytes expressed as hex; a digest alone grants no trust.",
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "Id": {
+          "description": "Opaque local reference identifier; syntax validity is not authenticity.",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+          "type": "string"
+        },
+        "QueryRef": {
+          "additionalProperties": false,
+          "description": "Exact service-owned query definition.",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/Id",
+              "description": "Stable resource identity."
+            },
+            "revision": {
+              "$ref": "#/$defs/Digest",
+              "description": "Digest of the complete current definition."
+            }
+          },
+          "required": ["id", "revision"],
+          "type": "object"
+        },
+        "RequestId": {
+          "description": "Local execution request identity.",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+          "type": "string"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "description": "Bounded read of already collected data.",
+      "properties": {
+        "after": {
+          "anyOf": [{ "$ref": "#/$defs/DataCursor" }, { "type": "null" }],
+          "description": "Immutable snapshot continuation."
+        },
+        "limit": {
+          "description": "One through 128 rows.",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxAgeSeconds": {
+          "description": "Optional consumer freshness requirement in seconds; never triggers collection.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": ["integer", "null"]
+        },
+        "selection": {
+          "$ref": "#/$defs/DataSelection",
+          "description": "Query or original request."
+        }
+      },
+      "required": ["selection", "limit"],
+      "title": "DataRead",
+      "type": "object"
+    },
+    "name": "execution_data_read",
+    "outputSchema": {
+      "$defs": {
+        "CollectedData": {
+          "additionalProperties": false,
+          "description": "Authorized, bounded observation projection.",
+          "properties": {
+            "collectedAt": {
+              "description": "UTC collection time in seconds, absent for unobserved values.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": ["integer", "null"]
+            },
+            "enumerationComplete": {
+              "description": "Whether the original enumeration was complete.",
+              "type": "boolean"
+            },
+            "fields": {
+              "additionalProperties": true,
+              "description": "Allowlisted local field projection.",
+              "type": "object"
+            },
+            "mappingVersion": {
+              "description": "Version of the local domain mapping; absent when unavailable.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": ["integer", "null"]
+            },
+            "next": {
+              "anyOf": [{ "$ref": "#/$defs/DataCursor" }, { "type": "null" }],
+              "description": "Continuation for this exact snapshot."
+            },
+            "quality": {
+              "$ref": "#/$defs/DataQuality",
+              "description": "Actual evidence quality."
+            },
+            "query": {
+              "$ref": "#/$defs/QueryRef",
+              "description": "Source definition."
+            },
+            "request": {
+              "anyOf": [{ "$ref": "#/$defs/RequestId" }, { "type": "null" }],
+              "description": "Original business request, if the source has one."
+            },
+            "rows": {
+              "description": "Structured rows; no raw process streams.",
+              "items": true,
+              "type": "array"
+            },
+            "scope": {
+              "$ref": "#/$defs/DataScope",
+              "description": "Required local read boundary."
+            },
+            "stale": {
+              "description": "Whether the consumer's freshness requirement was exceeded.",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "query",
+            "scope",
+            "quality",
+            "enumerationComplete",
+            "fields",
+            "rows",
+            "stale"
+          ],
+          "type": "object"
+        },
+        "DataCursor": {
+          "additionalProperties": false,
+          "description": "A cursor is only a position; every read rechecks caller authorization.",
+          "properties": {
+            "offset": {
+              "description": "Exclusive row position.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "snapshot": {
+              "$ref": "#/$defs/Digest",
+              "description": "Exact snapshot digest, preventing pages from mixing observations."
+            }
+          },
+          "required": ["snapshot", "offset"],
+          "type": "object"
+        },
+        "DataQuality": {
+          "description": "Observation quality; absence and a complete empty collection are different.",
+          "oneOf": [
+            {
+              "const": "complete",
+              "description": "Complete validated observation.",
+              "type": "string"
+            },
+            {
+              "const": "partial",
+              "description": "Some data or sources are missing.",
+              "type": "string"
+            },
+            {
+              "const": "truncated",
+              "description": "A declared output budget was reached.",
+              "type": "string"
+            },
+            {
+              "const": "failed",
+              "description": "Collection failed.",
+              "type": "string"
+            },
+            {
+              "const": "notCollected",
+              "description": "No observation has been collected.",
+              "type": "string"
+            },
+            {
+              "const": "definitionUnavailable",
+              "description": "The definition cannot be recovered.",
+              "type": "string"
+            },
+            {
+              "const": "unsupported",
+              "description": "This collector or mapping is unsupported.",
+              "type": "string"
+            },
+            {
+              "const": "denied",
+              "description": "New collection permission is absent.",
+              "type": "string"
+            },
+            {
+              "const": "expired",
+              "description": "A configuration or result reference expired.",
+              "type": "string"
+            },
+            {
+              "const": "unknown",
+              "description": "An existing execution outcome is unknown.",
+              "type": "string"
+            }
+          ]
+        },
+        "DataResponse": {
+          "description": "Typed result of the shared data boundary.",
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "Directory page.",
+              "properties": {
+                "kind": { "const": "directory", "type": "string" },
+                "value": { "$ref": "#/$defs/QueryPage" }
+              },
+              "required": ["kind", "value"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Existing result page.",
+              "properties": {
+                "kind": { "const": "read", "type": "string" },
+                "value": { "$ref": "#/$defs/CollectedData" }
+              },
+              "required": ["kind", "value"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Original request state.",
+              "properties": {
+                "kind": { "const": "status", "type": "string" },
+                "value": { "$ref": "#/$defs/QueryStatus" }
+              },
+              "required": ["kind", "value"],
+              "type": "object"
+            }
+          ]
+        },
+        "DataScope": {
+          "description": "Visibility of a local result, independent of the service's execution identity.",
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "Product-authorized device facts.",
+              "properties": { "kind": { "const": "device", "type": "string" } },
+              "required": ["kind"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Facts private to one authenticated OS account.",
+              "properties": {
+                "kind": { "const": "user", "type": "string" },
+                "subject": {
+                  "$ref": "#/$defs/Id",
+                  "description": "Exact OS account identity."
+                }
+              },
+              "required": ["kind", "subject"],
+              "type": "object"
+            }
+          ]
+        },
+        "Digest": {
+          "description": "Lowercase SHA-256 bytes expressed as hex; a digest alone grants no trust.",
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "ErrorView": {
+          "description": "Protocol error payload; optional catalog diagnostic is produced only from static C03 errors.",
+          "properties": { "code": { "$ref": "#/$defs/ServiceError" } },
+          "required": ["code"],
+          "type": "object"
+        },
+        "Id": {
+          "description": "Opaque local reference identifier; syntax validity is not authenticity.",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+          "type": "string"
+        },
+        "QueryDescriptor": {
+          "additionalProperties": false,
+          "description": "Safe query discovery; an unavailable query can still have retained data.",
+          "properties": {
+            "available": {
+              "description": "Whether a new invocation is currently available.",
+              "type": "boolean"
+            },
+            "kind": {
+              "$ref": "#/$defs/QueryKind",
+              "description": "Source family."
+            },
+            "reason": {
+              "anyOf": [{ "$ref": "#/$defs/DataQuality" }, { "type": "null" }],
+              "description": "Closed unavailability reason."
+            },
+            "reference": {
+              "$ref": "#/$defs/QueryRef",
+              "description": "Exact definition."
+            },
+            "scope": {
+              "$ref": "#/$defs/DataScope",
+              "description": "Required local read boundary."
+            },
+            "title": {
+              "description": "Display text; never an executable selector.",
+              "type": "string"
+            }
+          },
+          "required": ["reference", "title", "kind", "scope", "available"],
+          "type": "object"
+        },
+        "QueryKind": {
+          "description": "Physical source, distinct from caller identity and execution permission.",
+          "oneOf": [
+            {
+              "const": "native",
+              "description": "Published native collection.",
+              "type": "string"
+            },
+            {
+              "const": "policy",
+              "description": "Employee-authorized script or osquery Policy.",
+              "type": "string"
+            },
+            {
+              "const": "telemetry",
+              "description": "Signed periodic observation.",
+              "type": "string"
+            }
+          ]
+        },
+        "QueryPage": {
+          "additionalProperties": false,
+          "description": "Directory page, scoped by the authenticated service.",
+          "properties": {
+            "items": {
+              "description": "Visible queries.",
+              "items": { "$ref": "#/$defs/QueryDescriptor" },
+              "type": "array"
+            },
+            "next": {
+              "anyOf": [{ "$ref": "#/$defs/Id" }, { "type": "null" }],
+              "description": "Exclusive continuation."
+            }
+          },
+          "required": ["items"],
+          "type": "object"
+        },
+        "QueryPhase": {
+          "description": "Query state is a projection of the original execution, not another lifecycle.",
+          "oneOf": [
+            {
+              "const": "accepted",
+              "description": "Submission accepted.",
+              "type": "string"
+            },
+            {
+              "const": "awaitingConfirmation",
+              "description": "Existing business confirmation is required.",
+              "type": "string"
+            },
+            {
+              "const": "running",
+              "description": "Physical collection is running.",
+              "type": "string"
+            },
+            {
+              "const": "completed",
+              "description": "A terminal, validated result is available.",
+              "type": "string"
+            },
+            {
+              "const": "failed",
+              "description": "Execution failed.",
+              "type": "string"
+            },
+            {
+              "const": "cancelled",
+              "description": "Cancellation was observed.",
+              "type": "string"
+            },
+            {
+              "const": "unknown",
+              "description": "Physical outcome is not known.",
+              "type": "string"
+            }
+          ]
+        },
+        "QueryPreparationRef": {
+          "additionalProperties": false,
+          "description": "Reference to the existing Policy preparation; use its existing confirmation UI.",
+          "properties": {
+            "request": {
+              "$ref": "#/$defs/RequestId",
+              "description": "Original Policy request; never a new approval identity."
+            },
+            "revision": {
+              "description": "Exact preparation revision.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": ["request", "revision"],
+          "type": "object"
+        },
+        "QueryRef": {
+          "additionalProperties": false,
+          "description": "Exact service-owned query definition.",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/Id",
+              "description": "Stable resource identity."
+            },
+            "revision": {
+              "$ref": "#/$defs/Digest",
+              "description": "Digest of the complete current definition."
+            }
+          },
+          "required": ["id", "revision"],
+          "type": "object"
+        },
+        "QueryStatus": {
+          "additionalProperties": false,
+          "description": "Status of the same original request.",
+          "properties": {
+            "cancelRequested": {
+              "description": "Cancellation request; this does not prove termination.",
+              "type": "boolean"
+            },
+            "phase": {
+              "$ref": "#/$defs/QueryPhase",
+              "description": "Actual state projection."
+            },
+            "preparation": {
+              "anyOf": [
+                { "$ref": "#/$defs/QueryPreparationRef" },
+                { "type": "null" }
+              ],
+              "description": "Existing Policy preparation/confirmation, when applicable."
+            },
+            "query": {
+              "$ref": "#/$defs/QueryRef",
+              "description": "Exact query."
+            },
+            "request": {
+              "$ref": "#/$defs/RequestId",
+              "description": "Original request."
+            }
+          },
+          "required": ["request", "query", "phase", "cancelRequested"],
+          "type": "object"
+        },
+        "RequestId": {
+          "description": "Local execution request identity.",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+          "type": "string"
+        },
+        "ServiceError": {
+          "description": "Static safe errors. An implementation must never attach raw backend diagnostics.",
+          "oneOf": [
+            {
+              "const": "invalidLimits",
+              "description": "Invalid host configuration.",
+              "type": "string"
+            },
+            {
+              "const": "unbound",
+              "description": "No authenticated host/service binding; startup must fail.",
+              "type": "string"
+            },
+            {
+              "const": "denied",
+              "description": "Subject/delegation/target is not authorized.",
+              "type": "string"
+            },
+            {
+              "const": "notFound",
+              "description": "Object absent within the authorized namespace; do not reveal another namespace.",
+              "type": "string"
+            },
+            {
+              "const": "conflict",
+              "description": "Stable operation ID already names different content.",
+              "type": "string"
+            },
+            {
+              "const": "expired",
+              "description": "Exact reference or trusted authorization is no longer current.",
+              "type": "string"
+            },
+            {
+              "const": "unsupported",
+              "description": "Capability not implemented; never weaken required protection.",
+              "type": "string"
+            },
+            {
+              "const": "unavailable",
+              "description": "Service unavailable; submission may require querying the original ID.",
+              "type": "string"
+            },
+            {
+              "const": "outcomeUnknown",
+              "description": "Acceptance cannot be determined; query/retry the original operationRequestId.",
+              "type": "string"
+            },
+            {
+              "const": "invalidInput",
+              "description": "Invalid request data.",
+              "type": "string"
+            },
+            {
+              "const": "limit",
+              "description": "A configured byte, collection or concurrency budget was exceeded.",
+              "type": "string"
+            },
+            {
+              "const": "cancelled",
+              "description": "Current RPC wait ended. This is not business cancellation.",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "One output schema for both success and tool-level failure.",
+      "oneOf": [
+        {
+          "properties": {
+            "result": { "$ref": "#/$defs/DataResponse" },
+            "status": { "const": "ok", "type": "string" }
+          },
+          "required": ["status", "result"],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "error": { "$ref": "#/$defs/ErrorView" },
+            "status": { "const": "error", "type": "string" }
+          },
+          "required": ["status", "error"],
+          "type": "object"
+        }
+      ],
+      "title": "ToolOutput",
+      "type": "object"
+    }
+  },
+  {
+    "annotations": { "openWorldHint": false, "readOnlyHint": false },
+    "description": "Explicitly submit one query. Reuse the original request after response loss. Published scripts retain their Policy risk and confirmation flow.",
+    "inputSchema": {
+      "$defs": {
+        "Digest": {
+          "description": "Lowercase SHA-256 bytes expressed as hex; a digest alone grants no trust.",
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "Id": {
+          "description": "Opaque local reference identifier; syntax validity is not authenticity.",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+          "type": "string"
+        },
+        "QueryRef": {
+          "additionalProperties": false,
+          "description": "Exact service-owned query definition.",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/Id",
+              "description": "Stable resource identity."
+            },
+            "revision": {
+              "$ref": "#/$defs/Digest",
+              "description": "Digest of the complete current definition."
+            }
+          },
+          "required": ["id", "revision"],
+          "type": "object"
+        },
+        "RequestId": {
+          "description": "Local execution request identity.",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+          "type": "string"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "description": "Explicit new query; OS identity, target and origin come from authenticated IPC.",
+      "properties": {
+        "parameters": {
+          "additionalProperties": true,
+          "description": "Only parameters allowed by the published definition.",
+          "type": "object"
+        },
+        "query": {
+          "$ref": "#/$defs/QueryRef",
+          "description": "Exact discovered query definition."
+        },
+        "request": {
+          "$ref": "#/$defs/RequestId",
+          "description": "Stable, caller-owned operation UUID."
+        }
+      },
+      "required": ["request", "query", "parameters"],
+      "title": "QuerySubmit",
+      "type": "object"
+    },
+    "name": "execution_query_submit",
+    "outputSchema": {
+      "$defs": {
+        "CollectedData": {
+          "additionalProperties": false,
+          "description": "Authorized, bounded observation projection.",
+          "properties": {
+            "collectedAt": {
+              "description": "UTC collection time in seconds, absent for unobserved values.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": ["integer", "null"]
+            },
+            "enumerationComplete": {
+              "description": "Whether the original enumeration was complete.",
+              "type": "boolean"
+            },
+            "fields": {
+              "additionalProperties": true,
+              "description": "Allowlisted local field projection.",
+              "type": "object"
+            },
+            "mappingVersion": {
+              "description": "Version of the local domain mapping; absent when unavailable.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": ["integer", "null"]
+            },
+            "next": {
+              "anyOf": [{ "$ref": "#/$defs/DataCursor" }, { "type": "null" }],
+              "description": "Continuation for this exact snapshot."
+            },
+            "quality": {
+              "$ref": "#/$defs/DataQuality",
+              "description": "Actual evidence quality."
+            },
+            "query": {
+              "$ref": "#/$defs/QueryRef",
+              "description": "Source definition."
+            },
+            "request": {
+              "anyOf": [{ "$ref": "#/$defs/RequestId" }, { "type": "null" }],
+              "description": "Original business request, if the source has one."
+            },
+            "rows": {
+              "description": "Structured rows; no raw process streams.",
+              "items": true,
+              "type": "array"
+            },
+            "scope": {
+              "$ref": "#/$defs/DataScope",
+              "description": "Required local read boundary."
+            },
+            "stale": {
+              "description": "Whether the consumer's freshness requirement was exceeded.",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "query",
+            "scope",
+            "quality",
+            "enumerationComplete",
+            "fields",
+            "rows",
+            "stale"
+          ],
+          "type": "object"
+        },
+        "DataCursor": {
+          "additionalProperties": false,
+          "description": "A cursor is only a position; every read rechecks caller authorization.",
+          "properties": {
+            "offset": {
+              "description": "Exclusive row position.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "snapshot": {
+              "$ref": "#/$defs/Digest",
+              "description": "Exact snapshot digest, preventing pages from mixing observations."
+            }
+          },
+          "required": ["snapshot", "offset"],
+          "type": "object"
+        },
+        "DataQuality": {
+          "description": "Observation quality; absence and a complete empty collection are different.",
+          "oneOf": [
+            {
+              "const": "complete",
+              "description": "Complete validated observation.",
+              "type": "string"
+            },
+            {
+              "const": "partial",
+              "description": "Some data or sources are missing.",
+              "type": "string"
+            },
+            {
+              "const": "truncated",
+              "description": "A declared output budget was reached.",
+              "type": "string"
+            },
+            {
+              "const": "failed",
+              "description": "Collection failed.",
+              "type": "string"
+            },
+            {
+              "const": "notCollected",
+              "description": "No observation has been collected.",
+              "type": "string"
+            },
+            {
+              "const": "definitionUnavailable",
+              "description": "The definition cannot be recovered.",
+              "type": "string"
+            },
+            {
+              "const": "unsupported",
+              "description": "This collector or mapping is unsupported.",
+              "type": "string"
+            },
+            {
+              "const": "denied",
+              "description": "New collection permission is absent.",
+              "type": "string"
+            },
+            {
+              "const": "expired",
+              "description": "A configuration or result reference expired.",
+              "type": "string"
+            },
+            {
+              "const": "unknown",
+              "description": "An existing execution outcome is unknown.",
+              "type": "string"
+            }
+          ]
+        },
+        "DataResponse": {
+          "description": "Typed result of the shared data boundary.",
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "Directory page.",
+              "properties": {
+                "kind": { "const": "directory", "type": "string" },
+                "value": { "$ref": "#/$defs/QueryPage" }
+              },
+              "required": ["kind", "value"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Existing result page.",
+              "properties": {
+                "kind": { "const": "read", "type": "string" },
+                "value": { "$ref": "#/$defs/CollectedData" }
+              },
+              "required": ["kind", "value"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Original request state.",
+              "properties": {
+                "kind": { "const": "status", "type": "string" },
+                "value": { "$ref": "#/$defs/QueryStatus" }
+              },
+              "required": ["kind", "value"],
+              "type": "object"
+            }
+          ]
+        },
+        "DataScope": {
+          "description": "Visibility of a local result, independent of the service's execution identity.",
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "Product-authorized device facts.",
+              "properties": { "kind": { "const": "device", "type": "string" } },
+              "required": ["kind"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Facts private to one authenticated OS account.",
+              "properties": {
+                "kind": { "const": "user", "type": "string" },
+                "subject": {
+                  "$ref": "#/$defs/Id",
+                  "description": "Exact OS account identity."
+                }
+              },
+              "required": ["kind", "subject"],
+              "type": "object"
+            }
+          ]
+        },
+        "Digest": {
+          "description": "Lowercase SHA-256 bytes expressed as hex; a digest alone grants no trust.",
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "ErrorView": {
+          "description": "Protocol error payload; optional catalog diagnostic is produced only from static C03 errors.",
+          "properties": { "code": { "$ref": "#/$defs/ServiceError" } },
+          "required": ["code"],
+          "type": "object"
+        },
+        "Id": {
+          "description": "Opaque local reference identifier; syntax validity is not authenticity.",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+          "type": "string"
+        },
+        "QueryDescriptor": {
+          "additionalProperties": false,
+          "description": "Safe query discovery; an unavailable query can still have retained data.",
+          "properties": {
+            "available": {
+              "description": "Whether a new invocation is currently available.",
+              "type": "boolean"
+            },
+            "kind": {
+              "$ref": "#/$defs/QueryKind",
+              "description": "Source family."
+            },
+            "reason": {
+              "anyOf": [{ "$ref": "#/$defs/DataQuality" }, { "type": "null" }],
+              "description": "Closed unavailability reason."
+            },
+            "reference": {
+              "$ref": "#/$defs/QueryRef",
+              "description": "Exact definition."
+            },
+            "scope": {
+              "$ref": "#/$defs/DataScope",
+              "description": "Required local read boundary."
+            },
+            "title": {
+              "description": "Display text; never an executable selector.",
+              "type": "string"
+            }
+          },
+          "required": ["reference", "title", "kind", "scope", "available"],
+          "type": "object"
+        },
+        "QueryKind": {
+          "description": "Physical source, distinct from caller identity and execution permission.",
+          "oneOf": [
+            {
+              "const": "native",
+              "description": "Published native collection.",
+              "type": "string"
+            },
+            {
+              "const": "policy",
+              "description": "Employee-authorized script or osquery Policy.",
+              "type": "string"
+            },
+            {
+              "const": "telemetry",
+              "description": "Signed periodic observation.",
+              "type": "string"
+            }
+          ]
+        },
+        "QueryPage": {
+          "additionalProperties": false,
+          "description": "Directory page, scoped by the authenticated service.",
+          "properties": {
+            "items": {
+              "description": "Visible queries.",
+              "items": { "$ref": "#/$defs/QueryDescriptor" },
+              "type": "array"
+            },
+            "next": {
+              "anyOf": [{ "$ref": "#/$defs/Id" }, { "type": "null" }],
+              "description": "Exclusive continuation."
+            }
+          },
+          "required": ["items"],
+          "type": "object"
+        },
+        "QueryPhase": {
+          "description": "Query state is a projection of the original execution, not another lifecycle.",
+          "oneOf": [
+            {
+              "const": "accepted",
+              "description": "Submission accepted.",
+              "type": "string"
+            },
+            {
+              "const": "awaitingConfirmation",
+              "description": "Existing business confirmation is required.",
+              "type": "string"
+            },
+            {
+              "const": "running",
+              "description": "Physical collection is running.",
+              "type": "string"
+            },
+            {
+              "const": "completed",
+              "description": "A terminal, validated result is available.",
+              "type": "string"
+            },
+            {
+              "const": "failed",
+              "description": "Execution failed.",
+              "type": "string"
+            },
+            {
+              "const": "cancelled",
+              "description": "Cancellation was observed.",
+              "type": "string"
+            },
+            {
+              "const": "unknown",
+              "description": "Physical outcome is not known.",
+              "type": "string"
+            }
+          ]
+        },
+        "QueryPreparationRef": {
+          "additionalProperties": false,
+          "description": "Reference to the existing Policy preparation; use its existing confirmation UI.",
+          "properties": {
+            "request": {
+              "$ref": "#/$defs/RequestId",
+              "description": "Original Policy request; never a new approval identity."
+            },
+            "revision": {
+              "description": "Exact preparation revision.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": ["request", "revision"],
+          "type": "object"
+        },
+        "QueryRef": {
+          "additionalProperties": false,
+          "description": "Exact service-owned query definition.",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/Id",
+              "description": "Stable resource identity."
+            },
+            "revision": {
+              "$ref": "#/$defs/Digest",
+              "description": "Digest of the complete current definition."
+            }
+          },
+          "required": ["id", "revision"],
+          "type": "object"
+        },
+        "QueryStatus": {
+          "additionalProperties": false,
+          "description": "Status of the same original request.",
+          "properties": {
+            "cancelRequested": {
+              "description": "Cancellation request; this does not prove termination.",
+              "type": "boolean"
+            },
+            "phase": {
+              "$ref": "#/$defs/QueryPhase",
+              "description": "Actual state projection."
+            },
+            "preparation": {
+              "anyOf": [
+                { "$ref": "#/$defs/QueryPreparationRef" },
+                { "type": "null" }
+              ],
+              "description": "Existing Policy preparation/confirmation, when applicable."
+            },
+            "query": {
+              "$ref": "#/$defs/QueryRef",
+              "description": "Exact query."
+            },
+            "request": {
+              "$ref": "#/$defs/RequestId",
+              "description": "Original request."
+            }
+          },
+          "required": ["request", "query", "phase", "cancelRequested"],
+          "type": "object"
+        },
+        "RequestId": {
+          "description": "Local execution request identity.",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+          "type": "string"
+        },
+        "ServiceError": {
+          "description": "Static safe errors. An implementation must never attach raw backend diagnostics.",
+          "oneOf": [
+            {
+              "const": "invalidLimits",
+              "description": "Invalid host configuration.",
+              "type": "string"
+            },
+            {
+              "const": "unbound",
+              "description": "No authenticated host/service binding; startup must fail.",
+              "type": "string"
+            },
+            {
+              "const": "denied",
+              "description": "Subject/delegation/target is not authorized.",
+              "type": "string"
+            },
+            {
+              "const": "notFound",
+              "description": "Object absent within the authorized namespace; do not reveal another namespace.",
+              "type": "string"
+            },
+            {
+              "const": "conflict",
+              "description": "Stable operation ID already names different content.",
+              "type": "string"
+            },
+            {
+              "const": "expired",
+              "description": "Exact reference or trusted authorization is no longer current.",
+              "type": "string"
+            },
+            {
+              "const": "unsupported",
+              "description": "Capability not implemented; never weaken required protection.",
+              "type": "string"
+            },
+            {
+              "const": "unavailable",
+              "description": "Service unavailable; submission may require querying the original ID.",
+              "type": "string"
+            },
+            {
+              "const": "outcomeUnknown",
+              "description": "Acceptance cannot be determined; query/retry the original operationRequestId.",
+              "type": "string"
+            },
+            {
+              "const": "invalidInput",
+              "description": "Invalid request data.",
+              "type": "string"
+            },
+            {
+              "const": "limit",
+              "description": "A configured byte, collection or concurrency budget was exceeded.",
+              "type": "string"
+            },
+            {
+              "const": "cancelled",
+              "description": "Current RPC wait ended. This is not business cancellation.",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "One output schema for both success and tool-level failure.",
+      "oneOf": [
+        {
+          "properties": {
+            "result": { "$ref": "#/$defs/DataResponse" },
+            "status": { "const": "ok", "type": "string" }
+          },
+          "required": ["status", "result"],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "error": { "$ref": "#/$defs/ErrorView" },
+            "status": { "const": "error", "type": "string" }
+          },
+          "required": ["status", "error"],
+          "type": "object"
+        }
+      ],
+      "title": "ToolOutput",
+      "type": "object"
+    }
+  },
+  {
+    "annotations": { "openWorldHint": false, "readOnlyHint": true },
+    "description": "Read the original query state and existing confirmation reference. Never resubmit to poll.",
+    "inputSchema": {
+      "$defs": {
+        "RequestId": {
+          "description": "Local execution request identity.",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+          "type": "string"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "description": "Original query lookup or cancellation.",
+      "properties": {
+        "request": {
+          "$ref": "#/$defs/RequestId",
+          "description": "Original request UUID."
+        }
+      },
+      "required": ["request"],
+      "title": "QueryRequest",
+      "type": "object"
+    },
+    "name": "execution_query_status",
+    "outputSchema": {
+      "$defs": {
+        "CollectedData": {
+          "additionalProperties": false,
+          "description": "Authorized, bounded observation projection.",
+          "properties": {
+            "collectedAt": {
+              "description": "UTC collection time in seconds, absent for unobserved values.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": ["integer", "null"]
+            },
+            "enumerationComplete": {
+              "description": "Whether the original enumeration was complete.",
+              "type": "boolean"
+            },
+            "fields": {
+              "additionalProperties": true,
+              "description": "Allowlisted local field projection.",
+              "type": "object"
+            },
+            "mappingVersion": {
+              "description": "Version of the local domain mapping; absent when unavailable.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": ["integer", "null"]
+            },
+            "next": {
+              "anyOf": [{ "$ref": "#/$defs/DataCursor" }, { "type": "null" }],
+              "description": "Continuation for this exact snapshot."
+            },
+            "quality": {
+              "$ref": "#/$defs/DataQuality",
+              "description": "Actual evidence quality."
+            },
+            "query": {
+              "$ref": "#/$defs/QueryRef",
+              "description": "Source definition."
+            },
+            "request": {
+              "anyOf": [{ "$ref": "#/$defs/RequestId" }, { "type": "null" }],
+              "description": "Original business request, if the source has one."
+            },
+            "rows": {
+              "description": "Structured rows; no raw process streams.",
+              "items": true,
+              "type": "array"
+            },
+            "scope": {
+              "$ref": "#/$defs/DataScope",
+              "description": "Required local read boundary."
+            },
+            "stale": {
+              "description": "Whether the consumer's freshness requirement was exceeded.",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "query",
+            "scope",
+            "quality",
+            "enumerationComplete",
+            "fields",
+            "rows",
+            "stale"
+          ],
+          "type": "object"
+        },
+        "DataCursor": {
+          "additionalProperties": false,
+          "description": "A cursor is only a position; every read rechecks caller authorization.",
+          "properties": {
+            "offset": {
+              "description": "Exclusive row position.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "snapshot": {
+              "$ref": "#/$defs/Digest",
+              "description": "Exact snapshot digest, preventing pages from mixing observations."
+            }
+          },
+          "required": ["snapshot", "offset"],
+          "type": "object"
+        },
+        "DataQuality": {
+          "description": "Observation quality; absence and a complete empty collection are different.",
+          "oneOf": [
+            {
+              "const": "complete",
+              "description": "Complete validated observation.",
+              "type": "string"
+            },
+            {
+              "const": "partial",
+              "description": "Some data or sources are missing.",
+              "type": "string"
+            },
+            {
+              "const": "truncated",
+              "description": "A declared output budget was reached.",
+              "type": "string"
+            },
+            {
+              "const": "failed",
+              "description": "Collection failed.",
+              "type": "string"
+            },
+            {
+              "const": "notCollected",
+              "description": "No observation has been collected.",
+              "type": "string"
+            },
+            {
+              "const": "definitionUnavailable",
+              "description": "The definition cannot be recovered.",
+              "type": "string"
+            },
+            {
+              "const": "unsupported",
+              "description": "This collector or mapping is unsupported.",
+              "type": "string"
+            },
+            {
+              "const": "denied",
+              "description": "New collection permission is absent.",
+              "type": "string"
+            },
+            {
+              "const": "expired",
+              "description": "A configuration or result reference expired.",
+              "type": "string"
+            },
+            {
+              "const": "unknown",
+              "description": "An existing execution outcome is unknown.",
+              "type": "string"
+            }
+          ]
+        },
+        "DataResponse": {
+          "description": "Typed result of the shared data boundary.",
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "Directory page.",
+              "properties": {
+                "kind": { "const": "directory", "type": "string" },
+                "value": { "$ref": "#/$defs/QueryPage" }
+              },
+              "required": ["kind", "value"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Existing result page.",
+              "properties": {
+                "kind": { "const": "read", "type": "string" },
+                "value": { "$ref": "#/$defs/CollectedData" }
+              },
+              "required": ["kind", "value"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Original request state.",
+              "properties": {
+                "kind": { "const": "status", "type": "string" },
+                "value": { "$ref": "#/$defs/QueryStatus" }
+              },
+              "required": ["kind", "value"],
+              "type": "object"
+            }
+          ]
+        },
+        "DataScope": {
+          "description": "Visibility of a local result, independent of the service's execution identity.",
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "Product-authorized device facts.",
+              "properties": { "kind": { "const": "device", "type": "string" } },
+              "required": ["kind"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Facts private to one authenticated OS account.",
+              "properties": {
+                "kind": { "const": "user", "type": "string" },
+                "subject": {
+                  "$ref": "#/$defs/Id",
+                  "description": "Exact OS account identity."
+                }
+              },
+              "required": ["kind", "subject"],
+              "type": "object"
+            }
+          ]
+        },
+        "Digest": {
+          "description": "Lowercase SHA-256 bytes expressed as hex; a digest alone grants no trust.",
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "ErrorView": {
+          "description": "Protocol error payload; optional catalog diagnostic is produced only from static C03 errors.",
+          "properties": { "code": { "$ref": "#/$defs/ServiceError" } },
+          "required": ["code"],
+          "type": "object"
+        },
+        "Id": {
+          "description": "Opaque local reference identifier; syntax validity is not authenticity.",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+          "type": "string"
+        },
+        "QueryDescriptor": {
+          "additionalProperties": false,
+          "description": "Safe query discovery; an unavailable query can still have retained data.",
+          "properties": {
+            "available": {
+              "description": "Whether a new invocation is currently available.",
+              "type": "boolean"
+            },
+            "kind": {
+              "$ref": "#/$defs/QueryKind",
+              "description": "Source family."
+            },
+            "reason": {
+              "anyOf": [{ "$ref": "#/$defs/DataQuality" }, { "type": "null" }],
+              "description": "Closed unavailability reason."
+            },
+            "reference": {
+              "$ref": "#/$defs/QueryRef",
+              "description": "Exact definition."
+            },
+            "scope": {
+              "$ref": "#/$defs/DataScope",
+              "description": "Required local read boundary."
+            },
+            "title": {
+              "description": "Display text; never an executable selector.",
+              "type": "string"
+            }
+          },
+          "required": ["reference", "title", "kind", "scope", "available"],
+          "type": "object"
+        },
+        "QueryKind": {
+          "description": "Physical source, distinct from caller identity and execution permission.",
+          "oneOf": [
+            {
+              "const": "native",
+              "description": "Published native collection.",
+              "type": "string"
+            },
+            {
+              "const": "policy",
+              "description": "Employee-authorized script or osquery Policy.",
+              "type": "string"
+            },
+            {
+              "const": "telemetry",
+              "description": "Signed periodic observation.",
+              "type": "string"
+            }
+          ]
+        },
+        "QueryPage": {
+          "additionalProperties": false,
+          "description": "Directory page, scoped by the authenticated service.",
+          "properties": {
+            "items": {
+              "description": "Visible queries.",
+              "items": { "$ref": "#/$defs/QueryDescriptor" },
+              "type": "array"
+            },
+            "next": {
+              "anyOf": [{ "$ref": "#/$defs/Id" }, { "type": "null" }],
+              "description": "Exclusive continuation."
+            }
+          },
+          "required": ["items"],
+          "type": "object"
+        },
+        "QueryPhase": {
+          "description": "Query state is a projection of the original execution, not another lifecycle.",
+          "oneOf": [
+            {
+              "const": "accepted",
+              "description": "Submission accepted.",
+              "type": "string"
+            },
+            {
+              "const": "awaitingConfirmation",
+              "description": "Existing business confirmation is required.",
+              "type": "string"
+            },
+            {
+              "const": "running",
+              "description": "Physical collection is running.",
+              "type": "string"
+            },
+            {
+              "const": "completed",
+              "description": "A terminal, validated result is available.",
+              "type": "string"
+            },
+            {
+              "const": "failed",
+              "description": "Execution failed.",
+              "type": "string"
+            },
+            {
+              "const": "cancelled",
+              "description": "Cancellation was observed.",
+              "type": "string"
+            },
+            {
+              "const": "unknown",
+              "description": "Physical outcome is not known.",
+              "type": "string"
+            }
+          ]
+        },
+        "QueryPreparationRef": {
+          "additionalProperties": false,
+          "description": "Reference to the existing Policy preparation; use its existing confirmation UI.",
+          "properties": {
+            "request": {
+              "$ref": "#/$defs/RequestId",
+              "description": "Original Policy request; never a new approval identity."
+            },
+            "revision": {
+              "description": "Exact preparation revision.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": ["request", "revision"],
+          "type": "object"
+        },
+        "QueryRef": {
+          "additionalProperties": false,
+          "description": "Exact service-owned query definition.",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/Id",
+              "description": "Stable resource identity."
+            },
+            "revision": {
+              "$ref": "#/$defs/Digest",
+              "description": "Digest of the complete current definition."
+            }
+          },
+          "required": ["id", "revision"],
+          "type": "object"
+        },
+        "QueryStatus": {
+          "additionalProperties": false,
+          "description": "Status of the same original request.",
+          "properties": {
+            "cancelRequested": {
+              "description": "Cancellation request; this does not prove termination.",
+              "type": "boolean"
+            },
+            "phase": {
+              "$ref": "#/$defs/QueryPhase",
+              "description": "Actual state projection."
+            },
+            "preparation": {
+              "anyOf": [
+                { "$ref": "#/$defs/QueryPreparationRef" },
+                { "type": "null" }
+              ],
+              "description": "Existing Policy preparation/confirmation, when applicable."
+            },
+            "query": {
+              "$ref": "#/$defs/QueryRef",
+              "description": "Exact query."
+            },
+            "request": {
+              "$ref": "#/$defs/RequestId",
+              "description": "Original request."
+            }
+          },
+          "required": ["request", "query", "phase", "cancelRequested"],
+          "type": "object"
+        },
+        "RequestId": {
+          "description": "Local execution request identity.",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+          "type": "string"
+        },
+        "ServiceError": {
+          "description": "Static safe errors. An implementation must never attach raw backend diagnostics.",
+          "oneOf": [
+            {
+              "const": "invalidLimits",
+              "description": "Invalid host configuration.",
+              "type": "string"
+            },
+            {
+              "const": "unbound",
+              "description": "No authenticated host/service binding; startup must fail.",
+              "type": "string"
+            },
+            {
+              "const": "denied",
+              "description": "Subject/delegation/target is not authorized.",
+              "type": "string"
+            },
+            {
+              "const": "notFound",
+              "description": "Object absent within the authorized namespace; do not reveal another namespace.",
+              "type": "string"
+            },
+            {
+              "const": "conflict",
+              "description": "Stable operation ID already names different content.",
+              "type": "string"
+            },
+            {
+              "const": "expired",
+              "description": "Exact reference or trusted authorization is no longer current.",
+              "type": "string"
+            },
+            {
+              "const": "unsupported",
+              "description": "Capability not implemented; never weaken required protection.",
+              "type": "string"
+            },
+            {
+              "const": "unavailable",
+              "description": "Service unavailable; submission may require querying the original ID.",
+              "type": "string"
+            },
+            {
+              "const": "outcomeUnknown",
+              "description": "Acceptance cannot be determined; query/retry the original operationRequestId.",
+              "type": "string"
+            },
+            {
+              "const": "invalidInput",
+              "description": "Invalid request data.",
+              "type": "string"
+            },
+            {
+              "const": "limit",
+              "description": "A configured byte, collection or concurrency budget was exceeded.",
+              "type": "string"
+            },
+            {
+              "const": "cancelled",
+              "description": "Current RPC wait ended. This is not business cancellation.",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "One output schema for both success and tool-level failure.",
+      "oneOf": [
+        {
+          "properties": {
+            "result": { "$ref": "#/$defs/DataResponse" },
+            "status": { "const": "ok", "type": "string" }
+          },
+          "required": ["status", "result"],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "error": { "$ref": "#/$defs/ErrorView" },
+            "status": { "const": "error", "type": "string" }
+          },
+          "required": ["status", "error"],
+          "type": "object"
+        }
+      ],
+      "title": "ToolOutput",
+      "type": "object"
+    }
+  },
+  {
+    "annotations": { "openWorldHint": false, "readOnlyHint": false },
+    "description": "Request cancellation of the original query; acknowledgement does not prove termination.",
+    "inputSchema": {
+      "$defs": {
+        "RequestId": {
+          "description": "Local execution request identity.",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+          "type": "string"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "description": "Original query lookup or cancellation.",
+      "properties": {
+        "request": {
+          "$ref": "#/$defs/RequestId",
+          "description": "Original request UUID."
+        }
+      },
+      "required": ["request"],
+      "title": "QueryRequest",
+      "type": "object"
+    },
+    "name": "execution_query_cancel",
+    "outputSchema": {
+      "$defs": {
+        "CollectedData": {
+          "additionalProperties": false,
+          "description": "Authorized, bounded observation projection.",
+          "properties": {
+            "collectedAt": {
+              "description": "UTC collection time in seconds, absent for unobserved values.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": ["integer", "null"]
+            },
+            "enumerationComplete": {
+              "description": "Whether the original enumeration was complete.",
+              "type": "boolean"
+            },
+            "fields": {
+              "additionalProperties": true,
+              "description": "Allowlisted local field projection.",
+              "type": "object"
+            },
+            "mappingVersion": {
+              "description": "Version of the local domain mapping; absent when unavailable.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": ["integer", "null"]
+            },
+            "next": {
+              "anyOf": [{ "$ref": "#/$defs/DataCursor" }, { "type": "null" }],
+              "description": "Continuation for this exact snapshot."
+            },
+            "quality": {
+              "$ref": "#/$defs/DataQuality",
+              "description": "Actual evidence quality."
+            },
+            "query": {
+              "$ref": "#/$defs/QueryRef",
+              "description": "Source definition."
+            },
+            "request": {
+              "anyOf": [{ "$ref": "#/$defs/RequestId" }, { "type": "null" }],
+              "description": "Original business request, if the source has one."
+            },
+            "rows": {
+              "description": "Structured rows; no raw process streams.",
+              "items": true,
+              "type": "array"
+            },
+            "scope": {
+              "$ref": "#/$defs/DataScope",
+              "description": "Required local read boundary."
+            },
+            "stale": {
+              "description": "Whether the consumer's freshness requirement was exceeded.",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "query",
+            "scope",
+            "quality",
+            "enumerationComplete",
+            "fields",
+            "rows",
+            "stale"
+          ],
+          "type": "object"
+        },
+        "DataCursor": {
+          "additionalProperties": false,
+          "description": "A cursor is only a position; every read rechecks caller authorization.",
+          "properties": {
+            "offset": {
+              "description": "Exclusive row position.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "snapshot": {
+              "$ref": "#/$defs/Digest",
+              "description": "Exact snapshot digest, preventing pages from mixing observations."
+            }
+          },
+          "required": ["snapshot", "offset"],
+          "type": "object"
+        },
+        "DataQuality": {
+          "description": "Observation quality; absence and a complete empty collection are different.",
+          "oneOf": [
+            {
+              "const": "complete",
+              "description": "Complete validated observation.",
+              "type": "string"
+            },
+            {
+              "const": "partial",
+              "description": "Some data or sources are missing.",
+              "type": "string"
+            },
+            {
+              "const": "truncated",
+              "description": "A declared output budget was reached.",
+              "type": "string"
+            },
+            {
+              "const": "failed",
+              "description": "Collection failed.",
+              "type": "string"
+            },
+            {
+              "const": "notCollected",
+              "description": "No observation has been collected.",
+              "type": "string"
+            },
+            {
+              "const": "definitionUnavailable",
+              "description": "The definition cannot be recovered.",
+              "type": "string"
+            },
+            {
+              "const": "unsupported",
+              "description": "This collector or mapping is unsupported.",
+              "type": "string"
+            },
+            {
+              "const": "denied",
+              "description": "New collection permission is absent.",
+              "type": "string"
+            },
+            {
+              "const": "expired",
+              "description": "A configuration or result reference expired.",
+              "type": "string"
+            },
+            {
+              "const": "unknown",
+              "description": "An existing execution outcome is unknown.",
+              "type": "string"
+            }
+          ]
+        },
+        "DataResponse": {
+          "description": "Typed result of the shared data boundary.",
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "Directory page.",
+              "properties": {
+                "kind": { "const": "directory", "type": "string" },
+                "value": { "$ref": "#/$defs/QueryPage" }
+              },
+              "required": ["kind", "value"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Existing result page.",
+              "properties": {
+                "kind": { "const": "read", "type": "string" },
+                "value": { "$ref": "#/$defs/CollectedData" }
+              },
+              "required": ["kind", "value"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Original request state.",
+              "properties": {
+                "kind": { "const": "status", "type": "string" },
+                "value": { "$ref": "#/$defs/QueryStatus" }
+              },
+              "required": ["kind", "value"],
+              "type": "object"
+            }
+          ]
+        },
+        "DataScope": {
+          "description": "Visibility of a local result, independent of the service's execution identity.",
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "Product-authorized device facts.",
+              "properties": { "kind": { "const": "device", "type": "string" } },
+              "required": ["kind"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Facts private to one authenticated OS account.",
+              "properties": {
+                "kind": { "const": "user", "type": "string" },
+                "subject": {
+                  "$ref": "#/$defs/Id",
+                  "description": "Exact OS account identity."
+                }
+              },
+              "required": ["kind", "subject"],
+              "type": "object"
+            }
+          ]
+        },
+        "Digest": {
+          "description": "Lowercase SHA-256 bytes expressed as hex; a digest alone grants no trust.",
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "ErrorView": {
+          "description": "Protocol error payload; optional catalog diagnostic is produced only from static C03 errors.",
+          "properties": { "code": { "$ref": "#/$defs/ServiceError" } },
+          "required": ["code"],
+          "type": "object"
+        },
+        "Id": {
+          "description": "Opaque local reference identifier; syntax validity is not authenticity.",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+          "type": "string"
+        },
+        "QueryDescriptor": {
+          "additionalProperties": false,
+          "description": "Safe query discovery; an unavailable query can still have retained data.",
+          "properties": {
+            "available": {
+              "description": "Whether a new invocation is currently available.",
+              "type": "boolean"
+            },
+            "kind": {
+              "$ref": "#/$defs/QueryKind",
+              "description": "Source family."
+            },
+            "reason": {
+              "anyOf": [{ "$ref": "#/$defs/DataQuality" }, { "type": "null" }],
+              "description": "Closed unavailability reason."
+            },
+            "reference": {
+              "$ref": "#/$defs/QueryRef",
+              "description": "Exact definition."
+            },
+            "scope": {
+              "$ref": "#/$defs/DataScope",
+              "description": "Required local read boundary."
+            },
+            "title": {
+              "description": "Display text; never an executable selector.",
+              "type": "string"
+            }
+          },
+          "required": ["reference", "title", "kind", "scope", "available"],
+          "type": "object"
+        },
+        "QueryKind": {
+          "description": "Physical source, distinct from caller identity and execution permission.",
+          "oneOf": [
+            {
+              "const": "native",
+              "description": "Published native collection.",
+              "type": "string"
+            },
+            {
+              "const": "policy",
+              "description": "Employee-authorized script or osquery Policy.",
+              "type": "string"
+            },
+            {
+              "const": "telemetry",
+              "description": "Signed periodic observation.",
+              "type": "string"
+            }
+          ]
+        },
+        "QueryPage": {
+          "additionalProperties": false,
+          "description": "Directory page, scoped by the authenticated service.",
+          "properties": {
+            "items": {
+              "description": "Visible queries.",
+              "items": { "$ref": "#/$defs/QueryDescriptor" },
+              "type": "array"
+            },
+            "next": {
+              "anyOf": [{ "$ref": "#/$defs/Id" }, { "type": "null" }],
+              "description": "Exclusive continuation."
+            }
+          },
+          "required": ["items"],
+          "type": "object"
+        },
+        "QueryPhase": {
+          "description": "Query state is a projection of the original execution, not another lifecycle.",
+          "oneOf": [
+            {
+              "const": "accepted",
+              "description": "Submission accepted.",
+              "type": "string"
+            },
+            {
+              "const": "awaitingConfirmation",
+              "description": "Existing business confirmation is required.",
+              "type": "string"
+            },
+            {
+              "const": "running",
+              "description": "Physical collection is running.",
+              "type": "string"
+            },
+            {
+              "const": "completed",
+              "description": "A terminal, validated result is available.",
+              "type": "string"
+            },
+            {
+              "const": "failed",
+              "description": "Execution failed.",
+              "type": "string"
+            },
+            {
+              "const": "cancelled",
+              "description": "Cancellation was observed.",
+              "type": "string"
+            },
+            {
+              "const": "unknown",
+              "description": "Physical outcome is not known.",
+              "type": "string"
+            }
+          ]
+        },
+        "QueryPreparationRef": {
+          "additionalProperties": false,
+          "description": "Reference to the existing Policy preparation; use its existing confirmation UI.",
+          "properties": {
+            "request": {
+              "$ref": "#/$defs/RequestId",
+              "description": "Original Policy request; never a new approval identity."
+            },
+            "revision": {
+              "description": "Exact preparation revision.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": ["request", "revision"],
+          "type": "object"
+        },
+        "QueryRef": {
+          "additionalProperties": false,
+          "description": "Exact service-owned query definition.",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/Id",
+              "description": "Stable resource identity."
+            },
+            "revision": {
+              "$ref": "#/$defs/Digest",
+              "description": "Digest of the complete current definition."
+            }
+          },
+          "required": ["id", "revision"],
+          "type": "object"
+        },
+        "QueryStatus": {
+          "additionalProperties": false,
+          "description": "Status of the same original request.",
+          "properties": {
+            "cancelRequested": {
+              "description": "Cancellation request; this does not prove termination.",
+              "type": "boolean"
+            },
+            "phase": {
+              "$ref": "#/$defs/QueryPhase",
+              "description": "Actual state projection."
+            },
+            "preparation": {
+              "anyOf": [
+                { "$ref": "#/$defs/QueryPreparationRef" },
+                { "type": "null" }
+              ],
+              "description": "Existing Policy preparation/confirmation, when applicable."
+            },
+            "query": {
+              "$ref": "#/$defs/QueryRef",
+              "description": "Exact query."
+            },
+            "request": {
+              "$ref": "#/$defs/RequestId",
+              "description": "Original request."
+            }
+          },
+          "required": ["request", "query", "phase", "cancelRequested"],
+          "type": "object"
+        },
+        "RequestId": {
+          "description": "Local execution request identity.",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+          "type": "string"
+        },
+        "ServiceError": {
+          "description": "Static safe errors. An implementation must never attach raw backend diagnostics.",
+          "oneOf": [
+            {
+              "const": "invalidLimits",
+              "description": "Invalid host configuration.",
+              "type": "string"
+            },
+            {
+              "const": "unbound",
+              "description": "No authenticated host/service binding; startup must fail.",
+              "type": "string"
+            },
+            {
+              "const": "denied",
+              "description": "Subject/delegation/target is not authorized.",
+              "type": "string"
+            },
+            {
+              "const": "notFound",
+              "description": "Object absent within the authorized namespace; do not reveal another namespace.",
+              "type": "string"
+            },
+            {
+              "const": "conflict",
+              "description": "Stable operation ID already names different content.",
+              "type": "string"
+            },
+            {
+              "const": "expired",
+              "description": "Exact reference or trusted authorization is no longer current.",
+              "type": "string"
+            },
+            {
+              "const": "unsupported",
+              "description": "Capability not implemented; never weaken required protection.",
+              "type": "string"
+            },
+            {
+              "const": "unavailable",
+              "description": "Service unavailable; submission may require querying the original ID.",
+              "type": "string"
+            },
+            {
+              "const": "outcomeUnknown",
+              "description": "Acceptance cannot be determined; query/retry the original operationRequestId.",
+              "type": "string"
+            },
+            {
+              "const": "invalidInput",
+              "description": "Invalid request data.",
+              "type": "string"
+            },
+            {
+              "const": "limit",
+              "description": "A configured byte, collection or concurrency budget was exceeded.",
+              "type": "string"
+            },
+            {
+              "const": "cancelled",
+              "description": "Current RPC wait ended. This is not business cancellation.",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "One output schema for both success and tool-level failure.",
+      "oneOf": [
+        {
+          "properties": {
+            "result": { "$ref": "#/$defs/DataResponse" },
+            "status": { "const": "ok", "type": "string" }
+          },
+          "required": ["status", "result"],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "error": { "$ref": "#/$defs/ErrorView" },
+            "status": { "const": "error", "type": "string" }
+          },
+          "required": ["status", "error"],
+          "type": "object"
+        }
+      ],
+      "title": "ToolOutput",
+      "type": "object"
+    }
+  },
+  {
+    "annotations": { "openWorldHint": false, "readOnlyHint": true },
     "description": "Verified backend tasks. Select the exact task, attempt and revision; presence never authorizes execution.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",

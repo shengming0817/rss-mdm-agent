@@ -108,7 +108,7 @@ async fn discovery_exposes_backend_references_and_rejects_old_script_and_catalog
         .await;
     let list = w.recv().await;
     let tools = list["result"]["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 9);
+    assert_eq!(tools.len(), 14);
     for tool in tools {
         jsonschema::draft202012::new(&tool["inputSchema"]).unwrap();
         jsonschema::draft202012::new(&tool["outputSchema"]).unwrap();
@@ -558,6 +558,36 @@ async fn every_tool_advertises_and_times_out_according_to_its_effects() {
     let tools = list["result"]["tools"].as_array().unwrap();
     let operation = json!({"operationRequestId":"original-id"});
     let cases = [
+        (
+            "execution_query_directory",
+            json!({"after":null,"limit":16,"refreshPolicies":false}),
+            true,
+            "unavailable",
+        ),
+        (
+            "execution_data_read",
+            json!({"selection":{"kind":"request","request":"original-id"},"after":null,"limit":16,"maxAgeSeconds":null}),
+            true,
+            "unavailable",
+        ),
+        (
+            "execution_query_submit",
+            json!({"request":"original-id","query":{"id":"native:test","revision":"a".repeat(64)},"parameters":{}}),
+            false,
+            "outcomeUnknown",
+        ),
+        (
+            "execution_query_status",
+            json!({"request":"original-id"}),
+            true,
+            "unavailable",
+        ),
+        (
+            "execution_query_cancel",
+            json!({"request":"original-id"}),
+            false,
+            "outcomeUnknown",
+        ),
         (
             "execution_operation_prepare",
             json!({"scene":"policy.parameters.v1", "tool":"policy_fixture", "parameters":{}}),

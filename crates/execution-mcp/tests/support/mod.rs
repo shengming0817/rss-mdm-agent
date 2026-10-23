@@ -111,6 +111,25 @@ impl TestService {
     }
 }
 impl ExecutionServicePort for TestService {
+    async fn collected_data(
+        &self,
+        input: execution_contract::DataOperation,
+        _: CancellationToken,
+    ) -> Result<execution_contract::DataResponse, ServiceError> {
+        self.authorize()?;
+        let delay = if matches!(
+            input,
+            execution_contract::DataOperation::Submit(_)
+                | execution_contract::DataOperation::Cancel(_)
+        ) {
+            &self.submit_delay_ms
+        } else {
+            &self.catalog_delay_ms
+        };
+        tokio::time::sleep(Duration::from_millis(delay.load(Ordering::SeqCst) as u64)).await;
+        Err(ServiceError::Denied)
+    }
+
     fn bind_call(
         self: &Arc<Self>,
         _: &serde_json::Map<String, serde_json::Value>,

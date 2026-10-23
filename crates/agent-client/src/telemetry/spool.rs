@@ -368,6 +368,24 @@ impl Spool {
         tx.commit()?;
         Ok(observation.id)
     }
+    /// Read one just-committed normalized observation for a local projection before ACK.
+    /// This is not an execution grant and does not change delivery membership.
+    pub fn observation(
+        &self,
+        configuration: &Configuration,
+        id: Uuid,
+    ) -> Result<w::TelemetryObservation, Error> {
+        let c = configuration.payload();
+        let body: Vec<u8> = self.conn.query_row(
+            "SELECT body FROM samples WHERE id=?1 AND policy=?2 AND registration=?3 AND generation=?4 AND binding=?5 AND length(body)<=?6",
+            params![id.to_string(), c.policy.to_string(), c.registration_id.to_string(), c.generation, c.binding, c.max_bytes], |r| r.get(0),
+        ).optional()?.ok_or(Error::NotFound)?;
+        let value: w::TelemetryObservation = decode(&body)?;
+        if value.id != id {
+            return Err(Error::Untrusted);
+        }
+        Ok(value)
+    }
     /// Drain all queued samples under their original frozen configuration.
     pub fn freeze_all(&mut self, configuration: &Configuration) -> Result<(), Error> {
         loop {

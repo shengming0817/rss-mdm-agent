@@ -443,6 +443,82 @@ export type BackendTrigger =
       toolCall: Id;
     };
 /**
+ * Select an existing snapshot without starting collection.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "DataSelection".
+ */
+export type DataSelection =
+  | {
+      kind: "query";
+      /**
+       * Current query identity.
+       */
+      query: QueryRef;
+    }
+  | {
+      kind: "request";
+      /**
+       * Stable request identity.
+       */
+      request: RequestId;
+    };
+/**
+ * Observation quality; absence and a complete empty collection are different.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "DataQuality".
+ */
+export type DataQuality =
+  | "complete"
+  | "partial"
+  | "truncated"
+  | "failed"
+  | "notCollected"
+  | "definitionUnavailable"
+  | "unsupported"
+  | "denied"
+  | "expired"
+  | "unknown";
+/**
+ * Visibility of a local result, independent of the service's execution identity.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "DataScope".
+ */
+export type DataScope =
+  | {
+      kind: "device";
+    }
+  | {
+      kind: "user";
+      /**
+       * Exact OS account identity.
+       */
+      subject: Id;
+    };
+/**
+ * Query state is a projection of the original execution, not another lifecycle.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "QueryPhase".
+ */
+export type QueryPhase =
+  | "accepted"
+  | "awaitingConfirmation"
+  | "running"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "unknown";
+/**
+ * Physical source, distinct from caller identity and execution permission.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "QueryKind".
+ */
+export type QueryKind = "native" | "policy" | "telemetry";
+/**
  * Query result spanning preparation and actual execution without inventing a frozen plan.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
@@ -997,24 +1073,29 @@ export type TaskExecution =
   | "unknown";
 
 export interface SelfServiceCommands {
-  ai_operation_submit: Command4;
-  appearance_snapshot: Command10;
-  device_overview: Command11;
-  self_service_cancel: Command9;
-  self_service_confirm: Command8;
-  self_service_execute: Command8;
-  self_service_observe_software: Command;
-  self_service_policy_confirm: Command5;
-  self_service_policy_directory: Command2;
-  self_service_policy_invoke: Command3;
-  self_service_policy_status: Command6;
-  self_service_snapshot: Command7;
+  ai_operation_submit: Command8;
+  appearance_snapshot: Command14;
+  data_read: Command2;
+  device_overview: Command15;
+  query_cancel: Command4;
+  query_directory: Command;
+  query_status: Command4;
+  query_submit: Command3;
+  self_service_cancel: Command13;
+  self_service_confirm: Command12;
+  self_service_execute: Command12;
+  self_service_observe_software: Command5;
+  self_service_policy_confirm: Command9;
+  self_service_policy_directory: Command6;
+  self_service_policy_invoke: Command7;
+  self_service_policy_status: Command10;
+  self_service_snapshot: Command11;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command4".
+ * via the `definition` "Command8".
  */
-export interface Command4 {
+export interface Command8 {
   input: PolicySubmission;
   output: BackendRequest;
 }
@@ -1471,9 +1552,9 @@ export interface VersionedRef {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command10".
+ * via the `definition` "Command14".
  */
-export interface Command10 {
+export interface Command14 {
   input: null;
   output: AppearanceSnapshot;
 }
@@ -1488,9 +1569,127 @@ export interface AppearanceSnapshot {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command11".
+ * via the `definition` "Command2".
  */
-export interface Command11 {
+export interface Command2 {
+  input: DataRead;
+  output: CollectedData;
+}
+/**
+ * Bounded read of already collected data.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "DataRead".
+ */
+export interface DataRead {
+  /**
+   * Immutable snapshot continuation.
+   */
+  after: DataCursor | null;
+  /**
+   * One through 128 rows.
+   */
+  limit: number;
+  /**
+   * Optional consumer freshness requirement in seconds; never triggers collection.
+   */
+  maxAgeSeconds: number | null;
+  /**
+   * Query or original request.
+   */
+  selection: DataSelection;
+}
+/**
+ * A cursor is only a position; every read rechecks caller authorization.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "DataCursor".
+ */
+export interface DataCursor {
+  /**
+   * Exclusive row position.
+   */
+  offset: number;
+  /**
+   * Exact snapshot digest, preventing pages from mixing observations.
+   */
+  snapshot: Digest;
+}
+/**
+ * Exact service-owned query definition.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "QueryRef".
+ */
+export interface QueryRef {
+  /**
+   * Stable resource identity.
+   */
+  id: Id;
+  /**
+   * Digest of the complete current definition.
+   */
+  revision: Digest;
+}
+/**
+ * Authorized, bounded observation projection.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "CollectedData".
+ */
+export interface CollectedData {
+  /**
+   * UTC collection time in seconds, absent for unobserved values.
+   */
+  collectedAt: number | null;
+  /**
+   * Whether the original enumeration was complete.
+   */
+  enumerationComplete: boolean;
+  /**
+   * Allowlisted local field projection.
+   */
+  fields: {
+    [k: string]: unknown;
+  };
+  /**
+   * Version of the local domain mapping; absent when unavailable.
+   */
+  mappingVersion: number | null;
+  /**
+   * Continuation for this exact snapshot.
+   */
+  next: DataCursor | null;
+  /**
+   * Actual evidence quality.
+   */
+  quality: DataQuality;
+  /**
+   * Source definition.
+   */
+  query: QueryRef;
+  /**
+   * Original business request, if the source has one.
+   */
+  request: RequestId | null;
+  /**
+   * Structured rows; no raw process streams.
+   */
+  rows: unknown[];
+  /**
+   * Required local read boundary.
+   */
+  scope: DataScope;
+  /**
+   * Whether the consumer's freshness requirement was exceeded.
+   */
+  stale: boolean;
+}
+/**
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "Command15".
+ */
+export interface Command15 {
   input: null;
   output: DeviceOverview;
 }
@@ -1529,9 +1728,179 @@ export interface DeviceAttributes {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command9".
+ * via the `definition` "Command4".
  */
-export interface Command9 {
+export interface Command4 {
+  input: QueryRequest;
+  output: QueryStatus;
+}
+/**
+ * Original query lookup or cancellation.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "QueryRequest".
+ */
+export interface QueryRequest {
+  /**
+   * Original request UUID.
+   */
+  request: RequestId;
+}
+/**
+ * Status of the same original request.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "QueryStatus".
+ */
+export interface QueryStatus {
+  /**
+   * Cancellation request; this does not prove termination.
+   */
+  cancelRequested: boolean;
+  /**
+   * Actual state projection.
+   */
+  phase: QueryPhase;
+  /**
+   * Existing Policy preparation/confirmation, when applicable.
+   */
+  preparation: QueryPreparationRef | null;
+  /**
+   * Exact query.
+   */
+  query: QueryRef;
+  /**
+   * Original request.
+   */
+  request: RequestId;
+}
+/**
+ * Reference to the existing Policy preparation; use its existing confirmation UI.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "QueryPreparationRef".
+ */
+export interface QueryPreparationRef {
+  /**
+   * Original Policy request; never a new approval identity.
+   */
+  request: RequestId;
+  /**
+   * Exact preparation revision.
+   */
+  revision: number;
+}
+/**
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "Command".
+ */
+export interface Command {
+  input: QueryDirectory;
+  output: QueryPage;
+}
+/**
+ * Bounded query directory.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "QueryDirectory".
+ */
+export interface QueryDirectory {
+  /**
+   * Exclusive stable query cursor.
+   */
+  after: Id | null;
+  /**
+   * Requested page size, from one through 128.
+   */
+  limit: number;
+  /**
+   * Explicitly refresh authorized published Policies over the existing backend channel.
+   */
+  refreshPolicies: boolean;
+}
+/**
+ * Directory page, scoped by the authenticated service.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "QueryPage".
+ */
+export interface QueryPage {
+  /**
+   * Visible queries.
+   */
+  items: QueryDescriptor[];
+  /**
+   * Exclusive continuation.
+   */
+  next: Id | null;
+}
+/**
+ * Safe query discovery; an unavailable query can still have retained data.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "QueryDescriptor".
+ */
+export interface QueryDescriptor {
+  /**
+   * Whether a new invocation is currently available.
+   */
+  available: boolean;
+  /**
+   * Source family.
+   */
+  kind: QueryKind;
+  /**
+   * Closed unavailability reason.
+   */
+  reason: DataQuality | null;
+  /**
+   * Exact definition.
+   */
+  reference: QueryRef;
+  /**
+   * Required local read boundary.
+   */
+  scope: DataScope;
+  /**
+   * Display text; never an executable selector.
+   */
+  title: string;
+}
+/**
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "Command3".
+ */
+export interface Command3 {
+  input: QuerySubmit;
+  output: QueryStatus;
+}
+/**
+ * Explicit new query; OS identity, target and origin come from authenticated IPC.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "QuerySubmit".
+ */
+export interface QuerySubmit {
+  /**
+   * Only parameters allowed by the published definition.
+   */
+  parameters: {
+    [k: string]: unknown;
+  };
+  /**
+   * Exact discovered query definition.
+   */
+  query: QueryRef;
+  /**
+   * Stable, caller-owned operation UUID.
+   */
+  request: RequestId;
+}
+/**
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "Command13".
+ */
+export interface Command13 {
   input: ActionRef;
   output: BackendTaskView;
 }
@@ -1889,9 +2258,9 @@ export interface ProcessSummary {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command8".
+ * via the `definition` "Command12".
  */
-export interface Command8 {
+export interface Command12 {
   input: BackendSelection;
   output: TaskSubmission;
 }
@@ -1913,25 +2282,25 @@ export interface TaskSubmission {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command".
+ * via the `definition` "Command5".
  */
-export interface Command {
+export interface Command5 {
   input: SoftwareReadChoice;
   output: BackendRequest;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command5".
+ * via the `definition` "Command9".
  */
-export interface Command5 {
+export interface Command9 {
   input: ActionRef;
   output: BackendRequest;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command2".
+ * via the `definition` "Command6".
  */
-export interface Command2 {
+export interface Command6 {
   input: PolicyDirectoryQuery;
   output: SelfServiceDirectoryResponse;
 }
@@ -1964,17 +2333,17 @@ export interface SelfServiceDirectoryResponse {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command3".
+ * via the `definition` "Command7".
  */
-export interface Command3 {
+export interface Command7 {
   input: PolicyChoice;
   output: BackendRequest;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command6".
+ * via the `definition` "Command10".
  */
-export interface Command6 {
+export interface Command10 {
   input: ActionRef;
   output: PolicyStatus;
 }
@@ -2121,9 +2490,9 @@ export interface TaskRunState {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command7".
+ * via the `definition` "Command11".
  */
-export interface Command7 {
+export interface Command11 {
   input: SnapshotQuery;
   output: Snapshot;
 }
@@ -2147,6 +2516,13 @@ export interface Snapshot {
   selected: BackendTaskView | null;
 }
 
+export type DataAccessPort = {
+  [K in keyof SelfServiceCommands as K extends `query_${string}` | "data_read"
+    ? K
+    : never]: (
+    input: SelfServiceCommands[K]["input"],
+  ) => Promise<SelfServiceCommands[K]["output"]>;
+};
 export type SelfServicePort = {
   [K in keyof SelfServiceCommands as K extends `self_service_${infer M}`
     ? M

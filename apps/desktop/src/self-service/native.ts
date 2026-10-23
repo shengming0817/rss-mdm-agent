@@ -3,6 +3,7 @@ import { userGeneration } from "../test-users";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import type {
   SelfServicePort,
+  DataAccessPort,
   Snapshot,
   TaskSubmission,
   BackendTaskView,
@@ -29,5 +30,19 @@ export function nativePort(): SelfServicePort | null {
       invoke<TaskSubmission>("self_service_confirm", { input, generation }),
     cancel: (input) =>
       invoke<BackendTaskView>("self_service_cancel", { input, generation }),
+  };
+}
+
+/** Shared local data adapter for modules; reads never invoke a collector. */
+export function nativeDataPort(): DataAccessPort | null {
+  if (!isTauri()) return null;
+  const generation = userGeneration();
+  return {
+    query_directory: (input) =>
+      invoke("query_directory", { input, generation }),
+    data_read: (input) => invoke("data_read", { input, generation }),
+    query_submit: (input) => invoke("query_submit", { input, generation }),
+    query_status: (input) => invoke("query_status", { input, generation }),
+    query_cancel: (input) => invoke("query_cancel", { input, generation }),
   };
 }

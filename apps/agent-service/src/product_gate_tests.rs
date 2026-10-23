@@ -4074,3 +4074,137 @@ async fn service_restart_retires_confirmed_relation_and_replays_cleanup_but_pres
         assert!(data.current_user.owner.is_some());
     }
 }
+
+#[tokio::test]
+async fn local_data_queries_use_the_original_journal_and_reject_replays_from_retired_contexts() {
+    let _budget = crate::scenario_budget::enter();
+    use execution_ipc::host::Request;
+    let mut c = Case::new(None).await;
+    c.service.client.drive_pki().await.unwrap();
+    c.service.update_identity_gate();
+    let context = c.context();
+    let origin = ClientOrigin::Desktop {};
+    let directory = c
+        .policy_call(Request::Data {
+            context: context.clone(),
+            origin: origin.clone(),
+            input: DataOperation::Directory(QueryDirectory {
+                after: None,
+                limit: 128,
+                refresh_policies: false,
+            }),
+        })
+        .await;
+    let Reply::Data {
+        value: DataResponse::Directory(page),
+    } = directory
+    else {
+        panic!("local directory")
+    };
+    assert!(!page.items.is_empty());
+    let query = page
+        .items
+        .into_iter()
+        .find(|q| q.title == "hardware.Memory")
+        .unwrap()
+        .reference;
+    let request = RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap();
+    let submit = QuerySubmit {
+        request: request.clone(),
+        query: query.clone(),
+        parameters: Default::default(),
+    };
+    let call = || Request::Data {
+        context: context.clone(),
+        origin: origin.clone(),
+        input: DataOperation::Submit(submit.clone()),
+    };
+    let first = c.policy_call(call()).await;
+    assert!(
+        matches!(
+            first,
+            Reply::Data {
+                value: DataResponse::Status(_)
+            }
+        ),
+        "manual query was not admitted"
+    );
+    let status = c
+        .service
+        .core
+        .app
+        .status(&c.service.core.caller(), &request)
+        .unwrap();
+    assert_eq!(status.attempts, 1);
+    c.policy_call(call()).await;
+    assert_eq!(
+        c.service
+            .core
+            .app
+            .status(&c.service.core.caller(), &request)
+            .unwrap()
+            .attempts,
+        1
+    );
+    let frozen = c.service.core.app.service_frozen_input(&request).unwrap();
+    assert!(matches!(
+        frozen.spec().request.initiator,
+        Initiator::Human { .. }
+    ));
+    assert_eq!(
+        frozen.spec().request.operation.action.as_str(),
+        "local-query"
+    );
+    assert!(c
+        .service
+        .core
+        .app
+        .backend_request(&c.service.core.caller(), &request)
+        .unwrap()
+        .is_none());
+    // Read does not allocate another attempt, including when registration is offline.
+    c.service
+        .core
+        .host
+        .revoked
+        .store(true, std::sync::atomic::Ordering::Release);
+    let read = Request::Data {
+        context: context.clone(),
+        origin: origin.clone(),
+        input: DataOperation::Read(DataRead {
+            selection: DataSelection::Query { query },
+            after: None,
+            limit: 16,
+            max_age_seconds: None,
+        }),
+    };
+    assert!(matches!(
+        c.policy_call(read).await,
+        Reply::Data {
+            value: DataResponse::Read(_)
+        }
+    ));
+    assert_eq!(
+        c.service
+            .core
+            .app
+            .status(&c.service.core.caller(), &request)
+            .unwrap()
+            .attempts,
+        1
+    );
+    c.policy_call(Request::RevokeContext {}).await;
+    let reply = c
+        .policy_call(Request::Data {
+            context,
+            origin,
+            input: DataOperation::Status(QueryRequest { request }),
+        })
+        .await;
+    assert!(matches!(
+        reply,
+        Reply::DataFailure {
+            reason: DataError::Denied
+        }
+    ));
+}

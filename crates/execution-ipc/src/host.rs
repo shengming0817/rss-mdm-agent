@@ -688,6 +688,15 @@ impl NativeContextSession {
     deny_unknown_fields
 )]
 pub enum Request {
+    /// Shared local data boundary, with a native-attested caller context.
+    Data {
+        /// Current native login binding.
+        context: execution_contract::NativeContextRef,
+        /// Native-attested caller origin.
+        origin: ClientOrigin,
+        /// Bounded data operation.
+        input: execution_contract::DataOperation,
+    },
     /// Finite native software observation; service selects only the exact signed detector.
     ObserveSoftware {
         /// Stable query and exact current signed selection.
@@ -833,6 +842,16 @@ struct Envelope {
     rename_all_fields = "camelCase"
 )]
 pub enum Reply {
+    /// Closed data boundary failure.
+    DataFailure {
+        /// Static non-sensitive classification.
+        reason: execution_contract::DataError,
+    },
+    /// Local collected data or original query state.
+    Data {
+        /// Shared typed projection.
+        value: execution_contract::DataResponse,
+    },
     /// Read-only native registration observation.
     MdmStatus {
         /// Current owner snapshot.

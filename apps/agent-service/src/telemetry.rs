@@ -165,7 +165,14 @@ impl Telemetry {
             self.collector.cancel()?;
         }
         if let Some((active, evidence)) = self.collector.take()? {
-            self.complete(&active.configuration, active.observed, &evidence, live, at)?;
+            self.complete(
+                &active.configuration,
+                active.observed,
+                &evidence,
+                live,
+                at,
+                core,
+            )?;
         }
 
         if live && !self.collector.active() {
@@ -273,6 +280,7 @@ impl Telemetry {
         evidence: &execution_contract::ProcessEvidence,
         live: bool,
         at: i64,
+        core: &mut crate::service::Core,
     ) -> Result<(), Error> {
         let p = configuration.payload();
         let current = live
@@ -282,10 +290,18 @@ impl Telemetry {
                 .is_some_and(|s| s.configuration.payload().binding == p.binding)
             && at / 1_000_000 < p.expires_at;
         if current {
-            match mapping::readings(p, evidence, at).and_then(|values| {
+            let result = mapping::readings(p, evidence, at).and_then(|values| {
                 self.spool
                     .append(configuration, observed, values, &performance::boot()?)
-            }) {
+            });
+            self.project_local(
+                core,
+                configuration,
+                evidence,
+                at,
+                result.as_ref().ok().copied(),
+            );
+            match result {
                 Ok(_) => (),
                 Err(e) => {
                     self.spool.gap_for(
@@ -487,20 +503,42 @@ impl Telemetry {
         }
         Ok(())
     }
-    pub fn shutdown(&mut self) -> Result<(), Error> {
+    fn project_local(
+        &self,
+        core: &mut crate::service::Core,
+        configuration: &Configuration,
+        evidence: &execution_contract::ProcessEvidence,
+        at: i64,
+        observation: Option<uuid::Uuid>,
+    ) {
+        let normalized = observation
+            .and_then(|id| self.spool.observation(configuration, id).ok())
+            .map(|o| o.values);
+        if let Err(error) = core.periodic_data(configuration.payload(), evidence, at, normalized) {
+            eprintln!("agent_collected_data: {error}");
+        }
+    }
+    pub fn shutdown(&mut self, core: &mut crate::service::Core) -> Result<(), Error> {
         self.collector.shutdown()?;
         if let Some((active, evidence)) = self.collector.take()? {
             let now = timestamp()?;
-            match mapping::readings(active.configuration.payload(), &evidence, now).and_then(
-                |values| {
+            let result = mapping::readings(active.configuration.payload(), &evidence, now)
+                .and_then(|values| {
                     self.spool.append(
                         &active.configuration,
                         active.observed,
                         values,
                         &performance::boot()?,
                     )
-                },
-            ) {
+                });
+            self.project_local(
+                core,
+                &active.configuration,
+                &evidence,
+                now,
+                result.as_ref().ok().copied(),
+            );
+            match result {
                 Ok(_) => (),
                 Err(_) => self.spool.gap_for(
                     active.configuration.payload().registration_id,

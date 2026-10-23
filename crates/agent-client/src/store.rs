@@ -18,7 +18,7 @@ pub(crate) struct Store {
     pub conn: Connection,
     pub root: PathBuf,
     pub cfg: Config,
-    _lock: File,
+    pub(crate) _lock: std::sync::Arc<File>,
 }
 pub(crate) fn encode(v: &impl Serialize) -> Result<Vec<u8>, Error> {
     serde_json_canonicalizer::to_vec(v).map_err(|_| Error::Protocol)
@@ -107,7 +107,7 @@ impl Store {
             conn,
             root: root.to_owned(),
             cfg,
-            _lock: lock,
+            _lock: std::sync::Arc::new(lock),
         })
     }
     pub fn time(&self, now: i64) -> Result<i64, Error> {

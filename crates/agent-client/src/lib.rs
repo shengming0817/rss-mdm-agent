@@ -1,8 +1,10 @@
 //! Agent V1 communication and bounded content delivery; execution remains journal-owned.
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
+mod collected;
 pub mod protocol;
 pub mod telemetry;
+pub use collected::CollectedStore;
 
 use rss_mdm_agent_wire::runtime::Secret;
 mod credential_escrow;
