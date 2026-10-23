@@ -1,3 +1,4 @@
+pub(crate) mod access;
 use crate::error::app_error as map_app_error;
 use crate::{
     backend::{self, host::EnterpriseHost, offered, plan, ExecutionBridge},
@@ -235,9 +236,17 @@ impl<S: IdentityProvider> DeviceService<S> {
         } else {
             None
         };
+        let fences = Arc::new(policy::Fences::default());
+        let access = access::State::new(
+            &config,
+            client.configuration().service_id,
+            matches!(startup, ProductionStartup::Create),
+            fences.clone(),
+        )?;
         Ok(Self {
             client,
             core: Core {
+                access,
                 telemetry,
                 data,
                 app,
@@ -257,7 +266,7 @@ impl<S: IdentityProvider> DeviceService<S> {
                 },
                 mdm_reported: None,
                 contexts: Default::default(),
-                fences: Default::default(),
+                fences,
                 credential_leases: Default::default(),
                 policy_commands: Default::default(),
             },
@@ -303,6 +312,15 @@ impl<S: IdentityProvider> DeviceService<S> {
         self.core.step_telemetry();
         self.reclaim_owner_step();
         if std::time::Instant::now() >= self.next_enrollment {
+            let access_ready = self.waiting.as_ref().is_some_and(|(offer, _)| {
+            matches!(offer.payload(), wire::TaskPayload::DeviceAccess(task) if self.core.access.ready(task).is_ok())
+        });
+            if access_ready {
+                if let Some((offer, materials)) = self.waiting.take() {
+                    backend::submit(self, offer, materials, None, commands).await?;
+                    self.core.available = None;
+                }
+            }
             self.core.reconcile()?;
             self.next_enrollment = std::time::Instant::now() + std::time::Duration::from_secs(2);
             let result = network(self.client.drive_pki(), &mut self.core, commands).await;
@@ -456,13 +474,33 @@ impl<S: IdentityProvider> DeviceService<S> {
                 if let wire::TaskPayload::Credential(spec) = retained.payload() {
                     let root = crate::credential_worker::root(&self.core.config);
                     if let Some(escrow) = crate::credential_worker::pending(&root, spec)? {
-                        network(
+                        let receipts = network(
                             self.client.escrow_credentials(task, escrow.clone()),
                             &mut self.core,
                             commands,
                         )
                         .await?;
-                        crate::credential_worker::acknowledge(&root, spec, &escrow)?;
+                        crate::credential_worker::acknowledge(&root, spec, &escrow, &receipts)?;
+                    }
+                }
+                if let wire::TaskPayload::DeviceAccess(spec) = retained.payload() {
+                    let root = crate::access_worker::root(&self.core.config);
+                    if let Some(prepared) = crate::access_worker::prepared(&root, spec)? {
+                        network(
+                            self.client.access_prepared(task, prepared),
+                            &mut self.core,
+                            commands,
+                        )
+                        .await?;
+                        if let Some(escrow) = crate::access_worker::pending(&root, spec)? {
+                            let receipts = network(
+                                self.client.escrow_credentials(task, escrow.clone()),
+                                &mut self.core,
+                                commands,
+                            )
+                            .await?;
+                            crate::access_worker::acknowledge(&root, spec, &escrow, receipts)?;
+                        }
                     }
                 }
                 if let Some(mut pending) =
@@ -568,6 +606,12 @@ impl<S: IdentityProvider> DeviceService<S> {
                     self.core.available_start = backend::gate::TrustedStart::from_offer(&offer);
                     self.core.available = Some(offered(&offer)?);
                     self.waiting = Some((offer, materials));
+                } else if matches!(offer.payload(), wire::TaskPayload::DeviceAccess(_)) {
+                    if self.waiting.is_none() {
+                        let materials =
+                            network(self.client.prepare(&offer), &mut self.core, commands).await?;
+                        self.waiting = Some((offer, materials));
+                    }
                 } else {
                     // No original resumable local intent means no execution may have started.
                     self.abandon(task, commands).await?;
@@ -613,6 +657,23 @@ impl<S: IdentityProvider> DeviceService<S> {
                     Err(Error::Capacity) => {}
                     Err(error) => return Err(error),
                 }
+            }
+        }
+        #[cfg(windows)]
+        {
+            let mut offline =
+                device_access::Store::open(&self.core.access.root, self.core.access.installation)
+                    .map_err(|_| Error::Storage)?;
+            for usage in offline.recovery_uses().map_err(|_| Error::Storage)? {
+                network(
+                    self.client.access_recovery_use(&usage),
+                    &mut self.core,
+                    commands,
+                )
+                .await?;
+                offline
+                    .acknowledge_recovery_use(usage.operation_id)
+                    .map_err(|_| Error::Storage)?;
             }
         }
         let reports = 16.min(self.client.configuration().limits.pending_reports);
@@ -698,6 +759,10 @@ impl<S: IdentityProvider> DeviceService<S> {
             self.core.available = Some(offered(&offer)?);
             network(self.client.received(&offer), &mut self.core, commands).await?;
             let materials = network(self.client.prepare(&offer), &mut self.core, commands).await?;
+            if matches!(offer.payload(), wire::TaskPayload::DeviceAccess(_)) {
+                self.waiting = Some((offer, materials));
+                return Ok(());
+            }
             if is_policy_offer(&offer) {
                 self.waiting = Some((offer, materials));
                 // The next owner iteration resumes automatically from the original consent.
@@ -959,6 +1024,7 @@ pub(crate) struct Selection {
     pub(crate) origin: execution_ipc::host::ClientOrigin,
 }
 pub(crate) struct Core {
+    pub(crate) access: access::State,
     telemetry: Option<crate::telemetry::Telemetry>,
     data: crate::collected_data::Data,
     pub(crate) app: ExecutionApp<EnterpriseHost, NativeRunner, execution_sqlite::Store>,
@@ -1330,6 +1396,7 @@ impl Core {
             command.request.as_operation(),
             Some(
                 execution_ipc::host::Request::Data { .. }
+                    | Request::DeviceAccess { .. }
                     | Request::BindContext { .. }
                     | Request::RevokeContext {}
                     | Request::RetireEnterpriseContext { .. }
@@ -1352,6 +1419,7 @@ impl Core {
             match command.request.into_operation() {
                 Some(
                     Request::Data { .. }
+                    | Request::DeviceAccess { .. }
                     | Request::BindContext { .. }
                     | Request::RevokeContext {}
                     | Request::RetireEnterpriseContext { .. }

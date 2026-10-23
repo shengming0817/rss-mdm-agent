@@ -1,5 +1,7 @@
 //! Authenticated local ingress, native login facts and bounded service/helper transport.
 #![deny(missing_docs)]
+/// Desktop Device Access setup messages.
+pub mod device_access;
 mod diagnostics;
 pub use diagnostics::record_startup_failure;
 /// Fixed helper protocol and authenticated per-login client. Only runner executes its commands.

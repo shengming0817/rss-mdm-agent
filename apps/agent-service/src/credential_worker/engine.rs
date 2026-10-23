@@ -78,6 +78,19 @@ pub(super) fn execute(
 }
 fn execute_inner(input: &Input, n: &mut impl Native) -> Result<w::CredentialResult, Error> {
     let task = &input.task;
+    if matches!(
+        task.operation,
+        Op::RotateRssLogin { .. } | Op::VerifyRssLogin { .. }
+    ) {
+        #[cfg(windows)]
+        {
+            return super::rss::execute_system(input, n);
+        }
+        #[cfg(not(windows))]
+        {
+            return Err(Error::Unsupported);
+        }
+    }
     let mut recovery = None;
     let mut record: Option<Record> = None;
     let mut failure = None;

@@ -3171,6 +3171,15 @@
           "oneOf": [
             {
               "additionalProperties": false,
+              "description": "Local account integration; setup credentials are never part of this projection.",
+              "properties": {
+                "kind": { "const": "deviceAccess", "type": "string" }
+              },
+              "required": ["kind"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
               "description": "Closed system recovery credential operation; never exposes material.",
               "properties": {
                 "kind": { "const": "credential", "type": "string" }
@@ -3795,6 +3804,15 @@
         "BackendTaskSummary": {
           "description": "Safe preview bound to the complete signed offer revision.",
           "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "Local account integration; setup credentials are never part of this projection.",
+              "properties": {
+                "kind": { "const": "deviceAccess", "type": "string" }
+              },
+              "required": ["kind"],
+              "type": "object"
+            },
             {
               "additionalProperties": false,
               "description": "Closed system recovery credential operation; never exposes material.",
@@ -5345,6 +5363,15 @@
         "BackendTaskSummary": {
           "description": "Safe preview bound to the complete signed offer revision.",
           "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "Local account integration; setup credentials are never part of this projection.",
+              "properties": {
+                "kind": { "const": "deviceAccess", "type": "string" }
+              },
+              "required": ["kind"],
+              "type": "object"
+            },
             {
               "additionalProperties": false,
               "description": "Closed system recovery credential operation; never exposes material.",

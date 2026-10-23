@@ -46,3 +46,14 @@ export function nativeDataPort(): DataAccessPort | null {
     query_cancel: (input) => invoke("query_cancel", { input, generation }),
   };
 }
+
+export type DeviceAccessPort = (
+  input: import("./types").SelfServiceCommands["device_access"]["input"],
+) => Promise<import("./types").SelfServiceCommands["device_access"]["output"]>;
+
+/** Bound to the same native employee generation as the other desktop operations. */
+export function nativeDeviceAccessPort(): DeviceAccessPort | null {
+  if (!isTauri()) return null;
+  const generation = userGeneration();
+  return (input) => invoke("device_access", { input, generation });
+}

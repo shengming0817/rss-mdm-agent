@@ -1637,7 +1637,7 @@ fn event_response(d: &mut Data, value: Value) -> Response {
             axum::Json(TaskEventAck::new(None, false)).into_response()
         }
         TaskEvent::Start => start_event(d, operation),
-        TaskEvent::CredentialEscrow(_) => {
+        TaskEvent::CredentialEscrow(escrow) => {
             if d.credential_escrows.iter().any(|old| old != &value) {
                 return StatusCode::CONFLICT.into_response();
             }
@@ -1645,7 +1645,16 @@ fn event_response(d: &mut Data, value: Value) -> Response {
             if std::mem::take(&mut d.escrow_reply_lost) {
                 return StatusCode::SERVICE_UNAVAILABLE.into_response();
             }
-            axum::Json(TaskEventAck::new(None, false)).into_response()
+            let receipts = escrow
+                .materials
+                .iter()
+                .map(|material| CredentialReceipt {
+                    subject: material.subject.clone(),
+                    material: d.task,
+                    version: material.expected_revision + 1,
+                })
+                .collect();
+            axum::Json(TaskEventAck::new(None, false).with_credentials(receipts)).into_response()
         }
         TaskEvent::OutputChunk(chunk) => {
             d.chunk_calls.push(value);

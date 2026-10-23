@@ -13,6 +13,7 @@ pub(crate) fn profile(profile: &VersionedRef) -> Result<(), Error> {
             "native-software-worker",
             "native-collection-worker",
             "native-credential-worker",
+            "native-device-access-worker",
         ]
         .contains(&profile.id.as_str()))
     {
@@ -38,6 +39,13 @@ pub(crate) fn arguments(
     let path = script.to_str().ok_or(Error::InvalidInput)?;
     if profile.id.as_str() == "native-collection-worker" {
         return if args == ["--collection-worker", path] {
+            Ok(())
+        } else {
+            Err(Error::Denied)
+        };
+    }
+    if profile.id.as_str() == "native-device-access-worker" {
+        return if args == ["--device-access-worker", path] {
             Ok(())
         } else {
             Err(Error::Denied)
@@ -72,27 +80,32 @@ mod tests {
     use execution_contract::Id;
     #[test]
     fn credential_admission_requires_exact_revision_flag_and_materialized_path() {
-        let mut p = VersionedRef {
-            id: Id::new("native-credential-worker").unwrap(),
-            revision: Id::new("1").unwrap(),
-        };
-        let path = std::path::Path::new(r"C:\sessions\input.json");
-        let valid = vec!["--credential-worker".into(), path.to_str().unwrap().into()];
-        assert!(profile(&p).is_ok());
-        assert!(arguments(&p, &valid, path).is_ok());
-        for args in [
-            vec![],
-            vec!["--credential-worker".into()],
-            vec!["--software-worker".into(), valid[1].clone()],
-            vec![valid[0].clone(), "other.json".into()],
-            vec![valid[0].clone(), valid[1].clone(), "extra".into()],
+        for (profile_id, flag) in [
+            ("native-credential-worker", "--credential-worker"),
+            ("native-device-access-worker", "--device-access-worker"),
         ] {
-            assert!(arguments(&p, &args, path).is_err());
+            let mut p = VersionedRef {
+                id: Id::new(profile_id).unwrap(),
+                revision: Id::new("1").unwrap(),
+            };
+            let path = std::path::Path::new(r"C:\sessions\input.json");
+            let valid = vec![flag.into(), path.to_str().unwrap().into()];
+            assert!(profile(&p).is_ok());
+            assert!(arguments(&p, &valid, path).is_ok());
+            for args in [
+                vec![],
+                vec![flag.into()],
+                vec!["--software-worker".into(), valid[1].clone()],
+                vec![valid[0].clone(), "other.json".into()],
+                vec![valid[0].clone(), valid[1].clone(), "extra".into()],
+            ] {
+                assert!(arguments(&p, &args, path).is_err());
+            }
+            p.revision = Id::new("2").unwrap();
+            assert!(profile(&p).is_err());
+            assert!(arguments(&p, &valid, path).is_err());
+            p.id = Id::new("unknown-worker").unwrap();
+            assert!(arguments(&p, &valid, path).is_err());
         }
-        p.revision = Id::new("2").unwrap();
-        assert!(profile(&p).is_err());
-        assert!(arguments(&p, &valid, path).is_err());
-        p.id = Id::new("unknown-worker").unwrap();
-        assert!(arguments(&p, &valid, path).is_err());
     }
 }

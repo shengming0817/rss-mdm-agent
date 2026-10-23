@@ -688,6 +688,15 @@ impl NativeContextSession {
     deny_unknown_fields
 )]
 pub enum Request {
+    /// Authenticated desktop-only Device Access setup; no AI equivalent.
+    DeviceAccess {
+        /// Exact current employee context.
+        context: execution_contract::NativeContextRef,
+        /// Native-attested origin.
+        origin: ClientOrigin,
+        /// Finite local setup operation.
+        input: crate::device_access::Operation,
+    },
     /// Shared local data boundary, with a native-attested caller context.
     Data {
         /// Current native login binding.
@@ -842,6 +851,11 @@ struct Envelope {
     rename_all_fields = "camelCase"
 )]
 pub enum Reply {
+    /// Device Access response, including ephemeral local setup material when requested.
+    DeviceAccess {
+        /// Typed desktop-only result.
+        value: crate::device_access::Response,
+    },
     /// Closed data boundary failure.
     DataFailure {
         /// Static non-sensitive classification.

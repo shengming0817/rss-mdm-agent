@@ -364,6 +364,26 @@ impl ExecutionHandle {
             _ => Err(bad(Error::Unavailable)),
         }
     }
+    pub async fn device_access(
+        &self,
+        input: execution_ipc::device_access::Operation,
+    ) -> ui::Result<execution_ipc::device_access::Response> {
+        if !matches!(self.origin, ClientOrigin::Desktop {}) {
+            return Err(bad(Error::Denied));
+        }
+        match self
+            .request(Request::DeviceAccess {
+                context: self.context_ref()?,
+                origin: self.origin.clone(),
+                input,
+            })
+            .await
+            .map_err(bad)?
+        {
+            Reply::DeviceAccess { value } => Ok(value),
+            _ => Err(bad(Error::Unavailable)),
+        }
+    }
     pub async fn policy_directory(
         &self,
         input: ui::PolicyDirectoryQuery,

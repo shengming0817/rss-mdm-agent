@@ -34,10 +34,21 @@ fn run() -> Result<(), Error> {
             std::process::exit(code);
         }
     }
+    #[cfg(windows)]
+    if args
+        .first()
+        .is_some_and(|a| a == "--device-access-component")
+    {
+        return agent_service::access_component::run(&args[1..]);
+    }
     if args.first().is_some_and(|a| a == "--installation") {
         return agent_service::installation::run(&args[1..]);
     }
     if let [mode, path] = args.as_slice() {
+        if mode == "--device-access-worker" {
+            let code = agent_service::access_worker::run(std::path::Path::new(path))?;
+            std::process::exit(code);
+        }
         if mode == "--credential-worker" {
             let code = agent_service::credential_worker::run(std::path::Path::new(path))?;
             std::process::exit(code);

@@ -1,0 +1,348 @@
+//! Actual offline SQLite and task envelope seam; Fake does not establish Windows evidence.
+use super::*;
+use base64::{engine::general_purpose::STANDARD, Engine};
+use device_access::{Clock, Protector, Store};
+use rsa::{pkcs8::EncodePublicKey, rand_core::OsRng, RsaPrivateKey};
+use std::sync::LazyLock;
+use uuid::Uuid;
+use zeroize::Zeroizing;
+static KEY: LazyLock<RsaPrivateKey> =
+    LazyLock::new(|| RsaPrivateKey::new(&mut OsRng, 2048).unwrap());
+const SID: &str = "S-1-5-21-1-2-3-1001";
+struct Root(PathBuf);
+impl Drop for Root {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+struct Fake {
+    clock: Clock,
+    creates: usize,
+    enables: usize,
+    role: w::AccessRole,
+    fail_create: bool,
+    installed: bool,
+}
+impl Protector for Fake {
+    fn seal(&self, bytes: &[u8]) -> Result<Vec<u8>, device_access::Error> {
+        Ok(bytes.to_vec())
+    }
+    fn open(&self, bytes: &[u8]) -> Result<Zeroizing<Vec<u8>>, device_access::Error> {
+        Ok(Zeroizing::new(bytes.to_vec()))
+    }
+}
+impl engine::Native for Fake {
+    fn integration_ready(&self) -> bool {
+        self.installed
+    }
+    fn clock(&self) -> Result<Clock, Error> {
+        Ok(self.clock)
+    }
+    fn password(&mut self) -> Result<Zeroizing<String>, Error> {
+        Ok(Zeroizing::new("local-only-test-password".into()))
+    }
+    fn create(&mut self, _: &str, _: &str) -> Result<String, w::AccessFailure> {
+        self.creates += 1;
+        if self.fail_create {
+            Err(w::AccessFailure::NativeFailure)
+        } else {
+            Ok(SID.into())
+        }
+    }
+    fn inspect(&self, _: &str) -> Result<w::AccessRole, w::AccessFailure> {
+        Ok(self.role)
+    }
+    fn role(&mut self, _: &str, role: w::AccessRole) -> Result<(), w::AccessFailure> {
+        self.role = role;
+        Ok(())
+    }
+    fn enable(&mut self, _: &str) -> Result<(), w::AccessFailure> {
+        self.enables += 1;
+        Ok(())
+    }
+}
+fn otp(secret: &[u8], utc: i64) -> String {
+    use ring::hmac;
+    let tag = hmac::sign(
+        &hmac::Key::new(hmac::HMAC_SHA1_FOR_LEGACY_USE_ONLY, secret),
+        &((utc / 30) as u64).to_be_bytes(),
+    );
+    let bytes = tag.as_ref();
+    let offset = (bytes[19] & 15) as usize;
+    format!(
+        "{:06}",
+        (u32::from_be_bytes(bytes[offset..offset + 4].try_into().unwrap()) & 0x7fff_ffff)
+            % 1_000_000
+    )
+}
+fn fixture(create: bool) -> (Root, Input, Fake, Vec<u8>, String) {
+    let root = Root(
+        std::env::temp_dir()
+            .canonicalize()
+            .unwrap()
+            .join(format!("rss-access-worker-{}", Uuid::new_v4())),
+    );
+    platform_private_storage::directory(&root.0).unwrap();
+    let now = (crate::wall().unwrap() / 1000) as i64;
+    let native = Fake {
+        clock: Clock {
+            utc: now,
+            monotonic: 1000,
+            boot: Uuid::new_v4(),
+        },
+        creates: 0,
+        enables: 0,
+        role: w::AccessRole::Administrator,
+        fail_create: false,
+        installed: true,
+    };
+    let configuration = w::AccessConfiguration {
+        self_enrollment: true,
+        enabled: true,
+        role: None,
+    };
+    let task = w::AccessTaskSpec {
+        wire_version: 1,
+        tenant_id: Uuid::new_v4(),
+        device_id: "device".into(),
+        registration_id: Uuid::new_v4(),
+        generation: 1,
+        platform: w::TaskPlatform::Windows,
+        architecture: w::TaskArchitecture::X86_64,
+        task_id: Uuid::new_v4(),
+        attempt_id: Uuid::new_v4(),
+        permit: w::TaskPermit::Start,
+        expires_at: now + 30,
+        deadline: now + 60,
+        binding_id: Uuid::new_v4(),
+        instance_id: Uuid::new_v4(),
+        principal_id: Uuid::new_v4(),
+        binding_generation: 1,
+        factor_generation: 1,
+        revision: 1,
+        definition_digest: [7; 32],
+        action: if create {
+            w::AccessAction::Create {
+                name: "newuser".into(),
+                configuration,
+            }
+        } else {
+            w::AccessAction::Apply {
+                account: w::AccessAccount::Windows { sid: SID.into() },
+                configuration,
+            }
+        },
+        windows: Some(w::AccessWindowsPlan::Initialize {
+            recipient: w::CredentialRecipient {
+                key_id: "a".repeat(64),
+                public_key: STANDARD
+                    .encode(KEY.to_public_key().to_public_key_der().unwrap().as_bytes()),
+            },
+            expected_revision: 0,
+        }),
+        authorization: w::TaskAuthorization::Policy {
+            policy_id: Uuid::new_v4(),
+            policy_version: Uuid::new_v4(),
+        },
+    };
+    task.validate().unwrap();
+    let input = Input {
+        task,
+        root: root.0.clone(),
+        installation: Uuid::new_v4(),
+        image_sha256: Digest::new("a".repeat(64)).unwrap(),
+        run_as: RunAs::System {
+            platform: execution_contract::Platform::Windows,
+        },
+        session: SessionRequirement::NotRequired {},
+    };
+    let mut store = Store::create(&root.0, input.installation).unwrap();
+    let mut candidate = device_access::Candidate::generate().unwrap();
+    let secret = candidate.totp_secret().to_vec();
+    let recovery = candidate.recovery_secret().to_owned();
+    assert!(candidate.confirm(&otp(&secret, now), native.clock).unwrap());
+    store
+        .stage(input.task.task_id, &candidate, &native)
+        .unwrap();
+    (root, input, native, secret, recovery)
+}
+fn ack(input: &Input, expected: String) -> std::thread::JoinHandle<w::CredentialReceipt> {
+    let root = input.root.clone();
+    let task = input.task.clone();
+    std::thread::spawn(move || {
+        for _ in 0..500 {
+            if let Some(escrow) = pending(&root, &task).unwrap() {
+                let prepared = prepared(&root, &task)
+                    .unwrap()
+                    .expect("Prepared precedes escrow");
+                assert_eq!(
+                    prepared.account,
+                    w::AccessAccount::Windows { sid: SID.into() }
+                );
+                let material = &escrow.materials[0];
+                let key = KEY
+                    .decrypt(
+                        rsa::Oaep::new::<sha2::Sha256>(),
+                        &STANDARD.decode(&material.wrapped_key).unwrap(),
+                    )
+                    .unwrap();
+                let aead = ring::aead::LessSafeKey::new(
+                    ring::aead::UnboundKey::new(&ring::aead::AES_256_GCM, &key).unwrap(),
+                );
+                let mut bytes = STANDARD.decode(&material.ciphertext).unwrap();
+                let plain = aead
+                    .open_in_place(
+                        ring::aead::Nonce::assume_unique_for_key(material.nonce),
+                        ring::aead::Aad::from(task.material_aad(&material.subject, 0).unwrap()),
+                        &mut bytes,
+                    )
+                    .unwrap();
+                assert_eq!(plain, expected.as_bytes());
+                let receipt = w::CredentialReceipt {
+                    subject: material.subject.clone(),
+                    material: Uuid::new_v4(),
+                    version: 1,
+                };
+                acknowledge(&root, &task, &escrow, vec![receipt.clone()]).unwrap();
+                return receipt;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        panic!("escrow not published")
+    })
+}
+#[test]
+fn initialize_preserve_and_unbind_use_real_factor_state_and_exact_ack() {
+    let (_root, mut input, mut native, secret, recovery) = fixture(false);
+    let ack = ack(&input, recovery.clone());
+    let result = engine::execute(&input, &mut native).unwrap();
+    let receipt = ack.join().unwrap();
+    let w::AccessEffect::Applied {
+        windows: Some(facts),
+        role,
+        ..
+    } = result.effect
+    else {
+        panic!("not applied")
+    };
+    assert_eq!(role, w::AccessRole::Administrator);
+    assert_eq!(facts.recovery, receipt);
+    let mut store = Store::open(&input.root, input.installation).unwrap();
+    assert_eq!(
+        store
+            .verify(
+                SID,
+                device_access::Factor::Totp(&otp(&secret, native.clock.utc)),
+                native.clock,
+                &native
+            )
+            .unwrap(),
+        device_access::Decision::Denied
+    );
+    native.clock.utc += 30;
+    native.clock.monotonic += 30;
+    let next = otp(&secret, native.clock.utc);
+    assert_eq!(
+        store
+            .verify(
+                SID,
+                device_access::Factor::Totp(&next),
+                native.clock,
+                &native
+            )
+            .unwrap(),
+        device_access::Decision::Accepted
+    );
+    input.task.task_id = Uuid::new_v4();
+    input.task.attempt_id = Uuid::new_v4();
+    input.task.revision = 2;
+    input.task.windows = Some(w::AccessWindowsPlan::Preserve { facts });
+    assert!(engine::execute(&input, &mut native)
+        .unwrap()
+        .effect
+        .complete());
+    assert_eq!(
+        store
+            .verify(
+                SID,
+                device_access::Factor::Totp(&next),
+                native.clock,
+                &native
+            )
+            .unwrap(),
+        device_access::Decision::Denied
+    );
+    input.task.task_id = Uuid::new_v4();
+    input.task.attempt_id = Uuid::new_v4();
+    input.task.binding_generation = 2;
+    input.task.revision = 3;
+    input.task.windows = None;
+    input.task.action = w::AccessAction::Unbind {
+        account: w::AccessAccount::Windows { sid: SID.into() },
+    };
+    assert_eq!(
+        engine::execute(&input, &mut native).unwrap().effect,
+        w::AccessEffect::Unbound
+    );
+    assert_eq!(
+        store
+            .verify(
+                SID,
+                device_access::Factor::Recovery(&recovery),
+                native.clock,
+                &native
+            )
+            .unwrap(),
+        device_access::Decision::Disabled
+    );
+    assert_eq!(native.role, w::AccessRole::Administrator);
+    assert_eq!(native.creates, 0);
+}
+#[test]
+fn creation_activates_before_enable_and_replay_does_not_recreate_account() {
+    let (_root, input, mut native, _, recovery) = fixture(true);
+    let ack = ack(&input, recovery);
+    assert!(engine::execute(&input, &mut native)
+        .unwrap()
+        .effect
+        .complete());
+    ack.join().unwrap();
+    assert_eq!(native.role, w::AccessRole::Standard);
+    assert_eq!(native.creates, 1);
+    assert_eq!(native.enables, 1);
+    assert!(engine::execute(&input, &mut native)
+        .unwrap()
+        .effect
+        .complete());
+    assert_eq!(native.creates, 1);
+    assert_eq!(native.enables, 1);
+}
+#[test]
+fn uncertain_creation_never_adopts_an_existing_name_on_retry() {
+    let (_root, input, mut native, _, _) = fixture(true);
+    native.fail_create = true;
+    assert_eq!(
+        engine::execute(&input, &mut native).unwrap().effect,
+        w::AccessEffect::Unknown
+    );
+    native.fail_create = false;
+    assert_eq!(
+        engine::execute(&input, &mut native).unwrap().effect,
+        w::AccessEffect::Unknown
+    );
+    assert_eq!(native.creates, 1);
+    assert_eq!(native.enables, 0);
+}
+#[test]
+fn missing_provider_does_not_change_accounts_or_claim_applied() {
+    let (_root, input, mut native, _, _) = fixture(true);
+    native.installed = false;
+    assert_eq!(
+        engine::execute(&input, &mut native).unwrap().effect,
+        w::AccessEffect::Failed {
+            reason: w::AccessFailure::Unsupported
+        }
+    );
+    assert_eq!(native.creates, 0);
+    assert_eq!(native.enables, 0);
+}

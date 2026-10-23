@@ -27,6 +27,7 @@ fn recipe(
         "native-collection-worker",
         "native-enrollment-worker",
         "native-credential-worker",
+        "native-device-access-worker",
     ]
     .contains(&launch.interpreter.profile.id.as_str())
     {

@@ -164,6 +164,9 @@ mod production_storage;
 
 pub mod installation;
 
+#[cfg(windows)]
+pub mod access_component;
+pub mod access_worker;
 /// Fixed recovery credential worker entry.
 pub mod credential_worker;
 

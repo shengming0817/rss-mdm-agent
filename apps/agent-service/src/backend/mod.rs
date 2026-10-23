@@ -2,6 +2,7 @@
 use agent_client::{Error, Offer};
 use rss_mdm_agent_wire::runtime as wire;
 use sha2::Digest as _;
+mod access;
 pub(crate) mod bridge;
 pub(crate) mod collection;
 pub(crate) mod commands;
@@ -10,6 +11,7 @@ mod dispatch;
 mod enrollment;
 pub(crate) mod gate;
 pub(crate) mod host;
+mod native_worker;
 mod offer;
 pub(crate) mod plan;
 pub(crate) mod software;
@@ -26,7 +28,7 @@ pub(crate) fn request_id(offer: &Offer) -> Result<execution_contract::RequestId,
         serde_json_canonicalizer::to_vec(value).map_err(|_| Error::Protocol)
     }
     let authorization = match offer.payload() {
-        wire::TaskPayload::DeviceAccess(_) => return Err(Error::Unsupported),
+        wire::TaskPayload::DeviceAccess(v) => Some(&v.authorization),
         wire::TaskPayload::Unmanage(_) => return Err(Error::Unsupported),
         wire::TaskPayload::Credential(v) => Some(&v.authorization),
         wire::TaskPayload::Collection(v) => Some(&v.authorization),
@@ -39,7 +41,13 @@ pub(crate) fn request_id(offer: &Offer) -> Result<execution_contract::RequestId,
             .map_err(|_| Error::Protocol);
     }
     let bytes = match offer.payload() {
-        wire::TaskPayload::DeviceAccess(_) => return Err(Error::Unsupported),
+        wire::TaskPayload::DeviceAccess(v) => encode(&(
+            v.tenant_id,
+            &v.device_id,
+            v.registration_id,
+            v.generation,
+            v.task_id,
+        ))?,
         wire::TaskPayload::Unmanage(_) => return Err(Error::Unsupported),
         wire::TaskPayload::Credential(v) => encode(&(
             v.tenant_id,

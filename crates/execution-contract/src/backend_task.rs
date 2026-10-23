@@ -309,6 +309,8 @@ pub struct BackendConfirmation {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
 pub enum BackendTaskSummary {
+    /// Local account integration; setup credentials are never part of this projection.
+    DeviceAccess {},
     /// Closed system recovery credential operation; never exposes material.
     Credential {},
     /// Native MDM registration; opening the OS flow does not establish registration.

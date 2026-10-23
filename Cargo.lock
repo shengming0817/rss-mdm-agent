@@ -90,7 +90,9 @@ dependencies = [
  "axum",
  "base64 0.23.1",
  "cc",
+ "data-encoding",
  "der",
+ "device-access",
  "execution-admission",
  "execution-app",
  "execution-approval",
@@ -1003,6 +1005,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "device-access"
+version = "0.1.0"
+dependencies = [
+ "base64 0.23.1",
+ "platform-credentials",
+ "platform-private-storage",
+ "ring",
+ "rss-mdm-agent-wire",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "uuid",
+ "windows",
+ "windows-sys 0.61.2",
+ "zeroize",
+]
+
+[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1291,6 +1312,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "tokio",
+ "uuid",
  "windows-sys 0.61.2",
  "zeroize",
 ]
@@ -4045,7 +4067,7 @@ dependencies = [
 [[package]]
 name = "rss-mdm-agent-wire"
 version = "1.0.0"
-source = "git+https://dev.azure.com/shengming0923/rss/_git/rss-mdm?rev=f24a6949ac387521c8680b3a4aee5e0edd76e6de#f24a6949ac387521c8680b3a4aee5e0edd76e6de"
+source = "git+https://dev.azure.com/shengming0923/rss/_git/rss-mdm?rev=74cf17086482db0589ea967ba20e452a9627980c#74cf17086482db0589ea967ba20e452a9627980c"
 dependencies = [
  "base64 0.22.1",
  "ordered-float",
@@ -6226,6 +6248,16 @@ dependencies = [
  "windows-link 0.1.3",
  "windows-result",
  "windows-strings",
+]
+
+[[package]]
+name = "windows-credential-provider"
+version = "0.1.0"
+dependencies = [
+ "device-access",
+ "windows",
+ "windows-core",
+ "zeroize",
 ]
 
 [[package]]

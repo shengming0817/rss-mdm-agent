@@ -138,6 +138,9 @@ export type SoftwareDetectionFailure =
  */
 export type BackendTaskSummary =
   | {
+      kind: "deviceAccess";
+    }
+  | {
       kind: "credential";
     }
   | {
@@ -498,6 +501,291 @@ export type DataScope =
        */
       subject: Id;
     };
+/**
+ * Finite local operations; there is no role or account mutation authority in this protocol.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "Operation".
+ */
+export type Operation =
+  | {
+      /**
+       * Policy cursor.
+       */
+      after: string | null;
+      kind: "directory";
+    }
+  | {
+      kind: "begin";
+      /**
+       * Unique ceremony identity. A lost nonce requires a new ceremony.
+       */
+      operationId: string;
+      /**
+       * One enabled Device Access policy eligible for this device.
+       */
+      policy: string;
+    }
+  | {
+      kind: "confirm";
+      /**
+       * Original ceremony operation.
+       */
+      operation: string;
+    }
+  | {
+      kind: "tasks";
+    }
+  | {
+      kind: "prepare";
+      /**
+       * Signed task identity.
+       */
+      task: string;
+    }
+  | {
+      /**
+       * Six-digit TOTP.
+       */
+      code: string;
+      kind: "confirmFactor";
+      /**
+       * New Windows account password; never persisted or sent remotely.
+       */
+      password: string | null;
+      /**
+       * Signed task identity.
+       */
+      task: string;
+    };
+/**
+ * Response for the authenticated desktop session only.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "Response".
+ */
+export type Response =
+  | {
+      /**
+       * Cursor for the next policy scan.
+       */
+      after: string | null;
+      /**
+       * This authenticated person's bindings in the current device registration.
+       */
+      bindings: AccessBindingStatus[];
+      kind: "directory";
+      /**
+       * Eligible policies in this scan page.
+       */
+      policies: AccessPolicyOption[];
+    }
+  | {
+      /**
+       * Expiry in UTC seconds.
+       */
+      expiresAt: number;
+      kind: "challenge";
+      /**
+       * Original operation.
+       */
+      operation: string;
+    }
+  | {
+      /**
+       * Actual native account, if known.
+       */
+      account: AccessAccount | null;
+      /**
+       * Last confirmed applied revision.
+       */
+      appliedRevision: number | null;
+      /**
+       * Association generation.
+       */
+      bindingGeneration: number;
+      /**
+       * Desired configuration.
+       */
+      configuration: AccessConfiguration;
+      /**
+       * Native effect, not inferred from transport acknowledgement.
+       */
+      effect: AccessEffect | null;
+      /**
+       * Factor replacement generation.
+       */
+      factorGeneration: number;
+      /**
+       * Stable binding.
+       */
+      id: string;
+      kind: "binding";
+      /**
+       * Last received desired revision.
+       */
+      receivedRevision: number | null;
+      /**
+       * Desired revision.
+       */
+      revision: number;
+      /**
+       * Whether this association is revoked on the server.
+       */
+      revoked: boolean;
+    }
+  | {
+      kind: "tasks";
+      /**
+       * Tasks for the current person.
+       */
+      tasks: SetupTask[];
+    }
+  | {
+      kind: "setup";
+      /**
+       * RFC 4648 base32 secret for an authenticator.
+       */
+      secret: string;
+      /**
+       * Exact task.
+       */
+      task: string;
+    }
+  | {
+      kind: "prepared";
+    };
+/**
+ * Stable local account identity, never a display name or a transient Unix UID.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "AccessAccount".
+ */
+export type AccessAccount =
+  | {
+      platform: "windows";
+      /**
+       * SID returned by the authenticated native account operation.
+       */
+      sid: string;
+    }
+  | {
+      /**
+       * Persistent directory identity, distinct from numeric UID.
+       */
+      generatedUid: string;
+      platform: "macos";
+    };
+/**
+ * Requested account privilege. Absence preserves an existing account's privilege.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "AccessRole".
+ */
+export type AccessRole = "standard" | "administrator";
+/**
+ * Effect receipt. Received/start ACKs are carried by the existing task protocol separately.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "AccessEffect".
+ */
+export type AccessEffect =
+  | {
+      /**
+       * Identity actually changed or confirmed.
+       */
+      account: AccessAccount;
+      /**
+       * macOS-specific facts; required on macOS and absent on Windows.
+       */
+      mac: AccessMacFacts | null;
+      /**
+       * Actual native privilege after the operation.
+       */
+      role: AccessRole;
+      state: "applied";
+      /**
+       * Installed Windows factors and exact durable escrow coordinates.
+       */
+      windows: AccessWindowsFacts | null;
+    }
+  | {
+      state: "unbound";
+    }
+  | {
+      state: "unknown";
+    }
+  | {
+      /**
+       * Bounded public failure reason.
+       */
+      reason: AccessFailure;
+      state: "failed";
+    };
+/**
+ * One independent native capability observation, never inferred from transport success.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "AccessObservation".
+ */
+export type AccessObservation =
+  | "present"
+  | "absent"
+  | "unknown"
+  | "needs_administrator";
+/**
+ * An exact Windows object, never an account display name or drive letter.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "CredentialSubject".
+ */
+export type CredentialSubject =
+  | {
+      /**
+       * Stable Device Access association.
+       */
+      binding: string;
+      /**
+       * Exact association generation.
+       */
+      bindingGeneration: number;
+      kind: "rss_login";
+      /**
+       * Stable local account SID.
+       */
+      sid: string;
+    }
+  | {
+      kind: "bitlocker";
+      /**
+       * Recovery protector identity.
+       */
+      protector: string;
+      /**
+       * Stable WMI volume DeviceID.
+       */
+      volume: string;
+    }
+  | {
+      kind: "local_administrator";
+      /**
+       * Stable Windows account SID.
+       */
+      sid: string;
+    };
+/**
+ * Closed native failure classes; never include command output or user credentials.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "AccessFailure".
+ */
+export type AccessFailure =
+  | "unsupported"
+  | "account_changed"
+  | "name_conflict"
+  | "recovery_account_protected"
+  | "needs_user"
+  | "native_failure";
 /**
  * Query state is a projection of the original execution, not another lifecycle.
  *
@@ -1074,29 +1362,30 @@ export type TaskExecution =
   | "unknown";
 
 export interface SelfServiceCommands {
-  ai_operation_submit: Command8;
-  appearance_snapshot: Command14;
-  data_read: Command2;
-  device_overview: Command15;
-  query_cancel: Command4;
-  query_directory: Command;
-  query_status: Command4;
-  query_submit: Command3;
-  self_service_cancel: Command13;
-  self_service_confirm: Command12;
-  self_service_execute: Command12;
-  self_service_observe_software: Command5;
-  self_service_policy_confirm: Command9;
-  self_service_policy_directory: Command6;
-  self_service_policy_invoke: Command7;
-  self_service_policy_status: Command10;
-  self_service_snapshot: Command11;
+  ai_operation_submit: Command9;
+  appearance_snapshot: Command15;
+  data_read: Command3;
+  device_access: Command;
+  device_overview: Command16;
+  query_cancel: Command5;
+  query_directory: Command2;
+  query_status: Command5;
+  query_submit: Command4;
+  self_service_cancel: Command14;
+  self_service_confirm: Command13;
+  self_service_execute: Command13;
+  self_service_observe_software: Command6;
+  self_service_policy_confirm: Command10;
+  self_service_policy_directory: Command7;
+  self_service_policy_invoke: Command8;
+  self_service_policy_status: Command11;
+  self_service_snapshot: Command12;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command8".
+ * via the `definition` "Command9".
  */
-export interface Command8 {
+export interface Command9 {
   input: PolicySubmission;
   output: BackendRequest;
 }
@@ -1553,9 +1842,9 @@ export interface VersionedRef {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command14".
+ * via the `definition` "Command15".
  */
-export interface Command14 {
+export interface Command15 {
   input: null;
   output: AppearanceSnapshot;
 }
@@ -1570,9 +1859,9 @@ export interface AppearanceSnapshot {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command2".
+ * via the `definition` "Command3".
  */
-export interface Command2 {
+export interface Command3 {
   input: DataRead;
   output: CollectedData;
 }
@@ -1688,9 +1977,181 @@ export interface CollectedData {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command15".
+ * via the `definition` "Command".
  */
-export interface Command15 {
+export interface Command {
+  input: Operation;
+  output: Response;
+}
+/**
+ * Safe employee-facing binding projection. This is not a login credential.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "AccessBindingStatus".
+ */
+export interface AccessBindingStatus {
+  /**
+   * Actual native account, if known.
+   */
+  account: AccessAccount | null;
+  /**
+   * Last confirmed applied revision.
+   */
+  appliedRevision: number | null;
+  /**
+   * Association generation.
+   */
+  bindingGeneration: number;
+  /**
+   * Desired configuration.
+   */
+  configuration: AccessConfiguration;
+  /**
+   * Native effect, not inferred from transport acknowledgement.
+   */
+  effect: AccessEffect | null;
+  /**
+   * Factor replacement generation.
+   */
+  factorGeneration: number;
+  /**
+   * Stable binding.
+   */
+  id: string;
+  /**
+   * Last received desired revision.
+   */
+  receivedRevision: number | null;
+  /**
+   * Desired revision.
+   */
+  revision: number;
+  /**
+   * Whether this association is revoked on the server.
+   */
+  revoked: boolean;
+}
+/**
+ * Common product configuration; Apple protocol payloads remain with the Apple owner.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "AccessConfiguration".
+ */
+export interface AccessConfiguration {
+  /**
+   * Enable the platform's RSS login integration.
+   */
+  enabled: boolean;
+  /**
+   * Explicit role convergence; null preserves existing role, new accounts default standard.
+   */
+  role: AccessRole | null;
+  /**
+   * Permit the first association to the currently authenticated interactive local account.
+   */
+  selfEnrollment: boolean;
+}
+/**
+ * Apple account facts are separate from PSSO registration and Secure Enclave keys.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "AccessMacFacts".
+ */
+export interface AccessMacFacts {
+  /**
+   * Actual FileVault unlock eligibility, not merely the disk encryption setting.
+   */
+  filevaultUnlock: AccessObservation;
+  /**
+   * The account's Secure Token status, not Bootstrap Token custody.
+   */
+  secureToken: AccessObservation;
+  /**
+   * Apple silicon volume ownership.
+   */
+  volumeOwner: AccessObservation;
+}
+/**
+ * Installed factor identity is independent of the account association and configuration revision.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "AccessWindowsFacts".
+ */
+export interface AccessWindowsFacts {
+  /**
+   * Exact installed factor generation.
+   */
+  factorGeneration: number;
+  /**
+   * Exact recovery material retained on this endpoint.
+   */
+  recovery: CredentialReceipt;
+}
+/**
+ * Durable escrow coordinates returned only for the exact accepted task event.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "CredentialReceipt".
+ */
+export interface CredentialReceipt {
+  /**
+   * Server-assigned entry identity.
+   */
+  material: string;
+  /**
+   * Exact material subject.
+   */
+  subject: CredentialSubject;
+  /**
+   * Immutable material version.
+   */
+  version: number;
+}
+/**
+ * One currently eligible first-enrollment policy.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "AccessPolicyOption".
+ */
+export interface AccessPolicyOption {
+  /**
+   * Safe configuration preview; begin rechecks current authority.
+   */
+  configuration: AccessConfiguration;
+  /**
+   * Policy identity used by begin.
+   */
+  policy: string;
+  /**
+   * Current published policy version.
+   */
+  version: string;
+}
+/**
+ * Safe local task selection; all authority remains in the signed task.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "SetupTask".
+ */
+export interface SetupTask {
+  /**
+   * Business association.
+   */
+  binding: string;
+  /**
+   * Name only when creating a new account.
+   */
+  createName: string | null;
+  /**
+   * Exact backend task.
+   */
+  task: string;
+}
+/**
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "Command16".
+ */
+export interface Command16 {
   input: null;
   output: DeviceOverview;
 }
@@ -1729,9 +2190,9 @@ export interface DeviceAttributes {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command4".
+ * via the `definition` "Command5".
  */
-export interface Command4 {
+export interface Command5 {
   input: QueryRequest;
   output: QueryStatus;
 }
@@ -1793,9 +2254,9 @@ export interface QueryPreparationRef {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command".
+ * via the `definition` "Command2".
  */
-export interface Command {
+export interface Command2 {
   input: QueryDirectory;
   output: QueryPage;
 }
@@ -1905,9 +2366,9 @@ export interface PublishedQuery {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command3".
+ * via the `definition` "Command4".
  */
-export interface Command3 {
+export interface Command4 {
   input: QuerySubmit;
   output: QueryStatus;
 }
@@ -1935,9 +2396,9 @@ export interface QuerySubmit {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command13".
+ * via the `definition` "Command14".
  */
-export interface Command13 {
+export interface Command14 {
   input: ActionRef;
   output: BackendTaskView;
 }
@@ -2010,7 +2471,7 @@ export interface FrozenExecutionSummary {
   /**
    * Action and exact resource revision.
    */
-  operation: Operation;
+  operation: Operation2;
   /**
    * Exact policy revision.
    */
@@ -2125,9 +2586,9 @@ export interface InterpreterRef {
  * Action and exact resource identity submitted to the authorization owner.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Operation".
+ * via the `definition` "Operation2".
  */
-export interface Operation {
+export interface Operation2 {
   /**
    * Stable operation identifier owned by the catalog/authorization policy.
    */
@@ -2295,9 +2756,9 @@ export interface ProcessSummary {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command12".
+ * via the `definition` "Command13".
  */
-export interface Command12 {
+export interface Command13 {
   input: BackendSelection;
   output: TaskSubmission;
 }
@@ -2319,25 +2780,25 @@ export interface TaskSubmission {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command5".
+ * via the `definition` "Command6".
  */
-export interface Command5 {
+export interface Command6 {
   input: SoftwareReadChoice;
   output: BackendRequest;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command9".
+ * via the `definition` "Command10".
  */
-export interface Command9 {
+export interface Command10 {
   input: ActionRef;
   output: BackendRequest;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command6".
+ * via the `definition` "Command7".
  */
-export interface Command6 {
+export interface Command7 {
   input: PolicyDirectoryQuery;
   output: SelfServiceDirectoryResponse;
 }
@@ -2370,17 +2831,17 @@ export interface SelfServiceDirectoryResponse {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command7".
+ * via the `definition` "Command8".
  */
-export interface Command7 {
+export interface Command8 {
   input: PolicyChoice;
   output: BackendRequest;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command10".
+ * via the `definition` "Command11".
  */
-export interface Command10 {
+export interface Command11 {
   input: ActionRef;
   output: PolicyStatus;
 }
@@ -2527,9 +2988,9 @@ export interface TaskRunState {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command11".
+ * via the `definition` "Command12".
  */
-export interface Command11 {
+export interface Command12 {
   input: SnapshotQuery;
   output: Snapshot;
 }

@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import Account from "./Account.vue";
 import { accountBinding, recoverAccount } from "../test-users";
+import DeviceAccess from "./DeviceAccess.vue";
 import MdmRegistration from "./MdmRegistration.vue";
 import { nativeService, type ServicePort } from "./native";
 import type { SelfServicePort } from "../self-service/types";
@@ -321,6 +322,15 @@ onUnmounted(() => {
     <p>状态查询不代表任务获准或执行成功。</p>
     <button :disabled="!native || pending" @click="refresh">重新查询</button>
   </section>
+  <DeviceAccess
+    v-if="
+      native &&
+      view?.phase === 'connected' &&
+      view.status.platform === 'windows'
+    "
+    :ready="agentReady"
+    :active="active"
+  />
   <MdmRegistration
     v-if="native"
     :service-port="native"

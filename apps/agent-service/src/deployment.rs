@@ -460,6 +460,9 @@ impl Deployment {
         }
         if cfg!(windows) {
             values.push(C::CredentialsWindowsV1);
+            if cfg!(target_arch = "x86_64") {
+                values.push(C::DeviceAccessV1);
+            }
         }
         let has = |profile| {
             self.execution

@@ -12,8 +12,10 @@ use std::{
 use zeroize::Zeroizing;
 #[cfg(any(windows, test))]
 mod engine;
-mod envelope;
-mod state;
+pub(crate) mod envelope;
+#[cfg(any(windows, test))]
+mod rss;
+pub(crate) mod state;
 #[cfg(test)]
 mod tests;
 #[cfg(windows)]
@@ -124,7 +126,9 @@ pub(crate) fn acknowledge(
     root: &Path,
     task: &w::CredentialTaskSpec,
     escrow: &w::CredentialEscrow,
+    receipts: &[w::CredentialReceipt],
 ) -> Result<(), Error> {
+    state::write(root, &state::name(task, "receipts"), &receipts)?;
     state::write(root, &state::name(task, "ack"), &envelope::digest(escrow)?)
 }
 
@@ -226,12 +230,12 @@ pub(crate) fn retire(root: &Path, task: &w::CredentialTaskSpec) -> Result<(), Er
             let mut original = task.clone();
             original.task_id = reference.task_id;
             original.attempt_id = reference.attempt_id;
-            for suffix in ["state", "escrow", "ack", "result"] {
+            for suffix in ["state", "escrow", "ack", "receipts", "result"] {
                 state::remove(root, &state::name(&original, suffix))?;
             }
         }
     }
-    for suffix in ["escrow", "ack", "result"] {
+    for suffix in ["escrow", "ack", "receipts", "result"] {
         state::remove(root, &state::name(task, suffix))?;
     }
     // A held owner lock proves no worker is staging a write; the service owner is sequential.
