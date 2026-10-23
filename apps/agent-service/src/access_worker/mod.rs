@@ -56,6 +56,20 @@ pub(crate) fn authority(task: &w::AccessTaskSpec, sid: &str) -> device_access::A
         sid: sid.into(),
     }
 }
+/// Verify the consumer registration against the task's frozen storage identity.
+// ref: rustls verify.rs@2976d90 (verification receives the caller's expected identity).
+#[cfg(any(windows, test))]
+pub(crate) fn verify_installation(
+    expected_root: &Path,
+    expected_id: uuid::Uuid,
+    actual_root: &Path,
+    actual_id: uuid::Uuid,
+) -> Result<(), Error> {
+    if expected_root != actual_root || expected_id != actual_id {
+        return Err(Error::Identity);
+    }
+    Ok(())
+}
 pub(crate) fn report(task: &w::AccessTaskSpec, effect: w::AccessEffect) -> w::AccessResult {
     w::AccessResult {
         binding_id: task.binding_id,

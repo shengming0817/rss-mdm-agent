@@ -151,6 +151,9 @@ pub fn run(args: &[OsString]) -> Result<(), Error> {
 }
 pub(crate) fn health() -> Result<(), Error> {
     let config = device_access::windows::installation().map_err(|_| Error::Configuration)?;
+    health_for(&config)
+}
+fn health_for(config: &Installation) -> Result<(), Error> {
     device_access::Store::open(&config.root, config.id).map_err(|_| Error::Storage)?;
     let inproc = format!("{}\\InprocServer32", class());
     let path = get(&inproc, "")?;
@@ -163,19 +166,19 @@ pub(crate) fn health() -> Result<(), Error> {
     Ok(())
 }
 
-pub(crate) fn remove_for(deployment: &crate::deployment::Deployment) -> Result<(), Error> {
+fn exists(path: &str) -> Result<bool, Error> {
     let mut key = null_mut();
     let status = unsafe {
         RegOpenKeyExW(
             HKEY_LOCAL_MACHINE,
-            wide(CONFIG_KEY).as_ptr(),
+            wide(path).as_ptr(),
             0,
             KEY_READ | KEY_WOW64_64KEY,
             &mut key,
         )
     };
     if [2, 3].contains(&status) {
-        return Ok(());
+        return Ok(false);
     }
     if status != 0 {
         return Err(Error::Storage);
@@ -183,12 +186,33 @@ pub(crate) fn remove_for(deployment: &crate::deployment::Deployment) -> Result<(
     unsafe {
         RegCloseKey(key);
     }
-    let config = device_access::windows::installation().map_err(|_| Error::Identity)?;
-    if config.id != deployment.service_id
-        || config.root != crate::access_worker::root(&deployment.execution)
-    {
-        return Err(Error::Identity);
+    Ok(true)
+}
+/// A missing Provider permits cleanup; a different registered installation never does.
+pub(crate) fn readiness(root: &Path, installation: uuid::Uuid) -> Result<bool, Error> {
+    if !exists(CONFIG_KEY)? {
+        return if exists(&provider())? {
+            Err(Error::Identity)
+        } else {
+            Ok(false)
+        };
     }
+    let config = device_access::windows::installation().map_err(|_| Error::Identity)?;
+    crate::access_worker::verify_installation(root, installation, &config.root, config.id)?;
+    Ok(health_for(&config).is_ok())
+}
+
+pub(crate) fn remove_for(deployment: &crate::deployment::Deployment) -> Result<(), Error> {
+    if !exists(CONFIG_KEY)? {
+        return Ok(());
+    }
+    let config = device_access::windows::installation().map_err(|_| Error::Identity)?;
+    crate::access_worker::verify_installation(
+        &crate::access_worker::root(&deployment.execution),
+        deployment.service_id,
+        &config.root,
+        config.id,
+    )?;
     delete(&provider())?;
     delete(&class())?;
     delete(CONFIG_KEY)

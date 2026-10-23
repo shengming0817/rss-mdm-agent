@@ -7,7 +7,7 @@ use w::{
 use zeroize::Zeroizing;
 
 pub(super) trait Native: Protector {
-    fn integration_ready(&self) -> bool;
+    fn integration_ready(&self, root: &Path, installation: uuid::Uuid) -> Result<bool, Error>;
     fn clock(&self) -> Result<Clock, Error>;
     fn password(&mut self) -> Result<Zeroizing<String>, Error>;
     fn create(&mut self, name: &str, password: &str) -> Result<String, Failure>;
@@ -47,6 +47,31 @@ pub(super) fn execute(input: &Input, native: &mut impl Native) -> Result<w::Acce
 fn apply(input: &Input, native: &mut impl Native) -> Result<Effect, Error> {
     let task = &input.task;
     let mut store = Store::open(&input.root, input.installation).map_err(storage)?;
+    let enabled = match &task.action {
+        Action::Apply { configuration, .. } | Action::Create { configuration, .. } => {
+            configuration.enabled
+        }
+        _ => false,
+    };
+    // Even disabling and unbinding must target the storage consumed by this installation.
+    let ready = match native.integration_ready(&input.root, input.installation) {
+        Ok(ready) => ready,
+        Err(Error::Identity) => {
+            return Ok(Effect::Failed {
+                reason: Failure::AccountChanged,
+            })
+        }
+        Err(_) => {
+            return Ok(Effect::Failed {
+                reason: Failure::NativeFailure,
+            })
+        }
+    };
+    if enabled && !ready {
+        return Ok(Effect::Failed {
+            reason: Failure::Unsupported,
+        });
+    }
     if let Action::Unbind {
         account: Account::Windows { sid },
     } = &task.action
@@ -55,17 +80,6 @@ fn apply(input: &Input, native: &mut impl Native) -> Result<Effect, Error> {
             .revoke(&authority(task, sid), task.revision)
             .map_err(storage)?;
         return Ok(Effect::Unbound);
-    }
-    let enabled = match &task.action {
-        Action::Apply { configuration, .. } | Action::Create { configuration, .. } => {
-            configuration.enabled
-        }
-        _ => false,
-    };
-    if enabled && !native.integration_ready() {
-        return Ok(Effect::Failed {
-            reason: Failure::Unsupported,
-        });
     }
     // Require already confirmed setup before touching an OS account.
     if matches!(task.windows, Some(Plan::Initialize { .. })) {

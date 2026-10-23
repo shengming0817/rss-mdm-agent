@@ -11,8 +11,8 @@ impl Protector for NativeWindows {
     }
 }
 impl engine::Native for NativeWindows {
-    fn integration_ready(&self) -> bool {
-        crate::access_component::health().is_ok()
+    fn integration_ready(&self, root: &Path, installation: uuid::Uuid) -> Result<bool, Error> {
+        crate::access_component::readiness(root, installation)
     }
     fn clock(&self) -> Result<device_access::Clock, Error> {
         device_access::windows::clock().map_err(|_| Error::Clock)

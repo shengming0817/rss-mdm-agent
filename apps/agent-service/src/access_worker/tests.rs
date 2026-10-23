@@ -22,6 +22,7 @@ struct Fake {
     role: w::AccessRole,
     fail_create: bool,
     installed: bool,
+    registered: Option<(PathBuf, Uuid)>,
 }
 impl Protector for Fake {
     fn seal(&self, bytes: &[u8]) -> Result<Vec<u8>, device_access::Error> {
@@ -32,8 +33,14 @@ impl Protector for Fake {
     }
 }
 impl engine::Native for Fake {
-    fn integration_ready(&self) -> bool {
-        self.installed
+    fn integration_ready(&self, root: &Path, installation: Uuid) -> Result<bool, Error> {
+        if let Some((actual_root, actual_id)) = &self.registered {
+            verify_installation(root, installation, actual_root, *actual_id)?;
+            Store::open(actual_root, *actual_id).map_err(|_| Error::Storage)?;
+        } else if self.installed {
+            return Err(Error::Identity);
+        }
+        Ok(self.installed)
     }
     fn clock(&self) -> Result<Clock, Error> {
         Ok(self.clock)
@@ -84,7 +91,7 @@ fn fixture(create: bool) -> (Root, Input, Fake, Vec<u8>, String) {
     );
     platform_private_storage::directory(&root.0).unwrap();
     let now = (crate::wall().unwrap() / 1000) as i64;
-    let native = Fake {
+    let mut native = Fake {
         clock: Clock {
             utc: now,
             monotonic: 1000,
@@ -95,6 +102,7 @@ fn fixture(create: bool) -> (Root, Input, Fake, Vec<u8>, String) {
         role: w::AccessRole::Administrator,
         fail_create: false,
         installed: true,
+        registered: None,
     };
     let configuration = w::AccessConfiguration {
         self_enrollment: true,
@@ -157,6 +165,7 @@ fn fixture(create: bool) -> (Root, Input, Fake, Vec<u8>, String) {
         session: SessionRequirement::NotRequired {},
     };
     let mut store = Store::create(&root.0, input.installation).unwrap();
+    native.registered = Some((input.root.clone(), input.installation));
     let mut candidate = device_access::Candidate::generate().unwrap();
     let secret = candidate.totp_secret().to_vec();
     let recovery = candidate.recovery_secret().to_owned();
@@ -345,4 +354,126 @@ fn missing_provider_does_not_change_accounts_or_claim_applied() {
     );
     assert_eq!(native.creates, 0);
     assert_eq!(native.enables, 0);
+}
+
+#[test]
+fn different_valid_provider_store_rejects_enable_disable_and_unbind_before_mutation() {
+    let (_root, mut input, mut native, _, recovery) = fixture(false);
+    let ack = ack(&input, recovery);
+    let initial = engine::execute(&input, &mut native).unwrap();
+    ack.join().unwrap();
+    let w::AccessEffect::Applied {
+        windows: Some(facts),
+        ..
+    } = initial.effect
+    else {
+        panic!("not applied")
+    };
+    let (_other_root, other, _, _, _) = fixture(false);
+    native.registered = Some((other.root.clone(), other.installation));
+    for action in [
+        w::AccessAction::Apply {
+            account: w::AccessAccount::Windows { sid: SID.into() },
+            configuration: w::AccessConfiguration {
+                enabled: true,
+                self_enrollment: true,
+                role: Some(w::AccessRole::Standard),
+            },
+        },
+        w::AccessAction::Apply {
+            account: w::AccessAccount::Windows { sid: SID.into() },
+            configuration: w::AccessConfiguration {
+                enabled: false,
+                self_enrollment: true,
+                role: None,
+            },
+        },
+        w::AccessAction::Unbind {
+            account: w::AccessAccount::Windows { sid: SID.into() },
+        },
+    ] {
+        input.task.task_id = Uuid::new_v4();
+        input.task.attempt_id = Uuid::new_v4();
+        input.task.revision += 1;
+        input.task.windows = if matches!(action, w::AccessAction::Unbind { .. }) {
+            None
+        } else {
+            Some(w::AccessWindowsPlan::Preserve {
+                facts: facts.clone(),
+            })
+        };
+        input.task.action = action;
+        assert_eq!(
+            engine::execute(&input, &mut native).unwrap().effect,
+            w::AccessEffect::Failed {
+                reason: w::AccessFailure::AccountChanged
+            }
+        );
+        assert!(Store::open(&input.root, input.installation)
+            .unwrap()
+            .enabled(SID)
+            .unwrap());
+        assert!(!Store::open(&other.root, other.installation)
+            .unwrap()
+            .enabled(SID)
+            .unwrap());
+        assert!(prepared(&input.root, &input.task).unwrap().is_none());
+        assert_eq!(native.role, w::AccessRole::Administrator);
+    }
+    assert!(verify_installation(
+        &input.root,
+        input.installation,
+        &input.root,
+        other.installation
+    )
+    .is_err());
+    assert!(verify_installation(
+        &input.root,
+        input.installation,
+        &other.root,
+        input.installation
+    )
+    .is_err());
+}
+#[test]
+fn absent_provider_allows_disable_and_unbind_of_the_current_store() {
+    let (_root, mut input, mut native, _, recovery) = fixture(false);
+    let ack = ack(&input, recovery);
+    let initial = engine::execute(&input, &mut native).unwrap();
+    ack.join().unwrap();
+    let w::AccessEffect::Applied {
+        windows: Some(facts),
+        ..
+    } = initial.effect
+    else {
+        panic!("not applied")
+    };
+    native.installed = false;
+    native.registered = None;
+    input.task.task_id = Uuid::new_v4();
+    input.task.attempt_id = Uuid::new_v4();
+    input.task.revision += 1;
+    input.task.windows = Some(w::AccessWindowsPlan::Preserve { facts });
+    if let w::AccessAction::Apply { configuration, .. } = &mut input.task.action {
+        configuration.enabled = false;
+    }
+    assert!(matches!(
+        engine::execute(&input, &mut native).unwrap().effect,
+        w::AccessEffect::Applied { .. }
+    ));
+    assert!(!Store::open(&input.root, input.installation)
+        .unwrap()
+        .enabled(SID)
+        .unwrap());
+    input.task.task_id = Uuid::new_v4();
+    input.task.attempt_id = Uuid::new_v4();
+    input.task.revision += 1;
+    input.task.windows = None;
+    input.task.action = w::AccessAction::Unbind {
+        account: w::AccessAccount::Windows { sid: SID.into() },
+    };
+    assert_eq!(
+        engine::execute(&input, &mut native).unwrap().effect,
+        w::AccessEffect::Unbound
+    );
 }
