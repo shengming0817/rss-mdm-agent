@@ -108,6 +108,7 @@ fn main() {
             "account_organizations",
             "account_save_organization",
             "account_login",
+            "account_recover",
             "select_test_user",
             "execution_service_status",
             "agent_registration_status",

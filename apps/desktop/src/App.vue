@@ -210,6 +210,7 @@ onBeforeUnmount(() => {
           page = 'settings';
         "
       >
+        <template #login-qr><slot name="login-qr" /></template>
         <template v-if="selectedUser" #back
           ><button @click="loginOpen = false">返回工作区</button></template
         >

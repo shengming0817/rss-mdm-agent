@@ -5,7 +5,6 @@ import type {
   FixtureLoginPort,
   EnterpriseLogin,
 } from "../../apps/desktop/src/account/types";
-import qrImage from "./login-qr.svg?url";
 export function createLoginFixture(
   identity: () => Promise<UserContext>,
 ): FixtureLoginPort {
@@ -15,7 +14,6 @@ export function createLoginFixture(
     profile = "normal";
   const state = reactive<FixtureLoginPort["state"]>({
     qr: "waiting",
-    qrImage,
     clients: [],
     discovering: false,
     error: "",

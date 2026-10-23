@@ -12,7 +12,6 @@ export interface EnterpriseLogin {
 export interface FixtureLoginPort {
   state: {
     qr: "waiting" | "scanned" | "expired" | "denied";
-    qrImage: string;
     clients: Array<{
       id: string;
       name: string;

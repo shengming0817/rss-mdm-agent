@@ -1,3 +1,5 @@
+import * as accountApi from "../test-users";
+import Account from "./Account.vue";
 import { flushPromises, mount } from "@vue/test-utils";
 import { expect, it, vi } from "vitest";
 import LocalService from "./LocalService.vue";
@@ -229,5 +231,42 @@ it("keeps registration facts visible during background refresh and does not call
   } finally {
     wrapper.unmount();
     vi.useRealTimers();
+  }
+});
+
+it("routes registration handoff recovery through the shared native account owner", async () => {
+  const recover = vi
+    .spyOn(accountApi, "recoverAccount")
+    .mockResolvedValue(undefined);
+  accountApi.accountBinding.value = "binding_unknown";
+  const read = vi.fn(
+    async () =>
+      structuredClone(serviceViews.registrationRequired) as ServiceView,
+  );
+  const port: ServicePort = {
+    read,
+    registration: async () => ({
+      phase: "active",
+      registered: true,
+      credential: "active",
+    }),
+    requestRegistration: async () => {
+      throw { code: "binding_unknown" };
+    },
+    mdmStatus: async () => ({ state: "unknown" }),
+    importRegistration: async () => null,
+    cancelRegistration: async () => {},
+  };
+  const wrapper = mount(LocalService, { props: { port } });
+  try {
+    await flushPromises();
+    wrapper.getComponent(Account).vm.$emit("recover", false);
+    await flushPromises();
+    expect(recover).toHaveBeenCalledWith(false);
+    expect(read.mock.calls.length).toBeGreaterThan(1);
+  } finally {
+    wrapper.unmount();
+    accountApi.accountBinding.value = "unbound";
+    recover.mockRestore();
   }
 });

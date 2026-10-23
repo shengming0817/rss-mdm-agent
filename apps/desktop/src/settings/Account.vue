@@ -41,6 +41,7 @@ const emit = defineEmits<{
   authenticated: [context: UserContext];
 }>();
 const uid = useId();
+const tabButtons = ref<HTMLButtonElement[]>([]);
 const organizations = ref<AccountOrganization[]>([]),
   selected = ref(""),
   login = ref(""),
@@ -184,10 +185,11 @@ async function tabKeys(event: KeyboardEvent) {
       : event.key === "End"
         ? 2
         : (index + (event.key === "ArrowRight" ? 1 : 2)) % 3;
-  await changeMethod(methods[next]);
+  const nextMethod = methods.at(next)!;
+  await changeMethod(nextMethod);
   await nextTick();
-  document
-    .getElementById(`${uid}-tab-${methods[next]}`)
+  tabButtons.value
+    .find((button) => button.id === `${uid}-tab-${nextMethod}`)
     ?.focus({ preventScroll: true });
 }
 </script>
@@ -256,6 +258,7 @@ async function tabKeys(event: KeyboardEvent) {
           { id: 'qr', label: '扫码登录' },
           { id: 'client', label: '本机快捷登录' },
         ] as const"
+        ref="tabButtons"
         :id="`${uid}-tab-${item.id}`"
         :key="item.id"
         role="tab"
@@ -357,7 +360,7 @@ async function tabKeys(event: KeyboardEvent) {
         <div v-else-if="method === 'qr' && fixture" class="qr-pane">
           <p>使用已登录企业账号的手机扫码确认</p>
           <div class="qr-box">
-            <img :src="fixture.state.qrImage" alt="Fixture 演示二维码" />
+            <slot name="qr" />
             <div v-if="fixture.state.qr !== 'waiting'" class="qr-overlay">
               <strong>{{
                 fixture.state.qr === "scanned"
@@ -588,7 +591,11 @@ async function tabKeys(event: KeyboardEvent) {
   border-bottom: 1px solid var(--rss-color-border);
   margin-bottom: 17px;
 }
-.login-tabs button {
+.account .login-tabs button {
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   height: 37px;
   position: relative;
   padding: 0 0 11px;
@@ -655,7 +662,10 @@ async function tabKeys(event: KeyboardEvent) {
   justify-content: space-between;
   margin-top: 15px;
 }
-.text-link {
+.account .text-link {
+  min-height: 0;
+  border: 0;
+  background: transparent;
   color: var(--rss-color-accent);
   font-size: 10px;
   padding: 0;
@@ -666,7 +676,10 @@ async function tabKeys(event: KeyboardEvent) {
 .password-input input {
   padding-right: 48px !important;
 }
-.password-input button {
+.account .password-input button {
+  min-height: 0;
+  border: 0;
+  background: transparent;
   position: absolute;
   right: 10px;
   top: 12px;
@@ -719,7 +732,9 @@ async function tabKeys(event: KeyboardEvent) {
   padding-top: 6px;
   text-align: center;
 }
-.account-footer > button {
+.account .account-footer > button {
+  border: 0;
+  background: transparent;
   height: 36px;
   width: 100%;
   font-size: 11px;
@@ -856,7 +871,7 @@ summary:focus-visible {
   border-radius: 12px;
   background: white;
 }
-.qr-box img {
+.qr-box :deep(img) {
   width: 172px;
   height: 172px;
 }

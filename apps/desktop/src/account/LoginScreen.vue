@@ -82,7 +82,8 @@ const emit = defineEmits<{
             @guest="emit('guest')"
             @recover="emit('recover', $event)"
             @authenticated="emit('authenticated', $event)"
-          />
+            ><template #qr><slot name="login-qr" /></template
+          ></Account>
         </div>
         <p class="security-note">你的组织账号，由组织安全管理</p>
       </div>

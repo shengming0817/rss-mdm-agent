@@ -5,6 +5,7 @@ import { createFixturePorts } from "./ports";
 import { homePreviewKey } from "../../apps/desktop/src/home/preview";
 import { createSoftwarePreview } from "./software-preview";
 import { softwarePreviewKey } from "../../apps/desktop/src/catalog-preview/software-preview";
+import loginQr from "./login-qr.svg?url";
 import FoundationGallery from "./FoundationGallery.vue";
 import { desktopPlatform } from "../../apps/desktop/src/appearance";
 import OperationGallery from "./OperationGallery.vue";
@@ -85,6 +86,8 @@ export function mountFixture() {
             ...ports,
           },
           {
+            "login-qr": () =>
+              h("img", { src: loginQr, alt: "Fixture 演示二维码" }),
             "operation-cards": ({
               visible,
               drafts,

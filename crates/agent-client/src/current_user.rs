@@ -313,16 +313,12 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         {
             return Err(Error::Protocol);
         }
-        state.confirmed = if let Some(fingerprint) = &pending.proof {
-            Some(Confirmed {
-                owner: pending.owner.clone(),
-                registration: pending.registration.clone(),
-                proof: fingerprint.clone(),
-                value: value.clone(),
-            })
-        } else {
-            None
-        };
+        state.confirmed = pending.proof.as_ref().map(|fingerprint| Confirmed {
+            owner: pending.owner.clone(),
+            registration: pending.registration.clone(),
+            proof: fingerprint.clone(),
+            value: value.clone(),
+        });
         state.pending = None;
         state.phase = if state.confirmed.is_some() {
             Phase::Bound

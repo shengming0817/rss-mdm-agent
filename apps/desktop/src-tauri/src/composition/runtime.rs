@@ -247,7 +247,7 @@ impl DesktopRuntime {
         *self.identity.pending.lock().map_err(|_| unavailable())? = None;
         *self.account_binding.lock().map_err(|_| unavailable())? =
             ai_session_contract::AccountBindingState::Unbound;
-        self.account_result(local.and(remote))
+        self.account_result(remote.and(local))
     }
     pub async fn select_user(&self, name: &str) -> ui::Result<ai_session_contract::UserContext> {
         let _switch = self.switching.lock().await;

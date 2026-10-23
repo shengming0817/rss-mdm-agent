@@ -1420,6 +1420,10 @@ try {
         baseline,
         `login geometry changed at ${viewport.width}: ${name}`,
       );
+      if (viewport.width === 1200 || viewport.width === 390)
+        await page.screenshot({
+          path: `.local-ci-runs/login-${viewport.width}-${name}.png`,
+        });
     }
   }
   await page.getByRole("tab", { name: "扫码登录", exact: true }).click();

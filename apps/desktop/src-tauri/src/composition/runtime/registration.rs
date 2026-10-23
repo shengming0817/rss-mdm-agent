@@ -311,7 +311,7 @@ mod tests {
         let next = account.context().unwrap();
         let generation = next.generation.clone();
         runtime.identity.set_session(Some(account)).unwrap();
-        runtime.users.lock().unwrap().activate(next).unwrap();
+        *runtime.identity.pending.lock().unwrap() = Some(next);
         let attempts = Arc::new(AtomicU64::new(0));
         let native_bound = Arc::new(AtomicBool::new(false));
         let calls = attempts.clone();
@@ -338,7 +338,12 @@ mod tests {
                         "uncertain prior binding must be retired"
                     );
                     if calls.fetch_add(1, Ordering::AcqRel) == 0 {
-                        return Err(execution_app::Error::OutcomeUnknown);
+                        return Ok(Reply::CurrentUserSync {
+                            value: execution_contract::CurrentUserSync {
+                                phase: execution_contract::CurrentUserSyncPhase::BindingUnknown,
+                                current: None,
+                            },
+                        });
                     }
                     Ok(Reply::ContextBound {
                         value: execution_contract::NativeContextRef {
@@ -379,10 +384,19 @@ mod tests {
             .unwrap());
         assert_eq!(attempts.load(Ordering::Acquire), 0);
         current.status.credential = CredentialStatus::Active;
-        assert!(!runtime
-            .registration_handoff(&current, intent, &generation)
-            .await
-            .unwrap());
+        assert_eq!(
+            runtime
+                .registration_handoff(&current, intent, &generation)
+                .await
+                .unwrap_err()
+                .code,
+            "binding_unknown"
+        );
+        assert!(runtime.identity.snapshot().is_err());
+        assert_eq!(
+            runtime.account_status().unwrap().binding,
+            ai_session_contract::AccountBindingState::BindingUnknown
+        );
         assert!(native_bound.load(Ordering::Acquire));
         assert!(runtime
             .policy_execution_for(generation.as_str())
