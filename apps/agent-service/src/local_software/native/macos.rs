@@ -85,6 +85,12 @@ pub(super) fn select(item: &InstalledSoftware, row: &serde_json::Value) -> Resul
             .ok_or(Error::Untrusted)?,
     );
     let root = match &item.scope {
+        DataScope::Device
+            if action != LocalSoftwareAction::Uninstall
+                && path.starts_with("/System/Applications") =>
+        {
+            PathBuf::from("/System/Applications")
+        }
         DataScope::Device => PathBuf::from("/Applications"),
         DataScope::User { subject } => {
             crate::collection_worker::macos::local_user_app_root(subject.as_str())?
@@ -93,7 +99,7 @@ pub(super) fn select(item: &InstalledSoftware, row: &serde_json::Value) -> Resul
     if !path.starts_with(&root) || path == root || path.extension().is_none_or(|e| e != "app") {
         return Err(Error::Denied);
     }
-    if matches!(item.scope, DataScope::Device) {
+    if matches!(item.scope, DataScope::Device) && action == LocalSoftwareAction::Uninstall {
         installation_security::applications_directory().map_err(|_| Error::Denied)?;
         // Nested administrator/user-writable discovery directories need an explicit recipe.
         if path.parent() != Some(root.as_path()) {

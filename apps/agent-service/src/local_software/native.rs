@@ -48,15 +48,15 @@ pub(crate) struct Input {
 pub(crate) fn select(item: &InstalledSoftware, row: &serde_json::Value) -> Result<Target, Error> {
     #[cfg(target_os = "macos")]
     {
-        macos::select(item, row)
+        macos::select(item, row, action)
     }
     #[cfg(windows)]
     {
-        windows::select(item, row)
+        windows::select(item, row, action)
     }
     #[cfg(not(any(target_os = "macos", windows)))]
     {
-        let _ = (item, row);
+        let _ = (item, row, action);
         Err(Error::Unsupported)
     }
 }

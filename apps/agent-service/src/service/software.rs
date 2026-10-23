@@ -396,42 +396,43 @@ impl Core {
                 } else {
                     None
                 };
-                let (frozen, artifacts) =
-                    if let Some(recipe) = policy.rules.recipe(&item, choice.action) {
-                        let work_root = helper
-                            .as_ref()
-                            .map(|h| h.context().work_root.clone())
-                            .unwrap_or_else(|| self.config.work_root.clone());
-                        crate::local_software::compile::recipe(
-                            recipe,
-                            choice,
-                            &item,
-                            &self.host.binding,
-                            &self.host.actor,
-                            initiator,
-                            context,
-                            &policy,
-                            self.host.clock.millis()?,
-                            helper,
-                            work_root,
-                        )?
-                    } else {
-                        let target = crate::local_software::native::select(&item, &row)?;
-                        crate::local_software::compile::native(
-                            target,
-                            choice,
-                            &item,
-                            &self.host.binding,
-                            &self.host.actor,
-                            initiator,
-                            context,
-                            &policy,
-                            self.host.clock.millis()?,
-                            &self.config,
-                            &mut self.material_root,
-                            helper,
-                        )?
-                    };
+                let (frozen, artifacts) = if let Some(recipe) =
+                    policy.rules.recipe(&item, choice.action)
+                {
+                    let work_root = helper
+                        .as_ref()
+                        .map(|h| h.context().work_root.clone())
+                        .unwrap_or_else(|| self.config.work_root.clone());
+                    crate::local_software::compile::recipe(
+                        recipe,
+                        choice,
+                        &item,
+                        &self.host.binding,
+                        &self.host.actor,
+                        initiator,
+                        context,
+                        &policy,
+                        self.host.clock.millis()?,
+                        helper,
+                        work_root,
+                    )?
+                } else {
+                    let target = crate::local_software::native::select(&item, &row, choice.action)?;
+                    crate::local_software::compile::native(
+                        target,
+                        choice,
+                        &item,
+                        &self.host.binding,
+                        &self.host.actor,
+                        initiator,
+                        context,
+                        &policy,
+                        self.host.clock.millis()?,
+                        &self.config,
+                        &mut self.material_root,
+                        helper,
+                    )?
+                };
                 policy.current()?;
                 self.data_context(command, context)?;
                 self.host
@@ -506,7 +507,9 @@ impl Core {
                     }
                     let original: crate::local_software::native::Target =
                         parameter(&frozen, "local-software-native")?;
-                    if crate::local_software::native::select(&item, &row)? != original {
+                    if crate::local_software::native::select(&item, &row, preview.choice.action)?
+                        != original
+                    {
                         return Err(Error::Conflict);
                     }
                     crate::local_software::compile::native_materials(&frozen, &self.config, helper)?

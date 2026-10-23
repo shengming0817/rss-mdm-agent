@@ -128,6 +128,9 @@ onBeforeUnmount(() => {
   <section class="local-software-action" aria-label="本地软件原请求">
     <p v-if="error" role="alert">{{ error }}</p>
     <template v-if="value">
+      <p v-if="value.execution.mode === 'test'">
+        测试执行记录，不代表真实设备效果。
+      </p>
       <h3>
         {{ actionLabels[value.prepared.choice.action] }} ·
         {{ value.prepared.name }}
