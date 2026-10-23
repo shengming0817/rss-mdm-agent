@@ -176,7 +176,7 @@ it("shares the home draft with the assistant without sending or replacing it", a
     ).toBe("检查应用连接");
     await wrapper.findAll(".home-stats > button")[3].trigger("click");
     expect(wrapper.find(".computer-home").exists()).toBe(false);
-    expect(wrapper.get(".software-reference").isVisible()).toBe(true);
+    expect(wrapper.get(".software-production").isVisible()).toBe(true);
   } finally {
     wrapper.unmount();
     bounds.mockRestore();

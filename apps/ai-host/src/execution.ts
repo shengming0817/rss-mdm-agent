@@ -95,6 +95,11 @@ const methods = new Set([
   "execution_query_submit",
   "execution_query_status",
   "execution_query_cancel",
+  "execution_software_read",
+  "execution_software_prepare",
+  "execution_software_status",
+  "execution_software_cancel",
+  "execution_policy_invoke",
   "execution_software_observe",
   "execution_policy_tools",
   "execution_operation_prepare",
@@ -220,7 +225,7 @@ export async function connectExecution(
         const value = await client.callTool(
           {
             name: "execution_policy_tools",
-            arguments: {},
+            arguments: { after: null },
             _meta: { "com.rss-mdm/ai-origin": origin },
           },
           undefined,
@@ -229,7 +234,7 @@ export async function connectExecution(
         stage = "projection";
         boundedJson(value, defaultLimits);
         const body = value.structuredContent as any;
-        if (body?.status !== "ok" || !Array.isArray(body.result)) {
+        if (body?.status !== "ok" || !Array.isArray(body.result?.tools)) {
           console.error("RSS_POLICY_DISCOVERY_UNAVAILABLE stage=projection");
           return fail("unavailable");
         }
@@ -241,15 +246,14 @@ export async function connectExecution(
         // Providers consume invocation interfaces. MCP retains its result validators;
         // duplicating output schemas in every worker catalog exceeds transport budgets.
         return ok(
-          [
-            ...catalog.tools.filter((t) => t.name !== "execution_policy_tools"),
-            ...body.result,
-          ].map(({ name, description, inputSchema, annotations }) => ({
-            name,
-            description,
-            inputSchema,
-            annotations,
-          })),
+          [...catalog.tools, ...body.result.tools].map(
+            ({ name, description, inputSchema, annotations }) => ({
+              name,
+              description,
+              inputSchema,
+              annotations,
+            }),
+          ),
         );
       } catch {
         console.error(`RSS_POLICY_DISCOVERY_UNAVAILABLE stage=${stage}`);
@@ -265,6 +269,8 @@ export async function connectExecution(
       const read = [
         "execution_query_directory",
         "execution_data_read",
+        "execution_software_read",
+        "execution_software_status",
         "execution_query_status",
         "execution_software_observe",
         "execution_policy_tools",
@@ -276,11 +282,15 @@ export async function connectExecution(
       const id =
         proposal.name.startsWith("policy_") ||
         proposal.name === "execution_operation_prepare" ||
+        proposal.name === "execution_policy_invoke" ||
+        proposal.name === "execution_software_prepare" ||
         proposal.name === "execution_query_submit"
           ? proposal.callId
           : read
             ? randomUUID()
-            : proposal.name === "execution_query_cancel"
+            : ["execution_query_cancel", "execution_software_cancel"].includes(
+                  proposal.name,
+                )
               ? proposal.arguments.request
               : operationRequestId(proposal.name, proposal.arguments);
       if (!isId(id)) return fail("invalid_input");
@@ -291,6 +301,8 @@ export async function connectExecution(
         proposal.name.startsWith("policy_") ||
         proposal.name === "execution_software_observe" ||
         proposal.name === "execution_operation_prepare" ||
+        proposal.name === "execution_policy_invoke" ||
+        proposal.name === "execution_software_prepare" ||
         proposal.name === "execution_query_submit"
           ? `${digest.slice(0, 8)}-${digest.slice(8, 12)}-4${digest.slice(13, 16)}-a${digest.slice(17, 20)}-${digest.slice(20, 32)}`
           : digest;
@@ -326,6 +338,33 @@ export async function connectExecution(
       const { name, arguments: args } = request.body.proposal;
       try {
         if (
+          name === "execution_software_prepare" ||
+          name === "execution_software_cancel"
+        ) {
+          const original =
+            name === "execution_software_prepare"
+              ? request.body.operationId
+              : args.request;
+          const status = await call(
+            request,
+            "execution_software_status",
+            { request: original },
+            b,
+          );
+          if (status.status === "error")
+            return ok({
+              state:
+                status.error?.code === "notFound" ? "not_submitted" : "unknown",
+            });
+          if (
+            name === "execution_software_cancel" &&
+            status.result?.operation?.cancelRequested !== true &&
+            status.result?.operation?.phase !== "cancelled"
+          )
+            return ok({ state: "unknown" });
+          return ok({ state: "committed", receipt: receipt(request, status) });
+        }
+        if (
           name === "execution_query_submit" ||
           name === "execution_query_cancel"
         ) {
@@ -356,7 +395,8 @@ export async function connectExecution(
         }
         if (
           name.startsWith("policy_") ||
-          name === "execution_operation_prepare"
+          name === "execution_operation_prepare" ||
+          name === "execution_policy_invoke"
         ) {
           const status = await call(
             request,

@@ -23,6 +23,7 @@ function fixture() {
     failure: null,
     action: {
       kind: "policy",
+      locator: { after: null },
       choice: {
         request: "operation-1",
         policyId: "policy-1",

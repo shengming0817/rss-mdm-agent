@@ -166,3 +166,25 @@ pub struct ExecutionStatus {
     /// Authorized evidence references only.
     pub evidence: Vec<EvidenceRef>,
 }
+
+/// Safe local software preview and the original execution journal status.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LocalSoftwareStatus {
+    /// Independently observed native state from the retained fixed-worker result; absent means unknown.
+    pub detected: Option<execution_contract::SoftwareState>,
+    /// Immutable service-owned preview; no executable inputs are returned.
+    pub prepared: execution_contract::LocalSoftwarePrepared,
+    /// Existing lifecycle facts, with no parallel software state machine.
+    pub execution: ExecutionStatus,
+}
+
+/// Authorized local software records from the sole execution journal.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LocalSoftwareHistory {
+    /// Current user's local preparations and executions in this page.
+    pub items: Vec<LocalSoftwareStatus>,
+    /// Journal continuation; a filtered page may be empty and still have a next position.
+    pub next: Option<RequestId>,
+}

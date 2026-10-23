@@ -485,7 +485,10 @@ impl<S: IdentityProvider> DeviceService<S> {
             };
             let reply = match result {
                 Err(error)
-                    if matches!(command.request.as_operation(), Some(Request::Data { .. })) =>
+                    if matches!(
+                        command.request.as_operation(),
+                        Some(Request::Data { .. } | Request::LocalSoftware { .. })
+                    ) =>
                 {
                     super::data::failure(error)
                 }
@@ -572,12 +575,35 @@ impl<S: IdentityProvider> DeviceService<S> {
                     }
                     directory.items.sort_by_key(|item| item.policy_id);
                 }
-                Ok(_)
-                | Err(Error::Identity | Error::Denied | Error::Expired | Error::Unavailable) => (),
+                Ok(_) => return Err(Error::Conflict),
                 Err(error) => return Err(error),
             }
         }
         Ok(directory)
+    }
+    async fn current_policy(
+        &mut self,
+        bound: &NativeContext,
+        origin: &ClientOrigin,
+        choice: &execution_contract::PolicyChoice,
+        locator: &execution_contract::PolicyLocator,
+        commands: &mut tokio::sync::mpsc::Receiver<Command>,
+    ) -> Result<wire::SelfServiceDirectoryItem, Error> {
+        let item = self
+            .policy_directory(bound, origin, locator.after.clone(), commands)
+            .await?
+            .items
+            .into_iter()
+            .find(|item| item.policy_id.to_string() == choice.policy_id.as_str())
+            .ok_or(Error::Conflict)?;
+        if item.policy_revision != choice.policy_revision
+            || item.policy_version.to_string() != choice.policy_version.as_str()
+            || !item.self_service.published
+            || (source(origin) == wire::SelfServiceCaller::Ai && !item.self_service.allow_ai)
+        {
+            return Err(Error::Conflict);
+        }
+        Ok(item)
     }
     async fn policy_command(
         &mut self,
@@ -587,6 +613,16 @@ impl<S: IdentityProvider> DeviceService<S> {
         let Some(request) = command.request.as_operation() else {
             return Err(Error::Protocol);
         };
+        if let Request::LocalSoftware {
+            context,
+            origin,
+            input,
+        } = request
+        {
+            return self
+                .core
+                .software_operation(command, context, origin, input);
+        }
         if let Request::Data {
             context,
             origin,
@@ -818,8 +854,18 @@ impl<S: IdentityProvider> DeviceService<S> {
                         .await?,
                 }
             }
-            Request::InvokePolicy { choice, origin, .. }
-            | Request::PreparePolicy { choice, origin, .. } => {
+            Request::InvokePolicy {
+                choice,
+                locator,
+                origin,
+                ..
+            }
+            | Request::PreparePolicy {
+                choice,
+                locator,
+                origin,
+                ..
+            } => {
                 let draft = matches!(request, Request::PreparePolicy { .. });
                 if draft && !matches!(origin, ClientOrigin::Ai { .. }) {
                     return Err(Error::Denied);
@@ -850,25 +896,9 @@ impl<S: IdentityProvider> DeviceService<S> {
                         value: Box::new(self.send_policy(previous, &bound, commands).await?),
                     }
                 } else {
-                    let mut after = None;
-                    let mut found = None;
-                    for _ in 0..16 {
-                        let page = self
-                            .policy_directory(&bound, origin, after.take(), commands)
-                            .await?;
-                        found = page
-                            .items
-                            .into_iter()
-                            .find(|d| d.policy_id.to_string() == choice.policy_id.as_str());
-                        if found.is_some() || page.next_cursor.is_none() {
-                            break;
-                        }
-                        after = page
-                            .next_cursor
-                            .map(|id| plan::id(id.to_string()))
-                            .transpose()?;
-                    }
-                    let directory = found.ok_or(Error::Denied)?;
+                    let directory = self
+                        .current_policy(&bound, origin, choice, locator, commands)
+                        .await?;
                     if directory.policy_revision != choice.policy_revision
                         || directory.policy_version.to_string() != choice.policy_version.as_str()
                         || !directory.self_service.published
@@ -942,6 +972,7 @@ impl<S: IdentityProvider> DeviceService<S> {
                     let record = BackendRequest {
                         action: PreparedAction::Policy {
                             choice: choice.clone(),
+                            locator: locator.clone(),
                             directory: Box::new(directory),
                             run_id: None,
                             offer: None,
@@ -988,7 +1019,10 @@ impl<S: IdentityProvider> DeviceService<S> {
                 }
                 self.core.current_policy_access(&previous)?;
                 let PreparedAction::Policy {
-                    choice, directory, ..
+                    choice,
+                    locator,
+                    directory,
+                    ..
                 } = &previous.action
                 else {
                     return Err(Error::Denied);
@@ -1036,25 +1070,9 @@ impl<S: IdentityProvider> DeviceService<S> {
                         &bound.scope.binding,
                         &origin,
                     )?;
-                    let mut after = None;
-                    let mut current = None;
-                    for _ in 0..16 {
-                        let page = self
-                            .policy_directory(&bound, &origin, after.take(), commands)
-                            .await?;
-                        current = page
-                            .items
-                            .into_iter()
-                            .find(|item| item.policy_id == directory.policy_id);
-                        if current.is_some() || page.next_cursor.is_none() {
-                            break;
-                        }
-                        after = page
-                            .next_cursor
-                            .map(|id| plan::id(id.to_string()))
-                            .transpose()?;
-                    }
-                    let current = current.ok_or(Error::Denied)?;
+                    let current = self
+                        .current_policy(&bound, &origin, choice, locator, commands)
+                        .await?;
                     if serde_json::to_value(&current).map_err(|_| Error::Protocol)?
                         != serde_json::to_value(directory).map_err(|_| Error::Protocol)?
                         || !current.self_service.published
@@ -1133,6 +1151,26 @@ impl<S: IdentityProvider> DeviceService<S> {
                         value: Box::new(self.send_policy(previous, &bound, commands).await?),
                     });
                 }
+                let origin = policy_origin(&previous)?;
+                let PreparedAction::Policy {
+                    choice,
+                    locator,
+                    directory,
+                    ..
+                } = &previous.action
+                else {
+                    return Err(Error::Denied);
+                };
+                let current = self
+                    .current_policy(&bound, &origin, choice, locator, commands)
+                    .await?;
+                if serde_json::to_value(&current).map_err(|_| Error::Protocol)?
+                    != serde_json::to_value(directory).map_err(|_| Error::Protocol)?
+                {
+                    return Err(Error::Conflict);
+                }
+                self.core.context(command)?;
+                self.core.current_policy_access(&previous)?;
                 let BackendTrigger::Ai { os_session, .. } = &previous.trigger else {
                     return Err(Error::Denied);
                 };
@@ -1155,10 +1193,12 @@ impl<S: IdentityProvider> DeviceService<S> {
                         .expires_at_unix_ms()
                         .min(now.saturating_add(60_000)),
                 });
+                let _fence = self.core.fences.admit(&bound.scope, bound.epoch)?;
                 self.core
                     .app
                     .record_backend_request(&self.core.caller(), Some(&previous), &next)
                     .map_err(map_app_error)?;
+                drop(_fence);
                 Reply::PolicyRequest {
                     value: Box::new(self.send_policy(next, &bound, commands).await?),
                 }
@@ -1772,5 +1812,24 @@ impl Core {
             .record_backend_request(&caller, Some(&submitting), &observed)
             .map_err(map_app_error)?;
         Ok(observed)
+    }
+}
+
+fn policy_origin(record: &BackendRequest) -> Result<ClientOrigin, Error> {
+    match &record.trigger {
+        BackendTrigger::Human { .. } => Ok(ClientOrigin::Desktop {}),
+        BackendTrigger::Ai {
+            config,
+            conversation,
+            tool_call,
+            context,
+            ..
+        } => Ok(ClientOrigin::Ai {
+            config: config.clone(),
+            conversation: conversation.clone(),
+            tool_call: tool_call.clone(),
+            context: context.clone(),
+        }),
+        BackendTrigger::Automatic {} => Err(Error::Denied),
     }
 }

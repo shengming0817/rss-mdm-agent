@@ -364,6 +364,102 @@ impl ExecutionHandle {
             _ => Err(bad(Error::Unavailable)),
         }
     }
+    async fn software_request(
+        &self,
+        input: LocalSoftwareOperation,
+    ) -> Result<Reply, mcp::ServiceError> {
+        let reply = self
+            .request(Request::LocalSoftware {
+                context: self.context_ref().map_err(|_| mcp::ServiceError::Unbound)?,
+                origin: self.origin.clone(),
+                input,
+            })
+            .await
+            .map_err(mcp_error)?;
+        software_reply(reply)
+    }
+    pub async fn software_history(
+        &self,
+        input: SoftwareHistoryQuery,
+    ) -> ui::Result<execution_app::LocalSoftwareHistory> {
+        match self
+            .software_request(LocalSoftwareOperation::History(input))
+            .await
+            .map_err(software_ui_error)?
+        {
+            Reply::SoftwareHistory { value } => Ok(value),
+            _ => Err(bad(Error::Unavailable)),
+        }
+    }
+    pub async fn software_prepare(
+        &self,
+        input: LocalSoftwareChoice,
+    ) -> ui::Result<LocalSoftwarePrepared> {
+        match self
+            .software_request(LocalSoftwareOperation::Prepare(input))
+            .await
+            .map_err(software_ui_error)?
+        {
+            Reply::SoftwarePrepared { value } => Ok(value),
+            _ => Err(bad(Error::OutcomeUnknown)),
+        }
+    }
+    pub async fn software_submit(
+        &self,
+        input: LocalSoftwareSubmission,
+    ) -> ui::Result<execution_app::LocalSoftwareStatus> {
+        match self
+            .software_request(LocalSoftwareOperation::Submit(input))
+            .await
+            .map_err(software_ui_error)?
+        {
+            Reply::SoftwareStatus { value } => Ok(value),
+            _ => Err(bad(Error::OutcomeUnknown)),
+        }
+    }
+    pub async fn software_status(
+        &self,
+        input: QueryRequest,
+    ) -> ui::Result<execution_app::LocalSoftwareStatus> {
+        match self
+            .software_request(LocalSoftwareOperation::Status(input))
+            .await
+            .map_err(software_ui_error)?
+        {
+            Reply::SoftwareStatus { value } => Ok(value),
+            _ => Err(bad(Error::OutcomeUnknown)),
+        }
+    }
+    pub async fn software_cancel(
+        &self,
+        input: QueryRequest,
+    ) -> ui::Result<execution_app::LocalSoftwareStatus> {
+        match self
+            .software_request(LocalSoftwareOperation::Cancel(input))
+            .await
+            .map_err(software_ui_error)?
+        {
+            Reply::SoftwareStatus { value } => Ok(value),
+            _ => Err(bad(Error::OutcomeUnknown)),
+        }
+    }
+    async fn read_software(&self, input: SoftwareRead) -> Result<SoftwarePage, mcp::ServiceError> {
+        let reply = self
+            .request(Request::SoftwareRead {
+                context: self.context_ref().map_err(|_| mcp::ServiceError::Unbound)?,
+                origin: self.origin.clone(),
+                input,
+            })
+            .await
+            .map_err(mcp_error)?;
+        match software_reply(reply)? {
+            Reply::SoftwarePage { value } => Ok(value),
+            _ => Err(mcp::ServiceError::Unavailable),
+        }
+    }
+    pub async fn software_read(&self, input: SoftwareRead) -> ui::Result<SoftwarePage> {
+        self.read_software(input).await.map_err(software_ui_error)
+    }
     pub async fn policy_directory(
         &self,
         input: ui::PolicyDirectoryQuery,
@@ -381,11 +477,12 @@ impl ExecutionHandle {
             _ => Err(bad(Error::Denied)),
         }
     }
-    pub async fn invoke_policy(&self, choice: PolicyChoice) -> ui::Result<BackendRequest> {
+    pub async fn invoke_policy(&self, input: PolicyInvocation) -> ui::Result<BackendRequest> {
         match self
             .request(Request::InvokePolicy {
                 context: self.context_ref()?,
-                choice,
+                choice: input.choice,
+                locator: input.locator,
                 origin: self.origin.clone(),
             })
             .await
@@ -398,7 +495,7 @@ impl ExecutionHandle {
     async fn policy_call(
         &self,
         name: &str,
-        args: serde_json::Map<String, serde_json::Value>,
+        input: mcp::PolicyToolInput,
         draft: bool,
     ) -> Result<BackendRequest, mcp::ServiceError> {
         let ClientOrigin::Ai { tool_call, .. } = &self.origin else {
@@ -410,48 +507,43 @@ impl ExecutionHandle {
                 .to_string(),
         )
         .map_err(|_| mcp::ServiceError::InvalidInput)?;
-        let mut after = None;
-        for _ in 0..16 {
-            let page = self
-                .policy_directory(ui::PolicyDirectoryQuery { after })
-                .await
-                .map_err(|_| mcp::ServiceError::Unavailable)?;
-            for item in page.items {
-                if mcp::policy_tool_name(&item) == name {
-                    mcp::policy_tool(&item)?;
-                    let choice = PolicyChoice {
-                        request,
-                        policy_id: Id::new(item.policy_id.to_string())
-                            .map_err(|_| mcp::ServiceError::InvalidInput)?,
-                        policy_revision: item.policy_revision,
-                        policy_version: Id::new(item.policy_version.to_string())
-                            .map_err(|_| mcp::ServiceError::InvalidInput)?,
-                        parameters: args.into_iter().collect(),
-                    };
-                    return if draft {
-                        self.prepare_policy(choice).await
-                    } else {
-                        self.invoke_policy(choice).await
-                    }
-                    .map_err(|_| mcp::ServiceError::OutcomeUnknown);
-                }
-            }
-            after = page
-                .next_cursor
-                .map(|id| Id::new(id.to_string()))
-                .transpose()
-                .map_err(|_| mcp::ServiceError::InvalidInput)?;
-            if after.is_none() {
-                break;
-            }
+        let page = self
+            .policy_directory(ui::PolicyDirectoryQuery {
+                after: input.locator.after.clone(),
+            })
+            .await
+            .map_err(|_| mcp::ServiceError::Unavailable)?;
+        let item = page
+            .items
+            .into_iter()
+            .find(|item| mcp::policy_tool_name(item) == name)
+            .ok_or(mcp::ServiceError::Conflict)?;
+        mcp::policy_tool(&item, &input.locator)?;
+        let invocation = PolicyInvocation {
+            locator: input.locator,
+            choice: PolicyChoice {
+                request,
+                policy_id: Id::new(item.policy_id.to_string())
+                    .map_err(|_| mcp::ServiceError::InvalidInput)?,
+                policy_revision: item.policy_revision,
+                policy_version: Id::new(item.policy_version.to_string())
+                    .map_err(|_| mcp::ServiceError::InvalidInput)?,
+                parameters: input.parameters.into_iter().collect(),
+            },
+        };
+        if draft {
+            self.prepare_policy(invocation).await
+        } else {
+            self.invoke_policy(invocation).await
         }
-        Err(mcp::ServiceError::Denied)
+        .map_err(|_| mcp::ServiceError::OutcomeUnknown)
     }
-    pub async fn prepare_policy(&self, choice: PolicyChoice) -> ui::Result<BackendRequest> {
+    pub async fn prepare_policy(&self, input: PolicyInvocation) -> ui::Result<BackendRequest> {
         match self
             .request(Request::PreparePolicy {
                 context: self.context_ref()?,
-                choice,
+                choice: input.choice,
+                locator: input.locator,
                 origin: self.origin.clone(),
             })
             .await
@@ -644,6 +736,13 @@ fn operation(s: ExecutionStatus) -> mcp::OperationStatus {
         evidence: s.evidence.into_iter().map(|e| e.reference.id).collect(),
     }
 }
+fn local_software_result(value: execution_app::LocalSoftwareStatus) -> mcp::LocalSoftwareResult {
+    mcp::LocalSoftwareResult {
+        detected: value.detected,
+        prepared: value.prepared,
+        operation: operation(value.execution),
+    }
+}
 impl mcp::ExecutionServicePort for ExecutionHandle {
     fn bind_call(
         self: &Arc<Self>,
@@ -717,60 +816,121 @@ impl mcp::ExecutionServicePort for ExecutionHandle {
             .await
             .map_err(|_| mcp::ServiceError::Unavailable)
     }
+    async fn software_read(
+        &self,
+        input: SoftwareRead,
+        _: CancellationToken,
+    ) -> Result<SoftwarePage, mcp::ServiceError> {
+        self.read_software(input).await
+    }
+    async fn software_prepare(
+        &self,
+        input: mcp::LocalSoftwareProposal,
+        _: CancellationToken,
+    ) -> Result<LocalSoftwarePrepared, mcp::ServiceError> {
+        let ClientOrigin::Ai { tool_call, .. } = &self.origin else {
+            return Err(mcp::ServiceError::Denied);
+        };
+        let request = RequestId::new(
+            uuid::Uuid::parse_str(tool_call.as_str())
+                .map_err(|_| mcp::ServiceError::InvalidInput)?
+                .to_string(),
+        )
+        .map_err(|_| mcp::ServiceError::InvalidInput)?;
+        match self
+            .software_request(LocalSoftwareOperation::Prepare(LocalSoftwareChoice {
+                request,
+                software: input.software,
+                action: input.action,
+            }))
+            .await?
+        {
+            Reply::SoftwarePrepared { value } => Ok(value),
+            _ => Err(mcp::ServiceError::OutcomeUnknown),
+        }
+    }
+    async fn software_status(
+        &self,
+        input: QueryRequest,
+        _: CancellationToken,
+    ) -> Result<mcp::LocalSoftwareResult, mcp::ServiceError> {
+        let value = match self
+            .software_request(LocalSoftwareOperation::Status(input))
+            .await?
+        {
+            Reply::SoftwareStatus { value } => value,
+            _ => return Err(mcp::ServiceError::Unavailable),
+        };
+        Ok(local_software_result(value))
+    }
+    async fn software_cancel(
+        &self,
+        input: QueryRequest,
+        _: CancellationToken,
+    ) -> Result<mcp::LocalSoftwareResult, mcp::ServiceError> {
+        let value = match self
+            .software_request(LocalSoftwareOperation::Cancel(input))
+            .await?
+        {
+            Reply::SoftwareStatus { value } => value,
+            _ => return Err(mcp::ServiceError::Unavailable),
+        };
+        Ok(local_software_result(value))
+    }
     async fn policy_tools(
         &self,
+        input: mcp::PolicyToolsQuery,
         _: CancellationToken,
-    ) -> Result<Vec<serde_json::Value>, mcp::ServiceError> {
+    ) -> Result<mcp::PolicyToolPage, mcp::ServiceError> {
         if !matches!(self.origin, ClientOrigin::Ai { .. }) {
             return Err(mcp::ServiceError::Denied);
         }
-        let mut after = None;
+        let locator = PolicyLocator {
+            after: input.after.clone(),
+        };
+        let page = self
+            .policy_directory(ui::PolicyDirectoryQuery { after: input.after })
+            .await
+            .map_err(|_| mcp::ServiceError::Unavailable)?;
         let mut tools = Vec::new();
-        for _ in 0..16 {
-            let page = self
-                .policy_directory(ui::PolicyDirectoryQuery { after })
-                .await
-                .map_err(|_| mcp::ServiceError::Unavailable)?;
-            for item in page.items {
-                match mcp::policy_tool(&item) {
-                    Ok(tool) => tools.push(tool),
-                    Err(mcp::ServiceError::InvalidInput) => {
-                        eprintln!(
-                            "RSS_POLICY_TOOL_UNSUPPORTED name={}",
-                            mcp::policy_tool_name(&item)
-                        );
-                    }
-                    Err(error) => return Err(error),
-                }
+        for item in page.items {
+            match mcp::policy_tool(&item, &locator) {
+                Ok(tool) => tools.push(tool),
+                Err(mcp::ServiceError::InvalidInput) => (), // Unsupported Resource schemas are not executable tools.
+                Err(error) => return Err(error),
             }
-            after = page
+        }
+        Ok(mcp::PolicyToolPage {
+            tools,
+            next: page
                 .next_cursor
                 .map(|id| Id::new(id.to_string()))
                 .transpose()
-                .map_err(|_| mcp::ServiceError::InvalidInput)?;
-            if after.is_none() {
-                return Ok(tools);
-            }
-            if tools.len() >= 128 {
-                return Err(mcp::ServiceError::Limit);
-            }
-        }
-        Err(mcp::ServiceError::Limit)
+                .map_err(|_| mcp::ServiceError::InvalidInput)?,
+        })
     }
     async fn invoke_policy(
         &self,
         name: &str,
-        args: serde_json::Map<String, serde_json::Value>,
+        input: mcp::PolicyToolInput,
         _: CancellationToken,
     ) -> Result<BackendRequest, mcp::ServiceError> {
-        self.policy_call(name, args, false).await
+        self.policy_call(name, input, false).await
     }
     async fn prepare_operation(
         &self,
         input: mcp::OperationProposal,
         _: CancellationToken,
     ) -> Result<BackendRequest, mcp::ServiceError> {
-        self.policy_call(&input.tool, input.parameters, true).await
+        self.policy_call(
+            &input.tool,
+            mcp::PolicyToolInput {
+                locator: input.locator,
+                parameters: input.parameters,
+            },
+            true,
+        )
+        .await
     }
 
     async fn policy_status(
@@ -845,6 +1005,36 @@ impl mcp::ExecutionServicePort for ExecutionHandle {
             },
         })
     }
+}
+
+fn software_reply(reply: Reply) -> Result<Reply, mcp::ServiceError> {
+    if let Reply::DataFailure { reason } = reply {
+        return Err(match reason {
+            DataError::InvalidInput => mcp::ServiceError::InvalidInput,
+            DataError::Denied => mcp::ServiceError::Denied,
+            DataError::NotFound => mcp::ServiceError::NotFound,
+            DataError::Conflict => mcp::ServiceError::Conflict,
+            DataError::Expired => mcp::ServiceError::Expired,
+            DataError::Unsupported => mcp::ServiceError::Unsupported,
+            DataError::InProgress => mcp::ServiceError::InProgress,
+            DataError::Capacity => mcp::ServiceError::Limit,
+            DataError::Unavailable => mcp::ServiceError::Unavailable,
+        });
+    }
+    Ok(reply)
+}
+fn software_ui_error(error: mcp::ServiceError) -> ui::ServiceError {
+    ui::error(
+        match error {
+            mcp::ServiceError::NotFound => "software_not_found",
+            mcp::ServiceError::Conflict => "software_conflict",
+            mcp::ServiceError::Denied | mcp::ServiceError::Unbound => "software_denied",
+            mcp::ServiceError::Expired => "software_expired",
+            mcp::ServiceError::Unsupported => "software_unsupported",
+            _ => "software_unavailable",
+        },
+        "软件操作尚未完成；请核对所选软件或查询原请求",
+    )
 }
 
 fn selection_reply(input: &BackendSelection, reply: Reply) -> Result<TaskSubmission, Error> {
@@ -1087,5 +1277,74 @@ mod selection_tests {
             )
             .is_err());
         }
+    }
+}
+
+#[cfg(test)]
+mod local_software_error_tests {
+    use super::*;
+    #[test]
+    fn verified_detection_facts_survive_the_native_mcp_projection() {
+        use serde_json::json;
+        let mut value: execution_app::LocalSoftwareStatus = serde_json::from_value(json!({
+            "detected":null,
+            "prepared":{
+                "request":"local-detection","digest":"a".repeat(64),
+                "choice":{"request":"local-detection","software":{"query":{"id":"native:apps","revision":"b".repeat(64)},"cursor":{"snapshot":"c".repeat(64),"offset":0},"installation":"app"},"action":"detect"},
+                "name":"App","initiator":{"kind":"human","osSession":{"device":"device","account":{"platform":"macos","subject":"uid:501"},"session":"login"}},
+                "identity":"system","targetVersion":null,"startBeforeUnixMs":1000
+            },
+            "execution":{
+                "operationRequestId":"local-detection","contentDigest":"a".repeat(64),
+                "phase":"executionEnded","mode":"test","process":null,"software":null,
+                "attemptId":null,"attempts":1,"cancelRequested":false,"admission":null,
+                "dispatchCause":null,"stopOutcome":null,"assessment":null,"evidence":[]
+            }
+        })).unwrap();
+        for detected in [
+            Some(SoftwareState::Present {
+                version: PackageValue::new("1.2.3").unwrap(),
+            }),
+            Some(SoftwareState::Absent {}),
+            Some(SoftwareState::Unknown {
+                reason: SoftwareDetectionFailure::Unavailable,
+            }),
+            None,
+        ] {
+            value.detected = detected.clone();
+            let projected = local_software_result(value.clone());
+            assert_eq!(projected.detected, detected);
+            assert_eq!(projected.prepared.request, value.prepared.request);
+            assert_eq!(
+                projected.operation.operation_request_id,
+                value.execution.operation_request_id
+            );
+            assert_eq!(
+                projected.operation.phase,
+                mcp::OperationPhase::ExecutionEnded
+            );
+        }
+    }
+
+    #[test]
+    fn definitive_software_absence_survives_the_mcp_boundary() {
+        assert!(matches!(
+            software_reply(Reply::DataFailure {
+                reason: DataError::NotFound
+            }),
+            Err(mcp::ServiceError::NotFound)
+        ));
+        assert!(matches!(
+            software_reply(Reply::DataFailure {
+                reason: DataError::Conflict
+            }),
+            Err(mcp::ServiceError::Conflict)
+        ));
+        assert!(matches!(
+            software_reply(Reply::DataFailure {
+                reason: DataError::Denied
+            }),
+            Err(mcp::ServiceError::Denied)
+        ));
     }
 }

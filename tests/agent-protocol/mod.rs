@@ -173,6 +173,7 @@ pub struct Data {
     pub employee_calls: Vec<(String, Value)>,
     pub employee_credentials: Vec<bool>,
     pub self_service_directory: Option<SelfServiceDirectoryResponse>,
+    pub self_service_pages: BTreeMap<Option<Uuid>, SelfServiceDirectoryResponse>,
     pub invocations: BTreeMap<Uuid, (Value, SelfServiceAccepted)>,
     pub invocation_reply_lost: bool,
     pub invocation_unaccepted: bool,
@@ -660,6 +661,7 @@ impl Server {
             employee_calls: vec![],
             employee_credentials: vec![],
             self_service_directory: None,
+            self_service_pages: BTreeMap::new(),
             invocations: BTreeMap::new(),
             invocation_reply_lost: false,
             invocation_unaccepted: false,
@@ -1871,14 +1873,20 @@ fn self_service_response(d: &mut Data, uri: &Uri, headers: &HeaderMap, value: Va
         }
     }
     if path.ends_with("/self-service") {
-        let mut directory =
-            d.self_service_directory
-                .clone()
-                .unwrap_or(SelfServiceDirectoryResponse {
-                    items: vec![],
-                    next_cursor: None,
-                    as_of: d.time.now().unwrap(),
-                });
+        let after = uri
+            .query()
+            .and_then(|q| q.split('&').find_map(|part| part.strip_prefix("after=")))
+            .and_then(|id| Uuid::parse_str(id).ok());
+        let mut directory = d
+            .self_service_pages
+            .get(&after)
+            .cloned()
+            .or_else(|| d.self_service_directory.clone())
+            .unwrap_or(SelfServiceDirectoryResponse {
+                items: vec![],
+                next_cursor: None,
+                as_of: d.time.now().unwrap(),
+            });
         // Explicit transport fixture projection, not enterprise qualification authority.
         directory.items.retain(|item| {
             matches!(item.subject, SelfServiceSubject::Device {})

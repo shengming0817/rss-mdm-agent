@@ -1239,6 +1239,53 @@ it("execution cards require a Host delivery and matching Rust conversation and t
   t.c.dispose();
 });
 
+it("later-page Policy cards read the original native request and keep conversation/tool binding", async () => {
+  const t = setup();
+  await t.c.connect();
+  await t.c.select("session-1");
+  const signal = new AbortController().signal;
+  const details = structuredClone(fixtures.running) as ExecutionTaskDetails;
+  details.status.operationRequestId = "op";
+  details.action.initiator = {
+    kind: "ai",
+    conversation: "session-1",
+    toolCall: "op",
+    provider: "codex",
+    config: { id: "config", revision: "1" },
+    osSession: {
+      ...(details.action.initiator as { osSession: object }).osSession,
+    },
+  } as Extract<ExecutionTaskDetails["action"]["initiator"], { kind: "ai" }>;
+  t.view.deliveries.op = {
+    commandId: "command",
+    recorded: true,
+    proposal: {
+      name: "execution_policy_invoke",
+      arguments: {
+        tool: "policy_later",
+        locator: { after: "page-17" },
+        parameters: { request: "model-suggested-id" },
+      },
+    },
+  };
+  t.emit();
+  t.taskDetails.mockResolvedValue({ kind: "execution", value: details });
+  await expect(t.c.executionDetails("op", signal)).resolves.toEqual({
+    kind: "execution",
+    value: details,
+  });
+  expect(t.taskDetails).toHaveBeenLastCalledWith("op", expect.any(AbortSignal));
+  details.status.operationRequestId = "model-suggested-id";
+  await expect(t.c.executionDetails("op", signal)).rejects.toThrow();
+  details.status.operationRequestId = "op";
+  details.action.initiator.toolCall = "other-tool";
+  await expect(t.c.executionDetails("op", signal)).rejects.toThrow();
+  details.action.initiator.toolCall = "op";
+  details.action.initiator.conversation = "other-conversation";
+  await expect(t.c.executionDetails("op", signal)).rejects.toThrow();
+  t.c.dispose();
+});
+
 describe("resource composition ownership", () => {
   it("stages without sending and submits the preview to the existing session", async () => {
     const t = setup();

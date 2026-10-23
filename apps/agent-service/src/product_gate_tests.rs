@@ -101,6 +101,9 @@ impl Case {
             &root.path.join("execution.sqlite"),
             crate::ProductionStartup::Create,
             ExecutionConfig {
+                local_software: crate::local_software::LocalSoftwareConfig {
+                    policy_file: "/unavailable/software-policy.json".into(),
+                },
                 work_root: root.path.clone(),
                 material_root: root.path.join("materials"),
                 interpreters: vec![Interpreter {
@@ -1049,6 +1052,9 @@ async fn service_assembly_creates_and_reopens_journal_with_its_actual_budgets() 
         cdhash: None,
     };
     let config = ExecutionConfig {
+        local_software: crate::local_software::LocalSoftwareConfig {
+            policy_file: "/unavailable/software-policy.json".into(),
+        },
         work_root: root.path.clone(),
         material_root: root.path.join("materials"),
         // Native collection/telemetry do not require an installed script interpreter.
@@ -1386,6 +1392,7 @@ async fn policy_confirmation_is_single_exact_and_bound_to_employee_generation() 
         parameters: std::collections::BTreeMap::from([("name".into(), serde_json::json!("Acme"))]),
     };
     let invoke = Request::InvokePolicy {
+        locator: execution_contract::PolicyLocator { after: None },
         context: c.context(),
         choice: choice.clone(),
         origin: c.selection.origin.clone(),
@@ -1408,6 +1415,7 @@ async fn policy_confirmation_is_single_exact_and_bound_to_employee_generation() 
         .insert("path".into(), serde_json::json!("/Library"));
     assert!(matches!(
         c.policy_call(Request::InvokePolicy {
+            locator: execution_contract::PolicyLocator { after: None },
             context: c.context(),
             choice: changed,
             origin: c.selection.origin.clone()
@@ -1446,6 +1454,7 @@ async fn policy_confirmation_is_single_exact_and_bound_to_employee_generation() 
     choice.request = RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap();
     assert!(matches!(
         c.policy_call(Request::InvokePolicy {
+            locator: execution_contract::PolicyLocator { after: None },
             context: c.context(),
             choice: choice.clone(),
             origin: c.selection.origin.clone()
@@ -1527,6 +1536,7 @@ async fn policy_low_risk_and_human_only_settings_have_separate_native_sources() 
         };
         let Reply::PolicyRequest { value } = c
             .policy_call(Request::InvokePolicy {
+                locator: execution_contract::PolicyLocator { after: None },
                 context: c.context(),
                 choice: choice.clone(),
                 origin,
@@ -1549,6 +1559,7 @@ async fn policy_low_risk_and_human_only_settings_have_separate_native_sources() 
         stale.policy_revision += 1;
         assert!(matches!(
             c.policy_call(Request::InvokePolicy {
+                locator: execution_contract::PolicyLocator { after: None },
                 context: c.context(),
                 choice: stale,
                 origin: c.selection.origin.clone()
@@ -1593,6 +1604,7 @@ async fn policy_offer_binds_the_original_journal_and_signed_start_before_dispatc
                 };
                 assert!(matches!(
                     c.policy_call(Request::InvokePolicy {
+                        locator: execution_contract::PolicyLocator { after: None },
                         context: c.context(),
                         choice: choice.clone(),
                         origin: c.selection.origin.clone()
@@ -2043,6 +2055,7 @@ async fn durable_ready_policy_resumes_original_uuid_from_each_native_entrypoint(
             )]),
         };
         let invoke = Request::InvokePolicy {
+            locator: execution_contract::PolicyLocator { after: None },
             context: c.context(),
             choice: choice.clone(),
             origin: c.selection.origin.clone(),
@@ -2079,6 +2092,7 @@ async fn durable_ready_policy_resumes_original_uuid_from_each_native_entrypoint(
             .unwrap();
         let request = match entry {
             0 => Request::InvokePolicy {
+                locator: execution_contract::PolicyLocator { after: None },
                 context: c.context(),
                 choice: match &restored.action {
                     PreparedAction::Policy { choice, .. } => choice.clone(),
@@ -2134,6 +2148,7 @@ async fn unaccepted_policy_expiry_is_durable_and_status_remains_read_only() {
     };
     let Reply::PolicyRequest { value } = c
         .policy_call(Request::InvokePolicy {
+            locator: execution_contract::PolicyLocator { after: None },
             context: c.context(),
             choice,
             origin: c.selection.origin.clone(),
@@ -2367,6 +2382,7 @@ async fn software_self_service_binds_signed_policy_and_native_context() {
     };
     let Reply::PolicyRequest { value: pending } = c
         .policy_call(Request::InvokePolicy {
+            locator: execution_contract::PolicyLocator { after: None },
             context: c.context(),
             choice: choice.clone(),
             origin: c.selection.origin.clone(),
@@ -2525,6 +2541,7 @@ async fn device_directory_and_invocation_are_credential_free_with_or_without_emp
         let choice = c.policy_choice(&item);
         let Reply::PolicyRequest { value } = c
             .policy_call(Request::InvokePolicy {
+                locator: execution_contract::PolicyLocator { after: None },
                 context: c.context(),
                 choice: choice.clone(),
                 origin: c.selection.origin.clone(),
@@ -2574,6 +2591,7 @@ async fn retired_ai_ingress_cannot_read_or_invoke_but_original_device_consent_co
     let origin = c.selection.origin.clone();
     let Reply::PolicyRequest { value: pending } = c
         .policy_call(Request::InvokePolicy {
+            locator: execution_contract::PolicyLocator { after: None },
             context: old.clone(),
             choice: choice.clone(),
             origin: origin.clone(),
@@ -2595,6 +2613,7 @@ async fn retired_ai_ingress_cannot_read_or_invoke_but_original_device_consent_co
             origin: origin.clone(),
         },
         Request::InvokePolicy {
+            locator: execution_contract::PolicyLocator { after: None },
             context: c.context(),
             choice: choice.clone(),
             origin: origin.clone(),
@@ -2664,6 +2683,7 @@ async fn unknown_device_submission_queries_original_before_any_repeat_post_after
         let choice = c.policy_choice(&item);
         let Reply::PolicyRequest { value: unknown } = c
             .policy_call(Request::InvokePolicy {
+                locator: execution_contract::PolicyLocator { after: None },
                 context: c.context(),
                 choice: choice.clone(),
                 origin: c.selection.origin.clone(),
@@ -2732,6 +2752,7 @@ async fn fences_isolate_os_sessions_and_user_requests_never_downgrade() {
     let choice = c.policy_choice(&item);
     let Reply::PolicyRequest { value } = c
         .policy_call(Request::InvokePolicy {
+            locator: execution_contract::PolicyLocator { after: None },
             context: c.context(),
             choice: choice.clone(),
             origin: c.selection.origin.clone(),
@@ -2792,6 +2813,7 @@ impl Case {
         let choice = self.policy_choice(&item);
         let reply = self
             .policy_call(Request::InvokePolicy {
+                locator: execution_contract::PolicyLocator { after: None },
                 context: self.context(),
                 choice: choice.clone(),
                 origin: self.selection.origin.clone(),
@@ -3125,6 +3147,7 @@ async fn expired_device_confirmation_checks_original_os_owner_before_read_or_wri
     let choice = c.policy_choice(&item);
     assert!(matches!(
         c.policy_call(Request::InvokePolicy {
+            locator: execution_contract::PolicyLocator { after: None },
             context: c.context(),
             choice: choice.clone(),
             origin: c.selection.origin.clone(),
@@ -3426,6 +3449,7 @@ async fn operation_draft_freezes_current_parameters_once_and_queries_do_not_exec
         };
         let Reply::PolicyRequest { value: draft } = c
             .policy_call(Request::PreparePolicy {
+                locator: execution_contract::PolicyLocator { after: None },
                 context: c.context(),
                 choice: choice.clone(),
                 origin: c.selection.origin.clone(),
@@ -3571,6 +3595,7 @@ async fn operation_draft_rejects_changed_policy_and_retired_native_context() {
         };
         let Reply::PolicyRequest { value } = c
             .policy_call(Request::PreparePolicy {
+                locator: execution_contract::PolicyLocator { after: None },
                 context: c.context(),
                 choice: choice.clone(),
                 origin: c.selection.origin.clone(),
@@ -3661,6 +3686,7 @@ async fn operation_draft_rejects_secret_and_unresolved_schemas_before_persistenc
         };
         let reply = c
             .policy_call(Request::PreparePolicy {
+                locator: execution_contract::PolicyLocator { after: None },
                 context: c.context(),
                 choice: choice.clone(),
                 origin: c.selection.origin.clone(),
@@ -4092,7 +4118,7 @@ async fn local_data_queries_keep_os_prerequisites_exact_authority_and_offline_re
             input: DataOperation::Directory(QueryDirectory {
                 after: None,
                 limit: 128,
-                refresh_policies: false,
+                policy_page: None,
             }),
         })
         .await;
@@ -4262,7 +4288,7 @@ async fn local_data_queries_keep_os_prerequisites_exact_authority_and_offline_re
             input: DataOperation::Directory(QueryDirectory {
                 after: None,
                 limit: 16,
-                refresh_policies: false
+                policy_page: None
             })
         })
         .await,
@@ -4328,4 +4354,450 @@ async fn local_data_queries_keep_os_prerequisites_exact_authority_and_offline_re
         }
     ));
     assert_eq!(c.service.core.policy_commands.len(), queued);
+}
+
+#[tokio::test]
+async fn late_policy_page_is_revalidated_for_invoke_draft_and_confirmation_without_scanning() {
+    let _budget = crate::scenario_budget::enter();
+    use execution_ipc::host::Request;
+    for draft in [false, true] {
+        let mut c = Case::new(None).await;
+        let directory = protocol::policy_directory_fixture(c.service.client.configuration().tenant);
+        let cursor = uuid::Uuid::from_u128(18);
+        {
+            let mut data = c._server.data.lock().unwrap();
+            for page in 0..18 {
+                data.self_service_pages.insert(
+                    if page == 0 {
+                        None
+                    } else {
+                        Some(uuid::Uuid::from_u128(page))
+                    },
+                    wire::SelfServiceDirectoryResponse {
+                        items: vec![],
+                        next_cursor: Some(uuid::Uuid::from_u128(page + 1)),
+                        as_of: c._server.time.now().unwrap(),
+                    },
+                );
+            }
+            data.self_service_pages.insert(
+                Some(cursor),
+                wire::SelfServiceDirectoryResponse {
+                    items: vec![directory.clone()],
+                    next_cursor: None,
+                    as_of: c._server.time.now().unwrap(),
+                },
+            );
+        }
+        c.employee("late-page").await;
+        let choice = c.policy_choice(&directory);
+        let locator = execution_contract::PolicyLocator {
+            after: Some(plan::id(cursor.to_string()).unwrap()),
+        };
+        let request = if draft {
+            Request::PreparePolicy {
+                context: c.context(),
+                choice: choice.clone(),
+                locator: locator.clone(),
+                origin: c.selection.origin.clone(),
+            }
+        } else {
+            Request::InvokePolicy {
+                context: c.context(),
+                choice: choice.clone(),
+                locator: locator.clone(),
+                origin: c.selection.origin.clone(),
+            }
+        };
+        let offset = c._server.data.lock().unwrap().employee_calls.len();
+        let Reply::PolicyRequest { value } = c.policy_call(request).await else {
+            panic!("late-page choice")
+        };
+        assert_eq!(
+            value.state,
+            if draft {
+                BackendRequestState::Draft
+            } else {
+                BackendRequestState::AwaitingConfirmation
+            }
+        );
+        assert!(c._server.data.lock().unwrap().invocations.is_empty());
+        let calls = c._server.data.lock().unwrap().employee_calls[offset..].to_vec();
+        assert_eq!(calls.len(), 2);
+        assert!(calls
+            .iter()
+            .all(|(url, _)| url.contains(&format!("after={cursor}"))));
+        if draft {
+            c.policy_call(Request::SubmitPolicy {
+                context: c.context(),
+                input: execution_contract::PolicySubmission {
+                    request: choice.request.clone(),
+                    revision: value.revision,
+                    parameters: choice.parameters.clone(),
+                },
+            })
+            .await;
+        } else {
+            c.policy_call(Request::ConfirmPolicy {
+                context: c.context(),
+                request: choice.request.clone(),
+            })
+            .await;
+        }
+        assert!(c
+            ._server
+            .data
+            .lock()
+            .unwrap()
+            .invocations
+            .contains_key(&uuid::Uuid::parse_str(choice.request.as_str()).unwrap()));
+    }
+}
+
+/// Explicit policy authority fixture with real service/SQLite; native detector is read-only.
+/// This never establishes System privilege, a real install/uninstall or Windows acceptance.
+#[cfg(target_os = "macos")]
+async fn local_software_case() -> (Case, LocalSoftwareChoice) {
+    use crate::local_software::{LocalScope, Recipe, Rules};
+    use execution_ipc::host::Request;
+    let mut c = Case::new(None).await;
+    let context = c.context();
+    let Reply::Data {
+        value: DataResponse::Directory(directory),
+    } = c
+        .policy_call(Request::Data {
+            context: context.clone(),
+            origin: ClientOrigin::Desktop {},
+            input: DataOperation::Directory(QueryDirectory {
+                after: None,
+                limit: 128,
+                policy_page: None,
+            }),
+        })
+        .await
+    else {
+        panic!("directory");
+    };
+    let query = directory
+        .items
+        .into_iter()
+        .find(|d| d.domains.contains(&"software.receipts".into()))
+        .unwrap()
+        .reference;
+    let receipt = format!("org.rss.fixture.never-installed.{}", uuid::Uuid::new_v4());
+    c.service.core.data.snapshot(&CollectedData{
+        query:query.clone(),scope:DataScope::Device,request:None,collected_at:Some(c.service.core.host.clock.millis().unwrap()/1000),quality:DataQuality::Complete,enumeration_complete:true,mapping_version:Some(1),fields:Default::default(),
+        rows:vec![serde_json::json!({"id":"fixture-receipt","native_id":receipt,"name":"Explicit receipt fixture","version":"1.0.0","scope":"device","owner":"","origin":"pkg_receipt"})],stale:false,next:None,
+    }).unwrap();
+    let (reply, receive) = tokio::sync::oneshot::channel();
+    c.service.core.handle(Command {
+        fence_epoch: c.service.core.fences.current(&c.scope()).unwrap(),
+        subject: c.selection.subject.clone(),
+        session: c.selection.session,
+        binding: Some(c.selection.binding.clone()),
+        reply,
+        request: LocalRequest::operation(Request::SoftwareRead {
+            context: context.clone(),
+            origin: ClientOrigin::Desktop {},
+            input: SoftwareRead {
+                read: DataRead {
+                    selection: DataSelection::Query { query },
+                    after: None,
+                    limit: 16,
+                    max_age_seconds: Some(300),
+                },
+            },
+        }),
+    });
+    let reply = receive.await.unwrap();
+    let page = match reply {
+        Reply::SoftwarePage { value } => value,
+        Reply::DataFailure { reason } => panic!("software facts unavailable: {reason:?}"),
+        _ => panic!("unexpected software facts reply"),
+    };
+    let item = page.items.into_iter().next().unwrap();
+    let material = plan::pin(std::path::Path::new("/bin/sh")).unwrap();
+    let mut input: ExecutionInput = serde_json::from_slice(include_bytes!(
+        "../../../crates/execution-contract/tests/fixtures/plan.json"
+    ))
+    .unwrap();
+    input.request.target.platform = Platform::Macos;
+    input.request.target.scope = TargetScope::Device {};
+    input.run_as = RunAs::System {
+        platform: Platform::Macos,
+    };
+    input.session_requirement = SessionRequirement::NotRequired {};
+    input.constraints = IsolationPolicy::OsIdentity {};
+    input.budget = ExecutionBudget {
+        total_timeout_ms: 10_000,
+        total_output_bytes: 65536,
+        max_attempts: 1,
+    };
+    input.launch.cwd = c._root.path.to_str().unwrap().into();
+    input.launch.env.clear();
+    input.launch.stdin = StandardInput::Closed {};
+    input.launch.artifact = material.artifact.clone();
+    input.launch.interpreter.artifact = material.artifact.clone();
+    input.launch.interpreter.profile = script_plan::ScriptProfile::PosixSh.reference();
+    input.launch.argv = vec![LaunchArg::ArtifactPath {}];
+    let invocation = SoftwareInvocation {
+        launch: input.launch.clone(),
+        run_as: input.run_as.clone(),
+        session_requirement: input.session_requirement.clone(),
+        timeout_ms: 1000,
+        output_bytes: 4096,
+        exit_codes: SoftwareExitCodes {
+            success: [0].into(),
+            reboot: Default::default(),
+        },
+    };
+    input.launch.interpreter.profile = plan::reference("native-software-sequence", "1").unwrap();
+    input.request.parameters.clear();
+    input.request.operation.action = plan::id("software.uninstall").unwrap();
+    let version = PackageValue::new("1.0.0").unwrap();
+    input.execution = ExecutionSpec::SoftwareProgram {
+        program: Box::new(SoftwareProgram {
+            definition_digest: Digest::new("8".repeat(64)).unwrap(),
+            intent: SoftwareOperation::Uninstall,
+            steps: vec![SoftwareProgramStep {
+                format: SoftwareFormat::Pkg {},
+                package: PackageValue::new(&receipt).unwrap(),
+                version: version.clone(),
+                architecture: PackageValue::new("aarch64").unwrap(),
+                payload: material.artifact.clone(),
+                materials: vec![],
+                signatures: vec![],
+                upgrade: SoftwareUpgrade::Deny {},
+                install: invocation.clone(),
+                auxiliary: Default::default(),
+                uninstall: Some(invocation),
+                detection: SoftwareDetector::PkgReceipt { receipt, version },
+                allow_downgrade: false,
+                allow_reboot: false,
+            }],
+        }),
+    };
+    let mut rules = Rules::installation_default();
+    rules.recipes.push(Recipe {
+        native_id: item.native_id.clone(),
+        kind: item.kind,
+        scope: LocalScope::Device,
+        action: LocalSoftwareAction::Uninstall,
+        publisher: None,
+        from_versions: vec![],
+        target_version: None,
+        input,
+        files: vec![material],
+    });
+    let path = c._root.path.join("explicit-fixture-policy.json");
+    std::fs::write(&path, serde_json::to_vec(&rules).unwrap()).unwrap();
+    c.service.core.config.local_software.policy_file = path;
+    c.service.core.local_policy_fixture = Some(crate::local_software::Policy::fixture);
+    let choice = LocalSoftwareChoice {
+        request: RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap(),
+        software: item.reference,
+        action: LocalSoftwareAction::Detect,
+    };
+    (c, choice)
+}
+#[cfg(target_os = "macos")]
+impl Case {
+    async fn local_software_call(&mut self, input: LocalSoftwareOperation, ai: bool) -> Reply {
+        self.policy_call(execution_ipc::host::Request::LocalSoftware {
+            context: self.context(),
+            origin: if ai {
+                self.selection.origin.clone()
+            } else {
+                ClientOrigin::Desktop {}
+            },
+            input,
+        })
+        .await
+    }
+}
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn local_software_api_stages_no_attempt_and_replays_the_original_after_lost_ack() {
+    let _budget = crate::scenario_budget::enter();
+    let (mut c, choice) = local_software_case().await;
+    let Reply::SoftwarePrepared { value: prepared } = c
+        .local_software_call(LocalSoftwareOperation::Prepare(choice.clone()), true)
+        .await
+    else {
+        panic!("prepare");
+    };
+    assert_eq!(
+        c.service
+            .core
+            .app
+            .status(&c.service.core.caller(), &choice.request)
+            .unwrap()
+            .attempts,
+        0
+    );
+    let original = c
+        .service
+        .core
+        .app
+        .frozen_input(&c.service.core.caller(), &choice.request)
+        .unwrap();
+    assert!(!c.service.core.host.materials.registered(&original).unwrap());
+    // Discarded acknowledgement, repeated prepare and explicit status reuse the retained UUID/digest.
+    let Reply::SoftwarePrepared { value: replay } = c
+        .local_software_call(LocalSoftwareOperation::Prepare(choice.clone()), true)
+        .await
+    else {
+        panic!("replay");
+    };
+    assert_eq!(prepared.digest, replay.digest);
+    let submit = LocalSoftwareSubmission {
+        request: choice.request.clone(),
+        digest: prepared.digest.clone(),
+    };
+    assert!(matches!(
+        c.local_software_call(LocalSoftwareOperation::Submit(submit.clone()), true)
+            .await,
+        Reply::DataFailure {
+            reason: DataError::Denied
+        }
+    ));
+    let mut wrong = submit.clone();
+    wrong.digest = Digest::new("9".repeat(64)).unwrap();
+    assert!(matches!(
+        c.local_software_call(LocalSoftwareOperation::Submit(wrong), false)
+            .await,
+        Reply::DataFailure {
+            reason: DataError::Conflict
+        }
+    ));
+    let Reply::SoftwareStatus { value: started } = c
+        .local_software_call(LocalSoftwareOperation::Submit(submit.clone()), false)
+        .await
+    else {
+        panic!("submit");
+    };
+    assert_eq!(started.execution.attempts, 1);
+    assert!(matches!(started.prepared.initiator, Initiator::Ai { .. }));
+    let Reply::SoftwareStatus { value: again } = c
+        .local_software_call(LocalSoftwareOperation::Submit(submit), false)
+        .await
+    else {
+        panic!("submit replay");
+    };
+    assert_eq!(again.execution.attempts, 1);
+    assert_eq!(again.prepared.digest, prepared.digest);
+    let Reply::SoftwareHistory { value: history } = c
+        .local_software_call(
+            LocalSoftwareOperation::History(SoftwareHistoryQuery {
+                after: None,
+                limit: 64,
+            }),
+            false,
+        )
+        .await
+    else {
+        panic!("history");
+    };
+    assert!(history
+        .items
+        .iter()
+        .any(|i| i.prepared.request == choice.request));
+    let Reply::SoftwareStatus { value: cancel } = c
+        .local_software_call(
+            LocalSoftwareOperation::Cancel(QueryRequest {
+                request: choice.request.clone(),
+            }),
+            false,
+        )
+        .await
+    else {
+        panic!("cancel");
+    };
+    assert!(cancel.execution.cancel_requested);
+    assert_eq!(cancel.execution.attempts, 1);
+    // A retired context cannot use a retained intent to read or cancel a request.
+    let context = c.context();
+    c.policy_call(execution_ipc::host::Request::RevokeContext {})
+        .await;
+    assert!(matches!(
+        c.policy_call(execution_ipc::host::Request::LocalSoftware {
+            context,
+            origin: ClientOrigin::Desktop {},
+            input: LocalSoftwareOperation::Status(QueryRequest {
+                request: choice.request
+            })
+        })
+        .await,
+        Reply::DataFailure {
+            reason: DataError::Denied
+        }
+    ));
+}
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn local_software_api_rechecks_rules_and_snapshot_before_any_attempt() {
+    let _budget = crate::scenario_budget::enter();
+    for changed_rules in [false, true] {
+        let (mut c, choice) = local_software_case().await;
+        let Reply::SoftwarePrepared { value: prepared } = c
+            .local_software_call(LocalSoftwareOperation::Prepare(choice.clone()), false)
+            .await
+        else {
+            panic!("prepare");
+        };
+        if changed_rules {
+            let path = &c.service.core.config.local_software.policy_file;
+            let mut rules: crate::local_software::Rules =
+                serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+            rules.allow_launch = false;
+            std::fs::write(path, serde_json::to_vec(&rules).unwrap()).unwrap();
+        } else {
+            // Changing the immutable observation selected by the original cursor is not a new grant.
+            let read = DataRead {
+                selection: DataSelection::Query {
+                    query: choice.software.query.clone(),
+                },
+                after: None,
+                limit: 16,
+                max_age_seconds: None,
+            };
+            let mut value = c
+                .service
+                .core
+                .data
+                .read(
+                    &read,
+                    &c.selection.subject,
+                    &c.selection.binding,
+                    c.service.core.host.clock.millis().unwrap() / 1000,
+                )
+                .unwrap();
+            value.rows[0]["version"] = serde_json::json!("2.0.0");
+            c.service.core.data.snapshot(&value).unwrap();
+        }
+        let reply = c
+            .local_software_call(
+                LocalSoftwareOperation::Submit(LocalSoftwareSubmission {
+                    request: choice.request.clone(),
+                    digest: prepared.digest,
+                }),
+                false,
+            )
+            .await;
+        assert!(matches!(
+            reply,
+            Reply::DataFailure {
+                reason: DataError::Denied | DataError::Conflict
+            }
+        ));
+        assert_eq!(
+            c.service
+                .core
+                .app
+                .status(&c.service.core.caller(), &choice.request)
+                .unwrap()
+                .attempts,
+            0
+        );
+    }
 }

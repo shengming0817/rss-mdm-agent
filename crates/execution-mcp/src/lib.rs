@@ -10,8 +10,10 @@ mod server;
 mod transport;
 pub use config::McpLimits;
 pub use model::{
-    CancelDisposition, CancelResult, CapabilityState, CapabilityView, OperationPhase,
-    OperationProposal, OperationRequest, OperationScene, OperationStatus, ServiceError,
+    CancelDisposition, CancelResult, CapabilityState, CapabilityView, LocalSoftwareProposal,
+    LocalSoftwareResult, OperationPhase, OperationProposal, OperationRequest, OperationScene,
+    OperationStatus, PolicyToolCall, PolicyToolInput, PolicyToolPage, PolicyToolsQuery,
+    ServiceError,
 };
 pub use port::ExecutionServicePort;
 
@@ -113,6 +115,7 @@ pub fn policy_tool_name(item: &rss_mdm_agent_wire::runtime::SelfServiceDirectory
 /// Project only Input fields from the Resource-owned schema; full resolved validation remains in the service.
 pub fn policy_tool(
     item: &rss_mdm_agent_wire::runtime::SelfServiceDirectoryItem,
+    locator: &execution_contract::PolicyLocator,
 ) -> Result<serde_json::Value, ServiceError> {
     if !item.self_service.published
         || !item.self_service.allow_ai
@@ -122,6 +125,16 @@ pub fn policy_tool(
     }
     let schema =
         execution_contract::query_input_schema(item).map_err(|_| ServiceError::InvalidInput)?;
+    // Codex rust-v0.155.0 tools/src/json_schema/types.rs supports typed properties
+    // and enums; an untyped object const is normalized to a string enum.
+    let after = match &locator.after {
+        Some(value) => serde_json::json!({"type":"string","enum":[value]}),
+        None => serde_json::json!({"type":"null"}),
+    };
+    let locator_schema = serde_json::json!({
+        "type":"object","properties":{"after":after},
+        "required":["after"],"additionalProperties":false
+    });
     let presentation = &item.self_service.presentation;
     let text = |key: &str| {
         presentation
@@ -141,6 +154,6 @@ pub fn policy_tool(
         })
         .unwrap_or_default();
     Ok(
-        serde_json::json!({"name": policy_tool_name(item), "description": format!("{}\n{}\nCategory: {}\nKeywords: {}\nPrerequisites: {}\nSide effects: {}", text("displayName"), text("description"), text("category"), keywords, text("prerequisites"), text("sideEffects")), "inputSchema": schema, "annotations": {"readOnlyHint": item.self_service.risk_level == 1 && matches!(item.task, rss_mdm_agent_wire::runtime::SelfServiceTask::Script {..}), "openWorldHint": false, "idempotentHint": false}}),
+        serde_json::json!({"name": policy_tool_name(item), "description": format!("{}\n{}\nCategory: {}\nKeywords: {}\nPrerequisites: {}\nSide effects: {}", text("displayName"), text("description"), text("category"), keywords, text("prerequisites"), text("sideEffects")), "inputSchema": {"type":"object","properties":{"locator":locator_schema,"parameters":schema},"required":["locator","parameters"],"additionalProperties":false}, "annotations": {"readOnlyHint": item.self_service.risk_level == 1 && matches!(item.task, rss_mdm_agent_wire::runtime::SelfServiceTask::Script {..}), "openWorldHint": false, "idempotentHint": false}}),
     )
 }

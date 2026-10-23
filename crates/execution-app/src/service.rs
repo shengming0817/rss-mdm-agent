@@ -153,6 +153,25 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
         capabilities(&self.host, plan, self.config.active()?)?;
         Ok(())
     }
+    /// Retain an exact preparation in the existing journal without admission, an attempt or dispatch.
+    /// The trusted product must authorize the original intent before calling this method.
+    /// A later explicit submission rechecks all gates against the retained immutable input.
+    pub fn stage_execution(
+        &mut self,
+        caller: &RequestContext,
+        plan: &FrozenExecution,
+    ) -> Result<ExecutionStatus, Error> {
+        self.prepare_execution(caller, plan)?;
+        let op = operation(plan, "prepare", "")?;
+        let host =
+            Host::new(&self.host, &self.binding, &self.config, Some(caller)).with_input(Some(plan));
+        self.journal.open_execution(&op, plan, &host)?;
+        self.status_for(
+            Some(caller),
+            &plan.spec().request.request_id,
+            ExecutionAccess::Submission,
+        )
+    }
     /// Accept a single immutable execution. Exact replays continue only before the first intent.
     pub fn request_execution(
         &mut self,
@@ -1112,6 +1131,21 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
             .input()
             .clone())
     }
+    /// Device-owner read of retained native process evidence. Never serialize raw bytes to UI/model.
+    pub fn service_process_evidence(
+        &self,
+        request: &RequestId,
+    ) -> Result<Option<execution_contract::ProcessEvidence>, Error> {
+        let execution = self.load(None, request, ExecutionAccess::RunnerFact)?;
+        let Some(attempt) = &execution.snapshot().attempt else {
+            return Ok(None);
+        };
+        Ok(self.journal.runner_evidence(
+            &Scope::from_input(execution.input()),
+            &attempt.id,
+            &self.adapter(None, Some(execution.input())),
+        )?)
+    }
     /// Sole device-owner read of the original frozen recovery input. No UI/model transport
     /// may expose this value; access is checked against the current service binding.
     pub fn service_frozen_input(&self, request: &RequestId) -> Result<FrozenExecution, Error> {
@@ -1461,6 +1495,14 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
     }
     /// Stop live runners on service shutdown. Missing proof remains Unknown in the same journal.
     pub fn stop_active(&mut self, limit: usize) -> Result<(), Error> {
+        self.stop_active_matching(limit, |_| true)
+    }
+    /// Stop only the product-selected authority domain; all retained journal facts are preserved.
+    pub fn stop_active_matching(
+        &mut self,
+        limit: usize,
+        selected: impl Fn(&FrozenExecution) -> bool,
+    ) -> Result<(), Error> {
         let until = std::time::Instant::now() + std::time::Duration::from_secs(3);
         let mut after = None;
         loop {
@@ -1472,6 +1514,9 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
                     return Err(Error::Unavailable);
                 }
                 let execution = self.load(None, request, ExecutionAccess::RunnerFact)?;
+                if !selected(execution.input()) {
+                    continue;
+                }
                 if let Some(attempt) = execution
                     .snapshot()
                     .attempt

@@ -8,7 +8,7 @@
     "status": {
       "build": "0.1.0",
       "platform": "macos",
-      "protocol": 2,
+      "protocol": 3,
       "readiness": { "phase": "notReady" },
       "telemetry": null
     }
@@ -18,7 +18,7 @@
     "status": {
       "build": "0.1.0",
       "platform": "macos",
-      "protocol": 2,
+      "protocol": 3,
       "readiness": { "phase": "ready" },
       "telemetry": null
     }
@@ -28,7 +28,7 @@
     "status": {
       "build": "0.1.0",
       "platform": "macos",
-      "protocol": 2,
+      "protocol": 3,
       "readiness": { "phase": "registrationRequired" },
       "telemetry": null
     }

@@ -25,6 +25,8 @@ pub(crate) struct EnterpriseHost {
     pub subject: String,
     pub current: Arc<Mutex<Option<Arc<BackendPermit>>>>,
     pub local_query: Arc<Mutex<Option<FrozenExecution>>>,
+    pub local_software: Arc<Mutex<Option<Arc<crate::local_software::Permit>>>>,
+    pub local_stopped: Arc<std::sync::atomic::AtomicBool>,
     pub identity_until: agent_client::RuntimeGate,
     pub revoked: Arc<std::sync::atomic::AtomicBool>,
 }
@@ -65,6 +67,44 @@ impl AuthorityVerifier for EnterpriseHost {
         plan: &FrozenExecution,
         _: &AttemptId,
     ) -> Result<AuthorityFacts, VerificationError> {
+        if let Some(permit) = self
+            .local_software
+            .lock()
+            .map_err(|_| VerificationError::Subject)?
+            .as_ref()
+        {
+            if self
+                .local_stopped
+                .load(std::sync::atomic::Ordering::Acquire)
+            {
+                return Err(VerificationError::Subject);
+            }
+            let now = self.clock.millis().map_err(|_| VerificationError::Clock)?;
+            permit
+                .verify(plan, now)
+                .map_err(|_| VerificationError::Subject)?;
+            let p = plan.spec();
+            return Ok(AuthorityFacts {
+                verified_origin: p.request.initiator.clone(),
+                risk: Some(RiskLevel::Two),
+                subject: SubjectFacts {
+                    authority: self.binding.authority.clone(),
+                    actor: self.actor.clone(),
+                    validity: p.validity,
+                    budget: p.budget,
+                },
+                delegation: None,
+                policy: p.policy.clone(),
+                rules: vec![Rule {
+                    id: p.policy.id.clone(),
+                    template: plan.clone(),
+                    effect: RuleEffect::Allow,
+                }],
+                now_unix_ms: now,
+                verification_revision: p.policy.clone(),
+                fresh_until_unix_ms: p.validity.expires_at_unix_ms,
+            });
+        }
         if self.identity_ready()
             && self
                 .local_query

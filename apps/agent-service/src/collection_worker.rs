@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::Path;
 #[cfg(target_os = "macos")]
-mod macos;
+pub(crate) mod macos;
 #[cfg(target_os = "macos")]
 mod macos_supervisor;
 #[cfg(any(windows, target_os = "macos", test))]

@@ -1247,7 +1247,8 @@ async fn run(
         fault(&mut facts, ProcessFailureKind::Supervision);
     }
     facts.finished = true;
-    let native_worker = recipe.launch.interpreter.profile.id.as_str() == "native-software-worker";
+    let native_worker = ["native-software-worker", "native-local-software-worker"]
+        .contains(&recipe.launch.interpreter.profile.id.as_str());
     if native_worker {
         if let Ok(result) = serde_json::from_slice::<SoftwareWorkerResult>(&facts.stdout) {
             facts.total_output_bytes = facts

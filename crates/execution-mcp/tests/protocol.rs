@@ -108,7 +108,7 @@ async fn discovery_exposes_backend_references_and_rejects_old_script_and_catalog
         .await;
     let list = w.recv().await;
     let tools = list["result"]["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 14);
+    assert_eq!(tools.len(), 19);
     for tool in tools {
         jsonschema::draft202012::new(&tool["inputSchema"]).unwrap();
         jsonschema::draft202012::new(&tool["outputSchema"]).unwrap();
@@ -394,7 +394,7 @@ async fn official_rmcp_client_can_consume_the_bounded_service() {
             .unwrap()
             .tools
             .len(),
-        14
+        19
     );
     client.cancel().await.unwrap();
     timeout(Duration::from_secs(2), task)
@@ -559,8 +559,38 @@ async fn every_tool_advertises_and_times_out_according_to_its_effects() {
     let operation = json!({"operationRequestId":"original-id"});
     let cases = [
         (
+            "execution_policy_invoke",
+            json!({"tool":"policy_fixture","locator":{"after":null},"parameters":{}}),
+            false,
+            "outcomeUnknown",
+        ),
+        (
+            "execution_software_read",
+            json!({"read":{"selection":{"kind":"query","query":{"id":"native:test","revision":"a".repeat(64)}},"after":null,"limit":16,"maxAgeSeconds":null}}),
+            true,
+            "unavailable",
+        ),
+        (
+            "execution_software_prepare",
+            json!({"software":{"query":{"id":"native:test","revision":"a".repeat(64)},"cursor":{"snapshot":"b".repeat(64),"offset":0},"installation":"test-app"},"action":"uninstall"}),
+            false,
+            "outcomeUnknown",
+        ),
+        (
+            "execution_software_status",
+            json!({"request":"original-id"}),
+            true,
+            "unavailable",
+        ),
+        (
+            "execution_software_cancel",
+            json!({"request":"original-id"}),
+            false,
+            "outcomeUnknown",
+        ),
+        (
             "execution_query_directory",
-            json!({"after":null,"limit":16,"refreshPolicies":false}),
+            json!({"after":null,"limit":16,"policyPage":null}),
             true,
             "unavailable",
         ),
@@ -590,11 +620,16 @@ async fn every_tool_advertises_and_times_out_according_to_its_effects() {
         ),
         (
             "execution_operation_prepare",
-            json!({"scene":"policy.parameters.v1", "tool":"policy_fixture", "parameters":{}}),
+            json!({"scene":"policy.parameters.v1", "tool":"policy_fixture", "locator":{"after":null}, "parameters":{}}),
             false,
             "outcomeUnknown",
         ),
-        ("execution_policy_tools", json!({}), true, "unavailable"),
+        (
+            "execution_policy_tools",
+            json!({"after":null}),
+            true,
+            "unavailable",
+        ),
         (
             "execution_policy_status",
             operation.clone(),
@@ -747,12 +782,31 @@ fn policy_mcp_descriptor_preserves_resource_input_constraints_and_versions() {
         "parameterSources":{"name":{"kind":"input"},"path":{"kind":"fixed","value":"/Applications"}},
         "parameterSchema":{"type":"object","properties":{"name":{"type":"string","maxLength":32},"path":{"type":"string"}},"required":["name","path"],"additionalProperties":false}}
     })).unwrap();
-    let descriptor = policy_tool(&item).unwrap();
+    let descriptor =
+        policy_tool(&item, &execution_contract::PolicyLocator { after: None }).unwrap();
     let validator = jsonschema::validator_for(&descriptor["inputSchema"]).unwrap();
-    assert!(validator.is_valid(&json!({"name":"Acme"})));
-    assert!(!validator.is_valid(&json!({"name":"Acme","path":"/Library"})));
-    assert!(!validator.is_valid(&json!({"name":"x".repeat(33)})));
+    assert!(validator.is_valid(&json!({"locator":{"after":null},"parameters":{"name":"Acme"}})));
+    assert!(!validator.is_valid(
+        &json!({"locator":{"after":null},"parameters":{"name":"Acme","path":"/Library"}})
+    ));
+    assert!(!validator
+        .is_valid(&json!({"locator":{"after":null},"parameters":{"name":"x".repeat(33)}})));
     assert!(!validator.is_valid(&json!({})));
+    assert!(!validator.is_valid(&json!({"locator":{"after":"later"},"parameters":{"name":"Acme"}})));
+    let later = policy_tool(
+        &item,
+        &execution_contract::PolicyLocator {
+            after: Some(execution_contract::Id::new("later").unwrap()),
+        },
+    )
+    .unwrap();
+    let later_validator = jsonschema::validator_for(&later["inputSchema"]).unwrap();
+    assert!(later_validator
+        .is_valid(&json!({"locator":{"after":"later"},"parameters":{"name":"Acme"}})));
+    for after in [serde_json::Value::Null, json!("other")] {
+        assert!(!later_validator
+            .is_valid(&json!({"locator":{"after":after},"parameters":{"name":"Acme"}})));
+    }
     assert_eq!(descriptor["annotations"]["readOnlyHint"], false);
     fn parameter_schema(item: &mut SelfServiceDirectoryItem) -> &mut serde_json::Value {
         let rss_mdm_agent_wire::runtime::SelfServiceTask::Script {
@@ -766,13 +820,16 @@ fn policy_mcp_descriptor_preserves_resource_input_constraints_and_versions() {
     let saved = parameter_schema(&mut item).clone();
     parameter_schema(&mut item)["properties"]["name"] =
         json!({"type":"array","items":{"type":"integer","minimum":i64::MIN,"maximum":i64::MAX}});
-    let descriptor = policy_tool(&item).unwrap();
+    let descriptor =
+        policy_tool(&item, &execution_contract::PolicyLocator { after: None }).unwrap();
     assert_eq!(
-        descriptor["inputSchema"]["properties"]["name"]["items"]["maximum"],
+        descriptor["inputSchema"]["properties"]["parameters"]["properties"]["name"]["items"]
+            ["maximum"],
         9_007_199_254_740_991_i64
     );
     assert_eq!(
-        descriptor["inputSchema"]["properties"]["name"]["items"]["minimum"],
+        descriptor["inputSchema"]["properties"]["parameters"]["properties"]["name"]["items"]
+            ["minimum"],
         -9_007_199_254_740_991_i64
     );
     assert_eq!(
@@ -786,7 +843,7 @@ fn policy_mcp_descriptor_preserves_resource_input_constraints_and_versions() {
     ] {
         parameter_schema(&mut item)["properties"]["name"] = unsupported;
         assert!(matches!(
-            policy_tool(&item),
+            policy_tool(&item, &execution_contract::PolicyLocator { after: None }),
             Err(ServiceError::InvalidInput)
         ));
     }
@@ -795,12 +852,21 @@ fn policy_mcp_descriptor_preserves_resource_input_constraints_and_versions() {
     item.policy_revision += 1;
     assert_ne!(policy_tool_name(&item), original);
     item.self_service.allow_ai = false;
-    assert!(matches!(policy_tool(&item), Err(ServiceError::Denied)));
+    assert!(matches!(
+        policy_tool(&item, &execution_contract::PolicyLocator { after: None }),
+        Err(ServiceError::Denied)
+    ));
     item.self_service.allow_ai = true;
     item.self_service.risk_level = 0;
-    assert!(matches!(policy_tool(&item), Err(ServiceError::Denied)));
+    assert!(matches!(
+        policy_tool(&item, &execution_contract::PolicyLocator { after: None }),
+        Err(ServiceError::Denied)
+    ));
     item.self_service.risk_level = 3;
-    assert!(matches!(policy_tool(&item), Err(ServiceError::Denied)));
+    assert!(matches!(
+        policy_tool(&item, &execution_contract::PolicyLocator { after: None }),
+        Err(ServiceError::Denied)
+    ));
 }
 
 #[tokio::test]
@@ -811,7 +877,7 @@ async fn data_tools_preserve_original_request_and_typed_results_through_real_mcp
         .call(
             2,
             "execution_query_directory",
-            json!({"after":null,"limit":16,"refreshPolicies":false}),
+            json!({"after":null,"limit":16,"policyPage":null}),
         )
         .await;
     assert_eq!(value(&directory)["kind"], "directory");
@@ -836,5 +902,66 @@ async fn data_tools_preserve_original_request_and_typed_results_through_real_mcp
         .await;
     assert_eq!(value(&cancelled)["value"]["cancelRequested"], true);
     assert_eq!(s.attempts.load(Ordering::SeqCst), 1);
+    w.close().await;
+}
+
+#[tokio::test]
+async fn local_software_status_preserves_verified_state_in_the_real_mcp_response() {
+    use execution_contract::*;
+    let s = service();
+    let request = RequestId::new("local-detection").unwrap();
+    let prepared: LocalSoftwarePrepared = serde_json::from_value(json!({
+        "request":request,"digest":"a".repeat(64),
+        "choice":{"request":request,"software":{"query":{"id":"native:apps","revision":"b".repeat(64)},"cursor":{"snapshot":"c".repeat(64),"offset":0},"installation":"app"},"action":"detect"},
+        "name":"App","initiator":{"kind":"human","osSession":{"device":"device","account":{"platform":"macos","subject":"uid:501"},"session":"login"}},
+        "identity":"system","targetVersion":null,"startBeforeUnixMs":1000
+    })).unwrap();
+    let mut w = Wire::open(s.clone(), limits()).await;
+    w.send(json!({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}))
+        .await;
+    let list = w.recv().await;
+    let output = &list["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|tool| tool["name"] == "execution_software_status")
+        .unwrap()["outputSchema"];
+    let validator = jsonschema::validator_for(output).unwrap();
+    for detected in [
+        Some(SoftwareState::Present {
+            version: PackageValue::new("1.2.3").unwrap(),
+        }),
+        Some(SoftwareState::Absent {}),
+        Some(SoftwareState::Unknown {
+            reason: SoftwareDetectionFailure::Unavailable,
+        }),
+        None,
+    ] {
+        s.software_result(LocalSoftwareResult {
+            detected: detected.clone(),
+            prepared: prepared.clone(),
+            operation: OperationStatus {
+                mode: execution_lifecycle::ExecutionMode::Test,
+                process: None,
+                assessment: None,
+                cancel_requested: false,
+                operation_request_id: request.clone(),
+                content_digest: prepared.digest.clone(),
+                phase: OperationPhase::ExecutionEnded,
+                attempt_id: None,
+                evidence: vec![],
+            },
+        });
+        let reply = w
+            .call(3, "execution_software_status", json!({"request":request}))
+            .await;
+        assert_eq!(
+            value(&reply)["detected"],
+            serde_json::to_value(detected).unwrap()
+        );
+        assert_eq!(value(&reply)["operation"]["phase"], "executionEnded");
+        assert!(validator.is_valid(&reply["result"]["structuredContent"]));
+    }
+    assert_eq!(s.attempts.load(Ordering::SeqCst), 0);
     w.close().await;
 }

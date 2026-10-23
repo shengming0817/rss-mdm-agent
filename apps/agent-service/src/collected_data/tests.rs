@@ -295,7 +295,13 @@ async fn metadata_is_bounded_titles_survive_capture_and_published_inputs_remain_
             generation: id(&format!("generation-{n}")),
         };
         let descriptor = data
-            .publish(published_item(), "501", &session, &context)
+            .publish(
+                published_item(),
+                PolicyLocator { after: None },
+                "501",
+                &session,
+                &context,
+            )
             .unwrap();
         assert_eq!(descriptor.title, "Published fixture");
         assert!(descriptor.input_schema["properties"].get("name").is_some());
@@ -517,7 +523,14 @@ async fn minimum_record_quota_reclaims_metadata_and_reserves_new_query_capacity(
             .unwrap();
         let mut item = published_item();
         item.policy_id = uuid::Uuid::from_u128(n + 1);
-        data.publish(item, "501", &session, &context).unwrap();
+        data.publish(
+            item,
+            PolicyLocator { after: None },
+            "501",
+            &session,
+            &context,
+        )
+        .unwrap();
     }
     data.maintain(&contexts, &Default::default(), &Default::default())
         .unwrap();
@@ -670,7 +683,13 @@ async fn authorized_policy_data_survives_context_retirement_and_reopen_without_e
         generation: id("old"),
     };
     let query = data
-        .publish(published_item(), &subject, &old_session, &old_context)
+        .publish(
+            published_item(),
+            PolicyLocator { after: None },
+            &subject,
+            &old_session,
+            &old_context,
+        )
         .unwrap()
         .reference;
     let request = RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap();
@@ -760,7 +779,13 @@ async fn authorized_policy_data_survives_context_retirement_and_reopen_without_e
             .is_err());
     }
     let republished = data
-        .publish(published_item(), &subject, &session, &context)
+        .publish(
+            published_item(),
+            PolicyLocator { after: None },
+            &subject,
+            &session,
+            &context,
+        )
         .unwrap();
     assert_eq!(republished.reference, query);
     // A stale or reused account cannot consume a persisted read projection.

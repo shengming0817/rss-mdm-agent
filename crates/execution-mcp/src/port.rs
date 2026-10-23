@@ -24,6 +24,39 @@ pub trait ExecutionServicePort: Send + Sync + 'static {
     ) -> impl Future<Output = Result<execution_contract::DataResponse, ServiceError>> + Send {
         async { Err(ServiceError::Unsupported) }
     }
+    /// Read retained software facts without starting collection.
+    fn software_read(
+        &self,
+        _: execution_contract::SoftwareRead,
+        _: CancellationToken,
+    ) -> impl Future<Output = Result<execution_contract::SoftwarePage, ServiceError>> + Send {
+        async { Err(ServiceError::Unsupported) }
+    }
+    /// Prepare a fixed local operation. AI has no submit/confirmation method.
+    fn software_prepare(
+        &self,
+        _: LocalSoftwareProposal,
+        _: CancellationToken,
+    ) -> impl Future<Output = Result<execution_contract::LocalSoftwarePrepared, ServiceError>> + Send
+    {
+        async { Err(ServiceError::Unsupported) }
+    }
+    /// Query the original local software request.
+    fn software_status(
+        &self,
+        _: execution_contract::QueryRequest,
+        _: CancellationToken,
+    ) -> impl Future<Output = Result<LocalSoftwareResult, ServiceError>> + Send {
+        async { Err(ServiceError::Unsupported) }
+    }
+    /// Cancel the original local software request; not a rollback guarantee.
+    fn software_cancel(
+        &self,
+        _: execution_contract::QueryRequest,
+        _: CancellationToken,
+    ) -> impl Future<Output = Result<LocalSoftwareResult, ServiceError>> + Send {
+        async { Err(ServiceError::Unsupported) }
+    }
     /// Bind one call from bounded, untrusted MCP metadata to the authenticated connection.
     /// The composition owns metadata semantics and must reject missing/mismatched provenance.
     /// Return an immutable per-call service; never mutate shared connection identity.
@@ -41,15 +74,21 @@ pub trait ExecutionServicePort: Send + Sync + 'static {
     /// Native discovery of current AI-authorized Policy tools. The production consumer uses the formal directory.
     fn policy_tools(
         &self,
+        _: PolicyToolsQuery,
         _: CancellationToken,
-    ) -> impl Future<Output = Result<Vec<serde_json::Value>, ServiceError>> + Send {
-        async { Ok(Vec::new()) }
+    ) -> impl Future<Output = Result<PolicyToolPage, ServiceError>> + Send {
+        async {
+            Ok(PolicyToolPage {
+                tools: Vec::new(),
+                next: None,
+            })
+        }
     }
     /// Invoke a current Policy descriptor with a Host-owned original request identity.
     fn invoke_policy(
         &self,
         _: &str,
-        _: serde_json::Map<String, serde_json::Value>,
+        _: PolicyToolInput,
         _: CancellationToken,
     ) -> impl Future<Output = Result<execution_contract::BackendRequest, ServiceError>> + Send {
         async { Err(ServiceError::Denied) }

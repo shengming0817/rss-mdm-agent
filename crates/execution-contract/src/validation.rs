@@ -501,7 +501,7 @@ fn software(p: &ExecutionInput, limits: &ExecutionLimits) -> Result<(), Contract
                     crate::SoftwareOperation::Uninstall => "software.uninstall",
                     crate::SoftwareOperation::Detect => "software.detect",
                 }
-            || !p.request.parameters.is_empty()
+            || !crate::software_management::valid_software_metadata(p)
         {
             return Err(invalid());
         }

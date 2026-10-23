@@ -256,6 +256,9 @@ impl Candidate {
                 interactive: true,
             },
             execution: ExecutionConfig {
+                local_software: crate::local_software::LocalSoftwareConfig {
+                    policy_file: base.join("software-policy.json"),
+                },
                 work_root: base.join("work"),
                 material_root: base.join("materials"),
                 interpreters,
@@ -513,4 +516,8 @@ fn verify_runtime_files(root: &Path, target: Target) -> Result<(), Error> {
         }
     }
     Ok(())
+}
+
+pub(crate) fn publish_local_rules(path: &Path, bytes: &[u8]) -> Result<(), Error> {
+    publish_new(path, bytes)
 }

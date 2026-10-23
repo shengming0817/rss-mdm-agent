@@ -18,6 +18,10 @@ const binding = await compile(typescriptSchema(schema), "SelfServiceCommands", {
 });
 const generated = await format(
   `${binding}
+export type SoftwarePort = {
+  [K in keyof SelfServiceCommands as K extends \`software_\${infer M}\` ? M : never]:
+    (input: SelfServiceCommands[K]["input"]) => Promise<SelfServiceCommands[K]["output"]>;
+};
 export type DataAccessPort = {
   [K in keyof SelfServiceCommands as K extends \`query_\${string}\` | "data_read" ? K : never]:
     (input: SelfServiceCommands[K]["input"]) => Promise<SelfServiceCommands[K]["output"]>;
