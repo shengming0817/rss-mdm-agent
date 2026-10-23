@@ -1598,8 +1598,13 @@ try {
         otherScales: "unverified",
       };
 
-      await navigate("AI 助手");
+      mark("native operation gallery activation");
+      await fixtureControls();
       await browser.$('input[aria-label="显示操作模板"]').click();
+      await navigate("AI 助手");
+      await wait(() =>
+        browser.$('select[aria-label="操作模板"]').isDisplayed(),
+      );
       for (const template of [
         "SettingsForm",
         "ObjectActions",
@@ -1663,7 +1668,9 @@ try {
         );
         result.checks.push(`native-operation-${template}`);
       }
+      await fixtureControls();
       await browser.$('input[aria-label="显示操作模板"]').click();
+      await navigate("AI 助手");
       result.windowsAppearance = "unverified; no Windows host";
       await browser.setWindowSize(1100, 760);
       mark("native visual close and reopen main window");
