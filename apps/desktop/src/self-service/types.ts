@@ -59,6 +59,10 @@ export type PreparedAction =
       expiresAtUnixMs: number;
       kind: "policy";
       /**
+       * Frozen discovery position, used only to re-fetch current authorization.
+       */
+      locator: PolicyLocator;
+      /**
        * Eventual signed Offer; no task/attempt is invented before this exists.
        */
       offer: BackendTask | null;
@@ -1460,6 +1464,18 @@ export interface TaskResource {
   version: string;
 }
 /**
+ * The actual page on which a Policy was discovered. This is a position, never permission.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "PolicyLocator".
+ */
+export interface PolicyLocator {
+  /**
+   * Cursor sent when discovering the selected page; null identifies the first page.
+   */
+  after: Id | null;
+}
+/**
  * Sole product confirmation, persisted together with the original AI request.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
@@ -1815,9 +1831,9 @@ export interface QueryDirectory {
    */
   limit: number;
   /**
-   * Explicitly refresh authorized published Policies over the existing backend channel.
+   * Explicitly refresh one authorized Policy page; null reads only local definitions.
    */
-  refreshPolicies: boolean;
+  policyPage: PolicyLocator | null;
 }
 /**
  * Directory page, scoped by the authenticated service.
@@ -1834,6 +1850,10 @@ export interface QueryPage {
    * Exclusive continuation.
    */
   next: Id | null;
+  /**
+   * Next Policy discovery page; separate from local definition pagination.
+   */
+  policyNext: PolicyLocator | null;
 }
 /**
  * Safe query discovery; an unavailable query can still have retained data.
@@ -2373,8 +2393,24 @@ export interface SelfServiceDirectoryResponse {
  * via the `definition` "Command7".
  */
 export interface Command7 {
-  input: PolicyChoice;
+  input: PolicyInvocation;
   output: BackendRequest;
+}
+/**
+ * Local invocation envelope. Navigation is separate from the immutable business choice.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "PolicyInvocation".
+ */
+export interface PolicyInvocation {
+  /**
+   * Original request identity and exact user input.
+   */
+  choice: PolicyChoice;
+  /**
+   * Non-authoritative position, revalidated against the authenticated backend.
+   */
+  locator: PolicyLocator;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema

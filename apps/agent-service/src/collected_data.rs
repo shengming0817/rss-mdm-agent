@@ -28,6 +28,7 @@ pub(crate) struct Association {
 }
 #[derive(Serialize, Deserialize)]
 struct Published {
+    locator: PolicyLocator,
     generated_uid: Option<String>,
     descriptor: QueryDescriptor,
     item: w::SelfServiceDirectoryItem,
@@ -596,6 +597,7 @@ impl Data {
     pub fn publish(
         &mut self,
         item: w::SelfServiceDirectoryItem,
+        locator: PolicyLocator,
         subject: &str,
         session: &Id,
         context: &NativeContextRef,
@@ -645,6 +647,7 @@ impl Data {
         self.store.write(
             &format!("published/{}", descriptor.reference.id.as_str()),
             &encode(&Published {
+                locator,
                 generated_uid: account_uid(subject)?,
                 descriptor: descriptor.clone(),
                 item,
@@ -663,7 +666,7 @@ impl Data {
         subject: &str,
         session: &Id,
         context: &NativeContextRef,
-    ) -> Result<Option<w::SelfServiceDirectoryItem>, Error> {
+    ) -> Result<Option<(w::SelfServiceDirectoryItem, PolicyLocator)>, Error> {
         let Some(value) = self
             .store
             .read(&format!("published/{}", query.id.as_str()))?
@@ -677,7 +680,7 @@ impl Data {
         if policy_revision(&p.item, subject)? != query.revision {
             return Err(Error::Conflict);
         }
-        Ok(Some(p.item))
+        Ok(Some((p.item, p.locator)))
     }
     pub fn authorize_read(&self, read: &DataRead, caller: &str, session: &Id) -> Result<(), Error> {
         let query = match &read.selection {

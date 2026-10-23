@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import PolicyExecutionContext from "./PolicyExecutionContext.vue";
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onMounted, onBeforeUnmount, ref, watch } from "vue";
 import Ajv, { type AnySchema } from "ajv";
 import type {
   SelfServicePort,
@@ -111,45 +111,48 @@ const resolved = computed(() =>
     ]),
   ),
 );
-async function refresh() {
-  if (!props.port || busy.value) return;
+const nextCursor = ref<string | null>(null);
+const directoryComplete = ref(false);
+const locators = new Map<string, string | null>();
+const visited = new Set<string>();
+async function refresh() { await loadDirectory(false); }
+async function loadMore() { await loadDirectory(true); }
+async function loadDirectory(append: boolean) {
+  if (!props.port || busy.value || (append && !nextCursor.value)) return;
+  if (!append) {
+    ++epoch;
+    directory.value = [];
+    nextCursor.value = null;
+    directoryComplete.value = false;
+    locators.clear(); visited.clear();
+    if (!request.value) { selected.value = undefined; choice.value = undefined; }
+  }
   busy.value = true;
   const current = epoch;
+  const after = append ? nextCursor.value : null;
   try {
-    const items: SelfServiceDirectoryItem[] = [];
-    let after: string | null = null;
-    for (let page = 0; page < 16; page++) {
-      const value = await props.port.policy_directory({ after });
-      if (current !== epoch) return;
-      items.push(...value.items);
-      after = value.nextCursor;
-      if (!after) break;
-    }
-    directory.value = items.filter((item) =>
-      props.kind
-        ? item.task.kind === props.kind
-        : item.task.kind !== "enrollment",
-    );
-    error.value = "";
-    if (
-      selected.value &&
-      !items.some(
-        (item) =>
-          item.policyId === selected.value?.policyId &&
-          item.policyRevision === selected.value?.policyRevision &&
-          item.policyVersion === selected.value?.policyVersion,
-      )
-    ) {
-      selected.value = undefined;
-      choice.value = undefined;
-    }
-  } catch {
+    if (visited.size >= 2048) throw new Error("capacity");
+    const value = await props.port.policy_directory({ after });
     if (current !== epoch) return;
-    error.value = "请连接执行服务后读取可用任务；设备准入任务无需企业登录。";
+    if (value.nextCursor && (value.nextCursor === after || visited.has(value.nextCursor))) throw new Error("cursor");
+    if (after) visited.add(after);
+    const items = value.items.filter((item) => props.kind ? item.task.kind === props.kind : item.task.kind !== "enrollment");
+    for (const item of items) locators.set(item.policyId, after);
+    const merged = new Map(directory.value.map((item) => [item.policyId, item]));
+    for (const item of items) merged.set(item.policyId, item);
+    directory.value = [...merged.values()].slice(-1024);
+    const retained = new Set(directory.value.map((item) => item.policyId));
+    for (const id of locators.keys()) if (!retained.has(id) && id !== selected.value?.policyId) locators.delete(id);
+    nextCursor.value = value.nextCursor;
+    directoryComplete.value = !value.nextCursor;
+    error.value = "";
+  } catch {
+    if (current === epoch) error.value = "目录读取未完成；已加载条目保留，可重试本页。刷新可重新开始发现。";
   } finally {
     if (current === epoch) busy.value = false;
   }
 }
+onBeforeUnmount(() => { ++epoch; });
 function select(item: SelfServiceDirectoryItem) {
   if (request.value || props.allowNewRequests === false) return;
   selected.value = item;
@@ -256,7 +259,7 @@ async function invoke() {
   busy.value = true;
   const current = epoch;
   try {
-    const value = await props.port.policy_invoke(choice.value);
+    const value = await props.port.policy_invoke({ choice: choice.value, locator: { after: locators.get(choice.value.policyId) ?? null } });
     if (current !== epoch) return;
     status.value = { kind: "preparation", value };
     emit("changed");
@@ -327,6 +330,9 @@ function presentationText(value: unknown, fallback = "未提供"): string {
       <h3>{{ kind === "enrollment" ? "MDM 注册" : "企业自助任务" }}</h3>
       <button :disabled="busy" @click="refresh">刷新任务</button>
     </div>
+    <p role="status">当前加载 {{ directory.length }} 条；{{ directoryComplete ? "目录已读取完毕" : "目录尚未完整，搜索与计数仅覆盖当前加载范围" }}。</p>
+    <button v-if="nextCursor" :disabled="busy" @click="loadMore">继续加载</button>
+    <button v-if="error && !nextCursor" :disabled="busy" @click="refresh">重试读取</button>
     <p v-if="error" role="status">{{ error }}</p>
     <p
       v-if="

@@ -10,6 +10,17 @@
           "minLength": 1,
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
           "type": "string"
+        },
+        "PolicyLocator": {
+          "additionalProperties": false,
+          "description": "The actual page on which a Policy was discovered. This is a position, never permission.",
+          "properties": {
+            "after": {
+              "anyOf": [{ "$ref": "#/$defs/Id" }, { "type": "null" }],
+              "description": "Cursor sent when discovering the selected page; null identifies the first page."
+            }
+          },
+          "type": "object"
         }
       },
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -27,12 +38,12 @@
           "minimum": 0,
           "type": "integer"
         },
-        "refreshPolicies": {
-          "description": "Explicitly refresh authorized published Policies over the existing backend channel.",
-          "type": "boolean"
+        "policyPage": {
+          "anyOf": [{ "$ref": "#/$defs/PolicyLocator" }, { "type": "null" }],
+          "description": "Explicitly refresh one authorized Policy page; null reads only local definitions."
         }
       },
-      "required": ["refreshPolicies", "limit"],
+      "required": ["limit"],
       "title": "QueryDirectory",
       "type": "object"
     },
@@ -263,6 +274,17 @@
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
           "type": "string"
         },
+        "PolicyLocator": {
+          "additionalProperties": false,
+          "description": "The actual page on which a Policy was discovered. This is a position, never permission.",
+          "properties": {
+            "after": {
+              "anyOf": [{ "$ref": "#/$defs/Id" }, { "type": "null" }],
+              "description": "Cursor sent when discovering the selected page; null identifies the first page."
+            }
+          },
+          "type": "object"
+        },
         "PublishedQuery": {
           "additionalProperties": false,
           "description": "Original Policy coordinates for presentation and existing confirmation integration.",
@@ -381,6 +403,13 @@
             "next": {
               "anyOf": [{ "$ref": "#/$defs/Id" }, { "type": "null" }],
               "description": "Exclusive continuation."
+            },
+            "policyNext": {
+              "anyOf": [
+                { "$ref": "#/$defs/PolicyLocator" },
+                { "type": "null" }
+              ],
+              "description": "Next Policy discovery page; separate from local definition pagination."
             }
           },
           "required": ["items"],
@@ -942,6 +971,17 @@
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
           "type": "string"
         },
+        "PolicyLocator": {
+          "additionalProperties": false,
+          "description": "The actual page on which a Policy was discovered. This is a position, never permission.",
+          "properties": {
+            "after": {
+              "anyOf": [{ "$ref": "#/$defs/Id" }, { "type": "null" }],
+              "description": "Cursor sent when discovering the selected page; null identifies the first page."
+            }
+          },
+          "type": "object"
+        },
         "PublishedQuery": {
           "additionalProperties": false,
           "description": "Original Policy coordinates for presentation and existing confirmation integration.",
@@ -1060,6 +1100,13 @@
             "next": {
               "anyOf": [{ "$ref": "#/$defs/Id" }, { "type": "null" }],
               "description": "Exclusive continuation."
+            },
+            "policyNext": {
+              "anyOf": [
+                { "$ref": "#/$defs/PolicyLocator" },
+                { "type": "null" }
+              ],
+              "description": "Next Policy discovery page; separate from local definition pagination."
             }
           },
           "required": ["items"],
@@ -1564,6 +1611,17 @@
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
           "type": "string"
         },
+        "PolicyLocator": {
+          "additionalProperties": false,
+          "description": "The actual page on which a Policy was discovered. This is a position, never permission.",
+          "properties": {
+            "after": {
+              "anyOf": [{ "$ref": "#/$defs/Id" }, { "type": "null" }],
+              "description": "Cursor sent when discovering the selected page; null identifies the first page."
+            }
+          },
+          "type": "object"
+        },
         "PublishedQuery": {
           "additionalProperties": false,
           "description": "Original Policy coordinates for presentation and existing confirmation integration.",
@@ -1682,6 +1740,13 @@
             "next": {
               "anyOf": [{ "$ref": "#/$defs/Id" }, { "type": "null" }],
               "description": "Exclusive continuation."
+            },
+            "policyNext": {
+              "anyOf": [
+                { "$ref": "#/$defs/PolicyLocator" },
+                { "type": "null" }
+              ],
+              "description": "Next Policy discovery page; separate from local definition pagination."
             }
           },
           "required": ["items"],
@@ -2147,6 +2212,17 @@
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
           "type": "string"
         },
+        "PolicyLocator": {
+          "additionalProperties": false,
+          "description": "The actual page on which a Policy was discovered. This is a position, never permission.",
+          "properties": {
+            "after": {
+              "anyOf": [{ "$ref": "#/$defs/Id" }, { "type": "null" }],
+              "description": "Cursor sent when discovering the selected page; null identifies the first page."
+            }
+          },
+          "type": "object"
+        },
         "PublishedQuery": {
           "additionalProperties": false,
           "description": "Original Policy coordinates for presentation and existing confirmation integration.",
@@ -2265,6 +2341,13 @@
             "next": {
               "anyOf": [{ "$ref": "#/$defs/Id" }, { "type": "null" }],
               "description": "Exclusive continuation."
+            },
+            "policyNext": {
+              "anyOf": [
+                { "$ref": "#/$defs/PolicyLocator" },
+                { "type": "null" }
+              ],
+              "description": "Next Policy discovery page; separate from local definition pagination."
             }
           },
           "required": ["items"],
@@ -2730,6 +2813,17 @@
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
           "type": "string"
         },
+        "PolicyLocator": {
+          "additionalProperties": false,
+          "description": "The actual page on which a Policy was discovered. This is a position, never permission.",
+          "properties": {
+            "after": {
+              "anyOf": [{ "$ref": "#/$defs/Id" }, { "type": "null" }],
+              "description": "Cursor sent when discovering the selected page; null identifies the first page."
+            }
+          },
+          "type": "object"
+        },
         "PublishedQuery": {
           "additionalProperties": false,
           "description": "Original Policy coordinates for presentation and existing confirmation integration.",
@@ -2848,6 +2942,13 @@
             "next": {
               "anyOf": [{ "$ref": "#/$defs/Id" }, { "type": "null" }],
               "description": "Exclusive continuation."
+            },
+            "policyNext": {
+              "anyOf": [
+                { "$ref": "#/$defs/PolicyLocator" },
+                { "type": "null" }
+              ],
+              "description": "Next Policy discovery page; separate from local definition pagination."
             }
           },
           "required": ["items"],
@@ -3378,10 +3479,25 @@
     "annotations": { "openWorldHint": false, "readOnlyHint": true },
     "description": "Current employee-authorized script tools. Policy publication, allowAi and risk are verified for this AI origin.",
     "inputSchema": {
+      "$defs": {
+        "Id": {
+          "description": "Opaque local reference identifier; syntax validity is not authenticity.",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+          "type": "string"
+        }
+      },
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "additionalProperties": false,
-      "description": "Empty arguments for current directory and capability queries.",
-      "title": "Empty",
+      "description": "Explicit pagination of authorized Policy tools.",
+      "properties": {
+        "after": {
+          "anyOf": [{ "$ref": "#/$defs/Id" }, { "type": "null" }],
+          "description": "Previous page's exclusive cursor; null starts discovery."
+        }
+      },
+      "title": "PolicyToolsQuery",
       "type": "object"
     },
     "name": "execution_policy_tools",
@@ -3391,6 +3507,29 @@
           "description": "Protocol error payload; optional catalog diagnostic is produced only from static C03 errors.",
           "properties": { "code": { "$ref": "#/$defs/ServiceError" } },
           "required": ["code"],
+          "type": "object"
+        },
+        "Id": {
+          "description": "Opaque local reference identifier; syntax validity is not authenticity.",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+          "type": "string"
+        },
+        "PolicyToolPage": {
+          "description": "A bounded tool page. An empty page can still have a continuation.",
+          "properties": {
+            "next": {
+              "anyOf": [{ "$ref": "#/$defs/Id" }, { "type": "null" }],
+              "description": "Next page, absent only after complete discovery."
+            },
+            "tools": {
+              "description": "Authorized tools, each carrying its actual discovery locator in the input schema.",
+              "items": true,
+              "type": "array"
+            }
+          },
+          "required": ["tools"],
           "type": "object"
         },
         "ServiceError": {
@@ -3469,7 +3608,7 @@
       "oneOf": [
         {
           "properties": {
-            "result": { "items": true, "type": "array" },
+            "result": { "$ref": "#/$defs/PolicyToolPage" },
             "status": { "const": "ok", "type": "string" }
           },
           "required": ["status", "result"],
@@ -3493,6 +3632,13 @@
     "description": "Show an editable operation card for a current policy tool. Use for requests to display or edit settings. Suggestions do not execute: the user saves the final parameters in the desktop. Only registered scenes are accepted.",
     "inputSchema": {
       "$defs": {
+        "Id": {
+          "description": "Opaque local reference identifier; syntax validity is not authenticity.",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+          "type": "string"
+        },
         "OperationScene": {
           "description": "Product scenes supported by this preparation boundary.",
           "oneOf": [
@@ -3502,12 +3648,27 @@
               "type": "string"
             }
           ]
+        },
+        "PolicyLocator": {
+          "additionalProperties": false,
+          "description": "The actual page on which a Policy was discovered. This is a position, never permission.",
+          "properties": {
+            "after": {
+              "anyOf": [{ "$ref": "#/$defs/Id" }, { "type": "null" }],
+              "description": "Cursor sent when discovering the selected page; null identifies the first page."
+            }
+          },
+          "type": "object"
         }
       },
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "additionalProperties": false,
       "description": "Registered form suggestion. This prepares a card and never executes a tool.",
       "properties": {
+        "locator": {
+          "$ref": "#/$defs/PolicyLocator",
+          "description": "Actual discovery page; the service re-fetches it and checks the exact tool identity."
+        },
         "parameters": {
           "additionalProperties": true,
           "description": "Suggested input fields. The user may change them before submission.",
@@ -3522,7 +3683,7 @@
           "type": "string"
         }
       },
-      "required": ["scene", "tool", "parameters"],
+      "required": ["scene", "tool", "locator", "parameters"],
       "title": "OperationProposal",
       "type": "object"
     },
@@ -4180,6 +4341,17 @@
           ],
           "type": "object"
         },
+        "PolicyLocator": {
+          "additionalProperties": false,
+          "description": "The actual page on which a Policy was discovered. This is a position, never permission.",
+          "properties": {
+            "after": {
+              "anyOf": [{ "$ref": "#/$defs/Id" }, { "type": "null" }],
+              "description": "Cursor sent when discovering the selected page; null identifies the first page."
+            }
+          },
+          "type": "object"
+        },
         "PreparedAction": {
           "description": "One preparation reference, before or after a signed Offer has arrived.",
           "oneOf": [
@@ -4249,6 +4421,10 @@
                   "type": "integer"
                 },
                 "kind": { "const": "policy", "type": "string" },
+                "locator": {
+                  "$ref": "#/$defs/PolicyLocator",
+                  "description": "Frozen discovery position, used only to re-fetch current authorization."
+                },
                 "offer": {
                   "anyOf": [
                     { "$ref": "#/$defs/BackendTask" },
@@ -4264,6 +4440,7 @@
               "required": [
                 "kind",
                 "choice",
+                "locator",
                 "directory",
                 "access",
                 "expiresAtUnixMs"
@@ -5730,6 +5907,17 @@
           ],
           "type": "object"
         },
+        "PolicyLocator": {
+          "additionalProperties": false,
+          "description": "The actual page on which a Policy was discovered. This is a position, never permission.",
+          "properties": {
+            "after": {
+              "anyOf": [{ "$ref": "#/$defs/Id" }, { "type": "null" }],
+              "description": "Cursor sent when discovering the selected page; null identifies the first page."
+            }
+          },
+          "type": "object"
+        },
         "PreparedAction": {
           "description": "One preparation reference, before or after a signed Offer has arrived.",
           "oneOf": [
@@ -5799,6 +5987,10 @@
                   "type": "integer"
                 },
                 "kind": { "const": "policy", "type": "string" },
+                "locator": {
+                  "$ref": "#/$defs/PolicyLocator",
+                  "description": "Frozen discovery position, used only to re-fetch current authorization."
+                },
                 "offer": {
                   "anyOf": [
                     { "$ref": "#/$defs/BackendTask" },
@@ -5814,6 +6006,7 @@
               "required": [
                 "kind",
                 "choice",
+                "locator",
                 "directory",
                 "access",
                 "expiresAtUnixMs"

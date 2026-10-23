@@ -11,7 +11,8 @@ mod transport;
 pub use config::McpLimits;
 pub use model::{
     CancelDisposition, CancelResult, CapabilityState, CapabilityView, OperationPhase,
-    OperationProposal, OperationRequest, OperationScene, OperationStatus, ServiceError,
+    OperationProposal, OperationRequest, OperationScene, OperationStatus, PolicyToolInput,
+    PolicyToolPage, PolicyToolsQuery, ServiceError,
 };
 pub use port::ExecutionServicePort;
 
@@ -113,6 +114,7 @@ pub fn policy_tool_name(item: &rss_mdm_agent_wire::runtime::SelfServiceDirectory
 /// Project only Input fields from the Resource-owned schema; full resolved validation remains in the service.
 pub fn policy_tool(
     item: &rss_mdm_agent_wire::runtime::SelfServiceDirectoryItem,
+    locator: &execution_contract::PolicyLocator,
 ) -> Result<serde_json::Value, ServiceError> {
     if !item.self_service.published
         || !item.self_service.allow_ai
@@ -141,6 +143,6 @@ pub fn policy_tool(
         })
         .unwrap_or_default();
     Ok(
-        serde_json::json!({"name": policy_tool_name(item), "description": format!("{}\n{}\nCategory: {}\nKeywords: {}\nPrerequisites: {}\nSide effects: {}", text("displayName"), text("description"), text("category"), keywords, text("prerequisites"), text("sideEffects")), "inputSchema": schema, "annotations": {"readOnlyHint": item.self_service.risk_level == 1 && matches!(item.task, rss_mdm_agent_wire::runtime::SelfServiceTask::Script {..}), "openWorldHint": false, "idempotentHint": false}}),
+        serde_json::json!({"name": policy_tool_name(item), "description": format!("{}\n{}\nCategory: {}\nKeywords: {}\nPrerequisites: {}\nSide effects: {}", text("displayName"), text("description"), text("category"), keywords, text("prerequisites"), text("sideEffects")), "inputSchema": {"type":"object","properties":{"locator":{"const":locator},"parameters":schema},"required":["locator","parameters"],"additionalProperties":false}, "annotations": {"readOnlyHint": item.self_service.risk_level == 1 && matches!(item.task, rss_mdm_agent_wire::runtime::SelfServiceTask::Script {..}), "openWorldHint": false, "idempotentHint": false}}),
     )
 }

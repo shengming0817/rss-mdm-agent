@@ -141,6 +141,22 @@ pub struct PolicyChoice {
     /// Only Resource fields whose Policy source is Input.
     pub parameters: std::collections::BTreeMap<String, serde_json::Value>,
 }
+/// The actual page on which a Policy was discovered. This is a position, never permission.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PolicyLocator {
+    /// Cursor sent when discovering the selected page; null identifies the first page.
+    pub after: Option<Id>,
+}
+/// Local invocation envelope. Navigation is separate from the immutable business choice.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PolicyInvocation {
+    /// Original request identity and exact user input.
+    pub choice: PolicyChoice,
+    /// Non-authoritative position, revalidated against the authenticated backend.
+    pub locator: PolicyLocator,
+}
 /// Definite rejection before submission; transport and storage ambiguity are never this type.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -196,6 +212,8 @@ pub enum PreparedAction {
     Policy {
         /// Immutable employee choice.
         choice: PolicyChoice,
+        /// Frozen discovery position, used only to re-fetch current authorization.
+        locator: PolicyLocator,
         /// Formal backend directory DTO, including the Resource-owned schema.
         directory: Box<rss_mdm_agent_wire::runtime::SelfServiceDirectoryItem>,
         /// Backend Run returned for the original request, absent until acceptance is known.

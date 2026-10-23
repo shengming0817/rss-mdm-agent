@@ -162,7 +162,7 @@ impl ToolKind {
             Self::PrepareOperation => {
                 tool::<OperationProposal, execution_contract::BackendRequest>(self)
             }
-            Self::PolicyTools => tool::<Empty, Vec<Value>>(self),
+            Self::PolicyTools => tool::<PolicyToolsQuery, PolicyToolPage>(self),
             Self::PolicyStatus => tool::<OperationRequest, Value>(self),
             Self::Tasks => tool::<Empty, Vec<BackendTask>>(self),
             Self::Capabilities => tool::<Empty, CapabilityView>(self),
@@ -274,11 +274,7 @@ impl<S: ExecutionServicePort> Handler<S> {
                 max,
             ),
             ToolKind::PolicyTools => result(
-                async {
-                    let _: Empty = decode(raw)?;
-                    Ok(self.service.policy_tools(wait).await?)
-                }
-                .await,
+                async { Ok(self.service.policy_tools(decode(raw)?, wait).await?) }.await,
                 max,
             ),
             ToolKind::PolicyStatus => result(

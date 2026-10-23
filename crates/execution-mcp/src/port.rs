@@ -41,15 +41,21 @@ pub trait ExecutionServicePort: Send + Sync + 'static {
     /// Native discovery of current AI-authorized Policy tools. The production consumer uses the formal directory.
     fn policy_tools(
         &self,
+        _: PolicyToolsQuery,
         _: CancellationToken,
-    ) -> impl Future<Output = Result<Vec<serde_json::Value>, ServiceError>> + Send {
-        async { Ok(Vec::new()) }
+    ) -> impl Future<Output = Result<PolicyToolPage, ServiceError>> + Send {
+        async {
+            Ok(PolicyToolPage {
+                tools: Vec::new(),
+                next: None,
+            })
+        }
     }
     /// Invoke a current Policy descriptor with a Host-owned original request identity.
     fn invoke_policy(
         &self,
         _: &str,
-        _: serde_json::Map<String, serde_json::Value>,
+        _: PolicyToolInput,
         _: CancellationToken,
     ) -> impl Future<Output = Result<execution_contract::BackendRequest, ServiceError>> + Send {
         async { Err(ServiceError::Denied) }

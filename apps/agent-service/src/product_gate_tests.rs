@@ -1386,6 +1386,7 @@ async fn policy_confirmation_is_single_exact_and_bound_to_employee_generation() 
         parameters: std::collections::BTreeMap::from([("name".into(), serde_json::json!("Acme"))]),
     };
     let invoke = Request::InvokePolicy {
+        locator: execution_contract::PolicyLocator { after: None },
         context: c.context(),
         choice: choice.clone(),
         origin: c.selection.origin.clone(),
@@ -1408,6 +1409,7 @@ async fn policy_confirmation_is_single_exact_and_bound_to_employee_generation() 
         .insert("path".into(), serde_json::json!("/Library"));
     assert!(matches!(
         c.policy_call(Request::InvokePolicy {
+            locator: execution_contract::PolicyLocator { after: None },
             context: c.context(),
             choice: changed,
             origin: c.selection.origin.clone()
@@ -1446,6 +1448,7 @@ async fn policy_confirmation_is_single_exact_and_bound_to_employee_generation() 
     choice.request = RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap();
     assert!(matches!(
         c.policy_call(Request::InvokePolicy {
+            locator: execution_contract::PolicyLocator { after: None },
             context: c.context(),
             choice: choice.clone(),
             origin: c.selection.origin.clone()
@@ -1527,6 +1530,7 @@ async fn policy_low_risk_and_human_only_settings_have_separate_native_sources() 
         };
         let Reply::PolicyRequest { value } = c
             .policy_call(Request::InvokePolicy {
+                locator: execution_contract::PolicyLocator { after: None },
                 context: c.context(),
                 choice: choice.clone(),
                 origin,
@@ -1549,6 +1553,7 @@ async fn policy_low_risk_and_human_only_settings_have_separate_native_sources() 
         stale.policy_revision += 1;
         assert!(matches!(
             c.policy_call(Request::InvokePolicy {
+                locator: execution_contract::PolicyLocator { after: None },
                 context: c.context(),
                 choice: stale,
                 origin: c.selection.origin.clone()
@@ -1593,6 +1598,7 @@ async fn policy_offer_binds_the_original_journal_and_signed_start_before_dispatc
                 };
                 assert!(matches!(
                     c.policy_call(Request::InvokePolicy {
+                        locator: execution_contract::PolicyLocator { after: None },
                         context: c.context(),
                         choice: choice.clone(),
                         origin: c.selection.origin.clone()
@@ -2043,6 +2049,7 @@ async fn durable_ready_policy_resumes_original_uuid_from_each_native_entrypoint(
             )]),
         };
         let invoke = Request::InvokePolicy {
+            locator: execution_contract::PolicyLocator { after: None },
             context: c.context(),
             choice: choice.clone(),
             origin: c.selection.origin.clone(),
@@ -2079,6 +2086,7 @@ async fn durable_ready_policy_resumes_original_uuid_from_each_native_entrypoint(
             .unwrap();
         let request = match entry {
             0 => Request::InvokePolicy {
+                locator: execution_contract::PolicyLocator { after: None },
                 context: c.context(),
                 choice: match &restored.action {
                     PreparedAction::Policy { choice, .. } => choice.clone(),
@@ -2134,6 +2142,7 @@ async fn unaccepted_policy_expiry_is_durable_and_status_remains_read_only() {
     };
     let Reply::PolicyRequest { value } = c
         .policy_call(Request::InvokePolicy {
+            locator: execution_contract::PolicyLocator { after: None },
             context: c.context(),
             choice,
             origin: c.selection.origin.clone(),
@@ -2367,6 +2376,7 @@ async fn software_self_service_binds_signed_policy_and_native_context() {
     };
     let Reply::PolicyRequest { value: pending } = c
         .policy_call(Request::InvokePolicy {
+            locator: execution_contract::PolicyLocator { after: None },
             context: c.context(),
             choice: choice.clone(),
             origin: c.selection.origin.clone(),
@@ -2525,6 +2535,7 @@ async fn device_directory_and_invocation_are_credential_free_with_or_without_emp
         let choice = c.policy_choice(&item);
         let Reply::PolicyRequest { value } = c
             .policy_call(Request::InvokePolicy {
+                locator: execution_contract::PolicyLocator { after: None },
                 context: c.context(),
                 choice: choice.clone(),
                 origin: c.selection.origin.clone(),
@@ -2574,6 +2585,7 @@ async fn retired_ai_ingress_cannot_read_or_invoke_but_original_device_consent_co
     let origin = c.selection.origin.clone();
     let Reply::PolicyRequest { value: pending } = c
         .policy_call(Request::InvokePolicy {
+            locator: execution_contract::PolicyLocator { after: None },
             context: old.clone(),
             choice: choice.clone(),
             origin: origin.clone(),
@@ -2595,6 +2607,7 @@ async fn retired_ai_ingress_cannot_read_or_invoke_but_original_device_consent_co
             origin: origin.clone(),
         },
         Request::InvokePolicy {
+            locator: execution_contract::PolicyLocator { after: None },
             context: c.context(),
             choice: choice.clone(),
             origin: origin.clone(),
@@ -2664,6 +2677,7 @@ async fn unknown_device_submission_queries_original_before_any_repeat_post_after
         let choice = c.policy_choice(&item);
         let Reply::PolicyRequest { value: unknown } = c
             .policy_call(Request::InvokePolicy {
+                locator: execution_contract::PolicyLocator { after: None },
                 context: c.context(),
                 choice: choice.clone(),
                 origin: c.selection.origin.clone(),
@@ -2732,6 +2746,7 @@ async fn fences_isolate_os_sessions_and_user_requests_never_downgrade() {
     let choice = c.policy_choice(&item);
     let Reply::PolicyRequest { value } = c
         .policy_call(Request::InvokePolicy {
+            locator: execution_contract::PolicyLocator { after: None },
             context: c.context(),
             choice: choice.clone(),
             origin: c.selection.origin.clone(),
@@ -2792,6 +2807,7 @@ impl Case {
         let choice = self.policy_choice(&item);
         let reply = self
             .policy_call(Request::InvokePolicy {
+                locator: execution_contract::PolicyLocator { after: None },
                 context: self.context(),
                 choice: choice.clone(),
                 origin: self.selection.origin.clone(),
@@ -3125,6 +3141,7 @@ async fn expired_device_confirmation_checks_original_os_owner_before_read_or_wri
     let choice = c.policy_choice(&item);
     assert!(matches!(
         c.policy_call(Request::InvokePolicy {
+            locator: execution_contract::PolicyLocator { after: None },
             context: c.context(),
             choice: choice.clone(),
             origin: c.selection.origin.clone(),
@@ -3426,6 +3443,7 @@ async fn operation_draft_freezes_current_parameters_once_and_queries_do_not_exec
         };
         let Reply::PolicyRequest { value: draft } = c
             .policy_call(Request::PreparePolicy {
+                locator: execution_contract::PolicyLocator { after: None },
                 context: c.context(),
                 choice: choice.clone(),
                 origin: c.selection.origin.clone(),
@@ -3571,6 +3589,7 @@ async fn operation_draft_rejects_changed_policy_and_retired_native_context() {
         };
         let Reply::PolicyRequest { value } = c
             .policy_call(Request::PreparePolicy {
+                locator: execution_contract::PolicyLocator { after: None },
                 context: c.context(),
                 choice: choice.clone(),
                 origin: c.selection.origin.clone(),
@@ -3661,6 +3680,7 @@ async fn operation_draft_rejects_secret_and_unresolved_schemas_before_persistenc
         };
         let reply = c
             .policy_call(Request::PreparePolicy {
+                locator: execution_contract::PolicyLocator { after: None },
                 context: c.context(),
                 choice: choice.clone(),
                 origin: c.selection.origin.clone(),
@@ -4092,7 +4112,7 @@ async fn local_data_queries_keep_os_prerequisites_exact_authority_and_offline_re
             input: DataOperation::Directory(QueryDirectory {
                 after: None,
                 limit: 128,
-                refresh_policies: false,
+                policy_page: None,
             }),
         })
         .await;
@@ -4262,7 +4282,7 @@ async fn local_data_queries_keep_os_prerequisites_exact_authority_and_offline_re
             input: DataOperation::Directory(QueryDirectory {
                 after: None,
                 limit: 16,
-                refresh_policies: false
+                policy_page: None
             })
         })
         .await,
@@ -4328,4 +4348,102 @@ async fn local_data_queries_keep_os_prerequisites_exact_authority_and_offline_re
         }
     ));
     assert_eq!(c.service.core.policy_commands.len(), queued);
+}
+
+#[tokio::test]
+async fn late_policy_page_is_revalidated_for_invoke_draft_and_confirmation_without_scanning() {
+    let _budget = crate::scenario_budget::enter();
+    use execution_ipc::host::Request;
+    for draft in [false, true] {
+        let mut c = Case::new(None).await;
+        let directory = protocol::policy_directory_fixture(c.service.client.configuration().tenant);
+        let cursor = uuid::Uuid::from_u128(18);
+        {
+            let mut data = c._server.data.lock().unwrap();
+            for page in 0..18 {
+                data.self_service_pages.insert(
+                    if page == 0 {
+                        None
+                    } else {
+                        Some(uuid::Uuid::from_u128(page))
+                    },
+                    wire::SelfServiceDirectoryResponse {
+                        items: vec![],
+                        next_cursor: Some(uuid::Uuid::from_u128(page + 1)),
+                        as_of: c._server.time.now().unwrap(),
+                    },
+                );
+            }
+            data.self_service_pages.insert(
+                Some(cursor),
+                wire::SelfServiceDirectoryResponse {
+                    items: vec![directory.clone()],
+                    next_cursor: None,
+                    as_of: c._server.time.now().unwrap(),
+                },
+            );
+        }
+        c.employee("late-page").await;
+        let choice = c.policy_choice(&directory);
+        let locator = execution_contract::PolicyLocator {
+            after: Some(plan::id(cursor.to_string()).unwrap()),
+        };
+        let request = if draft {
+            Request::PreparePolicy {
+                context: c.context(),
+                choice: choice.clone(),
+                locator: locator.clone(),
+                origin: c.selection.origin.clone(),
+            }
+        } else {
+            Request::InvokePolicy {
+                context: c.context(),
+                choice: choice.clone(),
+                locator: locator.clone(),
+                origin: c.selection.origin.clone(),
+            }
+        };
+        let offset = c._server.data.lock().unwrap().employee_calls.len();
+        let Reply::PolicyRequest { value } = c.policy_call(request).await else {
+            panic!("late-page choice")
+        };
+        assert_eq!(
+            value.state,
+            if draft {
+                BackendRequestState::Draft
+            } else {
+                BackendRequestState::AwaitingConfirmation
+            }
+        );
+        assert!(c._server.data.lock().unwrap().invocations.is_empty());
+        let calls = c._server.data.lock().unwrap().employee_calls[offset..].to_vec();
+        assert_eq!(calls.len(), 2);
+        assert!(calls
+            .iter()
+            .all(|(url, _)| url.contains(&format!("after={cursor}"))));
+        if draft {
+            c.policy_call(Request::SubmitPolicy {
+                context: c.context(),
+                input: execution_contract::PolicySubmission {
+                    request: choice.request.clone(),
+                    revision: value.revision,
+                    parameters: choice.parameters.clone(),
+                },
+            })
+            .await;
+        } else {
+            c.policy_call(Request::ConfirmPolicy {
+                context: c.context(),
+                request: choice.request.clone(),
+            })
+            .await;
+        }
+        assert!(c
+            ._server
+            .data
+            .lock()
+            .unwrap()
+            .invocations
+            .contains_key(&uuid::Uuid::parse_str(choice.request.as_str()).unwrap()));
+    }
 }

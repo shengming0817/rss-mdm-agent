@@ -145,6 +145,7 @@ impl ExecutionServicePort for TestService {
         };
         match input {
             DataOperation::Directory(_) => Ok(DataResponse::Directory(QueryPage {
+                policy_next: None,
                 items: vec![QueryDescriptor {
                     reference: query,
                     title: "Explicit query fixture".into(),
@@ -235,10 +236,14 @@ impl ExecutionServicePort for TestService {
     }
     async fn policy_tools(
         &self,
+        _: execution_mcp::PolicyToolsQuery,
         _: CancellationToken,
-    ) -> Result<Vec<serde_json::Value>, ServiceError> {
+    ) -> Result<execution_mcp::PolicyToolPage, ServiceError> {
         self.capabilities(CancellationToken::new()).await?;
-        Ok(Vec::new())
+        Ok(execution_mcp::PolicyToolPage {
+            tools: Vec::new(),
+            next: None,
+        })
     }
     async fn policy_status(
         &self,

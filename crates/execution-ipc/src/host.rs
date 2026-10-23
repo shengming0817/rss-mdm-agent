@@ -2,7 +2,7 @@
 use execution_contract::{Digest, Id, RequestId, VersionedRef};
 use serde::{Deserialize, Serialize};
 /// Current desktop/system IPC. No negotiation or legacy parser exists.
-pub const IPC_VERSION: u8 = 2;
+pub const IPC_VERSION: u8 = 3;
 /// Current protected installation document format.
 pub const DEPLOYMENT_VERSION: u32 = 2;
 
@@ -737,6 +737,8 @@ pub enum Request {
         context: execution_contract::NativeContextRef,
         /// Exact directory choice and Input values.
         choice: execution_contract::PolicyChoice,
+        /// Actual discovery page, never an authorization claim.
+        locator: execution_contract::PolicyLocator,
         /// Trusted native origin.
         origin: ClientOrigin,
     },
@@ -746,6 +748,8 @@ pub enum Request {
         context: execution_contract::NativeContextRef,
         /// Policy identity and non-authoritative initial suggestions.
         choice: execution_contract::PolicyChoice,
+        /// Actual discovery page, re-fetched before freezing the draft.
+        locator: execution_contract::PolicyLocator,
         /// Attested AI origin; never renderer supplied.
         origin: ClientOrigin,
     },

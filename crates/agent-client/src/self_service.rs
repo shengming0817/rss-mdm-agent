@@ -70,7 +70,19 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         let response: wire::SelfServiceDirectoryResponse = self
             .self_service_json(secret, Method::GET, &path, None)
             .await?;
-        if response.items.len() > 64 || response.as_of < 0 {
+        if response.items.len() > 64
+            || response.as_of < 0
+            || response
+                .next_cursor
+                .is_some_and(|next| Some(next) == query.after || next.is_nil())
+            || response
+                .items
+                .iter()
+                .map(|item| item.policy_id)
+                .collect::<std::collections::BTreeSet<_>>()
+                .len()
+                != response.items.len()
+        {
             return Err(Error::Protocol);
         }
         Ok(response)
