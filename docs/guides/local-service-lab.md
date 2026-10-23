@@ -95,7 +95,7 @@ WinGet/Brew 使用签名任务中的完整源绑定、文档摘要和物料集�
 
 管理员在当前格式部署的 `software_read_grants` 中显式登记 Brew 只读凭据，例如 `{"credential":{"source":"实际 target","reference":"只读凭据引用"},"origin":"https://软件源主机"}`。source/reference 必须与签名任务一致，origin 仅允许 HTTPS origin；凭据不写入 JSON 或源 URL。先完成首次安装初始化，停止系统服务，再由服务 OS 主体运行固定服务镜像 `--config <受保护配置> --import-software-credential <target>`，通过 stdin 提供 32–512 字节 ASCII 可见只读 token（允许一个结尾换行）；该入口只向现有 OS 凭据命名空间追加，不覆盖、自动获取或扩大权限。macOS 使用 root 服务身份，Windows 使用原服务账户；重新启动后才宣告对应凭据可用。WinGet 公共源不需要读 token。软件源使用独立的无客户端证书 HTTPS 传输，仅信任部署 CA；设备 mTLS 身份不会发送给软件源。
 
-原生源 Prepare/Cleanup 与安装共用原 attempt、manager 排他和预算。Brew 仅在 tap/URI/commit/文档完全匹配时借用已有源，借用资源不会删除；本次新建资源记录所有权后才能创建；Brew checkout 在 attempt 私有目录完成并校验，再以禁止覆盖的原子重命名发布到 tap 路径，部分 checkout 随原 attempt 清理。attempt 与 tap 须位于同一文件系统，不支持原子发布时明确失败，不退回直接写 tap。恢复只清理本次资源。WinGet 只创建本次私有 manifest。原活动结束证明绑定原内核启动世代与 runner 原进程组/Windows Job；仍在运行、无查询权限或共享源内容变化时保留证据与排他。资源清理成功不改写未知安装事实，不重置既有包管理器配置。新部署使用 deployment version 7；不提供旧软件 Ring、旧部署格式或旧库兼容入口。当前 macOS 测试覆盖真实 TLS/SQLite/Git 与固定 fixture manager；不代表 Windows 原生 WinGet 或真实软件安装验收通过。
+原生源 Prepare/Cleanup 与安装共用原 attempt、manager 排他和预算。Brew 仅在 tap/URI/commit/文档完全匹配时借用已有源，借用资源不会删除；本次新建资源记录所有权后才能创建；Brew checkout 在 attempt 私有目录完成并校验，再以禁止覆盖的原子重命名发布到 tap 路径，部分 checkout 随原 attempt 清理。attempt 与 tap 须位于同一文件系统，不支持原子发布时明确失败，不退回直接写 tap。恢复只清理本次资源。WinGet 只创建本次私有 manifest。原活动结束证明绑定原内核启动世代与 runner 原进程组/Windows Job；仍在运行、无查询权限或共享源内容变化时保留证据与排他。资源清理成功不改写未知安装事实，不重置既有包管理器配置。新部署使用 deployment version 3；不提供旧软件 Ring、旧部署格式或旧库兼容入口。当前 macOS 测试覆盖真实 TLS/SQLite/Git 与固定 fixture manager；不代表 Windows 原生 WinGet 或真实软件安装验收通过。
 
 验收入口可加 `--dmg-app <已公证 app>`，将固定候选装入只读镜像，经真实 HTTPS、系统服务、SQLite 与认证 IPC 验证安装及精确卸载；测试不修改签名信任或 quarantine。
 
@@ -326,7 +326,7 @@ Windows CPU 当前仅接纳单 processor group，多组系统报告 unsupported�
 
 本机设置页的“RSS 登录”只向当前已解锁的物理控制台本地账户提供首次自助关联，需有效员工登录与后台候选策略。设置验证器后提交六位动态码；创建账户时 Windows 密码只经本机受控输入交给 SYSTEM worker，不上传后台。页面的“准备完成”不代表已应用，应刷新并核对后台应用 revision。追加关联、创建其它账户、角色变更由后台 AccountWrite 授权；本地管理员身份不提供 RSS 授权。
 
-Credential Provider 是独立 `windows-credential-provider` cdylib，与 Agent 静态链接同一离线因子 owner；当前仅交付源码与手工组件入口，安装包装配另行验收。在 Windows x64 构建环境使用 `cargo build --locked --release -p windows-credential-provider -p agent-service`，固定 Agent 和 DLL 的提交、摘要及签名后，将 DLL 放入 SYSTEM/管理员拥有、普通用户不可写的规范绝对路径。先由系统服务的新部署初始化 `execution.material_root/device-access`；注册不能创建或替换离线库。以 LocalSystem 主体运行：
+Credential Provider 是独立 `windows-credential-provider` cdylib，与 Agent 静态链接同一离线因子 owner；当前仅交付源码与手工组件入口，安装包装配另行验收。在 Windows x64 构建环境使用 `cargo build --locked --release -p windows-credential-provider -p agent-service`，固定 Agent 和 DLL 的提交、摘要及签名后，将 DLL 放入 SYSTEM/管理员拥有、普通用户不可写的规范绝对路径。部署格式为 version 3，旧格式在候选准入阶段拒绝，不迁移；已有当前格式部署在服务切换前核对离线库与安装身份。先由系统服务的新部署初始化 `execution.material_root/device-access`；注册不能创建或替换离线库。以 LocalSystem 主体运行：
 
 ```powershell
 & $Agent --device-access-component register $OfflineRoot $ServiceId $ProviderDll

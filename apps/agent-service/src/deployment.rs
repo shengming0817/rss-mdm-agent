@@ -410,6 +410,8 @@ impl Deployment {
             // origin. Recomputing its authority from the raw deployment URL changes its
             // identity when the otherwise equivalent origin omits the trailing slash.
             platform_private_storage::validate(&self.execution.work_root)?;
+            #[cfg(windows)]
+            validate_access_storage(&self.execution, self.service_id)?;
         }
         Ok(())
     }
@@ -627,6 +629,18 @@ impl execution_ipc::host::Handler for Diagnostic {
     }
 }
 
+#[cfg(any(windows, test))]
+fn validate_access_storage(
+    config: &ExecutionConfig,
+    installation: uuid::Uuid,
+) -> Result<(), Error> {
+    // Candidate refresh checks existing state before stopping the current service.
+    // Never repair or initialize an old deployment as part of admission.
+    device_access::Store::open(&crate::access_worker::root(config), installation)
+        .map(|_| ())
+        .map_err(|_| Error::Storage)
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -662,7 +676,7 @@ pub(crate) mod tests {
         for old in [
             {
                 let mut v = current.clone();
-                v["version"] = 4.into();
+                v["version"] = 2.into();
                 v
             },
             {
@@ -677,6 +691,27 @@ pub(crate) mod tests {
                 Err(Error::Configuration)
             ));
         }
+    }
+    #[test]
+    fn refresh_requires_existing_installation_bound_access_storage() {
+        let root = std::env::temp_dir()
+            .canonicalize()
+            .unwrap()
+            .join(format!("refresh-access-{}", uuid::Uuid::new_v4()));
+        platform_private_storage::directory(&root).unwrap();
+        let mut deployment = deployment();
+        deployment.execution.material_root = root.clone();
+        let offline = crate::access_worker::root(&deployment.execution);
+        assert!(validate_access_storage(&deployment.execution, deployment.service_id).is_err());
+        assert!(
+            !offline.exists(),
+            "preflight must not initialize missing state"
+        );
+        platform_private_storage::directory(&offline).unwrap();
+        device_access::Store::create(&offline, deployment.service_id).unwrap();
+        validate_access_storage(&deployment.execution, deployment.service_id).unwrap();
+        assert!(validate_access_storage(&deployment.execution, uuid::Uuid::new_v4()).is_err());
+        std::fs::remove_dir_all(root).unwrap();
     }
     #[test]
     fn refresh_requires_both_original_markers_without_initializing_missing_state() {
