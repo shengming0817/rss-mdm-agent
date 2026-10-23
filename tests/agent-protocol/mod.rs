@@ -145,6 +145,11 @@ impl IdentityProvider for Secrets {
     }
 }
 pub struct Data {
+    pub connection_configuration: Option<rss_mdm_agent_wire::connections::SignedConfiguration>,
+    pub connection_ack_calls: Vec<Value>,
+    pub connection_failure_calls: Vec<Value>,
+    pub connection_ack_reply_lost: bool,
+    pub connection_get_fault: Option<StatusCode>,
     pub telemetry: telemetry::State,
     pub software_source: Option<software_native::Source>,
     pub trust: Value,
@@ -623,6 +628,11 @@ impl Server {
         let time = Time(Arc::new(AtomicI64::new(1)));
         let signer = Ed25519KeyPair::from_seed_unchecked(&[7; 32]).unwrap();
         let data = Arc::new(Mutex::new(Data {
+            connection_configuration: None,
+            connection_ack_calls: vec![],
+            connection_failure_calls: vec![],
+            connection_ack_reply_lost: false,
+            connection_get_fault: None,
             telemetry: Default::default(),
             software_source: None,
             trust: Value::Null,
@@ -719,6 +729,26 @@ impl Server {
             claim_inputs: vec![],
             claims: BTreeMap::new(),
         }));
+        Self::serve(data, time, Secrets::new(), tls, true).await
+    }
+    /// Another real TLS listener over the same backend device, tasks and receipts.
+    pub async fn alias(&self) -> Self {
+        Self::serve(
+            self.data.clone(),
+            self.time.clone(),
+            self.secrets.clone(),
+            true,
+            false,
+        )
+        .await
+    }
+    async fn serve(
+        data: Arc<Mutex<Data>>,
+        time: Time,
+        secrets: Secrets,
+        tls: bool,
+        initialize: bool,
+    ) -> Self {
         let (ready, started) = tokio::sync::oneshot::channel();
         let (stop, stopped) = tokio::sync::oneshot::channel();
         let server_data = data.clone();
@@ -740,7 +770,14 @@ impl Server {
                     .unwrap();
                     {
                         let mut state = server_data.lock().unwrap();
-                        state.trust = pki::trust(url.as_str(), state.tenant);
+                        if initialize {
+                            state.trust = pki::trust(url.as_str(), state.tenant);
+                            state.connection_configuration = Some(signed_connections(
+                                url.origin().ascii_serialization(),
+                                state.tenant,
+                                1,
+                            ));
+                        }
                     }
                     let router = axum::Router::new()
                         .fallback(handler)
@@ -783,14 +820,19 @@ impl Server {
             url,
             data,
             time,
-            secrets: Secrets::new(),
+            secrets,
             _runtime: runtime,
         }
     }
     pub fn config(&self) -> Config {
         let data = self.data.lock().unwrap();
         Config {
-            task_trust_origins: vec![],
+            service_id: SERVICE_ID,
+            connections: signed_connections(
+                self.url.origin().ascii_serialization(),
+                data.tenant,
+                1,
+            ),
             software_read_grants: data
                 .software_source
                 .as_ref()
@@ -841,7 +883,7 @@ impl Server {
             wire_version: 1,
             configuration_id: Uuid::new_v4(),
             tenant_id: cfg.tenant,
-            origin: cfg.origin.origin().ascii_serialization(),
+            connections: cfg.connections.clone(),
             targets: vec![w::Target {
                 platform: cfg.platform,
                 architecture: cfg.architecture,
@@ -1004,6 +1046,7 @@ async fn handler(
             || path.ends_with("/renewal-grants")
             || path.ends_with("/trust/acknowledgements")
             || path.ends_with("/trust/observations")
+            || path.starts_with("/api/v1/agent/enroll/connections")
             || path.starts_with("/api/v1/agent/runtime/"))
         && !authenticated
     {
@@ -1012,6 +1055,39 @@ async fn handler(
     let value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
     if headers.contains_key("authorization") {
         return runtime_error(StatusCode::UNAUTHORIZED, ErrorCode::InvalidIdentity);
+    }
+    if path == "/api/v1/agent/enroll/connections" {
+        if let Some(status) = d.connection_get_fault.take() {
+            return (status, axum::Json(json!({"code":"service_unavailable"}))).into_response();
+        }
+        return axum::Json(d.connection_configuration.as_ref().unwrap()).into_response();
+    }
+    if path == "/api/v1/agent/enroll/connections/acknowledgements" {
+        let ack: rss_mdm_agent_wire::connections::Acknowledgement =
+            serde_json::from_value(value.clone()).unwrap();
+        ack.validate_for(&d.connection_configuration.as_ref().unwrap().configuration)
+            .unwrap();
+        assert_eq!(
+            ack.origin,
+            format!("https://{}", headers.get("host").unwrap().to_str().unwrap())
+        );
+        if let Some(previous) = d
+            .connection_ack_calls
+            .iter()
+            .find(|a| a["operationId"] == value["operationId"])
+        {
+            assert_eq!(previous, &value);
+        }
+        d.connection_ack_calls.push(value);
+        return if std::mem::take(&mut d.connection_ack_reply_lost) {
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        } else {
+            StatusCode::NO_CONTENT.into_response()
+        };
+    }
+    if path == "/api/v1/agent/enroll/connections/failures" {
+        d.connection_failure_calls.push(value);
+        return StatusCode::NO_CONTENT.into_response();
     }
     if path.contains("/self-service") {
         return self_service_response(&mut d, &uri, &headers, value);
@@ -1550,6 +1626,7 @@ fn start_event(d: &mut Data, operation: String) -> Response {
         let mut payload = d.offer.as_ref().unwrap().payload.clone();
         let expiry = d.time.now().unwrap() + d.start_validity_seconds;
         match &mut payload {
+            TaskPayload::DeviceAccess(_) => panic!("unsupported fixture task"),
             TaskPayload::Unmanage(v) => {
                 v.permit = TaskPermit::Start;
                 v.expires_at = expiry;
@@ -1708,7 +1785,7 @@ impl axum::extract::connect_info::Connected<axum::serve::IncomingStream<'_, TlsL
 pub fn policy_directory_fixture(tenant: Uuid) -> SelfServiceDirectoryItem {
     serde_json::from_value(json!({
         "policyId": Uuid::new_v4(), "policyRevision": 2, "policyVersion": Uuid::new_v4(),
-        "subject":{"kind":"user","user":{"tenantId":tenant,"instanceId":Uuid::from_u128(2),"principalId":Uuid::from_u128(3)}},
+        "subject":{"kind":"user","user":{"tenantId":tenant,"instanceId":SERVICE_ID,"principalId":Uuid::from_u128(3)}},
         "selfService":{"published": true, "allowAi": true, "riskLevel": 2, "presentation": {"displayName": "Repair", "description": "Test repair", "prerequisites": "Employee session", "sideEffects": "Restarts a fixture", "category": "Support", "keywords": ["repair"]}},
         "task":{"kind":"script","runAs":"system","resource":{"id":Uuid::new_v4().to_string(),"version":"v1","variant":"default"},
         "parameterSources":{"name":{"kind":"input"}, "path":{"kind":"fixed","value":"/Applications"}},
@@ -1821,7 +1898,7 @@ fn task_trust_response(d: &mut Data, value: Value) -> Response {
             );
         }
         if d.task_trust.is_null() {
-            d.task_trust = serde_json::json!({"version":1,"origin":d.trust["origin"],"tenant":d.tenant,"revision":1,
+            d.task_trust = serde_json::json!({"version":1,"service_id":SERVICE_ID,"tenant":d.tenant,"revision":1,
                     "keys":[{"id":"test","public_key":base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(d.signer.public_key().as_ref()),"state":"active"}]});
         }
         return axum::Json(d.task_trust.clone()).into_response();
@@ -1834,4 +1911,38 @@ fn task_trust_response(d: &mut Data, value: Value) -> Response {
         );
     }
     axum::Json(value).into_response()
+}
+
+/// Stable installation identity shared by alternate TLS listeners and all fixtures.
+pub const SERVICE_ID: Uuid = Uuid::from_u128(2);
+/// Signed fixture locations; the wire remains the sole owner of canonical bytes and bounds.
+pub fn signed_connections(
+    origin: String,
+    tenant: Uuid,
+    revision: u64,
+) -> rss_mdm_agent_wire::connections::SignedConfiguration {
+    let configuration = rss_mdm_agent_wire::connections::Configuration {
+        wire_version: 1,
+        service_id: SERVICE_ID,
+        tenant_id: tenant,
+        revision,
+        preferred_origin: origin.clone(),
+        origins: vec![origin],
+        key_id: "test".into(),
+    };
+    sign_connections(configuration)
+}
+pub fn sign_connections(
+    configuration: rss_mdm_agent_wire::connections::Configuration,
+) -> rss_mdm_agent_wire::connections::SignedConfiguration {
+    let signer = Ed25519KeyPair::from_seed_unchecked(&[7; 32]).unwrap();
+    let signature = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(
+        signer
+            .sign(&configuration.signing_bytes().unwrap())
+            .as_ref(),
+    );
+    rss_mdm_agent_wire::connections::SignedConfiguration {
+        configuration,
+        signature,
+    }
 }

@@ -26,10 +26,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
     }
     fn bind_task_trust(&self, trust: &Trust) -> Result<(), Error> {
         trust.validate()?;
-        if trust.tenant != self.store.cfg.tenant
-            || (trust.origin != self.store.cfg.origin.origin().ascii_serialization()
-                && !self.store.cfg.task_trust_origins.contains(&trust.origin))
-        {
+        if trust.tenant != self.store.cfg.tenant || trust.service_id != self.store.cfg.service_id {
             return Err(Error::Untrusted);
         }
         Ok(())

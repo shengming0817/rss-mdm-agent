@@ -548,11 +548,9 @@ impl<S: IdentityProvider> DeviceService<S> {
             return Err(Error::Protocol);
         };
         if let Request::BindContext { value, expected } = request {
-            if value.credential_origin().is_some_and(|origin| {
-                url::Url::parse(origin).ok().as_ref() != Some(&self.client.configuration().origin)
-            }) || value.user().is_some_and(|user| {
+            if value.user().is_some_and(|user| {
                 user.tenant_id != self.client.configuration().tenant
-                    || user.instance_id.is_nil()
+                    || user.instance_id != self.client.configuration().service_id
                     || user.principal_id.is_nil()
             }) || value.credential().is_some_and(|secret| {
                 secret.len() != 64
@@ -582,7 +580,6 @@ impl<S: IdentityProvider> DeviceService<S> {
                         && old.epoch == epoch
                         && old.expires_at_unix_ms > self.core.host.clock.millis()?
                         && old.generation == value.generation
-                        && old.credential_origin() == value.credential_origin()
                         && old.user() == value.user() =>
                 {
                     old.context.clone()

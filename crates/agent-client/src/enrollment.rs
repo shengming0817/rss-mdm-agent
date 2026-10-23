@@ -1,5 +1,4 @@
 use crate::{
-    client::json_transport,
     identity::{Active, IdentityState, Pending, Purpose},
     store::{decode, encode},
     Client, Clock, Error, IdentityProvider,
@@ -450,9 +449,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         body: &impl Serialize,
     ) -> Result<T, EnrollmentFailure> {
         let url = self
-            .store
-            .cfg
-            .origin
+            .connection_origin()?
             .join(&format!("api/v1/agent/enroll/{path}"))
             .map_err(|_| Error::Configuration)?;
         let request = http
@@ -460,7 +457,9 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             .header("content-type", "application/json")
             .body(encode(body)?)
             .timeout(self.store.cfg.limits.request_timeout);
-        let (status, bytes) = json_transport(request, self.store.cfg.limits.response_bytes).await?;
+        let (status, bytes) = self
+            .agent_json_transport(request, self.store.cfg.limits.response_bytes)
+            .await?;
         if !status.is_success() {
             let error: enroll::ErrorBody = decode(&bytes)?;
             return Err(EnrollmentFailure::Rejected(error.code));

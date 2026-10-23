@@ -28,9 +28,13 @@ impl Drop for Scratch {
     }
 }
 
-fn name(origin: &str, tenant: uuid::Uuid, step: &wire::SoftwareTaskStep) -> Result<String, Error> {
+fn name(
+    service_id: uuid::Uuid,
+    tenant: uuid::Uuid,
+    step: &wire::SoftwareTaskStep,
+) -> Result<String, Error> {
     Ok(hash(&encode(&(
-        origin,
+        service_id,
         tenant,
         &step.export,
         &step.action.package,
@@ -68,7 +72,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             if matches!(step.export, wire::SoftwareTaskExport::Direct) {
                 continue;
             }
-            let name = name(self.store.cfg.origin.as_str(), self.store.cfg.tenant, step)?;
+            let name = name(self.store.cfg.service_id, self.store.cfg.tenant, step)?;
             let cached = self
                 .store
                 .get(&format!("native/{name}"))?
@@ -92,7 +96,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                 continue;
             }
             self.verify(&offer.signed, wire::TaskPermit::Offer)?;
-            let name = name(self.store.cfg.origin.as_str(), self.store.cfg.tenant, step)?;
+            let name = name(self.store.cfg.service_id, self.store.cfg.tenant, step)?;
             self.store.conn.execute(
                 "INSERT OR IGNORE INTO cache_refs VALUES(?1,?2)",
                 params![offer.task_id().to_string(), name],

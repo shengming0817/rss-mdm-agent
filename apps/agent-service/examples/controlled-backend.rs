@@ -18,7 +18,7 @@ async fn main() {
         data.start_validity_seconds = 120;
         println!(
             "{}",
-            serde_json::json!({"origin": server.url.as_str(), "tenant":data.tenant,"key":base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(data.signer.public_key().as_ref()), "caPem":String::from_utf8(protocol::pki::ca()).unwrap()})
+            serde_json::json!({"origin": server.url.as_str(), "tenant":data.tenant,"serviceId":protocol::SERVICE_ID,"connections":data.connection_configuration,"key":base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(data.signer.public_key().as_ref()), "caPem":String::from_utf8(protocol::pki::ca()).unwrap()})
         );
     }
     let (tx, mut rx) = tokio::sync::mpsc::channel(4);

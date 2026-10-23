@@ -576,7 +576,12 @@ async fn unknown_communication_schema_preserves_registration_pending_delivery_an
 #[test]
 fn configuration_rejects_untrusted_network_and_unbounded_budgets() {
     let mut cfg = Config {
-        task_trust_origins: vec![],
+        service_id: support::SERVICE_ID,
+        connections: support::signed_connections(
+            "https://agent.fixture.test".into(),
+            Uuid::from_u128(2),
+            1,
+        ),
         software_read_grants: vec![],
         execution_context: rss_mdm_agent_wire::runtime::SoftwareExecutionContext {
             revision: 1,
@@ -589,7 +594,7 @@ fn configuration_rejects_untrusted_network_and_unbounded_budgets() {
             msix_unsigned: false,
         },
         origin: Url::parse("http://example.com").unwrap(),
-        tenant: Uuid::new_v4(),
+        tenant: Uuid::from_u128(2),
         platform: TaskPlatform::Macos,
         architecture: TaskArchitecture::Aarch64,
         registration_keys: Default::default(),
@@ -600,7 +605,14 @@ fn configuration_rejects_untrusted_network_and_unbounded_budgets() {
     assert_eq!(cfg.validate(), Err(Error::Configuration));
     cfg.origin = Url::parse("http://127.0.0.1:8080").unwrap();
     cfg.transport = Transport::TestLoopback;
-    cfg.registration_keys.insert("test".into(), vec![1; 32]);
+    cfg.registration_keys.insert(
+        "test".into(),
+        ring::signature::KeyPair::public_key(
+            &ring::signature::Ed25519KeyPair::from_seed_unchecked(&[7; 32]).unwrap(),
+        )
+        .as_ref()
+        .to_vec(),
+    );
     assert!(cfg.validate().is_ok());
     cfg.limits.cache_bytes = 0;
     assert_eq!(cfg.validate(), Err(Error::Configuration));

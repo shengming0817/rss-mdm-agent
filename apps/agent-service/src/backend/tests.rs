@@ -1322,11 +1322,17 @@ async fn revoked_and_expired_unknown_keeps_original_execution_and_association() 
     for changed in [0, 1, 2, 3] {
         let mut cfg = case.server.config();
         match changed {
-            0 => cfg.origin = next_server.url.clone(),
+            0 => {
+                cfg.service_id = uuid::Uuid::new_v4();
+                cfg.connections.configuration.service_id = cfg.service_id;
+            }
             1 => cfg.tenant = next_client.configuration().tenant,
             2 => cfg.platform = TaskPlatform::Windows,
             _ => cfg.architecture = TaskArchitecture::X86_64,
         }
+        cfg.connections.configuration.tenant_id = cfg.tenant;
+        cfg.connections =
+            crate::protocol_test_support::sign_connections(cfg.connections.configuration);
         // Historical inspection is read-only and validates deployment binding before identity.
         let before = std::fs::read(case.root.path.join("communication.sqlite")).unwrap();
         assert_eq!(

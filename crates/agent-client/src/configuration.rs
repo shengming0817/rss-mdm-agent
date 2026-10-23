@@ -32,8 +32,13 @@ pub fn verify_configuration(
     ring::signature::UnparsedPublicKey::new(&ring::signature::ED25519, key)
         .verify(&bytes, &signature)
         .map_err(|_| Error::Untrusted)?;
-    if c.origin != cfg.origin.origin().ascii_serialization()
-        || c.tenant_id != cfg.tenant
+    crate::connections::verify_connections(
+        &c.connections,
+        cfg.service_id,
+        cfg.tenant,
+        &cfg.registration_keys,
+    )?;
+    if c.tenant_id != cfg.tenant
         || !c.targets.contains(&wire::Target {
             platform: cfg.platform,
             architecture: cfg.architecture,
@@ -85,6 +90,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             return Ok(());
         }
         verify_configuration(&file, &self.store.cfg, self.now()?)?;
+        self.install_connections(file.configuration.connections.clone())?;
         let operation = Uuid::new_v4();
         let config_reference = format!("configuration-{operation}");
         self.secrets
@@ -145,16 +151,15 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         verify_configuration(&file, &self.store.cfg, self.now()?)?;
         if c.installation.is_none() {
             let url = self
-                .store
-                .cfg
-                .origin
+                .connection_origin()?
                 .join("api/v1/agent/enroll/packages")
                 .map_err(|_| Error::Configuration)?;
-            let (status, bytes) = crate::client::json_transport(
-                http.get(url).timeout(self.store.cfg.limits.request_timeout),
-                self.store.cfg.limits.response_bytes,
-            )
-            .await?;
+            let (status, bytes) = self
+                .agent_json_transport(
+                    http.get(url).timeout(self.store.cfg.limits.request_timeout),
+                    self.store.cfg.limits.response_bytes,
+                )
+                .await?;
             if !status.is_success() {
                 return Err(Error::Unavailable);
             }

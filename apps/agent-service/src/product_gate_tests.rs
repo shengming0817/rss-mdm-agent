@@ -1298,10 +1298,10 @@ impl Case {
                 value: execution_ipc::host::NativeContextSession {
                     access: execution_ipc::host::NativeAccess::User {
                         credential: zeroize::Zeroizing::new("c".repeat(64)),
-                        credential_origin: self.service.client.configuration().origin.to_string(),
+
                         user: wire::SelfServiceUser {
                             tenant_id: self.service.client.configuration().tenant,
-                            instance_id: uuid::Uuid::from_u128(2),
+                            instance_id: crate::protocol_test_support::SERVICE_ID,
                             principal_id: uuid::Uuid::from_u128(3),
                         },
                     },
@@ -1320,7 +1320,7 @@ impl Case {
     }
 }
 #[tokio::test]
-async fn native_user_handoff_rejects_another_origin_before_any_http_or_refresh() {
+async fn native_user_handoff_rejects_another_service_before_any_http_or_refresh() {
     let _budget = crate::scenario_budget::enter();
     use execution_ipc::host::{NativeContextSession, Request};
     for refresh in [false, true] {
@@ -1335,10 +1335,10 @@ async fn native_user_handoff_rejects_another_origin_before_any_http_or_refresh()
                 value: NativeContextSession {
                     access: execution_ipc::host::NativeAccess::User {
                         credential: zeroize::Zeroizing::new("c".repeat(64)),
-                        credential_origin: "https://other-authority.invalid".into(),
+
                         user: wire::SelfServiceUser {
                             tenant_id: c.service.client.configuration().tenant,
-                            instance_id: uuid::Uuid::from_u128(2),
+                            instance_id: uuid::Uuid::new_v4(),
                             principal_id: uuid::Uuid::from_u128(3),
                         },
                     },
@@ -1670,7 +1670,7 @@ async fn policy_offer_binds_the_original_journal_and_signed_start_before_dispatc
                                 *subject = wire::SelfServiceSubject::User {
                                     user: wire::SelfServiceUser {
                                         tenant_id: data.tenant,
-                                        instance_id: uuid::Uuid::from_u128(2),
+                                        instance_id: crate::protocol_test_support::SERVICE_ID,
                                         principal_id: uuid::Uuid::new_v4(),
                                     },
                                 };
@@ -1701,7 +1701,7 @@ async fn policy_offer_binds_the_original_journal_and_signed_start_before_dispatc
                                     wire::SelfServiceSubject::User {
                                         user: wire::SelfServiceUser {
                                             tenant_id: data.tenant,
-                                            instance_id: uuid::Uuid::from_u128(2),
+                                            instance_id: crate::protocol_test_support::SERVICE_ID,
                                             principal_id: uuid::Uuid::from_u128(3),
                                         },
                                     }
@@ -1825,10 +1825,10 @@ async fn revoked_generation_cannot_rebind_from_a_queued_native_handoff() {
             value: execution_ipc::host::NativeContextSession {
                 access: execution_ipc::host::NativeAccess::User {
                     credential: zeroize::Zeroizing::new("c".repeat(64)),
-                    credential_origin: c.service.client.configuration().origin.to_string(),
+
                     user: wire::SelfServiceUser {
                         tenant_id: c.service.client.configuration().tenant,
-                        instance_id: uuid::Uuid::from_u128(2),
+                        instance_id: crate::protocol_test_support::SERVICE_ID,
                         principal_id: uuid::Uuid::from_u128(3),
                     },
                 },
@@ -2410,7 +2410,7 @@ async fn software_self_service_binds_signed_policy_and_native_context() {
             subject: wire::SelfServiceSubject::User {
                 user: wire::SelfServiceUser {
                     tenant_id: data.tenant,
-                    instance_id: uuid::Uuid::from_u128(2),
+                    instance_id: crate::protocol_test_support::SERVICE_ID,
                     principal_id: uuid::Uuid::from_u128(3),
                 },
             },
@@ -2501,7 +2501,7 @@ async fn device_directory_and_invocation_are_credential_free_with_or_without_emp
         user_item.subject = wire::SelfServiceSubject::User {
             user: wire::SelfServiceUser {
                 tenant_id: c.service.client.configuration().tenant,
-                instance_id: uuid::Uuid::from_u128(2),
+                instance_id: crate::protocol_test_support::SERVICE_ID,
                 principal_id: uuid::Uuid::from_u128(3),
             },
         };

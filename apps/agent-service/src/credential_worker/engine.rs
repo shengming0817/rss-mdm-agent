@@ -127,6 +127,9 @@ fn execute_inner(input: &Input, n: &mut impl Native) -> Result<w::CredentialResu
         vec![Material { subject, secret }]
     } else {
         match &task.operation {
+            Op::RotateRssLogin { .. } | Op::VerifyRssLogin { .. } => {
+                return Err(Error::Unsupported)
+            }
             Op::CollectBitlocker => {
                 let inventory = match n.collect() {
                     Ok(value) => value,

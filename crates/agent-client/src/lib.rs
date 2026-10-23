@@ -14,6 +14,8 @@ pub use delivery::{AbandonmentAck, Association, FrozenAbandonment, FrozenResult,
 pub use redaction::CredentialRedactor;
 mod client;
 mod configuration;
+mod connections;
+pub use connections::{verify_connections, ConnectionStatus};
 mod enrollment;
 mod managed;
 mod native_enrollment;
@@ -65,6 +67,9 @@ pub enum Error {
     /// Retry the same operation in a later bounded drive.
     #[error("Agent transport unavailable")]
     Unavailable,
+    /// Classified network failure before application or TLS protocol acceptance.
+    #[error("Agent network unavailable")]
+    Network,
     /// The device certificate is expired; retain its registration and journal.
     #[error("Agent certificate expired")]
     CertificateExpired,

@@ -8,7 +8,12 @@ fn candidate_requires_current_format_and_valid_identity() {
         cdhash: None,
     };
     let candidate = Candidate {
-        task_trust_origins: vec![],
+        service_id: crate::protocol_test_support::SERVICE_ID,
+        connections: crate::protocol_test_support::signed_connections(
+            "https://agent.example.org".into(),
+            uuid::Uuid::from_u128(2),
+            1,
+        ),
         version: 1,
         format: rss_mdm_agent_wire::enroll::configuration::InstallerFormat::MacosPkg,
         product_version: "test".into(),
@@ -22,12 +27,17 @@ fn candidate_requires_current_format_and_valid_identity() {
         },
         runtime_root: root.path.join("runtime"),
         runtime_sha256: "c".repeat(64),
-        origin: "https://agent.example.org".into(),
-        tenant: uuid::Uuid::new_v4(),
-        signing_keys: BTreeMap::from([(
-            "key".into(),
-            "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE".into(),
-        )]),
+        tenant: uuid::Uuid::from_u128(2),
+        signing_keys: BTreeMap::from([("test".into(), {
+            use base64::Engine;
+            use ring::signature::KeyPair;
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(
+                ring::signature::Ed25519KeyPair::from_seed_unchecked(&[7; 32])
+                    .unwrap()
+                    .public_key()
+                    .as_ref(),
+            )
+        })]),
         ca_pem: Some(String::from_utf8(crate::protocol_test_support::pki::ca()).unwrap()),
         signing_mode: SigningMode::Development,
     };
@@ -62,4 +72,25 @@ fn installation_image_reader_is_not_the_small_configuration_reader() {
     }
     .verify(&path)
     .is_err());
+}
+
+#[test]
+fn program_refresh_keeps_stable_namespace_and_source_grants_across_signed_seed_changes() {
+    let old = crate::deployment::tests::deployment();
+    let mut next = old.clone();
+    next.connections.configuration.revision += 1;
+    next.connections.configuration.origins = vec!["https://new-agent.example.org:9445".into()];
+    next.connections.configuration.preferred_origin =
+        next.connections.configuration.origins[0].clone();
+    next.connections =
+        crate::protocol_test_support::sign_connections(next.connections.configuration);
+    assert_eq!(old.namespace().unwrap(), next.namespace().unwrap());
+    lifecycle::preserved(&old, &next).unwrap();
+    next.service_id = uuid::Uuid::new_v4();
+    assert_eq!(lifecycle::preserved(&old, &next), Err(Error::Identity));
+    assert_ne!(old.namespace().unwrap(), next.namespace().unwrap());
+    next = old.clone();
+    next.signing_keys
+        .insert("new-root".into(), "unapproved".into());
+    assert_eq!(lifecycle::preserved(&old, &next), Err(Error::Identity));
 }

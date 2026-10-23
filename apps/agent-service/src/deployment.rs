@@ -19,9 +19,8 @@ pub struct Deployment {
     pub software_read_grants: Vec<agent_client::SoftwareReadGrant>,
     pub version: u32,
     pub ipc_version: u8,
-    pub origin: String,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub task_trust_origins: Vec<String>,
+    pub service_id: uuid::Uuid,
+    pub connections: rss_mdm_agent_wire::connections::SignedConfiguration,
     pub tenant: uuid::Uuid,
     pub signing_keys: BTreeMap<String, String>,
     pub ca_file: Option<PathBuf>,
@@ -201,7 +200,8 @@ impl Deployment {
             })
             .collect::<Result<_, Error>>()?;
         Ok(Config {
-            task_trust_origins: self.task_trust_origins.clone(),
+            service_id: self.service_id,
+            connections: self.connections.clone(),
             software_read_grants: self.software_read_grants.clone(),
             execution_context: wire::SoftwareExecutionContext {
                 revision: 1,
@@ -217,7 +217,8 @@ impl Deployment {
                 msix_sideload: crate::software_worker::sideload_allowed()?,
                 msix_unsigned: cfg!(windows) && crate::os_version::current()? >= [10, 0, 19041, 0],
             },
-            origin: url::Url::parse(&self.origin).map_err(|_| Error::Configuration)?,
+            origin: url::Url::parse(&self.connections.configuration.preferred_origin)
+                .map_err(|_| Error::Configuration)?,
             tenant: self.tenant,
             platform,
             architecture,
@@ -246,7 +247,7 @@ impl Deployment {
         Ok(format!(
             "{:x}",
             Sha256::digest(
-                serde_json::to_vec(&(&self.origin, self.tenant, self.installation_id))
+                serde_json::to_vec(&(self.service_id, self.tenant, self.installation_id))
                     .map_err(|_| Error::Configuration)?
             )
         ))
@@ -270,7 +271,7 @@ impl Deployment {
         if root.join("execution.sqlite").exists() {
             let binding = agent_client::inspect_binding(&root.join("communication"), &network)?;
             let (context, _) =
-                crate::backend::plan::context(network.origin.as_str(), network.tenant, &binding)?;
+                crate::backend::plan::context(network.service_id, network.tenant, &binding)?;
             execution_sqlite::Store::validate_existing(
                 &root.join("execution.sqlite"),
                 &context.authority,
@@ -555,6 +556,7 @@ pub(crate) fn startup_failure(error: Error) -> execution_contract::ProcessFailur
         Error::Capacity => K::Capacity,
         Error::Conflict | Error::EnrollmentPaused => K::Conflict,
         Error::Storage
+        | Error::Network
         | Error::Unavailable
         | Error::Clock
         | Error::Expired
@@ -643,7 +645,7 @@ pub(crate) mod tests {
         let current = serde_json::json!({
             "version": execution_ipc::host::DEPLOYMENT_VERSION,
             "ipc_version": execution_ipc::host::IPC_VERSION,
-            "origin":"https://agent.example.org", "tenant":uuid::Uuid::new_v4(),
+            "service_id":crate::protocol_test_support::SERVICE_ID, "connections":crate::protocol_test_support::signed_connections("https://agent.example.org".into(), uuid::Uuid::from_u128(2), 1), "tenant":uuid::Uuid::from_u128(2),
             "software_read_grants":[], "signing_keys":{}, "ca_file":root.path.join("https-ca.pem"),
             "installation_id":uuid::Uuid::new_v4(), "installation_artifact":"a".repeat(64),
             "registration_clients":peer.clone(), "clients":peer, "service":image,
@@ -704,11 +706,15 @@ pub(crate) mod tests {
             cdhash: None,
         };
         Deployment {
-            task_trust_origins: vec![],
+            service_id: crate::protocol_test_support::SERVICE_ID,
+            connections: crate::protocol_test_support::signed_connections(
+                "https://agent.example.org".into(),
+                uuid::Uuid::from_u128(2),
+                1,
+            ),
             software_read_grants: vec![],
             version: execution_ipc::host::DEPLOYMENT_VERSION,
             ipc_version: execution_ipc::host::IPC_VERSION,
-            origin: String::new(),
             tenant: uuid::Uuid::new_v4(),
             signing_keys: Default::default(),
             ca_file: None,

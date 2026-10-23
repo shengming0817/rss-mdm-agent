@@ -34,7 +34,7 @@ impl DesktopRuntime {
         let mut account = self.identity.session()?;
         if !account
             .as_ref()
-            .is_some_and(|a| a.matches_registration(&initial.origin, &initial.tenant_id))
+            .is_some_and(|a| a.matches_registration(&initial.service_id, &initial.tenant_id))
         {
             account = None;
         }
@@ -51,9 +51,7 @@ impl DesktopRuntime {
                 .lock()
                 .map_err(|_| unavailable())?
                 .get(&id)?;
-            if super::super::account::registration_origin(&organization)? != initial.origin
-                || organization.tenant_id != initial.tenant_id
-            {
+            if organization.tenant_id != initial.tenant_id {
                 return Err(error(
                     "registration_organization_mismatch",
                     "所选组织与本机安装包不一致",
@@ -87,6 +85,12 @@ impl DesktopRuntime {
         }
         let mut account = account.ok_or_else(unavailable)?;
         account.verify().await?;
+        if !account.matches_registration(&initial.service_id, &initial.tenant_id) {
+            return Err(error(
+                "registration_organization_mismatch",
+                "登录服务与本机安装身份不一致",
+            ));
+        }
         self.identity.set_session(Some(account))?;
         let generation = self.identity.snapshot()?.generation;
         let intent = self.registration_epoch.fetch_add(1, Ordering::AcqRel) + 1;
@@ -115,7 +119,7 @@ impl DesktopRuntime {
                 }
                 Err(e) => return Err(e),
             };
-            if current.origin != initial.origin || current.tenant_id != initial.tenant_id {
+            if current.service_id != initial.service_id || current.tenant_id != initial.tenant_id {
                 return Err(error(
                     "registration_organization_mismatch",
                     "安装组织发生变化，已停止授权",
@@ -201,7 +205,7 @@ impl DesktopRuntime {
         let _switch = self.switching.lock().await;
         let next = self.registration_current(intent, generation)?;
         let account = self.identity.session()?.ok_or_else(unavailable)?;
-        if !account.matches_registration(&current.origin, &current.tenant_id) {
+        if !account.matches_registration(&current.service_id, &current.tenant_id) {
             return Err(error(
                 "registration_organization_mismatch",
                 "安装组织发生变化，已停止授权",
@@ -270,6 +274,7 @@ mod tests {
         ])
         .await;
         let mut current = RegistrationContext {
+            service_id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd".into(),
             origin: organization.origin.clone(),
             tenant_id: organization.tenant_id.clone(),
             status: RegistrationStatus {
@@ -402,7 +407,7 @@ mod tests {
             .registration_handoff(&current, intent, &stale)
             .await
             .is_err());
-        current.origin.push_str("/other");
+        current.service_id = uuid::Uuid::new_v4().to_string();
         assert_eq!(
             runtime
                 .registration_handoff(&current, intent, &generation)
