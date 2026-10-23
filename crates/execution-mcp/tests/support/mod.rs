@@ -28,6 +28,8 @@ pub fn limits() -> McpLimits {
 }
 #[derive(Default)]
 pub struct TestStore {
+    queries: HashMap<(TestNamespace, RequestId), execution_contract::QuerySubmit>,
+    query_cancellations: HashSet<(TestNamespace, RequestId)>,
     accepted: HashMap<(TestNamespace, RequestId), OperationStatus>,
     inputs: HashMap<(TestNamespace, RequestId), BackendSelection>,
     cancellations: HashSet<(TestNamespace, RequestId)>,
@@ -111,6 +113,100 @@ impl TestService {
     }
 }
 impl ExecutionServicePort for TestService {
+    async fn collected_data(
+        &self,
+        input: execution_contract::DataOperation,
+        _: CancellationToken,
+    ) -> Result<execution_contract::DataResponse, ServiceError> {
+        self.authorize()?;
+        let delay = if matches!(
+            input,
+            execution_contract::DataOperation::Submit(_)
+                | execution_contract::DataOperation::Cancel(_)
+        ) {
+            &self.submit_delay_ms
+        } else {
+            &self.catalog_delay_ms
+        };
+        tokio::time::sleep(Duration::from_millis(delay.load(Ordering::SeqCst) as u64)).await;
+        let cancelling = matches!(input, execution_contract::DataOperation::Cancel(_));
+        use execution_contract::*;
+        let query = QueryRef {
+            id: Id::new("native:fixture").unwrap(),
+            revision: Digest::new("b".repeat(64)).unwrap(),
+        };
+        let mut store = self.store.lock().unwrap();
+        let state = |request: RequestId, store: &TestStore| QueryStatus {
+            query: query.clone(),
+            cancel_requested: store.query_cancellations.contains(&self.key(&request)),
+            phase: QueryPhase::Completed,
+            request,
+            preparation: None,
+        };
+        match input {
+            DataOperation::Directory(_) => Ok(DataResponse::Directory(QueryPage {
+                items: vec![QueryDescriptor {
+                    reference: query,
+                    title: "Explicit query fixture".into(),
+                    kind: QueryKind::Native,
+                    domains: vec!["fixture".into()],
+                    scope: DataScope::Device,
+                    input_schema: serde_json::json!({"type":"object","properties":{},"additionalProperties":false}),
+                    policy: None,
+                    available: true,
+                    reason: None,
+                }],
+                next: None,
+            })),
+            DataOperation::Submit(submit) => {
+                if submit.query != query || !submit.parameters.is_empty() {
+                    return Err(ServiceError::InvalidInput);
+                }
+                let key = self.key(&submit.request);
+                if let Some(previous) = store.queries.get(&key) {
+                    if previous != &submit {
+                        return Err(ServiceError::Conflict);
+                    }
+                } else {
+                    store.queries.insert(key, submit.clone());
+                    self.attempts.fetch_add(1, Ordering::SeqCst);
+                }
+                Ok(DataResponse::Status(state(submit.request, &store)))
+            }
+            DataOperation::Status(input) | DataOperation::Cancel(input) => {
+                if !store.queries.contains_key(&self.key(&input.request)) {
+                    return Err(ServiceError::NotFound);
+                }
+                // The transport fixture records cancellation independently from collection.
+                if cancelling {
+                    store.query_cancellations.insert(self.key(&input.request));
+                }
+                Ok(DataResponse::Status(state(input.request, &store)))
+            }
+            DataOperation::Read(input) => {
+                let DataSelection::Request { request } = input.selection else {
+                    return Err(ServiceError::InvalidInput);
+                };
+                if !store.queries.contains_key(&self.key(&request)) {
+                    return Err(ServiceError::NotFound);
+                }
+                Ok(DataResponse::Read(CollectedData {
+                    query,
+                    scope: DataScope::Device,
+                    request: Some(request),
+                    collected_at: Some(100),
+                    quality: DataQuality::Complete,
+                    enumeration_complete: true,
+                    mapping_version: Some(1),
+                    fields: Default::default(),
+                    rows: vec![serde_json::json!({"fixture":true})],
+                    stale: false,
+                    next: None,
+                }))
+            }
+        }
+    }
+
     fn bind_call(
         self: &Arc<Self>,
         _: &serde_json::Map<String, serde_json::Value>,

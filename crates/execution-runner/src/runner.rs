@@ -160,7 +160,9 @@ impl NativeRunner {
         attempt: &AttemptId,
         allowance: DispatchAllowance,
     ) -> Result<DispatchOutcome, Error> {
-        let start_before = if matches!(plan.spec().request.initiator, Initiator::Backend { .. }) {
+        let start_before = if matches!(plan.spec().request.initiator, Initiator::Backend { .. })
+            || plan.spec().request.operation.action.as_str() == "local-query"
+        {
             let expiry = plan
                 .spec()
                 .validity

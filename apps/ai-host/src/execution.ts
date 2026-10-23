@@ -90,6 +90,11 @@ export class ParentTransport implements Transport {
   }
 }
 const methods = new Set([
+  "execution_query_directory",
+  "execution_data_read",
+  "execution_query_submit",
+  "execution_query_status",
+  "execution_query_cancel",
   "execution_software_observe",
   "execution_policy_tools",
   "execution_operation_prepare",
@@ -233,10 +238,19 @@ export async function connectExecution(
           {},
           { signal: b.signal, timeout: b.timeoutMs },
         );
-        return ok([
-          ...catalog.tools.filter((t) => t.name !== "execution_policy_tools"),
-          ...body.result,
-        ]);
+        // Providers consume invocation interfaces. MCP retains its result validators;
+        // duplicating output schemas in every worker catalog exceeds transport budgets.
+        return ok(
+          [
+            ...catalog.tools.filter((t) => t.name !== "execution_policy_tools"),
+            ...body.result,
+          ].map(({ name, description, inputSchema, annotations }) => ({
+            name,
+            description,
+            inputSchema,
+            annotations,
+          })),
+        );
       } catch {
         console.error(`RSS_POLICY_DISCOVERY_UNAVAILABLE stage=${stage}`);
         return fail("unavailable");
@@ -249,6 +263,9 @@ export async function connectExecution(
       )
         return fail("unsupported_capability");
       const read = [
+        "execution_query_directory",
+        "execution_data_read",
+        "execution_query_status",
         "execution_software_observe",
         "execution_policy_tools",
         "execution_policy_status",
@@ -258,11 +275,14 @@ export async function connectExecution(
       ].includes(proposal.name);
       const id =
         proposal.name.startsWith("policy_") ||
-        proposal.name === "execution_operation_prepare"
+        proposal.name === "execution_operation_prepare" ||
+        proposal.name === "execution_query_submit"
           ? proposal.callId
           : read
             ? randomUUID()
-            : operationRequestId(proposal.name, proposal.arguments);
+            : proposal.name === "execution_query_cancel"
+              ? proposal.arguments.request
+              : operationRequestId(proposal.name, proposal.arguments);
       if (!isId(id)) return fail("invalid_input");
       const digest = createHash("sha256")
         .update(JSON.stringify([namespace, commandId, proposal.name, id]))
@@ -270,7 +290,8 @@ export async function connectExecution(
       const operationId =
         proposal.name.startsWith("policy_") ||
         proposal.name === "execution_software_observe" ||
-        proposal.name === "execution_operation_prepare"
+        proposal.name === "execution_operation_prepare" ||
+        proposal.name === "execution_query_submit"
           ? `${digest.slice(0, 8)}-${digest.slice(8, 12)}-4${digest.slice(13, 16)}-a${digest.slice(17, 20)}-${digest.slice(20, 32)}`
           : digest;
       return ok({
@@ -287,7 +308,12 @@ export async function connectExecution(
             await call(
               request,
               request.body.proposal.name,
-              request.body.proposal.arguments,
+              request.body.proposal.name === "execution_query_submit"
+                ? {
+                    ...request.body.proposal.arguments,
+                    request: request.body.operationId,
+                  }
+                : request.body.proposal.arguments,
               b,
             ),
           ),
@@ -299,6 +325,35 @@ export async function connectExecution(
     reconcile: async (request, b) => {
       const { name, arguments: args } = request.body.proposal;
       try {
+        if (
+          name === "execution_query_submit" ||
+          name === "execution_query_cancel"
+        ) {
+          const original =
+            name === "execution_query_submit"
+              ? request.body.operationId
+              : args.request;
+          const status = await call(
+            request,
+            "execution_query_status",
+            { request: original },
+            b,
+          );
+          if (status.status === "error")
+            return ok({
+              state:
+                status.error?.code === "notFound" ? "not_submitted" : "unknown",
+            });
+          if (
+            name === "execution_query_cancel" &&
+            status.result?.value?.cancelRequested !== true &&
+            !["cancelled", "completed", "failed"].includes(
+              status.result?.value?.phase,
+            )
+          )
+            return ok({ state: "unknown" });
+          return ok({ state: "committed", receipt: receipt(request, status) });
+        }
         if (
           name.startsWith("policy_") ||
           name === "execution_operation_prepare"

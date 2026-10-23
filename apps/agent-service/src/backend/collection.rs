@@ -29,22 +29,57 @@ pub(crate) fn compile(
     }
     materials.validate_offer(offer)?;
     payload.validate()?;
-    if payload.platform
+    compile_read(
+        &payload.clone().into(),
+        super::request_id(offer)?,
+        Initiator::Backend {
+            task: id(payload.task_id.to_string())?,
+            attempt: id(payload.attempt_id.to_string())?,
+            trigger: BackendTrigger::Automatic {},
+        },
+        Operation {
+            action: id("backend-collection")?,
+            resource: reference("backend-resource", hex(&payload.resource_digest))?,
+        },
+        reference(
+            format!("backend:{}", payload.task_id),
+            payload.attempt_id.to_string(),
+        )?,
+        payload.expires_at,
+        binding,
+        actor,
+        (config, root),
+        delegate,
+    )
+}
+
+/// Compile physical collection without manufacturing a remote task or Start authority.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn compile_read(
+    read: &crate::collection_worker::ReadPlan,
+    request: RequestId,
+    initiator: Initiator,
+    operation: Operation,
+    policy: VersionedRef,
+    start_until: i64,
+    binding: &execution_app::ServiceBinding,
+    actor: &ActorId,
+    (config, root): (&crate::ExecutionConfig, &mut MaterialRoot),
+    delegate: Option<std::sync::Arc<execution_ipc::helper::Connection>>,
+) -> Result<(FrozenExecution, Artifacts), Error> {
+    if read.platform
         != match plan::platform()? {
             Platform::Windows => w::TaskPlatform::Windows,
             Platform::Macos => w::TaskPlatform::Macos,
             Platform::Linux => return Err(Error::Unsupported),
         }
-        || !payload
-            .plan
-            .supported_by(&crate::collection_worker::engines())
+        || !read.plan.supported_by(&crate::collection_worker::engines())
     {
         return Err(Error::Unsupported);
     }
-    crate::collection_worker::preflight(&payload.plan)?;
+    crate::collection_worker::preflight(&read.plan)?;
     let platform = plan::platform()?;
-    let (run_as, session, work_root) = match (&payload.execution.target, payload.execution.identity)
-    {
+    let (run_as, session, work_root) = match (&read.execution.target, read.execution.identity) {
         (w::SoftwareExecutionTarget::Device, w::ExecutionIdentity::System)
             if delegate.is_none() =>
         {
@@ -64,8 +99,7 @@ pub(crate) fn compile(
             let helper = delegate.as_ref().ok_or(Error::Unavailable)?;
             if identity != &helper.context().subject
                 || *session_id != crate::service::login_id(helper.context())
-                || payload.execution.generated_uid
-                    != crate::account_identity::generated_uid(identity)?
+                || read.execution.generated_uid != crate::account_identity::generated_uid(identity)?
             {
                 return Err(Error::Untrusted);
             }
@@ -86,11 +120,11 @@ pub(crate) fn compile(
         }
         _ => return Err(Error::Untrusted),
     };
-    let tools = crate::collection_worker::tools(config, &payload.plan)?;
+    let tools = crate::collection_worker::tools(config, &read.plan)?;
 
     // The runner derives Start expiry as validity end minus execution budget.
-    let seconds = u64::from(payload.plan.spec().budget.timeout_seconds)
-        .min(u64::try_from(payload.deadline - payload.expires_at).map_err(|_| Error::Clock)?);
+    let seconds = u64::from(read.plan.spec().budget.timeout_seconds)
+        .min(u64::try_from(read.deadline - start_until).map_err(|_| Error::Clock)?);
     if seconds == 0 {
         return Err(Error::Expired);
     }
@@ -106,7 +140,7 @@ pub(crate) fn compile(
         .ok_or(Error::Clock)?;
     let image = plan::pin(&std::env::current_exe()?)?;
     let input = crate::collection_worker::Input {
-        read: payload.clone().into(),
+        read: read.clone(),
         finish_by_unix_ms,
         image_sha256: image.artifact.sha256.clone(),
         run_as: run_as.clone(),
@@ -134,24 +168,17 @@ pub(crate) fn compile(
             execution: ExecutionSpec::Process {},
             request: ExecutionRequest {
                 schema_version: V1,
-                request_id: super::request_id(offer)?,
+                request_id: request,
                 authority: binding.authority.clone(),
                 actor: actor.clone(),
-                initiator: Initiator::Backend {
-                    task: id(payload.task_id.to_string())?,
-                    attempt: id(payload.attempt_id.to_string())?,
-                    trigger: BackendTrigger::Automatic {},
-                },
+                initiator,
                 delegation: None,
                 target: Target {
                     device: binding.device.clone(),
                     platform,
                     scope: TargetScope::Device {},
                 },
-                operation: Operation {
-                    action: id("backend-collection")?,
-                    resource: reference("backend-resource", hex(&payload.resource_digest))?,
-                },
+                operation,
                 parameters: [(
                     "collection-tools".into(),
                     InputValue::Literal {
@@ -187,21 +214,18 @@ pub(crate) fn compile(
             constraints: IsolationPolicy::OsIdentity {},
             budget: ExecutionBudget {
                 total_timeout_ms: seconds * 1000,
-                total_output_bytes: u64::from(payload.plan.spec().budget.output_bytes),
+                total_output_bytes: u64::from(read.plan.spec().budget.output_bytes),
                 max_attempts: 1,
             },
             validity: ValidityWindow {
                 not_before_unix_ms: compiled_at_ms,
-                expires_at_unix_ms: u64::try_from(payload.expires_at)
+                expires_at_unix_ms: u64::try_from(start_until)
                     .map_err(|_| Error::Clock)?
                     .checked_add(seconds)
                     .and_then(|s| s.checked_mul(1000))
                     .ok_or(Error::Clock)?,
             },
-            policy: reference(
-                format!("backend:{}", payload.task_id),
-                payload.attempt_id.to_string(),
-            )?,
+            policy,
         },
         &plan::storage_limits().input,
     )

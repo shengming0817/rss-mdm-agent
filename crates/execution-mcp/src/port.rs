@@ -16,6 +16,14 @@ use tokio_util::sync::CancellationToken;
 /// Accepted effects must remain queryable even when this adapter or its process disappears.
 /// Only explicitly identified test implementations may synthesize authority/evidence.
 pub trait ExecutionServicePort: Send + Sync + 'static {
+    /// Local collected data and explicit queries using native-attested caller identity.
+    fn collected_data(
+        &self,
+        _: execution_contract::DataOperation,
+        _: CancellationToken,
+    ) -> impl Future<Output = Result<execution_contract::DataResponse, ServiceError>> + Send {
+        async { Err(ServiceError::Unsupported) }
+    }
     /// Bind one call from bounded, untrusted MCP metadata to the authenticated connection.
     /// The composition owns metadata semantics and must reject missing/mismatched provenance.
     /// Return an immutable per-call service; never mutate shared connection identity.

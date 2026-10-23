@@ -108,7 +108,7 @@ async fn discovery_exposes_backend_references_and_rejects_old_script_and_catalog
         .await;
     let list = w.recv().await;
     let tools = list["result"]["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 9);
+    assert_eq!(tools.len(), 14);
     for tool in tools {
         jsonschema::draft202012::new(&tool["inputSchema"]).unwrap();
         jsonschema::draft202012::new(&tool["outputSchema"]).unwrap();
@@ -394,7 +394,7 @@ async fn official_rmcp_client_can_consume_the_bounded_service() {
             .unwrap()
             .tools
             .len(),
-        9
+        14
     );
     client.cancel().await.unwrap();
     timeout(Duration::from_secs(2), task)
@@ -558,6 +558,36 @@ async fn every_tool_advertises_and_times_out_according_to_its_effects() {
     let tools = list["result"]["tools"].as_array().unwrap();
     let operation = json!({"operationRequestId":"original-id"});
     let cases = [
+        (
+            "execution_query_directory",
+            json!({"after":null,"limit":16,"refreshPolicies":false}),
+            true,
+            "unavailable",
+        ),
+        (
+            "execution_data_read",
+            json!({"selection":{"kind":"request","request":"original-id"},"after":null,"limit":16,"maxAgeSeconds":null}),
+            true,
+            "unavailable",
+        ),
+        (
+            "execution_query_submit",
+            json!({"request":"original-id","query":{"id":"native:test","revision":"a".repeat(64)},"parameters":{}}),
+            false,
+            "outcomeUnknown",
+        ),
+        (
+            "execution_query_status",
+            json!({"request":"original-id"}),
+            true,
+            "unavailable",
+        ),
+        (
+            "execution_query_cancel",
+            json!({"request":"original-id"}),
+            false,
+            "outcomeUnknown",
+        ),
         (
             "execution_operation_prepare",
             json!({"scene":"policy.parameters.v1", "tool":"policy_fixture", "parameters":{}}),
@@ -771,4 +801,40 @@ fn policy_mcp_descriptor_preserves_resource_input_constraints_and_versions() {
     assert!(matches!(policy_tool(&item), Err(ServiceError::Denied)));
     item.self_service.risk_level = 3;
     assert!(matches!(policy_tool(&item), Err(ServiceError::Denied)));
+}
+
+#[tokio::test]
+async fn data_tools_preserve_original_request_and_typed_results_through_real_mcp() {
+    let s = service();
+    let mut w = Wire::open(s.clone(), limits()).await;
+    let directory = w
+        .call(
+            2,
+            "execution_query_directory",
+            json!({"after":null,"limit":16,"refreshPolicies":false}),
+        )
+        .await;
+    assert_eq!(value(&directory)["kind"], "directory");
+    let query = value(&directory)["value"]["items"][0]["reference"].clone();
+    let request = "11111111-1111-4111-a111-111111111111";
+    let submit = json!({"request":request,"query":query,"parameters":{}});
+    for n in 3..5 {
+        let result = w.call(n, "execution_query_submit", submit.clone()).await;
+        assert_eq!(value(&result)["kind"], "status");
+        assert_eq!(value(&result)["value"]["request"], request);
+    }
+    assert_eq!(s.attempts.load(Ordering::SeqCst), 1);
+    let status = w
+        .call(5, "execution_query_status", json!({"request":request}))
+        .await;
+    assert_eq!(value(&status)["value"]["phase"], "completed");
+    let read = w.call(6, "execution_data_read", json!({"selection":{"kind":"request","request":request},"after":null,"limit":16,"maxAgeSeconds":null})).await;
+    assert_eq!(value(&read)["kind"], "read");
+    assert_eq!(value(&read)["value"]["rows"][0]["fixture"], true);
+    let cancelled = w
+        .call(7, "execution_query_cancel", json!({"request":request}))
+        .await;
+    assert_eq!(value(&cancelled)["value"]["cancelRequested"], true);
+    assert_eq!(s.attempts.load(Ordering::SeqCst), 1);
+    w.close().await;
 }

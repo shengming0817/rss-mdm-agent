@@ -288,6 +288,82 @@ impl ExecutionHandle {
                 .map_err(|_| bad(Error::Unbound))?,
         })
     }
+    async fn request_data(&self, input: DataOperation) -> Result<DataResponse, mcp::ServiceError> {
+        let context = self.context_ref().map_err(|_| mcp::ServiceError::Unbound)?;
+        match self
+            .request(Request::Data {
+                context,
+                origin: self.origin.clone(),
+                input,
+            })
+            .await
+            .map_err(mcp_error)?
+        {
+            Reply::Data { value } => Ok(value),
+            Reply::DataFailure { reason } => Err(match reason {
+                DataError::InvalidInput => mcp::ServiceError::InvalidInput,
+                DataError::Denied => mcp::ServiceError::Denied,
+                DataError::NotFound => mcp::ServiceError::NotFound,
+                DataError::Conflict => mcp::ServiceError::Conflict,
+                DataError::Expired => mcp::ServiceError::Expired,
+                DataError::Unsupported => mcp::ServiceError::Unsupported,
+                DataError::InProgress => mcp::ServiceError::InProgress,
+                DataError::Capacity => mcp::ServiceError::Limit,
+                DataError::Unavailable => mcp::ServiceError::Unavailable,
+            }),
+            _ => Err(mcp::ServiceError::Unavailable),
+        }
+    }
+    pub async fn query_directory(&self, input: QueryDirectory) -> ui::Result<QueryPage> {
+        match self
+            .request_data(DataOperation::Directory(input))
+            .await
+            .map_err(data_error)?
+        {
+            DataResponse::Directory(value) => Ok(value),
+            _ => Err(bad(Error::Unavailable)),
+        }
+    }
+    pub async fn data_read(&self, input: DataRead) -> ui::Result<CollectedData> {
+        match self
+            .request_data(DataOperation::Read(input))
+            .await
+            .map_err(data_error)?
+        {
+            DataResponse::Read(value) => Ok(value),
+            _ => Err(bad(Error::Unavailable)),
+        }
+    }
+    pub async fn query_submit(&self, input: QuerySubmit) -> ui::Result<QueryStatus> {
+        match self
+            .request_data(DataOperation::Submit(input))
+            .await
+            .map_err(data_error)?
+        {
+            DataResponse::Status(value) => Ok(value),
+            _ => Err(bad(Error::Unavailable)),
+        }
+    }
+    pub async fn query_status(&self, input: QueryRequest) -> ui::Result<QueryStatus> {
+        match self
+            .request_data(DataOperation::Status(input))
+            .await
+            .map_err(data_error)?
+        {
+            DataResponse::Status(value) => Ok(value),
+            _ => Err(bad(Error::Unavailable)),
+        }
+    }
+    pub async fn query_cancel(&self, input: QueryRequest) -> ui::Result<QueryStatus> {
+        match self
+            .request_data(DataOperation::Cancel(input))
+            .await
+            .map_err(data_error)?
+        {
+            DataResponse::Status(value) => Ok(value),
+            _ => Err(bad(Error::Unavailable)),
+        }
+    }
     pub async fn policy_directory(
         &self,
         input: ui::PolicyDirectoryQuery,
@@ -604,6 +680,25 @@ impl mcp::ExecutionServicePort for ExecutionHandle {
             _ => Err(mcp::ServiceError::Unavailable),
         }
     }
+    async fn collected_data(
+        &self,
+        mut input: DataOperation,
+        _: CancellationToken,
+    ) -> Result<DataResponse, mcp::ServiceError> {
+        let ClientOrigin::Ai { tool_call, .. } = &self.origin else {
+            return Err(mcp::ServiceError::Denied);
+        };
+        if let DataOperation::Submit(submit) = &mut input {
+            // Submission identity belongs to the authenticated Host, never to model arguments.
+            submit.request = RequestId::new(
+                uuid::Uuid::parse_str(tool_call.as_str())
+                    .map_err(|_| mcp::ServiceError::InvalidInput)?
+                    .to_string(),
+            )
+            .map_err(|_| mcp::ServiceError::InvalidInput)?;
+        }
+        self.request_data(input).await
+    }
     async fn observe_software(
         &self,
         input: SoftwareReadSelection,
@@ -886,6 +981,23 @@ pub fn install_user_helper() -> Result<(), Error> {
         }
         std::thread::sleep(Duration::from_millis(50));
     }
+}
+
+fn data_error(error: mcp::ServiceError) -> ui::ServiceError {
+    ui::error(
+        match error {
+            mcp::ServiceError::InvalidInput => "data_invalid_input",
+            mcp::ServiceError::Denied => "data_denied",
+            mcp::ServiceError::NotFound => "data_not_found",
+            mcp::ServiceError::Conflict => "data_conflict",
+            mcp::ServiceError::InProgress => "data_in_progress",
+            mcp::ServiceError::Expired => "data_expired",
+            mcp::ServiceError::Unsupported => "data_unsupported",
+            mcp::ServiceError::Limit => "data_capacity",
+            _ => "data_unavailable",
+        },
+        "本地数据操作未完成，请根据原请求状态处理",
+    )
 }
 
 #[cfg(test)]

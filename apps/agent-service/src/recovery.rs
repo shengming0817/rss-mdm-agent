@@ -5,7 +5,7 @@ use execution_contract::*;
 use execution_runner::{Artifacts, SoftwareStepArtifacts};
 use std::{path::PathBuf, sync::Arc};
 
-fn content(config: &ExecutionConfig, run_as: &RunAs, digest: &Digest) -> PathBuf {
+pub(crate) fn content(config: &ExecutionConfig, run_as: &RunAs, digest: &Digest) -> PathBuf {
     use sha2::{Digest as _, Sha256};
     let namespace = match run_as {
         RunAs::User { account } => {

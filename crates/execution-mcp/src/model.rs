@@ -18,6 +18,9 @@ pub enum ServiceError {
     /// Object absent within the authorized namespace; do not reveal another namespace.
     #[error("not found")]
     NotFound,
+    /// The same query has an unsettled original request.
+    #[error("query already in progress")]
+    InProgress,
     /// Stable operation ID already names different content.
     #[error("content conflict")]
     Conflict,

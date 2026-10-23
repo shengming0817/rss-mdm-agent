@@ -6,6 +6,11 @@ import ts from "typescript";
 import { parse, compileTemplate } from "vue/compiler-sfc";
 
 const selfServiceCommands = [
+  "query_directory",
+  "data_read",
+  "query_submit",
+  "query_status",
+  "query_cancel",
   "self_service_snapshot",
   "self_service_execute",
   "self_service_confirm",
@@ -989,8 +994,9 @@ export function checkTree(treeRoot = root, executable) {
   const ipcPath = "apps/desktop/src-tauri/src/composition/ipc.rs";
   const ipc = read(ipcPath);
   const commands =
-    ipc.match(/commands!\s*\{([\s\S]*?)\}/)?.[1].match(/self_service_\w+/g) ??
-    [];
+    ipc
+      .match(/commands!\s*\{([\s\S]*?)\}/)?.[1]
+      .match(/\b(?:self_service_\w+|query_\w+|data_read)(?=\s*\()/g) ?? [];
   if (
     JSON.stringify(commands.toSorted()) !==
       JSON.stringify(selfServiceCommands.toSorted()) ||

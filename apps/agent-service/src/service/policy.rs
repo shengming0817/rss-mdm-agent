@@ -78,7 +78,7 @@ pub(super) struct NativeContext {
     scope: SessionKey,
     epoch: u64,
     lease: Option<Arc<zeroize::Zeroizing<String>>>,
-    context: execution_contract::NativeContextRef,
+    pub(super) context: execution_contract::NativeContextRef,
 }
 impl std::ops::Deref for NativeContext {
     type Target = NativeContextSession;
@@ -229,6 +229,37 @@ impl Core {
             }
         }
         Ok(())
+    }
+    pub(super) fn data_contexts(&self) -> Vec<(String, Id, execution_contract::NativeContextRef)> {
+        self.contexts
+            .values()
+            .filter(|c| c.ready && self.fences.current(&c.scope).ok() == Some(c.epoch))
+            .map(|c| {
+                (
+                    c.scope.subject.clone(),
+                    c.scope.binding.clone(),
+                    c.context.clone(),
+                )
+            })
+            .collect()
+    }
+    pub(super) fn data_context(
+        &self,
+        command: &Command,
+        expected: &execution_contract::NativeContextRef,
+    ) -> Result<&NativeContext, Error> {
+        let bound = self
+            .contexts
+            .get(&peer_key(command)?)
+            .ok_or(Error::Identity)?;
+        if self.stopping
+            || !bound.ready
+            || self.fences.current(&bound.scope)? != bound.epoch
+            || &bound.context != expected
+        {
+            return Err(Error::Identity);
+        }
+        Ok(bound)
     }
     pub(super) fn context(&self, command: &Command) -> Result<&NativeContext, Error> {
         if self.host.revoked.load(Ordering::Acquire) || self.stopping {
@@ -454,6 +485,11 @@ impl<S: IdentityProvider> DeviceService<S> {
             };
             let reply = match result {
                 Err(error)
+                    if matches!(command.request.as_operation(), Some(Request::Data { .. })) =>
+                {
+                    super::data::failure(error)
+                }
+                Err(error)
                     if operation_submit
                         && matches!(
                             error,
@@ -487,7 +523,7 @@ impl<S: IdentityProvider> DeviceService<S> {
         }
         Ok(())
     }
-    async fn policy_directory(
+    pub(super) async fn policy_directory(
         &mut self,
         bound: &NativeContext,
         origin: &ClientOrigin,
@@ -551,6 +587,24 @@ impl<S: IdentityProvider> DeviceService<S> {
         let Some(request) = command.request.as_operation() else {
             return Err(Error::Protocol);
         };
+        if let Request::Data {
+            context,
+            origin,
+            input,
+        } = request
+        {
+            return self
+                .data_command(command, context, origin, input, commands)
+                .await;
+        }
+        self.policy_operation(command, request, commands).await
+    }
+    pub(super) async fn policy_operation(
+        &mut self,
+        command: &Command,
+        request: &Request,
+        commands: &mut tokio::sync::mpsc::Receiver<Command>,
+    ) -> Result<Reply, Error> {
         if let Request::RetireEnterpriseContext {
             generation,
             proof,
@@ -621,7 +675,11 @@ impl<S: IdentityProvider> DeviceService<S> {
             {
                 return Err(Error::Identity);
             }
-            if self.core.host.revoked.load(Ordering::Acquire) || self.core.stopping {
+            // A device-only OS binding permits cached local reads while offline.
+            // Live Policy access and all submissions retain their independent identity gate.
+            if (self.core.host.revoked.load(Ordering::Acquire) && value.user().is_some())
+                || self.core.stopping
+            {
                 return Err(Error::Denied);
             }
             let key = peer_key(command)?;
@@ -672,6 +730,7 @@ impl<S: IdentityProvider> DeviceService<S> {
             let lease = value.credential().map(|secret| Arc::new(secret.clone()));
             if let Some(secret) = &lease {
                 self.bridge.protect_user_session(secret)?;
+                self.core.data.protect(secret)?;
             }
             self.core.contexts.insert(
                 key.clone(),

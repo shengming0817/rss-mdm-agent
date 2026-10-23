@@ -64,12 +64,20 @@ async fn withdrawal_expiry_and_clock_jump_preserve_gaps_without_restarting_work(
         total_output_bytes: 10,
         quality: OutputQuality::Complete,
     };
-    t.complete(&c, at, &e, true, at).unwrap();
+    t.complete(&c, at, &e, true, at, &mut case.service.core)
+        .unwrap();
     assert_eq!(t.spool.summary().unwrap().pending, 0);
     assert_eq!(t.spool.summary().unwrap().gaps["configuration"].count, 1);
     t.install(c.clone()).unwrap();
-    t.complete(&c, at, &e, true, c.payload().expires_at * 1_000_000)
-        .unwrap();
+    t.complete(
+        &c,
+        at,
+        &e,
+        true,
+        c.payload().expires_at * 1_000_000,
+        &mut case.service.core,
+    )
+    .unwrap();
     assert_eq!(t.spool.summary().unwrap().pending, 0);
     t.last_time = Some((Instant::now(), at + 10_000_000));
     t.step(&mut case.service.core).unwrap();

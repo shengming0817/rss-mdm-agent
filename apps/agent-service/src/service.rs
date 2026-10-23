@@ -11,6 +11,7 @@ use execution_contract::{
 };
 use execution_runner::{MaterialRegistry, NativeRunner};
 use rss_mdm_agent_wire::runtime as wire;
+mod data;
 mod policy;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -60,6 +61,31 @@ pub struct UserResources {
     pub work_roots: std::collections::BTreeMap<String, PathBuf>,
 }
 impl UserResources {
+    fn connect_peer(
+        &self,
+        subject: &str,
+        session: u32,
+        binding: &execution_contract::Id,
+    ) -> Result<Arc<execution_ipc::helper::Connection>, Error> {
+        let connection = execution_ipc::helper::Connection::connect(
+            execution_ipc::host::PeerPolicy {
+                images: vec![self.image.clone()],
+                subjects: vec![subject.into()],
+                interactive: true,
+            },
+            subject.into(),
+            session,
+        )
+        .map_err(helper_error)?;
+        if &connection.context().binding != binding
+            || self.work_roots.get(subject).is_none_or(|p| {
+                p.canonicalize().ok().as_ref() != Some(&connection.context().work_root)
+            })
+        {
+            return Err(Error::Denied);
+        }
+        Ok(Arc::new(connection))
+    }
     pub(crate) fn connect(
         &self,
         selection: Option<&Selection>,
@@ -170,6 +196,7 @@ impl<S: IdentityProvider> DeviceService<S> {
             materials,
             subject: execution_ipc::host::current_subject().map_err(crate::error::app_error)?,
             current: Arc::new(Mutex::new(None)),
+            local_query: Arc::new(Mutex::new(None)),
             identity_until: client.runtime_gate(),
             revoked: Arc::new(AtomicBool::new(client.runtime_readiness().is_err())),
         };
@@ -193,6 +220,11 @@ impl<S: IdentityProvider> DeviceService<S> {
         .map_err(|_| Error::Configuration)?;
         let material_root = open_materials(&config.material_root, &owner, journal)
             .map_err(crate::error::app_error)?;
+        let mut data =
+            crate::collected_data::Data::new(client.collected_store()?, client.output_policy()?);
+        if let Err(error) = data.install_local() {
+            eprintln!("agent_collected_data: {error}");
+        }
         let output = client.output_policy()?;
         let telemetry = if client
             .registration()?
@@ -207,6 +239,7 @@ impl<S: IdentityProvider> DeviceService<S> {
             client,
             core: Core {
                 telemetry,
+                data,
                 app,
                 host,
                 config,
@@ -446,6 +479,9 @@ impl<S: IdentityProvider> DeviceService<S> {
                         .finish_delivery(&mut self.client, pending, &mut self.core.app)?;
                 }
                 let request = self.client.bound_request(task)?.ok_or(Error::Conflict)?;
+                if let Err(error) = self.core.capture_data(&request) {
+                    eprintln!("agent_collected_data: {error}");
+                }
                 let input = self
                     .core
                     .app
@@ -888,12 +924,13 @@ impl<S: IdentityProvider> DeviceService<S> {
     }
     /// Stop accepted work. Stopping never claims process termination or effect rollback.
     pub fn stop(&mut self) -> Result<(), Error> {
-        let telemetry = self
-            .core
-            .telemetry
-            .as_mut()
-            .map(|t| t.shutdown())
-            .transpose();
+        let telemetry = if let Some(mut telemetry) = self.core.telemetry.take() {
+            let result = telemetry.shutdown(&mut self.core);
+            self.core.telemetry = Some(telemetry);
+            result
+        } else {
+            Ok(())
+        };
         let commands = self
             .core
             .app
@@ -923,6 +960,7 @@ pub(crate) struct Selection {
 }
 pub(crate) struct Core {
     telemetry: Option<crate::telemetry::Telemetry>,
+    data: crate::collected_data::Data,
     pub(crate) app: ExecutionApp<EnterpriseHost, NativeRunner, execution_sqlite::Store>,
     pub(crate) host: EnterpriseHost,
     pub(crate) config: ExecutionConfig,
@@ -972,8 +1010,14 @@ impl Core {
             self.app
                 .reconcile(request)
                 .map_err(crate::error::app_error)?;
+            if let Err(error) = self.capture_data(request) {
+                eprintln!("agent_collected_data: {error}");
+            }
         }
         self.recovery_cursor = page.next;
+        if let Err(error) = self.maintain_data() {
+            eprintln!("agent_collected_data: {error}");
+        }
         Ok(())
     }
     fn revoke_preparations(&mut self) -> Result<(), Error> {
@@ -1268,10 +1312,25 @@ impl Core {
             eprintln!("agent_identity_gate: {error}");
         }
         use execution_ipc::host::{Reply, Request};
+        if let Some(Request::Data {
+            context,
+            origin,
+            input,
+        }) = command.request.as_operation()
+        {
+            if data::is_local(input) {
+                let reply = self
+                    .local_data(&command, context, origin, input)
+                    .unwrap_or_else(data::failure);
+                let _ = command.reply.send(reply);
+                return;
+            }
+        }
         if matches!(
             command.request.as_operation(),
             Some(
-                execution_ipc::host::Request::BindContext { .. }
+                execution_ipc::host::Request::Data { .. }
+                    | Request::BindContext { .. }
                     | Request::RevokeContext {}
                     | Request::RetireEnterpriseContext { .. }
                     | execution_ipc::host::Request::ObserveSoftware { .. }
@@ -1292,7 +1351,8 @@ impl Core {
         let reply = (|| -> Result<Reply, Error> {
             match command.request.into_operation() {
                 Some(
-                    Request::BindContext { .. }
+                    Request::Data { .. }
+                    | Request::BindContext { .. }
                     | Request::RevokeContext {}
                     | Request::RetireEnterpriseContext { .. }
                     | Request::ObserveSoftware { .. }
@@ -1839,8 +1899,11 @@ impl Selection {
 }
 
 pub(crate) fn login_id(context: &execution_ipc::helper::UserContext) -> uuid::Uuid {
+    login_binding_id(&context.binding)
+}
+pub(crate) fn login_binding_id(binding: &execution_contract::Id) -> uuid::Uuid {
     use sha2::{Digest as _, Sha256};
-    let digest = Sha256::digest(context.binding.as_str().as_bytes());
+    let digest = Sha256::digest(binding.as_str().as_bytes());
     let mut bytes = [0; 16];
     bytes.copy_from_slice(&digest[..16]);
     bytes[6] = (bytes[6] & 0x0f) | 0x50;

@@ -2,6 +2,7 @@
 //! No local enterprise approver, source catalog or policy-signing authority is introduced.
 mod account_identity;
 mod backend;
+mod collected_data;
 mod collection_environment;
 pub mod collection_worker;
 pub mod deployment;

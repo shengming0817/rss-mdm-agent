@@ -74,6 +74,11 @@ fn constrain_schema_integers(value: &mut Value) {
 // bind schemas and dispatch to that owner without repeating wire-name lists.
 #[derive(Clone, Copy)]
 pub(crate) enum ToolKind {
+    QueryDirectory,
+    DataRead,
+    QuerySubmit,
+    QueryStatus,
+    QueryCancel,
     Tasks,
     PolicyTools,
     PrepareOperation,
@@ -90,7 +95,12 @@ enum Effect {
     MayPersist,
 }
 impl ToolKind {
-    const ALL: [Self; 9] = [
+    const ALL: [Self; 14] = [
+        Self::QueryDirectory,
+        Self::DataRead,
+        Self::QuerySubmit,
+        Self::QueryStatus,
+        Self::QueryCancel,
         Self::Tasks,
         Self::PolicyTools,
         Self::PrepareOperation,
@@ -104,6 +114,11 @@ impl ToolKind {
 
     fn descriptor(self) -> (&'static str, &'static str, Effect) {
         match self {
+            Self::QueryDirectory => ("execution_query_directory", "Discover exact local query definitions. Descriptors are not execution grants.", Effect::ReadOnly),
+            Self::DataRead => ("execution_data_read", "Read retained local data by query or original request, with snapshot pagination. This never starts collection.", Effect::ReadOnly),
+            Self::QuerySubmit => ("execution_query_submit", "Explicitly submit one query. Reuse the original request after response loss. Published scripts retain their Policy risk and confirmation flow.", Effect::MayPersist),
+            Self::QueryStatus => ("execution_query_status", "Read the original query state and existing confirmation reference. Never resubmit to poll.", Effect::ReadOnly),
+            Self::QueryCancel => ("execution_query_cancel", "Request cancellation of the original query; acknowledgement does not prove termination.", Effect::MayPersist),
             Self::SoftwareRead => ("execution_software_observe", "Collect a fresh bounded native software fact from one current signed definition step. No installation or script execution.", Effect::ReadOnly),
             Self::PrepareOperation => ("execution_operation_prepare", "Show an editable operation card for a current policy tool. Use for requests to display or edit settings. Suggestions do not execute: the user saves the final parameters in the desktop. Only registered scenes are accepted.", Effect::MayPersist),
             Self::PolicyTools => ("execution_policy_tools", "Current employee-authorized script tools. Policy publication, allowAi and risk are verified for this AI origin.", Effect::ReadOnly),
@@ -128,6 +143,18 @@ impl ToolKind {
     }
     fn definition(self) -> Tool {
         match self {
+            Self::QueryDirectory => {
+                tool::<execution_contract::QueryDirectory, execution_contract::DataResponse>(self)
+            }
+            Self::DataRead => {
+                tool::<execution_contract::DataRead, execution_contract::DataResponse>(self)
+            }
+            Self::QuerySubmit => {
+                tool::<execution_contract::QuerySubmit, execution_contract::DataResponse>(self)
+            }
+            Self::QueryStatus | Self::QueryCancel => {
+                tool::<execution_contract::QueryRequest, execution_contract::DataResponse>(self)
+            }
             Self::SoftwareRead => tool::<
                 execution_contract::SoftwareReadSelection,
                 execution_contract::BackendRequest,
@@ -218,6 +245,26 @@ impl<S: ExecutionServicePort> Handler<S> {
             );
         };
         match kind {
+            ToolKind::QueryDirectory
+            | ToolKind::DataRead
+            | ToolKind::QuerySubmit
+            | ToolKind::QueryStatus
+            | ToolKind::QueryCancel => result(
+                async {
+                    use execution_contract::DataOperation as D;
+                    let operation = match kind {
+                        ToolKind::QueryDirectory => D::Directory(decode(raw)?),
+                        ToolKind::DataRead => D::Read(decode(raw)?),
+                        ToolKind::QuerySubmit => D::Submit(decode(raw)?),
+                        ToolKind::QueryStatus => D::Status(decode(raw)?),
+                        ToolKind::QueryCancel => D::Cancel(decode(raw)?),
+                        _ => unreachable!(),
+                    };
+                    Ok(self.service.collected_data(operation, wait).await?)
+                }
+                .await,
+                max,
+            ),
             ToolKind::SoftwareRead => result(
                 async { Ok(self.service.observe_software(decode(raw)?, wait).await?) }.await,
                 max,
