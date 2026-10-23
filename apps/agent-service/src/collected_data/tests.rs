@@ -548,3 +548,225 @@ async fn minimum_record_quota_reclaims_metadata_and_reserves_new_query_capacity(
         .association(&request, "501", &association.session)
         .is_ok());
 }
+
+#[tokio::test]
+async fn a_later_native_projection_failure_rolls_back_the_batch_and_recovers_after_reopen() {
+    let _budget = crate::scenario_budget::enter();
+    let server = Server::new().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    let mut data = Data::new(
+        client.collected_store().unwrap(),
+        client.output_policy().unwrap(),
+    );
+    let mut read = read_plan();
+    let mut spec: w::NativePlanSpec = read.plan.clone().into();
+    let mut cpu = spec.queries["arbitrarySourceName"].clone();
+    cpu.definition = w::NativeQueryDefinition::MacosHardware {
+        section: w::MacosHardwareSection::Cpu,
+    };
+    spec.queries.insert("cpu".into(), cpu);
+    read.plan = w::NativeCollectionPlan::new(spec).unwrap();
+    let request = RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap();
+    data.remember(&request, read.clone()).unwrap();
+    let mut refs = read
+        .plan
+        .spec()
+        .queries
+        .values()
+        .map(|q| {
+            data.register(single(&read, q).unwrap())
+                .unwrap()
+                .descriptor
+                .reference
+        })
+        .collect::<Vec<_>>();
+    refs.sort_by(|a, b| a.id.cmp(&b.id));
+    let mut process = evidence(&read_plan(), true);
+    let mut result: w::NativeCollectionResult = serde_json::from_slice(&process.stdout).unwrap();
+    result.plan_digest = read.plan.digest();
+    let mut cpu = result.queries["arbitrarySourceName"].clone();
+    cpu.query_digest = read.plan.spec().queries["cpu"].digest();
+    cpu.rows = vec![[
+        ("model".into(), json!("Fixture CPU")),
+        ("physical_cores".into(), json!(4)),
+        ("logical_cores".into(), json!(8)),
+    ]
+    .into()];
+    result.queries.insert("cpu".into(), cpu);
+    process.stdout = serde_json::to_vec(&result).unwrap();
+    process.stderr = serde_json::to_vec(&CollectionCompletion {
+        input_sha256: "b".repeat(64),
+        native_output_bytes: process.stdout.len() as u64,
+        closed: true,
+        output_sha256: format!("{:x}", Sha256::digest(&process.stdout)),
+    })
+    .unwrap();
+    process.total_output_bytes = (process.stdout.len() + process.stderr.len()) as u64;
+    let conn = rusqlite::Connection::open(root.path.join("communication.sqlite")).unwrap();
+    conn.execute_batch(&format!("CREATE TRIGGER fixture_second_projection BEFORE INSERT ON state WHEN NEW.key GLOB 'local-data/*latest/{}' AND EXISTS(SELECT 1 FROM state WHERE key GLOB 'local-data/*latest/{}') BEGIN SELECT RAISE(ABORT,'fixture second write'); END;", refs[1].id.as_str(), refs[0].id.as_str())).unwrap();
+    assert!(data
+        .native(read.clone(), Some(request.clone()), &process, 100_000)
+        .is_err());
+    assert!(!data.captured(&request).unwrap());
+    assert!(data.remembered(&request).unwrap().is_some());
+    for query in &refs {
+        assert!(data
+            .store
+            .read(&format!("latest/{}", query.id.as_str()))
+            .unwrap()
+            .is_none());
+    }
+    drop(data);
+    drop(client);
+    conn.execute_batch("DROP TRIGGER fixture_second_projection;")
+        .unwrap();
+    drop(conn);
+    let client = server.client(&root, OpenMode::Existing);
+    let mut data = Data::new(
+        client.collected_store().unwrap(),
+        client.output_policy().unwrap(),
+    );
+    let recovered = data.remembered(&request).unwrap().unwrap();
+    data.native(recovered, Some(request.clone()), &process, 100_000)
+        .unwrap();
+    assert!(data.captured(&request).unwrap());
+    assert!(data.remembered(&request).unwrap().is_none());
+    for query in refs {
+        let value = data
+            .read(
+                &DataRead {
+                    selection: DataSelection::Query { query },
+                    after: None,
+                    limit: 16,
+                    max_age_seconds: None,
+                },
+                "501",
+                &id("login/new"),
+                100,
+            )
+            .unwrap();
+        assert_eq!(value.quality, DataQuality::Complete);
+    }
+}
+
+#[tokio::test]
+async fn authorized_policy_data_survives_context_retirement_and_reopen_without_execution_authority()
+{
+    let _budget = crate::scenario_budget::enter();
+    let server = Server::new().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    let mut data = Data::new(
+        client.collected_store().unwrap(),
+        client.output_policy().unwrap(),
+    );
+    let subject = execution_ipc::host::current_subject().unwrap();
+    let old_session = id("login/old");
+    let old_context = NativeContextRef {
+        id: id("context"),
+        generation: id("old"),
+    };
+    let query = data
+        .publish(published_item(), &subject, &old_session, &old_context)
+        .unwrap()
+        .reference;
+    let request = RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap();
+    let association = Association {
+        query: query.clone(),
+        subject: subject.clone(),
+        session: old_session.clone(),
+        parameters: digest(&json!({})).unwrap(),
+        kind: QueryKind::Policy,
+        created_at: 100,
+        origin: digest(&json!("desktop")).unwrap(),
+    };
+    data.associate(&request, &association).unwrap();
+    let status = w::SelfServiceStatus {
+        request_id: uuid::Uuid::parse_str(request.as_str()).unwrap(),
+        run_id: uuid::Uuid::new_v4(),
+        attempt_id: None,
+        state: w::TaskRunState {
+            delivery: w::TaskDelivery::Queued,
+            execution: w::TaskExecution::NotStarted,
+            cancellation: w::RunCancellation::None,
+            deadline: 200,
+            started_at: None,
+        },
+        available_at: 100,
+        deadline: 200,
+        result: Some(w::SelfServiceResult::Script {
+            evidence: w::ScriptRunResult {
+                collected_at: 100,
+                received_at: 101,
+                exit_code: Some(0),
+                quality: w::OutputQuality::Complete,
+                schema_valid: true,
+                budget_valid: true,
+                output: json!({"fixture":17}),
+                output_reference: None,
+                diagnostics: w::TaskDiagnostics::new(String::new(), String::new(), 1, 100, None)
+                    .unwrap(),
+                trusted: true,
+            },
+        }),
+    };
+    data.policy_result(&association, &status).unwrap();
+    drop(data);
+    drop(client);
+    let client = server.client(&root, OpenMode::Existing);
+    let mut data = Data::new(
+        client.collected_store().unwrap(),
+        client.output_policy().unwrap(),
+    );
+    data.maintain(&[], &Default::default(), &Default::default())
+        .unwrap();
+    let session = id("login/new");
+    let context = NativeContextRef {
+        id: id("context"),
+        generation: id("new"),
+    };
+    assert!(data
+        .published(&query, &subject, &session, &context)
+        .unwrap()
+        .is_none());
+    assert!(data.association(&request, &subject, &session).is_err()); // no status/cancel grant
+    let saved = data
+        .directory(&subject)
+        .unwrap()
+        .into_iter()
+        .find(|d| d.reference == query)
+        .unwrap();
+    assert!(!saved.available);
+    for selection in [
+        DataSelection::Query {
+            query: query.clone(),
+        },
+        DataSelection::Request { request },
+    ] {
+        let read = DataRead {
+            selection,
+            after: None,
+            limit: 16,
+            max_age_seconds: None,
+        };
+        data.authorize_read(&read, &subject, &session).unwrap();
+        let value = data.read(&read, &subject, &session, 100).unwrap();
+        assert_eq!(value.rows, vec![json!({"fixture":17})]);
+        assert!(data
+            .authorize_read(&read, "foreign-account", &session)
+            .is_err());
+    }
+    let republished = data
+        .publish(published_item(), &subject, &session, &context)
+        .unwrap();
+    assert_eq!(republished.reference, query);
+    // A stale or reused account cannot consume a persisted read projection.
+    let key = format!("policy-read/{}", query.id.as_str());
+    let mut metadata: PolicyRead = decode(data.store.read(&key).unwrap().unwrap()).unwrap();
+    metadata.generated_uid = Some(uuid::Uuid::new_v4().to_string());
+    data.store.write(&key, &encode(&metadata).unwrap()).unwrap();
+    assert!(data.policy_read(&query, &subject).is_err());
+}

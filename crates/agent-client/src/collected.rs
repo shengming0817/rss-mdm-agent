@@ -89,44 +89,64 @@ impl CollectedStore {
     }
     /// Atomically publish a service-validated projection, independently of upload ACKs.
     pub fn write(&mut self, key: &str, value: &Value) -> Result<(), Error> {
-        let key = self.key(key)?;
-        let body = serde_json::to_vec(value).map_err(|_| Error::Protocol)?;
-        if body.len() > self.bytes {
-            return Err(Error::Capacity);
-        }
-        let tx = self.conn.transaction()?;
-        let (count, bytes): (usize, usize) = tx.query_row(
-            "SELECT count(*),coalesce(sum(length(body)),0) FROM state WHERE key GLOB 'local-data/*'",
-            [], |r| Ok((r.get(0)?, r.get(1)?)),
-        )?;
-        let previous: Option<usize> = tx
-            .query_row("SELECT length(body) FROM state WHERE key=?1", [&key], |r| {
-                r.get(0)
-            })
-            .optional()?;
-        let mut count = count;
-        let mut bytes = bytes.saturating_sub(previous.unwrap_or(0));
-        while count + usize::from(previous.is_none()) > self.records
-            || bytes.saturating_add(body.len()) > self.bytes
-        {
-            // Only reproducible value projections are evictable. Never discard request
-            // identities, trusted definitions or an active worker's recovery metadata.
-            let oldest: Option<(String, usize)> = tx.query_row(
-                "SELECT key,length(body) FROM state WHERE (key GLOB ?1 OR key GLOB ?2) AND key<>?3 ORDER BY rowid LIMIT 1",
-                params![format!("{}latest/*", self.namespace), format!("{}result/*", self.namespace), key],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            ).optional()?;
-            let Some((oldest, size)) = oldest else {
+        self.commit(&[(key.to_owned(), value.clone())], &[])
+    }
+    /// Atomically replace one complete projection batch and remove its recovery inputs.
+    /// Capacity eviction never removes a member of the batch being committed.
+    pub fn commit(&mut self, values: &[(String, Value)], remove: &[String]) -> Result<(), Error> {
+        let mut writes = std::collections::BTreeMap::new();
+        for (key, value) in values {
+            let body = serde_json::to_vec(value).map_err(|_| Error::Protocol)?;
+            if body.len() > self.bytes || writes.insert(self.key(key)?, body).is_some() {
                 return Err(Error::Capacity);
-            };
-            tx.execute("DELETE FROM state WHERE key=?1", [&oldest])?;
-            count = count.saturating_sub(1);
-            bytes = bytes.saturating_sub(size);
+            }
         }
-        tx.execute(
-            "INSERT INTO state(key,body) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET body=excluded.body",
-            params![key, body],
+        let remove = remove
+            .iter()
+            .map(|key| self.key(key))
+            .collect::<Result<Vec<_>, _>>()?;
+        let tx = self.conn.transaction()?;
+        for key in remove {
+            tx.execute("DELETE FROM state WHERE key=?1", [key])?;
+        }
+        for (key, body) in &writes {
+            tx.execute(
+                "INSERT INTO state(key,body) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET body=excluded.body",
+                params![key, body],
+            )?;
+        }
+        let (mut count, mut bytes): (usize, usize) = tx.query_row(
+            "SELECT count(*),coalesce(sum(length(body)),0) FROM state WHERE substr(key,1,length(?1))=?1",
+            [&self.namespace], |r| Ok((r.get(0)?, r.get(1)?)),
         )?;
+        if count > self.records || bytes > self.bytes {
+            let mut query = tx.prepare(
+                "SELECT key,length(body) FROM state WHERE (key GLOB ?1 OR key GLOB ?2) ORDER BY rowid",
+            )?;
+            let candidates = query
+                .query_map(
+                    params![
+                        format!("{}latest/*", self.namespace),
+                        format!("{}result/*", self.namespace)
+                    ],
+                    |r| Ok((r.get::<_, String>(0)?, r.get::<_, usize>(1)?)),
+                )?
+                .collect::<Result<Vec<_>, _>>()?;
+            drop(query);
+            for (key, size) in candidates {
+                if count <= self.records && bytes <= self.bytes {
+                    break;
+                }
+                if !writes.contains_key(&key) {
+                    tx.execute("DELETE FROM state WHERE key=?1", [key])?;
+                    count -= 1;
+                    bytes -= size;
+                }
+            }
+            if count > self.records || bytes > self.bytes {
+                return Err(Error::Capacity);
+            }
+        }
         tx.commit()?;
         Ok(())
     }

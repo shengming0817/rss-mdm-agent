@@ -28,11 +28,29 @@ pub(crate) struct Association {
 }
 #[derive(Serialize, Deserialize)]
 struct Published {
+    generated_uid: Option<String>,
+    descriptor: QueryDescriptor,
     item: w::SelfServiceDirectoryItem,
     subject: String,
     session: Id,
     context: NativeContextRef,
     seen_at: u64,
+}
+#[derive(Serialize, Deserialize)]
+struct PolicyRead {
+    descriptor: QueryDescriptor,
+    generated_uid: Option<String>,
+    seen_at: u64,
+}
+fn account_uid(subject: &str) -> Result<Option<String>, Error> {
+    if subject == "0" {
+        Ok(None)
+    } else {
+        crate::account_identity::generated_uid(subject)
+    }
+}
+fn policy_revision(item: &w::SelfServiceDirectoryItem, subject: &str) -> Result<Digest, Error> {
+    digest(&(item, subject, account_uid(subject)?))
 }
 pub(crate) struct Data {
     store: CollectedStore,
@@ -387,7 +405,7 @@ impl Data {
         // metadata by bytes too, while preserving current recipes and request identity.
         let mut candidates = Vec::new();
         let mut total = 0usize;
-        for prefix in ["definition/", "published/", "observed/"] {
+        for prefix in ["definition/", "published/", "observed/", "policy-read/"] {
             for (key, value) in self.scan(prefix)? {
                 let bytes = serde_json::to_vec(&value)
                     .map_err(|_| Error::Protocol)?
@@ -462,7 +480,29 @@ impl Data {
                 other => vec![other.clone()],
             };
         }
-        self.snapshot(&value)
+        let published: Published = decode(
+            self.store
+                .read(&format!("published/{}", a.query.id.as_str()))?
+                .ok_or(Error::NotFound)?,
+        )?;
+        if published.subject != a.subject
+            || published.descriptor.reference != a.query
+            || published.generated_uid != account_uid(&a.subject)?
+        {
+            return Err(Error::Denied);
+        }
+        let metadata = PolicyRead {
+            descriptor: published.descriptor,
+            generated_uid: published.generated_uid,
+            seen_at: now(),
+        };
+        self.snapshots(
+            &[value],
+            &[(
+                format!("policy-read/{}", a.query.id.as_str()),
+                encode(&metadata)?,
+            )],
+        )
     }
     pub fn periodic(
         &mut self,
@@ -560,7 +600,7 @@ impl Data {
         session: &Id,
         context: &NativeContextRef,
     ) -> Result<QueryDescriptor, Error> {
-        let revision = digest(&(&item, subject, session, context))?;
+        let revision = policy_revision(&item, subject)?;
         let reference = QueryRef {
             id: crate::backend::plan::id(format!("policy:{}", revision.as_str()))?,
             revision,
@@ -589,17 +629,7 @@ impl Data {
                 .take(1024)
                 .collect(),
         });
-        self.store.write(
-            &format!("published/{}", reference.id.as_str()),
-            &encode(&Published {
-                item,
-                subject: subject.into(),
-                session: session.clone(),
-                context: context.clone(),
-                seen_at: now(),
-            })?,
-        )?;
-        Ok(QueryDescriptor {
+        let descriptor = QueryDescriptor {
             reference,
             title,
             kind: QueryKind::Policy,
@@ -611,8 +641,22 @@ impl Data {
             },
             available: true,
             reason: None,
-        })
+        };
+        self.store.write(
+            &format!("published/{}", descriptor.reference.id.as_str()),
+            &encode(&Published {
+                generated_uid: account_uid(subject)?,
+                descriptor: descriptor.clone(),
+                item,
+                subject: subject.into(),
+                session: session.clone(),
+                context: context.clone(),
+                seen_at: now(),
+            })?,
+        )?;
+        Ok(descriptor)
     }
+
     pub fn published(
         &self,
         query: &QueryRef,
@@ -630,21 +674,17 @@ impl Data {
         if p.subject != subject || &p.session != session || &p.context != context {
             return Err(Error::Denied);
         }
-        if digest(&(&p.item, subject, session, context))? != query.revision {
+        if policy_revision(&p.item, subject)? != query.revision {
             return Err(Error::Conflict);
         }
         Ok(Some(p.item))
     }
-    pub fn authorize_read(
-        &self,
-        read: &DataRead,
-        caller: &str,
-        session: &Id,
-        context: &NativeContextRef,
-    ) -> Result<(), Error> {
+    pub fn authorize_read(&self, read: &DataRead, caller: &str, session: &Id) -> Result<(), Error> {
         let query = match &read.selection {
             DataSelection::Query { query } => query.clone(),
-            DataSelection::Request { request } => self.association(request, caller, session)?.query,
+            DataSelection::Request { request } => {
+                self.read_association(request, caller, session)?.query
+            }
         };
         if !["policy:", "native:", "telemetry:"]
             .iter()
@@ -652,10 +692,8 @@ impl Data {
         {
             return Err(Error::NotFound);
         }
-        if query.id.as_str().starts_with("policy:")
-            && self.published(&query, caller, session, context)?.is_none()
-        {
-            return Err(Error::Denied);
+        if query.id.as_str().starts_with("policy:") {
+            self.policy_read(&query, caller)?;
         }
         if query.id.as_str().starts_with("telemetry:") {
             let d: QueryDescriptor = decode(
@@ -786,6 +824,15 @@ impl Data {
         for (_, v) in self.store.page("observed/", None, 128)? {
             result.push(decode(v)?);
         }
+        for (_, value) in self.scan("policy-read/")? {
+            let meta: PolicyRead = decode(value)?;
+            if self.policy_read(&meta.descriptor.reference, caller).is_ok() {
+                let mut descriptor = meta.descriptor;
+                descriptor.available = false;
+                descriptor.reason = Some(DataQuality::Expired);
+                result.push(descriptor);
+            }
+        }
         Ok(result)
     }
     pub fn history(&self) -> Result<Vec<(RequestId, u64)>, Error> {
@@ -874,6 +921,43 @@ impl Data {
         }
         Ok(value)
     }
+    fn policy_read(&self, query: &QueryRef, caller: &str) -> Result<PolicyRead, Error> {
+        let metadata: PolicyRead = decode(
+            self.store
+                .read(&format!("policy-read/{}", query.id.as_str()))?
+                .ok_or(Error::Denied)?,
+        )?;
+        if metadata.descriptor.reference != *query {
+            return Err(Error::Conflict);
+        }
+        if metadata.descriptor.scope
+            != (DataScope::User {
+                subject: crate::backend::plan::id(caller)?,
+            })
+            || metadata.generated_uid != account_uid(caller)?
+        {
+            return Err(Error::Denied);
+        }
+        Ok(metadata)
+    }
+    fn read_association(
+        &self,
+        request: &RequestId,
+        caller: &str,
+        session: &Id,
+    ) -> Result<Association, Error> {
+        let association: Association = decode(
+            self.store
+                .read(&format!("request/{}", request.as_str()))?
+                .ok_or(Error::NotFound)?,
+        )?;
+        if association.kind == QueryKind::Policy {
+            self.policy_read(&association.query, caller)?;
+            Ok(association)
+        } else {
+            self.association(request, caller, session)
+        }
+    }
     pub fn native(
         &mut self,
         read: ReadPlan,
@@ -902,6 +986,7 @@ impl Data {
         } else {
             None
         };
+        let mut values = Vec::new();
         for (source, q) in &read.plan.spec().queries {
             let definition = self.register(single(&read, q)?)?;
             let mut value = empty(
@@ -966,11 +1051,38 @@ impl Data {
             } else if evidence.quality == OutputQuality::Truncated {
                 value.quality = DataQuality::Truncated;
             }
-            self.snapshot(&value)?;
+            values.push(value);
         }
-        Ok(())
+        self.snapshots(&values, &[])
     }
     pub fn snapshot(&mut self, value: &CollectedData) -> Result<(), Error> {
+        self.snapshots(std::slice::from_ref(value), &[])
+    }
+    fn snapshots(
+        &mut self,
+        values: &[CollectedData],
+        extra: &[(String, Value)],
+    ) -> Result<(), Error> {
+        let mut writes = std::collections::BTreeMap::new();
+        let mut remove = Vec::new();
+        for value in values {
+            let value = self.bounded(value)?;
+            let key = format!("latest/{}", value.query.id.as_str());
+            let previous: Option<CollectedData> = self.store.read(&key)?.map(decode).transpose()?;
+            if previous.is_none_or(|p| p.collected_at <= value.collected_at) {
+                writes.insert(key, encode(&value)?);
+            }
+            if let Some(request) = &value.request {
+                // The request result is a completion receipt only after the entire batch commits.
+                writes.insert(format!("result/{}", request.as_str()), encode(&value)?);
+                remove.push(format!("input/{}", request.as_str()));
+            }
+        }
+        writes.extend(extra.iter().cloned());
+        self.store
+            .commit(&writes.into_iter().collect::<Vec<_>>(), &remove)
+    }
+    fn bounded(&self, value: &CollectedData) -> Result<CollectedData, Error> {
         let value_rows = value.rows.len();
         let mut value = value.clone();
         let mut remaining = 256 * 1024usize;
@@ -1001,18 +1113,7 @@ impl Data {
         if !self.safe(&encode(&value.rows)?)? || !self.safe(&encode(&value.fields)?)? {
             return Err(Error::Untrusted);
         }
-        let key = format!("latest/{}", value.query.id.as_str());
-        // A historical recovery may not replace a newer sample.
-        let previous: Option<CollectedData> = self.store.read(&key)?.map(decode).transpose()?;
-        if previous.is_none_or(|p| p.collected_at <= value.collected_at) {
-            self.store.write(&key, &encode(&value)?)?;
-        }
-        if let Some(request) = &value.request {
-            self.store
-                .write(&format!("result/{}", request.as_str()), &encode(&value)?)?;
-            self.store.remove(&format!("input/{}", request.as_str()))?;
-        }
-        Ok(())
+        Ok(value)
     }
     fn safe(&self, value: &Value) -> Result<bool, Error> {
         let text = serde_json::to_string(value).map_err(|_| Error::Protocol)?;
@@ -1032,11 +1133,13 @@ impl Data {
             DataSelection::Query { query } => {
                 if query.id.as_str().starts_with("native:") {
                     self.definition(query, caller)?;
+                } else if query.id.as_str().starts_with("policy:") {
+                    self.policy_read(query, caller)?;
                 }
                 (query.clone(), format!("latest/{}", query.id.as_str()))
             }
             DataSelection::Request { request } => {
-                let a = self.association(request, caller, session)?;
+                let a = self.read_association(request, caller, session)?;
                 (a.query, format!("result/{}", request.as_str()))
             }
         };

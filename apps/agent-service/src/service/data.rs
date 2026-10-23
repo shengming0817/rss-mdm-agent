@@ -19,20 +19,7 @@ impl Core {
         let binding = command.binding.as_ref().ok_or(Error::Denied)?;
         let value = match input {
             DataOperation::Read(read) => {
-                let policy = match &read.selection {
-                    DataSelection::Query { query } => query.id.as_str().starts_with("policy:"),
-                    DataSelection::Request { request } => {
-                        self.data
-                            .association(request, &command.subject, binding)?
-                            .kind
-                            == QueryKind::Policy
-                    }
-                };
-                if policy {
-                    self.context(command)?;
-                }
-                self.data
-                    .authorize_read(read, &command.subject, binding, context)?;
+                self.data.authorize_read(read, &command.subject, binding)?;
                 Ok(DataResponse::Read(self.data.read(
                     read,
                     &command.subject,
@@ -299,12 +286,12 @@ impl<S: IdentityProvider> DeviceService<S> {
                     for item in page.items {
                         if matches!(item.task, wire::SelfServiceTask::Script { .. }) {
                             self.core.maintain_data()?;
-                            items.push(self.core.data.publish(
-                                item,
-                                &command.subject,
-                                binding,
-                                context,
-                            )?);
+                            let descriptor =
+                                self.core
+                                    .data
+                                    .publish(item, &command.subject, binding, context)?;
+                            items.retain(|item| item.reference.id != descriptor.reference.id);
+                            items.push(descriptor);
                         }
                     }
                     self.core.maintain_data()?;
@@ -318,6 +305,7 @@ impl<S: IdentityProvider> DeviceService<S> {
                 }
                 items.retain(|item| {
                     item.kind != QueryKind::Policy
+                        || !item.available
                         || self
                             .core
                             .data
