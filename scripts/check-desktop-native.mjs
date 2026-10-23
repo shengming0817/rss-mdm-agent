@@ -1601,7 +1601,7 @@ try {
       mark("native operation gallery activation");
       await fixtureControls();
       await browser.$('input[aria-label="显示操作模板"]').click();
-      await navigate("AI 助手");
+      // OperationGallery is owned by the active development settings slot.
       await wait(() =>
         browser.$('select[aria-label="操作模板"]').isDisplayed(),
       );
