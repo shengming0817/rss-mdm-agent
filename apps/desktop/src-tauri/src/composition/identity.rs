@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 pub(super) struct IdentityOwner {
     pub(super) users: Arc<Mutex<Users>>,
     account: Mutex<Option<EnterpriseSession>>,
+    pub(super) pending: Mutex<Option<ai_session_contract::UserContext>>,
     pub(super) refresh: tokio::sync::Mutex<Refresh>,
 }
 impl IdentityOwner {
@@ -13,6 +14,7 @@ impl IdentityOwner {
         Self {
             users,
             account: Mutex::new(None),
+            pending: Mutex::new(None),
             refresh: tokio::sync::Mutex::new(Refresh { last: None }),
         }
     }

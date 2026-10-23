@@ -240,67 +240,6 @@ pub fn platform_backend() -> impl KeyBackend {
         Dpapi
     }
 }
-#[cfg(target_os = "macos")]
-pub async fn enter_enterprise_password<R: tauri::Runtime>(
-    app: tauri::AppHandle<R>,
-    target: String,
-) -> Result<String> {
-    let (sender, receiver) = tokio::sync::oneshot::channel();
-    app.run_on_main_thread(move || {
-        use objc2::MainThreadMarker;
-        use objc2_app_kit::{NSAlert, NSAlertFirstButtonReturn, NSSecureTextField};
-        use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
-        let result = (|| {
-            let mtm = MainThreadMarker::new().ok_or_else(unavailable)?;
-            let alert = NSAlert::new(mtm);
-            alert.setMessageText(&NSString::from_str("输入企业账号密码"));
-            alert.setInformativeText(&NSString::from_str(&target));
-            alert.addButtonWithTitle(&NSString::from_str("登录"));
-            alert.addButtonWithTitle(&NSString::from_str("取消"));
-            let field = NSSecureTextField::new(mtm);
-            field.setFrame(NSRect::new(NSPoint::new(0., 0.), NSSize::new(360., 24.)));
-            alert.setAccessoryView(Some(&field));
-            if alert.runModal() != NSAlertFirstButtonReturn {
-                return Err(error("cancelled", "未完成登录"));
-            }
-            let secret = field.stringValue().to_string();
-            field.setStringValue(&NSString::from_str(""));
-            if secret.trim().is_empty()
-                || secret.len() > 16384
-                || secret.chars().any(char::is_control)
-            {
-                return Err(unavailable());
-            }
-            Ok(secret)
-        })();
-        let _ = sender.send(result);
-    })
-    .map_err(|_| unavailable())?;
-    receiver.await.map_err(|_| unavailable())?
-}
-#[cfg(windows)]
-pub async fn enter_enterprise_password<R: tauri::Runtime>(
-    app: tauri::AppHandle<R>,
-    target: String,
-) -> Result<String> {
-    let (sender, receiver) = tokio::sync::oneshot::channel();
-    app.run_on_main_thread(move || {
-        let result = super::windows_dialogs::enter_enterprise_password(&target)
-            .map_err(|_| unavailable())
-            .and_then(|value| value.ok_or_else(|| error("cancelled", "未完成登录")))
-            .and_then(|value| {
-                if value.trim().is_empty() || value.chars().any(char::is_control) {
-                    Err(unavailable())
-                } else {
-                    Ok(value)
-                }
-            });
-        let _ = sender.send(result);
-    })
-    .map_err(|_| unavailable())?;
-    receiver.await.map_err(|_| unavailable())?
-}
-
 #[cfg(windows)]
 fn key_path() -> std::io::Result<std::path::PathBuf> {
     use windows_sys::Win32::{

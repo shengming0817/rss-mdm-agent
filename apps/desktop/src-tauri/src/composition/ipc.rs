@@ -172,26 +172,26 @@ pub fn account_save_organization(
     })
 }
 #[tauri::command]
-pub async fn account_login<R: tauri::Runtime>(
-    app: tauri::AppHandle<R>,
+pub async fn account_login(
     state: State<'_, DesktopRuntime>,
-    organization_id: String,
-    login: String,
+    input: super::account::EnterpriseCredentials,
 ) -> Result<ai_session_contract::UserContext> {
+    input.validate()?;
     let organization = state
         .organizations
         .lock()
         .map_err(|_| error("users_unavailable", "组织配置不可用"))?
-        .get(&organization_id)?;
-    if login.trim().is_empty() || login.len() > 256 || login.chars().any(char::is_control) {
-        return Err(error("input", "无效企业账号"));
-    }
-    let target = format!(
-        "服务：{}\n租户：{}\n账号：{}\n密码仅由原生层发送至该组织服务，不保存在本机。",
-        organization.origin, organization.tenant_id, login
-    );
-    let password = super::credentials::enter_enterprise_password(app, target).await?;
-    state.login(organization, &login, password).await
+        .get(&input.organization_id)?;
+    state
+        .login(organization, &input.login, input.password)
+        .await
+}
+#[tauri::command]
+pub async fn account_recover(
+    state: State<'_, DesktopRuntime>,
+    clear: bool,
+) -> Result<Option<ai_session_contract::UserContext>> {
+    state.recover_account(clear).await
 }
 
 #[tauri::command]
@@ -268,14 +268,16 @@ pub async fn agent_registration_status() -> Result<execution_ipc::host::Registra
     registration_request(execution_ipc::host::Request::RegistrationStatus {}).await
 }
 #[tauri::command]
-pub async fn agent_request_registration<R: tauri::Runtime>(
-    app: tauri::AppHandle<R>,
+pub async fn agent_request_registration(
     state: State<'_, DesktopRuntime>,
-    organization_id: Option<String>,
-    login: Option<String>,
+    input: Option<super::account::EnterpriseCredentials>,
 ) -> Result<execution_ipc::host::RegistrationStatus> {
-    state.register_device(app, organization_id, login).await
+    if let Some(input) = &input {
+        input.validate()?;
+    }
+    state.register_device(input).await
 }
+
 #[tauri::command]
 pub async fn agent_cancel_registration(state: State<'_, DesktopRuntime>) -> Result<()> {
     state.cancel_registration_wait().await;
@@ -388,6 +390,7 @@ pub fn register<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder
         account_organizations,
         account_save_organization,
         account_login,
+        account_recover,
         execution_service_status,
         agent_registration_status,
         mdm_registration_status,
@@ -511,6 +514,7 @@ mod tests {
             "account_logout",
             "account_status",
             "account_login",
+            "account_recover",
             "account_organizations",
             "account_save_organization",
             "execution_service_status",

@@ -23,11 +23,9 @@ async fn context() -> Result<RegistrationContext> {
     }
 }
 impl DesktopRuntime {
-    pub async fn register_device<R: tauri::Runtime>(
+    pub async fn register_device(
         &self,
-        app: tauri::AppHandle<R>,
-        organization_id: Option<String>,
-        login: Option<String>,
+        credentials: Option<super::super::account::EnterpriseCredentials>,
     ) -> Result<RegistrationStatus> {
         let _switch = self.switching.lock().await;
         let initial = context().await?;
@@ -39,18 +37,19 @@ impl DesktopRuntime {
             account = None;
         }
         // An explicit login form submission can replace an expired session; a passive retry cannot.
-        if account.is_none() || organization_id.is_some() {
-            let id = organization_id.ok_or_else(|| {
+        if account.is_none() || credentials.is_some() {
+            let credentials = credentials.ok_or_else(|| {
                 error(
                     "registration_login_required",
                     "请登录安装包所属组织以注册此设备",
                 )
             })?;
+            credentials.validate()?;
             let organization = self
                 .organizations
                 .lock()
                 .map_err(|_| unavailable())?
-                .get(&id)?;
+                .get(&credentials.organization_id)?;
             if super::super::account::registration_origin(&organization)? != initial.origin
                 || organization.tenant_id != initial.tenant_id
             {
@@ -59,17 +58,8 @@ impl DesktopRuntime {
                     "所选组织与本机安装包不一致",
                 ));
             }
-            let login = login
-                .filter(|v| {
-                    !v.trim().is_empty() && v.len() <= 256 && !v.chars().any(char::is_control)
-                })
-                .ok_or_else(|| error("input", "请输入企业账号"))?;
-            let target = format!(
-                "注册此设备\n服务：{}\n租户：{}\n账号：{}",
-                organization.origin, organization.tenant_id, login
-            );
-            let password =
-                super::super::credentials::enter_enterprise_password(app, target).await?;
+            let login = credentials.login;
+            let password = credentials.password;
             self.retire_locked().await?;
             let session =
                 super::super::account::EnterpriseSession::login(organization, &login, password)
@@ -77,7 +67,14 @@ impl DesktopRuntime {
             let next = session.context()?;
             self.identity.set_session(Some(session.clone()))?;
             // Publishing a user view is separate from disclosing credentials to execution IPC.
-            let published = self.users.lock().map_err(|_| unavailable())?.activate(next);
+            let published =
+                self.identity
+                    .pending
+                    .lock()
+                    .map_err(|_| unavailable())
+                    .map(|mut pending| {
+                        *pending = Some(next);
+                    });
             if let Err(e) = published {
                 self.identity.set_session(None)?;
                 let _ = session.logout().await;
@@ -88,7 +85,15 @@ impl DesktopRuntime {
         let mut account = account.ok_or_else(unavailable)?;
         account.verify().await?;
         self.identity.set_session(Some(account))?;
-        let generation = self.identity.snapshot()?.generation;
+        let generation = self
+            .identity
+            .pending
+            .lock()
+            .map_err(|_| unavailable())?
+            .as_ref()
+            .map(|u| u.generation.clone())
+            .or_else(|| self.identity.snapshot().ok().map(|u| u.generation))
+            .ok_or_else(unavailable)?;
         let intent = self.registration_epoch.fetch_add(1, Ordering::AcqRel) + 1;
         drop(_switch);
         let mut prepared = initial.status.registered;
@@ -185,6 +190,17 @@ impl DesktopRuntime {
                 "registration_cancelled",
                 "已停止注册等待；已提交的原请求仍保留",
             ));
+        }
+        if let Some(pending) = self
+            .identity
+            .pending
+            .lock()
+            .map_err(|_| unavailable())?
+            .as_ref()
+        {
+            if &pending.generation == generation {
+                return Ok(pending.clone());
+            }
         }
         self.current(generation.as_str())
     }

@@ -119,6 +119,28 @@ fn uuid(value: &str) -> Result<String> {
     }
     Ok(id.to_string())
 }
+/// One current login request; partial legacy credentials are rejected.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct EnterpriseCredentials {
+    pub organization_id: String,
+    pub login: String,
+    pub password: zeroize::Zeroizing<String>,
+}
+impl EnterpriseCredentials {
+    pub fn validate(&self) -> Result<()> {
+        if self.login.trim().is_empty()
+            || self.login.len() > 256
+            || self.login.chars().any(char::is_control)
+            || self.password.trim().is_empty()
+            || self.password.len() > 16384
+            || self.password.chars().any(char::is_control)
+        {
+            return Err(error("input", "请输入有效的企业账号与密码"));
+        }
+        Ok(())
+    }
+}
 pub struct Organizations {
     path: PathBuf,
     values: Vec<Organization>,
@@ -305,6 +327,16 @@ fn enterprise_client(ca: Option<Vec<u8>>) -> Result<Client> {
 }
 
 impl EnterpriseSession {
+    pub(super) fn employee_proof(&self) -> Result<zeroize::Zeroizing<String>> {
+        let proof = self
+            .cookie
+            .strip_prefix("__Host-identity-session=")
+            .ok_or_else(invalid)?;
+        if proof.len() != 64 || !proof.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err(invalid());
+        }
+        Ok(zeroize::Zeroizing::new(proof.to_owned()))
+    }
     pub(super) fn native_session(
         &self,
         generation: &str,
@@ -380,7 +412,11 @@ impl EnterpriseSession {
         Ok(())
     }
 
-    pub async fn login(organization: Organization, login: &str, password: String) -> Result<Self> {
+    pub async fn login(
+        organization: Organization,
+        login: &str,
+        password: zeroize::Zeroizing<String>,
+    ) -> Result<Self> {
         if login.is_empty() || login.len() > 256 || password.is_empty() || password.len() > 16384 {
             return Err(failure(Stage::Login, Reason::Denied));
         }
@@ -391,7 +427,7 @@ impl EnterpriseSession {
         client: Client,
         organization: Organization,
         login: &str,
-        password: String,
+        password: zeroize::Zeroizing<String>,
     ) -> Result<Self> {
         let registration_origin = registration_origin(&organization)?;
         let response = client

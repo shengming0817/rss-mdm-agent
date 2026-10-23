@@ -26,7 +26,9 @@ pub struct DesktopRuntime {
     pub organizations: std::sync::Mutex<super::account::Organizations>,
     identity: super::identity::IdentityOwner,
     cleanup_pending: AtomicBool,
+    retiring_account: AtomicBool,
     account_failure: std::sync::Mutex<Option<ai_session_contract::AccountFailure>>,
+    account_binding: std::sync::Mutex<ai_session_contract::AccountBindingState>,
     host: super::supervisor::HostSupervisor,
     master: Arc<MasterKey>,
     views: super::views::ViewChannels,
@@ -75,6 +77,9 @@ impl DesktopRuntime {
                     },
                 }),
                 Request::RevokeContext {} => Ok(Reply::ContextRevoked),
+                Request::RetireEnterpriseContext { .. } => Ok(Reply::CurrentUserSync {
+                    value: Default::default(),
+                }),
                 _ => Err(execution_app::Error::Unavailable),
             }
         });
@@ -89,13 +94,17 @@ impl DesktopRuntime {
                     .map_err(|_| "organization settings unavailable")?,
             ),
             cleanup_pending: AtomicBool::new(false),
+            retiring_account: AtomicBool::new(false),
             account_failure: std::sync::Mutex::new(None),
+            account_binding: std::sync::Mutex::new(
+                ai_session_contract::AccountBindingState::Unbound,
+            ),
             host: super::supervisor::HostSupervisor::new(root, artifact, source)?,
             master: Arc::new(MasterKey::new(backend)),
             views: super::views::ViewChannels::new(),
         };
         runtime.restart(0).await;
-        let _ = runtime.select_device().await;
+
         Ok(runtime)
     }
     pub fn closed(&self) -> bool {
@@ -172,6 +181,7 @@ impl DesktopRuntime {
             kind: ai_session_contract::AccountStatusKind::AccountStatus,
             schema_version: ai_session_contract::AccountStatusSchemaVersion::VALUE,
             current: self.users.lock().map_err(|_| unavailable())?.page().current,
+            binding: *self.account_binding.lock().map_err(|_| unavailable())?,
             failure: self
                 .account_failure
                 .lock()
@@ -192,8 +202,50 @@ impl DesktopRuntime {
     // Every identity transition attempts remote retirement even after local persistence fails.
     async fn retire_locked(&self) -> ui::Result<()> {
         self.registration_epoch.fetch_add(1, Ordering::AcqRel);
+        let pending = self
+            .identity
+            .pending
+            .lock()
+            .map_err(|_| unavailable())?
+            .clone();
+        let generation = pending
+            .as_ref()
+            .or(self.identity.snapshot().ok().as_ref())
+            .map(|u| u.generation.to_string());
+        let enterprise = self.identity.session()?.is_some();
         let local = self.revoke_locked().await;
+        if enterprise
+            && *self.account_binding.lock().map_err(|_| unavailable())?
+                != ai_session_contract::AccountBindingState::NotApplicable
+        {
+            self.retiring_account.store(true, Ordering::Release);
+            let proof = self
+                .identity
+                .session()?
+                .map(|account| account.employee_proof())
+                .transpose()?;
+            let retired = self
+                .execution
+                .retire_enterprise(
+                    generation.and_then(|g| execution_contract::Id::new(g).ok()),
+                    proof,
+                    false,
+                )
+                .await;
+            if let Err(error) = retired {
+                self.record_binding_error(&error)?;
+                if error.code != "binding_conflict" && error.code != "binding_invalidated" {
+                    *self.account_binding.lock().map_err(|_| unavailable())? =
+                        ai_session_contract::AccountBindingState::CleanupPending;
+                }
+                return Err(error);
+            }
+        }
         let remote = self.logout_remote().await;
+        self.retiring_account.store(false, Ordering::Release);
+        *self.identity.pending.lock().map_err(|_| unavailable())? = None;
+        *self.account_binding.lock().map_err(|_| unavailable())? =
+            ai_session_contract::AccountBindingState::Unbound;
         self.account_result(local.and(remote))
     }
     pub async fn select_user(&self, name: &str) -> ui::Result<ai_session_contract::UserContext> {
@@ -274,7 +326,7 @@ impl DesktopRuntime {
         &self,
         organization: super::account::Organization,
         login: &str,
-        password: String,
+        password: zeroize::Zeroizing<String>,
     ) -> ui::Result<ai_session_contract::UserContext> {
         self.login_with(|| super::account::EnterpriseSession::login(organization, login, password))
             .await
@@ -293,14 +345,11 @@ impl DesktopRuntime {
         let account = self.account_result(authenticate().await)?;
         let next = account.context()?;
         self.identity.set_session(Some(account))?;
+        *self.identity.pending.lock().map_err(|_| unavailable())? = Some(next.clone());
         let result = self.activate_context(next).await;
-        let result = match result {
-            Ok(context) => Ok(context),
-            Err(error) => match self.logout_remote().await {
-                Ok(()) => Err(error),
-                Err(logout) => Err(logout),
-            },
-        };
+        if let Err(error) = &result {
+            self.record_binding_error(error)?;
+        }
         self.account_result(result)
     }
     async fn activate_context(
@@ -320,20 +369,36 @@ impl DesktopRuntime {
             match self.execution.bind_context(session, None).await {
                 Ok(binding) => {
                     next.execution_binding =
-                        Some(binding.id.as_str().parse().map_err(|_| unavailable())?)
+                        Some(binding.id.as_str().parse().map_err(|_| unavailable())?);
+                    *self.account_binding.lock().map_err(|_| unavailable())? =
+                        if self.identity.session()?.is_some() {
+                            ai_session_contract::AccountBindingState::Bound
+                        } else {
+                            ai_session_contract::AccountBindingState::Unbound
+                        };
                 }
                 Err(error) => {
-                    // Independent conversation is available without an installed execution owner.
-                    // Uncertain retirement remains a barrier to activating another identity.
-                    if self.cleanup_pending.load(Ordering::Acquire) {
+                    if self.cleanup_pending.load(Ordering::Acquire)
+                        || !self.execution.independent_login_allowed().await
+                    {
                         return Err(error);
                     }
+                    *self.account_binding.lock().map_err(|_| unavailable())? =
+                        ai_session_contract::AccountBindingState::NotApplicable;
                 }
             }
             self.users.lock().map_err(|_| unavailable())?.activate(next)
         }
         .await;
-        if published.is_err() {
+        if published.is_ok() {
+            *self.identity.pending.lock().map_err(|_| unavailable())? = None;
+        }
+        if published.as_ref().is_err_and(|error| {
+            !matches!(
+                error.code,
+                "binding_unknown" | "binding_conflict" | "binding_invalidated" | "cleanup_pending"
+            )
+        }) {
             // Ownership transfers only after local publication. Retain uncertain
             // native retirement so the background owner can retry the same cleanup.
             self.cleanup_pending.store(true, Ordering::Release);
@@ -341,6 +406,60 @@ impl DesktopRuntime {
             let _ = self.retry_cleanup().await;
         }
         published
+    }
+    fn record_binding_error(&self, error: &ui::ServiceError) -> ui::Result<()> {
+        use ai_session_contract::AccountBindingState as B;
+        *self.account_binding.lock().map_err(|_| unavailable())? = match error.code {
+            "binding_conflict" => B::Conflict,
+            "binding_invalidated" => B::Invalidated,
+            "cleanup_pending" => B::CleanupPending,
+            _ => B::BindingUnknown,
+        };
+        Ok(())
+    }
+    pub async fn recover_account(
+        &self,
+        clear: bool,
+    ) -> ui::Result<Option<ai_session_contract::UserContext>> {
+        let _switch = self.switching.lock().await;
+        self.retry_cleanup().await?;
+        if clear {
+            self.revoke_locked().await?;
+            let result = self.execution.retire_enterprise(None, None, true).await;
+            if let Err(error) = result {
+                self.record_binding_error(&error)?;
+                return Err(error);
+            }
+            self.logout_remote().await?;
+            self.retiring_account.store(false, Ordering::Release);
+            *self.identity.pending.lock().map_err(|_| unavailable())? = None;
+            *self.account_binding.lock().map_err(|_| unavailable())? =
+                ai_session_contract::AccountBindingState::Unbound;
+            return Ok(None);
+        }
+        if self.retiring_account.load(Ordering::Acquire) {
+            self.retire_locked().await?;
+            return Ok(None);
+        }
+        let pending = self
+            .identity
+            .pending
+            .lock()
+            .map_err(|_| unavailable())?
+            .clone();
+        if let Some(context) = pending {
+            let mut account = self.identity.session()?.ok_or_else(unavailable)?;
+            account.verify().await?;
+            self.identity.set_session(Some(account))?;
+            let result = self.activate_context(context).await;
+            if let Err(error) = &result {
+                self.record_binding_error(error)?;
+            }
+            return result.map(Some);
+        }
+        // A local logout may be complete while its remote DELETE is still pending.
+        self.retire_locked().await?;
+        Ok(None)
     }
     /// Single-flight refresh performs HTTP on a cloned session, outside identity and transition locks.
     pub async fn verify_account(&self) -> ui::Result<()> {
