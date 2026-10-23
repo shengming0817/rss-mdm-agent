@@ -152,6 +152,7 @@ export interface BackendRequest {
          */
         expiresAtUnixMs: number;
         kind: "policy";
+        locator: PolicyLocator;
         /**
          * Eventual signed Offer; no task/attempt is invented before this exists.
          */
@@ -603,6 +604,15 @@ export interface TaskResource1 {
    * Immutable Resource version.
    */
   version: string;
+}
+/**
+ * Frozen discovery position, used only to re-fetch current authorization.
+ */
+export interface PolicyLocator {
+  /**
+   * Cursor sent when discovering the selected page; null identifies the first page.
+   */
+  after: Id | null;
 }
 /**
  * Exact displayed backend offer, without executable input or authorization claims.

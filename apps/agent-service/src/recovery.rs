@@ -24,6 +24,7 @@ fn recipe(
 ) -> Result<Artifacts, Error> {
     let interpreter = if [
         "native-software-worker",
+        "native-local-software-worker",
         "native-collection-worker",
         "native-enrollment-worker",
         "native-credential-worker",

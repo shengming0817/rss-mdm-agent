@@ -9,6 +9,7 @@ pub mod deployment;
 mod device_overview;
 pub mod enrollment_worker;
 mod error;
+pub mod local_software;
 mod material_gc;
 mod mdm_state;
 mod recovery;

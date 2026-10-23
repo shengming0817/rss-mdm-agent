@@ -7,9 +7,7 @@ const controlledToolNames = JSON.parse(
     ),
     "utf8",
   ),
-)
-  .filter((t) => t.name !== "execution_policy_tools")
-  .map((t) => t.name);
+).map((t) => t.name);
 import { CODEX_VERSION } from "../../packages/ai-adapters/codex/dist/runtime.js";
 import { PROVIDER_VERSION } from "../../packages/ai-adapters/claude/dist/configuration.js";
 import { HARNESS_VERSION } from "../../packages/ai-adapters/deepseek/dist/configuration.js";
@@ -584,8 +582,8 @@ export function assertNativeToolSchema(provider, requests, definition) {
     // ref: openai/codex rust-v0.155.0 codex-rs/tools/src/json_schema/types.rs (JsonSchema).
     // App-server verifies the original MCP schema before admission. Its model-facing
     // schema representation omits the fixture's maxLength.
-    assert.equal(expected.properties.name.maxLength, 32);
-    delete expected.properties.name.maxLength;
+    assert.equal(expected.properties.parameters.properties.name.maxLength, 32);
+    delete expected.properties.parameters.properties.name.maxLength;
   }
   assert.deepEqual(
     actual.input_schema ?? actual.parameters ?? actual.function?.parameters,

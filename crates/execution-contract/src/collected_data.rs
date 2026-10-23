@@ -6,7 +6,7 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 
 /// Exact service-owned query definition.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct QueryRef {
     /// Stable resource identity.
@@ -77,8 +77,8 @@ pub struct PublishedQuery {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct QueryDirectory {
-    /// Explicitly refresh authorized published Policies over the existing backend channel.
-    pub refresh_policies: bool,
+    /// Explicitly refresh one authorized Policy page; null reads only local definitions.
+    pub policy_page: Option<crate::PolicyLocator>,
     /// Exclusive stable query cursor.
     pub after: Option<Id>,
     /// Requested page size, from one through 128.
@@ -88,6 +88,8 @@ pub struct QueryDirectory {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct QueryPage {
+    /// Next Policy discovery page; separate from local definition pagination.
+    pub policy_next: Option<crate::PolicyLocator>,
     /// Visible queries.
     pub items: Vec<QueryDescriptor>,
     /// Exclusive continuation.
@@ -136,7 +138,7 @@ pub enum DataSelection {
     },
 }
 /// A cursor is only a position; every read rechecks caller authorization.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DataCursor {
     /// Exact snapshot digest, preventing pages from mixing observations.

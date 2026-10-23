@@ -667,7 +667,7 @@ pub(crate) mod tests {
             "installation_id":uuid::Uuid::new_v4(), "installation_artifact":"a".repeat(64),
             "registration_clients":peer.clone(), "clients":peer, "service":image,
             "state_root":root.path.join("state"), "helper_work_roots":{},
-            "execution":{"work_root":root.path.join("work"), "material_root":root.path.join("materials"),
+            "execution":{"local_software":{"policyFile":"/unavailable/software-policy.json"},"work_root":root.path.join("work"), "material_root":root.path.join("materials"),
                 "processes":1, "interpreters":[], "managers":[]}
         });
         let bytes = serde_json::to_vec(&current).unwrap();
@@ -676,7 +676,7 @@ pub(crate) mod tests {
         for old in [
             {
                 let mut v = current.clone();
-                v["version"] = 2.into();
+                v["version"] = 3.into();
                 v
             },
             {
@@ -772,6 +772,9 @@ pub(crate) mod tests {
             },
             helper_work_roots: Default::default(),
             execution: ExecutionConfig {
+                local_software: crate::local_software::LocalSoftwareConfig {
+                    policy_file: "/unavailable/software-policy.json".into(),
+                },
                 work_root: PathBuf::new(),
                 material_root: PathBuf::new(),
                 processes: 1,

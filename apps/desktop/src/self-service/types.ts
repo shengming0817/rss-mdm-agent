@@ -59,6 +59,10 @@ export type PreparedAction =
       expiresAtUnixMs: number;
       kind: "policy";
       /**
+       * Frozen discovery position, used only to re-fetch current authorization.
+       */
+      locator: PolicyLocator;
+      /**
        * Eventual signed Offer; no task/attempt is invented before this exists.
        */
       offer: BackendTask | null;
@@ -1360,32 +1364,72 @@ export type TaskExecution =
   | "failed"
   | "waiting_reboot"
   | "unknown";
+/**
+ * Product-owned local actions; arbitrary commands are never accepted.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "LocalSoftwareAction".
+ */
+export type LocalSoftwareAction = "launch" | "update" | "uninstall" | "detect";
+/**
+ * Closed explanation of an unavailable local action.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "SoftwareBlock".
+ */
+export type SoftwareBlock =
+  | "protected"
+  | "ruleDisabled"
+  | "identityUnknown"
+  | "observationUnavailable"
+  | "recipeUnavailable"
+  | "updateUnknown"
+  | "noGui"
+  | "unsupported";
+/**
+ * Installation mechanism; an installation record is not necessarily a GUI application.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "InstalledSoftwareKind".
+ */
+export type InstalledSoftwareKind =
+  | "application"
+  | "pkg"
+  | "windowsProgram"
+  | "msix"
+  | "homebrew";
 
 export interface SelfServiceCommands {
-  ai_operation_submit: Command9;
-  appearance_snapshot: Command15;
-  data_read: Command3;
+  ai_operation_submit: Command14;
+  appearance_snapshot: Command20;
+  data_read: Command8;
   device_access: Command;
-  device_overview: Command16;
-  query_cancel: Command5;
-  query_directory: Command2;
-  query_status: Command5;
-  query_submit: Command4;
-  self_service_cancel: Command14;
-  self_service_confirm: Command13;
-  self_service_execute: Command13;
-  self_service_observe_software: Command6;
-  self_service_policy_confirm: Command10;
-  self_service_policy_directory: Command7;
-  self_service_policy_invoke: Command8;
-  self_service_policy_status: Command11;
-  self_service_snapshot: Command12;
+  device_overview: Command21;
+  query_cancel: Command10;
+  query_directory: Command7;
+  query_status: Command10;
+  query_submit: Command9;
+  self_service_cancel: Command19;
+  self_service_confirm: Command18;
+  self_service_execute: Command18;
+  self_service_observe_software: Command11;
+  self_service_policy_confirm: Command15;
+  self_service_policy_directory: Command12;
+  self_service_policy_invoke: Command13;
+  self_service_policy_status: Command16;
+  self_service_snapshot: Command17;
+  software_cancel: Command4;
+  software_history: Command5;
+  software_prepare: Command2;
+  software_read: Command6;
+  software_status: Command4;
+  software_submit: Command3;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command9".
+ * via the `definition` "Command14".
  */
-export interface Command9 {
+export interface Command14 {
   input: PolicySubmission;
   output: BackendRequest;
 }
@@ -1749,6 +1793,18 @@ export interface TaskResource {
   version: string;
 }
 /**
+ * The actual page on which a Policy was discovered. This is a position, never permission.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "PolicyLocator".
+ */
+export interface PolicyLocator {
+  /**
+   * Cursor sent when discovering the selected page; null identifies the first page.
+   */
+  after: Id | null;
+}
+/**
  * Sole product confirmation, persisted together with the original AI request.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
@@ -1842,9 +1898,9 @@ export interface VersionedRef {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command15".
+ * via the `definition` "Command20".
  */
-export interface Command15 {
+export interface Command20 {
   input: null;
   output: AppearanceSnapshot;
 }
@@ -1859,9 +1915,9 @@ export interface AppearanceSnapshot {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command3".
+ * via the `definition` "Command8".
  */
-export interface Command3 {
+export interface Command8 {
   input: DataRead;
   output: CollectedData;
 }
@@ -2149,9 +2205,9 @@ export interface SetupTask {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command16".
+ * via the `definition` "Command21".
  */
-export interface Command16 {
+export interface Command21 {
   input: null;
   output: DeviceOverview;
 }
@@ -2190,9 +2246,9 @@ export interface DeviceAttributes {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command5".
+ * via the `definition` "Command10".
  */
-export interface Command5 {
+export interface Command10 {
   input: QueryRequest;
   output: QueryStatus;
 }
@@ -2254,9 +2310,9 @@ export interface QueryPreparationRef {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command2".
+ * via the `definition` "Command7".
  */
-export interface Command2 {
+export interface Command7 {
   input: QueryDirectory;
   output: QueryPage;
 }
@@ -2276,9 +2332,9 @@ export interface QueryDirectory {
    */
   limit: number;
   /**
-   * Explicitly refresh authorized published Policies over the existing backend channel.
+   * Explicitly refresh one authorized Policy page; null reads only local definitions.
    */
-  refreshPolicies: boolean;
+  policyPage: PolicyLocator | null;
 }
 /**
  * Directory page, scoped by the authenticated service.
@@ -2295,6 +2351,10 @@ export interface QueryPage {
    * Exclusive continuation.
    */
   next: Id | null;
+  /**
+   * Next Policy discovery page; separate from local definition pagination.
+   */
+  policyNext: PolicyLocator | null;
 }
 /**
  * Safe query discovery; an unavailable query can still have retained data.
@@ -2366,9 +2426,9 @@ export interface PublishedQuery {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command4".
+ * via the `definition` "Command9".
  */
-export interface Command4 {
+export interface Command9 {
   input: QuerySubmit;
   output: QueryStatus;
 }
@@ -2396,9 +2456,9 @@ export interface QuerySubmit {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command14".
+ * via the `definition` "Command19".
  */
-export interface Command14 {
+export interface Command19 {
   input: ActionRef;
   output: BackendTaskView;
 }
@@ -2756,9 +2816,9 @@ export interface ProcessSummary {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command13".
+ * via the `definition` "Command18".
  */
-export interface Command13 {
+export interface Command18 {
   input: BackendSelection;
   output: TaskSubmission;
 }
@@ -2780,25 +2840,25 @@ export interface TaskSubmission {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command6".
+ * via the `definition` "Command11".
  */
-export interface Command6 {
+export interface Command11 {
   input: SoftwareReadChoice;
   output: BackendRequest;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command10".
+ * via the `definition` "Command15".
  */
-export interface Command10 {
+export interface Command15 {
   input: ActionRef;
   output: BackendRequest;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command7".
+ * via the `definition` "Command12".
  */
-export interface Command7 {
+export interface Command12 {
   input: PolicyDirectoryQuery;
   output: SelfServiceDirectoryResponse;
 }
@@ -2831,17 +2891,33 @@ export interface SelfServiceDirectoryResponse {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command8".
+ * via the `definition` "Command13".
  */
-export interface Command8 {
-  input: PolicyChoice;
+export interface Command13 {
+  input: PolicyInvocation;
   output: BackendRequest;
 }
 /**
+ * Local invocation envelope. Navigation is separate from the immutable business choice.
+ *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command11".
+ * via the `definition` "PolicyInvocation".
  */
-export interface Command11 {
+export interface PolicyInvocation {
+  /**
+   * Original request identity and exact user input.
+   */
+  choice: PolicyChoice;
+  /**
+   * Non-authoritative position, revalidated against the authenticated backend.
+   */
+  locator: PolicyLocator;
+}
+/**
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "Command16".
+ */
+export interface Command16 {
   input: ActionRef;
   output: PolicyStatus;
 }
@@ -2988,9 +3064,9 @@ export interface TaskRunState {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command12".
+ * via the `definition` "Command17".
  */
-export interface Command12 {
+export interface Command17 {
   input: SnapshotQuery;
   output: Snapshot;
 }
@@ -3013,7 +3089,318 @@ export interface Snapshot {
   requests: ExecutionTaskDetails[];
   selected: BackendTaskView | null;
 }
+/**
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "Command4".
+ */
+export interface Command4 {
+  input: QueryRequest;
+  output: LocalSoftwareStatus;
+}
+/**
+ * Safe local software preview and the original execution journal status.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "LocalSoftwareStatus".
+ */
+export interface LocalSoftwareStatus {
+  /**
+   * Independently observed native state from the retained fixed-worker result; absent means unknown.
+   */
+  detected: SoftwareState | null;
+  /**
+   * Existing lifecycle facts, with no parallel software state machine.
+   */
+  execution: ExecutionStatus;
+  /**
+   * Immutable service-owned preview; no executable inputs are returned.
+   */
+  prepared: LocalSoftwarePrepared;
+}
+/**
+ * Safe immutable preview of a locally prepared operation; executable input stays in the journal.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "LocalSoftwarePrepared".
+ */
+export interface LocalSoftwarePrepared {
+  /**
+   * Observed installation and requested action.
+   */
+  choice: LocalSoftwareChoice;
+  /**
+   * Digest of the complete service-frozen execution.
+   */
+  digest: Digest;
+  /**
+   * Effective physical account class.
+   */
+  identity: BackendIdentity;
+  /**
+   * Original authenticated source, preserved across human confirmation.
+   */
+  initiator: Initiator;
+  /**
+   * Safe software name.
+   */
+  name: string;
+  /**
+   * Original request UUID.
+   */
+  request: RequestId;
+  /**
+   * Latest permitted first start in UTC milliseconds.
+   */
+  startBeforeUnixMs: number;
+  /**
+   * Fixed candidate version for updates; never a moving latest selector.
+   */
+  targetVersion: string | null;
+}
+/**
+ * Original local software intent. The service derives all executable inputs.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "LocalSoftwareChoice".
+ */
+export interface LocalSoftwareChoice {
+  /**
+   * Closed operation.
+   */
+  action: LocalSoftwareAction;
+  /**
+   * Stable UUID allocated before submission and reused after response loss.
+   */
+  request: RequestId;
+  /**
+   * Exact observed installation.
+   */
+  software: SoftwareRef;
+}
+/**
+ * Exact observed installation in an authorized immutable data snapshot.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "SoftwareRef".
+ */
+export interface SoftwareRef {
+  /**
+   * Snapshot digest and row position, independently revalidated by the service.
+   */
+  cursor: DataCursor;
+  /**
+   * Native collector's stable installation identity.
+   */
+  installation: Id;
+  /**
+   * Service-owned collection definition.
+   */
+  query: QueryRef;
+}
+/**
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "Command5".
+ */
+export interface Command5 {
+  input: SoftwareHistoryQuery;
+  output: LocalSoftwareHistory;
+}
+/**
+ * Bounded history of local software intents in the existing execution journal.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "SoftwareHistoryQuery".
+ */
+export interface SoftwareHistoryQuery {
+  /**
+   * Exclusive journal continuation.
+   */
+  after: RequestId | null;
+  /**
+   * One through 128 records.
+   */
+  limit: number;
+}
+/**
+ * Authorized local software records from the sole execution journal.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "LocalSoftwareHistory".
+ */
+export interface LocalSoftwareHistory {
+  /**
+   * Current user's local preparations and executions in this page.
+   */
+  items: LocalSoftwareStatus[];
+  /**
+   * Journal continuation; a filtered page may be empty and still have a next position.
+   */
+  next: RequestId | null;
+}
+/**
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "Command2".
+ */
+export interface Command2 {
+  input: LocalSoftwareChoice;
+  output: LocalSoftwarePrepared;
+}
+/**
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "Command6".
+ */
+export interface Command6 {
+  input: SoftwareRead;
+  output: SoftwarePage;
+}
+/**
+ * Bounded read of collected software; it never performs a new inventory scan.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "SoftwareRead".
+ */
+export interface SoftwareRead {
+  /**
+   * Existing data read, with independent snapshot pagination.
+   */
+  read: DataRead;
+}
+/**
+ * Authorized software projection carrying the original observation quality.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "SoftwarePage".
+ */
+export interface SoftwarePage {
+  /**
+   * Actual collection time, absent when unobserved.
+   */
+  collectedAt: number | null;
+  /**
+   * Whether the original enumeration completed.
+   */
+  enumerationComplete: boolean;
+  /**
+   * User-visible installations; other users' private records are excluded.
+   */
+  items: InstalledSoftware[];
+  /**
+   * Next position in this exact observation, even when this page has no visible records.
+   */
+  next: DataCursor | null;
+  /**
+   * Original evidence quality.
+   */
+  quality: DataQuality;
+  /**
+   * Service-owned source definition.
+   */
+  query: QueryRef;
+  /**
+   * Whether the requested freshness bound was exceeded.
+   */
+  stale: boolean;
+}
+/**
+ * One actual installation, distinct from enterprise catalog candidates.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "InstalledSoftware".
+ */
+export interface InstalledSoftware {
+  /**
+   * Current locally supported actions.
+   */
+  actions: SoftwareActionView[];
+  /**
+   * Native installation family.
+   */
+  kind: InstalledSoftwareKind;
+  /**
+   * Display name from validated collection facts.
+   */
+  name: string;
+  /**
+   * Exact native identity for display and correlation.
+   */
+  nativeId: string;
+  /**
+   * Observed source family.
+   */
+  origin: string;
+  /**
+   * Display publisher, never authorization.
+   */
+  publisher: string | null;
+  /**
+   * Snapshot-bound reference, never a filesystem path selector.
+   */
+  reference: SoftwareRef;
+  /**
+   * Effective installation owner/scope.
+   */
+  scope: DataScope;
+  /**
+   * Observed installed version; absence is not a latest selector.
+   */
+  version: string | null;
+}
+/**
+ * Availability is a presentation fact; execution always rechecks current policy.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "SoftwareActionView".
+ */
+export interface SoftwareActionView {
+  /**
+   * Closed requested operation.
+   */
+  action: LocalSoftwareAction;
+  /**
+   * Whether preparation can currently be attempted.
+   */
+  available: boolean;
+  /**
+   * Accurate reason when unavailable.
+   */
+  reason: SoftwareBlock | null;
+  /**
+   * Exact qualified update target, when known.
+   */
+  targetVersion: string | null;
+}
+/**
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "Command3".
+ */
+export interface Command3 {
+  input: LocalSoftwareSubmission;
+  output: LocalSoftwareStatus;
+}
+/**
+ * Submit or query the exact service-frozen preparation.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "LocalSoftwareSubmission".
+ */
+export interface LocalSoftwareSubmission {
+  /**
+   * Exact preview digest; changing the selection requires a new explicit preparation.
+   */
+  digest: Digest;
+  /**
+   * Original request UUID.
+   */
+  request: RequestId;
+}
 
+export type SoftwarePort = {
+  [K in keyof SelfServiceCommands as K extends `software_${infer M}`
+    ? M
+    : never]: (
+    input: SelfServiceCommands[K]["input"],
+  ) => Promise<SelfServiceCommands[K]["output"]>;
+};
 export type DataAccessPort = {
   [K in keyof SelfServiceCommands as K extends `query_${string}` | "data_read"
     ? K

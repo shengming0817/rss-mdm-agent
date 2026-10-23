@@ -27,7 +27,7 @@ impl Core {
                     self.host.clock.millis()? / 1000,
                 )?))
             }
-            DataOperation::Directory(query) if !query.refresh_policies => {
+            DataOperation::Directory(query) if query.policy_page.is_none() => {
                 self.maintain_data()?;
                 let items = self.local_directory(command)?;
                 Ok(DataResponse::Directory(directory_page(items, query)?))
@@ -36,7 +36,10 @@ impl Core {
         }?;
         Ok(Reply::Data { value })
     }
-    fn local_directory(&mut self, command: &Command) -> Result<Vec<QueryDescriptor>, Error> {
+    pub(super) fn local_directory(
+        &mut self,
+        command: &Command,
+    ) -> Result<Vec<QueryDescriptor>, Error> {
         self.data.install_local()?;
         self.data.install_user(
             &command.subject,
@@ -272,36 +275,34 @@ impl<S: IdentityProvider> DeviceService<S> {
                     return Err(Error::Capacity);
                 }
                 let mut items = self.core.local_directory(command)?;
-                // Directory discovery carries no invocation authority. A failed refresh still
-                // permits local native reads; cached Policy availability is never asserted.
-                let mut after = None;
-                for _ in 0..if query.refresh_policies { 16 } else { 0 } {
-                    let page = match self
-                        .policy_directory(&bound, origin, after.take(), commands)
-                        .await
-                    {
-                        Ok(p) => p,
-                        Err(_) => break,
-                    };
+                let mut policy_next = None;
+                if let Some(locator) = &query.policy_page {
+                    let page = self
+                        .policy_directory(&bound, origin, locator.after.clone(), commands)
+                        .await?;
+                    policy_next = page
+                        .next_cursor
+                        .map(|next| {
+                            Ok::<_, Error>(PolicyLocator {
+                                after: Some(plan::id(next.to_string())?),
+                            })
+                        })
+                        .transpose()?;
                     for item in page.items {
                         if matches!(item.task, wire::SelfServiceTask::Script { .. }) {
                             self.core.maintain_data()?;
-                            let descriptor =
-                                self.core
-                                    .data
-                                    .publish(item, &command.subject, binding, context)?;
+                            let descriptor = self.core.data.publish(
+                                item,
+                                locator.clone(),
+                                &command.subject,
+                                binding,
+                                context,
+                            )?;
                             items.retain(|item| item.reference.id != descriptor.reference.id);
                             items.push(descriptor);
                         }
                     }
                     self.core.maintain_data()?;
-                    after = page
-                        .next_cursor
-                        .map(|id| plan::id(id.to_string()))
-                        .transpose()?;
-                    if after.is_none() {
-                        break;
-                    }
                 }
                 items.retain(|item| {
                     item.kind != QueryKind::Policy
@@ -312,7 +313,9 @@ impl<S: IdentityProvider> DeviceService<S> {
                             .published(&item.reference, &command.subject, binding, context)
                             .is_ok_and(|published| published.is_some())
                 });
-                DataResponse::Directory(directory_page(items, query)?)
+                let mut page = directory_page(items, query)?;
+                page.policy_next = policy_next;
+                DataResponse::Directory(page)
             }
             DataOperation::Read(_) => return Err(Error::Protocol),
             DataOperation::Submit(submit) => {
@@ -417,7 +420,7 @@ impl<S: IdentityProvider> DeviceService<S> {
                         });
                     }
                 }
-                if let Some(item) =
+                if let Some((item, locator)) =
                     self.core
                         .data
                         .published(&submit.query, &command.subject, binding, context)?
@@ -440,6 +443,7 @@ impl<S: IdentityProvider> DeviceService<S> {
                     };
                     self.core.data.associate(&submit.request, &a)?;
                     let request = Request::InvokePolicy {
+                        locator,
                         context: context.clone(),
                         choice,
                         origin: origin.clone(),
@@ -678,7 +682,7 @@ pub(super) fn is_local(input: &DataOperation) -> bool {
         input,
         DataOperation::Read(_)
             | DataOperation::Directory(QueryDirectory {
-                refresh_policies: false,
+                policy_page: None,
                 ..
             })
     )
@@ -709,7 +713,11 @@ fn directory_page(
     let next = (items.len() > query.limit as usize)
         .then(|| items[query.limit as usize - 1].reference.id.clone());
     items.truncate(query.limit as usize);
-    let mut page = QueryPage { items, next };
+    let mut page = QueryPage {
+        items,
+        next,
+        policy_next: None,
+    };
     while serde_json::to_vec(&page)
         .map_err(|_| Error::Protocol)?
         .len()

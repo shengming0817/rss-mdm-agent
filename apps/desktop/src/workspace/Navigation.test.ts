@@ -108,7 +108,7 @@ it("opens history in a separate panel from either sidebar and preserves one comp
   }
 });
 it("restores each module subsection and category, while ancestor breadcrumbs explicitly return to their target", async () => {
-  const w = await setup("software-management");
+  const w = await setup("software-management", true);
   const root = (label: string) =>
     w
       .findAll(".workspace-rail .ui-navigation button")

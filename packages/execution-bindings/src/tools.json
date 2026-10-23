@@ -1,6 +1,2397 @@
 [
   {
     "annotations": { "openWorldHint": false, "readOnlyHint": true },
+    "description": "Read retained installed-software facts, qualified fixed updates and local action availability. No collector or mutation runs.",
+    "inputSchema": {
+      "$defs": {
+        "DataCursor": {
+          "additionalProperties": false,
+          "description": "A cursor is only a position; every read rechecks caller authorization.",
+          "properties": {
+            "offset": {
+              "description": "Exclusive row position.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "snapshot": {
+              "$ref": "#/$defs/Digest",
+              "description": "Exact snapshot digest, preventing pages from mixing observations."
+            }
+          },
+          "required": ["snapshot", "offset"],
+          "type": "object"
+        },
+        "DataRead": {
+          "additionalProperties": false,
+          "description": "Bounded read of already collected data.",
+          "properties": {
+            "after": {
+              "anyOf": [{ "$ref": "#/$defs/DataCursor" }, { "type": "null" }],
+              "description": "Immutable snapshot continuation."
+            },
+            "limit": {
+              "description": "One through 128 rows.",
+              "format": "uint16",
+              "maximum": 65535,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxAgeSeconds": {
+              "description": "Optional consumer freshness requirement in seconds; never triggers collection.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": ["integer", "null"]
+            },
+            "selection": {
+              "$ref": "#/$defs/DataSelection",
+              "description": "Query or original request."
+            }
+          },
+          "required": ["selection", "limit"],
+          "type": "object"
+        },
+        "DataSelection": {
+          "description": "Select an existing snapshot without starting collection.",
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "Latest retained observation for an exact query.",
+              "properties": {
+                "kind": { "const": "query", "type": "string" },
+                "query": {
+                  "$ref": "#/$defs/QueryRef",
+                  "description": "Current query identity."
+                }
+              },
+              "required": ["kind", "query"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Result of one original request.",
+              "properties": {
+                "kind": { "const": "request", "type": "string" },
+                "request": {
+                  "$ref": "#/$defs/RequestId",
+                  "description": "Stable request identity."
+                }
+              },
+              "required": ["kind", "request"],
+              "type": "object"
+            }
+          ]
+        },
+        "Digest": {
+          "description": "Lowercase SHA-256 bytes expressed as hex; a digest alone grants no trust.",
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "Id": {
+          "description": "Opaque local reference identifier; syntax validity is not authenticity.",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+          "type": "string"
+        },
+        "QueryRef": {
+          "additionalProperties": false,
+          "description": "Exact service-owned query definition.",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/Id",
+              "description": "Stable resource identity."
+            },
+            "revision": {
+              "$ref": "#/$defs/Digest",
+              "description": "Digest of the complete current definition."
+            }
+          },
+          "required": ["id", "revision"],
+          "type": "object"
+        },
+        "RequestId": {
+          "description": "Local execution request identity.",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+          "type": "string"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "description": "Bounded read of collected software; it never performs a new inventory scan.",
+      "properties": {
+        "read": {
+          "$ref": "#/$defs/DataRead",
+          "description": "Existing data read, with independent snapshot pagination."
+        }
+      },
+      "required": ["read"],
+      "title": "SoftwareRead",
+      "type": "object"
+    },
+    "name": "execution_software_read",
+    "outputSchema": {
+      "$defs": {
+        "DataCursor": {
+          "additionalProperties": false,
+          "description": "A cursor is only a position; every read rechecks caller authorization.",
+          "properties": {
+            "offset": {
+              "description": "Exclusive row position.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "snapshot": {
+              "$ref": "#/$defs/Digest",
+              "description": "Exact snapshot digest, preventing pages from mixing observations."
+            }
+          },
+          "required": ["snapshot", "offset"],
+          "type": "object"
+        },
+        "DataQuality": {
+          "description": "Observation quality; absence and a complete empty collection are different.",
+          "oneOf": [
+            {
+              "const": "complete",
+              "description": "Complete validated observation.",
+              "type": "string"
+            },
+            {
+              "const": "missing",
+              "description": "The collector reported absence for this source; distinct from never collected.",
+              "type": "string"
+            },
+            {
+              "const": "partial",
+              "description": "Some data or sources are missing.",
+              "type": "string"
+            },
+            {
+              "const": "truncated",
+              "description": "A declared output budget was reached.",
+              "type": "string"
+            },
+            {
+              "const": "failed",
+              "description": "Collection failed.",
+              "type": "string"
+            },
+            {
+              "const": "notCollected",
+              "description": "No observation has been collected.",
+              "type": "string"
+            },
+            {
+              "const": "definitionUnavailable",
+              "description": "The definition cannot be recovered.",
+              "type": "string"
+            },
+            {
+              "const": "unsupported",
+              "description": "This collector or mapping is unsupported.",
+              "type": "string"
+            },
+            {
+              "const": "denied",
+              "description": "New collection permission is absent.",
+              "type": "string"
+            },
+            {
+              "const": "expired",
+              "description": "A configuration or result reference expired.",
+              "type": "string"
+            },
+            {
+              "const": "unknown",
+              "description": "An existing execution outcome is unknown.",
+              "type": "string"
+            }
+          ]
+        },
+        "DataScope": {
+          "description": "Visibility of a local result, independent of the service's execution identity.",
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "Product-authorized device facts.",
+              "properties": { "kind": { "const": "device", "type": "string" } },
+              "required": ["kind"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Facts private to one authenticated OS account.",
+              "properties": {
+                "kind": { "const": "user", "type": "string" },
+                "subject": {
+                  "$ref": "#/$defs/Id",
+                  "description": "Exact OS account identity."
+                }
+              },
+              "required": ["kind", "subject"],
+              "type": "object"
+            }
+          ]
+        },
+        "Digest": {
+          "description": "Lowercase SHA-256 bytes expressed as hex; a digest alone grants no trust.",
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "ErrorView": {
+          "description": "Protocol error payload; optional catalog diagnostic is produced only from static C03 errors.",
+          "properties": { "code": { "$ref": "#/$defs/ServiceError" } },
+          "required": ["code"],
+          "type": "object"
+        },
+        "Id": {
+          "description": "Opaque local reference identifier; syntax validity is not authenticity.",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+          "type": "string"
+        },
+        "InstalledSoftware": {
+          "additionalProperties": false,
+          "description": "One actual installation, distinct from enterprise catalog candidates.",
+          "properties": {
+            "actions": {
+              "description": "Current locally supported actions.",
+              "items": { "$ref": "#/$defs/SoftwareActionView" },
+              "type": "array"
+            },
+            "kind": {
+              "$ref": "#/$defs/InstalledSoftwareKind",
+              "description": "Native installation family."
+            },
+            "name": {
+              "description": "Display name from validated collection facts.",
+              "type": "string"
+            },
+            "nativeId": {
+              "description": "Exact native identity for display and correlation.",
+              "type": "string"
+            },
+            "origin": {
+              "description": "Observed source family.",
+              "type": "string"
+            },
+            "publisher": {
+              "description": "Display publisher, never authorization.",
+              "type": ["string", "null"]
+            },
+            "reference": {
+              "$ref": "#/$defs/SoftwareRef",
+              "description": "Snapshot-bound reference, never a filesystem path selector."
+            },
+            "scope": {
+              "$ref": "#/$defs/DataScope",
+              "description": "Effective installation owner/scope."
+            },
+            "version": {
+              "description": "Observed installed version; absence is not a latest selector.",
+              "type": ["string", "null"]
+            }
+          },
+          "required": [
+            "reference",
+            "kind",
+            "name",
+            "nativeId",
+            "origin",
+            "scope",
+            "actions"
+          ],
+          "type": "object"
+        },
+        "InstalledSoftwareKind": {
+          "description": "Installation mechanism; an installation record is not necessarily a GUI application.",
+          "oneOf": [
+            {
+              "const": "application",
+              "description": "macOS application bundle.",
+              "type": "string"
+            },
+            {
+              "const": "pkg",
+              "description": "macOS PackageInstaller receipt; removal requires a trusted recipe.",
+              "type": "string"
+            },
+            {
+              "const": "windowsProgram",
+              "description": "Windows native program record, requiring native MSI/EXE qualification before mutation.",
+              "type": "string"
+            },
+            {
+              "const": "msix",
+              "description": "Windows native package identity.",
+              "type": "string"
+            },
+            {
+              "const": "homebrew",
+              "description": "Installed Homebrew formula or cask with separate source identity.",
+              "type": "string"
+            }
+          ]
+        },
+        "LocalSoftwareAction": {
+          "description": "Product-owned local actions; arbitrary commands are never accepted.",
+          "oneOf": [
+            {
+              "const": "launch",
+              "description": "Open the exact GUI application in the authenticated user's session.",
+              "type": "string"
+            },
+            {
+              "const": "update",
+              "description": "Install one exact permitted newer candidate.",
+              "type": "string"
+            },
+            {
+              "const": "uninstall",
+              "description": "Remove the exact selected installation.",
+              "type": "string"
+            },
+            {
+              "const": "detect",
+              "description": "Recheck the exact installation without mutation.",
+              "type": "string"
+            }
+          ]
+        },
+        "QueryRef": {
+          "additionalProperties": false,
+          "description": "Exact service-owned query definition.",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/Id",
+              "description": "Stable resource identity."
+            },
+            "revision": {
+              "$ref": "#/$defs/Digest",
+              "description": "Digest of the complete current definition."
+            }
+          },
+          "required": ["id", "revision"],
+          "type": "object"
+        },
+        "ServiceError": {
+          "description": "Static safe errors. An implementation must never attach raw backend diagnostics.",
+          "oneOf": [
+            {
+              "const": "invalidLimits",
+              "description": "Invalid host configuration.",
+              "type": "string"
+            },
+            {
+              "const": "unbound",
+              "description": "No authenticated host/service binding; startup must fail.",
+              "type": "string"
+            },
+            {
+              "const": "denied",
+              "description": "Subject/delegation/target is not authorized.",
+              "type": "string"
+            },
+            {
+              "const": "notFound",
+              "description": "Object absent within the authorized namespace; do not reveal another namespace.",
+              "type": "string"
+            },
+            {
+              "const": "inProgress",
+              "description": "The same query has an unsettled original request.",
+              "type": "string"
+            },
+            {
+              "const": "conflict",
+              "description": "Stable operation ID already names different content.",
+              "type": "string"
+            },
+            {
+              "const": "expired",
+              "description": "Exact reference or trusted authorization is no longer current.",
+              "type": "string"
+            },
+            {
+              "const": "unsupported",
+              "description": "Capability not implemented; never weaken required protection.",
+              "type": "string"
+            },
+            {
+              "const": "unavailable",
+              "description": "Service unavailable; submission may require querying the original ID.",
+              "type": "string"
+            },
+            {
+              "const": "outcomeUnknown",
+              "description": "Acceptance cannot be determined; query/retry the original operationRequestId.",
+              "type": "string"
+            },
+            {
+              "const": "invalidInput",
+              "description": "Invalid request data.",
+              "type": "string"
+            },
+            {
+              "const": "limit",
+              "description": "A configured byte, collection or concurrency budget was exceeded.",
+              "type": "string"
+            },
+            {
+              "const": "cancelled",
+              "description": "Current RPC wait ended. This is not business cancellation.",
+              "type": "string"
+            }
+          ]
+        },
+        "SoftwareActionView": {
+          "additionalProperties": false,
+          "description": "Availability is a presentation fact; execution always rechecks current policy.",
+          "properties": {
+            "action": {
+              "$ref": "#/$defs/LocalSoftwareAction",
+              "description": "Closed requested operation."
+            },
+            "available": {
+              "description": "Whether preparation can currently be attempted.",
+              "type": "boolean"
+            },
+            "reason": {
+              "anyOf": [
+                { "$ref": "#/$defs/SoftwareBlock" },
+                { "type": "null" }
+              ],
+              "description": "Accurate reason when unavailable."
+            },
+            "targetVersion": {
+              "description": "Exact qualified update target, when known.",
+              "type": ["string", "null"]
+            }
+          },
+          "required": ["action", "available"],
+          "type": "object"
+        },
+        "SoftwareBlock": {
+          "description": "Closed explanation of an unavailable local action.",
+          "oneOf": [
+            {
+              "const": "protected",
+              "description": "The current product or organization rule protects this software.",
+              "type": "string"
+            },
+            {
+              "const": "ruleDisabled",
+              "description": "The corresponding local action is disabled by the protected rule document.",
+              "type": "string"
+            },
+            {
+              "const": "identityUnknown",
+              "description": "Native identity, source or installation context cannot be established.",
+              "type": "string"
+            },
+            {
+              "const": "observationUnavailable",
+              "description": "Data is missing, stale, incomplete or changed since selection.",
+              "type": "string"
+            },
+            {
+              "const": "recipeUnavailable",
+              "description": "No fixed trusted installation/removal recipe is registered.",
+              "type": "string"
+            },
+            {
+              "const": "updateUnknown",
+              "description": "No allowed fixed update candidate is known.",
+              "type": "string"
+            },
+            {
+              "const": "noGui",
+              "description": "The record is not a launchable GUI application.",
+              "type": "string"
+            },
+            {
+              "const": "unsupported",
+              "description": "The platform or native mechanism is unsupported.",
+              "type": "string"
+            }
+          ]
+        },
+        "SoftwarePage": {
+          "additionalProperties": false,
+          "description": "Authorized software projection carrying the original observation quality.",
+          "properties": {
+            "collectedAt": {
+              "description": "Actual collection time, absent when unobserved.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": ["integer", "null"]
+            },
+            "enumerationComplete": {
+              "description": "Whether the original enumeration completed.",
+              "type": "boolean"
+            },
+            "items": {
+              "description": "User-visible installations; other users' private records are excluded.",
+              "items": { "$ref": "#/$defs/InstalledSoftware" },
+              "type": "array"
+            },
+            "next": {
+              "anyOf": [{ "$ref": "#/$defs/DataCursor" }, { "type": "null" }],
+              "description": "Next position in this exact observation, even when this page has no visible records."
+            },
+            "quality": {
+              "$ref": "#/$defs/DataQuality",
+              "description": "Original evidence quality."
+            },
+            "query": {
+              "$ref": "#/$defs/QueryRef",
+              "description": "Service-owned source definition."
+            },
+            "stale": {
+              "description": "Whether the requested freshness bound was exceeded.",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "query",
+            "quality",
+            "enumerationComplete",
+            "stale",
+            "items"
+          ],
+          "type": "object"
+        },
+        "SoftwareRef": {
+          "additionalProperties": false,
+          "description": "Exact observed installation in an authorized immutable data snapshot.",
+          "properties": {
+            "cursor": {
+              "$ref": "#/$defs/DataCursor",
+              "description": "Snapshot digest and row position, independently revalidated by the service."
+            },
+            "installation": {
+              "$ref": "#/$defs/Id",
+              "description": "Native collector's stable installation identity."
+            },
+            "query": {
+              "$ref": "#/$defs/QueryRef",
+              "description": "Service-owned collection definition."
+            }
+          },
+          "required": ["query", "cursor", "installation"],
+          "type": "object"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "One output schema for both success and tool-level failure.",
+      "oneOf": [
+        {
+          "properties": {
+            "result": { "$ref": "#/$defs/SoftwarePage" },
+            "status": { "const": "ok", "type": "string" }
+          },
+          "required": ["status", "result"],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "error": { "$ref": "#/$defs/ErrorView" },
+            "status": { "const": "error", "type": "string" }
+          },
+          "required": ["status", "error"],
+          "type": "object"
+        }
+      ],
+      "title": "ToolOutput",
+      "type": "object"
+    }
+  },
+  {
+    "annotations": { "openWorldHint": false, "readOnlyHint": false },
+    "description": "Prepare a fixed local software action for the desktop user to review and submit. Never executes. Return the original request for recovery; do not prepare again to poll.",
+    "inputSchema": {
+      "$defs": {
+        "DataCursor": {
+          "additionalProperties": false,
+          "description": "A cursor is only a position; every read rechecks caller authorization.",
+          "properties": {
+            "offset": {
+              "description": "Exclusive row position.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "snapshot": {
+              "$ref": "#/$defs/Digest",
+              "description": "Exact snapshot digest, preventing pages from mixing observations."
+            }
+          },
+          "required": ["snapshot", "offset"],
+          "type": "object"
+        },
+        "Digest": {
+          "description": "Lowercase SHA-256 bytes expressed as hex; a digest alone grants no trust.",
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "Id": {
+          "description": "Opaque local reference identifier; syntax validity is not authenticity.",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+          "type": "string"
+        },
+        "LocalSoftwareAction": {
+          "description": "Product-owned local actions; arbitrary commands are never accepted.",
+          "oneOf": [
+            {
+              "const": "launch",
+              "description": "Open the exact GUI application in the authenticated user's session.",
+              "type": "string"
+            },
+            {
+              "const": "update",
+              "description": "Install one exact permitted newer candidate.",
+              "type": "string"
+            },
+            {
+              "const": "uninstall",
+              "description": "Remove the exact selected installation.",
+              "type": "string"
+            },
+            {
+              "const": "detect",
+              "description": "Recheck the exact installation without mutation.",
+              "type": "string"
+            }
+          ]
+        },
+        "QueryRef": {
+          "additionalProperties": false,
+          "description": "Exact service-owned query definition.",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/Id",
+              "description": "Stable resource identity."
+            },
+            "revision": {
+              "$ref": "#/$defs/Digest",
+              "description": "Digest of the complete current definition."
+            }
+          },
+          "required": ["id", "revision"],
+          "type": "object"
+        },
+        "SoftwareRef": {
+          "additionalProperties": false,
+          "description": "Exact observed installation in an authorized immutable data snapshot.",
+          "properties": {
+            "cursor": {
+              "$ref": "#/$defs/DataCursor",
+              "description": "Snapshot digest and row position, independently revalidated by the service."
+            },
+            "installation": {
+              "$ref": "#/$defs/Id",
+              "description": "Native collector's stable installation identity."
+            },
+            "query": {
+              "$ref": "#/$defs/QueryRef",
+              "description": "Service-owned collection definition."
+            }
+          },
+          "required": ["query", "cursor", "installation"],
+          "type": "object"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "description": "Local software proposal; the native host supplies the original request UUID.",
+      "properties": {
+        "action": {
+          "$ref": "#/$defs/LocalSoftwareAction",
+          "description": "Fixed local operation requiring human submission."
+        },
+        "software": {
+          "$ref": "#/$defs/SoftwareRef",
+          "description": "Exact authorized observation reference, never a path or command."
+        }
+      },
+      "required": ["software", "action"],
+      "title": "LocalSoftwareProposal",
+      "type": "object"
+    },
+    "name": "execution_software_prepare",
+    "outputSchema": {
+      "$defs": {
+        "BackendIdentity": {
+          "description": "Display-only account class, never OS identity evidence.",
+          "oneOf": [
+            {
+              "const": "system",
+              "description": "System service execution.",
+              "type": "string"
+            },
+            {
+              "const": "user",
+              "description": "Bound active user helper execution.",
+              "type": "string"
+            }
+          ]
+        },
+        "BackendTrigger": {
+          "description": "Provenance for a task already authorized by the backend; never a local enterprise approval.",
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "Automatic backend assignment.",
+              "properties": {
+                "kind": { "const": "automatic", "type": "string" }
+              },
+              "required": ["kind"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "An authenticated user selected an offered task in the trusted desktop.",
+              "properties": {
+                "kind": { "const": "human", "type": "string" },
+                "osSession": {
+                  "$ref": "#/$defs/OsSessionRef",
+                  "description": "Actual native account and login session, supplied by ingress."
+                }
+              },
+              "required": ["kind", "osSession"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Trusted desktop submitted the user's confirmed AI proposal.",
+              "properties": {
+                "config": {
+                  "$ref": "#/$defs/VersionedRef",
+                  "description": "Native AI connection configuration, not a provider identity grant."
+                },
+                "context": {
+                  "$ref": "#/$defs/NativeContextRef",
+                  "description": "Native owner binding at the original invocation, independent of provider identity."
+                },
+                "conversation": {
+                  "$ref": "#/$defs/Id",
+                  "description": "Conversation reference used for audit correlation."
+                },
+                "kind": { "const": "ai", "type": "string" },
+                "osSession": {
+                  "$ref": "#/$defs/OsSessionRef",
+                  "description": "Actual native account and login session, supplied by ingress."
+                },
+                "toolCall": {
+                  "$ref": "#/$defs/Id",
+                  "description": "Tool request reference used for audit correlation."
+                }
+              },
+              "required": [
+                "kind",
+                "context",
+                "osSession",
+                "config",
+                "conversation",
+                "toolCall"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "DataCursor": {
+          "additionalProperties": false,
+          "description": "A cursor is only a position; every read rechecks caller authorization.",
+          "properties": {
+            "offset": {
+              "description": "Exclusive row position.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "snapshot": {
+              "$ref": "#/$defs/Digest",
+              "description": "Exact snapshot digest, preventing pages from mixing observations."
+            }
+          },
+          "required": ["snapshot", "offset"],
+          "type": "object"
+        },
+        "DeviceId": {
+          "description": "Device reference, not verified registration evidence.",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+          "type": "string"
+        },
+        "Digest": {
+          "description": "Lowercase SHA-256 bytes expressed as hex; a digest alone grants no trust.",
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "ErrorView": {
+          "description": "Protocol error payload; optional catalog diagnostic is produced only from static C03 errors.",
+          "properties": { "code": { "$ref": "#/$defs/ServiceError" } },
+          "required": ["code"],
+          "type": "object"
+        },
+        "Id": {
+          "description": "Opaque local reference identifier; syntax validity is not authenticity.",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+          "type": "string"
+        },
+        "Initiator": {
+          "description": "Request origin and account provenance; never grants the product actor additional authority.",
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "Backend-authorized task. A local trigger records provenance and supplies no new authority.",
+              "properties": {
+                "attempt": {
+                  "$ref": "#/$defs/Id",
+                  "description": "Exact server execution attempt."
+                },
+                "kind": { "const": "backend", "type": "string" },
+                "task": {
+                  "$ref": "#/$defs/Id",
+                  "description": "Exact server task, independently verified by the host."
+                },
+                "trigger": {
+                  "$ref": "#/$defs/BackendTrigger",
+                  "description": "Authenticated local trigger or automatic backend dispatch."
+                }
+              },
+              "required": ["kind", "task", "attempt", "trigger"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Human origin with explicit OS login provenance.",
+              "properties": {
+                "kind": { "const": "human", "type": "string" },
+                "osSession": {
+                  "$ref": "#/$defs/OsSessionRef",
+                  "description": "Originating OS account/session reference, separate from requested run-as identity."
+                }
+              },
+              "required": ["kind", "osSession"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "AI origin with OS provenance and the exact product connection configuration.",
+              "properties": {
+                "config": {
+                  "$ref": "#/$defs/VersionedRef",
+                  "description": "Exact connection configuration used at initiation; no external account identity."
+                },
+                "conversation": {
+                  "$ref": "#/$defs/Id",
+                  "description": "Originating AI conversation reference in the provider namespace."
+                },
+                "kind": { "const": "ai", "type": "string" },
+                "osSession": {
+                  "$ref": "#/$defs/OsSessionRef",
+                  "description": "Originating OS account/session reference, separate from requested run-as identity."
+                },
+                "provider": {
+                  "$ref": "#/$defs/Id",
+                  "description": "Provider namespace, independent of product authentication."
+                },
+                "toolCall": {
+                  "$ref": "#/$defs/Id",
+                  "description": "Originating tool-call reference; cannot act as a product approval."
+                }
+              },
+              "required": [
+                "kind",
+                "provider",
+                "osSession",
+                "config",
+                "conversation",
+                "toolCall"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Policy origin without an interactive OS/provider login; authority still comes from the actor context.",
+              "properties": {
+                "kind": { "const": "policy", "type": "string" },
+                "policy": {
+                  "$ref": "#/$defs/VersionedRef",
+                  "description": "Exact policy revision associated with this request or audit decision."
+                }
+              },
+              "required": ["kind", "policy"],
+              "type": "object"
+            }
+          ]
+        },
+        "LocalSoftwareAction": {
+          "description": "Product-owned local actions; arbitrary commands are never accepted.",
+          "oneOf": [
+            {
+              "const": "launch",
+              "description": "Open the exact GUI application in the authenticated user's session.",
+              "type": "string"
+            },
+            {
+              "const": "update",
+              "description": "Install one exact permitted newer candidate.",
+              "type": "string"
+            },
+            {
+              "const": "uninstall",
+              "description": "Remove the exact selected installation.",
+              "type": "string"
+            },
+            {
+              "const": "detect",
+              "description": "Recheck the exact installation without mutation.",
+              "type": "string"
+            }
+          ]
+        },
+        "LocalSoftwareChoice": {
+          "additionalProperties": false,
+          "description": "Original local software intent. The service derives all executable inputs.",
+          "properties": {
+            "action": {
+              "$ref": "#/$defs/LocalSoftwareAction",
+              "description": "Closed operation."
+            },
+            "request": {
+              "$ref": "#/$defs/RequestId",
+              "description": "Stable UUID allocated before submission and reused after response loss."
+            },
+            "software": {
+              "$ref": "#/$defs/SoftwareRef",
+              "description": "Exact observed installation."
+            }
+          },
+          "required": ["request", "software", "action"],
+          "type": "object"
+        },
+        "LocalSoftwarePrepared": {
+          "additionalProperties": false,
+          "description": "Safe immutable preview of a locally prepared operation; executable input stays in the journal.",
+          "properties": {
+            "choice": {
+              "$ref": "#/$defs/LocalSoftwareChoice",
+              "description": "Observed installation and requested action."
+            },
+            "digest": {
+              "$ref": "#/$defs/Digest",
+              "description": "Digest of the complete service-frozen execution."
+            },
+            "identity": {
+              "$ref": "#/$defs/BackendIdentity",
+              "description": "Effective physical account class."
+            },
+            "initiator": {
+              "$ref": "#/$defs/Initiator",
+              "description": "Original authenticated source, preserved across human confirmation."
+            },
+            "name": { "description": "Safe software name.", "type": "string" },
+            "request": {
+              "$ref": "#/$defs/RequestId",
+              "description": "Original request UUID."
+            },
+            "startBeforeUnixMs": {
+              "description": "Latest permitted first start in UTC milliseconds.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "targetVersion": {
+              "description": "Fixed candidate version for updates; never a moving latest selector.",
+              "type": ["string", "null"]
+            }
+          },
+          "required": [
+            "request",
+            "digest",
+            "choice",
+            "name",
+            "initiator",
+            "identity",
+            "startBeforeUnixMs"
+          ],
+          "type": "object"
+        },
+        "NativeContextRef": {
+          "additionalProperties": false,
+          "description": "Nonsecret reference returned by the native execution owner after binding a context.",
+          "properties": {
+            "generation": {
+              "$ref": "#/$defs/Id",
+              "description": "Exact caller generation; retirement rejects new ingress and User continuations."
+            },
+            "id": {
+              "$ref": "#/$defs/Id",
+              "description": "Owner-assigned binding identity, scoped to the authenticated native peer."
+            }
+          },
+          "required": ["id", "generation"],
+          "type": "object"
+        },
+        "OsAccountRef": {
+          "additionalProperties": false,
+          "description": "Opaque account reference in an OS namespace, independent of product or provider identity.",
+          "properties": {
+            "platform": {
+              "$ref": "#/$defs/Platform",
+              "description": "OS namespace of this reference or target; does not assert platform support."
+            },
+            "subject": {
+              "$ref": "#/$defs/Id",
+              "description": "Opaque stable OS account reference, such as a SID/UID reference, not an authentication credential."
+            }
+          },
+          "required": ["platform", "subject"],
+          "type": "object"
+        },
+        "OsSessionRef": {
+          "additionalProperties": false,
+          "description": "Claimed OS login provenance at the request origin, separate from target and run-as identity.",
+          "properties": {
+            "account": {
+              "$ref": "#/$defs/OsAccountRef",
+              "description": "Login account at the origin; never implicitly equated to the product actor."
+            },
+            "device": {
+              "$ref": "#/$defs/DeviceId",
+              "description": "Origin device reference; it does not establish registration or target authority."
+            },
+            "session": {
+              "$ref": "#/$defs/Id",
+              "description": "Origin OS login/session reference, including an explicit test reference in fixtures."
+            }
+          },
+          "required": ["device", "account", "session"],
+          "type": "object"
+        },
+        "Platform": {
+          "description": "Target OS semantics for validation; an enum value is not a platform support claim.",
+          "oneOf": [
+            {
+              "const": "windows",
+              "description": "Windows target/account namespace.",
+              "type": "string"
+            },
+            {
+              "const": "macos",
+              "description": "macOS target/account namespace.",
+              "type": "string"
+            },
+            {
+              "const": "linux",
+              "description": "Linux host/account design namespace; does not assert rss-mdm product support for managed Linux devices.",
+              "type": "string"
+            }
+          ]
+        },
+        "QueryRef": {
+          "additionalProperties": false,
+          "description": "Exact service-owned query definition.",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/Id",
+              "description": "Stable resource identity."
+            },
+            "revision": {
+              "$ref": "#/$defs/Digest",
+              "description": "Digest of the complete current definition."
+            }
+          },
+          "required": ["id", "revision"],
+          "type": "object"
+        },
+        "RequestId": {
+          "description": "Local execution request identity.",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+          "type": "string"
+        },
+        "ServiceError": {
+          "description": "Static safe errors. An implementation must never attach raw backend diagnostics.",
+          "oneOf": [
+            {
+              "const": "invalidLimits",
+              "description": "Invalid host configuration.",
+              "type": "string"
+            },
+            {
+              "const": "unbound",
+              "description": "No authenticated host/service binding; startup must fail.",
+              "type": "string"
+            },
+            {
+              "const": "denied",
+              "description": "Subject/delegation/target is not authorized.",
+              "type": "string"
+            },
+            {
+              "const": "notFound",
+              "description": "Object absent within the authorized namespace; do not reveal another namespace.",
+              "type": "string"
+            },
+            {
+              "const": "inProgress",
+              "description": "The same query has an unsettled original request.",
+              "type": "string"
+            },
+            {
+              "const": "conflict",
+              "description": "Stable operation ID already names different content.",
+              "type": "string"
+            },
+            {
+              "const": "expired",
+              "description": "Exact reference or trusted authorization is no longer current.",
+              "type": "string"
+            },
+            {
+              "const": "unsupported",
+              "description": "Capability not implemented; never weaken required protection.",
+              "type": "string"
+            },
+            {
+              "const": "unavailable",
+              "description": "Service unavailable; submission may require querying the original ID.",
+              "type": "string"
+            },
+            {
+              "const": "outcomeUnknown",
+              "description": "Acceptance cannot be determined; query/retry the original operationRequestId.",
+              "type": "string"
+            },
+            {
+              "const": "invalidInput",
+              "description": "Invalid request data.",
+              "type": "string"
+            },
+            {
+              "const": "limit",
+              "description": "A configured byte, collection or concurrency budget was exceeded.",
+              "type": "string"
+            },
+            {
+              "const": "cancelled",
+              "description": "Current RPC wait ended. This is not business cancellation.",
+              "type": "string"
+            }
+          ]
+        },
+        "SoftwareRef": {
+          "additionalProperties": false,
+          "description": "Exact observed installation in an authorized immutable data snapshot.",
+          "properties": {
+            "cursor": {
+              "$ref": "#/$defs/DataCursor",
+              "description": "Snapshot digest and row position, independently revalidated by the service."
+            },
+            "installation": {
+              "$ref": "#/$defs/Id",
+              "description": "Native collector's stable installation identity."
+            },
+            "query": {
+              "$ref": "#/$defs/QueryRef",
+              "description": "Service-owned collection definition."
+            }
+          },
+          "required": ["query", "cursor", "installation"],
+          "type": "object"
+        },
+        "VersionedRef": {
+          "additionalProperties": false,
+          "description": "Exact resource/configuration reference. Resolution and authenticity belong to the owner.",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/Id",
+              "description": "Opaque reference identity; the revision must be supplied separately."
+            },
+            "revision": {
+              "$ref": "#/$defs/Id",
+              "description": "Exact immutable revision reference; does not resolve or follow a moving alias."
+            }
+          },
+          "required": ["id", "revision"],
+          "type": "object"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "One output schema for both success and tool-level failure.",
+      "oneOf": [
+        {
+          "properties": {
+            "result": { "$ref": "#/$defs/LocalSoftwarePrepared" },
+            "status": { "const": "ok", "type": "string" }
+          },
+          "required": ["status", "result"],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "error": { "$ref": "#/$defs/ErrorView" },
+            "status": { "const": "error", "type": "string" }
+          },
+          "required": ["status", "error"],
+          "type": "object"
+        }
+      ],
+      "title": "ToolOutput",
+      "type": "object"
+    }
+  },
+  {
+    "annotations": { "openWorldHint": false, "readOnlyHint": true },
+    "description": "Query the original local software request and observed result. Unknown does not permit resubmission.",
+    "inputSchema": {
+      "$defs": {
+        "RequestId": {
+          "description": "Local execution request identity.",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+          "type": "string"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "description": "Original query lookup or cancellation.",
+      "properties": {
+        "request": {
+          "$ref": "#/$defs/RequestId",
+          "description": "Original request UUID."
+        }
+      },
+      "required": ["request"],
+      "title": "QueryRequest",
+      "type": "object"
+    },
+    "name": "execution_software_status",
+    "outputSchema": {
+      "$defs": {
+        "AttemptId": {
+          "description": "Execution attempt correlation identity.",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+          "type": "string"
+        },
+        "BackendIdentity": {
+          "description": "Display-only account class, never OS identity evidence.",
+          "oneOf": [
+            {
+              "const": "system",
+              "description": "System service execution.",
+              "type": "string"
+            },
+            {
+              "const": "user",
+              "description": "Bound active user helper execution.",
+              "type": "string"
+            }
+          ]
+        },
+        "BackendTrigger": {
+          "description": "Provenance for a task already authorized by the backend; never a local enterprise approval.",
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "Automatic backend assignment.",
+              "properties": {
+                "kind": { "const": "automatic", "type": "string" }
+              },
+              "required": ["kind"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "An authenticated user selected an offered task in the trusted desktop.",
+              "properties": {
+                "kind": { "const": "human", "type": "string" },
+                "osSession": {
+                  "$ref": "#/$defs/OsSessionRef",
+                  "description": "Actual native account and login session, supplied by ingress."
+                }
+              },
+              "required": ["kind", "osSession"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Trusted desktop submitted the user's confirmed AI proposal.",
+              "properties": {
+                "config": {
+                  "$ref": "#/$defs/VersionedRef",
+                  "description": "Native AI connection configuration, not a provider identity grant."
+                },
+                "context": {
+                  "$ref": "#/$defs/NativeContextRef",
+                  "description": "Native owner binding at the original invocation, independent of provider identity."
+                },
+                "conversation": {
+                  "$ref": "#/$defs/Id",
+                  "description": "Conversation reference used for audit correlation."
+                },
+                "kind": { "const": "ai", "type": "string" },
+                "osSession": {
+                  "$ref": "#/$defs/OsSessionRef",
+                  "description": "Actual native account and login session, supplied by ingress."
+                },
+                "toolCall": {
+                  "$ref": "#/$defs/Id",
+                  "description": "Tool request reference used for audit correlation."
+                }
+              },
+              "required": [
+                "kind",
+                "context",
+                "osSession",
+                "config",
+                "conversation",
+                "toolCall"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "DataCursor": {
+          "additionalProperties": false,
+          "description": "A cursor is only a position; every read rechecks caller authorization.",
+          "properties": {
+            "offset": {
+              "description": "Exclusive row position.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "snapshot": {
+              "$ref": "#/$defs/Digest",
+              "description": "Exact snapshot digest, preventing pages from mixing observations."
+            }
+          },
+          "required": ["snapshot", "offset"],
+          "type": "object"
+        },
+        "DeviceId": {
+          "description": "Device reference, not verified registration evidence.",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+          "type": "string"
+        },
+        "Digest": {
+          "description": "Lowercase SHA-256 bytes expressed as hex; a digest alone grants no trust.",
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "EffectAssessment": {
+          "description": "Verified assessment of the whole controlled attempt, not text from tool output.",
+          "oneOf": [
+            {
+              "const": "noEffect",
+              "description": "Quiescent attempt has no side effects or pending external work.",
+              "type": "string"
+            },
+            {
+              "const": "satisfied",
+              "description": "Independent target verification confirms the desired state.",
+              "type": "string"
+            },
+            {
+              "const": "notSatisfied",
+              "description": "Target is not satisfied; side effects may nevertheless exist.",
+              "type": "string"
+            },
+            {
+              "const": "unknown",
+              "description": "Effect cannot be established.",
+              "type": "string"
+            }
+          ]
+        },
+        "ErrorView": {
+          "description": "Protocol error payload; optional catalog diagnostic is produced only from static C03 errors.",
+          "properties": { "code": { "$ref": "#/$defs/ServiceError" } },
+          "required": ["code"],
+          "type": "object"
+        },
+        "ExecutionMode": {
+          "description": "Explicit execution provenance; test effects never become real effects.",
+          "oneOf": [
+            {
+              "const": "test",
+              "description": "Explicit fixture runner only.",
+              "type": "string"
+            },
+            {
+              "const": "real",
+              "description": "Real runner, verified by the later production host.",
+              "type": "string"
+            }
+          ]
+        },
+        "Id": {
+          "description": "Opaque local reference identifier; syntax validity is not authenticity.",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+          "type": "string"
+        },
+        "Initiator": {
+          "description": "Request origin and account provenance; never grants the product actor additional authority.",
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "Backend-authorized task. A local trigger records provenance and supplies no new authority.",
+              "properties": {
+                "attempt": {
+                  "$ref": "#/$defs/Id",
+                  "description": "Exact server execution attempt."
+                },
+                "kind": { "const": "backend", "type": "string" },
+                "task": {
+                  "$ref": "#/$defs/Id",
+                  "description": "Exact server task, independently verified by the host."
+                },
+                "trigger": {
+                  "$ref": "#/$defs/BackendTrigger",
+                  "description": "Authenticated local trigger or automatic backend dispatch."
+                }
+              },
+              "required": ["kind", "task", "attempt", "trigger"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Human origin with explicit OS login provenance.",
+              "properties": {
+                "kind": { "const": "human", "type": "string" },
+                "osSession": {
+                  "$ref": "#/$defs/OsSessionRef",
+                  "description": "Originating OS account/session reference, separate from requested run-as identity."
+                }
+              },
+              "required": ["kind", "osSession"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "AI origin with OS provenance and the exact product connection configuration.",
+              "properties": {
+                "config": {
+                  "$ref": "#/$defs/VersionedRef",
+                  "description": "Exact connection configuration used at initiation; no external account identity."
+                },
+                "conversation": {
+                  "$ref": "#/$defs/Id",
+                  "description": "Originating AI conversation reference in the provider namespace."
+                },
+                "kind": { "const": "ai", "type": "string" },
+                "osSession": {
+                  "$ref": "#/$defs/OsSessionRef",
+                  "description": "Originating OS account/session reference, separate from requested run-as identity."
+                },
+                "provider": {
+                  "$ref": "#/$defs/Id",
+                  "description": "Provider namespace, independent of product authentication."
+                },
+                "toolCall": {
+                  "$ref": "#/$defs/Id",
+                  "description": "Originating tool-call reference; cannot act as a product approval."
+                }
+              },
+              "required": [
+                "kind",
+                "provider",
+                "osSession",
+                "config",
+                "conversation",
+                "toolCall"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Policy origin without an interactive OS/provider login; authority still comes from the actor context.",
+              "properties": {
+                "kind": { "const": "policy", "type": "string" },
+                "policy": {
+                  "$ref": "#/$defs/VersionedRef",
+                  "description": "Exact policy revision associated with this request or audit decision."
+                }
+              },
+              "required": ["kind", "policy"],
+              "type": "object"
+            }
+          ]
+        },
+        "LocalSoftwareAction": {
+          "description": "Product-owned local actions; arbitrary commands are never accepted.",
+          "oneOf": [
+            {
+              "const": "launch",
+              "description": "Open the exact GUI application in the authenticated user's session.",
+              "type": "string"
+            },
+            {
+              "const": "update",
+              "description": "Install one exact permitted newer candidate.",
+              "type": "string"
+            },
+            {
+              "const": "uninstall",
+              "description": "Remove the exact selected installation.",
+              "type": "string"
+            },
+            {
+              "const": "detect",
+              "description": "Recheck the exact installation without mutation.",
+              "type": "string"
+            }
+          ]
+        },
+        "LocalSoftwareChoice": {
+          "additionalProperties": false,
+          "description": "Original local software intent. The service derives all executable inputs.",
+          "properties": {
+            "action": {
+              "$ref": "#/$defs/LocalSoftwareAction",
+              "description": "Closed operation."
+            },
+            "request": {
+              "$ref": "#/$defs/RequestId",
+              "description": "Stable UUID allocated before submission and reused after response loss."
+            },
+            "software": {
+              "$ref": "#/$defs/SoftwareRef",
+              "description": "Exact observed installation."
+            }
+          },
+          "required": ["request", "software", "action"],
+          "type": "object"
+        },
+        "LocalSoftwarePrepared": {
+          "additionalProperties": false,
+          "description": "Safe immutable preview of a locally prepared operation; executable input stays in the journal.",
+          "properties": {
+            "choice": {
+              "$ref": "#/$defs/LocalSoftwareChoice",
+              "description": "Observed installation and requested action."
+            },
+            "digest": {
+              "$ref": "#/$defs/Digest",
+              "description": "Digest of the complete service-frozen execution."
+            },
+            "identity": {
+              "$ref": "#/$defs/BackendIdentity",
+              "description": "Effective physical account class."
+            },
+            "initiator": {
+              "$ref": "#/$defs/Initiator",
+              "description": "Original authenticated source, preserved across human confirmation."
+            },
+            "name": { "description": "Safe software name.", "type": "string" },
+            "request": {
+              "$ref": "#/$defs/RequestId",
+              "description": "Original request UUID."
+            },
+            "startBeforeUnixMs": {
+              "description": "Latest permitted first start in UTC milliseconds.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "targetVersion": {
+              "description": "Fixed candidate version for updates; never a moving latest selector.",
+              "type": ["string", "null"]
+            }
+          },
+          "required": [
+            "request",
+            "digest",
+            "choice",
+            "name",
+            "initiator",
+            "identity",
+            "startBeforeUnixMs"
+          ],
+          "type": "object"
+        },
+        "LocalSoftwareResult": {
+          "additionalProperties": false,
+          "description": "Existing execution status with its original safe software preview.",
+          "properties": {
+            "detected": {
+              "anyOf": [
+                { "$ref": "#/$defs/SoftwareState" },
+                { "type": "null" }
+              ],
+              "description": "Independently observed native state; null means no verified observation is available."
+            },
+            "operation": {
+              "$ref": "#/$defs/OperationStatus",
+              "description": "Projection of the sole execution journal."
+            },
+            "prepared": {
+              "$ref": "#/$defs/LocalSoftwarePrepared",
+              "description": "Immutable service-owned preview."
+            }
+          },
+          "required": ["prepared", "operation"],
+          "type": "object"
+        },
+        "NativeContextRef": {
+          "additionalProperties": false,
+          "description": "Nonsecret reference returned by the native execution owner after binding a context.",
+          "properties": {
+            "generation": {
+              "$ref": "#/$defs/Id",
+              "description": "Exact caller generation; retirement rejects new ingress and User continuations."
+            },
+            "id": {
+              "$ref": "#/$defs/Id",
+              "description": "Owner-assigned binding identity, scoped to the authenticated native peer."
+            }
+          },
+          "required": ["id", "generation"],
+          "type": "object"
+        },
+        "OperationPhase": {
+          "description": "Read-only service projection. This crate implements no execution state machine.",
+          "oneOf": [
+            {
+              "const": "accepted",
+              "description": "Durable acceptance only.",
+              "type": "string"
+            },
+            {
+              "const": "waiting",
+              "description": "Waiting for policy/approval/user conditions.",
+              "type": "string"
+            },
+            {
+              "const": "running",
+              "description": "Service reports execution underway.",
+              "type": "string"
+            },
+            {
+              "const": "executionEnded",
+              "description": "Execution ended; effects have not necessarily been verified.",
+              "type": "string"
+            },
+            {
+              "const": "outcomeUnknown",
+              "description": "Outcome needs authoritative reconciliation.",
+              "type": "string"
+            },
+            {
+              "const": "verified",
+              "description": "An independent assessment was recorded; inspect mode and assessment.",
+              "type": "string"
+            },
+            {
+              "const": "failed",
+              "description": "Failure known to the execution authority.",
+              "type": "string"
+            },
+            {
+              "const": "cancelled",
+              "description": "Service confirms its business cancellation condition, not rollback.",
+              "type": "string"
+            }
+          ]
+        },
+        "OperationStatus": {
+          "description": "Authorized execution fact projection; accepted is never rewritten to success.",
+          "properties": {
+            "assessment": {
+              "anyOf": [
+                { "$ref": "#/$defs/EffectAssessment" },
+                { "type": "null" }
+              ],
+              "description": "Independent effect assessment, never inferred from process exit."
+            },
+            "attemptId": {
+              "anyOf": [{ "$ref": "#/$defs/AttemptId" }, { "type": "null" }],
+              "description": "Service-owned attempt identity, if an attempt exists."
+            },
+            "cancelRequested": {
+              "description": "Durable cancellation request, independent of termination/effect status.",
+              "type": "boolean"
+            },
+            "contentDigest": {
+              "$ref": "#/$defs/Digest",
+              "description": "Exact content identity: signed offer revision during preparation, frozen input thereafter."
+            },
+            "evidence": {
+              "description": "Authorized evidence references only.",
+              "items": { "$ref": "#/$defs/Id" },
+              "type": "array"
+            },
+            "mode": {
+              "$ref": "#/$defs/ExecutionMode",
+              "description": "Execution provenance; a verified test result is not a real platform effect."
+            },
+            "operationRequestId": {
+              "$ref": "#/$defs/RequestId",
+              "description": "Original business identity."
+            },
+            "phase": {
+              "$ref": "#/$defs/OperationPhase",
+              "description": "Service-owned current phase."
+            },
+            "process": {
+              "anyOf": [
+                { "$ref": "#/$defs/ProcessSummary" },
+                { "type": "null" }
+              ],
+              "description": "Redacted root process progress; not full-scope termination or effect proof."
+            }
+          },
+          "required": [
+            "mode",
+            "cancelRequested",
+            "operationRequestId",
+            "contentDigest",
+            "phase",
+            "evidence"
+          ],
+          "type": "object"
+        },
+        "OsAccountRef": {
+          "additionalProperties": false,
+          "description": "Opaque account reference in an OS namespace, independent of product or provider identity.",
+          "properties": {
+            "platform": {
+              "$ref": "#/$defs/Platform",
+              "description": "OS namespace of this reference or target; does not assert platform support."
+            },
+            "subject": {
+              "$ref": "#/$defs/Id",
+              "description": "Opaque stable OS account reference, such as a SID/UID reference, not an authentication credential."
+            }
+          },
+          "required": ["platform", "subject"],
+          "type": "object"
+        },
+        "OsSessionRef": {
+          "additionalProperties": false,
+          "description": "Claimed OS login provenance at the request origin, separate from target and run-as identity.",
+          "properties": {
+            "account": {
+              "$ref": "#/$defs/OsAccountRef",
+              "description": "Login account at the origin; never implicitly equated to the product actor."
+            },
+            "device": {
+              "$ref": "#/$defs/DeviceId",
+              "description": "Origin device reference; it does not establish registration or target authority."
+            },
+            "session": {
+              "$ref": "#/$defs/Id",
+              "description": "Origin OS login/session reference, including an explicit test reference in fixtures."
+            }
+          },
+          "required": ["device", "account", "session"],
+          "type": "object"
+        },
+        "OutputQuality": {
+          "description": "Quality of the captured result, independent from the exit code.",
+          "oneOf": [
+            {
+              "const": "complete",
+              "description": "All required output was decoded and structurally valid.",
+              "type": "string"
+            },
+            {
+              "const": "truncated",
+              "description": "Capture was truncated by the output budget.",
+              "type": "string"
+            },
+            {
+              "const": "failed",
+              "description": "Encoding, JSON shape, row bound or process outcome failed.",
+              "type": "string"
+            },
+            {
+              "const": "partial",
+              "description": "A process or pipe is still unaccounted for.",
+              "type": "string"
+            }
+          ]
+        },
+        "PackageValue": {
+          "description": "Exact ecosystem text: no SemVer, case folding, alias lookup or normalization.\nAccepts 1..=1024 UTF-8 bytes without control characters, including '+' and '~'.",
+          "type": "string"
+        },
+        "Platform": {
+          "description": "Target OS semantics for validation; an enum value is not a platform support claim.",
+          "oneOf": [
+            {
+              "const": "windows",
+              "description": "Windows target/account namespace.",
+              "type": "string"
+            },
+            {
+              "const": "macos",
+              "description": "macOS target/account namespace.",
+              "type": "string"
+            },
+            {
+              "const": "linux",
+              "description": "Linux host/account design namespace; does not assert rss-mdm product support for managed Linux devices.",
+              "type": "string"
+            }
+          ]
+        },
+        "ProcessEnd": {
+          "description": "Why a bounded process owner stopped collecting output.",
+          "oneOf": [
+            {
+              "const": "rejected",
+              "description": "Preparation was rejected before any target process started.",
+              "type": "string"
+            },
+            {
+              "const": "exited",
+              "description": "Root process exited; this is not an effect observation.",
+              "type": "string"
+            },
+            {
+              "const": "cancelled",
+              "description": "Explicit cancellation requested.",
+              "type": "string"
+            },
+            {
+              "const": "timedOut",
+              "description": "Remaining wall time exhausted.",
+              "type": "string"
+            },
+            {
+              "const": "outputLimit",
+              "description": "Combined output allowance exhausted.",
+              "type": "string"
+            },
+            {
+              "const": "unknown",
+              "description": "Read, supervision or termination failure.",
+              "type": "string"
+            }
+          ]
+        },
+        "ProcessFailureKind": {
+          "description": "Closed, value-free mechanism diagnosis, independent of cancellation, exit and effect.",
+          "oneOf": [
+            {
+              "const": "none",
+              "description": "No mechanism failure was observed; not a statement of business success.",
+              "type": "string"
+            },
+            {
+              "const": "denied",
+              "description": "An immutable input or artifact did not satisfy access/integrity requirements.",
+              "type": "string"
+            },
+            {
+              "const": "unbound",
+              "description": "The requested OS identity or controlled input binding is absent.",
+              "type": "string"
+            },
+            {
+              "const": "capability",
+              "description": "The declared restriction cannot be enforced.",
+              "type": "string"
+            },
+            {
+              "const": "unsupported",
+              "description": "A profile or encoding is not supported on this platform.",
+              "type": "string"
+            },
+            {
+              "const": "invalidInput",
+              "description": "Supplied input, encoding or configuration is malformed.",
+              "type": "string"
+            },
+            {
+              "const": "capacity",
+              "description": "A materialization, input or owner capacity limit was exceeded.",
+              "type": "string"
+            },
+            {
+              "const": "conflict",
+              "description": "An attempt or immutable resource already has a conflicting owner.",
+              "type": "string"
+            },
+            {
+              "const": "unavailable",
+              "description": "A required platform resource could not be acquired.",
+              "type": "string"
+            },
+            {
+              "const": "runtime",
+              "description": "The owner thread/runtime could not be initialized.",
+              "type": "string"
+            },
+            {
+              "const": "spawn",
+              "description": "The target could not be created or its initial thread resumed.",
+              "type": "string"
+            },
+            {
+              "const": "inputDelivery",
+              "description": "Controlled stdin could not be delivered completely.",
+              "type": "string"
+            },
+            {
+              "const": "capture",
+              "description": "A standard output/error stream could not be read completely.",
+              "type": "string"
+            },
+            {
+              "const": "supervision",
+              "description": "Root process status could not be observed reliably.",
+              "type": "string"
+            },
+            {
+              "const": "outputValidation",
+              "description": "Captured output did not meet its declared encoding or structure.",
+              "type": "string"
+            }
+          ]
+        },
+        "ProcessSummary": {
+          "additionalProperties": false,
+          "description": "Ordinary result projection. No raw output, paths, process identifiers or secrets.",
+          "properties": {
+            "end": {
+              "$ref": "#/$defs/ProcessEnd",
+              "description": "Stop/failure classification."
+            },
+            "exitCode": {
+              "description": "Root exit code, independently from effect or scope quiescence.",
+              "format": "int32",
+              "type": ["integer", "null"]
+            },
+            "failureKind": {
+              "$ref": "#/$defs/ProcessFailureKind",
+              "description": "First mechanism failure. Required even when no failure has occurred."
+            },
+            "finished": {
+              "description": "Root capture completed; not proof of all descendants terminating.",
+              "type": "boolean"
+            },
+            "quality": {
+              "$ref": "#/$defs/OutputQuality",
+              "description": "Capture/decoding quality, not a business success bit."
+            },
+            "quiescent": {
+              "description": "Explicit full-scope proof; false means unproven.",
+              "type": "boolean"
+            },
+            "totalOutputBytes": {
+              "description": "Bytes observed including discarded bytes.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "finished",
+            "end",
+            "failureKind",
+            "quiescent",
+            "totalOutputBytes",
+            "quality"
+          ],
+          "type": "object"
+        },
+        "QueryRef": {
+          "additionalProperties": false,
+          "description": "Exact service-owned query definition.",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/Id",
+              "description": "Stable resource identity."
+            },
+            "revision": {
+              "$ref": "#/$defs/Digest",
+              "description": "Digest of the complete current definition."
+            }
+          },
+          "required": ["id", "revision"],
+          "type": "object"
+        },
+        "RequestId": {
+          "description": "Local execution request identity.",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+          "type": "string"
+        },
+        "ServiceError": {
+          "description": "Static safe errors. An implementation must never attach raw backend diagnostics.",
+          "oneOf": [
+            {
+              "const": "invalidLimits",
+              "description": "Invalid host configuration.",
+              "type": "string"
+            },
+            {
+              "const": "unbound",
+              "description": "No authenticated host/service binding; startup must fail.",
+              "type": "string"
+            },
+            {
+              "const": "denied",
+              "description": "Subject/delegation/target is not authorized.",
+              "type": "string"
+            },
+            {
+              "const": "notFound",
+              "description": "Object absent within the authorized namespace; do not reveal another namespace.",
+              "type": "string"
+            },
+            {
+              "const": "inProgress",
+              "description": "The same query has an unsettled original request.",
+              "type": "string"
+            },
+            {
+              "const": "conflict",
+              "description": "Stable operation ID already names different content.",
+              "type": "string"
+            },
+            {
+              "const": "expired",
+              "description": "Exact reference or trusted authorization is no longer current.",
+              "type": "string"
+            },
+            {
+              "const": "unsupported",
+              "description": "Capability not implemented; never weaken required protection.",
+              "type": "string"
+            },
+            {
+              "const": "unavailable",
+              "description": "Service unavailable; submission may require querying the original ID.",
+              "type": "string"
+            },
+            {
+              "const": "outcomeUnknown",
+              "description": "Acceptance cannot be determined; query/retry the original operationRequestId.",
+              "type": "string"
+            },
+            {
+              "const": "invalidInput",
+              "description": "Invalid request data.",
+              "type": "string"
+            },
+            {
+              "const": "limit",
+              "description": "A configured byte, collection or concurrency budget was exceeded.",
+              "type": "string"
+            },
+            {
+              "const": "cancelled",
+              "description": "Current RPC wait ended. This is not business cancellation.",
+              "type": "string"
+            }
+          ]
+        },
+        "SoftwareDetectionFailure": {
+          "description": "Closed independent detection failures.",
+          "oneOf": [
+            {
+              "const": "unavailable",
+              "description": "Target or protected ancestor cannot be inspected.",
+              "type": "string"
+            },
+            {
+              "const": "unrecognizedVersion",
+              "description": "Installed bytes do not match a declared version.",
+              "type": "string"
+            },
+            {
+              "const": "budgetExceeded",
+              "description": "The independent observation exhausted its time, cancellation or byte bound.",
+              "type": "string"
+            }
+          ]
+        },
+        "SoftwareRef": {
+          "additionalProperties": false,
+          "description": "Exact observed installation in an authorized immutable data snapshot.",
+          "properties": {
+            "cursor": {
+              "$ref": "#/$defs/DataCursor",
+              "description": "Snapshot digest and row position, independently revalidated by the service."
+            },
+            "installation": {
+              "$ref": "#/$defs/Id",
+              "description": "Native collector's stable installation identity."
+            },
+            "query": {
+              "$ref": "#/$defs/QueryRef",
+              "description": "Service-owned collection definition."
+            }
+          },
+          "required": ["query", "cursor", "installation"],
+          "type": "object"
+        },
+        "SoftwareState": {
+          "description": "Independently observed software state; installer exit is never a value of this type.",
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "Declared installed target is authoritatively absent.",
+              "properties": { "kind": { "const": "absent", "type": "string" } },
+              "required": ["kind"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Installed bytes match one exact declared version proof.",
+              "properties": {
+                "kind": { "const": "present", "type": "string" },
+                "version": {
+                  "$ref": "#/$defs/PackageValue",
+                  "description": "Ecosystem version, preserved exactly."
+                }
+              },
+              "required": ["kind", "version"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Target is unreadable, changed concurrently, or contains unknown bytes.",
+              "properties": {
+                "kind": { "const": "unknown", "type": "string" },
+                "reason": {
+                  "$ref": "#/$defs/SoftwareDetectionFailure",
+                  "description": "Closed detection failure, without paths or backend text."
+                }
+              },
+              "required": ["kind", "reason"],
+              "type": "object"
+            }
+          ]
+        },
+        "VersionedRef": {
+          "additionalProperties": false,
+          "description": "Exact resource/configuration reference. Resolution and authenticity belong to the owner.",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/Id",
+              "description": "Opaque reference identity; the revision must be supplied separately."
+            },
+            "revision": {
+              "$ref": "#/$defs/Id",
+              "description": "Exact immutable revision reference; does not resolve or follow a moving alias."
+            }
+          },
+          "required": ["id", "revision"],
+          "type": "object"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "One output schema for both success and tool-level failure.",
+      "oneOf": [
+        {
+          "properties": {
+            "result": { "$ref": "#/$defs/LocalSoftwareResult" },
+            "status": { "const": "ok", "type": "string" }
+          },
+          "required": ["status", "result"],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "error": { "$ref": "#/$defs/ErrorView" },
+            "status": { "const": "error", "type": "string" }
+          },
+          "required": ["status", "error"],
+          "type": "object"
+        }
+      ],
+      "title": "ToolOutput",
+      "type": "object"
+    }
+  },
+  {
+    "annotations": { "openWorldHint": false, "readOnlyHint": false },
+    "description": "Request cancellation of the original local software action. Does not prove termination or rollback.",
+    "inputSchema": {
+      "$defs": {
+        "RequestId": {
+          "description": "Local execution request identity.",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+          "type": "string"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "description": "Original query lookup or cancellation.",
+      "properties": {
+        "request": {
+          "$ref": "#/$defs/RequestId",
+          "description": "Original request UUID."
+        }
+      },
+      "required": ["request"],
+      "title": "QueryRequest",
+      "type": "object"
+    },
+    "name": "execution_software_cancel",
+    "outputSchema": {
+      "$defs": {
+        "ErrorView": {
+          "description": "Protocol error payload; optional catalog diagnostic is produced only from static C03 errors.",
+          "properties": { "code": { "$ref": "#/$defs/ServiceError" } },
+          "required": ["code"],
+          "type": "object"
+        },
+        "OperationRequest": {
+          "additionalProperties": false,
+          "description": "Authorized lookup/cancellation within the host-bound namespace.",
+          "properties": {
+            "operationRequestId": {
+              "$ref": "#/$defs/RequestId",
+              "description": "Business identity, never inferred from a JSON-RPC ID."
+            }
+          },
+          "required": ["operationRequestId"],
+          "type": "object"
+        },
+        "RequestId": {
+          "description": "Local execution request identity.",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+          "type": "string"
+        },
+        "ServiceError": {
+          "description": "Static safe errors. An implementation must never attach raw backend diagnostics.",
+          "oneOf": [
+            {
+              "const": "invalidLimits",
+              "description": "Invalid host configuration.",
+              "type": "string"
+            },
+            {
+              "const": "unbound",
+              "description": "No authenticated host/service binding; startup must fail.",
+              "type": "string"
+            },
+            {
+              "const": "denied",
+              "description": "Subject/delegation/target is not authorized.",
+              "type": "string"
+            },
+            {
+              "const": "notFound",
+              "description": "Object absent within the authorized namespace; do not reveal another namespace.",
+              "type": "string"
+            },
+            {
+              "const": "inProgress",
+              "description": "The same query has an unsettled original request.",
+              "type": "string"
+            },
+            {
+              "const": "conflict",
+              "description": "Stable operation ID already names different content.",
+              "type": "string"
+            },
+            {
+              "const": "expired",
+              "description": "Exact reference or trusted authorization is no longer current.",
+              "type": "string"
+            },
+            {
+              "const": "unsupported",
+              "description": "Capability not implemented; never weaken required protection.",
+              "type": "string"
+            },
+            {
+              "const": "unavailable",
+              "description": "Service unavailable; submission may require querying the original ID.",
+              "type": "string"
+            },
+            {
+              "const": "outcomeUnknown",
+              "description": "Acceptance cannot be determined; query/retry the original operationRequestId.",
+              "type": "string"
+            },
+            {
+              "const": "invalidInput",
+              "description": "Invalid request data.",
+              "type": "string"
+            },
+            {
+              "const": "limit",
+              "description": "A configured byte, collection or concurrency budget was exceeded.",
+              "type": "string"
+            },
+            {
+              "const": "cancelled",
+              "description": "Current RPC wait ended. This is not business cancellation.",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "One output schema for both success and tool-level failure.",
+      "oneOf": [
+        {
+          "properties": {
+            "result": { "$ref": "#/$defs/OperationRequest" },
+            "status": { "const": "ok", "type": "string" }
+          },
+          "required": ["status", "result"],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "error": { "$ref": "#/$defs/ErrorView" },
+            "status": { "const": "error", "type": "string" }
+          },
+          "required": ["status", "error"],
+          "type": "object"
+        }
+      ],
+      "title": "ToolOutput",
+      "type": "object"
+    }
+  },
+  {
+    "annotations": { "openWorldHint": false, "readOnlyHint": true },
     "description": "Discover exact local query definitions. Descriptors are not execution grants.",
     "inputSchema": {
       "$defs": {
@@ -10,6 +2401,17 @@
           "minLength": 1,
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
           "type": "string"
+        },
+        "PolicyLocator": {
+          "additionalProperties": false,
+          "description": "The actual page on which a Policy was discovered. This is a position, never permission.",
+          "properties": {
+            "after": {
+              "anyOf": [{ "$ref": "#/$defs/Id" }, { "type": "null" }],
+              "description": "Cursor sent when discovering the selected page; null identifies the first page."
+            }
+          },
+          "type": "object"
         }
       },
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -27,12 +2429,12 @@
           "minimum": 0,
           "type": "integer"
         },
-        "refreshPolicies": {
-          "description": "Explicitly refresh authorized published Policies over the existing backend channel.",
-          "type": "boolean"
+        "policyPage": {
+          "anyOf": [{ "$ref": "#/$defs/PolicyLocator" }, { "type": "null" }],
+          "description": "Explicitly refresh one authorized Policy page; null reads only local definitions."
         }
       },
-      "required": ["refreshPolicies", "limit"],
+      "required": ["limit"],
       "title": "QueryDirectory",
       "type": "object"
     },
@@ -263,6 +2665,17 @@
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
           "type": "string"
         },
+        "PolicyLocator": {
+          "additionalProperties": false,
+          "description": "The actual page on which a Policy was discovered. This is a position, never permission.",
+          "properties": {
+            "after": {
+              "anyOf": [{ "$ref": "#/$defs/Id" }, { "type": "null" }],
+              "description": "Cursor sent when discovering the selected page; null identifies the first page."
+            }
+          },
+          "type": "object"
+        },
         "PublishedQuery": {
           "additionalProperties": false,
           "description": "Original Policy coordinates for presentation and existing confirmation integration.",
@@ -381,6 +2794,13 @@
             "next": {
               "anyOf": [{ "$ref": "#/$defs/Id" }, { "type": "null" }],
               "description": "Exclusive continuation."
+            },
+            "policyNext": {
+              "anyOf": [
+                { "$ref": "#/$defs/PolicyLocator" },
+                { "type": "null" }
+              ],
+              "description": "Next Policy discovery page; separate from local definition pagination."
             }
           },
           "required": ["items"],
@@ -942,6 +3362,17 @@
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
           "type": "string"
         },
+        "PolicyLocator": {
+          "additionalProperties": false,
+          "description": "The actual page on which a Policy was discovered. This is a position, never permission.",
+          "properties": {
+            "after": {
+              "anyOf": [{ "$ref": "#/$defs/Id" }, { "type": "null" }],
+              "description": "Cursor sent when discovering the selected page; null identifies the first page."
+            }
+          },
+          "type": "object"
+        },
         "PublishedQuery": {
           "additionalProperties": false,
           "description": "Original Policy coordinates for presentation and existing confirmation integration.",
@@ -1060,6 +3491,13 @@
             "next": {
               "anyOf": [{ "$ref": "#/$defs/Id" }, { "type": "null" }],
               "description": "Exclusive continuation."
+            },
+            "policyNext": {
+              "anyOf": [
+                { "$ref": "#/$defs/PolicyLocator" },
+                { "type": "null" }
+              ],
+              "description": "Next Policy discovery page; separate from local definition pagination."
             }
           },
           "required": ["items"],
@@ -1564,6 +4002,17 @@
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
           "type": "string"
         },
+        "PolicyLocator": {
+          "additionalProperties": false,
+          "description": "The actual page on which a Policy was discovered. This is a position, never permission.",
+          "properties": {
+            "after": {
+              "anyOf": [{ "$ref": "#/$defs/Id" }, { "type": "null" }],
+              "description": "Cursor sent when discovering the selected page; null identifies the first page."
+            }
+          },
+          "type": "object"
+        },
         "PublishedQuery": {
           "additionalProperties": false,
           "description": "Original Policy coordinates for presentation and existing confirmation integration.",
@@ -1682,6 +4131,13 @@
             "next": {
               "anyOf": [{ "$ref": "#/$defs/Id" }, { "type": "null" }],
               "description": "Exclusive continuation."
+            },
+            "policyNext": {
+              "anyOf": [
+                { "$ref": "#/$defs/PolicyLocator" },
+                { "type": "null" }
+              ],
+              "description": "Next Policy discovery page; separate from local definition pagination."
             }
           },
           "required": ["items"],
@@ -2147,6 +4603,17 @@
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
           "type": "string"
         },
+        "PolicyLocator": {
+          "additionalProperties": false,
+          "description": "The actual page on which a Policy was discovered. This is a position, never permission.",
+          "properties": {
+            "after": {
+              "anyOf": [{ "$ref": "#/$defs/Id" }, { "type": "null" }],
+              "description": "Cursor sent when discovering the selected page; null identifies the first page."
+            }
+          },
+          "type": "object"
+        },
         "PublishedQuery": {
           "additionalProperties": false,
           "description": "Original Policy coordinates for presentation and existing confirmation integration.",
@@ -2265,6 +4732,13 @@
             "next": {
               "anyOf": [{ "$ref": "#/$defs/Id" }, { "type": "null" }],
               "description": "Exclusive continuation."
+            },
+            "policyNext": {
+              "anyOf": [
+                { "$ref": "#/$defs/PolicyLocator" },
+                { "type": "null" }
+              ],
+              "description": "Next Policy discovery page; separate from local definition pagination."
             }
           },
           "required": ["items"],
@@ -2730,6 +5204,17 @@
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
           "type": "string"
         },
+        "PolicyLocator": {
+          "additionalProperties": false,
+          "description": "The actual page on which a Policy was discovered. This is a position, never permission.",
+          "properties": {
+            "after": {
+              "anyOf": [{ "$ref": "#/$defs/Id" }, { "type": "null" }],
+              "description": "Cursor sent when discovering the selected page; null identifies the first page."
+            }
+          },
+          "type": "object"
+        },
         "PublishedQuery": {
           "additionalProperties": false,
           "description": "Original Policy coordinates for presentation and existing confirmation integration.",
@@ -2848,6 +5333,13 @@
             "next": {
               "anyOf": [{ "$ref": "#/$defs/Id" }, { "type": "null" }],
               "description": "Exclusive continuation."
+            },
+            "policyNext": {
+              "anyOf": [
+                { "$ref": "#/$defs/PolicyLocator" },
+                { "type": "null" }
+              ],
+              "description": "Next Policy discovery page; separate from local definition pagination."
             }
           },
           "required": ["items"],
@@ -3387,10 +5879,25 @@
     "annotations": { "openWorldHint": false, "readOnlyHint": true },
     "description": "Current employee-authorized script tools. Policy publication, allowAi and risk are verified for this AI origin.",
     "inputSchema": {
+      "$defs": {
+        "Id": {
+          "description": "Opaque local reference identifier; syntax validity is not authenticity.",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+          "type": "string"
+        }
+      },
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "additionalProperties": false,
-      "description": "Empty arguments for current directory and capability queries.",
-      "title": "Empty",
+      "description": "Explicit pagination of authorized Policy tools.",
+      "properties": {
+        "after": {
+          "anyOf": [{ "$ref": "#/$defs/Id" }, { "type": "null" }],
+          "description": "Previous page's exclusive cursor; null starts discovery."
+        }
+      },
+      "title": "PolicyToolsQuery",
       "type": "object"
     },
     "name": "execution_policy_tools",
@@ -3400,6 +5907,29 @@
           "description": "Protocol error payload; optional catalog diagnostic is produced only from static C03 errors.",
           "properties": { "code": { "$ref": "#/$defs/ServiceError" } },
           "required": ["code"],
+          "type": "object"
+        },
+        "Id": {
+          "description": "Opaque local reference identifier; syntax validity is not authenticity.",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+          "type": "string"
+        },
+        "PolicyToolPage": {
+          "description": "A bounded tool page. An empty page can still have a continuation.",
+          "properties": {
+            "next": {
+              "anyOf": [{ "$ref": "#/$defs/Id" }, { "type": "null" }],
+              "description": "Next page, absent only after complete discovery."
+            },
+            "tools": {
+              "description": "Authorized tools, each carrying its actual discovery locator in the input schema.",
+              "items": true,
+              "type": "array"
+            }
+          },
+          "required": ["tools"],
           "type": "object"
         },
         "ServiceError": {
@@ -3478,7 +6008,176 @@
       "oneOf": [
         {
           "properties": {
-            "result": { "items": true, "type": "array" },
+            "result": { "$ref": "#/$defs/PolicyToolPage" },
+            "status": { "const": "ok", "type": "string" }
+          },
+          "required": ["status", "result"],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "error": { "$ref": "#/$defs/ErrorView" },
+            "status": { "const": "error", "type": "string" }
+          },
+          "required": ["status", "error"],
+          "type": "object"
+        }
+      ],
+      "title": "ToolOutput",
+      "type": "object"
+    }
+  },
+  {
+    "annotations": { "openWorldHint": false, "readOnlyHint": false },
+    "description": "Invoke one exact tool discovered through execution_policy_tools, including later pages. Supply the original locator and Resource inputs. Current publication and permissions are revalidated.",
+    "inputSchema": {
+      "$defs": {
+        "Id": {
+          "description": "Opaque local reference identifier; syntax validity is not authenticity.",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+          "type": "string"
+        },
+        "PolicyLocator": {
+          "additionalProperties": false,
+          "description": "The actual page on which a Policy was discovered. This is a position, never permission.",
+          "properties": {
+            "after": {
+              "anyOf": [{ "$ref": "#/$defs/Id" }, { "type": "null" }],
+              "description": "Cursor sent when discovering the selected page; null identifies the first page."
+            }
+          },
+          "type": "object"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "description": "Invoke an exact tool discovered on a later Policy page without hiding pages in an automatic scan.",
+      "properties": {
+        "locator": {
+          "$ref": "#/$defs/PolicyLocator",
+          "description": "Actual discovery page, independently revalidated."
+        },
+        "parameters": {
+          "additionalProperties": true,
+          "description": "Only the original Resource-owned input fields.",
+          "type": "object"
+        },
+        "tool": {
+          "description": "Exact discovered tool name.",
+          "type": "string"
+        }
+      },
+      "required": ["tool", "locator", "parameters"],
+      "title": "PolicyToolCall",
+      "type": "object"
+    },
+    "name": "execution_policy_invoke",
+    "outputSchema": {
+      "$defs": {
+        "ErrorView": {
+          "description": "Protocol error payload; optional catalog diagnostic is produced only from static C03 errors.",
+          "properties": { "code": { "$ref": "#/$defs/ServiceError" } },
+          "required": ["code"],
+          "type": "object"
+        },
+        "OperationRequest": {
+          "additionalProperties": false,
+          "description": "Authorized lookup/cancellation within the host-bound namespace.",
+          "properties": {
+            "operationRequestId": {
+              "$ref": "#/$defs/RequestId",
+              "description": "Business identity, never inferred from a JSON-RPC ID."
+            }
+          },
+          "required": ["operationRequestId"],
+          "type": "object"
+        },
+        "RequestId": {
+          "description": "Local execution request identity.",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+          "type": "string"
+        },
+        "ServiceError": {
+          "description": "Static safe errors. An implementation must never attach raw backend diagnostics.",
+          "oneOf": [
+            {
+              "const": "invalidLimits",
+              "description": "Invalid host configuration.",
+              "type": "string"
+            },
+            {
+              "const": "unbound",
+              "description": "No authenticated host/service binding; startup must fail.",
+              "type": "string"
+            },
+            {
+              "const": "denied",
+              "description": "Subject/delegation/target is not authorized.",
+              "type": "string"
+            },
+            {
+              "const": "notFound",
+              "description": "Object absent within the authorized namespace; do not reveal another namespace.",
+              "type": "string"
+            },
+            {
+              "const": "inProgress",
+              "description": "The same query has an unsettled original request.",
+              "type": "string"
+            },
+            {
+              "const": "conflict",
+              "description": "Stable operation ID already names different content.",
+              "type": "string"
+            },
+            {
+              "const": "expired",
+              "description": "Exact reference or trusted authorization is no longer current.",
+              "type": "string"
+            },
+            {
+              "const": "unsupported",
+              "description": "Capability not implemented; never weaken required protection.",
+              "type": "string"
+            },
+            {
+              "const": "unavailable",
+              "description": "Service unavailable; submission may require querying the original ID.",
+              "type": "string"
+            },
+            {
+              "const": "outcomeUnknown",
+              "description": "Acceptance cannot be determined; query/retry the original operationRequestId.",
+              "type": "string"
+            },
+            {
+              "const": "invalidInput",
+              "description": "Invalid request data.",
+              "type": "string"
+            },
+            {
+              "const": "limit",
+              "description": "A configured byte, collection or concurrency budget was exceeded.",
+              "type": "string"
+            },
+            {
+              "const": "cancelled",
+              "description": "Current RPC wait ended. This is not business cancellation.",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "description": "One output schema for both success and tool-level failure.",
+      "oneOf": [
+        {
+          "properties": {
+            "result": { "$ref": "#/$defs/OperationRequest" },
             "status": { "const": "ok", "type": "string" }
           },
           "required": ["status", "result"],
@@ -3502,6 +6201,13 @@
     "description": "Show an editable operation card for a current policy tool. Use for requests to display or edit settings. Suggestions do not execute: the user saves the final parameters in the desktop. Only registered scenes are accepted.",
     "inputSchema": {
       "$defs": {
+        "Id": {
+          "description": "Opaque local reference identifier; syntax validity is not authenticity.",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
+          "type": "string"
+        },
         "OperationScene": {
           "description": "Product scenes supported by this preparation boundary.",
           "oneOf": [
@@ -3511,12 +6217,27 @@
               "type": "string"
             }
           ]
+        },
+        "PolicyLocator": {
+          "additionalProperties": false,
+          "description": "The actual page on which a Policy was discovered. This is a position, never permission.",
+          "properties": {
+            "after": {
+              "anyOf": [{ "$ref": "#/$defs/Id" }, { "type": "null" }],
+              "description": "Cursor sent when discovering the selected page; null identifies the first page."
+            }
+          },
+          "type": "object"
         }
       },
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "additionalProperties": false,
       "description": "Registered form suggestion. This prepares a card and never executes a tool.",
       "properties": {
+        "locator": {
+          "$ref": "#/$defs/PolicyLocator",
+          "description": "Actual discovery page; the service re-fetches it and checks the exact tool identity."
+        },
         "parameters": {
           "additionalProperties": true,
           "description": "Suggested input fields. The user may change them before submission.",
@@ -3531,7 +6252,7 @@
           "type": "string"
         }
       },
-      "required": ["scene", "tool", "parameters"],
+      "required": ["scene", "tool", "locator", "parameters"],
       "title": "OperationProposal",
       "type": "object"
     },
@@ -4198,6 +6919,17 @@
           ],
           "type": "object"
         },
+        "PolicyLocator": {
+          "additionalProperties": false,
+          "description": "The actual page on which a Policy was discovered. This is a position, never permission.",
+          "properties": {
+            "after": {
+              "anyOf": [{ "$ref": "#/$defs/Id" }, { "type": "null" }],
+              "description": "Cursor sent when discovering the selected page; null identifies the first page."
+            }
+          },
+          "type": "object"
+        },
         "PreparedAction": {
           "description": "One preparation reference, before or after a signed Offer has arrived.",
           "oneOf": [
@@ -4267,6 +6999,10 @@
                   "type": "integer"
                 },
                 "kind": { "const": "policy", "type": "string" },
+                "locator": {
+                  "$ref": "#/$defs/PolicyLocator",
+                  "description": "Frozen discovery position, used only to re-fetch current authorization."
+                },
                 "offer": {
                   "anyOf": [
                     { "$ref": "#/$defs/BackendTask" },
@@ -4282,6 +7018,7 @@
               "required": [
                 "kind",
                 "choice",
+                "locator",
                 "directory",
                 "access",
                 "expiresAtUnixMs"
@@ -5757,6 +8494,17 @@
           ],
           "type": "object"
         },
+        "PolicyLocator": {
+          "additionalProperties": false,
+          "description": "The actual page on which a Policy was discovered. This is a position, never permission.",
+          "properties": {
+            "after": {
+              "anyOf": [{ "$ref": "#/$defs/Id" }, { "type": "null" }],
+              "description": "Cursor sent when discovering the selected page; null identifies the first page."
+            }
+          },
+          "type": "object"
+        },
         "PreparedAction": {
           "description": "One preparation reference, before or after a signed Offer has arrived.",
           "oneOf": [
@@ -5826,6 +8574,10 @@
                   "type": "integer"
                 },
                 "kind": { "const": "policy", "type": "string" },
+                "locator": {
+                  "$ref": "#/$defs/PolicyLocator",
+                  "description": "Frozen discovery position, used only to re-fetch current authorization."
+                },
                 "offer": {
                   "anyOf": [
                     { "$ref": "#/$defs/BackendTask" },
@@ -5841,6 +8593,7 @@
               "required": [
                 "kind",
                 "choice",
+                "locator",
                 "directory",
                 "access",
                 "expiresAtUnixMs"

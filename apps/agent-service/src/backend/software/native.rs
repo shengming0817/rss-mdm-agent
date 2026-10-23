@@ -725,6 +725,9 @@ mod gc_tests {
         )
         .unwrap();
         let config = ExecutionConfig {
+            local_software: crate::local_software::LocalSoftwareConfig {
+                policy_file: "/unavailable/software-policy.json".into(),
+            },
             work_root: db.path.parent().unwrap().into(),
             material_root: root_path,
             interpreters: vec![],
@@ -771,6 +774,9 @@ mod gc_tests {
         )
         .unwrap();
         let config = ExecutionConfig {
+            local_software: crate::local_software::LocalSoftwareConfig {
+                policy_file: "/unavailable/software-policy.json".into(),
+            },
             work_root: db.path.parent().unwrap().into(),
             material_root: root_path,
             interpreters: vec![],

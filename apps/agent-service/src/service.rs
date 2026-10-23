@@ -14,6 +14,7 @@ use execution_runner::{MaterialRegistry, NativeRunner};
 use rss_mdm_agent_wire::runtime as wire;
 mod data;
 mod policy;
+mod software;
 use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
@@ -27,6 +28,7 @@ use std::{
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExecutionConfig {
+    pub local_software: crate::local_software::LocalSoftwareConfig,
     pub work_root: PathBuf,
     pub material_root: PathBuf,
     pub interpreters: Vec<Interpreter>,
@@ -198,6 +200,8 @@ impl<S: IdentityProvider> DeviceService<S> {
             subject: execution_ipc::host::current_subject().map_err(crate::error::app_error)?,
             current: Arc::new(Mutex::new(None)),
             local_query: Arc::new(Mutex::new(None)),
+            local_software: Arc::new(Mutex::new(None)),
+            local_stopped: Arc::new(AtomicBool::new(false)),
             identity_until: client.runtime_gate(),
             revoked: Arc::new(AtomicBool::new(client.runtime_readiness().is_err())),
         };
@@ -247,6 +251,8 @@ impl<S: IdentityProvider> DeviceService<S> {
             client,
             core: Core {
                 access,
+                #[cfg(test)]
+                local_policy_fixture: None,
                 telemetry,
                 data,
                 app,
@@ -711,9 +717,22 @@ impl<S: IdentityProvider> DeviceService<S> {
                     Error::CredentialRevoked | Error::CredentialRetired | Error::CertificateExpired
                 ) {
                     self.core.host.revoked.store(true, Ordering::Release);
+                    let stop_local =
+                        matches!(e, Error::CredentialRevoked | Error::CredentialRetired);
+                    if stop_local {
+                        self.core.host.local_stopped.store(true, Ordering::Release);
+                    }
                     self.core
                         .app
-                        .stop_active(128)
+                        .stop_active_matching(128, |plan| {
+                            stop_local
+                                || !plan
+                                    .spec()
+                                    .policy
+                                    .id
+                                    .as_str()
+                                    .starts_with("local-software:")
+                        })
                         .map_err(crate::error::app_error)?;
                 }
                 return Err(e);
@@ -801,6 +820,7 @@ impl<S: IdentityProvider> DeviceService<S> {
         )
         .await?;
         self.core.host.revoked.store(true, Ordering::Release);
+        self.core.host.local_stopped.store(true, Ordering::Release);
         Ok(())
     }
     fn submission_result(
@@ -962,6 +982,7 @@ impl<S: IdentityProvider> DeviceService<S> {
                 Ok(None)
             ) {
                 self.core.host.revoked.store(true, Ordering::Release);
+                self.core.host.local_stopped.store(true, Ordering::Release);
                 return;
             }
         }
@@ -981,7 +1002,14 @@ impl<S: IdentityProvider> DeviceService<S> {
                     eprintln!("agent_revoke_preparation: {error}");
                 }
                 self.release_waiting();
-                if let Err(error) = self.core.app.stop_active(128) {
+                if let Err(error) = self.core.app.stop_active_matching(128, |plan| {
+                    !plan
+                        .spec()
+                        .policy
+                        .id
+                        .as_str()
+                        .starts_with("local-software:")
+                }) {
                     eprintln!("agent_revoke_stop: {error}");
                 }
             }
@@ -993,6 +1021,7 @@ impl<S: IdentityProvider> DeviceService<S> {
     }
     /// Stop accepted work. Stopping never claims process termination or effect rollback.
     pub fn stop(&mut self) -> Result<(), Error> {
+        self.core.host.local_stopped.store(true, Ordering::Release);
         let telemetry = if let Some(mut telemetry) = self.core.telemetry.take() {
             let result = telemetry.shutdown(&mut self.core);
             self.core.telemetry = Some(telemetry);
@@ -1029,6 +1058,9 @@ pub(crate) struct Selection {
 }
 pub(crate) struct Core {
     pub(crate) access: access::State,
+    // Explicit test-owned authority source, absent from every production build and IPC DTO.
+    #[cfg(test)]
+    pub(crate) local_policy_fixture: Option<crate::local_software::FixturePolicyReader>,
     telemetry: Option<crate::telemetry::Telemetry>,
     data: crate::collected_data::Data,
     pub(crate) app: ExecutionApp<EnterpriseHost, NativeRunner, execution_sqlite::Store>,
@@ -1062,7 +1094,16 @@ impl Core {
         if !self.host.identity_ready() {
             self.host.revoked.store(true, Ordering::Release);
             self.revoke_preparations()?;
-            self.app.stop_active(128).map_err(map_app_error)?;
+            self.app
+                .stop_active_matching(128, |plan| {
+                    !plan
+                        .spec()
+                        .policy
+                        .id
+                        .as_str()
+                        .starts_with("local-software:")
+                })
+                .map_err(map_app_error)?;
         }
         Ok(())
     }
@@ -1374,6 +1415,15 @@ impl Core {
                 RunAs::User { account } => account.subject.as_str() == subject,
                 _ => true,
             },
+            Initiator::Human { os_session } | Initiator::Ai { os_session, .. } => {
+                input
+                    .spec()
+                    .policy
+                    .id
+                    .as_str()
+                    .starts_with("local-software:")
+                    && os_session.account.subject.as_str() == subject
+            }
             _ => false,
         })
     }
@@ -1382,6 +1432,18 @@ impl Core {
             eprintln!("agent_identity_gate: {error}");
         }
         use execution_ipc::host::{Reply, Request};
+        if let Some(Request::SoftwareRead {
+            context,
+            origin,
+            input,
+        }) = command.request.as_operation()
+        {
+            let reply = self
+                .read_software(&command, context, origin, input)
+                .unwrap_or_else(data::failure);
+            let _ = command.reply.send(reply);
+            return;
+        }
         if let Some(Request::Data {
             context,
             origin,
@@ -1401,6 +1463,7 @@ impl Core {
             Some(
                 execution_ipc::host::Request::Data { .. }
                     | Request::DeviceAccess { .. }
+                    | Request::LocalSoftware { .. }
                     | Request::BindContext { .. }
                     | Request::RevokeContext {}
                     | Request::RetireEnterpriseContext { .. }
@@ -1424,6 +1487,8 @@ impl Core {
                 Some(
                     Request::Data { .. }
                     | Request::DeviceAccess { .. }
+                    | Request::SoftwareRead { .. }
+                    | Request::LocalSoftware { .. }
                     | Request::BindContext { .. }
                     | Request::RevokeContext {}
                     | Request::RetireEnterpriseContext { .. }

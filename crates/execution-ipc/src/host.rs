@@ -2,9 +2,9 @@
 use execution_contract::{Digest, Id, RequestId, VersionedRef};
 use serde::{Deserialize, Serialize};
 /// Current desktop/system IPC. No negotiation or legacy parser exists.
-pub const IPC_VERSION: u8 = 2;
+pub const IPC_VERSION: u8 = 3;
 /// Current protected installation document format.
-pub const DEPLOYMENT_VERSION: u32 = 3;
+pub const DEPLOYMENT_VERSION: u32 = 4;
 
 /// Read-only native state, independent from Agent identity and policy authorization.
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema, PartialEq, Eq)]
@@ -697,6 +697,24 @@ pub enum Request {
         /// Finite local setup operation.
         input: crate::device_access::Operation,
     },
+    /// Typed local software intent, without a remote task or caller-selected command.
+    LocalSoftware {
+        /// Current authenticated native context.
+        context: execution_contract::NativeContextRef,
+        /// Native-attested source; confirmation is accepted only from the desktop.
+        origin: ClientOrigin,
+        /// Bounded read/prepare/submit/cancel operation.
+        input: execution_contract::LocalSoftwareOperation,
+    },
+    /// Read user-visible software from an existing authorized data snapshot.
+    SoftwareRead {
+        /// Current authenticated native context.
+        context: execution_contract::NativeContextRef,
+        /// Native-attested source.
+        origin: ClientOrigin,
+        /// Bounded snapshot read.
+        input: execution_contract::SoftwareRead,
+    },
     /// Shared local data boundary, with a native-attested caller context.
     Data {
         /// Current native login binding.
@@ -746,6 +764,8 @@ pub enum Request {
         context: execution_contract::NativeContextRef,
         /// Exact directory choice and Input values.
         choice: execution_contract::PolicyChoice,
+        /// Actual discovery page, never an authorization claim.
+        locator: execution_contract::PolicyLocator,
         /// Trusted native origin.
         origin: ClientOrigin,
     },
@@ -755,6 +775,8 @@ pub enum Request {
         context: execution_contract::NativeContextRef,
         /// Policy identity and non-authoritative initial suggestions.
         choice: execution_contract::PolicyChoice,
+        /// Actual discovery page, re-fetched before freezing the draft.
+        locator: execution_contract::PolicyLocator,
         /// Attested AI origin; never renderer supplied.
         origin: ClientOrigin,
     },
@@ -855,6 +877,26 @@ pub enum Reply {
     DeviceAccess {
         /// Typed desktop-only result.
         value: crate::device_access::Response,
+    },
+    /// Immutable local preview retained in the existing execution journal.
+    SoftwarePrepared {
+        /// Safe summary; executable input remains private.
+        value: execution_contract::LocalSoftwarePrepared,
+    },
+    /// Authorized bounded local software journal history.
+    SoftwareHistory {
+        /// Existing execution status and immutable previews.
+        value: execution_app::LocalSoftwareHistory,
+    },
+    /// Existing journal status for the same local software request.
+    SoftwareStatus {
+        /// Typed preview and lifecycle facts.
+        value: execution_app::LocalSoftwareStatus,
+    },
+    /// Typed software facts, independently of enterprise directory availability.
+    SoftwarePage {
+        /// Existing observations with precise snapshot references.
+        value: execution_contract::SoftwarePage,
     },
     /// Closed data boundary failure.
     DataFailure {

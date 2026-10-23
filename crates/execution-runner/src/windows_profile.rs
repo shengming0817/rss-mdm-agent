@@ -11,6 +11,7 @@ pub(crate) fn profile(profile: &VersionedRef) -> Result<(), Error> {
         ) || [
             "native-osquery-template",
             "native-software-worker",
+            "native-local-software-worker",
             "native-collection-worker",
             "native-credential-worker",
             "native-device-access-worker",
@@ -53,6 +54,13 @@ pub(crate) fn arguments(
     }
     if profile.id.as_str() == "native-credential-worker" {
         return if args == ["--credential-worker", path] {
+            Ok(())
+        } else {
+            Err(Error::Denied)
+        };
+    }
+    if profile.id.as_str() == "native-local-software-worker" {
+        return if args == ["--local-software-worker", path] {
             Ok(())
         } else {
             Err(Error::Denied)

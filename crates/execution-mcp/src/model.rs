@@ -165,7 +165,34 @@ pub struct OperationProposal {
     pub scene: OperationScene,
     /// Exact tool name from the authenticated policy directory.
     pub tool: String,
+    /// Actual discovery page; the service re-fetches it and checks the exact tool identity.
+    pub locator: execution_contract::PolicyLocator,
     /// Suggested input fields. The user may change them before submission.
+    pub parameters: serde_json::Map<String, serde_json::Value>,
+}
+/// Explicit pagination of authorized Policy tools.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PolicyToolsQuery {
+    /// Previous page's exclusive cursor; null starts discovery.
+    pub after: Option<Id>,
+}
+/// A bounded tool page. An empty page can still have a continuation.
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PolicyToolPage {
+    /// Authorized tools, each carrying its actual discovery locator in the input schema.
+    pub tools: Vec<serde_json::Value>,
+    /// Next page, absent only after complete discovery.
+    pub next: Option<Id>,
+}
+/// Input for one dynamically discovered Policy tool.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PolicyToolInput {
+    /// Actual discovery position, never authorization.
+    pub locator: execution_contract::PolicyLocator,
+    /// Only Resource-declared Input fields.
     pub parameters: serde_json::Map<String, serde_json::Value>,
 }
 /// Product scenes supported by this preparation boundary.
@@ -174,4 +201,37 @@ pub enum OperationScene {
     /// Policy parameter editing, with default approval when no specialized form exists.
     #[serde(rename = "policy.parameters.v1")]
     PolicyParameters,
+}
+
+/// Local software proposal; the native host supplies the original request UUID.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LocalSoftwareProposal {
+    /// Exact authorized observation reference, never a path or command.
+    pub software: execution_contract::SoftwareRef,
+    /// Fixed local operation requiring human submission.
+    pub action: execution_contract::LocalSoftwareAction,
+}
+/// Existing execution status with its original safe software preview.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LocalSoftwareResult {
+    /// Independently observed native state; null means no verified observation is available.
+    pub detected: Option<execution_contract::SoftwareState>,
+    /// Immutable service-owned preview.
+    pub prepared: execution_contract::LocalSoftwarePrepared,
+    /// Projection of the sole execution journal.
+    pub operation: OperationStatus,
+}
+
+/// Invoke an exact tool discovered on a later Policy page without hiding pages in an automatic scan.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PolicyToolCall {
+    /// Exact discovered tool name.
+    pub tool: String,
+    /// Actual discovery page, independently revalidated.
+    pub locator: execution_contract::PolicyLocator,
+    /// Only the original Resource-owned input fields.
+    pub parameters: serde_json::Map<String, serde_json::Value>,
 }

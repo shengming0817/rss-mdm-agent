@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, inject, ref } from "vue";
+import { softwareSummaryKey } from "../software/controller";
 import HomeAssistant from "./HomeAssistant.vue";
 import SettingsGlyph from "../system-settings/SettingsGlyph.vue";
 import { UiPopover, Package, Sparkles } from "@rss-mdm-agent/ui";
@@ -12,6 +13,7 @@ import {
 import { homePreviewKey, type HomePreview } from "./preview";
 const props = defineProps<{
   controller: Controller;
+  fixture?: boolean;
   preview: boolean;
   draft: string;
   connected: boolean;
@@ -22,15 +24,29 @@ const emit = defineEmits<{
   "update:draft": [text: string];
 }>();
 const sample = inject<HomePreview | undefined>(homePreviewKey, undefined);
-const catalog = inject<SoftwarePreview | undefined>(
+const fixtureCatalog = inject<SoftwarePreview | undefined>(
   softwarePreviewKey,
   undefined,
 );
-const installed = computed(
-  () => catalog?.items.filter((e) => e.installed) ?? [],
+const summary = inject(softwareSummaryKey, undefined);
+const catalog = computed(() => (props.fixture ? fixtureCatalog : undefined));
+const installed = computed(() =>
+  props.fixture
+    ? (catalog.value?.items.filter((e) => e.installed) ?? [])
+    : (summary?.value.items.map((item) => ({
+        id: item.reference.installation,
+        name: item.name,
+        letter: item.name.slice(0, 1),
+      })) ?? []),
 );
-const updates = computed(
-  () => installed.value.filter((e) => e.version !== e.latest).length,
+const updates = computed(() =>
+  props.fixture
+    ? (catalog.value?.items.filter((e) => e.installed && e.version !== e.latest)
+        .length ?? 0)
+    : (summary?.value.updates ?? 0),
+);
+const softwareRead = computed(() =>
+  props.fixture ? !!catalog.value : !!summary?.value.sources,
 );
 const addressesOpen = ref(false);
 </script>
@@ -114,9 +130,12 @@ const addressesOpen = ref(false);
       >
         <span class="stat-label"
           ><Package :size="17" aria-hidden="true" />我的应用</span
-        ><strong>{{ catalog ? installed.length : "—" }}<em>个已安装</em></strong
+        ><strong
+          >{{ softwareRead ? installed.length : "—" }}<em>个已安装</em></strong
         ><small>{{
-          catalog ? `${updates} 个更新可用` : "软件清单尚未接入"
+          softwareRead
+            ? `当前加载范围 · ${updates} 个固定更新候选`
+            : "软件清单尚未读取"
         }}</small
         ><span class="stat-link">查看更新 →</span>
       </button>

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import {
   computed,
+  provide,
   nextTick,
   ref,
   shallowRef,
@@ -46,7 +47,10 @@ import {
 import SelfService from "./self-service/SelfService.vue";
 import Home from "./home/Home.vue";
 import SystemSettings from "./system-settings/SystemSettings.vue";
-import SoftwareManagement from "./catalog-preview/SoftwareManagement.vue";
+import SoftwarePreviewPage from "./catalog-preview/SoftwareManagement.vue";
+import SoftwareManagement from "./software/SoftwareManagement.vue";
+import { createSoftware, softwareSummaryKey } from "./software/controller";
+import { nativeDataPort, nativeSoftwarePort } from "./self-service/native";
 import ToolsPage from "./catalog-preview/ToolsPage.vue";
 import { createDeviceOverview, type DeviceOverviewPort } from "./home/device";
 import { nativeDeviceOverview } from "./home/native";
@@ -238,6 +242,12 @@ const device = createDeviceOverview(
 let devicePolling: ReturnType<typeof setInterval> | undefined;
 const lastContentPage = ref("home");
 const newIdentity = () => crypto.randomUUID();
+const software = createSoftware(
+  !props.ready || props.fixture ? null : nativeDataPort(),
+  !props.ready || props.fixture ? null : nativeSoftwarePort(),
+);
+provide(softwareSummaryKey, software.summary);
+onBeforeUnmount(() => software.dispose());
 const controller = props.ready
   ? createController(props.selfServicePort ?? nativePort(), preview)
   : undefined;
@@ -785,10 +795,18 @@ onBeforeUnmount(() => {
             @ask-ai="askAi"
           />
         </div>
-        <SoftwareManagement
-          @navigation="softwarePage = $event"
-          v-if="ready"
+        <SoftwarePreviewPage
+          v-if="ready && fixture"
           v-show="page === 'software-management'"
+          @navigation="softwarePage = $event"
+          @navigate="emit('navigate', $event)"
+        />
+        <SoftwareManagement
+          v-if="ready && !fixture"
+          v-show="page === 'software-management'"
+          :model="software"
+          :execution="controller"
+          @navigation="softwarePage = $event"
           @navigate="emit('navigate', $event)"
         />
         <ToolsPage
@@ -806,6 +824,7 @@ onBeforeUnmount(() => {
         <div v-if="controller && page === 'home'" class="home-content">
           <Home
             :controller="controller"
+            :fixture="!!fixture"
             :device="device.state.value"
             :preview="!controller.interactive || !!fixture"
             :draft="assistant?.draft.value ?? ''"

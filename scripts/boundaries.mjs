@@ -7,6 +7,12 @@ import { parse, compileTemplate } from "vue/compiler-sfc";
 
 const selfServiceCommands = [
   "device_access",
+  "software_read",
+  "software_prepare",
+  "software_submit",
+  "software_status",
+  "software_cancel",
+  "software_history",
   "query_directory",
   "data_read",
   "query_submit",
@@ -404,7 +410,22 @@ export function checkSource(file, source) {
       ],
       "apps/desktop/src/assistant/resource-context.ts": ["JSON"],
       "apps/desktop/src/self-service/PolicyPreparation.vue": ["JSON"],
-      "apps/desktop/src/self-service/PolicySelfService.vue": ["JSON", "crypto"],
+      "apps/desktop/src/self-service/PolicySelfService.vue": [
+        "JSON",
+        "crypto",
+        "Set",
+      ],
+      "apps/desktop/src/software/controller.ts": [
+        "JSON",
+        "Set",
+        "Promise",
+        "crypto",
+        "Symbol",
+      ],
+      "apps/desktop/src/software/LocalSoftwareAction.vue": [
+        "setInterval",
+        "clearInterval",
+      ],
       "apps/desktop/src/self-service/controller.ts": ["crypto"],
       "apps/desktop/src/appearance.ts": [
         "navigator",
@@ -493,6 +514,8 @@ export function checkSource(file, source) {
           ].includes(file) && name === "../self-service/types"
         ) &&
         !(
+          (file === "apps/desktop/src/assistant/Assistant.vue" &&
+            name === "../software/LocalSoftwareAction.vue") ||
           (file === "apps/desktop/src/assistant/ExecutionDetails.vue" &&
             name === "../self-service/RequestOrigin.vue") ||
           (file === "apps/desktop/src/self-service/SelfService.vue" &&
@@ -680,6 +703,20 @@ export function checkSource(file, source) {
         ],
         "apps/desktop/src/self-service/PolicyPreparation.vue": [
           "action.choice.parameters",
+        ],
+        "apps/desktop/src/software/LocalSoftwareAction.vue": [
+          "actionLabels",
+          "phaseLabels",
+          "_ctx.actionLabels",
+          "_ctx.phaseLabels",
+        ],
+        "apps/desktop/src/software/SoftwareManagement.vue": [
+          "kinds",
+          "actionLabels",
+          "blocks",
+          "_ctx.kinds",
+          "_ctx.actionLabels",
+          "_ctx.blocks",
         ],
         "apps/desktop/src/self-service/PolicySelfService.vue": [
           "inputs.value",
@@ -999,7 +1036,7 @@ export function checkTree(treeRoot = root, executable) {
     ipc
       .match(/commands!\s*\{([\s\S]*?)\}/)?.[1]
       .match(
-        /\b(?:self_service_\w+|query_\w+|data_read|device_access)(?=\s*\()/g,
+        /\b(?:self_service_\w+|software_\w+|query_\w+|data_read|device_access)(?=\s*\()/g,
       ) ?? [];
   if (
     JSON.stringify(commands.toSorted()) !==

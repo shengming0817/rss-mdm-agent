@@ -74,6 +74,10 @@ fn constrain_schema_integers(value: &mut Value) {
 // bind schemas and dispatch to that owner without repeating wire-name lists.
 #[derive(Clone, Copy)]
 pub(crate) enum ToolKind {
+    LocalSoftwareRead,
+    LocalSoftwarePrepare,
+    LocalSoftwareStatus,
+    LocalSoftwareCancel,
     QueryDirectory,
     DataRead,
     QuerySubmit,
@@ -81,6 +85,7 @@ pub(crate) enum ToolKind {
     QueryCancel,
     Tasks,
     PolicyTools,
+    InvokePolicy,
     PrepareOperation,
     PolicyStatus,
     SoftwareRead,
@@ -95,7 +100,11 @@ enum Effect {
     MayPersist,
 }
 impl ToolKind {
-    const ALL: [Self; 14] = [
+    const ALL: [Self; 19] = [
+        Self::LocalSoftwareRead,
+        Self::LocalSoftwarePrepare,
+        Self::LocalSoftwareStatus,
+        Self::LocalSoftwareCancel,
         Self::QueryDirectory,
         Self::DataRead,
         Self::QuerySubmit,
@@ -103,6 +112,7 @@ impl ToolKind {
         Self::QueryCancel,
         Self::Tasks,
         Self::PolicyTools,
+        Self::InvokePolicy,
         Self::PrepareOperation,
         Self::PolicyStatus,
         Self::SoftwareRead,
@@ -114,6 +124,10 @@ impl ToolKind {
 
     fn descriptor(self) -> (&'static str, &'static str, Effect) {
         match self {
+            Self::LocalSoftwareRead => ("execution_software_read", "Read retained installed-software facts, qualified fixed updates and local action availability. No collector or mutation runs.", Effect::ReadOnly),
+            Self::LocalSoftwarePrepare => ("execution_software_prepare", "Prepare a fixed local software action for the desktop user to review and submit. Never executes. Return the original request for recovery; do not prepare again to poll.", Effect::MayPersist),
+            Self::LocalSoftwareStatus => ("execution_software_status", "Query the original local software request and observed result. Unknown does not permit resubmission.", Effect::ReadOnly),
+            Self::LocalSoftwareCancel => ("execution_software_cancel", "Request cancellation of the original local software action. Does not prove termination or rollback.", Effect::MayPersist),
             Self::QueryDirectory => ("execution_query_directory", "Discover exact local query definitions. Descriptors are not execution grants.", Effect::ReadOnly),
             Self::DataRead => ("execution_data_read", "Read retained local data by query or original request, with snapshot pagination. This never starts collection.", Effect::ReadOnly),
             Self::QuerySubmit => ("execution_query_submit", "Explicitly submit one query. Reuse the original request after response loss. Published scripts retain their Policy risk and confirmation flow.", Effect::MayPersist),
@@ -121,6 +135,7 @@ impl ToolKind {
             Self::QueryCancel => ("execution_query_cancel", "Request cancellation of the original query; acknowledgement does not prove termination.", Effect::MayPersist),
             Self::SoftwareRead => ("execution_software_observe", "Collect a fresh bounded native software fact from one current signed definition step. No installation or script execution.", Effect::ReadOnly),
             Self::PrepareOperation => ("execution_operation_prepare", "Show an editable operation card for a current policy tool. Use for requests to display or edit settings. Suggestions do not execute: the user saves the final parameters in the desktop. Only registered scenes are accepted.", Effect::MayPersist),
+            Self::InvokePolicy => ("execution_policy_invoke", "Invoke one exact tool discovered through execution_policy_tools, including later pages. Supply the original locator and Resource inputs. Current publication and permissions are revalidated.", Effect::MayPersist),
             Self::PolicyTools => ("execution_policy_tools", "Current employee-authorized script tools. Policy publication, allowAi and risk are verified for this AI origin.", Effect::ReadOnly),
             Self::PolicyStatus => ("execution_policy_status", "Read structured status and result for the original Policy request. Unknown never permits another invocation.", Effect::ReadOnly),
             Self::Tasks => ("execution_tasks", "Verified backend tasks. Select the exact task, attempt and revision; presence never authorizes execution.", Effect::ReadOnly),
@@ -143,6 +158,18 @@ impl ToolKind {
     }
     fn definition(self) -> Tool {
         match self {
+            Self::LocalSoftwareRead => {
+                tool::<execution_contract::SoftwareRead, execution_contract::SoftwarePage>(self)
+            }
+            Self::LocalSoftwarePrepare => {
+                tool::<LocalSoftwareProposal, execution_contract::LocalSoftwarePrepared>(self)
+            }
+            Self::LocalSoftwareStatus => {
+                tool::<execution_contract::QueryRequest, LocalSoftwareResult>(self)
+            }
+            Self::LocalSoftwareCancel => {
+                tool::<execution_contract::QueryRequest, OperationRequest>(self)
+            }
             Self::QueryDirectory => {
                 tool::<execution_contract::QueryDirectory, execution_contract::DataResponse>(self)
             }
@@ -162,7 +189,8 @@ impl ToolKind {
             Self::PrepareOperation => {
                 tool::<OperationProposal, execution_contract::BackendRequest>(self)
             }
-            Self::PolicyTools => tool::<Empty, Vec<Value>>(self),
+            Self::InvokePolicy => tool::<PolicyToolCall, OperationRequest>(self),
+            Self::PolicyTools => tool::<PolicyToolsQuery, PolicyToolPage>(self),
             Self::PolicyStatus => tool::<OperationRequest, Value>(self),
             Self::Tasks => tool::<Empty, Vec<BackendTask>>(self),
             Self::Capabilities => tool::<Empty, CapabilityView>(self),
@@ -245,6 +273,28 @@ impl<S: ExecutionServicePort> Handler<S> {
             );
         };
         match kind {
+            ToolKind::LocalSoftwareRead => result(
+                async { Ok(self.service.software_read(decode(raw)?, wait).await?) }.await,
+                max,
+            ),
+            ToolKind::LocalSoftwarePrepare => result(
+                async { Ok(self.service.software_prepare(decode(raw)?, wait).await?) }.await,
+                max,
+            ),
+            ToolKind::LocalSoftwareStatus => result(
+                async { Ok(self.service.software_status(decode(raw)?, wait).await?) }.await,
+                max,
+            ),
+            ToolKind::LocalSoftwareCancel => result(
+                async {
+                    let value = self.service.software_cancel(decode(raw)?, wait).await?;
+                    Ok(OperationRequest {
+                        operation_request_id: value.prepared.request,
+                    })
+                }
+                .await,
+                max,
+            ),
             ToolKind::QueryDirectory
             | ToolKind::DataRead
             | ToolKind::QuerySubmit
@@ -273,12 +323,29 @@ impl<S: ExecutionServicePort> Handler<S> {
                 async { Ok(self.service.prepare_operation(decode(raw)?, wait).await?) }.await,
                 max,
             ),
-            ToolKind::PolicyTools => result(
+            ToolKind::InvokePolicy => result(
                 async {
-                    let _: Empty = decode(raw)?;
-                    Ok(self.service.policy_tools(wait).await?)
+                    let input: PolicyToolCall = decode(raw)?;
+                    let value = self
+                        .service
+                        .invoke_policy(
+                            &input.tool,
+                            PolicyToolInput {
+                                locator: input.locator,
+                                parameters: input.parameters,
+                            },
+                            wait,
+                        )
+                        .await?;
+                    Ok(OperationRequest {
+                        operation_request_id: value.action.request().clone(),
+                    })
                 }
                 .await,
+                max,
+            ),
+            ToolKind::PolicyTools => result(
+                async { Ok(self.service.policy_tools(decode(raw)?, wait).await?) }.await,
                 max,
             ),
             ToolKind::PolicyStatus => result(

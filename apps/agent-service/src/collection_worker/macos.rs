@@ -19,6 +19,25 @@ mod native;
 mod receipts;
 mod security;
 mod signature;
+pub(crate) fn local_app_identity(
+    path: &Path,
+    bundle: &str,
+    team: &str,
+) -> std::result::Result<(), Error> {
+    let evidence = signature::inspect(path, Some((bundle, team))).map_err(|_| Error::Untrusted)?;
+    if evidence.status != "signed"
+        || evidence.identifier.as_deref() != Some(bundle)
+        || evidence.team.as_deref() != Some(team)
+    {
+        return Err(Error::Untrusted);
+    }
+    Ok(())
+}
+pub(crate) fn local_user_app_root(subject: &str) -> std::result::Result<PathBuf, Error> {
+    home(subject.parse().map_err(|_| Error::Identity)?)
+        .map(|p| p.join("Applications"))
+        .map_err(|_| Error::Identity)
+}
 #[cfg(test)]
 mod tests;
 pub(super) mod tool;

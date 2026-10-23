@@ -893,27 +893,22 @@ export function createAssistant(
     const delivery = Object.entries(session?.deliveries ?? {}).find(
       ([key]) => key === operationId,
     )?.[1];
+    const prepared =
+      delivery &&
+      (delivery.proposal.name.startsWith("policy_") ||
+        delivery.proposal.name === "execution_policy_invoke" ||
+        delivery.proposal.name === "execution_software_observe" ||
+        delivery.proposal.name === "execution_operation_prepare");
     if (
       !session ||
       !delivery ||
-      !(
-        delivery.proposal.name === "execution_execute" ||
-        delivery.proposal.name.startsWith("policy_") ||
-        delivery.proposal.name === "execution_software_observe" ||
-        delivery.proposal.name === "execution_operation_prepare"
-      ) ||
+      (!prepared && delivery.proposal.name !== "execution_execute") ||
       !services?.taskDetails
     )
       throw new ClientError("unavailable");
-    const requestId =
-      delivery.proposal.name.startsWith("policy_") ||
-      delivery.proposal.name === "execution_software_observe" ||
-      delivery.proposal.name === "execution_operation_prepare"
-        ? operationId
-        : operationRequestId(
-            delivery.proposal.name,
-            delivery.proposal.arguments,
-          );
+    const requestId = prepared
+      ? operationId
+      : operationRequestId(delivery.proposal.name, delivery.proposal.arguments);
     if (!requestId) throw new ClientError("invalid_input");
     const owner = new AbortController();
     const abort = () => owner.abort();

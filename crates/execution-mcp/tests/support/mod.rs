@@ -28,6 +28,7 @@ pub fn limits() -> McpLimits {
 }
 #[derive(Default)]
 pub struct TestStore {
+    software: HashMap<(TestNamespace, RequestId), LocalSoftwareResult>,
     queries: HashMap<(TestNamespace, RequestId), execution_contract::QuerySubmit>,
     query_cancellations: HashSet<(TestNamespace, RequestId)>,
     accepted: HashMap<(TestNamespace, RequestId), OperationStatus>,
@@ -95,6 +96,13 @@ impl TestService {
     fn key(&self, id: &RequestId) -> (TestNamespace, RequestId) {
         (self.namespace.clone(), id.clone())
     }
+    pub fn software_result(&self, value: LocalSoftwareResult) {
+        self.store
+            .lock()
+            .unwrap()
+            .software
+            .insert(self.key(&value.prepared.request), value);
+    }
     pub fn complete_test_result(&self, id: &str) {
         let mut db = self.store.lock().unwrap();
         let value = db
@@ -145,6 +153,7 @@ impl ExecutionServicePort for TestService {
         };
         match input {
             DataOperation::Directory(_) => Ok(DataResponse::Directory(QueryPage {
+                policy_next: None,
                 items: vec![QueryDescriptor {
                     reference: query,
                     title: "Explicit query fixture".into(),
@@ -207,6 +216,56 @@ impl ExecutionServicePort for TestService {
         }
     }
 
+    async fn software_read(
+        &self,
+        _: execution_contract::SoftwareRead,
+        _: CancellationToken,
+    ) -> Result<execution_contract::SoftwarePage, ServiceError> {
+        self.capabilities(CancellationToken::new()).await?;
+        Err(ServiceError::Denied)
+    }
+    async fn software_prepare(
+        &self,
+        _: LocalSoftwareProposal,
+        _: CancellationToken,
+    ) -> Result<execution_contract::LocalSoftwarePrepared, ServiceError> {
+        self.prepare_operation(serde_json::from_value(serde_json::json!({"scene":"policy.parameters.v1","tool":"policy_fixture","locator":{"after":null},"parameters":{}})).unwrap(),CancellationToken::new()).await?;
+        Err(ServiceError::Denied)
+    }
+    async fn software_status(
+        &self,
+        input: execution_contract::QueryRequest,
+        _: CancellationToken,
+    ) -> Result<LocalSoftwareResult, ServiceError> {
+        self.capabilities(CancellationToken::new()).await?;
+        self.store
+            .lock()
+            .unwrap()
+            .software
+            .get(&self.key(&input.request))
+            .cloned()
+            .ok_or(ServiceError::NotFound)
+    }
+    async fn software_cancel(
+        &self,
+        input: execution_contract::QueryRequest,
+        wait: CancellationToken,
+    ) -> Result<LocalSoftwareResult, ServiceError> {
+        self.software_status(input, wait).await
+    }
+    async fn invoke_policy(
+        &self,
+        _: &str,
+        _: PolicyToolInput,
+        _: CancellationToken,
+    ) -> Result<execution_contract::BackendRequest, ServiceError> {
+        self.authorize()?;
+        tokio::time::sleep(Duration::from_millis(
+            self.submit_delay_ms.load(Ordering::SeqCst) as u64,
+        ))
+        .await;
+        Err(ServiceError::Denied)
+    }
     fn bind_call(
         self: &Arc<Self>,
         _: &serde_json::Map<String, serde_json::Value>,
@@ -235,10 +294,14 @@ impl ExecutionServicePort for TestService {
     }
     async fn policy_tools(
         &self,
+        _: execution_mcp::PolicyToolsQuery,
         _: CancellationToken,
-    ) -> Result<Vec<serde_json::Value>, ServiceError> {
+    ) -> Result<execution_mcp::PolicyToolPage, ServiceError> {
         self.capabilities(CancellationToken::new()).await?;
-        Ok(Vec::new())
+        Ok(execution_mcp::PolicyToolPage {
+            tools: Vec::new(),
+            next: None,
+        })
     }
     async fn policy_status(
         &self,

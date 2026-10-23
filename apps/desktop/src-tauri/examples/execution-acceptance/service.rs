@@ -53,7 +53,8 @@ impl FixtureService {
             "parameterSources":{"name":{"kind":"input"},"path":{"kind":"fixed","value":"/Applications"}},
             "parameterSchema":{"type":"object","properties":{"name":{"type":"string","maxLength":32},"path":{"type":"string"}},"required":["name","path"],"additionalProperties":false}}
         })).unwrap();
-        execution_mcp::policy_tool(&item).unwrap()
+        execution_mcp::policy_tool(&item, &execution_contract::PolicyLocator { after: None })
+            .unwrap()
     }
     pub fn selection(&self) -> BackendSelection {
         BackendSelection {
@@ -99,18 +100,22 @@ impl ExecutionServicePort for FixtureService {
     }
     async fn policy_tools(
         &self,
+        _: execution_mcp::PolicyToolsQuery,
         _: CancellationToken,
-    ) -> Result<Vec<serde_json::Value>, ServiceError> {
-        Ok(vec![self.policy_descriptor()])
+    ) -> Result<execution_mcp::PolicyToolPage, ServiceError> {
+        Ok(execution_mcp::PolicyToolPage {
+            tools: vec![self.policy_descriptor()],
+            next: None,
+        })
     }
     async fn invoke_policy(
         &self,
         name: &str,
-        arguments: serde_json::Map<String, serde_json::Value>,
+        arguments: execution_mcp::PolicyToolInput,
         _: CancellationToken,
     ) -> Result<BackendRequest, ServiceError> {
         if name != self.policy_descriptor()["name"].as_str().unwrap()
-            || arguments
+            || arguments.parameters
                 != serde_json::json!({"name":"Acme"})
                     .as_object()
                     .unwrap()
