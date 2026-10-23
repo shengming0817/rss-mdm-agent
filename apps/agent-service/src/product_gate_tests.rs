@@ -4076,12 +4076,13 @@ async fn service_restart_retires_confirmed_relation_and_replays_cleanup_but_pres
 }
 
 #[tokio::test]
-async fn local_data_queries_use_the_original_journal_and_reject_replays_from_retired_contexts() {
+async fn local_data_queries_keep_os_prerequisites_exact_authority_and_offline_read_fences() {
     let _budget = crate::scenario_budget::enter();
-    use execution_ipc::host::Request;
+    use execution_ipc::host::{NativeAccess, NativeContextSession, Request};
     let mut c = Case::new(None).await;
     c.service.client.drive_pki().await.unwrap();
     c.service.update_identity_gate();
+    assert!(c.service.core.host.identity_ready());
     let context = c.context();
     let origin = ClientOrigin::Desktop {};
     let directory = c
@@ -4101,7 +4102,6 @@ async fn local_data_queries_use_the_original_journal_and_reject_replays_from_ret
     else {
         panic!("local directory")
     };
-    assert!(!page.items.is_empty());
     let query = page
         .items
         .into_iter()
@@ -4120,84 +4120,130 @@ async fn local_data_queries_use_the_original_journal_and_reject_replays_from_ret
         input: DataOperation::Submit(submit.clone()),
     };
     let first = c.policy_call(call()).await;
-    assert!(
-        matches!(
+    if execution_ipc::host::current_subject().unwrap() == "0"
+        && installation_security::protected(&std::env::current_exe().unwrap()).is_ok()
+    {
+        assert!(matches!(
             first,
             Reply::Data {
                 value: DataResponse::Status(_)
             }
-        ),
-        "manual query was not admitted"
-    );
-    let status = c
-        .service
-        .core
-        .app
-        .status(&c.service.core.caller(), &request)
-        .unwrap();
-    assert_eq!(status.attempts, 1);
-    c.policy_call(call()).await;
-    assert_eq!(
-        c.service
+        ));
+        c.policy_call(call()).await;
+        assert_eq!(
+            c.service
+                .core
+                .app
+                .status(&c.service.core.caller(), &request)
+                .unwrap()
+                .attempts,
+            1
+        );
+    } else {
+        // The developer's non-System process must never weaken production material/run-as checks.
+        assert!(matches!(
+            first,
+            Reply::DataFailure {
+                reason: DataError::Denied
+            }
+        ));
+        assert!(!c
+            .service
             .core
             .app
-            .status(&c.service.core.caller(), &request)
-            .unwrap()
-            .attempts,
-        1
-    );
-    let frozen = c.service.core.app.service_frozen_input(&request).unwrap();
-    assert!(matches!(
-        frozen.spec().request.initiator,
-        Initiator::Human { .. }
-    ));
-    assert_eq!(
-        frozen.spec().request.operation.action.as_str(),
-        "local-query"
-    );
-    assert!(c
-        .service
-        .core
-        .app
-        .backend_request(&c.service.core.caller(), &request)
-        .unwrap()
-        .is_none());
-    // Read does not allocate another attempt, including when registration is offline.
-    c.service
-        .core
-        .host
-        .revoked
-        .store(true, std::sync::atomic::Ordering::Release);
-    let read = Request::Data {
-        context: context.clone(),
-        origin: origin.clone(),
-        input: DataOperation::Read(DataRead {
-            selection: DataSelection::Query { query },
-            after: None,
-            limit: 16,
-            max_age_seconds: None,
-        }),
+            .has_service_execution(&request, &c.service.core.host.binding.device)
+            .unwrap());
+    }
+    // Opaque, non-dispatchable fixture input tests the product grant and revoke fence;
+    // it does not pretend this developer-owned executable satisfies System staging.
+    let now = c.service.core.host.clock.millis().unwrap();
+    let artifact = ExactArtifactRef {
+        resource: plan::reference("proof-only", "1").unwrap(),
+        sha256: Digest::new("a".repeat(64)).unwrap(),
     };
-    assert!(matches!(
-        c.policy_call(read).await,
-        Reply::Data {
-            value: DataResponse::Read(_)
-        }
-    ));
-    assert_eq!(
-        c.service
-            .core
-            .app
-            .status(&c.service.core.caller(), &request)
-            .unwrap()
-            .attempts,
-        1
-    );
+    let frozen = FrozenExecution::freeze(
+        ExecutionInput {
+            schema_version: V1,
+            execution: ExecutionSpec::Process {},
+            request: ExecutionRequest {
+                schema_version: V1,
+                request_id: request.clone(),
+                authority: c.service.core.host.binding.authority.clone(),
+                actor: c.service.core.host.actor.clone(),
+                initiator: Initiator::Human {
+                    os_session: OsSessionRef {
+                        device: c.service.core.host.binding.device.clone(),
+                        account: OsAccountRef {
+                            platform: plan::platform().unwrap(),
+                            subject: plan::id(&c.selection.subject).unwrap(),
+                        },
+                        session: c.selection.binding.clone(),
+                    },
+                },
+                delegation: None,
+                target: Target {
+                    device: c.service.core.host.binding.device.clone(),
+                    platform: plan::platform().unwrap(),
+                    scope: TargetScope::Device {},
+                },
+                operation: Operation {
+                    action: plan::id("local-query").unwrap(),
+                    resource: plan::reference(query.id.as_str(), query.revision.as_str()).unwrap(),
+                },
+                parameters: Default::default(),
+            },
+            launch: LaunchSpec {
+                artifact: artifact.clone(),
+                interpreter: InterpreterRef {
+                    artifact,
+                    profile: plan::reference("native-collection-worker", "1").unwrap(),
+                },
+                argv: vec![LaunchArg::ArtifactPath {}],
+                artifact_encoding: ArtifactEncoding::Utf8,
+                stdin: StandardInput::Closed {},
+                output: OutputSpec {
+                    format: OutputFormat::Json { max_rows: 1 },
+                    stdout: TextEncoding::Utf8,
+                    stderr: TextEncoding::Utf8,
+                },
+                cwd: c._root.path.to_str().unwrap().into(),
+                env: Default::default(),
+            },
+            run_as: RunAs::System {
+                platform: plan::platform().unwrap(),
+            },
+            session_requirement: SessionRequirement::NotRequired {},
+            constraints: IsolationPolicy::OsIdentity {},
+            budget: ExecutionBudget {
+                total_timeout_ms: 60000,
+                total_output_bytes: 65536,
+                max_attempts: 1,
+            },
+            validity: ValidityWindow {
+                not_before_unix_ms: now,
+                expires_at_unix_ms: now + 90000,
+            },
+            policy: plan::reference("local-native-query", "1").unwrap(),
+        },
+        &plan::storage_limits().input,
+    )
+    .unwrap();
+    *c.service.core.host.local_query.lock().unwrap() = Some(frozen.clone());
+    let attempt = AttemptId::new("proof-only-no-dispatch").unwrap();
+    let facts =
+        execution_admission::AuthorityVerifier::verify(&c.service.core.host, &frozen, &attempt)
+            .unwrap();
+    assert!(matches!(facts.verified_origin, Initiator::Human { .. }));
+    assert_eq!(facts.risk, Some(RiskLevel::One));
+    *c.service.core.host.local_query.lock().unwrap() = None;
+    assert!(execution_admission::AuthorityVerifier::verify(
+        &c.service.core.host,
+        &frozen,
+        &attempt
+    )
+    .is_err());
     let old_epoch = c.service.core.fences.current(&c.scope()).unwrap();
     c.policy_call(Request::RevokeContext {}).await;
-    let mut next = frozen.spec().clone();
-    next.request.request_id = RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap();
-    let next = FrozenExecution::freeze(next, &plan::storage_limits().input).unwrap();
     let (reply_tx, _) = tokio::sync::oneshot::channel();
     let stale = Command {
         request: LocalRequest::operation(Request::ServiceStatus {}),
@@ -4207,28 +4253,79 @@ async fn local_data_queries_use_the_original_journal_and_reject_replays_from_ret
         binding: Some(c.selection.binding.clone()),
         reply: reply_tx,
     };
-    assert!(c.service.core.submit_local(&stale, &next).is_err());
-    assert!(!c
-        .service
-        .core
-        .app
-        .has_service_execution(
-            &next.spec().request.request_id,
-            &c.service.core.host.binding.device
-        )
-        .unwrap());
+    assert!(c.service.core.submit_local(&stale, &frozen).is_err());
     assert!(c.service.core.host.local_query.lock().unwrap().is_none());
-    let reply = c
-        .policy_call(Request::Data {
-            context,
-            origin,
-            input: DataOperation::Status(QueryRequest { request }),
-        })
-        .await;
     assert!(matches!(
-        reply,
+        c.policy_call(Request::Data {
+            context: context.clone(),
+            origin: origin.clone(),
+            input: DataOperation::Directory(QueryDirectory {
+                after: None,
+                limit: 16,
+                refresh_policies: false
+            })
+        })
+        .await,
         Reply::DataFailure {
             reason: DataError::Denied
         }
     ));
+    c.service
+        .core
+        .host
+        .revoked
+        .store(true, std::sync::atomic::Ordering::Release);
+    let Reply::ContextBound { value: offline } = c
+        .policy_call(Request::BindContext {
+            expected: None,
+            value: NativeContextSession {
+                access: NativeAccess::Device {},
+                generation: plan::id("offline-generation").unwrap(),
+                expires_at_unix_ms: c.service.core.host.clock.millis().unwrap() + 60_000,
+            },
+        })
+        .await
+    else {
+        panic!("offline OS binding")
+    };
+    // A queued backend operation must not delay a purely local read.
+    let (queued_reply, _queued_receive) = tokio::sync::oneshot::channel();
+    c.service.core.enqueue_policy(Command {
+        fence_epoch: c.service.core.fences.current(&c.scope()).unwrap(),
+        request: LocalRequest::operation(Request::PolicyDirectory {
+            context: offline.clone(),
+            origin: origin.clone(),
+            after: None,
+        }),
+        subject: c.selection.subject.clone(),
+        session: c.selection.session,
+        binding: Some(c.selection.binding.clone()),
+        reply: queued_reply,
+    });
+    let queued = c.service.core.policy_commands.len();
+    let (reply, mut receive) = tokio::sync::oneshot::channel();
+    c.service.core.handle(Command {
+        fence_epoch: c.service.core.fences.current(&c.scope()).unwrap(),
+        request: LocalRequest::operation(Request::Data {
+            context: offline,
+            origin,
+            input: DataOperation::Read(DataRead {
+                selection: DataSelection::Query { query },
+                after: None,
+                limit: 16,
+                max_age_seconds: None,
+            }),
+        }),
+        subject: c.selection.subject.clone(),
+        session: c.selection.session,
+        binding: Some(c.selection.binding.clone()),
+        reply,
+    });
+    assert!(matches!(
+        receive.try_recv().unwrap(),
+        Reply::Data {
+            value: DataResponse::Read(_)
+        }
+    ));
+    assert_eq!(c.service.core.policy_commands.len(), queued);
 }

@@ -55,6 +55,8 @@ test("query response loss reconciles the Host-owned original ID and never replay
             kind: "status",
             value: {
               request: params.arguments.request,
+              query: { id: "native:fixture", revision: "a".repeat(64) },
+              preparation: null,
               phase: "running",
               cancelRequested: cancelled,
             },

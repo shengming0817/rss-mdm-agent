@@ -394,7 +394,7 @@ async fn official_rmcp_client_can_consume_the_bounded_service() {
             .unwrap()
             .tools
             .len(),
-        9
+        14
     );
     client.cancel().await.unwrap();
     timeout(Duration::from_secs(2), task)

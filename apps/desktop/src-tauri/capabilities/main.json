@@ -3,6 +3,11 @@
   "description": "Local main window: controlled execution service and private AI transport.",
   "windows": ["main"],
   "permissions": [
+    "allow-query-directory",
+    "allow-data-read",
+    "allow-query-submit",
+    "allow-query-status",
+    "allow-query-cancel",
     "core:window:allow-start-dragging",
     "core:window:allow-internal-toggle-maximize",
     "core:window:allow-minimize",

@@ -4,7 +4,7 @@ use rss_mdm_agent_wire::CollectionScope;
 
 impl Data {
     pub fn install_user(&mut self, subject: &str, session: uuid::Uuid) -> Result<(), Error> {
-        if crate::backend::plan::platform()? != Platform::Macos {
+        if subject == "0" || crate::backend::plan::platform()? != Platform::Macos {
             return Ok(());
         }
         let mut recipes = vec![w::NativeQueryDefinition::MacosApplications {
@@ -31,7 +31,7 @@ impl Data {
                 definition,
                 cardinality: w::NativeCardinality::List,
                 instance_keys: vec!["id".into()],
-                budget: budget.clone(),
+                budget,
             };
             let plan = w::NativeCollectionPlan::new(w::NativePlanSpec {
                 version: 1,
@@ -60,9 +60,12 @@ impl Data {
         Ok(())
     }
     pub fn install_local(&mut self) -> Result<(), Error> {
+        self.install_platform(crate::backend::plan::platform()?)
+    }
+    pub(super) fn install_platform(&mut self, platform: Platform) -> Result<(), Error> {
         use w::NativeQueryDefinition as Q;
         let mut recipes = Vec::new();
-        match crate::backend::plan::platform()? {
+        match platform {
             Platform::Macos => {
                 use w::MacosHardwareSection::*;
                 for section in [
@@ -129,16 +132,50 @@ impl Data {
                         vec![],
                     ),
                 ]);
+                for (path, name) in [
+                    (r"SOFTWARE\Microsoft\Windows NT\CurrentVersion", "EditionID"),
+                    (
+                        r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment",
+                        "PROCESSOR_ARCHITECTURE",
+                    ),
+                ] {
+                    recipes.push((
+                        name.into(),
+                        Q::WindowsRegistry {
+                            hive: w::RegistryHive::LocalMachine,
+                            view: w::RegistryView::Registry64,
+                            path: path.into(),
+                            enumerate_subkeys: false,
+                            values: [(
+                                "value".into(),
+                                w::RegistryValue {
+                                    name: name.into(),
+                                    value_type: w::RegistryType::Sz,
+                                },
+                            )]
+                            .into(),
+                        },
+                        w::NativeCardinality::ExactlyOne,
+                        vec![],
+                    ));
+                }
                 use w::CimType::*;
                 for (title, class, fields) in [
                     (
+                        "memory",
+                        "Win32_ComputerSystem",
+                        vec![("TotalPhysicalMemory", Uint64)],
+                    ),
+                    (
+                        "hardware UUID",
+                        "Win32_ComputerSystemProduct",
+                        vec![("UUID", String)],
+                    ),
+                    ("serial", "Win32_BIOS", vec![("SerialNumber", String)]),
+                    (
                         "system",
                         "Win32_ComputerSystem",
-                        vec![
-                            ("Model", String),
-                            ("Manufacturer", String),
-                            ("TotalPhysicalMemory", Uint64),
-                        ],
+                        vec![("Model", String), ("Manufacturer", String)],
                     ),
                     (
                         "OS",
@@ -152,7 +189,7 @@ impl Data {
                     (
                         "firmware",
                         "Win32_BIOS",
-                        vec![("SerialNumber", String), ("SMBIOSBIOSVersion", String)],
+                        vec![("SMBIOSBIOSVersion", String)],
                     ),
                     (
                         "disks",
@@ -206,7 +243,7 @@ impl Data {
                 } else {
                     vec![]
                 },
-                budget: budget.clone(),
+                budget,
             };
             let plan = w::NativeCollectionPlan::new(w::NativePlanSpec {
                 version: 1,

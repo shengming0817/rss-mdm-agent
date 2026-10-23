@@ -983,6 +983,23 @@ pub fn install_user_helper() -> Result<(), Error> {
     }
 }
 
+fn data_error(error: mcp::ServiceError) -> ui::ServiceError {
+    ui::error(
+        match error {
+            mcp::ServiceError::InvalidInput => "data_invalid_input",
+            mcp::ServiceError::Denied => "data_denied",
+            mcp::ServiceError::NotFound => "data_not_found",
+            mcp::ServiceError::Conflict => "data_conflict",
+            mcp::ServiceError::InProgress => "data_in_progress",
+            mcp::ServiceError::Expired => "data_expired",
+            mcp::ServiceError::Unsupported => "data_unsupported",
+            mcp::ServiceError::Limit => "data_capacity",
+            _ => "data_unavailable",
+        },
+        "本地数据操作未完成，请根据原请求状态处理",
+    )
+}
+
 #[cfg(test)]
 mod selection_tests {
     use super::*;
@@ -1071,21 +1088,4 @@ mod selection_tests {
             .is_err());
         }
     }
-}
-
-fn data_error(error: mcp::ServiceError) -> ui::ServiceError {
-    ui::error(
-        match error {
-            mcp::ServiceError::InvalidInput => "data_invalid_input",
-            mcp::ServiceError::Denied => "data_denied",
-            mcp::ServiceError::NotFound => "data_not_found",
-            mcp::ServiceError::Conflict => "data_conflict",
-            mcp::ServiceError::InProgress => "data_in_progress",
-            mcp::ServiceError::Expired => "data_expired",
-            mcp::ServiceError::Unsupported => "data_unsupported",
-            mcp::ServiceError::Limit => "data_capacity",
-            _ => "data_unavailable",
-        },
-        "本地数据操作未完成，请根据原请求状态处理",
-    )
 }

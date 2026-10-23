@@ -487,22 +487,7 @@ impl<S: IdentityProvider> DeviceService<S> {
                 Err(error)
                     if matches!(command.request.as_operation(), Some(Request::Data { .. })) =>
                 {
-                    Reply::DataFailure {
-                        reason: match error {
-                            Error::Denied | Error::Identity | Error::Untrusted => {
-                                execution_contract::DataError::Denied
-                            }
-                            Error::Protocol | Error::Configuration => {
-                                execution_contract::DataError::InvalidInput
-                            }
-                            Error::NotFound => execution_contract::DataError::NotFound,
-                            Error::Conflict => execution_contract::DataError::Conflict,
-                            Error::Expired => execution_contract::DataError::Expired,
-                            Error::Unsupported => execution_contract::DataError::Unsupported,
-                            Error::Capacity => execution_contract::DataError::Capacity,
-                            _ => execution_contract::DataError::Unavailable,
-                        },
-                    }
+                    super::data::failure(error)
                 }
                 Err(error)
                     if operation_submit
@@ -690,7 +675,11 @@ impl<S: IdentityProvider> DeviceService<S> {
             {
                 return Err(Error::Identity);
             }
-            if self.core.host.revoked.load(Ordering::Acquire) || self.core.stopping {
+            // A device-only OS binding permits cached local reads while offline.
+            // Live Policy access and all submissions retain their independent identity gate.
+            if (self.core.host.revoked.load(Ordering::Acquire) && value.user().is_some())
+                || self.core.stopping
+            {
                 return Err(Error::Denied);
             }
             let key = peer_key(command)?;

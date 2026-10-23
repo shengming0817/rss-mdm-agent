@@ -59,7 +59,18 @@ fn domain(q: &w::NativeQueryDefinition) -> Option<&'static str> {
         WindowsCpu => "hardware.cpu",
         WindowsNetwork => "hardware.network",
         WindowsBattery => "hardware.battery",
-        MacosHardware { .. } => "hardware",
+        MacosHardware { section } => match section {
+            w::MacosHardwareSection::Identity => "hardware.identity",
+            w::MacosHardwareSection::Os => "hardware.os",
+            w::MacosHardwareSection::Cpu => "hardware.cpu",
+            w::MacosHardwareSection::Memory => "hardware.memory",
+            w::MacosHardwareSection::Firmware => "hardware.firmware",
+            w::MacosHardwareSection::Disks => "hardware.disks",
+            w::MacosHardwareSection::ApfsContainers => "hardware.containers",
+            w::MacosHardwareSection::Volumes => "hardware.volumes",
+            w::MacosHardwareSection::Network => "hardware.network",
+            w::MacosHardwareSection::Battery => "hardware.battery",
+        },
         WindowsPerformance { .. } | MacosPerformance { .. } => "performance",
         WindowsSoftware | MacosApplications { .. } => "software.installations",
         MacosPkgReceipts {} => "software.receipts",
@@ -78,7 +89,7 @@ fn domain(q: &w::NativeQueryDefinition) -> Option<&'static str> {
                 "Win32_ComputerSystemProduct" => ("hardware.identity", &["UUID"]),
                 "Win32_BIOS" => ("hardware.firmware", &["SerialNumber", "SMBIOSBIOSVersion"]),
                 "Win32_DiskDrive" => ("hardware.disks", &["DeviceID", "Model", "Size"]),
-                "Win32_OperatingSystem" => ("system.os", &["Caption", "Version", "BuildNumber"]),
+                "Win32_OperatingSystem" => ("hardware.os", &["Caption", "Version", "BuildNumber"]),
                 _ => return None,
             };
             if properties.keys().any(|k| !allowed.contains(&k.as_str())) {
@@ -104,7 +115,7 @@ fn domain(q: &w::NativeQueryDefinition) -> Option<&'static str> {
                     }
             }) =>
         {
-            "system.os"
+            "hardware.os"
         }
         // Generic registry/WMI and security recipes have no default local read grant.
         // A future mapping must name the exact typed properties and their access boundary.
@@ -117,6 +128,78 @@ fn subject(read: &ReadPlan) -> Option<&str> {
         _ => None,
     }
 }
+fn mapped_field(q: &w::NativeQueryDefinition, key: &str) -> Option<String> {
+    use w::NativeQueryDefinition::*;
+    let exact = match q {
+        WindowsWmi { class, .. } => match (class.as_str(), key) {
+            ("Win32_ComputerSystem", "Model") => "hardware.identity.model",
+            ("Win32_ComputerSystem", "Manufacturer") => "hardware.identity.manufacturer",
+            ("Win32_ComputerSystem", "TotalPhysicalMemory") => "hardware.memory.total_bytes",
+            ("Win32_ComputerSystemProduct", "UUID") => "hardware.identity.hardware_uuid",
+            ("Win32_BIOS", "SerialNumber") => "hardware.identity.serial",
+            ("Win32_BIOS", "SMBIOSBIOSVersion") => "hardware.firmware.version",
+            ("Win32_OperatingSystem", "Caption") => "hardware.os.name",
+            ("Win32_OperatingSystem", "Version") => "hardware.os.version",
+            ("Win32_OperatingSystem", "BuildNumber") => "hardware.os.build",
+            _ => return None,
+        },
+        WindowsRegistry { values, .. } => match values.get(key)?.name.as_str() {
+            "EditionID" => "hardware.os.edition",
+            "PROCESSOR_ARCHITECTURE" => "hardware.os.architecture",
+            _ => return None,
+        },
+        WindowsPerformance { section } | MacosPerformance { section } => {
+            return Some(format!(
+                "performance.{}.{}",
+                serde_json::to_value(section).ok()?.as_str()?,
+                key
+            ))
+        }
+        _ => return Some(format!("{}.{}", domain(q)?, key)),
+    };
+    Some(exact.into())
+}
+fn domains(query: &w::NativeQuery) -> Vec<String> {
+    if query.cardinality == w::NativeCardinality::List {
+        return domain(&query.definition)
+            .map(|d| vec![d.into()])
+            .unwrap_or_default();
+    }
+    query
+        .definition
+        .properties()
+        .keys()
+        .filter_map(|key| mapped_field(&query.definition, key))
+        .filter_map(|key| key.rsplit_once('.').map(|(domain, _)| domain.to_owned()))
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+fn mapped_row(
+    q: &w::NativeQueryDefinition,
+    row: &BTreeMap<String, Value>,
+) -> BTreeMap<String, Value> {
+    if matches!(q, w::NativeQueryDefinition::WindowsWmi { class, .. } if class == "Win32_DiskDrive")
+    {
+        return row
+            .iter()
+            .filter_map(|(key, value)| {
+                Some((
+                    match key.as_str() {
+                        "DeviceID" => "id",
+                        "Model" => "model",
+                        "Size" => "size_bytes",
+                        _ => return None,
+                    }
+                    .into(),
+                    value.clone(),
+                ))
+            })
+            .collect();
+    }
+    row.clone()
+}
+
 fn now() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -161,7 +244,7 @@ fn single(read: &ReadPlan, query: &w::NativeQuery) -> Result<ReadPlan, Error> {
         version: 1,
         scope: read.plan.spec().scope.clone(),
         queries: [("read".into(), query.clone())].into(),
-        budget: read.plan.spec().budget.clone(),
+        budget: read.plan.spec().budget,
     })?;
     Ok(result)
 }
@@ -178,6 +261,11 @@ impl Data {
         value: &std::sync::Arc<zeroize::Zeroizing<String>>,
     ) -> Result<(), Error> {
         self.redactor.protect_user_session(value)
+    }
+    pub fn history_limit(&self) -> usize {
+        (self.store.limits().0 / (128 * 1024))
+            .min(self.store.limits().1.saturating_sub(self.pinned.len()) / 4)
+            .clamp(1, 32)
     }
     pub fn pin(&mut self, query: &QueryRef) {
         self.pinned.insert(query.id.clone());
@@ -247,6 +335,15 @@ impl Data {
         let mut definitions = Vec::new();
         for (key, value) in self.scan("definition/")? {
             let d: Definition = decode(value)?;
+            if subject(&d.read).is_some_and(|owner| !visible(&d.read, owner)) {
+                self.pinned.remove(&d.descriptor.reference.id);
+                if !protected.contains(&d.descriptor.reference.id) {
+                    self.store.remove(&key)?;
+                    self.store
+                        .remove(&format!("latest/{}", d.descriptor.reference.id.as_str()))?;
+                }
+                continue;
+            }
             if !self.pinned.contains(&d.descriptor.reference.id)
                 && !protected.contains(&d.descriptor.reference.id)
             {
@@ -285,6 +382,45 @@ impl Data {
             if !active_inputs.contains(&request) {
                 self.forget_input(&request)?;
             }
+        }
+        // Counts alone do not bound schemas of different sizes. Reclaim unreferenced
+        // metadata by bytes too, while preserving current recipes and request identity.
+        let mut candidates = Vec::new();
+        let mut total = 0usize;
+        for prefix in ["definition/", "published/", "observed/"] {
+            for (key, value) in self.scan(prefix)? {
+                let bytes = serde_json::to_vec(&value)
+                    .map_err(|_| Error::Protocol)?
+                    .len();
+                total = total.saturating_add(bytes);
+                let id = key.strip_prefix(prefix).ok_or(Error::Protocol)?.to_owned();
+                let protected = protected.iter().any(|q| q.as_str() == id.as_str())
+                    || self.pinned.iter().any(|q| q.as_str() == id.as_str())
+                    || active_policies.contains(&id);
+                if !protected {
+                    candidates.push((
+                        key,
+                        value.get("seen_at").and_then(Value::as_u64).unwrap_or(0),
+                        bytes,
+                        id,
+                    ));
+                }
+            }
+        }
+        candidates.sort_by_key(|(_, at, _, _)| *at);
+        let records = self.store.limits().1;
+        // Reserve room for request identity, recovery input and results even with the
+        // smallest supported namespace. Current recipes and active work stay protected.
+        let target = records.saturating_sub((records / 4).max(8));
+        let mut count = self.store.records()?;
+        for (key, _, bytes, id) in candidates {
+            if total <= self.store.limits().0 / 2 && count <= target {
+                break;
+            }
+            self.store.remove(&key)?;
+            self.store.remove(&format!("latest/{id}"))?;
+            total = total.saturating_sub(bytes);
+            count = self.store.records()?;
         }
         Ok(())
     }
@@ -365,6 +501,7 @@ impl Data {
             reference: reference.clone(),
             title: c.policy.to_string(),
             kind: QueryKind::Telemetry,
+            domains: Vec::new(),
             input_schema: json!({"type":"object","properties":{},"additionalProperties":false}),
             policy: None,
             scope: DataScope::Device,
@@ -466,6 +603,7 @@ impl Data {
             reference,
             title,
             kind: QueryKind::Policy,
+            domains: Vec::new(),
             input_schema,
             policy,
             scope: DataScope::User {
@@ -558,7 +696,7 @@ impl Data {
         spec.budget.output_bytes = spec.budget.output_bytes.min(2 * 1024 * 1024);
         spec.budget.max_rows = spec.budget.max_rows.min(4096);
         for q in spec.queries.values_mut() {
-            q.budget = spec.budget.clone();
+            q.budget = spec.budget;
         }
         read.plan = w::NativeCollectionPlan::new(spec)?;
         let reference = QueryRef {
@@ -585,6 +723,14 @@ impl Data {
                         .definition,
                 ),
                 kind: QueryKind::Native,
+                domains: domains(
+                    read.plan
+                        .spec()
+                        .queries
+                        .values()
+                        .next()
+                        .ok_or(Error::Protocol)?,
+                ),
                 input_schema: json!({"type":"object","properties":{},"additionalProperties":false}),
                 policy: None,
                 scope: match subject(&read) {
@@ -776,9 +922,12 @@ impl Data {
                     match result.status {
                         w::NativeQueryStatus::Truncated => DataQuality::Truncated,
                         w::NativeQueryStatus::Denied => DataQuality::Denied,
-                        w::NativeQueryStatus::Failed | w::NativeQueryStatus::Invalid => {
-                            DataQuality::Failed
-                        }
+                        w::NativeQueryStatus::Missing => DataQuality::Missing,
+                        w::NativeQueryStatus::Unsupported => DataQuality::Unsupported,
+                        w::NativeQueryStatus::Failed
+                        | w::NativeQueryStatus::Invalid
+                        | w::NativeQueryStatus::Timeout
+                        | w::NativeQueryStatus::Complete => DataQuality::Failed,
                         _ => DataQuality::Partial,
                     }
                 };
@@ -788,33 +937,23 @@ impl Data {
                             && result.rows.len() == 1
                             && q.cardinality == w::NativeCardinality::ExactlyOne
                         {
-                            let family = match &q.definition {
-                                w::NativeQueryDefinition::MacosHardware { section } => format!(
-                                    "hardware.{}",
-                                    serde_json::to_value(section)
-                                        .map_err(|_| Error::Protocol)?
-                                        .as_str()
-                                        .ok_or(Error::Protocol)?
-                                ),
-                                w::NativeQueryDefinition::WindowsPerformance { section }
-                                | w::NativeQueryDefinition::MacosPerformance { section } => {
-                                    format!(
-                                        "performance.{}",
-                                        serde_json::to_value(section)
-                                            .map_err(|_| Error::Protocol)?
-                                            .as_str()
-                                            .ok_or(Error::Protocol)?
-                                    )
-                                }
-                                _ => kind.into(),
-                            };
                             for (key, field) in &result.rows[0] {
-                                value
-                                    .fields
-                                    .insert(format!("{family}.{key}"), field.clone());
+                                if let Some(key) = mapped_field(&q.definition, key) {
+                                    value.fields.insert(key, field.clone());
+                                }
                             }
                         }
-                        value.rows = result.rows.iter().map(|row| json!({"source": source, "domain": kind, "definition": q.definition, "values": row})).collect();
+                        let schema = q.definition.properties();
+                        value.rows=result.rows.iter().filter(|row| row.keys().eq(schema.keys()) && schema.iter().all(|(key,kind)| row.get(key).is_some_and(|value| kind.accepts(value))) && q.definition.accepts_row(row))
+                            .map(|row| json!({"source":source,"domain":kind,"definition":q.definition,"values":mapped_row(&q.definition,row)})).collect();
+                        if value.rows.len() != result.rows.len() {
+                            value.enumeration_complete = false;
+                            value.quality = if value.rows.is_empty() {
+                                DataQuality::Failed
+                            } else {
+                                DataQuality::Partial
+                            };
+                        }
                     } else {
                         value.quality = DataQuality::Denied;
                         value.enumeration_complete = false;

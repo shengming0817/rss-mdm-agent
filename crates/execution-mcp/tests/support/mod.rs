@@ -149,6 +149,7 @@ impl ExecutionServicePort for TestService {
                     reference: query,
                     title: "Explicit query fixture".into(),
                     kind: QueryKind::Native,
+                    domains: vec!["fixture".into()],
                     scope: DataScope::Device,
                     input_schema: serde_json::json!({"type":"object","properties":{},"additionalProperties":false}),
                     policy: None,

@@ -18,7 +18,7 @@ fn read_plan() -> ReadPlan {
         definition,
         cardinality: w::NativeCardinality::ExactlyOne,
         instance_keys: vec![],
-        budget: budget.clone(),
+        budget,
     };
     let plan = w::NativeCollectionPlan::new(w::NativePlanSpec {
         version: 1,
@@ -426,5 +426,125 @@ async fn telemetry_ack_removes_delivery_but_preserves_the_normalized_local_proje
             (at / 1_000_000) as u64,
         )
         .unwrap();
-    assert_eq!(result.fields["custom.load"]["value"], json!(17));
+    assert_eq!(
+        result.fields["custom.load"]["value"],
+        json!({"kind":"integer","value":17})
+    );
+}
+
+#[tokio::test]
+async fn declared_domains_and_windows_fields_match_the_same_local_display_contract() {
+    let _budget = crate::scenario_budget::enter();
+    let server = Server::new().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    let mut data = Data::new(
+        client.collected_store().unwrap(),
+        client.output_policy().unwrap(),
+    );
+    // Pure wire/mapper validation on this host; this is not Windows execution evidence.
+    data.install_platform(Platform::Windows).unwrap();
+    let entries = data.directory("501").unwrap();
+    assert!(entries
+        .iter()
+        .any(|q| q.domains.iter().any(|d| d == "hardware.os")));
+    let memory = entries
+        .iter()
+        .find(|q| q.domains.iter().any(|d| d == "hardware.memory"))
+        .unwrap();
+    let read = data.definition(&memory.reference, "501").unwrap().read;
+    let q = &read.plan.spec().queries.values().next().unwrap().definition;
+    assert_eq!(
+        mapped_field(q, "TotalPhysicalMemory").as_deref(),
+        Some("hardware.memory.total_bytes")
+    );
+    let disk = w::NativeQueryDefinition::WindowsWmi {
+        namespace: r"root\cimv2".into(),
+        class: "Win32_DiskDrive".into(),
+        properties: Default::default(),
+        filter: None,
+    };
+    assert_eq!(
+        mapped_row(
+            &disk,
+            &[
+                ("DeviceID".into(), json!("disk0")),
+                ("Model".into(), json!("native")),
+                ("Size".into(), json!("1024"))
+            ]
+            .into()
+        ),
+        [
+            ("id".into(), json!("disk0")),
+            ("model".into(), json!("native")),
+            ("size_bytes".into(), json!("1024"))
+        ]
+        .into()
+    );
+}
+
+#[tokio::test]
+async fn minimum_record_quota_reclaims_metadata_and_reserves_new_query_capacity() {
+    let _budget = crate::scenario_budget::enter();
+    let server = Server::new().await;
+    let root = Root::new();
+    let mut config = server.config();
+    config.limits.pending_tasks = 1;
+    let mut client = agent_client::Client::open(
+        &root.path,
+        config,
+        OpenMode::Create,
+        server.secrets.clone(),
+        server.time.clone(),
+    )
+    .unwrap();
+    server.register(&mut client).await;
+    let mut data = Data::new(
+        client.collected_store().unwrap(),
+        client.output_policy().unwrap(),
+    );
+    data.install_platform(Platform::Macos).unwrap();
+    assert_eq!(data.store.limits().1, 32);
+    let context = NativeContextRef {
+        id: id("context"),
+        generation: id("generation"),
+    };
+    let session = id("login/1");
+    let contexts = [("501".into(), session.clone(), context.clone())];
+    for n in 0..80 {
+        data.maintain(&contexts, &Default::default(), &Default::default())
+            .unwrap();
+        let mut item = published_item();
+        item.policy_id = uuid::Uuid::from_u128(n + 1);
+        data.publish(item, "501", &session, &context).unwrap();
+    }
+    data.maintain(&contexts, &Default::default(), &Default::default())
+        .unwrap();
+    assert!(data.store.records().unwrap() <= 24);
+    assert!(data.history_limit() <= 4);
+    let query = data.directory("501").unwrap()[0].reference.clone();
+    let request = RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap();
+    let association = Association {
+        query,
+        subject: "501".into(),
+        session,
+        parameters: digest(&json!({})).unwrap(),
+        kind: QueryKind::Native,
+        created_at: 100,
+        origin: digest(&json!("desktop")).unwrap(),
+    };
+    data.store
+        .write(
+            &format!("request/{}", request.as_str()),
+            &encode(&association).unwrap(),
+        )
+        .unwrap();
+    data.remember(&request, read_plan()).unwrap();
+    data.maintain(&contexts, &[request.clone()].into(), &Default::default())
+        .unwrap();
+    assert!(data.remembered(&request).unwrap().is_some());
+    assert!(data
+        .association(&request, "501", &association.session)
+        .is_ok());
 }

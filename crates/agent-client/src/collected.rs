@@ -53,6 +53,20 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
     }
 }
 impl CollectedStore {
+    /// Existing total projection quotas, for bounded owner-side metadata retention.
+    pub fn limits(&self) -> (usize, usize) {
+        (self.bytes, self.records)
+    }
+
+    /// Count records within this registration projection namespace.
+    pub fn records(&self) -> Result<usize, Error> {
+        Ok(self.conn.query_row(
+            "SELECT count(*) FROM state WHERE substr(key,1,length(?1))=?1",
+            [&self.namespace],
+            |r| r.get(0),
+        )?)
+    }
+
     fn key(&self, key: &str) -> Result<String, Error> {
         if key.is_empty()
             || key.len() > 256

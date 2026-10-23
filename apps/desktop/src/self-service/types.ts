@@ -471,6 +471,7 @@ export type DataSelection =
  */
 export type DataQuality =
   | "complete"
+  | "missing"
   | "partial"
   | "truncated"
   | "failed"
@@ -1845,6 +1846,10 @@ export interface QueryDescriptor {
    * Whether a new invocation is currently available.
    */
   available: boolean;
+  /**
+   * Stable service-owned projection domains, independent of display title or producer labels.
+   */
+  domains: string[];
   /**
    * Complete safe caller input schema; native recipes have no parameters.
    */

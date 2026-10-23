@@ -238,10 +238,19 @@ export async function connectExecution(
           {},
           { signal: b.signal, timeout: b.timeoutMs },
         );
-        return ok([
-          ...catalog.tools.filter((t) => t.name !== "execution_policy_tools"),
-          ...body.result,
-        ]);
+        // Providers consume invocation interfaces. MCP retains its result validators;
+        // duplicating output schemas in every worker catalog exceeds transport budgets.
+        return ok(
+          [
+            ...catalog.tools.filter((t) => t.name !== "execution_policy_tools"),
+            ...body.result,
+          ].map(({ name, description, inputSchema, annotations }) => ({
+            name,
+            description,
+            inputSchema,
+            annotations,
+          })),
+        );
       } catch {
         console.error(`RSS_POLICY_DISCOVERY_UNAVAILABLE stage=${stage}`);
         return fail("unavailable");

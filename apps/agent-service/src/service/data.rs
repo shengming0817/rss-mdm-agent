@@ -5,6 +5,66 @@ use execution_contract::*;
 use execution_ipc::host::{ClientOrigin, Reply, Request};
 
 impl Core {
+    pub(super) fn local_data(
+        &mut self,
+        command: &Command,
+        context: &NativeContextRef,
+        origin: &ClientOrigin,
+        input: &DataOperation,
+    ) -> Result<Reply, Error> {
+        self.data_context(command, context)?;
+        if matches!(origin, ClientOrigin::Ai { context: ai, .. } if ai != context) {
+            return Err(Error::Identity);
+        }
+        let binding = command.binding.as_ref().ok_or(Error::Denied)?;
+        let value = match input {
+            DataOperation::Read(read) => {
+                let policy = match &read.selection {
+                    DataSelection::Query { query } => query.id.as_str().starts_with("policy:"),
+                    DataSelection::Request { request } => {
+                        self.data
+                            .association(request, &command.subject, binding)?
+                            .kind
+                            == QueryKind::Policy
+                    }
+                };
+                if policy {
+                    self.context(command)?;
+                }
+                self.data
+                    .authorize_read(read, &command.subject, binding, context)?;
+                Ok(DataResponse::Read(self.data.read(
+                    read,
+                    &command.subject,
+                    binding,
+                    self.host.clock.millis()? / 1000,
+                )?))
+            }
+            DataOperation::Directory(query) if !query.refresh_policies => {
+                self.maintain_data()?;
+                let items = self.local_directory(command)?;
+                Ok(DataResponse::Directory(directory_page(items, query)?))
+            }
+            _ => Err(Error::Protocol),
+        }?;
+        Ok(Reply::Data { value })
+    }
+    fn local_directory(&mut self, command: &Command) -> Result<Vec<QueryDescriptor>, Error> {
+        self.data.install_local()?;
+        self.data.install_user(
+            &command.subject,
+            login_binding_id(command.binding.as_ref().ok_or(Error::Denied)?),
+        )?;
+        let mut items = self.data.directory(&command.subject)?;
+        if !self.host.identity_ready() {
+            for item in &mut items {
+                item.available = false;
+                item.reason = Some(DataQuality::Expired);
+            }
+        }
+        Ok(items)
+    }
+
     pub(crate) fn periodic_data(
         &mut self,
         c: &wire::TelemetryConfiguration,
@@ -54,16 +114,14 @@ impl Core {
                     .app
                     .status(&self.caller(), &request)
                     .map_err(map_app_error)?;
-                if (status.process.is_some() && !self.data.captured(&request)?)
-                    || !matches!(
-                        status.phase,
-                        execution_app::TaskPhase::Cancelled
-                            | execution_app::TaskPhase::AdmissionDenied
-                            | execution_app::TaskPhase::FailedBeforeDispatch
-                            | execution_app::TaskPhase::ExecutionEnded
-                            | execution_app::TaskPhase::Verified
-                    )
-                {
+                if !matches!(
+                    status.phase,
+                    execution_app::TaskPhase::Cancelled
+                        | execution_app::TaskPhase::AdmissionDenied
+                        | execution_app::TaskPhase::FailedBeforeDispatch
+                        | execution_app::TaskPhase::ExecutionEnded
+                        | execution_app::TaskPhase::Verified
+                ) {
                     active.insert(request);
                 }
             }
@@ -206,11 +264,16 @@ impl<S: IdentityProvider> DeviceService<S> {
         input: &DataOperation,
         commands: &mut tokio::sync::mpsc::Receiver<Command>,
     ) -> Result<Reply, Error> {
+        if is_local(input) {
+            return self.core.local_data(command, context, origin, input);
+        }
         let binding = command.binding.as_ref().ok_or(Error::Denied)?;
         // Native context binds the local login. Cached device facts remain readable offline;
         // Policy operations below still use the stricter live enterprise context gate.
         let bound = self.core.data_context(command, context)?.clone();
-        self.core.maintain_data()?;
+        if matches!(input, DataOperation::Directory(_)) {
+            self.core.maintain_data()?;
+        }
         if let ClientOrigin::Ai { context: ai, .. } = origin {
             if ai != context {
                 return Err(Error::Identity);
@@ -221,11 +284,7 @@ impl<S: IdentityProvider> DeviceService<S> {
                 if !(1..=128).contains(&query.limit) {
                     return Err(Error::Capacity);
                 }
-                self.core.data.install_local()?;
-                self.core
-                    .data
-                    .install_user(&command.subject, login_binding_id(binding))?;
-                let mut items = self.core.data.directory(&command.subject)?;
+                let mut items = self.core.local_directory(command)?;
                 // Directory discovery carries no invocation authority. A failed refresh still
                 // permits local native reads; cached Policy availability is never asserted.
                 let mut after = None;
@@ -239,6 +298,7 @@ impl<S: IdentityProvider> DeviceService<S> {
                     };
                     for item in page.items {
                         if matches!(item.task, wire::SelfServiceTask::Script { .. }) {
+                            self.core.maintain_data()?;
                             items.push(self.core.data.publish(
                                 item,
                                 &command.subject,
@@ -256,49 +316,17 @@ impl<S: IdentityProvider> DeviceService<S> {
                         break;
                     }
                 }
-                items.sort_by(|a, b| a.reference.id.cmp(&b.reference.id));
-                items.retain(|d| query.after.as_ref().is_none_or(|a| d.reference.id > *a));
-                let next = (items.len() > query.limit as usize)
-                    .then(|| items[query.limit as usize - 1].reference.id.clone());
-                items.truncate(query.limit as usize);
-                let mut page = QueryPage { items, next };
-                while serde_json::to_vec(&page)
-                    .map_err(|_| Error::Protocol)?
-                    .len()
-                    > 48 * 1024
-                {
-                    page.items.pop();
-                    let Some(last) = page.items.last() else {
-                        return Err(Error::Capacity);
-                    };
-                    page.next = Some(last.reference.id.clone());
-                }
-                DataResponse::Directory(page)
-            }
-            DataOperation::Read(read) => {
-                let policy = match &read.selection {
-                    DataSelection::Query { query } => query.id.as_str().starts_with("policy:"),
-                    DataSelection::Request { request } => {
-                        self.core
+                items.retain(|item| {
+                    item.kind != QueryKind::Policy
+                        || self
+                            .core
                             .data
-                            .association(request, &command.subject, binding)?
-                            .kind
-                            == QueryKind::Policy
-                    }
-                };
-                if policy {
-                    self.core.context(command)?;
-                }
-                self.core
-                    .data
-                    .authorize_read(read, &command.subject, binding, context)?;
-                DataResponse::Read(self.core.data.read(
-                    read,
-                    &command.subject,
-                    binding,
-                    self.core.host.clock.millis()? / 1000,
-                )?)
+                            .published(&item.reference, &command.subject, binding, context)
+                            .is_ok_and(|published| published.is_some())
+                });
+                DataResponse::Directory(directory_page(items, query)?)
             }
+            DataOperation::Read(_) => return Err(Error::Protocol),
             DataOperation::Submit(submit) => {
                 let parsed =
                     uuid::Uuid::parse_str(submit.request.as_str()).map_err(|_| Error::Protocol)?;
@@ -311,7 +339,7 @@ impl<S: IdentityProvider> DeviceService<S> {
                 let history = self.core.data.history()?;
                 let mut retained = history.len();
                 for (old, _) in history {
-                    if retained < 32 {
+                    if retained < self.core.data.history_limit() {
                         break;
                     }
                     if old == submit.request {
@@ -655,4 +683,53 @@ fn policy_status(reply: Reply, a: &Association, request: &RequestId) -> Result<Q
             revision: p.revision,
         }),
     })
+}
+
+pub(super) fn is_local(input: &DataOperation) -> bool {
+    matches!(
+        input,
+        DataOperation::Read(_)
+            | DataOperation::Directory(QueryDirectory {
+                refresh_policies: false,
+                ..
+            })
+    )
+}
+pub(super) fn failure(error: Error) -> Reply {
+    Reply::DataFailure {
+        reason: match error {
+            Error::Denied | Error::Identity | Error::Untrusted => DataError::Denied,
+            Error::Protocol | Error::Configuration => DataError::InvalidInput,
+            Error::NotFound => DataError::NotFound,
+            Error::Conflict => DataError::Conflict,
+            Error::Expired => DataError::Expired,
+            Error::Unsupported => DataError::Unsupported,
+            Error::Capacity => DataError::Capacity,
+            _ => DataError::Unavailable,
+        },
+    }
+}
+fn directory_page(
+    mut items: Vec<QueryDescriptor>,
+    query: &QueryDirectory,
+) -> Result<QueryPage, Error> {
+    if !(1..=128).contains(&query.limit) {
+        return Err(Error::Capacity);
+    }
+    items.sort_by(|a, b| a.reference.id.cmp(&b.reference.id));
+    items.retain(|d| query.after.as_ref().is_none_or(|a| d.reference.id > *a));
+    let next = (items.len() > query.limit as usize)
+        .then(|| items[query.limit as usize - 1].reference.id.clone());
+    items.truncate(query.limit as usize);
+    let mut page = QueryPage { items, next };
+    while serde_json::to_vec(&page)
+        .map_err(|_| Error::Protocol)?
+        .len()
+        > 48 * 1024
+    {
+        page.items.pop();
+        let last = page.items.last().ok_or(Error::Capacity)?;
+        page.next = Some(last.reference.id.clone());
+    }
+    Ok(page)
 }

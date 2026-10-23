@@ -49,6 +49,8 @@ pub struct QueryDescriptor {
     pub kind: QueryKind,
     /// Required local read boundary.
     pub scope: DataScope,
+    /// Stable service-owned projection domains, independent of display title or producer labels.
+    pub domains: Vec<String>,
     /// Complete safe caller input schema; native recipes have no parameters.
     pub input_schema: Value,
     /// Exact original published Policy, when applicable.
@@ -97,6 +99,8 @@ pub struct QueryPage {
 pub enum DataQuality {
     /// Complete validated observation.
     Complete,
+    /// The collector reported absence for this source; distinct from never collected.
+    Missing,
     /// Some data or sources are missing.
     Partial,
     /// A declared output budget was reached.

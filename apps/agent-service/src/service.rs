@@ -1312,6 +1312,20 @@ impl Core {
             eprintln!("agent_identity_gate: {error}");
         }
         use execution_ipc::host::{Reply, Request};
+        if let Some(Request::Data {
+            context,
+            origin,
+            input,
+        }) = command.request.as_operation()
+        {
+            if data::is_local(input) {
+                let reply = self
+                    .local_data(&command, context, origin, input)
+                    .unwrap_or_else(data::failure);
+                let _ = command.reply.send(reply);
+                return;
+            }
+        }
         if matches!(
             command.request.as_operation(),
             Some(
