@@ -123,3 +123,17 @@ mod observation_tests {
         ));
     }
 }
+
+/// Whether a fixed candidate has native forward-version semantics already supported by this runner.
+/// Source managers still repeat their own guard during Prepare/Upgrade; this is not dispatch authority.
+/// Unknown ecosystem ordering and explicit downgrade permissions are never advertised as updates.
+pub fn forward_update(step: &execution_contract::SoftwareProgramStep, installed: &str) -> bool {
+    !step.allow_downgrade
+        && installed != step.version.as_str()
+        && execution_contract::PackageValue::new(installed).is_ok_and(|version| {
+            native_detection::not_downgrade(
+                step,
+                &execution_contract::SoftwareState::Present { version },
+            )
+        })
+}

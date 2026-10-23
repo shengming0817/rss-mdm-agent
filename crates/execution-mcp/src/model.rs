@@ -221,3 +221,15 @@ pub struct LocalSoftwareResult {
     /// Projection of the sole execution journal.
     pub operation: OperationStatus,
 }
+
+/// Invoke an exact tool discovered on a later Policy page without hiding pages in an automatic scan.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PolicyToolCall {
+    /// Exact discovered tool name.
+    pub tool: String,
+    /// Actual discovery page, independently revalidated.
+    pub locator: execution_contract::PolicyLocator,
+    /// Only the original Resource-owned input fields.
+    pub parameters: serde_json::Map<String, serde_json::Value>,
+}

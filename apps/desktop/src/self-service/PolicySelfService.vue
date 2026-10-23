@@ -15,7 +15,8 @@ const props = withDefaults(
   defineProps<{
     port: SelfServicePort | null;
     records: BackendRequest[];
-    kind?: "enrollment";
+    kind?: "enrollment" | "software";
+    filter?: string;
     allowNewRequests?: boolean;
     allowConfirm?: boolean;
   }>(),
@@ -30,6 +31,26 @@ watch(
       choice.value = undefined;
     }
   },
+);
+const category = ref("");
+const categories = computed(() => [
+  ...new Set(
+    directory.value.flatMap((i) =>
+      typeof i.selfService.presentation.category === "string"
+        ? [i.selfService.presentation.category]
+        : [],
+    ),
+  ),
+]);
+const visibleDirectory = computed(() =>
+  directory.value.filter(
+    (i) =>
+      (!category.value ||
+        i.selfService.presentation.category === category.value) &&
+      `${i.selfService.presentation.displayName ?? ""} ${i.selfService.presentation.description ?? ""} ${i.policyId}`
+        .toLocaleLowerCase()
+        .includes((props.filter ?? "").trim().toLocaleLowerCase()),
+  ),
 );
 const directory = ref<SelfServiceDirectoryItem[]>([]),
   selected = ref<SelfServiceDirectoryItem>(),
@@ -115,8 +136,12 @@ const nextCursor = ref<string | null>(null);
 const directoryComplete = ref(false);
 const locators = new Map<string, string | null>();
 const visited = new Set<string>();
-async function refresh() { await loadDirectory(false); }
-async function loadMore() { await loadDirectory(true); }
+async function refresh() {
+  await loadDirectory(false);
+}
+async function loadMore() {
+  await loadDirectory(true);
+}
 async function loadDirectory(append: boolean) {
   if (!props.port || busy.value || (append && !nextCursor.value)) return;
   if (!append) {
@@ -124,8 +149,12 @@ async function loadDirectory(append: boolean) {
     directory.value = [];
     nextCursor.value = null;
     directoryComplete.value = false;
-    locators.clear(); visited.clear();
-    if (!request.value) { selected.value = undefined; choice.value = undefined; }
+    locators.clear();
+    visited.clear();
+    if (!request.value) {
+      selected.value = undefined;
+      choice.value = undefined;
+    }
   }
   busy.value = true;
   const current = epoch;
@@ -134,25 +163,41 @@ async function loadDirectory(append: boolean) {
     if (visited.size >= 2048) throw new Error("capacity");
     const value = await props.port.policy_directory({ after });
     if (current !== epoch) return;
-    if (value.nextCursor && (value.nextCursor === after || visited.has(value.nextCursor))) throw new Error("cursor");
+    if (
+      value.nextCursor &&
+      (value.nextCursor === after || visited.has(value.nextCursor))
+    )
+      throw new Error("cursor");
     if (after) visited.add(after);
-    const items = value.items.filter((item) => props.kind ? item.task.kind === props.kind : item.task.kind !== "enrollment");
+    const items = value.items.filter((item) =>
+      props.kind
+        ? item.task.kind === props.kind
+        : item.task.kind !== "enrollment",
+    );
     for (const item of items) locators.set(item.policyId, after);
-    const merged = new Map(directory.value.map((item) => [item.policyId, item]));
+    const merged = new Map(
+      directory.value.map((item) => [item.policyId, item]),
+    );
     for (const item of items) merged.set(item.policyId, item);
     directory.value = [...merged.values()].slice(-1024);
     const retained = new Set(directory.value.map((item) => item.policyId));
-    for (const id of locators.keys()) if (!retained.has(id) && id !== selected.value?.policyId) locators.delete(id);
+    for (const id of locators.keys())
+      if (!retained.has(id) && id !== selected.value?.policyId)
+        locators.delete(id);
     nextCursor.value = value.nextCursor;
     directoryComplete.value = !value.nextCursor;
     error.value = "";
   } catch {
-    if (current === epoch) error.value = "目录读取未完成；已加载条目保留，可重试本页。刷新可重新开始发现。";
+    if (current === epoch)
+      error.value =
+        "目录读取未完成；已加载条目保留，可重试本页。刷新可重新开始发现。";
   } finally {
     if (current === epoch) busy.value = false;
   }
 }
-onBeforeUnmount(() => { ++epoch; });
+onBeforeUnmount(() => {
+  ++epoch;
+});
 function select(item: SelfServiceDirectoryItem) {
   if (request.value || props.allowNewRequests === false) return;
   selected.value = item;
@@ -259,7 +304,10 @@ async function invoke() {
   busy.value = true;
   const current = epoch;
   try {
-    const value = await props.port.policy_invoke({ choice: choice.value, locator: { after: locators.get(choice.value.policyId) ?? null } });
+    const value = await props.port.policy_invoke({
+      choice: choice.value,
+      locator: { after: locators.get(choice.value.policyId) ?? null },
+    });
     if (current !== epoch) return;
     status.value = { kind: "preparation", value };
     emit("changed");
@@ -330,9 +378,29 @@ function presentationText(value: unknown, fallback = "未提供"): string {
       <h3>{{ kind === "enrollment" ? "MDM 注册" : "企业自助任务" }}</h3>
       <button :disabled="busy" @click="refresh">刷新任务</button>
     </div>
-    <p role="status">当前加载 {{ directory.length }} 条；{{ directoryComplete ? "目录已读取完毕" : "目录尚未完整，搜索与计数仅覆盖当前加载范围" }}。</p>
-    <button v-if="nextCursor" :disabled="busy" @click="loadMore">继续加载</button>
-    <button v-if="error && !nextCursor" :disabled="busy" @click="refresh">重试读取</button>
+    <label v-if="kind === 'software'"
+      >发布分类
+      <select v-model="category">
+        <option value="">全部发布分类</option>
+        <option v-for="name in categories" :key="name">{{ name }}</option>
+      </select></label
+    >
+    <p v-if="kind === 'software'">
+      企业发布目标与本机安装记录独立显示。当前发布接口未提供可核实的安装关联时，关联状态为未知。
+    </p>
+    <p role="status">
+      当前加载 {{ directory.length }} 条；{{
+        directoryComplete
+          ? "目录已读取完毕"
+          : "目录尚未完整，搜索与计数仅覆盖当前加载范围"
+      }}。
+    </p>
+    <button v-if="nextCursor" :disabled="busy" @click="loadMore">
+      继续加载
+    </button>
+    <button v-if="error && !nextCursor" :disabled="busy" @click="refresh">
+      重试读取
+    </button>
     <p v-if="error" role="status">{{ error }}</p>
     <p
       v-if="
@@ -351,7 +419,7 @@ function presentationText(value: unknown, fallback = "未提供"): string {
     </p>
     <div class="catalog-grid" v-if="allowNewRequests !== false">
       <article
-        v-for="item in directory"
+        v-for="item in visibleDirectory"
         :key="item.policyId"
         class="resource-card"
       >

@@ -100,6 +100,7 @@ fn main() {
             "query_status",
             "query_cancel",
             "self_service_observe_software",
+            "software_history",
             "software_read",
             "software_prepare",
             "software_submit",

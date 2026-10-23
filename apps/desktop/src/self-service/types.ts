@@ -1112,34 +1112,35 @@ export type InstalledSoftwareKind =
   | "homebrew";
 
 export interface SelfServiceCommands {
-  ai_operation_submit: Command12;
-  appearance_snapshot: Command18;
-  data_read: Command6;
-  device_overview: Command19;
-  query_cancel: Command8;
-  query_directory: Command5;
-  query_status: Command8;
-  query_submit: Command7;
-  self_service_cancel: Command17;
-  self_service_confirm: Command16;
-  self_service_execute: Command16;
-  self_service_observe_software: Command9;
-  self_service_policy_confirm: Command13;
-  self_service_policy_directory: Command10;
-  self_service_policy_invoke: Command11;
-  self_service_policy_status: Command14;
-  self_service_snapshot: Command15;
+  ai_operation_submit: Command13;
+  appearance_snapshot: Command19;
+  data_read: Command7;
+  device_overview: Command20;
+  query_cancel: Command9;
+  query_directory: Command6;
+  query_status: Command9;
+  query_submit: Command8;
+  self_service_cancel: Command18;
+  self_service_confirm: Command17;
+  self_service_execute: Command17;
+  self_service_observe_software: Command10;
+  self_service_policy_confirm: Command14;
+  self_service_policy_directory: Command11;
+  self_service_policy_invoke: Command12;
+  self_service_policy_status: Command15;
+  self_service_snapshot: Command16;
   software_cancel: Command3;
+  software_history: Command4;
   software_prepare: Command;
-  software_read: Command4;
+  software_read: Command5;
   software_status: Command3;
   software_submit: Command2;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command12".
+ * via the `definition` "Command13".
  */
-export interface Command12 {
+export interface Command13 {
   input: PolicySubmission;
   output: BackendRequest;
 }
@@ -1608,9 +1609,9 @@ export interface VersionedRef {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command18".
+ * via the `definition` "Command19".
  */
-export interface Command18 {
+export interface Command19 {
   input: null;
   output: AppearanceSnapshot;
 }
@@ -1625,9 +1626,9 @@ export interface AppearanceSnapshot {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command6".
+ * via the `definition` "Command7".
  */
-export interface Command6 {
+export interface Command7 {
   input: DataRead;
   output: CollectedData;
 }
@@ -1743,9 +1744,9 @@ export interface CollectedData {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command19".
+ * via the `definition` "Command20".
  */
-export interface Command19 {
+export interface Command20 {
   input: null;
   output: DeviceOverview;
 }
@@ -1784,9 +1785,9 @@ export interface DeviceAttributes {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command8".
+ * via the `definition` "Command9".
  */
-export interface Command8 {
+export interface Command9 {
   input: QueryRequest;
   output: QueryStatus;
 }
@@ -1848,9 +1849,9 @@ export interface QueryPreparationRef {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command5".
+ * via the `definition` "Command6".
  */
-export interface Command5 {
+export interface Command6 {
   input: QueryDirectory;
   output: QueryPage;
 }
@@ -1964,9 +1965,9 @@ export interface PublishedQuery {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command7".
+ * via the `definition` "Command8".
  */
-export interface Command7 {
+export interface Command8 {
   input: QuerySubmit;
   output: QueryStatus;
 }
@@ -1994,9 +1995,9 @@ export interface QuerySubmit {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command17".
+ * via the `definition` "Command18".
  */
-export interface Command17 {
+export interface Command18 {
   input: ActionRef;
   output: BackendTaskView;
 }
@@ -2354,9 +2355,9 @@ export interface ProcessSummary {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command16".
+ * via the `definition` "Command17".
  */
-export interface Command16 {
+export interface Command17 {
   input: BackendSelection;
   output: TaskSubmission;
 }
@@ -2378,25 +2379,25 @@ export interface TaskSubmission {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command9".
+ * via the `definition` "Command10".
  */
-export interface Command9 {
+export interface Command10 {
   input: SoftwareReadChoice;
   output: BackendRequest;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command13".
+ * via the `definition` "Command14".
  */
-export interface Command13 {
+export interface Command14 {
   input: ActionRef;
   output: BackendRequest;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command10".
+ * via the `definition` "Command11".
  */
-export interface Command10 {
+export interface Command11 {
   input: PolicyDirectoryQuery;
   output: SelfServiceDirectoryResponse;
 }
@@ -2429,9 +2430,9 @@ export interface SelfServiceDirectoryResponse {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command11".
+ * via the `definition` "Command12".
  */
-export interface Command11 {
+export interface Command12 {
   input: PolicyInvocation;
   output: BackendRequest;
 }
@@ -2453,9 +2454,9 @@ export interface PolicyInvocation {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command14".
+ * via the `definition` "Command15".
  */
-export interface Command14 {
+export interface Command15 {
   input: ActionRef;
   output: PolicyStatus;
 }
@@ -2602,9 +2603,9 @@ export interface TaskRunState {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command15".
+ * via the `definition` "Command16".
  */
-export interface Command15 {
+export interface Command16 {
   input: SnapshotQuery;
   output: Snapshot;
 }
@@ -2643,6 +2644,10 @@ export interface Command3 {
  */
 export interface LocalSoftwareStatus {
   /**
+   * Independently observed native state from the retained fixed-worker result; absent means unknown.
+   */
+  detected: SoftwareState | null;
+  /**
    * Existing lifecycle facts, with no parallel software state machine.
    */
   execution: ExecutionStatus;
@@ -2670,6 +2675,10 @@ export interface LocalSoftwarePrepared {
    * Effective physical account class.
    */
   identity: BackendIdentity;
+  /**
+   * Original authenticated source, preserved across human confirmation.
+   */
+  initiator: Initiator;
   /**
    * Safe software name.
    */
@@ -2729,6 +2738,46 @@ export interface SoftwareRef {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "Command4".
+ */
+export interface Command4 {
+  input: SoftwareHistoryQuery;
+  output: LocalSoftwareHistory;
+}
+/**
+ * Bounded history of local software intents in the existing execution journal.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "SoftwareHistoryQuery".
+ */
+export interface SoftwareHistoryQuery {
+  /**
+   * Exclusive journal continuation.
+   */
+  after: RequestId | null;
+  /**
+   * One through 128 records.
+   */
+  limit: number;
+}
+/**
+ * Authorized local software records from the sole execution journal.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "LocalSoftwareHistory".
+ */
+export interface LocalSoftwareHistory {
+  /**
+   * Current user's local preparations and executions in this page.
+   */
+  items: LocalSoftwareStatus[];
+  /**
+   * Journal continuation; a filtered page may be empty and still have a next position.
+   */
+  next: RequestId | null;
+}
+/**
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
  * via the `definition` "Command".
  */
 export interface Command {
@@ -2737,9 +2786,9 @@ export interface Command {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command4".
+ * via the `definition` "Command5".
  */
-export interface Command4 {
+export interface Command5 {
   input: SoftwareRead;
   output: SoftwarePage;
 }

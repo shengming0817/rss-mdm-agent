@@ -69,7 +69,11 @@ impl Rules {
             allow_native_uninstall: true,
             allow_launch: true,
             allow_user_update: true,
-            protected: vec!["com.rss.mdmagent".into()],
+            protected: vec![
+                "com.rss.mdmagent".into(),
+                "com.rss-mdm.agent".into(),
+                "RSS MDM Agent".into(),
+            ],
             recipes: vec![],
         }
     }
@@ -137,9 +141,15 @@ impl Rules {
         Ok(())
     }
     pub(crate) fn protects(&self, item: &InstalledSoftware) -> bool {
-        item.native_id.starts_with("com.apple.")
-            || item.native_id == "com.rss.mdmagent"
-            || self.protected.iter().any(|id| id == &item.native_id)
+        let native = item.native_id.to_ascii_lowercase();
+        native.starts_with("com.apple.")
+            || native == "com.rss.mdmagent"
+            || native == "com.rss-mdm.agent"
+            || native.starts_with("rss.mdm.agent_")
+            || self
+                .protected
+                .iter()
+                .any(|id| id.eq_ignore_ascii_case(&item.native_id))
     }
     pub(crate) fn recipe(
         &self,
@@ -154,12 +164,34 @@ impl Rules {
             r.native_id == item.native_id
                 && r.kind == item.kind
                 && r.scope == scope
-                && r.action == action
+                && (r.action == action
+                    || (action == LocalSoftwareAction::Detect
+                        && r.action == LocalSoftwareAction::Uninstall))
+                && (r.action != LocalSoftwareAction::Uninstall
+                    || match &r.input.execution {
+                        ExecutionSpec::SoftwareProgram { program } => {
+                            program.steps.last().is_some_and(|step| {
+                                item.version.as_deref() == Some(step.version.as_str())
+                            })
+                        }
+                        _ => false,
+                    })
                 && (action != LocalSoftwareAction::Update
                     || item
                         .version
                         .as_ref()
                         .is_some_and(|v| r.from_versions.contains(v)))
+                && (action != LocalSoftwareAction::Update
+                    || match &r.input.execution {
+                        ExecutionSpec::SoftwareProgram { program } => {
+                            item.version.as_deref().is_some_and(|installed| {
+                                program.steps.last().is_some_and(|step| {
+                                    execution_runner::software::forward_update(step, installed)
+                                })
+                            })
+                        }
+                        _ => false,
+                    })
                 && r.publisher
                     .as_ref()
                     .is_none_or(|publisher| item.publisher.as_ref() == Some(publisher))

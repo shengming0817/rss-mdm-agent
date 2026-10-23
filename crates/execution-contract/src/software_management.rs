@@ -168,6 +168,16 @@ pub struct LocalSoftwareSubmission {
     pub digest: Digest,
 }
 
+/// Bounded history of local software intents in the existing execution journal.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SoftwareHistoryQuery {
+    /// Exclusive journal continuation.
+    pub after: Option<RequestId>,
+    /// One through 128 records.
+    pub limit: u16,
+}
+
 /// Local software requests share one native context and the existing journal.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(
@@ -177,6 +187,8 @@ pub struct LocalSoftwareSubmission {
     deny_unknown_fields
 )]
 pub enum LocalSoftwareOperation {
+    /// Recover authorized preparations and original results without creating an attempt.
+    History(SoftwareHistoryQuery),
     /// Retain an immutable preview without admission or dispatch.
     Prepare(LocalSoftwareChoice),
     /// Explicit human submission/confirmation of the original preview.

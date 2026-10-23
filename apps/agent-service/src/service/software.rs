@@ -303,6 +303,49 @@ impl Core {
     ) -> Result<Reply, Error> {
         self.data_context(command, context)?;
         match input {
+            LocalSoftwareOperation::History(query) => {
+                self.software_initiator(command, origin)?;
+                if query.limit == 0 || query.limit > 128 {
+                    return Err(Error::Protocol);
+                }
+                let page = self
+                    .app
+                    .service_tasks(query.after.as_ref(), usize::from(query.limit))
+                    .map_err(map_app_error)?;
+                let mut items = Vec::new();
+                for details in page.items {
+                    let matches = details
+                        .action
+                        .policy
+                        .id
+                        .as_str()
+                        .starts_with("local-software:")
+                        && match &details.action.initiator {
+                            Initiator::Human { os_session } | Initiator::Ai { os_session, .. } => {
+                                os_session.account.subject.as_str() == command.subject
+                            }
+                            _ => false,
+                        };
+                    if !matches {
+                        continue;
+                    }
+                    let frozen = self.local_software_input(
+                        command,
+                        context,
+                        &details.status.operation_request_id,
+                        false,
+                    )?;
+                    if let Reply::SoftwareStatus { value } = self.software_status(&frozen)? {
+                        items.push(value);
+                    }
+                }
+                Ok(Reply::SoftwareHistory {
+                    value: execution_app::LocalSoftwareHistory {
+                        items,
+                        next: page.next,
+                    },
+                })
+            }
             LocalSoftwareOperation::Prepare(choice) => {
                 if self.stopping || self.host.local_stopped.load(Ordering::Acquire) {
                     return Err(Error::Denied);
@@ -525,13 +568,33 @@ impl Core {
                         .cancel(&self.caller(), &query.request)
                         .map_err(map_app_error)?;
                 }
+                self.app.reconcile(&query.request).map_err(map_app_error)?;
                 self.software_status(&frozen)
             }
         }
     }
     fn software_status(&self, frozen: &FrozenExecution) -> Result<Reply, Error> {
+        let detected = if frozen.spec().launch.interpreter.profile.id.as_str()
+            == crate::local_software::native::PROFILE
+        {
+            self.app
+                .service_process_evidence(&frozen.spec().request.request_id)
+                .map_err(map_app_error)?
+                .filter(|p| {
+                    p.finished
+                        && p.quiescent
+                        && p.exit_code == Some(0)
+                        && p.quality == OutputQuality::Complete
+                })
+                .and_then(|p| serde_json::from_slice::<SoftwareWorkerResult>(&p.stdout).ok())
+                .filter(|r| r.closed)
+                .and_then(|r| r.detected)
+        } else {
+            None
+        };
         Ok(Reply::SoftwareStatus {
             value: execution_app::LocalSoftwareStatus {
+                detected,
                 prepared: software_preview(frozen)?,
                 execution: self
                     .app

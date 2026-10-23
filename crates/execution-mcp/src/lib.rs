@@ -12,7 +12,8 @@ pub use config::McpLimits;
 pub use model::{
     CancelDisposition, CancelResult, CapabilityState, CapabilityView, LocalSoftwareProposal,
     LocalSoftwareResult, OperationPhase, OperationProposal, OperationRequest, OperationScene,
-    OperationStatus, PolicyToolInput, PolicyToolPage, PolicyToolsQuery, ServiceError,
+    OperationStatus, PolicyToolCall, PolicyToolInput, PolicyToolPage, PolicyToolsQuery,
+    ServiceError,
 };
 pub use port::ExecutionServicePort;
 

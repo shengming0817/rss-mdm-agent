@@ -36,6 +36,7 @@ const emit = defineEmits<{ settings: []; tasks: [] }>();
 import QuestionCard from "./QuestionCard.vue";
 import ExecutionDetails from "./ExecutionDetails.vue";
 import OperationActivity from "./operation-ui/OperationActivity.vue";
+import LocalSoftwareAction from "../software/LocalSoftwareAction.vue";
 import { cancelNote } from "./command-presentation";
 const copyStatus = ref("");
 const timeline = ref<HTMLElement>();
@@ -429,10 +430,18 @@ async function copy(text: string) {
             <pre>{{ JSON.stringify(row.tool.arguments, null, 2) }}</pre>
             <pre>{{ row.tool.result?.text }}</pre>
           </details>
+          <LocalSoftwareAction
+            v-else-if="
+              row.delivery?.proposal.name === 'execution_software_prepare'
+            "
+            :request="row.key"
+            :visible="visible && row.delivery.recorded"
+          />
           <OperationActivity
             v-else-if="
               row.delivery &&
               (row.delivery.proposal.name === 'execution_execute' ||
+                row.delivery.proposal.name === 'execution_policy_invoke' ||
                 row.delivery.proposal.name.startsWith('policy_') ||
                 row.delivery.proposal.name === 'execution_software_observe' ||
                 row.delivery.proposal.name === 'execution_operation_prepare')

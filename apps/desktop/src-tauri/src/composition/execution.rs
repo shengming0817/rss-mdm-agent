@@ -388,6 +388,18 @@ impl ExecutionHandle {
         }
         Ok(reply)
     }
+    pub async fn software_history(
+        &self,
+        input: SoftwareHistoryQuery,
+    ) -> ui::Result<execution_app::LocalSoftwareHistory> {
+        match self
+            .software_request(LocalSoftwareOperation::History(input))
+            .await?
+        {
+            Reply::SoftwareHistory { value } => Ok(value),
+            _ => Err(bad(Error::Unavailable)),
+        }
+    }
     pub async fn software_prepare(
         &self,
         input: LocalSoftwareChoice,

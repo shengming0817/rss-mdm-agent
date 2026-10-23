@@ -189,6 +189,15 @@ fn msix(p: &Package) -> Result<Target, Error> {
     })
 }
 pub(super) fn select(item: &InstalledSoftware, _row: &serde_json::Value) -> Result<Target, Error> {
+    if let Some(location) = _row
+        .get("location")
+        .and_then(serde_json::Value::as_str)
+        .filter(|p| !p.is_empty())
+    {
+        if std::env::current_exe()?.starts_with(Path::new(location)) {
+            return Err(Error::Denied);
+        }
+    }
     let target = match item.kind {
         InstalledSoftwareKind::WindowsProgram => {
             let subject = match &item.scope {

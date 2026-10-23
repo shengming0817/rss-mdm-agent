@@ -869,6 +869,11 @@ pub enum Reply {
         /// Safe summary; executable input remains private.
         value: execution_contract::LocalSoftwarePrepared,
     },
+    /// Authorized bounded local software journal history.
+    SoftwareHistory {
+        /// Existing execution status and immutable previews.
+        value: execution_app::LocalSoftwareHistory,
+    },
     /// Existing journal status for the same local software request.
     SoftwareStatus {
         /// Typed preview and lifecycle facts.

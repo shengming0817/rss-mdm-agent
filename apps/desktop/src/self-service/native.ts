@@ -48,12 +48,12 @@ export function nativeDataPort(): DataAccessPort | null {
   };
 }
 
-
 /** Read-only software facts and typed local actions from the same authenticated service. */
 export function nativeSoftwarePort(): SoftwarePort | null {
   if (!isTauri()) return null;
   const generation = userGeneration();
   return {
+    history: (input) => invoke("software_history", { input, generation }),
     read: (input) => invoke("software_read", { input, generation }),
     prepare: (input) => invoke("software_prepare", { input, generation }),
     submit: (input) => invoke("software_submit", { input, generation }),

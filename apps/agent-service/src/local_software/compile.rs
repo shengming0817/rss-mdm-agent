@@ -65,6 +65,7 @@ pub(crate) fn recipe(
             action: plan::id(match choice.action {
                 LocalSoftwareAction::Update => "software.update",
                 LocalSoftwareAction::Uninstall => "software.uninstall",
+                LocalSoftwareAction::Detect => "software.detect",
                 _ => return Err(Error::Unsupported),
             })?,
             resource: plan::reference(item.native_id.clone(), policy.revision.as_str())?,
@@ -88,6 +89,9 @@ pub(crate) fn recipe(
     let ExecutionSpec::SoftwareProgram { program } = &mut input.execution else {
         return Err(Error::Configuration);
     };
+    if choice.action == LocalSoftwareAction::Detect {
+        program.intent = SoftwareOperation::Detect;
+    }
     for step in &mut program.steps {
         rebind(&mut step.install, &run_as, &session, &work_root)?;
         if let Some(uninstall) = &mut step.uninstall {

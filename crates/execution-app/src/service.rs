@@ -1131,6 +1131,21 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
             .input()
             .clone())
     }
+    /// Device-owner read of retained native process evidence. Never serialize raw bytes to UI/model.
+    pub fn service_process_evidence(
+        &self,
+        request: &RequestId,
+    ) -> Result<Option<execution_contract::ProcessEvidence>, Error> {
+        let execution = self.load(None, request, ExecutionAccess::RunnerFact)?;
+        let Some(attempt) = &execution.snapshot().attempt else {
+            return Ok(None);
+        };
+        Ok(self.journal.runner_evidence(
+            &Scope::from_input(execution.input()),
+            &attempt.id,
+            &self.adapter(None, Some(execution.input())),
+        )?)
+    }
     /// Sole device-owner read of the original frozen recovery input. No UI/model transport
     /// may expose this value; access is checked against the current service binding.
     pub fn service_frozen_input(&self, request: &RequestId) -> Result<FrozenExecution, Error> {
