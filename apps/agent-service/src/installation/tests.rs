@@ -7,6 +7,7 @@ fn candidate_requires_current_format_and_valid_identity() {
         sha256: "a".repeat(64),
         cdhash: None,
     };
+    let target = Target::current().unwrap();
     let candidate = Candidate {
         service_id: crate::protocol_test_support::SERVICE_ID,
         connections: crate::protocol_test_support::signed_connections(
@@ -15,9 +16,13 @@ fn candidate_requires_current_format_and_valid_identity() {
             1,
         ),
         version: 1,
-        format: rss_mdm_agent_wire::enroll::configuration::InstallerFormat::MacosPkg,
+        format: if target.platform() == "darwin" {
+            rss_mdm_agent_wire::enroll::configuration::InstallerFormat::MacosPkg
+        } else {
+            rss_mdm_agent_wire::enroll::configuration::InstallerFormat::WindowsMsi
+        },
         product_version: "test".into(),
-        target: Target::current().unwrap(),
+        target,
         root: root.path.clone(),
         service: image,
         desktop: Artifact {
