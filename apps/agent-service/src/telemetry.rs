@@ -51,6 +51,12 @@ pub(crate) enum Event {
     GapReceipt(w::TelemetryGapReceipt),
 }
 impl Telemetry {
+    pub(crate) fn data_sources(&self) -> std::collections::BTreeSet<String> {
+        self.slots
+            .keys()
+            .map(|id| format!("telemetry:{id}"))
+            .collect()
+    }
     pub fn open<S: IdentityProvider, C: Clock>(client: &Client<S, C>) -> Result<Self, Error> {
         let spool = client.telemetry_spool(Limits::production())?;
         let mut value = Self {

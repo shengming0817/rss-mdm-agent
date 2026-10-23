@@ -258,6 +258,37 @@
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
           "type": "string"
         },
+        "PublishedQuery": {
+          "additionalProperties": false,
+          "description": "Original Policy coordinates for presentation and existing confirmation integration.",
+          "properties": {
+            "description": {
+              "description": "Safe administrator description, never executable input.",
+              "type": "string"
+            },
+            "policyId": {
+              "$ref": "#/$defs/Id",
+              "description": "Current server Policy identity."
+            },
+            "policyRevision": {
+              "description": "Current configuration revision.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "policyVersion": {
+              "$ref": "#/$defs/Id",
+              "description": "Immutable execution version."
+            }
+          },
+          "required": [
+            "policyId",
+            "policyRevision",
+            "policyVersion",
+            "description"
+          ],
+          "type": "object"
+        },
         "QueryDescriptor": {
           "additionalProperties": false,
           "description": "Safe query discovery; an unavailable query can still have retained data.",
@@ -266,9 +297,19 @@
               "description": "Whether a new invocation is currently available.",
               "type": "boolean"
             },
+            "inputSchema": {
+              "description": "Complete safe caller input schema; native recipes have no parameters."
+            },
             "kind": {
               "$ref": "#/$defs/QueryKind",
               "description": "Source family."
+            },
+            "policy": {
+              "anyOf": [
+                { "$ref": "#/$defs/PublishedQuery" },
+                { "type": "null" }
+              ],
+              "description": "Exact original published Policy, when applicable."
             },
             "reason": {
               "anyOf": [{ "$ref": "#/$defs/DataQuality" }, { "type": "null" }],
@@ -287,7 +328,14 @@
               "type": "string"
             }
           },
-          "required": ["reference", "title", "kind", "scope", "available"],
+          "required": [
+            "reference",
+            "title",
+            "kind",
+            "scope",
+            "inputSchema",
+            "available"
+          ],
           "type": "object"
         },
         "QueryKind": {
@@ -460,6 +508,11 @@
             {
               "const": "notFound",
               "description": "Object absent within the authorized namespace; do not reveal another namespace.",
+              "type": "string"
+            },
+            {
+              "const": "inProgress",
+              "description": "The same query has an unsettled original request.",
               "type": "string"
             },
             {
@@ -873,6 +926,37 @@
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
           "type": "string"
         },
+        "PublishedQuery": {
+          "additionalProperties": false,
+          "description": "Original Policy coordinates for presentation and existing confirmation integration.",
+          "properties": {
+            "description": {
+              "description": "Safe administrator description, never executable input.",
+              "type": "string"
+            },
+            "policyId": {
+              "$ref": "#/$defs/Id",
+              "description": "Current server Policy identity."
+            },
+            "policyRevision": {
+              "description": "Current configuration revision.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "policyVersion": {
+              "$ref": "#/$defs/Id",
+              "description": "Immutable execution version."
+            }
+          },
+          "required": [
+            "policyId",
+            "policyRevision",
+            "policyVersion",
+            "description"
+          ],
+          "type": "object"
+        },
         "QueryDescriptor": {
           "additionalProperties": false,
           "description": "Safe query discovery; an unavailable query can still have retained data.",
@@ -881,9 +965,19 @@
               "description": "Whether a new invocation is currently available.",
               "type": "boolean"
             },
+            "inputSchema": {
+              "description": "Complete safe caller input schema; native recipes have no parameters."
+            },
             "kind": {
               "$ref": "#/$defs/QueryKind",
               "description": "Source family."
+            },
+            "policy": {
+              "anyOf": [
+                { "$ref": "#/$defs/PublishedQuery" },
+                { "type": "null" }
+              ],
+              "description": "Exact original published Policy, when applicable."
             },
             "reason": {
               "anyOf": [{ "$ref": "#/$defs/DataQuality" }, { "type": "null" }],
@@ -902,7 +996,14 @@
               "type": "string"
             }
           },
-          "required": ["reference", "title", "kind", "scope", "available"],
+          "required": [
+            "reference",
+            "title",
+            "kind",
+            "scope",
+            "inputSchema",
+            "available"
+          ],
           "type": "object"
         },
         "QueryKind": {
@@ -1075,6 +1176,11 @@
             {
               "const": "notFound",
               "description": "Object absent within the authorized namespace; do not reveal another namespace.",
+              "type": "string"
+            },
+            {
+              "const": "inProgress",
+              "description": "The same query has an unsettled original request.",
               "type": "string"
             },
             {
@@ -1431,6 +1537,37 @@
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
           "type": "string"
         },
+        "PublishedQuery": {
+          "additionalProperties": false,
+          "description": "Original Policy coordinates for presentation and existing confirmation integration.",
+          "properties": {
+            "description": {
+              "description": "Safe administrator description, never executable input.",
+              "type": "string"
+            },
+            "policyId": {
+              "$ref": "#/$defs/Id",
+              "description": "Current server Policy identity."
+            },
+            "policyRevision": {
+              "description": "Current configuration revision.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "policyVersion": {
+              "$ref": "#/$defs/Id",
+              "description": "Immutable execution version."
+            }
+          },
+          "required": [
+            "policyId",
+            "policyRevision",
+            "policyVersion",
+            "description"
+          ],
+          "type": "object"
+        },
         "QueryDescriptor": {
           "additionalProperties": false,
           "description": "Safe query discovery; an unavailable query can still have retained data.",
@@ -1439,9 +1576,19 @@
               "description": "Whether a new invocation is currently available.",
               "type": "boolean"
             },
+            "inputSchema": {
+              "description": "Complete safe caller input schema; native recipes have no parameters."
+            },
             "kind": {
               "$ref": "#/$defs/QueryKind",
               "description": "Source family."
+            },
+            "policy": {
+              "anyOf": [
+                { "$ref": "#/$defs/PublishedQuery" },
+                { "type": "null" }
+              ],
+              "description": "Exact original published Policy, when applicable."
             },
             "reason": {
               "anyOf": [{ "$ref": "#/$defs/DataQuality" }, { "type": "null" }],
@@ -1460,7 +1607,14 @@
               "type": "string"
             }
           },
-          "required": ["reference", "title", "kind", "scope", "available"],
+          "required": [
+            "reference",
+            "title",
+            "kind",
+            "scope",
+            "inputSchema",
+            "available"
+          ],
           "type": "object"
         },
         "QueryKind": {
@@ -1633,6 +1787,11 @@
             {
               "const": "notFound",
               "description": "Object absent within the authorized namespace; do not reveal another namespace.",
+              "type": "string"
+            },
+            {
+              "const": "inProgress",
+              "description": "The same query has an unsettled original request.",
               "type": "string"
             },
             {
@@ -1950,6 +2109,37 @@
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
           "type": "string"
         },
+        "PublishedQuery": {
+          "additionalProperties": false,
+          "description": "Original Policy coordinates for presentation and existing confirmation integration.",
+          "properties": {
+            "description": {
+              "description": "Safe administrator description, never executable input.",
+              "type": "string"
+            },
+            "policyId": {
+              "$ref": "#/$defs/Id",
+              "description": "Current server Policy identity."
+            },
+            "policyRevision": {
+              "description": "Current configuration revision.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "policyVersion": {
+              "$ref": "#/$defs/Id",
+              "description": "Immutable execution version."
+            }
+          },
+          "required": [
+            "policyId",
+            "policyRevision",
+            "policyVersion",
+            "description"
+          ],
+          "type": "object"
+        },
         "QueryDescriptor": {
           "additionalProperties": false,
           "description": "Safe query discovery; an unavailable query can still have retained data.",
@@ -1958,9 +2148,19 @@
               "description": "Whether a new invocation is currently available.",
               "type": "boolean"
             },
+            "inputSchema": {
+              "description": "Complete safe caller input schema; native recipes have no parameters."
+            },
             "kind": {
               "$ref": "#/$defs/QueryKind",
               "description": "Source family."
+            },
+            "policy": {
+              "anyOf": [
+                { "$ref": "#/$defs/PublishedQuery" },
+                { "type": "null" }
+              ],
+              "description": "Exact original published Policy, when applicable."
             },
             "reason": {
               "anyOf": [{ "$ref": "#/$defs/DataQuality" }, { "type": "null" }],
@@ -1979,7 +2179,14 @@
               "type": "string"
             }
           },
-          "required": ["reference", "title", "kind", "scope", "available"],
+          "required": [
+            "reference",
+            "title",
+            "kind",
+            "scope",
+            "inputSchema",
+            "available"
+          ],
           "type": "object"
         },
         "QueryKind": {
@@ -2152,6 +2359,11 @@
             {
               "const": "notFound",
               "description": "Object absent within the authorized namespace; do not reveal another namespace.",
+              "type": "string"
+            },
+            {
+              "const": "inProgress",
+              "description": "The same query has an unsettled original request.",
               "type": "string"
             },
             {
@@ -2469,6 +2681,37 @@
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
           "type": "string"
         },
+        "PublishedQuery": {
+          "additionalProperties": false,
+          "description": "Original Policy coordinates for presentation and existing confirmation integration.",
+          "properties": {
+            "description": {
+              "description": "Safe administrator description, never executable input.",
+              "type": "string"
+            },
+            "policyId": {
+              "$ref": "#/$defs/Id",
+              "description": "Current server Policy identity."
+            },
+            "policyRevision": {
+              "description": "Current configuration revision.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "policyVersion": {
+              "$ref": "#/$defs/Id",
+              "description": "Immutable execution version."
+            }
+          },
+          "required": [
+            "policyId",
+            "policyRevision",
+            "policyVersion",
+            "description"
+          ],
+          "type": "object"
+        },
         "QueryDescriptor": {
           "additionalProperties": false,
           "description": "Safe query discovery; an unavailable query can still have retained data.",
@@ -2477,9 +2720,19 @@
               "description": "Whether a new invocation is currently available.",
               "type": "boolean"
             },
+            "inputSchema": {
+              "description": "Complete safe caller input schema; native recipes have no parameters."
+            },
             "kind": {
               "$ref": "#/$defs/QueryKind",
               "description": "Source family."
+            },
+            "policy": {
+              "anyOf": [
+                { "$ref": "#/$defs/PublishedQuery" },
+                { "type": "null" }
+              ],
+              "description": "Exact original published Policy, when applicable."
             },
             "reason": {
               "anyOf": [{ "$ref": "#/$defs/DataQuality" }, { "type": "null" }],
@@ -2498,7 +2751,14 @@
               "type": "string"
             }
           },
-          "required": ["reference", "title", "kind", "scope", "available"],
+          "required": [
+            "reference",
+            "title",
+            "kind",
+            "scope",
+            "inputSchema",
+            "available"
+          ],
           "type": "object"
         },
         "QueryKind": {
@@ -2671,6 +2931,11 @@
             {
               "const": "notFound",
               "description": "Object absent within the authorized namespace; do not reveal another namespace.",
+              "type": "string"
+            },
+            {
+              "const": "inProgress",
+              "description": "The same query has an unsettled original request.",
               "type": "string"
             },
             {
@@ -2960,6 +3225,11 @@
               "type": "string"
             },
             {
+              "const": "inProgress",
+              "description": "The same query has an unsettled original request.",
+              "type": "string"
+            },
+            {
               "const": "conflict",
               "description": "Stable operation ID already names different content.",
               "type": "string"
@@ -3089,6 +3359,11 @@
             {
               "const": "notFound",
               "description": "Object absent within the authorized namespace; do not reveal another namespace.",
+              "type": "string"
+            },
+            {
+              "const": "inProgress",
+              "description": "The same query has an unsettled original request.",
               "type": "string"
             },
             {
@@ -4256,6 +4531,11 @@
               "type": "string"
             },
             {
+              "const": "inProgress",
+              "description": "The same query has an unsettled original request.",
+              "type": "string"
+            },
+            {
               "const": "conflict",
               "description": "Stable operation ID already names different content.",
               "type": "string"
@@ -4597,6 +4877,11 @@
             {
               "const": "notFound",
               "description": "Object absent within the authorized namespace; do not reveal another namespace.",
+              "type": "string"
+            },
+            {
+              "const": "inProgress",
+              "description": "The same query has an unsettled original request.",
               "type": "string"
             },
             {
@@ -5796,6 +6081,11 @@
               "type": "string"
             },
             {
+              "const": "inProgress",
+              "description": "The same query has an unsettled original request.",
+              "type": "string"
+            },
+            {
               "const": "conflict",
               "description": "Stable operation ID already names different content.",
               "type": "string"
@@ -6172,6 +6462,11 @@
               "type": "string"
             },
             {
+              "const": "inProgress",
+              "description": "The same query has an unsettled original request.",
+              "type": "string"
+            },
+            {
               "const": "conflict",
               "description": "Stable operation ID already names different content.",
               "type": "string"
@@ -6327,6 +6622,11 @@
             {
               "const": "notFound",
               "description": "Object absent within the authorized namespace; do not reveal another namespace.",
+              "type": "string"
+            },
+            {
+              "const": "inProgress",
+              "description": "The same query has an unsettled original request.",
               "type": "string"
             },
             {
@@ -6824,6 +7124,11 @@
             {
               "const": "notFound",
               "description": "Object absent within the authorized namespace; do not reveal another namespace.",
+              "type": "string"
+            },
+            {
+              "const": "inProgress",
+              "description": "The same query has an unsettled original request.",
               "type": "string"
             },
             {
@@ -7335,6 +7640,11 @@
             {
               "const": "notFound",
               "description": "Object absent within the authorized namespace; do not reveal another namespace.",
+              "type": "string"
+            },
+            {
+              "const": "inProgress",
+              "description": "The same query has an unsettled original request.",
               "type": "string"
             },
             {

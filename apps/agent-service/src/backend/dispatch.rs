@@ -59,7 +59,9 @@ pub(crate) async fn submit<S: IdentityProvider>(
         delegate.clone(),
         super::enrollment::NativeMaterials::default(),
     )?;
-    service.core.remember_data(&preview)?;
+    if let Err(error) = service.core.remember_data(&preview) {
+        eprintln!("agent_collected_data: {error}");
+    }
     artifacts
         .inspect(&preview)
         .map_err(crate::error::app_error)?;

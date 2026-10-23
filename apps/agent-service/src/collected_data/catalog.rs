@@ -41,7 +41,7 @@ impl Data {
                 queries: [("read".into(), query)].into(),
                 budget,
             })?;
-            self.register(ReadPlan {
+            let d = self.register(ReadPlan {
                 platform: plan.platform(),
                 plan,
                 deadline: 0,
@@ -55,6 +55,7 @@ impl Data {
                     generated_uid: crate::account_identity::generated_uid(subject)?,
                 },
             })?;
+            self.pin(&d.descriptor.reference);
         }
         Ok(())
     }
@@ -224,12 +225,9 @@ impl Data {
                     generated_uid: None,
                 },
             };
-            let mut definition = self.register(read)?;
-            definition.descriptor.title = title;
-            self.store.write(
-                &format!("definition/{}", definition.descriptor.reference.id.as_str()),
-                &encode(&definition)?,
-            )?;
+            let definition = self.register(read)?;
+            let _ = title;
+            self.pin(&definition.descriptor.reference);
         }
         Ok(())
     }

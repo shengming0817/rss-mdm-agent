@@ -15,11 +15,93 @@ impl Core {
         self.data.periodic(c, e, at, normalized)
     }
 
+    pub(super) fn submit_local(
+        &mut self,
+        command: &Command,
+        frozen: &FrozenExecution,
+    ) -> Result<execution_app::ExecutionStatus, Error> {
+        let fences = self.fences.clone();
+        let scope = policy::SessionKey::new(
+            command.subject.clone(),
+            command.binding.clone().ok_or(Error::Denied)?,
+        );
+        let _admission = fences.admit(&scope, command.fence_epoch)?;
+        *self
+            .host
+            .local_query
+            .lock()
+            .map_err(|_| Error::Unavailable)? = Some(frozen.clone());
+        let result = self
+            .app
+            .request_execution(&self.caller(), frozen)
+            .map_err(map_app_error);
+        *self
+            .host
+            .local_query
+            .lock()
+            .map_err(|_| Error::Unavailable)? = None;
+        result
+    }
+    pub(crate) fn maintain_data(&mut self) -> Result<(), Error> {
+        let mut active = std::collections::BTreeSet::new();
+        for request in self.data.input_requests()? {
+            if self
+                .app
+                .has_service_execution(&request, &self.host.binding.device)
+                .map_err(map_app_error)?
+            {
+                let status = self
+                    .app
+                    .status(&self.caller(), &request)
+                    .map_err(map_app_error)?;
+                if (status.process.is_some() && !self.data.captured(&request)?)
+                    || !matches!(
+                        status.phase,
+                        execution_app::TaskPhase::Cancelled
+                            | execution_app::TaskPhase::AdmissionDenied
+                            | execution_app::TaskPhase::FailedBeforeDispatch
+                            | execution_app::TaskPhase::ExecutionEnded
+                            | execution_app::TaskPhase::Verified
+                    )
+                {
+                    active.insert(request);
+                }
+            }
+        }
+        let policies = self
+            .telemetry
+            .as_ref()
+            .map(|t| t.data_sources())
+            .unwrap_or_default();
+        self.data
+            .maintain(&self.data_contexts(), &active, &policies)
+    }
     /// Recover only protected, hash-verified worker definitions. Never infer one from result keys.
     pub(crate) fn remember_data(&mut self, input: &FrozenExecution) -> Result<(), Error> {
         if input.spec().launch.interpreter.profile.id.as_str() != crate::collection_worker::PROFILE
         {
             return Ok(());
+        }
+        let request = &input.spec().request.request_id;
+        if self
+            .app
+            .has_service_execution(request, &self.host.binding.device)
+            .map_err(map_app_error)?
+        {
+            let status = self
+                .app
+                .status(&self.caller(), request)
+                .map_err(map_app_error)?;
+            if status.process.is_none()
+                && matches!(
+                    status.phase,
+                    execution_app::TaskPhase::Cancelled
+                        | execution_app::TaskPhase::AdmissionDenied
+                        | execution_app::TaskPhase::FailedBeforeDispatch
+                )
+            {
+                return Ok(());
+            }
         }
         let path = crate::recovery::content(
             &self.config,
@@ -128,6 +210,7 @@ impl<S: IdentityProvider> DeviceService<S> {
         // Native context binds the local login. Cached device facts remain readable offline;
         // Policy operations below still use the stricter live enterprise context gate.
         let bound = self.core.data_context(command, context)?.clone();
+        self.core.maintain_data()?;
         if let ClientOrigin::Ai { context: ai, .. } = origin {
             if ai != context {
                 return Err(Error::Identity);
@@ -138,6 +221,7 @@ impl<S: IdentityProvider> DeviceService<S> {
                 if !(1..=128).contains(&query.limit) {
                     return Err(Error::Capacity);
                 }
+                self.core.data.install_local()?;
                 self.core
                     .data
                     .install_user(&command.subject, login_binding_id(binding))?;
@@ -163,6 +247,7 @@ impl<S: IdentityProvider> DeviceService<S> {
                             )?);
                         }
                     }
+                    self.core.maintain_data()?;
                     after = page
                         .next_cursor
                         .map(|id| plan::id(id.to_string()))
@@ -176,7 +261,19 @@ impl<S: IdentityProvider> DeviceService<S> {
                 let next = (items.len() > query.limit as usize)
                     .then(|| items[query.limit as usize - 1].reference.id.clone());
                 items.truncate(query.limit as usize);
-                DataResponse::Directory(QueryPage { items, next })
+                let mut page = QueryPage { items, next };
+                while serde_json::to_vec(&page)
+                    .map_err(|_| Error::Protocol)?
+                    .len()
+                    > 48 * 1024
+                {
+                    page.items.pop();
+                    let Some(last) = page.items.last() else {
+                        return Err(Error::Capacity);
+                    };
+                    page.next = Some(last.reference.id.clone());
+                }
+                DataResponse::Directory(page)
             }
             DataOperation::Read(read) => {
                 let policy = match &read.selection {
@@ -447,24 +544,7 @@ impl<S: IdentityProvider> DeviceService<S> {
                         .materials
                         .register(&frozen, artifacts)
                         .map_err(map_app_error)?;
-                    *self
-                        .core
-                        .host
-                        .local_query
-                        .lock()
-                        .map_err(|_| Error::Unavailable)? = Some(frozen.clone());
-                    let result = self
-                        .core
-                        .app
-                        .request_execution(&self.core.caller(), &frozen)
-                        .map_err(map_app_error);
-                    *self
-                        .core
-                        .host
-                        .local_query
-                        .lock()
-                        .map_err(|_| Error::Unavailable)? = None;
-                    result?;
+                    self.core.submit_local(command, &frozen)?;
                     DataResponse::Status(self.core.native_query_status(&submit.request, &a)?)
                 }
             }
@@ -515,6 +595,10 @@ impl<S: IdentityProvider> DeviceService<S> {
                             .cancel(&self.core.caller(), &query.request)
                             .map_err(map_app_error)?;
                     }
+                    self.core
+                        .app
+                        .reconcile(&query.request)
+                        .map_err(map_app_error)?;
                     self.core.capture_data(&query.request)?;
                     DataResponse::Status(self.core.native_query_status(&query.request, &a)?)
                 }

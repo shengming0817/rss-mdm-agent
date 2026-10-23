@@ -335,6 +335,14 @@ export async function connectExecution(
               state:
                 status.error?.code === "notFound" ? "not_submitted" : "unknown",
             });
+          if (
+            name === "execution_query_cancel" &&
+            status.result?.value?.cancelRequested !== true &&
+            !["cancelled", "completed", "failed"].includes(
+              status.result?.value?.phase,
+            )
+          )
+            return ok({ state: "unknown" });
           return ok({ state: "committed", receipt: receipt(request, status) });
         }
         if (

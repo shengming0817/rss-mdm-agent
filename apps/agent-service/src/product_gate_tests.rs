@@ -4105,7 +4105,7 @@ async fn local_data_queries_use_the_original_journal_and_reject_replays_from_ret
     let query = page
         .items
         .into_iter()
-        .find(|q| q.title == "hardware.Memory")
+        .find(|q| q.title.contains("Memory"))
         .unwrap()
         .reference;
     let request = RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap();
@@ -4193,7 +4193,31 @@ async fn local_data_queries_use_the_original_journal_and_reject_replays_from_ret
             .attempts,
         1
     );
+    let old_epoch = c.service.core.fences.current(&c.scope()).unwrap();
     c.policy_call(Request::RevokeContext {}).await;
+    let mut next = frozen.spec().clone();
+    next.request.request_id = RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap();
+    let next = FrozenExecution::freeze(next, &plan::storage_limits().input).unwrap();
+    let (reply_tx, _) = tokio::sync::oneshot::channel();
+    let stale = Command {
+        request: LocalRequest::operation(Request::ServiceStatus {}),
+        fence_epoch: old_epoch,
+        subject: c.selection.subject.clone(),
+        session: c.selection.session,
+        binding: Some(c.selection.binding.clone()),
+        reply: reply_tx,
+    };
+    assert!(c.service.core.submit_local(&stale, &next).is_err());
+    assert!(!c
+        .service
+        .core
+        .app
+        .has_service_execution(
+            &next.spec().request.request_id,
+            &c.service.core.host.binding.device
+        )
+        .unwrap());
+    assert!(c.service.core.host.local_query.lock().unwrap().is_none());
     let reply = c
         .policy_call(Request::Data {
             context,

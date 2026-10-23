@@ -1846,9 +1846,17 @@ export interface QueryDescriptor {
    */
   available: boolean;
   /**
+   * Complete safe caller input schema; native recipes have no parameters.
+   */
+  inputSchema: unknown;
+  /**
    * Source family.
    */
   kind: QueryKind;
+  /**
+   * Exact original published Policy, when applicable.
+   */
+  policy: PublishedQuery | null;
   /**
    * Closed unavailability reason.
    */
@@ -1865,6 +1873,30 @@ export interface QueryDescriptor {
    * Display text; never an executable selector.
    */
   title: string;
+}
+/**
+ * Original Policy coordinates for presentation and existing confirmation integration.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "PublishedQuery".
+ */
+export interface PublishedQuery {
+  /**
+   * Safe administrator description, never executable input.
+   */
+  description: string;
+  /**
+   * Current server Policy identity.
+   */
+  policyId: Id;
+  /**
+   * Current configuration revision.
+   */
+  policyRevision: number;
+  /**
+   * Immutable execution version.
+   */
+  policyVersion: Id;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema

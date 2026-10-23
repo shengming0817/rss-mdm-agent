@@ -218,3 +218,213 @@ fn mapping_uses_exact_closed_recipes_and_never_promotes_receipts_or_arbitrary_wm
     };
     assert_eq!(domain(&q), None);
 }
+
+fn published_item() -> w::SelfServiceDirectoryItem {
+    serde_json::from_value(json!({
+        "policyId":"00000000-0000-4000-a000-000000000001","policyRevision":1,"policyVersion":"00000000-0000-4000-a000-000000000002",
+        "subject":{"kind":"device"},"selfService":{"published":true,"allowAi":true,"riskLevel":1,"presentation":{"displayName":"Published fixture","description":"Safe inputs"}},
+        "task":{"kind":"script","runAs":"system","resource":{"id":"resource","version":"1","variant":"default"},
+        "parameterSources":{"name":{"kind":"input"},"fixed":{"kind":"fixed","value":"hidden"}},
+        "parameterSchema":{"type":"object","properties":{"name":{"type":"string"},"fixed":{"type":"string"}},"required":["name","fixed"],"additionalProperties":false}}
+    })).unwrap()
+}
+#[tokio::test]
+async fn metadata_is_bounded_titles_survive_capture_and_published_inputs_remain_usable() {
+    let _budget = crate::scenario_budget::enter();
+    let server = Server::new().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    let mut data = Data::new(
+        client.collected_store().unwrap(),
+        client.output_policy().unwrap(),
+    );
+    let read = read_plan();
+    let definition = data.register(read.clone()).unwrap();
+    data.pin(&definition.descriptor.reference);
+    data.native(read.clone(), None, &evidence(&read, true), 100_000)
+        .unwrap();
+    assert_eq!(
+        data.definition(&definition.descriptor.reference, "501")
+            .unwrap()
+            .descriptor
+            .title,
+        definition.descriptor.title
+    );
+    let mut changed = read.clone();
+    let mut spec: w::NativePlanSpec = changed.plan.into();
+    let mut query = spec.queries.remove("arbitrarySourceName").unwrap();
+    query.budget.timeout_seconds = 15;
+    spec.queries.insert("serverLabelChanged".into(), query);
+    changed.plan = w::NativeCollectionPlan::new(spec).unwrap();
+    assert_eq!(
+        data.register(changed).unwrap().descriptor.reference,
+        definition.descriptor.reference
+    );
+    for n in 0..70 {
+        let mut read = read_plan();
+        let mut spec: w::NativePlanSpec = read.plan.into();
+        spec.queries.values_mut().next().unwrap().definition =
+            w::NativeQueryDefinition::WindowsWmi {
+                namespace: r"root\cimv2".into(),
+                class: format!("Unknown{n}"),
+                properties: [(
+                    "name".into(),
+                    w::WmiProperty {
+                        cim_type: w::CimType::String,
+                        array: false,
+                    },
+                )]
+                .into(),
+                filter: None,
+            };
+        read.plan = w::NativeCollectionPlan::new(spec).unwrap();
+        read.platform = w::TaskPlatform::Windows;
+        data.register(read).unwrap();
+    }
+    data.maintain(&[], &Default::default(), &Default::default())
+        .unwrap();
+    assert!(data.scan("definition/").unwrap().len() <= 65);
+    assert!(data
+        .definition(&definition.descriptor.reference, "501")
+        .is_ok());
+    let session = id("login/1");
+    for n in 0..40 {
+        let context = NativeContextRef {
+            id: id("context"),
+            generation: id(&format!("generation-{n}")),
+        };
+        let descriptor = data
+            .publish(published_item(), "501", &session, &context)
+            .unwrap();
+        assert_eq!(descriptor.title, "Published fixture");
+        assert!(descriptor.input_schema["properties"].get("name").is_some());
+        assert!(descriptor.input_schema["properties"].get("fixed").is_none());
+        assert_eq!(descriptor.input_schema["required"], json!(["name"]));
+        assert!(descriptor.policy.is_some());
+        data.maintain(
+            &[("501".into(), session.clone(), context)],
+            &Default::default(),
+            &Default::default(),
+        )
+        .unwrap();
+        assert_eq!(data.scan("published/").unwrap().len(), 1);
+    }
+}
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn reused_numeric_uid_cannot_discover_or_read_an_old_accounts_collection() {
+    let _budget = crate::scenario_budget::enter();
+    let server = Server::new().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    let mut data = Data::new(
+        client.collected_store().unwrap(),
+        client.output_policy().unwrap(),
+    );
+    let caller = execution_ipc::host::current_subject().unwrap();
+    let mut read = read_plan();
+    let mut spec: w::NativePlanSpec = read.plan.clone().into();
+    spec.queries.values_mut().next().unwrap().definition =
+        w::NativeQueryDefinition::MacosApplications {
+            root: w::MacosApplicationRoot::UserApplications,
+            max_depth: 4,
+        };
+    let query = spec.queries.values_mut().next().unwrap();
+    query.cardinality = w::NativeCardinality::List;
+    query.instance_keys = vec!["id".into()];
+    read.plan = w::NativeCollectionPlan::new(spec).unwrap();
+    read.execution = w::NativeExecutionBinding {
+        identity: w::ExecutionIdentity::LoggedInUser,
+        context_revision: 1,
+        target: w::SoftwareExecutionTarget::User {
+            identity: caller.clone(),
+            session_id: uuid::Uuid::new_v4(),
+        },
+        generated_uid: Some(uuid::Uuid::new_v4().to_string()),
+    };
+    let query = data.register(read).unwrap().descriptor.reference;
+    assert!(!data
+        .directory(&caller)
+        .unwrap()
+        .iter()
+        .any(|d| d.reference == query));
+    assert!(data.definition(&query, &caller).is_err());
+    let read = DataRead {
+        selection: DataSelection::Query { query },
+        after: None,
+        limit: 1,
+        max_age_seconds: None,
+    };
+    assert!(data.read(&read, &caller, &id("login/1"), 100).is_err());
+}
+#[tokio::test]
+async fn telemetry_ack_removes_delivery_but_preserves_the_normalized_local_projection() {
+    let _budget = crate::scenario_budget::enter();
+    use crate::protocol_test_support::telemetry as fixture;
+    use agent_client::{telemetry::Limits, Clock};
+    let server = Server::tls().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    let r = server.register(&mut client).await;
+    let signed = fixture::configuration(&server, &r);
+    server.data.lock().unwrap().telemetry.configuration = Some(signed.clone());
+    let c = client.verify_telemetry(signed).unwrap();
+    let mut spool = client.telemetry_spool(Limits::production()).unwrap();
+    spool.install(&c).unwrap();
+    let at = server.time.now().unwrap() * 1_000_000;
+    let values = [(
+        w::FieldKey::parse("custom.load").unwrap(),
+        w::TelemetryReading::Valid {
+            value: w::Scalar::Integer(17),
+            interval_start: None,
+        },
+    )]
+    .into();
+    let observation = spool.append(&c, at, values, "boot-fixture").unwrap();
+    let normalized = spool.observation(&c, observation).unwrap().values;
+    let mut data = Data::new(
+        client.collected_store().unwrap(),
+        client.output_policy().unwrap(),
+    );
+    data.periodic(
+        c.payload(),
+        &evidence(&read_plan(), true),
+        at,
+        Some(normalized),
+    )
+    .unwrap();
+    let query = data
+        .directory("501")
+        .unwrap()
+        .into_iter()
+        .find(|d| d.kind == QueryKind::Telemetry)
+        .unwrap()
+        .reference;
+    spool.freeze_all(&c).unwrap();
+    let pending = spool.pending(at / 1_000_000, false).unwrap().unwrap();
+    spool.attempting(&pending, at / 1_000_000).unwrap();
+    let receipt = client.telemetry_submit(&pending).await.unwrap();
+    spool.acknowledge(&pending, &receipt).unwrap();
+    assert_eq!(spool.summary().unwrap().pending, 0);
+    drop(data);
+    let data = Data::new(
+        client.collected_store().unwrap(),
+        client.output_policy().unwrap(),
+    );
+    let result = data
+        .read(
+            &DataRead {
+                selection: DataSelection::Query { query },
+                after: None,
+                limit: 16,
+                max_age_seconds: None,
+            },
+            "501",
+            &id("login/1"),
+            (at / 1_000_000) as u64,
+        )
+        .unwrap();
+    assert_eq!(result.fields["custom.load"]["value"], json!(17));
+}

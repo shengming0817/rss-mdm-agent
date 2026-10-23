@@ -14,6 +14,7 @@ pub(crate) const MAPPING_VERSION: u32 = 1;
 pub(crate) struct Definition {
     pub descriptor: QueryDescriptor,
     pub read: ReadPlan,
+    pub seen_at: u64,
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct Association {
@@ -31,10 +32,12 @@ struct Published {
     subject: String,
     session: Id,
     context: NativeContextRef,
+    seen_at: u64,
 }
 pub(crate) struct Data {
     store: CollectedStore,
     redactor: CredentialRedactor,
+    pinned: std::collections::BTreeSet<Id>,
 }
 pub(crate) fn digest(value: &impl Serialize) -> Result<Digest, Error> {
     Digest::new(format!(
@@ -114,6 +117,44 @@ fn subject(read: &ReadPlan) -> Option<&str> {
         _ => None,
     }
 }
+fn now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+fn visible(read: &ReadPlan, caller: &str) -> bool {
+    match subject(read) {
+        None => true,
+        Some(owner) => {
+            owner == caller
+                && crate::account_identity::generated_uid(caller)
+                    .is_ok_and(|current| current == read.execution.generated_uid)
+        }
+    }
+}
+fn title(q: &w::NativeQueryDefinition) -> String {
+    use w::NativeQueryDefinition::*;
+    let title = match q {
+        MacosHardware { section } => format!("macOS hardware: {section:?}"),
+        MacosApplications { root, .. } => format!("macOS applications: {root:?}"),
+        MacosBrew {
+            prefix, package, ..
+        } => format!("Homebrew {package:?}: {prefix}"),
+        MacosPkgReceipts {} => "macOS package receipts".into(),
+        WindowsWmi { class, .. } => format!("Windows {class}"),
+        WindowsRegistry { values, .. } => format!(
+            "Windows registry: {}",
+            values
+                .values()
+                .map(|v| v.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        _ => format!("{q:?}"),
+    };
+    title.chars().take(256).collect()
+}
 fn single(read: &ReadPlan, query: &w::NativeQuery) -> Result<ReadPlan, Error> {
     let mut result = read.clone();
     result.plan = w::NativeCollectionPlan::new(w::NativePlanSpec {
@@ -126,13 +167,126 @@ fn single(read: &ReadPlan, query: &w::NativeQuery) -> Result<ReadPlan, Error> {
 }
 impl Data {
     pub fn new(store: CollectedStore, redactor: CredentialRedactor) -> Self {
-        Self { store, redactor }
+        Self {
+            store,
+            redactor,
+            pinned: Default::default(),
+        }
     }
     pub fn protect(
         &mut self,
         value: &std::sync::Arc<zeroize::Zeroizing<String>>,
     ) -> Result<(), Error> {
         self.redactor.protect_user_session(value)
+    }
+    pub fn pin(&mut self, query: &QueryRef) {
+        self.pinned.insert(query.id.clone());
+    }
+    fn scan(&self, prefix: &str) -> Result<Vec<(String, Value)>, Error> {
+        let mut values = Vec::new();
+        let mut after = None;
+        loop {
+            let page = self.store.page(prefix, after.as_deref(), 128)?;
+            let done = page.len() < 128;
+            after = page.last().map(|(key, _)| key.clone());
+            values.extend(page);
+            if done {
+                return Ok(values);
+            }
+        }
+    }
+    pub fn input_requests(&self) -> Result<Vec<RequestId>, Error> {
+        self.scan("input/")?
+            .into_iter()
+            .map(|(key, _)| {
+                RequestId::new(key.strip_prefix("input/").ok_or(Error::Protocol)?)
+                    .map_err(|_| Error::Protocol)
+            })
+            .collect()
+    }
+    pub fn forget_input(&mut self, request: &RequestId) -> Result<(), Error> {
+        self.store.remove(&format!("input/{}", request.as_str()))
+    }
+    /// Keep bounded metadata independently of value eviction; never evict active request identity.
+    pub fn maintain(
+        &mut self,
+        contexts: &[(String, Id, NativeContextRef)],
+        active_inputs: &std::collections::BTreeSet<RequestId>,
+        active_policies: &std::collections::BTreeSet<String>,
+    ) -> Result<(), Error> {
+        let protected = self
+            .scan("request/")?
+            .into_iter()
+            .map(|(_, v)| decode::<Association>(v).map(|a| a.query.id))
+            .collect::<Result<std::collections::BTreeSet<_>, _>>()?;
+        let mut published = Vec::new();
+        for (key, value) in self.scan("published/")? {
+            let p: Published = decode(value)?;
+            if contexts.iter().any(|(subject, session, context)| {
+                *subject == p.subject && *session == p.session && *context == p.context
+            }) {
+                published.push((key, p.seen_at));
+            } else {
+                self.store.remove(&key)?;
+            }
+        }
+        published.sort_by_key(|(_, at)| *at);
+        let mut excess = published.len().saturating_sub(128);
+        for (key, _) in published {
+            if excess == 0 {
+                break;
+            }
+            if !protected
+                .iter()
+                .any(|id| key == format!("published/{}", id.as_str()))
+            {
+                self.store.remove(&key)?;
+                excess -= 1;
+            }
+        }
+        let mut definitions = Vec::new();
+        for (key, value) in self.scan("definition/")? {
+            let d: Definition = decode(value)?;
+            if !self.pinned.contains(&d.descriptor.reference.id)
+                && !protected.contains(&d.descriptor.reference.id)
+            {
+                definitions.push((key, d.seen_at, d.descriptor.reference.id));
+            }
+        }
+        definitions.sort_by_key(|(_, at, _)| *at);
+        let excess = definitions.len().saturating_sub(64);
+        for (key, _, id) in definitions.into_iter().take(excess) {
+            self.store.remove(&key)?;
+            self.store.remove(&format!("latest/{}", id.as_str()))?;
+        }
+        let mut observed = Vec::new();
+        for (key, value) in self.scan("observed/")? {
+            let d: QueryDescriptor = decode(value)?;
+            if !active_policies.contains(d.reference.id.as_str()) {
+                let latest: Option<CollectedData> = self
+                    .store
+                    .read(&format!("latest/{}", d.reference.id.as_str()))?
+                    .map(decode)
+                    .transpose()?;
+                observed.push((
+                    key,
+                    latest.and_then(|v| v.collected_at).unwrap_or(0),
+                    d.reference.id,
+                ));
+            }
+        }
+        observed.sort_by_key(|(_, at, _)| *at);
+        let excess = observed.len().saturating_sub(32);
+        for (key, _, id) in observed.into_iter().take(excess) {
+            self.store.remove(&key)?;
+            self.store.remove(&format!("latest/{}", id.as_str()))?;
+        }
+        for request in self.input_requests()? {
+            if !active_inputs.contains(&request) {
+                self.forget_input(&request)?;
+            }
+        }
+        Ok(())
     }
     pub fn policy_result(
         &mut self,
@@ -211,6 +365,8 @@ impl Data {
             reference: reference.clone(),
             title: c.policy.to_string(),
             kind: QueryKind::Telemetry,
+            input_schema: json!({"type":"object","properties":{},"additionalProperties":false}),
+            policy: None,
             scope: DataScope::Device,
             available: false,
             reason: Some(DataQuality::Denied),
@@ -272,7 +428,30 @@ impl Data {
             id: crate::backend::plan::id(format!("policy:{}", revision.as_str()))?,
             revision,
         };
-        let title = item.policy_id.to_string();
+        let title = item
+            .self_service
+            .presentation
+            .get("displayName")
+            .and_then(Value::as_str)
+            .unwrap_or("Published query")
+            .chars()
+            .take(256)
+            .collect();
+        let input_schema = query_input_schema(&item).map_err(|_| Error::Unsupported)?;
+        let policy = Some(PublishedQuery {
+            policy_id: crate::backend::plan::id(item.policy_id.to_string())?,
+            policy_revision: item.policy_revision,
+            policy_version: crate::backend::plan::id(item.policy_version.to_string())?,
+            description: item
+                .self_service
+                .presentation
+                .get("description")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .chars()
+                .take(1024)
+                .collect(),
+        });
         self.store.write(
             &format!("published/{}", reference.id.as_str()),
             &encode(&Published {
@@ -280,12 +459,15 @@ impl Data {
                 subject: subject.into(),
                 session: session.clone(),
                 context: context.clone(),
+                seen_at: now(),
             })?,
         )?;
         Ok(QueryDescriptor {
             reference,
             title,
             kind: QueryKind::Policy,
+            input_schema,
+            policy,
             scope: DataScope::User {
                 subject: crate::backend::plan::id(subject)?,
             },
@@ -392,8 +574,19 @@ impl Data {
         let definition = Definition {
             descriptor: QueryDescriptor {
                 reference,
-                title: "Native collection".into(),
+                title: title(
+                    &read
+                        .plan
+                        .spec()
+                        .queries
+                        .values()
+                        .next()
+                        .ok_or(Error::Protocol)?
+                        .definition,
+                ),
                 kind: QueryKind::Native,
+                input_schema: json!({"type":"object","properties":{},"additionalProperties":false}),
+                policy: None,
                 scope: match subject(&read) {
                     Some(s) => DataScope::User {
                         subject: crate::backend::plan::id(s)?,
@@ -405,6 +598,7 @@ impl Data {
                 reason: (!supported).then_some(DataQuality::Unsupported),
             },
             read,
+            seen_at: now(),
         };
         self.store.write(
             &format!("definition/{}", definition.descriptor.reference.id.as_str()),
@@ -421,7 +615,7 @@ impl Data {
         if definition.descriptor.reference != *query {
             return Err(Error::Conflict);
         }
-        if subject(&definition.read).is_some_and(|s| s != caller) {
+        if !visible(&definition.read, caller) {
             return Err(Error::Denied);
         }
         Ok(definition)
@@ -434,7 +628,7 @@ impl Data {
             let page = self.store.page("definition/", after.as_deref(), 128)?;
             for (_, v) in &page {
                 let d: Definition = decode(v.clone())?;
-                if subject(&d.read).is_none_or(|s| s == caller) {
+                if visible(&d.read, caller) {
                     result.push(d.descriptor);
                 }
             }
@@ -528,6 +722,9 @@ impl Data {
         )?;
         if value.subject != caller || &value.session != session {
             return Err(Error::Denied);
+        }
+        if value.kind == QueryKind::Native {
+            self.definition(&value.query, caller)?;
         }
         Ok(value)
     }

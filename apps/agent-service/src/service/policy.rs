@@ -230,6 +230,19 @@ impl Core {
         }
         Ok(())
     }
+    pub(super) fn data_contexts(&self) -> Vec<(String, Id, execution_contract::NativeContextRef)> {
+        self.contexts
+            .values()
+            .filter(|c| c.ready && self.fences.current(&c.scope).ok() == Some(c.epoch))
+            .map(|c| {
+                (
+                    c.scope.subject.clone(),
+                    c.scope.binding.clone(),
+                    c.context.clone(),
+                )
+            })
+            .collect()
+    }
     pub(super) fn data_context(
         &self,
         command: &Command,

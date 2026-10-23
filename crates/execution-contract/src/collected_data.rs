@@ -49,10 +49,27 @@ pub struct QueryDescriptor {
     pub kind: QueryKind,
     /// Required local read boundary.
     pub scope: DataScope,
+    /// Complete safe caller input schema; native recipes have no parameters.
+    pub input_schema: Value,
+    /// Exact original published Policy, when applicable.
+    pub policy: Option<PublishedQuery>,
     /// Whether a new invocation is currently available.
     pub available: bool,
     /// Closed unavailability reason.
     pub reason: Option<DataQuality>,
+}
+/// Original Policy coordinates for presentation and existing confirmation integration.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PublishedQuery {
+    /// Current server Policy identity.
+    pub policy_id: Id,
+    /// Current configuration revision.
+    pub policy_revision: u64,
+    /// Immutable execution version.
+    pub policy_version: Id,
+    /// Safe administrator description, never executable input.
+    pub description: String,
 }
 /// Bounded query directory.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]

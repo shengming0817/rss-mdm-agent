@@ -271,7 +271,9 @@ impl<S: IdentityProvider> DeviceService<S> {
         fact: execution_app::ServiceMaterialFact,
     ) -> Result<(), Error> {
         let input = fact.input;
-        self.core.remember_data(&input)?;
+        if let Err(error) = self.core.remember_data(&input) {
+            eprintln!("agent_collected_data: {error}");
+        }
         let request = &input.spec().request.request_id;
         pass.associated.remove(request);
         let communicating = pass.key.associated.contains(request);

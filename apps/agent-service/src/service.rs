@@ -222,7 +222,9 @@ impl<S: IdentityProvider> DeviceService<S> {
             .map_err(crate::error::app_error)?;
         let mut data =
             crate::collected_data::Data::new(client.collected_store()?, client.output_policy()?);
-        data.install_local()?;
+        if let Err(error) = data.install_local() {
+            eprintln!("agent_collected_data: {error}");
+        }
         let output = client.output_policy()?;
         let telemetry = if client
             .registration()?
@@ -477,6 +479,9 @@ impl<S: IdentityProvider> DeviceService<S> {
                         .finish_delivery(&mut self.client, pending, &mut self.core.app)?;
                 }
                 let request = self.client.bound_request(task)?.ok_or(Error::Conflict)?;
+                if let Err(error) = self.core.capture_data(&request) {
+                    eprintln!("agent_collected_data: {error}");
+                }
                 let input = self
                     .core
                     .app
@@ -1005,9 +1010,14 @@ impl Core {
             self.app
                 .reconcile(request)
                 .map_err(crate::error::app_error)?;
-            self.capture_data(request)?;
+            if let Err(error) = self.capture_data(request) {
+                eprintln!("agent_collected_data: {error}");
+            }
         }
         self.recovery_cursor = page.next;
+        if let Err(error) = self.maintain_data() {
+            eprintln!("agent_collected_data: {error}");
+        }
         Ok(())
     }
     fn revoke_preparations(&mut self) -> Result<(), Error> {
