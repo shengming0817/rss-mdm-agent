@@ -6,6 +6,7 @@ import ts from "typescript";
 import { parse, compileTemplate } from "vue/compiler-sfc";
 
 const selfServiceCommands = [
+  "device_access",
   "query_directory",
   "data_read",
   "query_submit",
@@ -385,6 +386,7 @@ export function checkSource(file, source) {
         "Set",
       ],
       "apps/desktop/src/App.vue": ["setInterval", "clearInterval"],
+      "apps/desktop/src/settings/DeviceAccess.vue": ["Promise", "crypto"],
       "apps/desktop/src/settings/MdmRegistration.vue": [
         "Promise",
         "setInterval",
@@ -996,7 +998,9 @@ export function checkTree(treeRoot = root, executable) {
   const commands =
     ipc
       .match(/commands!\s*\{([\s\S]*?)\}/)?.[1]
-      .match(/\b(?:self_service_\w+|query_\w+|data_read)(?=\s*\()/g) ?? [];
+      .match(
+        /\b(?:self_service_\w+|query_\w+|data_read|device_access)(?=\s*\()/g,
+      ) ?? [];
   if (
     JSON.stringify(commands.toSorted()) !==
       JSON.stringify(selfServiceCommands.toSorted()) ||

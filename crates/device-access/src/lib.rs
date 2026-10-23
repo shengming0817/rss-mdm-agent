@@ -461,6 +461,8 @@ impl Store {
         })
     }
     /// Only the worker with an authenticated escrow ACK may call this method.
+    // Keep the distinct authority, operation, receipt and sampled clock explicit at ingress.
+    #[allow(clippy::too_many_arguments)]
     pub fn activate(
         &mut self,
         authority: Authority,
