@@ -676,7 +676,16 @@ fn software_actions(
         let reason = if !usable {
             Some(SoftwareBlock::ObservationUnavailable)
         } else if let Some(rules) = rules {
-            if rules.protects(item)
+            if action == LocalSoftwareAction::Uninstall
+                && item.kind == InstalledSoftwareKind::Application
+                && matches!(item.scope, DataScope::Device)
+                && recipe.is_none()
+                && text(row, "location").is_none_or(|p| {
+                    std::path::Path::new(p).parent() != Some(std::path::Path::new("/Applications"))
+                })
+            {
+                Some(SoftwareBlock::Unsupported)
+            } else if rules.protects(item)
                 && matches!(
                     action,
                     LocalSoftwareAction::Update | LocalSoftwareAction::Uninstall

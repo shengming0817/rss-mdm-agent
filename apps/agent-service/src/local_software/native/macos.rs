@@ -75,7 +75,11 @@ fn identity(path: &Path, bundle: &str, version: &str, team: &str) -> Result<(u64
     }
     Ok((meta.dev(), meta.ino()))
 }
-pub(super) fn select(item: &InstalledSoftware, row: &serde_json::Value) -> Result<Target, Error> {
+pub(super) fn select(
+    item: &InstalledSoftware,
+    row: &serde_json::Value,
+    action: LocalSoftwareAction,
+) -> Result<Target, Error> {
     if item.kind != InstalledSoftwareKind::Application {
         return Err(Error::Unsupported);
     }

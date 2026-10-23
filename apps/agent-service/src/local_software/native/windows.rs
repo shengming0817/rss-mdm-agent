@@ -113,7 +113,7 @@ fn msi(product: &str, subject: Option<&str>, view: u32) -> Result<Target, Error>
     let version = property(product, subject, context, "VersionString")?.ok_or(Error::Conflict)?;
     let publisher = property(product, subject, context, "Publisher")?.ok_or(Error::Untrusted)?;
     // System servicing components need an explicit organization recipe.
-    if publisher.is_empty() || publisher.starts_with("Microsoft") {
+    if publisher.is_empty() || publisher.to_ascii_lowercase().starts_with("microsoft") {
         return Err(Error::Denied);
     }
     let cached_path = PathBuf::from(
@@ -188,7 +188,11 @@ fn msix(p: &Package) -> Result<Target, Error> {
         publisher: id.Publisher().map_err(|_| Error::Unavailable)?.to_string(),
     })
 }
-pub(super) fn select(item: &InstalledSoftware, _row: &serde_json::Value) -> Result<Target, Error> {
+pub(super) fn select(
+    item: &InstalledSoftware,
+    _row: &serde_json::Value,
+    _action: LocalSoftwareAction,
+) -> Result<Target, Error> {
     if let Some(location) = _row
         .get("location")
         .and_then(serde_json::Value::as_str)

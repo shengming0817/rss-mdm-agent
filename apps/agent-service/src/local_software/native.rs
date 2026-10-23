@@ -45,7 +45,11 @@ pub(crate) struct Input {
     pub run_as: RunAs,
     pub session: SessionRequirement,
 }
-pub(crate) fn select(item: &InstalledSoftware, row: &serde_json::Value) -> Result<Target, Error> {
+pub(crate) fn select(
+    item: &InstalledSoftware,
+    row: &serde_json::Value,
+    action: LocalSoftwareAction,
+) -> Result<Target, Error> {
     #[cfg(target_os = "macos")]
     {
         macos::select(item, row, action)
