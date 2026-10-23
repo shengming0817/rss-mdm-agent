@@ -61,6 +61,7 @@ let polling: ReturnType<typeof setInterval> | undefined;
 async function refresh() {
   try {
     users.value = (await loadTestUsers()).users;
+    if (selectedUser.value) loginOpen.value = false;
     await refreshAccount();
     if (selectedUser.value) loginOpen.value = false;
     if (selectedUser.value && page.value === "settings" && loading.value)

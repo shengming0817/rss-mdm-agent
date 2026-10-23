@@ -1614,6 +1614,34 @@ impl<S: IdentityProvider> DeviceService<S> {
 }
 
 impl<S: IdentityProvider> DeviceService<S> {
+    pub(super) async fn retire_expired_current_user(
+        &mut self,
+        commands: &mut tokio::sync::mpsc::Receiver<Command>,
+    ) -> Result<(), Error> {
+        let Some(owner) = self.client.current_user_owner()? else {
+            return Ok(());
+        };
+        let now = self.core.host.clock.millis()?;
+        let status = self.client.current_user_status()?;
+        let expired = self
+            .core
+            .contexts
+            .values()
+            .any(|bound| bound.context == owner.context && now >= bound.expires_at_unix_ms);
+        if status.phase == agent_client::current_user::Phase::CleanupPending
+            || (expired && status.phase == agent_client::current_user::Phase::Bound)
+        {
+            // No new revision on CAS conflict, and an uncertain PUT still needs
+            // its original proof or explicit recovery. Revoke IPC alone is not logout.
+            let _ = network(
+                self.client.retire_current_user(&owner, None, false),
+                &mut self.core,
+                commands,
+            )
+            .await;
+        }
+        Ok(())
+    }
     pub(super) fn prune_credentials(&mut self) -> Result<(), Error> {
         let now = self.core.host.clock.millis()?;
         let fences = &self.core.fences;

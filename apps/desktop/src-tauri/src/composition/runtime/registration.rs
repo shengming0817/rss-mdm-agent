@@ -230,8 +230,8 @@ impl DesktopRuntime {
         if self.execution.revoke_context().await.is_err() {
             return Ok(false);
         }
-        // Normal activation may publish an unbound view during service startup. Keep waiting
-        // and retry that same generation; never prepare another machine operation for this.
+        // Activation publishes only after current-user settlement. Any ambiguous result
+        // retains this same pending generation for the shared account recovery entry.
         Ok(self
             .activate_context(next)
             .await?

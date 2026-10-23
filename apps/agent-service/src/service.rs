@@ -371,6 +371,7 @@ impl<S: IdentityProvider> DeviceService<S> {
             return Ok(());
         }
         self.next_network = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        self.retire_expired_current_user(commands).await?;
         let caller = self.core.caller();
         if self.waiting.as_ref().is_some_and(|(offer, _)| {
             self.core

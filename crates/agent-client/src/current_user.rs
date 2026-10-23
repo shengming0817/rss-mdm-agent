@@ -167,6 +167,9 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         }
         if let Some(c) = &state.confirmed {
             if c.owner == *owner && c.proof == fingerprint {
+                if !same_user(&c.value.user, &Some(user.clone())) {
+                    return Err(Error::Identity);
+                }
                 let current = self.current_user().await?;
                 if current.revision != c.value.revision
                     || current.state != wire::CurrentUserState::Active

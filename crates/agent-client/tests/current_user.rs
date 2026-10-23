@@ -50,6 +50,16 @@ async fn mtls_login_lost_reply_reopen_original_replay_and_logout_preserve_owner(
         .await
         .unwrap();
     assert_eq!(bound.revision, 1);
+    let mut impostor = user.clone();
+    impostor.principal_id = uuid::Uuid::new_v4();
+    assert_eq!(
+        client
+            .bind_current_user(&owned, &impostor, &proof)
+            .await
+            .unwrap_err(),
+        Error::Identity
+    );
+
     {
         let d = server.data.lock().unwrap();
         assert_eq!(d.current_user.inputs.len(), 2);

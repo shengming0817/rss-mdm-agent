@@ -79,6 +79,7 @@ it("keeps the retired identity unavailable when logout cleanup is unconfirmed", 
   expect(currentUser.value).toBeUndefined();
   expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
     "account_logout",
+    "account_status",
   ]);
 });
 it("closes assistant modals when leaving the page and preserves the conversation draft", async () => {
@@ -451,3 +452,28 @@ it("projects closed account errors without exposing native details and rejects i
   });
   await expect(loadAccountSettings()).rejects.toThrow();
 });
+
+it.each(["cleanup_pending", "conflict"] as const)(
+  "exposes recovery after a rejected logout with %s",
+  async (binding) => {
+    currentUser.value = current;
+    accountBinding.value = "bound";
+    vi.mocked(invoke).mockImplementation(async (command) => {
+      if (command === "account_logout") throw { code: "cleanup_pending" };
+      if (command === "account_status")
+        return { schemaVersion: 1, kind: "accountStatus", binding };
+      throw Error("unexpected request");
+    });
+    await expect(logoutAccount()).rejects.toEqual({ code: "cleanup_pending" });
+    expect(currentUser.value).toBeUndefined();
+    expect(accountBinding.value).toBe(binding);
+    const wrapper = mount(Account, { props: { loading: false } });
+    await flushPromises();
+    expect(wrapper.text()).toContain("重试原操作");
+    expect(wrapper.text()).toContain("清理后重新登录");
+    expect(
+      wrapper.get('[aria-label="企业账号密码"]').attributes("disabled"),
+    ).toBeDefined();
+    wrapper.unmount();
+  },
+);

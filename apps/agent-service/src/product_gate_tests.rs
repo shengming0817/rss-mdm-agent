@@ -3880,3 +3880,52 @@ async fn raw_context_fence_does_not_delete_the_server_relation() {
         matches!(reply,Reply::CurrentUserSync{value} if value.phase==execution_contract::CurrentUserSyncPhase::Unbound)
     );
 }
+
+#[tokio::test]
+async fn expired_enterprise_lease_settles_current_user_without_a_live_desktop() {
+    let _budget = crate::scenario_budget::enter();
+    use execution_ipc::host::{NativeAccess, NativeContextSession, Request};
+    let mut c = Case::new(None).await;
+    let context = c.context();
+    let user = protocol::current_user::user(c.service.client.configuration().tenant);
+    let reply = c
+        .policy_call(Request::BindContext {
+            value: NativeContextSession {
+                access: NativeAccess::User {
+                    credential: zeroize::Zeroizing::new("c".repeat(64)),
+                    credential_origin: c.service.client.configuration().origin.to_string(),
+                    user,
+                },
+                generation: context.generation.clone(),
+                expires_at_unix_ms: c.service.core.host.clock.millis().unwrap() + 100,
+            },
+            expected: Some(context.id),
+        })
+        .await;
+    assert!(matches!(reply, Reply::ContextBound { .. }));
+    tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+    let (_sender, mut commands) = tokio::sync::mpsc::channel(1);
+    c._server.data.lock().unwrap().current_user.lose_reply = true;
+    c.service.prune_credentials().unwrap();
+    c.service
+        .retire_expired_current_user(&mut commands)
+        .await
+        .unwrap();
+    assert_eq!(
+        c.service.client.current_user_status().unwrap().phase,
+        execution_contract::CurrentUserSyncPhase::CleanupPending
+    );
+    c.service
+        .retire_expired_current_user(&mut commands)
+        .await
+        .unwrap();
+    assert_eq!(
+        c.service.client.current_user_status().unwrap().phase,
+        execution_contract::CurrentUserSyncPhase::Unbound
+    );
+    let data = c._server.data.lock().unwrap();
+    let inputs = &data.current_user.inputs;
+    assert_eq!(inputs[inputs.len() - 1], inputs[inputs.len() - 2]);
+    assert!(data.current_user.user.is_none());
+    assert!(data.current_user.owner.is_some());
+}

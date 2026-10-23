@@ -208,10 +208,11 @@ impl DesktopRuntime {
             .lock()
             .map_err(|_| unavailable())?
             .clone();
-        let generation = pending
-            .as_ref()
-            .or(self.identity.snapshot().ok().as_ref())
-            .map(|u| u.generation.to_string());
+        // Keep the retiring incarnation after its public view is revoked. A failed
+        // DELETE must retry with the original generation, not become an ownerless ACK.
+        let retiring = pending.or_else(|| self.identity.snapshot().ok());
+        let generation = retiring.as_ref().map(|u| u.generation.to_string());
+        *self.identity.pending.lock().map_err(|_| unavailable())? = retiring;
         let enterprise = self.identity.session()?.is_some();
         let local = self.revoke_locked().await;
         if enterprise
@@ -410,6 +411,20 @@ impl DesktopRuntime {
             self.users.lock().map_err(|_| unavailable())?.activate(next)
         }
         .await;
+        if let Err(error) = &published {
+            if self.identity.session()?.is_some()
+                && matches!(
+                    error.code,
+                    "binding_unknown"
+                        | "binding_conflict"
+                        | "binding_invalidated"
+                        | "cleanup_pending"
+                        | "execution_unavailable"
+                )
+            {
+                self.record_binding_error(error)?;
+            }
+        }
         if published.is_ok() {
             *self.identity.pending.lock().map_err(|_| unavailable())? = None;
         }
@@ -627,27 +642,15 @@ impl DesktopRuntime {
     }
     pub async fn shutdown(&self) {
         let _switch = self.switching.lock().await;
-        if self.execution.revoke_context().await.is_err() {
-            // Preserve the unresolved retirement; a subsequent identity cannot be activated.
-            self.cleanup_pending.store(true, Ordering::Release);
+        // Shutdown uses the same remote relation retirement as explicit logout.
+        // Even if settlement is unknown, close every local process/handle; do not
+        // destroy the employee proof by logging out its remote session first.
+        if self.retire_locked().await.is_err() {
             eprintln!("RSS_CONTEXT_RETIREMENT_UNCONFIRMED");
-            self.detach_views().await;
-            if let Some(process) = self.process() {
-                process.close().await;
-            }
-            return;
         }
         self.detach_views().await;
         if let Some(process) = self.process() {
             process.close().await;
-        }
-        let _ = self.users.lock().map(|mut users| {
-            if users.page().current.as_ref().is_some() {
-                let _ = users.clear();
-            }
-        });
-        if let Ok(Some(account)) = self.identity.take_session() {
-            let _ = account.logout().await;
         }
         self.host.close();
         self.execution.close().await;
@@ -890,6 +893,93 @@ mod tests {
         server.await.unwrap();
         runtime.shutdown().await;
         std::fs::remove_dir_all(root).unwrap();
+    }
+    #[tokio::test]
+    async fn logout_retries_the_same_retiring_generation_before_remote_logout() {
+        use super::super::account::{
+            http_tests::{access, identity, server},
+            EnterpriseSession,
+        };
+        use execution_ipc::host::{Reply, Request};
+        for shutdown in [false, true] {
+            let root = std::env::temp_dir().join(format!("rss-retire-{}", uuid::Uuid::new_v4()));
+            let mut runtime = DesktopRuntime::start_with_key_backend(
+                &root,
+                &root.join("missing"),
+                ai_session_contract::HostStatusSource::DevelopmentOverride,
+                NoKey,
+            )
+            .await
+            .unwrap();
+            let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+            let calls = seen.clone();
+            runtime.execution = runtime
+                .execution
+                .clone()
+                .with_context_transport(move |request| match request {
+                    Request::RevokeContext {} => Ok(Reply::ContextRevoked),
+                    Request::BindContext { value, .. } => Ok(Reply::ContextBound {
+                        value: execution_contract::NativeContextRef {
+                            id: value.generation.clone(),
+                            generation: value.generation,
+                        },
+                    }),
+                    Request::RetireEnterpriseContext { generation, .. } => {
+                        let mut seen = calls.lock().unwrap();
+                        seen.push(generation);
+                        Ok(Reply::CurrentUserSync {
+                            value: execution_contract::CurrentUserSync {
+                                phase: if seen.len() == 1 && !shutdown {
+                                    execution_contract::CurrentUserSyncPhase::CleanupPending
+                                } else {
+                                    execution_contract::CurrentUserSyncPhase::Unbound
+                                },
+                                current: None,
+                            },
+                        })
+                    }
+                    _ => panic!("unexpected context request"),
+                });
+            let (org, server) = server(vec![
+                (200, identity()),
+                (200, identity()),
+                (200, access()),
+                (200, json!({})),
+            ])
+            .await;
+            let context = runtime
+                .login_with(|| {
+                    EnterpriseSession::login_with_client(
+                        reqwest::Client::new(),
+                        org,
+                        "Alice",
+                        zeroize::Zeroizing::new("password".into()),
+                    )
+                })
+                .await
+                .unwrap();
+            if shutdown {
+                runtime.shutdown().await;
+            } else {
+                assert_eq!(runtime.logout().await.unwrap_err().code, "cleanup_pending");
+                assert!(runtime.identity.snapshot().is_err());
+                assert!(runtime.identity.session().unwrap().is_some());
+                runtime.recover_account(false).await.unwrap();
+                runtime.shutdown().await;
+            }
+            let seen = seen.lock().unwrap().clone();
+            assert_eq!(seen.len(), if shutdown { 1 } else { 2 });
+            assert!(seen.iter().all(|generation| generation
+                .as_ref()
+                .is_some_and(|g| g.as_str() == context.generation.as_str())));
+            assert!(server
+                .await
+                .unwrap()
+                .last()
+                .unwrap()
+                .contains("/session/logout"));
+            std::fs::remove_dir_all(root).unwrap();
+        }
     }
     #[tokio::test]
     async fn missing_runtime_preserves_users_and_execution_and_coalesces_restart() {

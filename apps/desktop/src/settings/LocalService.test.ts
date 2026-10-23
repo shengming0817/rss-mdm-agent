@@ -34,7 +34,7 @@ it("requests one fixed machine registration and refreshes its original public pr
     wrapper.findAll("button").find((b) => b.text() === text)!;
   await button("登录并注册此设备").trigger("click");
   await flushPromises();
-  expect(request.mock.calls).toEqual([[undefined, undefined]]);
+  expect(request.mock.calls).toEqual([[undefined]]);
   expect(wrapper.text()).toContain("public-grant");
   state = { phase: "rejected", registered: true, credential: "retired" };
   await button("重新查询").trigger("click");

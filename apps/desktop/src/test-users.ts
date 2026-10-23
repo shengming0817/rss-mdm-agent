@@ -142,8 +142,11 @@ export async function recoverAccount(clear = false): Promise<void> {
 }
 export async function logoutAccount(): Promise<void> {
   currentUser.value = undefined;
-  await invoke("account_logout");
-  if (!currentUser.value) await refreshAccount();
+  try {
+    await invoke("account_logout");
+  } finally {
+    await refreshAccount();
+  }
 }
 export async function refreshAccount(): Promise<void> {
   const expected = currentUser.value?.generation;
