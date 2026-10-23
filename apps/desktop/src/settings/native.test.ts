@@ -62,7 +62,12 @@ it.each(["device", "test", "user_device"] as const)(
       if (command === "account_organizations")
         return { schemaVersion: 1, kind: "accountSettings", organizations: [] };
       if (command === "account_status")
-        return { schemaVersion: 1, kind: "accountStatus", current };
+        return {
+          schemaVersion: 1,
+          kind: "accountStatus",
+          binding: "unbound",
+          current,
+        };
       if (command === "ai_host_status") return status;
       if (command === "ai_restart_host") {
         current = { ...current, generation: "new-generation" };
@@ -96,7 +101,12 @@ it("synchronizes a rotated identity even when Host startup fails", async () => {
   vi.mocked(invoke).mockImplementation(async (command) => {
     if (command === "ai_restart_host") throw Error("startup failed");
     if (command === "account_status")
-      return { schemaVersion: 1, kind: "accountStatus", current: next };
+      return {
+        schemaVersion: 1,
+        kind: "accountStatus",
+        binding: "unbound",
+        current: next,
+      };
     throw Error("unexpected command");
   });
   await expect(nativeHost()!.restart(1)).rejects.toThrow("startup failed");

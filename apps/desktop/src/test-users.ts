@@ -14,6 +14,11 @@ import type {
 import type { Result } from "@rss-mdm-agent/ai-contract/ports";
 export const currentUser = shallowRef<UserContext>();
 export const accountNotice = shallowRef("");
+export const accountBinding =
+  shallowRef<import("@rss-mdm-agent/ai-contract/wire").AccountBindingState>(
+    "unbound",
+  );
+import type { EnterpriseLogin } from "./account/types";
 import { fixtureSelected } from "./assembly";
 export const nativeTestMode = isTauri() && !fixtureSelected;
 function parsed<
@@ -112,12 +117,11 @@ export async function enterGuest(): Promise<UserContext> {
   }
 }
 export async function loginEnterprise(
-  organizationId: string,
-  login: string,
+  input: EnterpriseLogin,
 ): Promise<UserContext> {
   try {
     const context = parsed(
-      await invoke("account_login", { organizationId, login }),
+      await invoke("account_login", { input }),
       "userContext",
     );
     currentUser.value = context;
@@ -128,16 +132,28 @@ export async function loginEnterprise(
     throw error;
   }
 }
+export async function recoverAccount(clear = false): Promise<void> {
+  try {
+    const value = await invoke("account_recover", { clear });
+    currentUser.value = value ? parsed(value, "userContext") : undefined;
+  } finally {
+    await refreshAccount();
+  }
+}
 export async function logoutAccount(): Promise<void> {
   currentUser.value = undefined;
-  await invoke("account_logout");
-  if (!currentUser.value) await refreshAccount();
+  try {
+    await invoke("account_logout");
+  } finally {
+    await refreshAccount();
+  }
 }
 export async function refreshAccount(): Promise<void> {
   const expected = currentUser.value?.generation;
   try {
     const status = parsed(await invoke("account_status"), "accountStatus");
     const value = status.current;
+    accountBinding.value = status.binding;
     if (currentUser.value?.generation !== expected) return;
     if (status.failure)
       accountNotice.value = accountFailureMessage(status.failure);
@@ -211,6 +227,7 @@ export function accountErrorMessage(error: unknown): string {
         {
           schemaVersion: 1,
           kind: "accountStatus",
+          binding: "unbound",
           failure: { stage, reason, observedAtMs: 0 },
         },
         "accountStatus",
@@ -218,5 +235,10 @@ export function accountErrorMessage(error: unknown): string {
       if (status.failure) return accountFailureMessage(status.failure);
     } catch {}
   }
+  if (code === "binding_unknown") return "登录确认尚未完成，请重试原操作。";
+  if (code === "binding_conflict")
+    return "当前使用者发生冲突，请清理后重新登录。";
+  if (code === "cleanup_pending") return "退出清理尚未确认，请重试原操作。";
+  if (code === "binding_invalidated") return "设备身份已变化，请重新登录。";
   return "账户操作未完成，请重试；如持续失败，请联系管理员。";
 }

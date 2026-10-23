@@ -9,6 +9,7 @@ import type {
   HostStatus,
   UserContext,
 } from "../../packages/ai-contract/dist/wire.js";
+import { createLoginFixture } from "./login-fixture";
 import type { FixtureEnvironment } from "../../apps/desktop/src/assembly";
 export function createFixturePorts() {
   const services: AssistantServices = {
@@ -95,6 +96,7 @@ export function createFixturePorts() {
 
   const environment: FixtureEnvironment = {
     kind: "fixture",
+    account: createLoginFixture(() => rpc<UserContext>("identity")),
     device: {
       async read() {
         return {

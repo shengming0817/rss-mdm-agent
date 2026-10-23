@@ -47,6 +47,7 @@ const userCommands = [
   "account_logout",
   "account_status",
   "account_login",
+  "account_recover",
   "account_organizations",
   "account_save_organization",
 ];

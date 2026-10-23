@@ -1384,6 +1384,89 @@ try {
   await fixtureControls();
   await page.getByLabel("显示操作模板", { exact: true }).uncheck();
   await page.locator(".fixture-controls summary").click();
+  // Fixed login geometry and synthetic local-app/QR outcomes use the real renderer.
+  await openAgentSettings("账号与组织");
+  await page.getByRole("button", { name: "预览企业登录", exact: true }).click();
+  const geometry = () =>
+    page.evaluate(() =>
+      Object.fromEntries(
+        [
+          ".auth-heading",
+          ".organization-card",
+          ".login-tabs",
+          ".login-stage",
+          ".account-footer",
+        ].map((selector) => {
+          const { x, y, width, height } = document
+            .querySelector(selector)
+            .getBoundingClientRect();
+          return [selector, { x, y, width, height }];
+        }),
+      ),
+    );
+  for (const viewport of [
+    { width: 1200, height: 800 },
+    { width: 720, height: 800 },
+    { width: 390, height: 844 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await page.getByRole("tab", { name: "账号密码", exact: true }).click();
+    const baseline = await geometry();
+    for (const name of ["扫码登录", "本机快捷登录", "账号密码"]) {
+      await page.getByRole("tab", { name, exact: true }).click();
+      await page.clock.runFor(300);
+      assert.deepEqual(
+        await geometry(),
+        baseline,
+        `login geometry changed at ${viewport.width}: ${name}`,
+      );
+      if (viewport.width === 1200 || viewport.width === 390)
+        await page.screenshot({
+          path: `.local-ci-runs/login-${viewport.width}-${name}.png`,
+        });
+    }
+  }
+  await page.getByRole("tab", { name: "扫码登录", exact: true }).click();
+  await page.getByRole("button", { name: "模拟扫码", exact: true }).click();
+  await page.getByText("已扫码，请在手机上确认", { exact: true }).waitFor();
+  await page.getByRole("button", { name: "二维码过期", exact: true }).click();
+  await page.getByRole("button", { name: "手机确认", exact: true }).click();
+  await page.clock.runFor(300);
+  await page.getByText("二维码已过期", { exact: true }).waitFor();
+  await page.getByRole("tab", { name: "本机快捷登录", exact: true }).click();
+  await page.clock.runFor(300);
+  for (const scenario of ["signed_out", "missing", "mismatch", "error"]) {
+    await page
+      .getByLabel("本机应用登录场景", { exact: true })
+      .selectOption(scenario);
+    await page.clock.runFor(300);
+    assert.equal(
+      await page.getByRole("button", { name: "一键登录", exact: true }).count(),
+      0,
+      scenario,
+    );
+  }
+  await page
+    .getByLabel("本机应用登录场景", { exact: true })
+    .selectOption("expired");
+  await page.clock.runFor(300);
+  await page
+    .getByRole("button", { name: "一键登录", exact: true })
+    .first()
+    .click();
+  await page.clock.runFor(300);
+  await page.getByText("登录已失效", { exact: true }).waitFor();
+  await page
+    .getByLabel("本机应用登录场景", { exact: true })
+    .selectOption("normal");
+  await page.clock.runFor(300);
+  await page
+    .getByRole("button", { name: "一键登录", exact: true })
+    .first()
+    .click();
+  await page.clock.runFor(300);
+  await page.locator(".workspace-chrome").waitFor();
+  await page.setViewportSize({ width: 1200, height: 800 });
   await checkFoundations(browser, fixture.url);
   assert.deepEqual(errors, []);
   console.log(

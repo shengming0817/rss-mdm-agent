@@ -1,4 +1,5 @@
 #![allow(dead_code)]
+pub mod current_user;
 pub(crate) mod pki;
 pub mod software_native;
 pub mod telemetry;
@@ -145,6 +146,7 @@ impl IdentityProvider for Secrets {
     }
 }
 pub struct Data {
+    pub current_user: current_user::RelationFixture,
     pub telemetry: telemetry::State,
     pub software_source: Option<software_native::Source>,
     pub trust: Value,
@@ -623,6 +625,7 @@ impl Server {
         let time = Time(Arc::new(AtomicI64::new(1)));
         let signer = Ed25519KeyPair::from_seed_unchecked(&[7; 32]).unwrap();
         let data = Arc::new(Mutex::new(Data {
+            current_user: Default::default(),
             telemetry: Default::default(),
             software_source: None,
             trust: Value::Null,
@@ -979,6 +982,7 @@ fn native_enrollment_response(d: &mut Data, value: Value) -> Response {
 async fn handler(
     State(data): State<Arc<Mutex<Data>>>,
     uri: Uri,
+    method: axum::http::Method,
     headers: HeaderMap,
     peer: Result<ConnectInfo<TlsIdentity>, axum::extract::rejection::ExtensionRejection>,
     bytes: Bytes,
@@ -1012,6 +1016,13 @@ async fn handler(
     let value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
     if headers.contains_key("authorization") {
         return runtime_error(StatusCode::UNAUTHORIZED, ErrorCode::InvalidIdentity);
+    }
+    if path.ends_with("/current-user") {
+        if d.denied || d.activation.is_none() {
+            return runtime_error(StatusCode::UNAUTHORIZED, ErrorCode::InvalidIdentity);
+        }
+        let tenant = d.tenant;
+        return current_user::response(&mut d.current_user, tenant, &method, &headers, value);
     }
     if path.contains("/self-service") {
         return self_service_response(&mut d, &uri, &headers, value);

@@ -41,6 +41,7 @@
     "allow-account-organizations",
     "allow-account-save-organization",
     "allow-account-login",
+    "allow-account-recover",
     "allow-appearance-snapshot",
     "allow-device-overview",
     "allow-development-assembly"

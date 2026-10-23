@@ -23,11 +23,9 @@ async fn context() -> Result<RegistrationContext> {
     }
 }
 impl DesktopRuntime {
-    pub async fn register_device<R: tauri::Runtime>(
+    pub async fn register_device(
         &self,
-        app: tauri::AppHandle<R>,
-        organization_id: Option<String>,
-        login: Option<String>,
+        credentials: Option<super::super::account::EnterpriseCredentials>,
     ) -> Result<RegistrationStatus> {
         let _switch = self.switching.lock().await;
         let initial = context().await?;
@@ -39,18 +37,19 @@ impl DesktopRuntime {
             account = None;
         }
         // An explicit login form submission can replace an expired session; a passive retry cannot.
-        if account.is_none() || organization_id.is_some() {
-            let id = organization_id.ok_or_else(|| {
+        if account.is_none() || credentials.is_some() {
+            let credentials = credentials.ok_or_else(|| {
                 error(
                     "registration_login_required",
                     "请登录安装包所属组织以注册此设备",
                 )
             })?;
+            credentials.validate()?;
             let organization = self
                 .organizations
                 .lock()
                 .map_err(|_| unavailable())?
-                .get(&id)?;
+                .get(&credentials.organization_id)?;
             if super::super::account::registration_origin(&organization)? != initial.origin
                 || organization.tenant_id != initial.tenant_id
             {
@@ -59,17 +58,8 @@ impl DesktopRuntime {
                     "所选组织与本机安装包不一致",
                 ));
             }
-            let login = login
-                .filter(|v| {
-                    !v.trim().is_empty() && v.len() <= 256 && !v.chars().any(char::is_control)
-                })
-                .ok_or_else(|| error("input", "请输入企业账号"))?;
-            let target = format!(
-                "注册此设备\n服务：{}\n租户：{}\n账号：{}",
-                organization.origin, organization.tenant_id, login
-            );
-            let password =
-                super::super::credentials::enter_enterprise_password(app, target).await?;
+            let login = credentials.login;
+            let password = credentials.password;
             self.retire_locked().await?;
             let session =
                 super::super::account::EnterpriseSession::login(organization, &login, password)
@@ -77,7 +67,14 @@ impl DesktopRuntime {
             let next = session.context()?;
             self.identity.set_session(Some(session.clone()))?;
             // Publishing a user view is separate from disclosing credentials to execution IPC.
-            let published = self.users.lock().map_err(|_| unavailable())?.activate(next);
+            let published =
+                self.identity
+                    .pending
+                    .lock()
+                    .map_err(|_| unavailable())
+                    .map(|mut pending| {
+                        *pending = Some(next);
+                    });
             if let Err(e) = published {
                 self.identity.set_session(None)?;
                 let _ = session.logout().await;
@@ -88,7 +85,15 @@ impl DesktopRuntime {
         let mut account = account.ok_or_else(unavailable)?;
         account.verify().await?;
         self.identity.set_session(Some(account))?;
-        let generation = self.identity.snapshot()?.generation;
+        let generation = self
+            .identity
+            .pending
+            .lock()
+            .map_err(|_| unavailable())?
+            .as_ref()
+            .map(|u| u.generation.clone())
+            .or_else(|| self.identity.snapshot().ok().map(|u| u.generation))
+            .ok_or_else(unavailable)?;
         let intent = self.registration_epoch.fetch_add(1, Ordering::AcqRel) + 1;
         drop(_switch);
         let mut prepared = initial.status.registered;
@@ -186,6 +191,17 @@ impl DesktopRuntime {
                 "已停止注册等待；已提交的原请求仍保留",
             ));
         }
+        if let Some(pending) = self
+            .identity
+            .pending
+            .lock()
+            .map_err(|_| unavailable())?
+            .as_ref()
+        {
+            if &pending.generation == generation {
+                return Ok(pending.clone());
+            }
+        }
         self.current(generation.as_str())
     }
     async fn registration_handoff(
@@ -214,8 +230,8 @@ impl DesktopRuntime {
         if self.execution.revoke_context().await.is_err() {
             return Ok(false);
         }
-        // Normal activation may publish an unbound view during service startup. Keep waiting
-        // and retry that same generation; never prepare another machine operation for this.
+        // Activation publishes only after current-user settlement. Any ambiguous result
+        // retains this same pending generation for the shared account recovery entry.
         Ok(self
             .activate_context(next)
             .await?
@@ -288,14 +304,14 @@ mod tests {
             reqwest::Client::new(),
             organization,
             "Alice",
-            "password".into(),
+            zeroize::Zeroizing::new("password".into()),
         )
         .await
         .unwrap();
         let next = account.context().unwrap();
         let generation = next.generation.clone();
         runtime.identity.set_session(Some(account)).unwrap();
-        runtime.users.lock().unwrap().activate(next).unwrap();
+        *runtime.identity.pending.lock().unwrap() = Some(next);
         let attempts = Arc::new(AtomicU64::new(0));
         let native_bound = Arc::new(AtomicBool::new(false));
         let calls = attempts.clone();
@@ -304,6 +320,9 @@ mod tests {
             .execution
             .clone()
             .with_context_transport(move |request| match request {
+                Request::RetireEnterpriseContext { .. } => Ok(Reply::CurrentUserSync {
+                    value: Default::default(),
+                }),
                 Request::RevokeContext {} => {
                     bound.store(false, Ordering::Release);
                     Ok(Reply::ContextRevoked)
@@ -319,7 +338,12 @@ mod tests {
                         "uncertain prior binding must be retired"
                     );
                     if calls.fetch_add(1, Ordering::AcqRel) == 0 {
-                        return Err(execution_app::Error::OutcomeUnknown);
+                        return Ok(Reply::CurrentUserSync {
+                            value: execution_contract::CurrentUserSync {
+                                phase: execution_contract::CurrentUserSyncPhase::BindingUnknown,
+                                current: None,
+                            },
+                        });
                     }
                     Ok(Reply::ContextBound {
                         value: execution_contract::NativeContextRef {
@@ -360,10 +384,19 @@ mod tests {
             .unwrap());
         assert_eq!(attempts.load(Ordering::Acquire), 0);
         current.status.credential = CredentialStatus::Active;
-        assert!(!runtime
-            .registration_handoff(&current, intent, &generation)
-            .await
-            .unwrap());
+        assert_eq!(
+            runtime
+                .registration_handoff(&current, intent, &generation)
+                .await
+                .unwrap_err()
+                .code,
+            "binding_unknown"
+        );
+        assert!(runtime.identity.snapshot().is_err());
+        assert_eq!(
+            runtime.account_status().unwrap().binding,
+            ai_session_contract::AccountBindingState::BindingUnknown
+        );
         assert!(native_bound.load(Ordering::Acquire));
         assert!(runtime
             .policy_execution_for(generation.as_str())
