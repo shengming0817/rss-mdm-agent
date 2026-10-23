@@ -18,6 +18,7 @@ import type { SelfServicePort } from "./self-service/types";
 export type FixtureEnvironment = {
   device: import("./home/device").DeviceOverviewPort;
   kind: "fixture";
+  account?: import("./account/types").FixtureLoginPort;
   identity: { read(): Promise<UserContext> };
   host: NonNullable<ReturnType<typeof nativeHost>>;
   service: ServicePort;

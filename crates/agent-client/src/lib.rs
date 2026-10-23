@@ -26,6 +26,8 @@ mod identity;
 mod pki;
 mod task_trust;
 
+/// Device-bound enterprise relation and durable recovery.
+pub mod current_user;
 mod self_service;
 mod tls;
 mod trust;

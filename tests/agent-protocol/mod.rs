@@ -1,4 +1,5 @@
 #![allow(dead_code)]
+pub mod current_user;
 pub(crate) mod pki;
 pub mod software_native;
 pub mod telemetry;
@@ -153,6 +154,7 @@ pub struct Data {
     pub terminal_reply_lost: bool,
     pub terminal_call_origins: Vec<String>,
     pub connection_get_calls: usize,
+    pub current_user: current_user::RelationFixture,
     pub telemetry: telemetry::State,
     pub software_source: Option<software_native::Source>,
     pub trust: Value,
@@ -639,6 +641,7 @@ impl Server {
             terminal_reply_lost: false,
             terminal_call_origins: vec![],
             connection_get_calls: 0,
+            current_user: Default::default(),
             telemetry: Default::default(),
             software_source: None,
             trust: Value::Null,
@@ -1027,6 +1030,7 @@ fn native_enrollment_response(d: &mut Data, value: Value) -> Response {
 async fn handler(
     State(data): State<Arc<Mutex<Data>>>,
     uri: Uri,
+    method: axum::http::Method,
     headers: HeaderMap,
     peer: Result<ConnectInfo<TlsIdentity>, axum::extract::rejection::ExtensionRejection>,
     bytes: Bytes,
@@ -1064,6 +1068,13 @@ async fn handler(
     }
     if path.starts_with("/api/v1/agent/enroll/connections") {
         return connection_response(&mut d, path, &headers, value);
+    }
+    if path.ends_with("/current-user") {
+        if d.denied || d.activation.is_none() {
+            return runtime_error(StatusCode::UNAUTHORIZED, ErrorCode::InvalidIdentity);
+        }
+        let tenant = d.tenant;
+        return current_user::response(&mut d.current_user, tenant, &method, &headers, value);
     }
     if path.contains("/self-service") {
         return self_service_response(&mut d, &uri, &headers, value);

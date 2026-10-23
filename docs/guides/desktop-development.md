@@ -34,9 +34,9 @@ pnpm desktop:build       # 自动打包 Node/依赖、stage、构建 .app
 
 ## 企业、测试与不登录入口
 
-“设置 → 账户入口”始终保留企业登录、测试用户和“不登录使用”。不登录使用创建稳定的本地访客，支持个人 AI；设备操作仍须来自后台任务；访客、测试用户和企业账号的数据互相隔离。测试用户仍按本地名称选择，不代表认证。
+首次打开显示企业登录界面；账号与密码在同一表单填写。设置与诊断始终可达，账户设置继续提供企业登录、测试用户和“不登录使用”。不登录使用创建稳定的本地访客，支持个人 AI；设备操作仍须来自后台任务；访客、测试用户和企业账号的数据互相隔离。测试用户仍按本地名称选择，不代表认证。
 
-企业登录先添加组织名称、HTTPS 服务 origin 与租户 UUID，再选择组织并填写本地账号。原生安全输入框会展示实际服务、租户和账号；密码只由原生进程发送到该服务，不进入 WebView、不保存。仅接受系统信任的 HTTPS，不跟随重定向，不接受 URL 中的凭据、路径或查询。组织配置不构成授权；切换连接必须重新登录，随后分别查询 Identity 会话与 rss-mdm 当前业务授权，核对实例/租户/主体，并要求至少一个有效业务 grant。企业执行走已注册系统服务，企业批准不在客户端重新签发；本地 AI 的产品归属不随 provider 账号/API key 变化。
+企业登录先添加组织名称、HTTPS 服务 origin 与租户 UUID，再选择组织并填写本地账号。登录表单显示当前组织与实际服务；密码从页面经固定的原生登录命令一次提交，由 Rust 发送到该组织服务，不保存、不进入诊断或日志。提交、取消、切换组织及离开登录页会清空密码。仅接受系统信任的 HTTPS，不跟随重定向，不接受 URL 中的凭据、路径或查询。组织配置不构成授权；切换连接必须重新登录，随后分别查询 Identity 会话与 rss-mdm 当前业务授权，核对实例/租户/主体，并要求至少一个有效业务 grant。已注册设备登录需由唯一系统服务确认 current-user 绑定后才能进入工作区；响应丢失时重试原操作，冲突或原会话证明丢失时可明确选择清理后重新登录。即时本机撤权和远端关系清理分别确认。确定未安装或尚未注册的设备仍可独立使用企业会话，服务不可用或状态不明不作该降级。企业执行走已注册系统服务，企业批准不在客户端重新签发；本地 AI 的产品归属不随 provider 账号/API key 变化。
 
 本轮使用产品已提供的 Identity v2 本地密码认证与 rss-mdm 业务授权 v1 HTTP 接口。系统浏览器 OIDC 到原生客户端的凭据交接尚无公开契约，因此此入口不支持 OIDC-only 账号。组织连接列表保存在本机；它不是服务端组织成员目录，也不自动发现或认领组织。
 
@@ -62,7 +62,7 @@ Host 在发送工具操作前原子保存 delivery intent；回复丢失后按�
 
 ## 边界和验证
 
-`self-service/native.ts`、`assistant/native.ts`、`settings/native.ts` 和 `test-users.ts` 只调用各自固定字面量 IPC。WebView 无网络、文件、进程、凭据或 SDK 入口；capability 只授权本地 main 窗口。原生进程、socket 和 SQLite 只在 Rust composition 层。CSP、导航拒绝、IPC ACL、源码 AST 守卫分别验证，源码守卫不是 OS 沙箱证明。fixture 自己持有测试 Human/OS session 构造，源码守卫拒绝 fixture 反向依赖 composition。
+`self-service/native.ts`、`assistant/native.ts`、`settings/native.ts` 和 `test-users.ts` 只调用各自固定字面量 IPC。WebView 无网络、文件、进程、已存凭据读取或 SDK 入口；登录密码仅通过固定原生命令提交。capability 只授权本地 main 窗口。原生进程、socket 和 SQLite 只在 Rust composition 层。CSP、导航拒绝、IPC ACL、源码 AST 守卫分别验证，源码守卫不是 OS 沙箱证明。fixture 自己持有测试 Human/OS session 构造，源码守卫拒绝 fixture 反向依赖 composition。
 
 Rust 命令、task details 和 MCP schema 生成前端/模型声明，无手写第二份 wire：
 
@@ -81,6 +81,8 @@ macOS 的正式 `make ci` / `make ci-full` 对整个 Node 与 Rust 检查过程�
 CI 在本轮准备阶段构建选中的包与 Rust helper，后续检查复用本轮产物；各包的 `build` 保持自身编译职责。独立测试使用对应 `pnpm test:ai-*` 或 `pnpm check:boundaries`，打包使用 `pnpm bundle:ai-host`，入口会准备自身所需依赖。消费 Rust helper/runtime 的测试文件直接执行时，需要父进程提供本轮产物路径；输入变化、缺失或损坏产物会阻断复用，不读取旧 CI 回执。临时准备目录随 owning run 结束清理，发布与开发 runtime 仍使用既有目录和 manifest。
 
 定向 Rust 验证可用 `python3 scripts/build-run.py -- cargo test --locked -p <包名>` 复用同一槽位机制。直接运行 `cargo` 使用仓内 `target`；直接运行 `pnpm` 或 `cargo` 不取得 CI 的 worktree 租约，避免与同一 checkout 的正式 CI 同时修改仓内 Node 产物或运行回执。旧仓内 `target` 不自动迁移或删除。
+
+登录界面的扫码与本机 IM／零信任应用快捷登录仅在显式 fixture 装配中展示；应用名称和账号状态为测试样本，不探测或授权真实第三方软件。生产装配不挂载这些入口。
 
 浏览器开发使用显式 fixture 装配；样本不作为真实桌面/AI 验收。真实模型与原生窗口验收仅覆盖 macOS arm64、manifest 固定的 Codex；不要求 Windows/Linux 或三个引擎完成同一 E2E。受控服务验收覆盖 macOS 固定候选的真实执行与效果；开发机不执行 Windows 编译、测试、打包或真机验收，已完成实现项按[验证规则](../rules/verification-scope.md#开发机平台验证与实现项关闭)关闭并记录 Windows 未验证。独立平台安全矩阵、正式签名、公证、版本升级及 T3 企业身份按对应 owner 的有效范围另行验收。
 

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import Account from "./Account.vue";
+import { accountBinding, recoverAccount } from "../test-users";
 import MdmRegistration from "./MdmRegistration.vue";
 import { nativeService, type ServicePort } from "./native";
 import type { SelfServicePort } from "../self-service/types";
@@ -24,6 +25,12 @@ let timer: ReturnType<typeof setInterval> | undefined;
 function failure(error: unknown) {
   const value = error as { code?: string; message?: string };
   if (
+    [
+      "binding_unknown",
+      "binding_conflict",
+      "binding_invalidated",
+      "cleanup_pending",
+    ].includes(value?.code ?? "") ||
     value?.code === "registration_login_required" ||
     value?.code === "registration_authentication_required" ||
     value?.code === "account/session/denied" ||
@@ -77,15 +84,14 @@ async function refresh() {
     pending.value = false;
   }
 }
-async function requestRegistration(organizationId?: string, login?: string) {
+async function requestRegistration(
+  input?: import("../account/types").EnterpriseLogin,
+) {
   if (!native || pending.value) return;
   pending.value = true;
   registering.value = true;
   try {
-    registration.value = await native.requestRegistration(
-      organizationId,
-      login,
-    );
+    registration.value = await native.requestRegistration(input);
     registrationError.value = "";
     showLogin.value = false;
   } catch (error) {
@@ -93,6 +99,20 @@ async function requestRegistration(organizationId?: string, login?: string) {
   } finally {
     pending.value = false;
     registering.value = false;
+  }
+}
+async function recoverRegistration(clear: boolean) {
+  if (pending.value) return;
+  pending.value = true;
+  try {
+    await recoverAccount(clear);
+    showLogin.value = false;
+    registrationError.value = "";
+  } catch (error) {
+    failure(error);
+  } finally {
+    pending.value = false;
+    await refresh();
   }
 }
 async function importRegistration() {
@@ -265,10 +285,20 @@ onUnmounted(() => {
     </div>
     <p v-if="registrationError" role="alert">{{ registrationError }}</p>
     <Account
-      v-if="showLogin"
+      v-if="
+        showLogin ||
+        (!fixture &&
+          [
+            'binding_unknown',
+            'cleanup_pending',
+            'conflict',
+            'invalidated',
+          ].includes(accountBinding))
+      "
       registration
       :loading="pending"
       @login="requestRegistration"
+      @recover="recoverRegistration"
     />
     <button
       v-if="registration && !registration.registered && native"

@@ -702,6 +702,15 @@ pub enum Request {
         /// Existing binding for a refresh; absence requires a retired or absent context.
         expected: Option<Id>,
     },
+    /// Drain the exact enterprise relation after immediate local fencing.
+    RetireEnterpriseContext {
+        /// Original native login incarnation, absent only for explicit crash recovery.
+        generation: Option<Id>,
+        /// Original enterprise proof, retained only in native memory through retirement.
+        proof: Option<zeroize::Zeroizing<String>>,
+        /// Explicitly abandon a lost enterprise proof and clear the observed device relation.
+        recover: bool,
+    },
     /// Retire this peer's current context using the independent control lane.
     RevokeContext {},
     /// Query the current Policy directory; origin is attested by the native bridge.
@@ -843,6 +852,11 @@ pub enum Reply {
     ContextBound {
         /// Nonsecret binding, attested by this native owner.
         value: execution_contract::NativeContextRef,
+    },
+    /// Relation settlement is separate from the immediate local fence.
+    CurrentUserSync {
+        /// Nonsecret, durable synchronization outcome.
+        value: execution_contract::CurrentUserSync,
     },
     /// Retirement acknowledged by the independent control lane.
     ContextRevoked,

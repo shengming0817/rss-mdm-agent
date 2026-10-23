@@ -1414,6 +1414,14 @@ export type AccountFailureKind =
   | "unavailable"
   | "rate_limited"
   | "contract";
+export type AccountBindingState =
+  | "unbound"
+  | "not_applicable"
+  | "bound"
+  | "binding_unknown"
+  | "cleanup_pending"
+  | "conflict"
+  | "invalidated";
 
 /**
  * Client command identity and complete canonical input; trusted namespace is supplied separately.
@@ -2368,6 +2376,7 @@ export interface AccountStatus {
   kind: "accountStatus";
   current?: UserContext;
   failure?: AccountFailure;
+  binding: AccountBindingState;
 }
 export interface AccountFailure {
   stage: AccountFailureStage;

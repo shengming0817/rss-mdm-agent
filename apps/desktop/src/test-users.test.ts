@@ -1,10 +1,11 @@
 import { beforeEach, expect, it, vi } from "vitest";
-import { flushPromises, mount } from "@vue/test-utils";
+import { DOMWrapper, flushPromises, mount } from "@vue/test-utils";
 import { invoke } from "@tauri-apps/api/core";
 import App from "./App.vue";
 import {
   currentUser,
   accountNotice,
+  accountBinding,
   refreshAccount,
   logoutAccount,
   accountErrorMessage,
@@ -49,6 +50,7 @@ const current = {
 beforeEach(() => {
   currentUser.value = undefined;
   accountNotice.value = "";
+  accountBinding.value = "unbound";
   vi.mocked(invoke).mockReset();
 });
 it("installs the native device workspace after logout retires the old generation", async () => {
@@ -58,7 +60,12 @@ it("installs the native device workspace after logout retires the old generation
     expect(currentUser.value).toBeUndefined();
     if (command === "account_logout") return;
     if (command === "account_status")
-      return { schemaVersion: 1, kind: "accountStatus", current: device };
+      return {
+        schemaVersion: 1,
+        kind: "accountStatus",
+        binding: "unbound",
+        current: device,
+      };
     throw Error("unexpected native request");
   });
   await logoutAccount();
@@ -72,6 +79,7 @@ it("keeps the retired identity unavailable when logout cleanup is unconfirmed", 
   expect(currentUser.value).toBeUndefined();
   expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
     "account_logout",
+    "account_status",
   ]);
 });
 it("closes assistant modals when leaving the page and preserves the conversation draft", async () => {
@@ -118,6 +126,7 @@ it("keeps settings selected when navigation needs an unselected user", async () 
   const wrapper = mount(App);
   try {
     await flushPromises();
+    await wrapper.get(".login-diagnostics").trigger("click");
     const assistant = wrapper
       .findAll("button")
       .find((b) => b.text() === "AI 助手");
@@ -211,7 +220,7 @@ it("keeps the current workspace mounted and inert while a switch is pending", as
   wrapper.unmount();
 });
 
-it("keeps enterprise, test and guest entries visible before selecting a user", async () => {
+it("opens enterprise login first and keeps guest and diagnostics reachable", async () => {
   vi.mocked(invoke).mockImplementation(async (command) => {
     if (command === "test_users")
       return { schemaVersion: 1, kind: "testUserPage", users: [] };
@@ -221,11 +230,11 @@ it("keeps enterprise, test and guest entries visible before selecting a user", a
   const wrapper = mount(App);
   try {
     await flushPromises();
-    expect(wrapper.text()).toContain("企业登录");
-    expect(wrapper.find('[aria-label="测试用户名"]').exists()).toBe(true);
+    expect(wrapper.text()).toContain("欢迎回到工作空间");
+    expect(wrapper.find('input[type="password"]').exists()).toBe(true);
     const guest = wrapper
       .findAll("button")
-      .find((b) => b.text() === "不登录使用");
+      .find((b) => b.text() === "暂不登录，使用本机工作区");
     expect(guest).toBeDefined();
     await guest!.trigger("click");
     await flushPromises();
@@ -250,23 +259,27 @@ it("preselects the embedded organization without logging in and allows another o
   vi.mocked(invoke).mockResolvedValue(
     settingsPage([embedded, custom], embedded.id),
   );
-  const wrapper = mount(Account, { props: { loading: false } });
+  const wrapper = mount(Account, {
+    props: { loading: false },
+    attachTo: document.body,
+  });
   await flushPromises();
-  expect(
-    (wrapper.get('[aria-label="组织连接"]').element as HTMLSelectElement).value,
-  ).toBe("embedded");
-  expect(wrapper.get('[aria-label="当前组织连接"]').text()).toContain(
-    embedded.tenantId,
-  );
+  expect(wrapper.get(".organization-card").text()).toContain("Default");
   expect(wrapper.emitted("login")).toBeUndefined();
-  await wrapper.get('[aria-label="组织连接"]').setValue("custom");
+  await wrapper.get(".organization-card").trigger("click");
+  await flushPromises();
+  const dialog = new DOMWrapper(document.body);
+  await dialog.findAll(".organization-row")[1]!.trigger("click");
   await wrapper.get('[aria-label="企业账号"]').setValue("Alice");
-  await wrapper.findAll("form")[0]!.trigger("submit");
-  expect(wrapper.emitted("login")).toEqual([["custom", "Alice"]]);
+  await wrapper.get('[aria-label="企业账号密码"]').setValue("secret");
+  await wrapper.get("form").trigger("submit");
+  expect(wrapper.emitted("login")).toEqual([
+    [{ organizationId: "custom", login: "Alice", password: "secret" }],
+  ]);
   wrapper.unmount();
 });
 
-it("selects the normalized saved organization and emits the selected server login", async () => {
+it("selects the normalized saved organization and submits complete credentials", async () => {
   const normalized = {
     id: "org",
     label: "Example",
@@ -278,21 +291,33 @@ it("selects the normalized saved organization and emits the selected server logi
       ? settingsPage()
       : settingsPage([normalized], normalized.id),
   );
-  const wrapper = mount(Account, { props: { loading: false } });
+  const wrapper = mount(Account, {
+    props: { loading: false },
+    attachTo: document.body,
+  });
   await flushPromises();
-  await wrapper.get('[aria-label="组织名称"]').setValue(" Example ");
-  await wrapper
+  await wrapper.get(".organization-card").trigger("click");
+  await flushPromises();
+  const dialog = new DOMWrapper(document.body);
+  await dialog.get(".add-organization").trigger("click");
+  await dialog.get('[aria-label="组织名称"]').setValue(" Example ");
+  await dialog
     .get('[aria-label="组织服务地址"]')
     .setValue("https://mdm.example.com/");
-  await wrapper
+  await dialog
     .get('[aria-label="租户 UUID"]')
     .setValue(normalized.tenantId.toUpperCase());
-  await wrapper.findAll("form")[1]!.trigger("submit");
+  await dialog.get(".organization-form").trigger("submit");
   await flushPromises();
   await wrapper.get('[aria-label="企业账号"]').setValue("Alice");
-  await wrapper.findAll("form")[0]!.trigger("submit");
-  expect(wrapper.emitted("login")).toEqual([["org", "Alice"]]);
-  expect(wrapper.find('input[type="password"]').exists()).toBe(false);
+  await wrapper.get('[aria-label="企业账号密码"]').setValue("secret");
+  await wrapper.get("form").trigger("submit");
+  expect(wrapper.emitted("login")).toEqual([
+    [{ organizationId: "org", login: "Alice", password: "secret" }],
+  ]);
+  expect(
+    (wrapper.get('input[type="password"]').element as HTMLInputElement).value,
+  ).toBe("");
   wrapper.unmount();
 });
 
@@ -322,6 +347,7 @@ it("queries the production execution service without a fixture fallback and repo
       return {
         schemaVersion: 1,
         kind: "accountStatus",
+        binding: "unbound",
         ...(revoked ? {} : { current: enterprise }),
       };
     throw { code: "ai_unavailable" };
@@ -350,17 +376,11 @@ it("keeps visible labels for every account input", async () => {
   vi.mocked(invoke).mockResolvedValue(settingsPage());
   const wrapper = mount(Account, { props: { loading: false } });
   await flushPromises();
-  for (const name of [
-    "组织连接",
-    "企业账号",
-    "组织名称",
-    "组织服务地址",
-    "租户 UUID",
-  ]) {
+  for (const name of ["企业账号", "企业账号密码"]) {
     const input = wrapper.get(`[aria-label="${name}"]`);
-    const id = input.attributes("id");
-    expect(id).toBeTruthy();
-    expect(wrapper.get(`label[for="${id}"]`).text()).toContain(name);
+    expect(
+      wrapper.get(`label[for="${input.attributes("id")}"]`).text(),
+    ).toBeTruthy();
   }
   wrapper.unmount();
 });
@@ -384,6 +404,7 @@ it("focuses the default AI page after the selected workspace is replaced", async
   const wrapper = mount(App, { attachTo: document.body });
   try {
     await flushPromises();
+    await wrapper.get(".login-diagnostics").trigger("click");
     await wrapper.get('[aria-label="测试用户名"]').setValue("Alice");
     (
       wrapper.get('[aria-label="测试用户名"]').element as HTMLInputElement
@@ -431,3 +452,28 @@ it("projects closed account errors without exposing native details and rejects i
   });
   await expect(loadAccountSettings()).rejects.toThrow();
 });
+
+it.each(["cleanup_pending", "conflict"] as const)(
+  "exposes recovery after a rejected logout with %s",
+  async (binding) => {
+    currentUser.value = current;
+    accountBinding.value = "bound";
+    vi.mocked(invoke).mockImplementation(async (command) => {
+      if (command === "account_logout") throw { code: "cleanup_pending" };
+      if (command === "account_status")
+        return { schemaVersion: 1, kind: "accountStatus", binding };
+      throw Error("unexpected request");
+    });
+    await expect(logoutAccount()).rejects.toEqual({ code: "cleanup_pending" });
+    expect(currentUser.value).toBeUndefined();
+    expect(accountBinding.value).toBe(binding);
+    const wrapper = mount(Account, { props: { loading: false } });
+    await flushPromises();
+    expect(wrapper.text()).toContain("重试原操作");
+    expect(wrapper.text()).toContain("清理后重新登录");
+    expect(
+      wrapper.get('[aria-label="企业账号密码"]').attributes("disabled"),
+    ).toBeDefined();
+    wrapper.unmount();
+  },
+);

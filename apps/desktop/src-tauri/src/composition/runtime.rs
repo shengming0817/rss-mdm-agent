@@ -26,7 +26,9 @@ pub struct DesktopRuntime {
     pub organizations: std::sync::Mutex<super::account::Organizations>,
     identity: super::identity::IdentityOwner,
     cleanup_pending: AtomicBool,
+    retiring_account: AtomicBool,
     account_failure: std::sync::Mutex<Option<ai_session_contract::AccountFailure>>,
+    account_binding: std::sync::Mutex<ai_session_contract::AccountBindingState>,
     host: super::supervisor::HostSupervisor,
     master: Arc<MasterKey>,
     views: super::views::ViewChannels,
@@ -75,6 +77,9 @@ impl DesktopRuntime {
                     },
                 }),
                 Request::RevokeContext {} => Ok(Reply::ContextRevoked),
+                Request::RetireEnterpriseContext { .. } => Ok(Reply::CurrentUserSync {
+                    value: Default::default(),
+                }),
                 _ => Err(execution_app::Error::Unavailable),
             }
         });
@@ -89,13 +94,17 @@ impl DesktopRuntime {
                     .map_err(|_| "organization settings unavailable")?,
             ),
             cleanup_pending: AtomicBool::new(false),
+            retiring_account: AtomicBool::new(false),
             account_failure: std::sync::Mutex::new(None),
+            account_binding: std::sync::Mutex::new(
+                ai_session_contract::AccountBindingState::Unbound,
+            ),
             host: super::supervisor::HostSupervisor::new(root, artifact, source)?,
             master: Arc::new(MasterKey::new(backend)),
             views: super::views::ViewChannels::new(),
         };
         runtime.restart(0).await;
-        let _ = runtime.select_device().await;
+
         Ok(runtime)
     }
     pub fn closed(&self) -> bool {
@@ -172,6 +181,7 @@ impl DesktopRuntime {
             kind: ai_session_contract::AccountStatusKind::AccountStatus,
             schema_version: ai_session_contract::AccountStatusSchemaVersion::VALUE,
             current: self.users.lock().map_err(|_| unavailable())?.page().current,
+            binding: *self.account_binding.lock().map_err(|_| unavailable())?,
             failure: self
                 .account_failure
                 .lock()
@@ -192,9 +202,52 @@ impl DesktopRuntime {
     // Every identity transition attempts remote retirement even after local persistence fails.
     async fn retire_locked(&self) -> ui::Result<()> {
         self.registration_epoch.fetch_add(1, Ordering::AcqRel);
+        let pending = self
+            .identity
+            .pending
+            .lock()
+            .map_err(|_| unavailable())?
+            .clone();
+        // Keep the retiring incarnation after its public view is revoked. A failed
+        // DELETE must retry with the original generation, not become an ownerless ACK.
+        let retiring = pending.or_else(|| self.identity.snapshot().ok());
+        let generation = retiring.as_ref().map(|u| u.generation.to_string());
+        *self.identity.pending.lock().map_err(|_| unavailable())? = retiring;
+        let enterprise = self.identity.session()?.is_some();
         let local = self.revoke_locked().await;
+        if enterprise
+            && *self.account_binding.lock().map_err(|_| unavailable())?
+                != ai_session_contract::AccountBindingState::NotApplicable
+        {
+            self.retiring_account.store(true, Ordering::Release);
+            let proof = self
+                .identity
+                .session()?
+                .map(|account| account.employee_proof())
+                .transpose()?;
+            let retired = self
+                .execution
+                .retire_enterprise(
+                    generation.and_then(|g| execution_contract::Id::new(g).ok()),
+                    proof,
+                    false,
+                )
+                .await;
+            if let Err(error) = retired {
+                self.record_binding_error(&error)?;
+                if error.code != "binding_conflict" && error.code != "binding_invalidated" {
+                    *self.account_binding.lock().map_err(|_| unavailable())? =
+                        ai_session_contract::AccountBindingState::CleanupPending;
+                }
+                return Err(error);
+            }
+        }
         let remote = self.logout_remote().await;
-        self.account_result(local.and(remote))
+        self.retiring_account.store(false, Ordering::Release);
+        *self.identity.pending.lock().map_err(|_| unavailable())? = None;
+        *self.account_binding.lock().map_err(|_| unavailable())? =
+            ai_session_contract::AccountBindingState::Unbound;
+        self.account_result(remote.and(local))
     }
     pub async fn select_user(&self, name: &str) -> ui::Result<ai_session_contract::UserContext> {
         let _switch = self.switching.lock().await;
@@ -274,7 +327,7 @@ impl DesktopRuntime {
         &self,
         organization: super::account::Organization,
         login: &str,
-        password: String,
+        password: zeroize::Zeroizing<String>,
     ) -> ui::Result<ai_session_contract::UserContext> {
         self.login_with(|| super::account::EnterpriseSession::login(organization, login, password))
             .await
@@ -293,14 +346,31 @@ impl DesktopRuntime {
         let account = self.account_result(authenticate().await)?;
         let next = account.context()?;
         self.identity.set_session(Some(account))?;
+        *self.identity.pending.lock().map_err(|_| unavailable())? = Some(next.clone());
         let result = self.activate_context(next).await;
         let result = match result {
-            Ok(context) => Ok(context),
-            Err(error) => match self.logout_remote().await {
-                Ok(()) => Err(error),
-                Err(logout) => Err(logout),
-            },
+            Err(error)
+                if !matches!(
+                    error.code,
+                    "binding_unknown"
+                        | "binding_conflict"
+                        | "binding_invalidated"
+                        | "cleanup_pending"
+                        | "execution_unavailable"
+                ) =>
+            {
+                match self.retire_locked().await {
+                    Ok(()) => Err(error),
+                    Err(retired) => Err(retired),
+                }
+            }
+            other => other,
         };
+        if let Err(error) = &result {
+            if self.identity.session()?.is_some() {
+                self.record_binding_error(error)?;
+            }
+        }
         self.account_result(result)
     }
     async fn activate_context(
@@ -320,20 +390,50 @@ impl DesktopRuntime {
             match self.execution.bind_context(session, None).await {
                 Ok(binding) => {
                     next.execution_binding =
-                        Some(binding.id.as_str().parse().map_err(|_| unavailable())?)
+                        Some(binding.id.as_str().parse().map_err(|_| unavailable())?);
+                    *self.account_binding.lock().map_err(|_| unavailable())? =
+                        if self.identity.session()?.is_some() {
+                            ai_session_contract::AccountBindingState::Bound
+                        } else {
+                            ai_session_contract::AccountBindingState::Unbound
+                        };
                 }
                 Err(error) => {
-                    // Independent conversation is available without an installed execution owner.
-                    // Uncertain retirement remains a barrier to activating another identity.
-                    if self.cleanup_pending.load(Ordering::Acquire) {
+                    if self.cleanup_pending.load(Ordering::Acquire)
+                        || !self.execution.independent_login_allowed().await
+                    {
                         return Err(error);
                     }
+                    *self.account_binding.lock().map_err(|_| unavailable())? =
+                        ai_session_contract::AccountBindingState::NotApplicable;
                 }
             }
             self.users.lock().map_err(|_| unavailable())?.activate(next)
         }
         .await;
-        if published.is_err() {
+        if let Err(error) = &published {
+            if self.identity.session()?.is_some()
+                && matches!(
+                    error.code,
+                    "binding_unknown"
+                        | "binding_conflict"
+                        | "binding_invalidated"
+                        | "cleanup_pending"
+                        | "execution_unavailable"
+                )
+            {
+                self.record_binding_error(error)?;
+            }
+        }
+        if published.is_ok() {
+            *self.identity.pending.lock().map_err(|_| unavailable())? = None;
+        }
+        if published.as_ref().is_err_and(|error| {
+            !matches!(
+                error.code,
+                "binding_unknown" | "binding_conflict" | "binding_invalidated" | "cleanup_pending"
+            )
+        }) {
             // Ownership transfers only after local publication. Retain uncertain
             // native retirement so the background owner can retry the same cleanup.
             self.cleanup_pending.store(true, Ordering::Release);
@@ -341,6 +441,60 @@ impl DesktopRuntime {
             let _ = self.retry_cleanup().await;
         }
         published
+    }
+    fn record_binding_error(&self, error: &ui::ServiceError) -> ui::Result<()> {
+        use ai_session_contract::AccountBindingState as B;
+        *self.account_binding.lock().map_err(|_| unavailable())? = match error.code {
+            "binding_conflict" => B::Conflict,
+            "binding_invalidated" => B::Invalidated,
+            "cleanup_pending" => B::CleanupPending,
+            _ => B::BindingUnknown,
+        };
+        Ok(())
+    }
+    pub async fn recover_account(
+        &self,
+        clear: bool,
+    ) -> ui::Result<Option<ai_session_contract::UserContext>> {
+        let _switch = self.switching.lock().await;
+        self.retry_cleanup().await?;
+        if clear {
+            self.revoke_locked().await?;
+            let result = self.execution.retire_enterprise(None, None, true).await;
+            if let Err(error) = result {
+                self.record_binding_error(&error)?;
+                return Err(error);
+            }
+            self.logout_remote().await?;
+            self.retiring_account.store(false, Ordering::Release);
+            *self.identity.pending.lock().map_err(|_| unavailable())? = None;
+            *self.account_binding.lock().map_err(|_| unavailable())? =
+                ai_session_contract::AccountBindingState::Unbound;
+            return Ok(None);
+        }
+        if self.retiring_account.load(Ordering::Acquire) {
+            self.retire_locked().await?;
+            return Ok(None);
+        }
+        let pending = self
+            .identity
+            .pending
+            .lock()
+            .map_err(|_| unavailable())?
+            .clone();
+        if let Some(context) = pending {
+            let mut account = self.identity.session()?.ok_or_else(unavailable)?;
+            account.verify().await?;
+            self.identity.set_session(Some(account))?;
+            let result = self.activate_context(context).await;
+            if let Err(error) = &result {
+                self.record_binding_error(error)?;
+            }
+            return result.map(Some);
+        }
+        // A local logout may be complete while its remote DELETE is still pending.
+        self.retire_locked().await?;
+        Ok(None)
     }
     /// Single-flight refresh performs HTTP on a cloned session, outside identity and transition locks.
     pub async fn verify_account(&self) -> ui::Result<()> {
@@ -488,27 +642,15 @@ impl DesktopRuntime {
     }
     pub async fn shutdown(&self) {
         let _switch = self.switching.lock().await;
-        if self.execution.revoke_context().await.is_err() {
-            // Preserve the unresolved retirement; a subsequent identity cannot be activated.
-            self.cleanup_pending.store(true, Ordering::Release);
+        // Shutdown uses the same remote relation retirement as explicit logout.
+        // Even if settlement is unknown, close every local process/handle; do not
+        // destroy the employee proof by logging out its remote session first.
+        if self.retire_locked().await.is_err() {
             eprintln!("RSS_CONTEXT_RETIREMENT_UNCONFIRMED");
-            self.detach_views().await;
-            if let Some(process) = self.process() {
-                process.close().await;
-            }
-            return;
         }
         self.detach_views().await;
         if let Some(process) = self.process() {
             process.close().await;
-        }
-        let _ = self.users.lock().map(|mut users| {
-            if users.page().current.as_ref().is_some() {
-                let _ = users.clear();
-            }
-        });
-        if let Ok(Some(account)) = self.identity.take_session() {
-            let _ = account.logout().await;
         }
         self.host.close();
         self.execution.close().await;
@@ -554,6 +696,9 @@ mod tests {
                         },
                     })
                 }
+                Request::RetireEnterpriseContext { .. } => Ok(Reply::CurrentUserSync {
+                    value: Default::default(),
+                }),
                 Request::RevokeContext {} => {
                     if native_bound.load(Ordering::Acquire) && lost_ack.load(Ordering::Acquire) {
                         return Err(execution_app::Error::OutcomeUnknown);
@@ -634,7 +779,7 @@ mod tests {
                         reqwest::Client::new(),
                         org,
                         "Alice",
-                        "password".into(),
+                        zeroize::Zeroizing::new("password".into()),
                     )
                 })
                 .await
@@ -658,6 +803,181 @@ mod tests {
                 .unwrap()
                 .contains("/session/logout"));
             runtime.shutdown().await;
+            std::fs::remove_dir_all(root).unwrap();
+        }
+    }
+    #[tokio::test]
+    async fn unknown_relation_keeps_login_private_and_retries_the_original_generation() {
+        use super::super::account::{
+            http_tests::{access, identity, server},
+            EnterpriseSession,
+        };
+        use execution_ipc::host::{Reply, Request};
+        let root = std::env::temp_dir().join(format!("rss-relation-{}", uuid::Uuid::new_v4()));
+        let mut runtime = DesktopRuntime::start_with_key_backend(
+            &root,
+            &root.join("missing"),
+            ai_session_contract::HostStatusSource::DevelopmentOverride,
+            NoKey,
+        )
+        .await
+        .unwrap();
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let requests = seen.clone();
+        runtime.execution = runtime
+            .execution
+            .clone()
+            .with_context_transport(move |request| match request {
+                Request::RevokeContext {} => Ok(Reply::ContextRevoked),
+                Request::RetireEnterpriseContext { .. } => Ok(Reply::CurrentUserSync {
+                    value: Default::default(),
+                }),
+                Request::BindContext { value, .. } => {
+                    let mut seen = requests.lock().unwrap();
+                    seen.push(value.generation.clone());
+                    if seen.len() == 1 {
+                        Ok(Reply::CurrentUserSync {
+                            value: execution_contract::CurrentUserSync {
+                                phase: execution_contract::CurrentUserSyncPhase::BindingUnknown,
+                                current: None,
+                            },
+                        })
+                    } else {
+                        Ok(Reply::ContextBound {
+                            value: execution_contract::NativeContextRef {
+                                id: value.generation.clone(),
+                                generation: value.generation,
+                            },
+                        })
+                    }
+                }
+                _ => panic!("unexpected context request"),
+            });
+        let (org, server) = server(vec![
+            (200, identity()),
+            (200, identity()),
+            (200, access()),
+            (200, identity()),
+            (200, access()),
+            (200, json!({})),
+        ])
+        .await;
+        let error = runtime
+            .login_with(|| {
+                EnterpriseSession::login_with_client(
+                    reqwest::Client::new(),
+                    org,
+                    "Alice",
+                    zeroize::Zeroizing::new("password".into()),
+                )
+            })
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "binding_unknown");
+        assert!(runtime.identity.snapshot().is_err());
+        assert!(runtime.identity.session().unwrap().is_some());
+        assert_eq!(
+            runtime.account_status().unwrap().binding,
+            ai_session_contract::AccountBindingState::BindingUnknown
+        );
+        let published = runtime.recover_account(false).await.unwrap().unwrap();
+        assert_eq!(
+            runtime.identity.snapshot().unwrap().generation,
+            published.generation
+        );
+        let seen = seen.lock().unwrap().clone();
+        assert_eq!(seen.len(), 2);
+        assert_eq!(seen[0], seen[1]);
+        assert_eq!(published.generation.as_str(), seen[0].as_str());
+        runtime.logout().await.unwrap();
+        server.await.unwrap();
+        runtime.shutdown().await;
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[tokio::test]
+    async fn logout_retries_the_same_retiring_generation_before_remote_logout() {
+        use super::super::account::{
+            http_tests::{access, identity, server},
+            EnterpriseSession,
+        };
+        use execution_ipc::host::{Reply, Request};
+        for shutdown in [false, true] {
+            let root = std::env::temp_dir().join(format!("rss-retire-{}", uuid::Uuid::new_v4()));
+            let mut runtime = DesktopRuntime::start_with_key_backend(
+                &root,
+                &root.join("missing"),
+                ai_session_contract::HostStatusSource::DevelopmentOverride,
+                NoKey,
+            )
+            .await
+            .unwrap();
+            let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+            let calls = seen.clone();
+            runtime.execution = runtime
+                .execution
+                .clone()
+                .with_context_transport(move |request| match request {
+                    Request::RevokeContext {} => Ok(Reply::ContextRevoked),
+                    Request::BindContext { value, .. } => Ok(Reply::ContextBound {
+                        value: execution_contract::NativeContextRef {
+                            id: value.generation.clone(),
+                            generation: value.generation,
+                        },
+                    }),
+                    Request::RetireEnterpriseContext { generation, .. } => {
+                        let mut seen = calls.lock().unwrap();
+                        seen.push(generation);
+                        Ok(Reply::CurrentUserSync {
+                            value: execution_contract::CurrentUserSync {
+                                phase: if seen.len() == 1 && !shutdown {
+                                    execution_contract::CurrentUserSyncPhase::CleanupPending
+                                } else {
+                                    execution_contract::CurrentUserSyncPhase::Unbound
+                                },
+                                current: None,
+                            },
+                        })
+                    }
+                    _ => panic!("unexpected context request"),
+                });
+            let (org, server) = server(vec![
+                (200, identity()),
+                (200, identity()),
+                (200, access()),
+                (200, json!({})),
+            ])
+            .await;
+            let context = runtime
+                .login_with(|| {
+                    EnterpriseSession::login_with_client(
+                        reqwest::Client::new(),
+                        org,
+                        "Alice",
+                        zeroize::Zeroizing::new("password".into()),
+                    )
+                })
+                .await
+                .unwrap();
+            if shutdown {
+                runtime.shutdown().await;
+            } else {
+                assert_eq!(runtime.logout().await.unwrap_err().code, "cleanup_pending");
+                assert!(runtime.identity.snapshot().is_err());
+                assert!(runtime.identity.session().unwrap().is_some());
+                runtime.recover_account(false).await.unwrap();
+                runtime.shutdown().await;
+            }
+            let seen = seen.lock().unwrap().clone();
+            assert_eq!(seen.len(), if shutdown { 1 } else { 2 });
+            assert!(seen.iter().all(|generation| generation
+                .as_ref()
+                .is_some_and(|g| g.as_str() == context.generation.as_str())));
+            assert!(server
+                .await
+                .unwrap()
+                .last()
+                .unwrap()
+                .contains("/session/logout"));
             std::fs::remove_dir_all(root).unwrap();
         }
     }
@@ -758,7 +1078,7 @@ mod tests {
                         reqwest::Client::new(),
                         a_org,
                         "Alice",
-                        "password".into(),
+                        zeroize::Zeroizing::new("password".into()),
                     )
                 })
                 .await
@@ -784,7 +1104,7 @@ mod tests {
                         reqwest::Client::new(),
                         b_org,
                         "Alice",
-                        "password".into(),
+                        zeroize::Zeroizing::new("password".into()),
                     )
                     .await
                 })
@@ -839,7 +1159,7 @@ mod tests {
                         reqwest::Client::new(),
                         org,
                         "Alice",
-                        "password".into(),
+                        zeroize::Zeroizing::new("password".into()),
                     )
                 })
                 .await
@@ -887,7 +1207,7 @@ mod tests {
                     reqwest::Client::new(),
                     org,
                     "Alice",
-                    "password".into(),
+                    zeroize::Zeroizing::new("password".into()),
                 )
             })
             .await
@@ -938,7 +1258,7 @@ mod tests {
                         reqwest::Client::new(),
                         org,
                         "Alice",
-                        "password".into(),
+                        zeroize::Zeroizing::new("password".into()),
                     )
                 })
                 .await

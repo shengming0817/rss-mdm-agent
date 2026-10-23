@@ -4993,9 +4993,12 @@
         },
         "failure": {
           "$ref": "#/$defs/AccountFailure"
+        },
+        "binding": {
+          "$ref": "#/$defs/AccountBindingState"
         }
       },
-      "required": ["schemaVersion", "kind"],
+      "required": ["schemaVersion", "kind", "binding"],
       "additionalProperties": false
     },
     "CredentialCaller": {
@@ -5043,6 +5046,18 @@
       },
       "required": ["namespace", "status", "lastActivityAtMs", "presentation"],
       "additionalProperties": false
+    },
+    "AccountBindingState": {
+      "type": "string",
+      "enum": [
+        "unbound",
+        "not_applicable",
+        "bound",
+        "binding_unknown",
+        "cleanup_pending",
+        "conflict",
+        "invalidated"
+      ]
     }
   }
 }

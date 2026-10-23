@@ -4653,8 +4653,9 @@ const schema31 = {
         kind: { type: "string", const: "accountStatus" },
         current: { $ref: "#/$defs/UserContext" },
         failure: { $ref: "#/$defs/AccountFailure" },
+        binding: { $ref: "#/$defs/AccountBindingState" },
       },
-      required: ["schemaVersion", "kind"],
+      required: ["schemaVersion", "kind", "binding"],
       additionalProperties: false,
     },
     CredentialCaller: {
@@ -4689,6 +4690,18 @@ const schema31 = {
       },
       required: ["namespace", "status", "lastActivityAtMs", "presentation"],
       additionalProperties: false,
+    },
+    AccountBindingState: {
+      type: "string",
+      enum: [
+        "unbound",
+        "not_applicable",
+        "bound",
+        "binding_unknown",
+        "cleanup_pending",
+        "conflict",
+        "invalidated",
+      ],
     },
   },
 };
@@ -66240,9 +66253,22 @@ const schema394 = {
     kind: { type: "string", const: "accountStatus" },
     current: { $ref: "#/$defs/UserContext" },
     failure: { $ref: "#/$defs/AccountFailure" },
+    binding: { $ref: "#/$defs/AccountBindingState" },
   },
-  required: ["schemaVersion", "kind"],
+  required: ["schemaVersion", "kind", "binding"],
   additionalProperties: false,
+};
+const schema399 = {
+  type: "string",
+  enum: [
+    "unbound",
+    "not_applicable",
+    "bound",
+    "binding_unknown",
+    "cleanup_pending",
+    "conflict",
+    "invalidated",
+  ],
 };
 const schema395 = {
   type: "object",
@@ -66504,7 +66530,8 @@ function validate220(
       let missing0;
       if (
         (data.schemaVersion === undefined && (missing0 = "schemaVersion")) ||
-        (data.kind === undefined && (missing0 = "kind"))
+        (data.kind === undefined && (missing0 = "kind")) ||
+        (data.binding === undefined && (missing0 = "binding"))
       ) {
         validate220.errors = [
           {
@@ -66524,7 +66551,8 @@ function validate220(
               key0 === "schemaVersion" ||
               key0 === "kind" ||
               key0 === "current" ||
-              key0 === "failure"
+              key0 === "failure" ||
+              key0 === "binding"
             )
           ) {
             validate220.errors = [
@@ -66654,6 +66682,49 @@ function validate220(
                   var valid0 = _errs7 === errors;
                 } else {
                   var valid0 = true;
+                }
+                if (valid0) {
+                  if (data.binding !== undefined) {
+                    let data4 = data.binding;
+                    const _errs8 = errors;
+                    if (typeof data4 !== "string") {
+                      validate220.errors = [
+                        {
+                          instancePath: instancePath + "/binding",
+                          schemaPath: "#/$defs/AccountBindingState/type",
+                          keyword: "type",
+                          params: { type: "string" },
+                          message: "must be string",
+                        },
+                      ];
+                      return false;
+                    }
+                    if (
+                      !(
+                        data4 === "unbound" ||
+                        data4 === "not_applicable" ||
+                        data4 === "bound" ||
+                        data4 === "binding_unknown" ||
+                        data4 === "cleanup_pending" ||
+                        data4 === "conflict" ||
+                        data4 === "invalidated"
+                      )
+                    ) {
+                      validate220.errors = [
+                        {
+                          instancePath: instancePath + "/binding",
+                          schemaPath: "#/$defs/AccountBindingState/enum",
+                          keyword: "enum",
+                          params: { allowedValues: schema399.enum },
+                          message: "must be equal to one of the allowed values",
+                        },
+                      ];
+                      return false;
+                    }
+                    var valid0 = _errs8 === errors;
+                  } else {
+                    var valid0 = true;
+                  }
                 }
               }
             }

@@ -3801,3 +3801,276 @@ async fn startup_authority_requires_current_verified_revision() {
         ));
     }
 }
+
+#[tokio::test]
+async fn current_user_lost_ack_keeps_context_closed_and_resumes_original_login() {
+    let _budget = crate::scenario_budget::enter();
+    use execution_ipc::host::{NativeAccess, NativeContextSession, Request};
+    let mut c = Case::new(None).await;
+    c.policy_call(Request::RevokeContext {}).await;
+    let value = NativeContextSession {
+        access: NativeAccess::User {
+            credential: zeroize::Zeroizing::new("c".repeat(64)),
+            user: protocol::current_user::user(c.service.client.configuration().tenant),
+        },
+        generation: plan::id("pending-enterprise").unwrap(),
+        expires_at_unix_ms: c.service.core.host.clock.millis().unwrap() + 60000,
+    };
+    c._server.data.lock().unwrap().current_user.lose_reply = true;
+    let reply = c
+        .policy_call(Request::BindContext {
+            value: value.clone(),
+            expected: None,
+        })
+        .await;
+    assert!(
+        matches!(reply,Reply::CurrentUserSync{value} if value.phase==execution_contract::CurrentUserSyncPhase::BindingUnknown)
+    );
+    assert!(matches!(
+        c.policy_call(Request::PolicyDirectory {
+            context: c.context(),
+            after: None,
+            origin: ClientOrigin::Desktop {}
+        })
+        .await,
+        Reply::Rejected
+    ));
+    // Refresh cannot turn a pending, unpublished binding into a usable context.
+    assert!(matches!(
+        c.policy_call(Request::BindContext {
+            value: value.clone(),
+            expected: Some(value.generation.clone())
+        })
+        .await,
+        Reply::Rejected
+    ));
+    let calls = c._server.data.lock().unwrap().current_user.inputs.len();
+    assert!(matches!(
+        c.policy_call(Request::BindContext {
+            value,
+            expected: None
+        })
+        .await,
+        Reply::ContextBound { .. }
+    ));
+    let d = c._server.data.lock().unwrap();
+    assert_eq!(d.current_user.inputs.len(), calls + 1);
+    assert_eq!(
+        d.current_user.inputs[calls - 1],
+        d.current_user.inputs[calls]
+    );
+}
+#[tokio::test]
+async fn raw_context_fence_does_not_delete_the_server_relation() {
+    let _budget = crate::scenario_budget::enter();
+    let mut c = Case::new(None).await;
+    let before = c._server.data.lock().unwrap().current_user.revision;
+    c.policy_call(execution_ipc::host::Request::RevokeContext {})
+        .await;
+    assert_eq!(c._server.data.lock().unwrap().current_user.revision, before);
+    let reply = c
+        .policy_call(execution_ipc::host::Request::RetireEnterpriseContext {
+            generation: Some(plan::id("initial").unwrap()),
+            proof: Some(zeroize::Zeroizing::new("c".repeat(64))),
+            recover: false,
+        })
+        .await;
+    assert!(
+        matches!(reply,Reply::CurrentUserSync{value} if value.phase==execution_contract::CurrentUserSyncPhase::Unbound)
+    );
+}
+
+#[tokio::test]
+async fn expired_enterprise_lease_settles_current_user_without_a_live_desktop() {
+    let _budget = crate::scenario_budget::enter();
+    use execution_ipc::host::{NativeAccess, NativeContextSession, Request};
+    let mut c = Case::new(None).await;
+    let context = c.context();
+    let user = protocol::current_user::user(c.service.client.configuration().tenant);
+    let reply = c
+        .policy_call(Request::BindContext {
+            value: NativeContextSession {
+                access: NativeAccess::User {
+                    credential: zeroize::Zeroizing::new("c".repeat(64)),
+                    user,
+                },
+                generation: context.generation.clone(),
+                expires_at_unix_ms: c.service.core.host.clock.millis().unwrap() + 100,
+            },
+            expected: Some(context.id),
+        })
+        .await;
+    assert!(matches!(reply, Reply::ContextBound { .. }));
+    tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+    let (_sender, mut commands) = tokio::sync::mpsc::channel(1);
+    c._server.data.lock().unwrap().current_user.lose_reply = true;
+    c.service.prune_credentials().unwrap();
+    c.service
+        .retire_expired_current_user(&mut commands)
+        .await
+        .unwrap();
+    assert_eq!(
+        c.service.client.current_user_status().unwrap().phase,
+        execution_contract::CurrentUserSyncPhase::CleanupPending
+    );
+    c.service
+        .retire_expired_current_user(&mut commands)
+        .await
+        .unwrap();
+    assert_eq!(
+        c.service.client.current_user_status().unwrap().phase,
+        execution_contract::CurrentUserSyncPhase::Unbound
+    );
+    let data = c._server.data.lock().unwrap();
+    let inputs = &data.current_user.inputs;
+    assert_eq!(inputs[inputs.len() - 1], inputs[inputs.len() - 2]);
+    assert!(data.current_user.user.is_none());
+    assert!(data.current_user.owner.is_some());
+}
+
+#[tokio::test]
+async fn expired_other_peer_with_the_same_generation_cannot_retire_latest_owner() {
+    let _budget = crate::scenario_budget::enter();
+    use execution_ipc::host::{NativeAccess, NativeContextSession, Request};
+    let mut c = Case::new(None).await;
+    let context = c.context();
+    let reply = c
+        .policy_call(Request::BindContext {
+            value: NativeContextSession {
+                access: NativeAccess::User {
+                    credential: zeroize::Zeroizing::new("c".repeat(64)),
+                    user: protocol::current_user::user(c.service.client.configuration().tenant),
+                },
+                generation: context.generation.clone(),
+                expires_at_unix_ms: c.service.core.host.clock.millis().unwrap() + 100,
+            },
+            expected: Some(context.id),
+        })
+        .await;
+    assert!(matches!(reply, Reply::ContextBound { .. }));
+    c.selection.binding = plan::id("another-authenticated-login").unwrap();
+    c.employee("initial").await;
+    let revision = c._server.data.lock().unwrap().current_user.revision;
+    tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+    let (_sender, mut commands) = tokio::sync::mpsc::channel(1);
+    c.service
+        .retire_expired_current_user(&mut commands)
+        .await
+        .unwrap();
+    assert_eq!(
+        c.service.client.current_user_status().unwrap().phase,
+        execution_contract::CurrentUserSyncPhase::Bound
+    );
+    assert_eq!(
+        c._server.data.lock().unwrap().current_user.revision,
+        revision
+    );
+}
+
+#[tokio::test]
+async fn service_restart_retires_confirmed_relation_and_replays_cleanup_but_preserves_unknown_put()
+{
+    let _budget = crate::scenario_budget::enter();
+    use execution_ipc::host::{NativeAccess, NativeContextSession, Request};
+    for unknown_put in [false, true] {
+        let mut c = Case::new(None).await;
+        if unknown_put {
+            c.policy_call(Request::RevokeContext {}).await;
+            c._server.data.lock().unwrap().current_user.lose_reply = true;
+            let reply = c
+                .policy_call(Request::BindContext {
+                    value: NativeContextSession {
+                        access: NativeAccess::User {
+                            credential: zeroize::Zeroizing::new("c".repeat(64)),
+                            user: protocol::current_user::user(
+                                c.service.client.configuration().tenant,
+                            ),
+                        },
+                        generation: plan::id("unconfirmed-login").unwrap(),
+                        expires_at_unix_ms: c.service.core.host.clock.millis().unwrap() + 60_000,
+                    },
+                    expected: None,
+                })
+                .await;
+            assert!(
+                matches!(reply,Reply::CurrentUserSync{value} if value.phase==execution_contract::CurrentUserSyncPhase::BindingUnknown)
+            );
+        }
+        let config = c.service.core.config.clone();
+        let helpers = c.service.core.helpers.clone();
+        let Case {
+            _server: server,
+            _root: root,
+            service,
+            ..
+        } = c;
+        drop(service);
+        let assemble = || {
+            let clock = SystemClock::new().unwrap();
+            let client = Client::open(
+                &root.path,
+                server.config(),
+                OpenMode::Existing,
+                server.secrets.clone(),
+                clock.clone(),
+            )
+            .unwrap();
+            DeviceService::assemble(
+                client,
+                &root.path.join("execution.sqlite"),
+                ProductionStartup::Open,
+                config.clone(),
+                clock,
+                helpers.clone(),
+                execution_runner::staging::MaterialRoot::open_fixture,
+            )
+            .unwrap()
+        };
+        let mut service = assemble();
+        assert!(service.core.contexts.is_empty());
+        let before = server.data.lock().unwrap().current_user.inputs.len();
+        let (_sender, mut commands) = tokio::sync::mpsc::channel(1);
+        if unknown_put {
+            service
+                .retire_expired_current_user(&mut commands)
+                .await
+                .unwrap();
+            assert_eq!(
+                service.client.current_user_status().unwrap().phase,
+                execution_contract::CurrentUserSyncPhase::BindingUnknown
+            );
+            assert_eq!(
+                server.data.lock().unwrap().current_user.inputs.len(),
+                before
+            );
+            continue;
+        }
+        server.data.lock().unwrap().current_user.lose_reply = true;
+        service
+            .retire_expired_current_user(&mut commands)
+            .await
+            .unwrap();
+        assert_eq!(
+            service.client.current_user_status().unwrap().phase,
+            execution_contract::CurrentUserSyncPhase::CleanupPending
+        );
+        drop(service);
+        let mut service = assemble();
+        service
+            .retire_expired_current_user(&mut commands)
+            .await
+            .unwrap();
+        assert_eq!(
+            service.client.current_user_status().unwrap().phase,
+            execution_contract::CurrentUserSyncPhase::Unbound
+        );
+        let data = server.data.lock().unwrap();
+        assert_eq!(data.current_user.inputs.len(), before + 2);
+        assert_eq!(
+            data.current_user.inputs[before],
+            data.current_user.inputs[before + 1]
+        );
+        assert!(data.current_user.user.is_none());
+        assert!(data.current_user.owner.is_some());
+    }
+}

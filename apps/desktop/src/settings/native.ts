@@ -37,8 +37,7 @@ export type ServicePort = {
   registration(): Promise<RegistrationStatus>;
   mdmStatus(): Promise<MdmStatus>;
   requestRegistration(
-    organizationId?: string,
-    login?: string,
+    input?: import("../account/types").EnterpriseLogin,
   ): Promise<RegistrationStatus>;
   cancelRegistration(): Promise<void>;
   importRegistration(): Promise<RegistrationStatus | null>;
@@ -49,11 +48,10 @@ export function nativeService(): ServicePort | undefined {
     read: () => invoke<ServiceView>("execution_service_status"),
     registration: () => invoke<RegistrationStatus>("agent_registration_status"),
     mdmStatus: readMdmStatus,
-    async requestRegistration(organizationId, login) {
+    async requestRegistration(input) {
       try {
         return await invoke<RegistrationStatus>("agent_request_registration", {
-          organizationId,
-          login,
+          input,
         });
       } finally {
         await refreshAccount();

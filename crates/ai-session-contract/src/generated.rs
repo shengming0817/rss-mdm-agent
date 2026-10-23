@@ -256,6 +256,83 @@ impl<'de> ::serde::Deserialize<'de> for AccessUpdateSchemaVersion {
             .map_err(|e| <D::Error as ::serde::de::Error>::custom(e.to_string()))
     }
 }
+#[doc = "`AccountBindingState`"]
+#[derive(
+    :: serde :: Deserialize,
+    :: serde :: Serialize,
+    Clone,
+    Copy,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum AccountBindingState {
+    #[serde(rename = "unbound")]
+    #[doc = "`Unbound` alternative; see the parent type's schema contract."]
+    Unbound,
+    #[serde(rename = "not_applicable")]
+    #[doc = "`NotApplicable` alternative; see the parent type's schema contract."]
+    NotApplicable,
+    #[serde(rename = "bound")]
+    #[doc = "`Bound` alternative; see the parent type's schema contract."]
+    Bound,
+    #[serde(rename = "binding_unknown")]
+    #[doc = "`BindingUnknown` alternative; see the parent type's schema contract."]
+    BindingUnknown,
+    #[serde(rename = "cleanup_pending")]
+    #[doc = "`CleanupPending` alternative; see the parent type's schema contract."]
+    CleanupPending,
+    #[serde(rename = "conflict")]
+    #[doc = "`Conflict` alternative; see the parent type's schema contract."]
+    Conflict,
+    #[serde(rename = "invalidated")]
+    #[doc = "`Invalidated` alternative; see the parent type's schema contract."]
+    Invalidated,
+}
+impl ::std::fmt::Display for AccountBindingState {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Unbound => f.write_str("unbound"),
+            Self::NotApplicable => f.write_str("not_applicable"),
+            Self::Bound => f.write_str("bound"),
+            Self::BindingUnknown => f.write_str("binding_unknown"),
+            Self::CleanupPending => f.write_str("cleanup_pending"),
+            Self::Conflict => f.write_str("conflict"),
+            Self::Invalidated => f.write_str("invalidated"),
+        }
+    }
+}
+impl ::std::str::FromStr for AccountBindingState {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "unbound" => Ok(Self::Unbound),
+            "not_applicable" => Ok(Self::NotApplicable),
+            "bound" => Ok(Self::Bound),
+            "binding_unknown" => Ok(Self::BindingUnknown),
+            "cleanup_pending" => Ok(Self::CleanupPending),
+            "conflict" => Ok(Self::Conflict),
+            "invalidated" => Ok(Self::Invalidated),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for AccountBindingState {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for AccountBindingState {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
 #[doc = "`AccountFailure`"]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
 #[serde(deny_unknown_fields)]
@@ -610,6 +687,8 @@ impl<'de> ::serde::Deserialize<'de> for AccountSettingsSchemaVersion {
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct AccountStatus {
+    #[doc = "`binding` member; see its generated type and parent schema."]
+    pub binding: AccountBindingState,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     #[doc = "`current` member; see its generated type and parent schema."]
     pub current: ::std::option::Option<UserContext>,
@@ -14789,6 +14868,11 @@ impl std::fmt::Debug for AccessUpdateSchemaVersion {
             stringify!(AccessUpdateSchemaVersion),
             "([redacted])"
         ))
+    }
+}
+impl std::fmt::Debug for AccountBindingState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(concat!(stringify!(AccountBindingState), "([redacted])"))
     }
 }
 impl std::fmt::Debug for AccountFailure {

@@ -7,7 +7,7 @@ use reqwest::Method;
 use serde::de::DeserializeOwned;
 use uuid::Uuid;
 impl<S: IdentityProvider, C: Clock> Client<S, C> {
-    async fn self_service_json<T: DeserializeOwned>(
+    pub(crate) async fn self_service_json<T: DeserializeOwned>(
         &self,
         secret: Option<&str>,
         method: Method,

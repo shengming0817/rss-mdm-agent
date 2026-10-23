@@ -1090,11 +1090,56 @@ try {
       join(reports, "desktop-native-foundations.png"),
     );
     await click("收起基础控件");
+    mark("native fixture login form and stable method switching");
+    await openAgentSettings("账号与组织");
+    await click("预览企业登录");
+    const loginGeometry = () =>
+      browser.execute(() =>
+        Object.fromEntries(
+          [
+            ".auth-heading",
+            ".organization-card",
+            ".login-tabs",
+            ".login-stage",
+            ".account-footer",
+          ].map((selector) => {
+            const { x, y, width, height } = document
+              .querySelector(selector)
+              .getBoundingClientRect();
+            return [selector, { x, y, width, height }];
+          }),
+        ),
+      );
+    for (const width of [1100, 480]) {
+      await browser.setWindowSize(width, 800);
+      await click("账号密码");
+      const before = await loginGeometry();
+      assert.equal(
+        await browser.$('[aria-label="企业账号密码"]').isExisting(),
+        true,
+      );
+      for (const name of ["扫码登录", "本机快捷登录", "账号密码"]) {
+        await click(name);
+        assert.deepEqual(
+          await loginGeometry(),
+          before,
+          `native login geometry ${width}: ${name}`,
+        );
+        await browser.saveScreenshot(
+          join(reports, `desktop-native-login-${width}-${name}.png`),
+        );
+      }
+    }
+    result.checks.push("native-fixture-login-password-and-fixed-tabs");
+    await click("返回工作区");
+    await browser.setWindowSize(1100, 760);
     mark("macOS foundation dialog keyboard focus and cleanup");
     await navigate("AI 助手");
     await wait(() => browser.$(".composer textarea").isDisplayed());
     await click("新会话");
-    await assertEmptyHistory();
+    // This fixture intentionally seeds paginated history; a new draft preserves it.
+    mark("visual fixture new draft with existing history");
+    assert.equal(await browser.$(".composer textarea").getValue(), "");
     await browser.setWindowSize(1100, 760);
     await browser.saveScreenshot(
       join(reports, "desktop-native-start-default.png"),
@@ -1553,8 +1598,13 @@ try {
         otherScales: "unverified",
       };
 
-      await navigate("AI 助手");
+      mark("native operation gallery activation");
+      await fixtureControls();
       await browser.$('input[aria-label="显示操作模板"]').click();
+      // OperationGallery is owned by the active development settings slot.
+      await wait(() =>
+        browser.$('select[aria-label="操作模板"]').isDisplayed(),
+      );
       for (const template of [
         "SettingsForm",
         "ObjectActions",
@@ -1618,7 +1668,9 @@ try {
         );
         result.checks.push(`native-operation-${template}`);
       }
+      await fixtureControls();
       await browser.$('input[aria-label="显示操作模板"]').click();
+      await navigate("AI 助手");
       result.windowsAppearance = "unverified; no Windows host";
       await browser.setWindowSize(1100, 760);
       mark("native visual close and reopen main window");
@@ -1632,6 +1684,8 @@ try {
       menu("显示窗口");
       await wait(async () => (await browser.getWindowHandles()).length === 1);
       await browser.switchToWindow((await browser.getWindowHandles())[0]);
+      // Recreated fixture views open at Home, then use the product navigation.
+      await navigate("AI 助手");
       await wait(() => browser.$(".composer textarea").isDisplayed());
       result.checks.push("native-visual-close-reopen");
     }
@@ -1649,6 +1703,8 @@ try {
     result.status = "passed";
   } else {
     mark("account and saved unverified connection");
+    if (await browser.$('[aria-label="登录工作空间"]').isExisting())
+      await click("设置与诊断");
     await browser.$(".account-local-workspaces > summary").click();
     await browser.$('[aria-label="测试用户名"]').setValue("Golden Alice");
     await click("进入");
