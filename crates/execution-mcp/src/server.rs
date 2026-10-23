@@ -74,6 +74,10 @@ fn constrain_schema_integers(value: &mut Value) {
 // bind schemas and dispatch to that owner without repeating wire-name lists.
 #[derive(Clone, Copy)]
 pub(crate) enum ToolKind {
+    LocalSoftwareRead,
+    LocalSoftwarePrepare,
+    LocalSoftwareStatus,
+    LocalSoftwareCancel,
     QueryDirectory,
     DataRead,
     QuerySubmit,
@@ -95,7 +99,11 @@ enum Effect {
     MayPersist,
 }
 impl ToolKind {
-    const ALL: [Self; 14] = [
+    const ALL: [Self; 18] = [
+        Self::LocalSoftwareRead,
+        Self::LocalSoftwarePrepare,
+        Self::LocalSoftwareStatus,
+        Self::LocalSoftwareCancel,
         Self::QueryDirectory,
         Self::DataRead,
         Self::QuerySubmit,
@@ -114,6 +122,10 @@ impl ToolKind {
 
     fn descriptor(self) -> (&'static str, &'static str, Effect) {
         match self {
+            Self::LocalSoftwareRead => ("execution_software_read", "Read retained installed-software facts, qualified fixed updates and local action availability. No collector or mutation runs.", Effect::ReadOnly),
+            Self::LocalSoftwarePrepare => ("execution_software_prepare", "Prepare a fixed local software action for the desktop user to review and submit. Never executes. Return the original request for recovery; do not prepare again to poll.", Effect::MayPersist),
+            Self::LocalSoftwareStatus => ("execution_software_status", "Query the original local software request and observed result. Unknown does not permit resubmission.", Effect::ReadOnly),
+            Self::LocalSoftwareCancel => ("execution_software_cancel", "Request cancellation of the original local software action. Does not prove termination or rollback.", Effect::MayPersist),
             Self::QueryDirectory => ("execution_query_directory", "Discover exact local query definitions. Descriptors are not execution grants.", Effect::ReadOnly),
             Self::DataRead => ("execution_data_read", "Read retained local data by query or original request, with snapshot pagination. This never starts collection.", Effect::ReadOnly),
             Self::QuerySubmit => ("execution_query_submit", "Explicitly submit one query. Reuse the original request after response loss. Published scripts retain their Policy risk and confirmation flow.", Effect::MayPersist),
@@ -143,6 +155,15 @@ impl ToolKind {
     }
     fn definition(self) -> Tool {
         match self {
+            Self::LocalSoftwareRead => {
+                tool::<execution_contract::SoftwareRead, execution_contract::SoftwarePage>(self)
+            }
+            Self::LocalSoftwarePrepare => {
+                tool::<LocalSoftwareProposal, execution_contract::LocalSoftwarePrepared>(self)
+            }
+            Self::LocalSoftwareStatus | Self::LocalSoftwareCancel => {
+                tool::<execution_contract::QueryRequest, LocalSoftwareResult>(self)
+            }
             Self::QueryDirectory => {
                 tool::<execution_contract::QueryDirectory, execution_contract::DataResponse>(self)
             }
@@ -245,6 +266,22 @@ impl<S: ExecutionServicePort> Handler<S> {
             );
         };
         match kind {
+            ToolKind::LocalSoftwareRead => result(
+                async { Ok(self.service.software_read(decode(raw)?, wait).await?) }.await,
+                max,
+            ),
+            ToolKind::LocalSoftwarePrepare => result(
+                async { Ok(self.service.software_prepare(decode(raw)?, wait).await?) }.await,
+                max,
+            ),
+            ToolKind::LocalSoftwareStatus => result(
+                async { Ok(self.service.software_status(decode(raw)?, wait).await?) }.await,
+                max,
+            ),
+            ToolKind::LocalSoftwareCancel => result(
+                async { Ok(self.service.software_cancel(decode(raw)?, wait).await?) }.await,
+                max,
+            ),
             ToolKind::QueryDirectory
             | ToolKind::DataRead
             | ToolKind::QuerySubmit

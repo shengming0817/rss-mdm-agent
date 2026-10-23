@@ -10,9 +10,9 @@ mod server;
 mod transport;
 pub use config::McpLimits;
 pub use model::{
-    CancelDisposition, CancelResult, CapabilityState, CapabilityView, OperationPhase,
-    OperationProposal, OperationRequest, OperationScene, OperationStatus, PolicyToolInput,
-    PolicyToolPage, PolicyToolsQuery, ServiceError,
+    CancelDisposition, CancelResult, CapabilityState, CapabilityView, LocalSoftwareProposal,
+    LocalSoftwareResult, OperationPhase, OperationProposal, OperationRequest, OperationScene,
+    OperationStatus, PolicyToolInput, PolicyToolPage, PolicyToolsQuery, ServiceError,
 };
 pub use port::ExecutionServicePort;
 

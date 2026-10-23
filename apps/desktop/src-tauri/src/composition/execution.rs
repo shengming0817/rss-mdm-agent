@@ -364,6 +364,78 @@ impl ExecutionHandle {
             _ => Err(bad(Error::Unavailable)),
         }
     }
+    async fn software_request(&self, input: LocalSoftwareOperation) -> ui::Result<Reply> {
+        let reply = self
+            .request(Request::LocalSoftware {
+                context: self.context_ref()?,
+                origin: self.origin.clone(),
+                input,
+            })
+            .await
+            .map_err(bad)?;
+        if let Reply::DataFailure { reason } = reply {
+            return Err(ui::error(
+                match reason {
+                    DataError::Conflict => "software_conflict",
+                    DataError::Denied => "software_denied",
+                    DataError::Expired => "software_expired",
+                    DataError::NotFound => "software_not_found",
+                    DataError::Unsupported => "software_unsupported",
+                    _ => "software_unavailable",
+                },
+                "软件操作尚未完成；请核对所选软件或查询原请求",
+            ));
+        }
+        Ok(reply)
+    }
+    pub async fn software_prepare(
+        &self,
+        input: LocalSoftwareChoice,
+    ) -> ui::Result<LocalSoftwarePrepared> {
+        match self
+            .software_request(LocalSoftwareOperation::Prepare(input))
+            .await?
+        {
+            Reply::SoftwarePrepared { value } => Ok(value),
+            _ => Err(bad(Error::OutcomeUnknown)),
+        }
+    }
+    pub async fn software_submit(
+        &self,
+        input: LocalSoftwareSubmission,
+    ) -> ui::Result<execution_app::LocalSoftwareStatus> {
+        match self
+            .software_request(LocalSoftwareOperation::Submit(input))
+            .await?
+        {
+            Reply::SoftwareStatus { value } => Ok(value),
+            _ => Err(bad(Error::OutcomeUnknown)),
+        }
+    }
+    pub async fn software_status(
+        &self,
+        input: QueryRequest,
+    ) -> ui::Result<execution_app::LocalSoftwareStatus> {
+        match self
+            .software_request(LocalSoftwareOperation::Status(input))
+            .await?
+        {
+            Reply::SoftwareStatus { value } => Ok(value),
+            _ => Err(bad(Error::OutcomeUnknown)),
+        }
+    }
+    pub async fn software_cancel(
+        &self,
+        input: QueryRequest,
+    ) -> ui::Result<execution_app::LocalSoftwareStatus> {
+        match self
+            .software_request(LocalSoftwareOperation::Cancel(input))
+            .await?
+        {
+            Reply::SoftwareStatus { value } => Ok(value),
+            _ => Err(bad(Error::OutcomeUnknown)),
+        }
+    }
     pub async fn software_read(&self, input: SoftwareRead) -> ui::Result<SoftwarePage> {
         match self
             .request(Request::SoftwareRead {
@@ -730,6 +802,65 @@ impl mcp::ExecutionServicePort for ExecutionHandle {
         self.observe_software(SoftwareReadChoice { request, input })
             .await
             .map_err(|_| mcp::ServiceError::Unavailable)
+    }
+    async fn software_read(
+        &self,
+        input: SoftwareRead,
+        _: CancellationToken,
+    ) -> Result<SoftwarePage, mcp::ServiceError> {
+        self.software_read(input)
+            .await
+            .map_err(|_| mcp::ServiceError::Unavailable)
+    }
+    async fn software_prepare(
+        &self,
+        input: mcp::LocalSoftwareProposal,
+        _: CancellationToken,
+    ) -> Result<LocalSoftwarePrepared, mcp::ServiceError> {
+        let ClientOrigin::Ai { tool_call, .. } = &self.origin else {
+            return Err(mcp::ServiceError::Denied);
+        };
+        let request = RequestId::new(
+            uuid::Uuid::parse_str(tool_call.as_str())
+                .map_err(|_| mcp::ServiceError::InvalidInput)?
+                .to_string(),
+        )
+        .map_err(|_| mcp::ServiceError::InvalidInput)?;
+        self.software_prepare(LocalSoftwareChoice {
+            request,
+            software: input.software,
+            action: input.action,
+        })
+        .await
+        .map_err(|_| mcp::ServiceError::OutcomeUnknown)
+    }
+    async fn software_status(
+        &self,
+        input: QueryRequest,
+        _: CancellationToken,
+    ) -> Result<mcp::LocalSoftwareResult, mcp::ServiceError> {
+        let value = self
+            .software_status(input)
+            .await
+            .map_err(|_| mcp::ServiceError::Unavailable)?;
+        Ok(mcp::LocalSoftwareResult {
+            prepared: value.prepared,
+            operation: operation(value.execution),
+        })
+    }
+    async fn software_cancel(
+        &self,
+        input: QueryRequest,
+        _: CancellationToken,
+    ) -> Result<mcp::LocalSoftwareResult, mcp::ServiceError> {
+        let value = self
+            .software_cancel(input)
+            .await
+            .map_err(|_| mcp::ServiceError::OutcomeUnknown)?;
+        Ok(mcp::LocalSoftwareResult {
+            prepared: value.prepared,
+            operation: operation(value.execution),
+        })
     }
     async fn policy_tools(
         &self,

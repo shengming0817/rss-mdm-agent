@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 /// Current desktop/system IPC. No negotiation or legacy parser exists.
 pub const IPC_VERSION: u8 = 3;
 /// Current protected installation document format.
-pub const DEPLOYMENT_VERSION: u32 = 2;
+pub const DEPLOYMENT_VERSION: u32 = 3;
 
 /// Read-only native state, independent from Agent identity and policy authorization.
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema, PartialEq, Eq)]
@@ -688,6 +688,15 @@ impl NativeContextSession {
     deny_unknown_fields
 )]
 pub enum Request {
+    /// Typed local software intent, without a remote task or caller-selected command.
+    LocalSoftware {
+        /// Current authenticated native context.
+        context: execution_contract::NativeContextRef,
+        /// Native-attested source; confirmation is accepted only from the desktop.
+        origin: ClientOrigin,
+        /// Bounded read/prepare/submit/cancel operation.
+        input: execution_contract::LocalSoftwareOperation,
+    },
     /// Read user-visible software from an existing authorized data snapshot.
     SoftwareRead {
         /// Current authenticated native context.
@@ -855,6 +864,16 @@ struct Envelope {
     rename_all_fields = "camelCase"
 )]
 pub enum Reply {
+    /// Immutable local preview retained in the existing execution journal.
+    SoftwarePrepared {
+        /// Safe summary; executable input remains private.
+        value: execution_contract::LocalSoftwarePrepared,
+    },
+    /// Existing journal status for the same local software request.
+    SoftwareStatus {
+        /// Typed preview and lifecycle facts.
+        value: execution_app::LocalSoftwareStatus,
+    },
     /// Typed software facts, independently of enterprise directory availability.
     SoftwarePage {
         /// Existing observations with precise snapshot references.

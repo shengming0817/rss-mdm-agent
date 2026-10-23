@@ -2952,3 +2952,40 @@ fn retirement_drain_requires_quiescence_and_survives_lost_runner_memory() {
     );
     assert!(app.all_attempts_quiescent(0).is_err());
 }
+
+#[test]
+fn staged_input_survives_reopen_without_admission_and_submits_only_once() {
+    let db = Database::new();
+    let host = TestHost::new();
+    let runner = DeterministicTestRunner::new(id("test-runner"), TestScenario::Wait, 16).unwrap();
+    let p = plan();
+    let request = &p.spec().request.request_id;
+    let mut app = open(&db, host.clone(), runner.clone(), false);
+    let staged = app.stage_execution(&caller(), &p).unwrap();
+    assert_eq!(staged.attempts, 0);
+    assert!(staged.admission.is_none());
+    assert_eq!(runner.dispatch_count(), 0);
+    drop(app);
+    let mut app = open(&db, host, runner.clone(), true);
+    assert_eq!(
+        app.frozen_input(&caller(), request).unwrap().digest(),
+        p.digest()
+    );
+    assert_eq!(app.stage_execution(&caller(), &p).unwrap().attempts, 0);
+    let mut changed = p.spec().clone();
+    changed.launch.argv.insert(
+        0,
+        LaunchArg::Literal {
+            value: "changed".into(),
+        },
+    );
+    let changed = FrozenExecution::freeze(changed, &test_execution_limits()).unwrap();
+    assert!(matches!(
+        app.stage_execution(&caller(), &changed),
+        Err(Error::Conflict)
+    ));
+    assert_eq!(runner.dispatch_count(), 0);
+    assert_eq!(app.request_execution(&caller(), &p).unwrap().attempts, 1);
+    assert_eq!(app.request_execution(&caller(), &p).unwrap().attempts, 1);
+    assert_eq!(runner.dispatch_count(), 1);
+}

@@ -485,7 +485,10 @@ impl<S: IdentityProvider> DeviceService<S> {
             };
             let reply = match result {
                 Err(error)
-                    if matches!(command.request.as_operation(), Some(Request::Data { .. })) =>
+                    if matches!(
+                        command.request.as_operation(),
+                        Some(Request::Data { .. } | Request::LocalSoftware { .. })
+                    ) =>
                 {
                     super::data::failure(error)
                 }
@@ -610,6 +613,16 @@ impl<S: IdentityProvider> DeviceService<S> {
         let Some(request) = command.request.as_operation() else {
             return Err(Error::Protocol);
         };
+        if let Request::LocalSoftware {
+            context,
+            origin,
+            input,
+        } = request
+        {
+            return self
+                .core
+                .software_operation(command, context, origin, input);
+        }
         if let Request::Data {
             context,
             origin,

@@ -55,5 +55,9 @@ export function nativeSoftwarePort(): SoftwarePort | null {
   const generation = userGeneration();
   return {
     read: (input) => invoke("software_read", { input, generation }),
+    prepare: (input) => invoke("software_prepare", { input, generation }),
+    submit: (input) => invoke("software_submit", { input, generation }),
+    status: (input) => invoke("software_status", { input, generation }),
+    cancel: (input) => invoke("software_cancel", { input, generation }),
   };
 }

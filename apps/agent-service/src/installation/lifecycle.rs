@@ -379,7 +379,10 @@ fn refresh(
         match action {
             Step::StopCurrent => platform::stop(true, current, config),
             Step::RemoveCurrent => platform::remove(true, current, config),
-            Step::PublishCandidate => publish(config, &json(&next)?),
+            Step::PublishCandidate => {
+                crate::local_software::initialize(&next.execution.local_software)?;
+                publish(config, &json(&next)?)
+            }
             Step::RegisterCandidate => platform::register(true, candidate, config),
             Step::StopCandidate => platform::stop(true, candidate, config),
             Step::RemoveCandidate => platform::remove(true, candidate, config),
@@ -655,6 +658,7 @@ fn apply(candidate_path: &Path, profile: Option<&PathBuf>, config: &Path) -> Res
             )?;
         }
         outcome::phase("publish-configuration")?;
+        crate::local_software::initialize(&next.execution.local_software)?;
         publish_new(config, &json(&next)?)?;
         Deployment::load(config)?;
         outcome::phase("register-candidate")?;

@@ -114,6 +114,8 @@ async fn signed_start_compiles_exactly_and_never_creates_a_local_enterprise_appr
     };
     let (preview, _) = compile(offered).unwrap();
     let host = host::EnterpriseHost {
+        local_software: Arc::new(std::sync::Mutex::new(None)),
+        local_stopped: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         binding: binding.clone(),
         actor: actor.clone(),
         clock,
@@ -329,6 +331,9 @@ async fn current_software_steps_compile_from_exact_prefixed_artifacts() {
         let material_root = root.path.join("materials");
         execution_runner::staging::initialize(&material_root).unwrap();
         let config = ExecutionConfig {
+            local_software: crate::local_software::LocalSoftwareConfig {
+                policy_file: "/unavailable/software-policy.json".into(),
+            },
             work_root: root.path.clone(),
             material_root,
             interpreters: vec![Interpreter {

@@ -166,3 +166,13 @@ pub struct ExecutionStatus {
     /// Authorized evidence references only.
     pub evidence: Vec<EvidenceRef>,
 }
+
+/// Safe local software preview and the original execution journal status.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LocalSoftwareStatus {
+    /// Immutable service-owned preview; no executable inputs are returned.
+    pub prepared: execution_contract::LocalSoftwarePrepared,
+    /// Existing lifecycle facts, with no parallel software state machine.
+    pub execution: ExecutionStatus,
+}

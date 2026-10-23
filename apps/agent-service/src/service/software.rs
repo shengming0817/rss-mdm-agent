@@ -3,6 +3,7 @@ use super::*;
 use execution_contract::*;
 use execution_ipc::host::{ClientOrigin, Reply};
 use serde_json::Value;
+use uuid::Uuid;
 
 fn text<'a>(row: &'a Value, key: &str) -> Option<&'a str> {
     row.get(key)
@@ -44,15 +45,20 @@ impl Core {
             return Err(Error::Unsupported);
         }
         let offset = input.read.after.as_ref().map_or(0, |c| c.offset);
+        let policy = crate::local_software::Policy::open(&self.config.local_software).ok();
+        let usable =
+            !data.stale && data.quality == DataQuality::Complete && data.enumeration_complete;
         let mut items = Vec::new();
         for (index, row) in data.rows.iter().enumerate() {
-            if let Some(item) = software_item(
+            if let Some(mut item) = software_item(
                 row,
                 &data.query,
                 &snapshot,
                 offset + index as u32,
                 &command.subject,
             )? {
+                item.actions =
+                    software_actions(&item, row, policy.as_ref().map(|p| &p.rules), usable);
                 items.push(item);
             }
         }
@@ -175,4 +181,472 @@ mod tests {
         .unwrap();
         assert_eq!(item.kind, InstalledSoftwareKind::Pkg);
     }
+}
+
+impl Core {
+    fn software_initiator(
+        &self,
+        command: &Command,
+        origin: &ClientOrigin,
+    ) -> Result<Initiator, Error> {
+        let binding = command.binding.as_ref().ok_or(Error::Denied)?;
+        self.require_origin_context(&command.subject, binding, origin)?;
+        let os_session = OsSessionRef {
+            device: self.host.binding.device.clone(),
+            account: OsAccountRef {
+                platform: plan::platform()?,
+                subject: plan::id(&command.subject)?,
+            },
+            session: binding.clone(),
+        };
+        Ok(match origin {
+            ClientOrigin::Desktop {} => Initiator::Human { os_session },
+            ClientOrigin::Ai {
+                config,
+                conversation,
+                tool_call,
+                ..
+            } => Initiator::Ai {
+                provider: plan::id("local-ai-host")?,
+                os_session,
+                config: config.clone(),
+                conversation: conversation.clone(),
+                tool_call: tool_call.clone(),
+            },
+        })
+    }
+    fn resolve_software(
+        &mut self,
+        command: &Command,
+        context: &NativeContextRef,
+        origin: &ClientOrigin,
+        reference: &SoftwareRef,
+    ) -> Result<(InstalledSoftware, Value), Error> {
+        let input = SoftwareRead {
+            read: DataRead {
+                selection: DataSelection::Query {
+                    query: reference.query.clone(),
+                },
+                after: Some(reference.cursor.clone()),
+                limit: 1,
+                max_age_seconds: Some(300),
+            },
+        };
+        let Reply::SoftwarePage { value } = self.read_software(command, context, origin, &input)?
+        else {
+            return Err(Error::Protocol);
+        };
+        if value.stale || value.quality != DataQuality::Complete || !value.enumeration_complete {
+            return Err(Error::Conflict);
+        }
+        let item = value
+            .items
+            .into_iter()
+            .next()
+            .filter(|v| v.reference == *reference)
+            .ok_or(Error::Conflict)?;
+        let data = self.data.read(
+            &input.read,
+            &command.subject,
+            command.binding.as_ref().ok_or(Error::Denied)?,
+            self.host.clock.millis()? / 1000,
+        )?;
+        Ok((item, data.rows.into_iter().next().ok_or(Error::NotFound)?))
+    }
+    fn local_software_input(
+        &self,
+        command: &Command,
+        context: &NativeContextRef,
+        request: &RequestId,
+        mutating: bool,
+    ) -> Result<FrozenExecution, Error> {
+        self.data_context(command, context)?;
+        let frozen = self
+            .app
+            .frozen_input(&self.caller(), request)
+            .map_err(map_app_error)?;
+        let session = match &frozen.spec().request.initiator {
+            Initiator::Human { os_session } | Initiator::Ai { os_session, .. } => os_session,
+            _ => return Err(Error::Denied),
+        };
+        if !frozen
+            .spec()
+            .policy
+            .id
+            .as_str()
+            .starts_with("local-software:")
+            || session.account.subject.as_str() != command.subject
+            || &session.device != &self.host.binding.device
+        {
+            return Err(Error::Denied);
+        }
+        if mutating {
+            if self.stopping
+                || self.host.local_stopped.load(Ordering::Acquire)
+                || command.binding.as_ref() != Some(&session.session)
+            {
+                return Err(Error::Denied);
+            }
+            let original: NativeContextRef = parameter(&frozen, "local-software-context")?;
+            if original != *context {
+                return Err(Error::Identity);
+            }
+        }
+        Ok(frozen)
+    }
+    pub(super) fn software_operation(
+        &mut self,
+        command: &Command,
+        context: &NativeContextRef,
+        origin: &ClientOrigin,
+        input: &LocalSoftwareOperation,
+    ) -> Result<Reply, Error> {
+        self.data_context(command, context)?;
+        match input {
+            LocalSoftwareOperation::Prepare(choice) => {
+                if self.stopping || self.host.local_stopped.load(Ordering::Acquire) {
+                    return Err(Error::Denied);
+                }
+                let id = Uuid::parse_str(choice.request.as_str()).map_err(|_| Error::Protocol)?;
+                if id.is_nil() || id.to_string() != choice.request.as_str() {
+                    return Err(Error::Protocol);
+                }
+                let initiator = self.software_initiator(command, origin)?;
+                if self
+                    .app
+                    .has_service_execution(&choice.request, &self.host.binding.device)
+                    .map_err(map_app_error)?
+                {
+                    let frozen =
+                        self.local_software_input(command, context, &choice.request, true)?;
+                    let original: LocalSoftwareChoice =
+                        parameter(&frozen, "local-software-choice")?;
+                    if original != *choice || frozen.spec().request.initiator != initiator {
+                        return Err(Error::Conflict);
+                    }
+                    return Ok(Reply::SoftwarePrepared {
+                        value: software_preview(&frozen)?,
+                    });
+                }
+                let (item, row) =
+                    self.resolve_software(command, context, origin, &choice.software)?;
+                let policy = crate::local_software::Policy::open(&self.config.local_software)?;
+                if policy.rules.protects(&item)
+                    && matches!(
+                        choice.action,
+                        LocalSoftwareAction::Update | LocalSoftwareAction::Uninstall
+                    )
+                {
+                    return Err(Error::Denied);
+                }
+                if choice.action == LocalSoftwareAction::Update && !policy.rules.allow_user_update {
+                    return Err(Error::Denied);
+                }
+                let helper = if matches!(item.scope, DataScope::User { .. })
+                    || choice.action == LocalSoftwareAction::Launch
+                {
+                    Some(self.helpers.connect_peer(
+                        &command.subject,
+                        command.session,
+                        command.binding.as_ref().ok_or(Error::Denied)?,
+                    )?)
+                } else {
+                    None
+                };
+                let (frozen, artifacts) =
+                    if let Some(recipe) = policy.rules.recipe(&item, choice.action) {
+                        let work_root = helper
+                            .as_ref()
+                            .map(|h| h.context().work_root.clone())
+                            .unwrap_or_else(|| self.config.work_root.clone());
+                        crate::local_software::compile::recipe(
+                            recipe,
+                            choice,
+                            &item,
+                            &self.host.binding,
+                            &self.host.actor,
+                            initiator,
+                            context,
+                            &policy,
+                            self.host.clock.millis()?,
+                            helper,
+                            work_root,
+                        )?
+                    } else {
+                        let target = crate::local_software::native::select(&item, &row)?;
+                        crate::local_software::compile::native(
+                            target,
+                            choice,
+                            &item,
+                            &self.host.binding,
+                            &self.host.actor,
+                            initiator,
+                            context,
+                            &policy,
+                            self.host.clock.millis()?,
+                            &self.config,
+                            &mut self.material_root,
+                            helper,
+                        )?
+                    };
+                policy.current()?;
+                self.data_context(command, context)?;
+                self.host
+                    .materials
+                    .register(&frozen, artifacts)
+                    .map_err(map_app_error)?;
+                let scope = policy::SessionKey::new(
+                    command.subject.clone(),
+                    command.binding.clone().ok_or(Error::Denied)?,
+                );
+                let fences = self.fences.clone();
+                let _fence = fences.admit(&scope, command.fence_epoch)?;
+                self.app
+                    .stage_execution(&self.caller(), &frozen)
+                    .map_err(map_app_error)?;
+                Ok(Reply::SoftwarePrepared {
+                    value: software_preview(&frozen)?,
+                })
+            }
+            LocalSoftwareOperation::Submit(submit) => {
+                if !matches!(origin, ClientOrigin::Desktop {}) {
+                    return Err(Error::Denied);
+                }
+                let frozen = self.local_software_input(command, context, &submit.request, true)?;
+                if frozen.digest() != &submit.digest {
+                    return Err(Error::Conflict);
+                }
+                let before = self
+                    .app
+                    .status(&self.caller(), &submit.request)
+                    .map_err(map_app_error)?;
+                // Once admitted, reconciliation owns recovery. No source refresh can start it again.
+                if before.attempts > 0 || before.cancel_requested {
+                    return self.software_status(&frozen);
+                }
+                let preview = software_preview(&frozen)?;
+                if self.host.clock.millis()? >= preview.start_before_unix_ms {
+                    return Err(Error::Expired);
+                }
+                let (item, row) =
+                    self.resolve_software(command, context, origin, &preview.choice.software)?;
+                let policy = crate::local_software::Policy::open(&self.config.local_software)?;
+                if (policy.rules.protects(&item)
+                    && matches!(
+                        preview.choice.action,
+                        LocalSoftwareAction::Update | LocalSoftwareAction::Uninstall
+                    ))
+                    || frozen.spec().policy.revision.as_str() != policy.revision.as_str()
+                {
+                    return Err(Error::Denied);
+                }
+                if preview.choice.action == LocalSoftwareAction::Update
+                    && !policy.rules.allow_user_update
+                {
+                    return Err(Error::Denied);
+                }
+                let helper = if matches!(frozen.spec().run_as, RunAs::User { .. }) {
+                    Some(self.helpers.connect_peer(
+                        &command.subject,
+                        command.session,
+                        command.binding.as_ref().ok_or(Error::Denied)?,
+                    )?)
+                } else {
+                    None
+                };
+                let artifacts = if frozen.spec().launch.interpreter.profile.id.as_str()
+                    == crate::local_software::native::PROFILE
+                {
+                    if !crate::local_software::native::allowed(&policy.rules, preview.choice.action)
+                    {
+                        return Err(Error::Denied);
+                    }
+                    let original: crate::local_software::native::Target =
+                        parameter(&frozen, "local-software-native")?;
+                    if crate::local_software::native::select(&item, &row)? != original {
+                        return Err(Error::Conflict);
+                    }
+                    crate::local_software::compile::native_materials(&frozen, &self.config, helper)?
+                } else {
+                    let recipe = policy
+                        .rules
+                        .recipe(&item, preview.choice.action)
+                        .ok_or(Error::Unsupported)?;
+                    let root = helper
+                        .as_ref()
+                        .map(|h| h.context().work_root.clone())
+                        .unwrap_or_else(|| self.config.work_root.clone());
+                    crate::local_software::compile::materials(&frozen, recipe, helper, root)?
+                };
+                self.host
+                    .materials
+                    .register(&frozen, artifacts)
+                    .map_err(map_app_error)?;
+                let permit = Arc::new(crate::local_software::Permit::new(frozen.clone(), policy)?);
+                let scope = policy::SessionKey::new(
+                    command.subject.clone(),
+                    command.binding.clone().ok_or(Error::Denied)?,
+                );
+                let fences = self.fences.clone();
+                let _fence = fences.admit(&scope, command.fence_epoch)?;
+                *self
+                    .host
+                    .local_software
+                    .lock()
+                    .map_err(|_| Error::Unavailable)? = Some(permit);
+                let result = (|| {
+                    let status = self
+                        .app
+                        .request_execution(&self.caller(), &frozen)
+                        .map_err(map_app_error)?;
+                    if status.phase == execution_app::TaskPhase::ConfirmationRequired {
+                        self.app
+                            .confirm_execution(
+                                &self.caller(),
+                                &submit.request,
+                                &submit.digest,
+                                true,
+                            )
+                            .map_err(map_app_error)?;
+                    }
+                    self.software_status(&frozen)
+                })();
+                *self
+                    .host
+                    .local_software
+                    .lock()
+                    .map_err(|_| Error::Unavailable)? = None;
+                result
+            }
+            LocalSoftwareOperation::Status(query) | LocalSoftwareOperation::Cancel(query) => {
+                let frozen = self.local_software_input(command, context, &query.request, false)?;
+                if matches!(input, LocalSoftwareOperation::Cancel(_)) {
+                    self.app
+                        .cancel(&self.caller(), &query.request)
+                        .map_err(map_app_error)?;
+                }
+                self.software_status(&frozen)
+            }
+        }
+    }
+    fn software_status(&self, frozen: &FrozenExecution) -> Result<Reply, Error> {
+        Ok(Reply::SoftwareStatus {
+            value: execution_app::LocalSoftwareStatus {
+                prepared: software_preview(frozen)?,
+                execution: self
+                    .app
+                    .status(&self.caller(), &frozen.spec().request.request_id)
+                    .map_err(map_app_error)?,
+            },
+        })
+    }
+}
+fn parameter<T: serde::de::DeserializeOwned>(
+    frozen: &FrozenExecution,
+    key: &str,
+) -> Result<T, Error> {
+    let Some(InputValue::Literal { value }) = frozen.spec().request.parameters.get(key) else {
+        return Err(Error::Untrusted);
+    };
+    serde_json::from_value(value.clone()).map_err(|_| Error::Untrusted)
+}
+fn software_preview(frozen: &FrozenExecution) -> Result<LocalSoftwarePrepared, Error> {
+    Ok(LocalSoftwarePrepared {
+        request: frozen.spec().request.request_id.clone(),
+        digest: frozen.digest().clone(),
+        choice: parameter(frozen, "local-software-choice")?,
+        name: parameter(frozen, "local-software-name")?,
+        initiator: frozen.spec().request.initiator.clone(),
+        identity: match frozen.spec().run_as {
+            RunAs::System { .. } => BackendIdentity::System,
+            RunAs::User { .. } => BackendIdentity::User,
+        },
+        target_version: parameter(frozen, "local-software-target-version")?,
+        start_before_unix_ms: frozen
+            .spec()
+            .validity
+            .expires_at_unix_ms
+            .saturating_sub(frozen.spec().budget.total_timeout_ms),
+    })
+}
+
+fn software_actions(
+    item: &InstalledSoftware,
+    row: &Value,
+    rules: Option<&crate::local_software::Rules>,
+    usable: bool,
+) -> Vec<SoftwareActionView> {
+    let native = match item.kind {
+        InstalledSoftwareKind::Application => {
+            item.publisher.is_some()
+                && item.version.is_some()
+                && text(row, "signature_status") == Some("signed")
+                && text(row, "location")
+                    .is_some_and(|p| std::path::Path::new(p).is_absolute() && p.ends_with(".app"))
+        }
+        InstalledSoftwareKind::WindowsProgram => {
+            item.native_id.starts_with('{')
+                && item.native_id.ends_with('}')
+                && Uuid::parse_str(&item.native_id).is_ok()
+                && item
+                    .publisher
+                    .as_ref()
+                    .is_some_and(|p| !p.starts_with("Microsoft"))
+        }
+        InstalledSoftwareKind::Msix => {
+            matches!(item.scope, DataScope::User { .. }) && item.origin == "msix.registered"
+        }
+        _ => false,
+    };
+    [
+        LocalSoftwareAction::Launch,
+        LocalSoftwareAction::Update,
+        LocalSoftwareAction::Uninstall,
+        LocalSoftwareAction::Detect,
+    ]
+    .into_iter()
+    .map(|action| {
+        let recipe = rules.and_then(|r| r.recipe(item, action));
+        let reason = if !usable {
+            Some(SoftwareBlock::ObservationUnavailable)
+        } else if let Some(rules) = rules {
+            if rules.protects(item)
+                && matches!(
+                    action,
+                    LocalSoftwareAction::Update | LocalSoftwareAction::Uninstall
+                )
+            {
+                Some(SoftwareBlock::Protected)
+            } else if (action == LocalSoftwareAction::Update && !rules.allow_user_update)
+                || (action == LocalSoftwareAction::Launch && !rules.allow_launch)
+                || (action == LocalSoftwareAction::Uninstall
+                    && recipe.is_none()
+                    && !rules.allow_native_uninstall)
+            {
+                Some(SoftwareBlock::RuleDisabled)
+            } else if action == LocalSoftwareAction::Update && recipe.is_none() {
+                Some(SoftwareBlock::UpdateUnknown)
+            } else if action == LocalSoftwareAction::Launch
+                && !matches!(
+                    item.kind,
+                    InstalledSoftwareKind::Application | InstalledSoftwareKind::Msix
+                )
+            {
+                Some(SoftwareBlock::NoGui)
+            } else if recipe.is_none() && !native {
+                Some(SoftwareBlock::RecipeUnavailable)
+            } else {
+                None
+            }
+        } else {
+            Some(SoftwareBlock::RuleDisabled)
+        };
+        SoftwareActionView {
+            action,
+            available: reason.is_none(),
+            reason,
+            target_version: recipe.and_then(|r| r.target_version.clone()),
+        }
+    })
+    .collect()
 }

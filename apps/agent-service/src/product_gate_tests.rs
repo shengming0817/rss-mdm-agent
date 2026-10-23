@@ -101,6 +101,9 @@ impl Case {
             &root.path.join("execution.sqlite"),
             crate::ProductionStartup::Create,
             ExecutionConfig {
+                local_software: crate::local_software::LocalSoftwareConfig {
+                    policy_file: "/unavailable/software-policy.json".into(),
+                },
                 work_root: root.path.clone(),
                 material_root: root.path.join("materials"),
                 interpreters: vec![Interpreter {
@@ -1049,6 +1052,9 @@ async fn service_assembly_creates_and_reopens_journal_with_its_actual_budgets() 
         cdhash: None,
     };
     let config = ExecutionConfig {
+        local_software: crate::local_software::LocalSoftwareConfig {
+            policy_file: "/unavailable/software-policy.json".into(),
+        },
         work_root: root.path.clone(),
         material_root: root.path.join("materials"),
         // Native collection/telemetry do not require an installed script interpreter.

@@ -48,6 +48,8 @@ pub enum LocalSoftwareAction {
 pub enum SoftwareBlock {
     /// The current product or organization rule protects this software.
     Protected,
+    /// The corresponding local action is disabled by the protected rule document.
+    RuleDisabled,
     /// Native identity, source or installation context cannot be established.
     IdentityUnknown,
     /// Data is missing, stale, incomplete or changed since selection.
@@ -71,6 +73,8 @@ pub struct SoftwareActionView {
     pub available: bool,
     /// Accurate reason when unavailable.
     pub reason: Option<SoftwareBlock>,
+    /// Exact qualified update target, when known.
+    pub target_version: Option<String>,
 }
 /// One actual installation, distinct from enterprise catalog candidates.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -131,4 +135,54 @@ pub struct LocalSoftwareChoice {
     pub software: SoftwareRef,
     /// Closed operation.
     pub action: LocalSoftwareAction,
+}
+
+/// Safe immutable preview of a locally prepared operation; executable input stays in the journal.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LocalSoftwarePrepared {
+    /// Original request UUID.
+    pub request: RequestId,
+    /// Digest of the complete service-frozen execution.
+    pub digest: Digest,
+    /// Observed installation and requested action.
+    pub choice: LocalSoftwareChoice,
+    /// Safe software name.
+    pub name: String,
+    /// Original authenticated source, preserved across human confirmation.
+    pub initiator: Initiator,
+    /// Effective physical account class.
+    pub identity: BackendIdentity,
+    /// Fixed candidate version for updates; never a moving latest selector.
+    pub target_version: Option<String>,
+    /// Latest permitted first start in UTC milliseconds.
+    pub start_before_unix_ms: u64,
+}
+/// Submit or query the exact service-frozen preparation.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LocalSoftwareSubmission {
+    /// Original request UUID.
+    pub request: RequestId,
+    /// Exact preview digest; changing the selection requires a new explicit preparation.
+    pub digest: Digest,
+}
+
+/// Local software requests share one native context and the existing journal.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(
+    tag = "kind",
+    content = "input",
+    rename_all = "camelCase",
+    deny_unknown_fields
+)]
+pub enum LocalSoftwareOperation {
+    /// Retain an immutable preview without admission or dispatch.
+    Prepare(LocalSoftwareChoice),
+    /// Explicit human submission/confirmation of the original preview.
+    Submit(LocalSoftwareSubmission),
+    /// Read the original operation; never creates another attempt.
+    Status(QueryRequest),
+    /// Request cancellation, independently of physical termination or rollback.
+    Cancel(QueryRequest),
 }

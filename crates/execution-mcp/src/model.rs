@@ -202,3 +202,22 @@ pub enum OperationScene {
     #[serde(rename = "policy.parameters.v1")]
     PolicyParameters,
 }
+
+/// Local software proposal; the native host supplies the original request UUID.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LocalSoftwareProposal {
+    /// Exact authorized observation reference, never a path or command.
+    pub software: execution_contract::SoftwareRef,
+    /// Fixed local operation requiring human submission.
+    pub action: execution_contract::LocalSoftwareAction,
+}
+/// Existing execution status with its original safe software preview.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LocalSoftwareResult {
+    /// Immutable service-owned preview.
+    pub prepared: execution_contract::LocalSoftwarePrepared,
+    /// Projection of the sole execution journal.
+    pub operation: OperationStatus,
+}

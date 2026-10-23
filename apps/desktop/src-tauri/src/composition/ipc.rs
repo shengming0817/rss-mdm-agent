@@ -55,6 +55,10 @@ macro_rules! commands {
     }
 }
 commands! {
+    software_prepare(execution_contract::LocalSoftwareChoice) -> execution_contract::LocalSoftwarePrepared = software_prepare, employee = false,
+    software_submit(execution_contract::LocalSoftwareSubmission) -> execution_app::LocalSoftwareStatus = software_submit, employee = false,
+    software_status(execution_contract::QueryRequest) -> execution_app::LocalSoftwareStatus = software_status, employee = false,
+    software_cancel(execution_contract::QueryRequest) -> execution_app::LocalSoftwareStatus = software_cancel, employee = false,
     software_read(execution_contract::SoftwareRead) -> execution_contract::SoftwarePage = software_read, employee = false,
     query_directory(execution_contract::QueryDirectory) -> execution_contract::QueryPage = query_directory, employee = false,
     data_read(execution_contract::DataRead) -> execution_contract::CollectedData = data_read, employee = false,
@@ -416,6 +420,10 @@ pub fn register<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder
         query_cancel,
         self_service_observe_software,
         software_read,
+        software_prepare,
+        software_submit,
+        software_status,
+        software_cancel,
         self_service_policy_directory,
         self_service_policy_invoke,
         self_service_policy_confirm,
@@ -542,6 +550,10 @@ mod tests {
             "ai_export_diagnostics",
             "self_service_observe_software",
             "software_read",
+            "software_prepare",
+            "software_submit",
+            "software_status",
+            "software_cancel",
             "self_service_policy_directory",
             "self_service_policy_invoke",
             "self_service_policy_confirm",
