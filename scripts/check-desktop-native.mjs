@@ -1684,6 +1684,8 @@ try {
       menu("显示窗口");
       await wait(async () => (await browser.getWindowHandles()).length === 1);
       await browser.switchToWindow((await browser.getWindowHandles())[0]);
+      // Recreated fixture views open at Home, then use the product navigation.
+      await navigate("AI 助手");
       await wait(() => browser.$(".composer textarea").isDisplayed());
       result.checks.push("native-visual-close-reopen");
     }
