@@ -21,6 +21,9 @@ pub mod account;
 
 pub mod appearance;
 
+#[cfg(windows)]
+mod windows_dialogs;
+
 mod identity;
 
 mod supervisor;
