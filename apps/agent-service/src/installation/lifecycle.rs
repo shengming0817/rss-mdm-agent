@@ -139,7 +139,7 @@ pub(super) fn run(args: &[OsString]) -> Result<(), Error> {
     if action == "validate-trust" {
         let bytes = installation_security::read_external(
             &opts.path("--candidate")?,
-            rss_mdm_agent_wire::connections::MAX_FILE_BYTES * 2,
+            rss_mdm_agent_wire::connections::MAX_FILE_BYTES,
         )
         .map_err(|_| Error::Configuration)?;
         let candidate: Candidate =
