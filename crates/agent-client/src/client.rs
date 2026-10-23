@@ -875,11 +875,15 @@ pub(crate) fn transport_error(error: reqwest::Error) -> Error {
         if current.downcast_ref::<rustls::Error>().is_some() {
             return Error::Unavailable;
         }
+        if let Some(http) = current.downcast_ref::<hyper::Error>() {
+            network |= http.is_incomplete_message();
+        }
         if let Some(io) = current.downcast_ref::<std::io::Error>() {
             use std::io::ErrorKind as K;
             network |= matches!(
                 io.kind(),
-                K::ConnectionRefused
+                K::UnexpectedEof
+                    | K::ConnectionRefused
                     | K::ConnectionReset
                     | K::ConnectionAborted
                     | K::NotConnected

@@ -40,6 +40,8 @@ struct State {
     registration: Option<(Uuid, u64)>,
     failure: Option<FailureReport>,
     refresh_at: i64,
+    next_drive: i64,
+    attempts: u8,
 }
 impl State {
     fn new(document: SignedConfiguration, origin: String) -> Result<Self, Error> {
@@ -59,6 +61,8 @@ impl State {
             registration: None,
             failure: None,
             refresh_at: 0,
+            next_drive: 0,
+            attempts: 0,
         })
     }
     fn validate(&self, cfg: &Config) -> Result<(), Error> {
@@ -155,27 +159,6 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         }
         url::Url::parse(&self.connection_state()?.origin).map_err(|_| Error::Storage)
     }
-    pub(crate) fn connection_urls(&self, path: &str) -> Result<Vec<url::Url>, Error> {
-        if self.store.cfg.transport == Transport::TestLoopback {
-            return Ok(vec![self
-                .store
-                .cfg
-                .origin
-                .join(path)
-                .map_err(|_| Error::Configuration)?]);
-        }
-        let state = self.connection_state()?;
-        let mut origins = state.document.configuration.origins.clone();
-        origins.sort_by_key(|origin| origin != &state.origin);
-        origins
-            .iter()
-            .map(|origin| {
-                url::Url::parse(origin)
-                    .and_then(|url| url.join(path))
-                    .map_err(|_| Error::Storage)
-            })
-            .collect()
-    }
     /// Verify and atomically install a bounded signed file. It carries no new trust keys or credentials.
     /// Callers must use the installation owner and its exclusive communication lease for offline use.
     pub fn import_connections(&mut self, bytes: &[u8]) -> Result<(), Error> {
@@ -200,7 +183,11 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             return Ok(());
         }
         let origin = document.configuration.preferred_origin.clone();
-        self.persist_connections(&State::new(document, origin)?)
+        let mut state = State::new(document, origin)?;
+        state.next_drive = old.next_drive;
+        state.attempts = old.attempts;
+        state.failure = old.failure;
+        self.persist_connections(&state)
     }
     pub(crate) fn network_failed(&self) -> Result<(), Error> {
         let old = self.connection_state()?;
@@ -211,12 +198,14 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             .ok_or(Error::Storage)?;
         let next = origins[(index + 1) % origins.len()].clone();
         let failure = old.failure.clone();
+        let schedule = (old.next_drive, old.attempts);
         let mut state = if next != old.origin {
             State::new(old.document, next)?
         } else {
             old
         };
         state.failure = failure;
+        (state.next_drive, state.attempts) = schedule;
         state.refresh_at = self.now()?.saturating_add(30);
         if state.failure.is_none() {
             state.failure = Some(FailureReport {
@@ -264,6 +253,24 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
     /// Fetch, install and acknowledge from the existing service drive. Failures preserve identity.
     pub async fn drive_connections(&mut self) -> Result<(), Error> {
         self.active()?;
+        let now = self.now()?;
+        let mut state = self.connection_state()?;
+        if now < state.next_drive {
+            return Ok(());
+        }
+        state.attempts = state.attempts.saturating_add(1).min(6);
+        state.next_drive = now.saturating_add((1_i64 << state.attempts).min(60));
+        self.persist_connections(&state)?;
+        let result = self.drive_connections_inner().await;
+        if result.is_ok() {
+            let mut state = self.connection_state()?;
+            state.attempts = 0;
+            state.next_drive = now.saturating_add(2);
+            self.persist_connections(&state)?;
+        }
+        result
+    }
+    async fn drive_connections_inner(&mut self) -> Result<(), Error> {
         let mut state = self.connection_state()?;
         let current = self.registration()?;
         let binding = (current.registration_id, current.generation);

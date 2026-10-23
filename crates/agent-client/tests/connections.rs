@@ -16,6 +16,15 @@ fn stored(root: &Root) -> Value {
         .unwrap();
     serde_json::from_slice(&bytes).unwrap()
 }
+fn spool_body(root: &Root, id: uuid::Uuid) -> Vec<u8> {
+    let db = rusqlite::Connection::open(root.path.join("telemetry.sqlite")).unwrap();
+    db.query_row(
+        "SELECT body FROM batches WHERE id=?1",
+        [id.to_string()],
+        |row| row.get(0),
+    )
+    .unwrap()
+}
 fn publish(
     server: &Server,
     origins: Vec<String>,
@@ -39,16 +48,44 @@ async fn real_tls_address_publication_preserves_original_identity_cache_pending_
     let cfg = a.config();
     let mut client = a.client(&root, OpenMode::Create);
     let identity = a.register(&mut client).await;
-    let spool = client
+    let mut spool = client
         .telemetry_spool(agent_client::telemetry::Limits::production())
         .unwrap();
+    let signed = support::telemetry::configuration(&a, &identity);
+    a.data.lock().unwrap().telemetry.configuration = Some(signed.clone());
+    let telemetry = client.verify_telemetry(signed).unwrap();
+    spool.install(&telemetry).unwrap();
+    let sample = spool
+        .append(
+            &telemetry,
+            1_000_000,
+            [(
+                rss_mdm_agent_wire::runtime::FieldKey::parse("custom.load").unwrap(),
+                rss_mdm_agent_wire::runtime::TelemetryReading::Valid {
+                    value: rss_mdm_agent_wire::runtime::Scalar::Integer(17),
+                    interval_start: None,
+                },
+            )]
+            .into(),
+            "boot-before-address-change",
+        )
+        .unwrap();
+    spool.freeze(&telemetry).unwrap();
+    let original_batch = spool.pending(1, false).unwrap().unwrap();
+    let original_batch_id = original_batch.id();
+    let original_batch_body = spool_body(&root, original_batch.id());
     let original_spool = serde_json::to_value(spool.summary().unwrap()).unwrap();
+    assert_eq!(original_spool["pending"], 1);
     drop(spool);
     client.drive_connections().await.unwrap();
     let offer = client.claim().await.unwrap().offer.unwrap();
     let materials = client.prepare(&offer).await.unwrap();
     client.received(&offer).await.unwrap();
-    a.data.lock().unwrap().start_failure = true;
+    {
+        let mut data = a.data.lock().unwrap();
+        data.start_failure = true;
+        data.start_validity_seconds = 300;
+    }
     assert!(client.request_start(&offer, &materials).await.is_err());
     let original_credentials = a.secrets.0.lock().unwrap().clone();
     let original_cache = std::fs::read_dir(root.path.join("content"))
@@ -114,13 +151,22 @@ async fn real_tls_address_publication_preserves_original_identity_cache_pending_
         b.time.clone(),
     )
     .unwrap();
-    let spool = client
+    let mut spool = client
         .telemetry_spool(agent_client::telemetry::Limits::production())
         .unwrap();
     assert_eq!(
         serde_json::to_value(spool.summary().unwrap()).unwrap(),
         original_spool
     );
+    let pending = spool.pending(80, false).unwrap().unwrap();
+    assert_eq!(pending.id(), original_batch_id);
+    assert_eq!(spool_body(&root, pending.id()), original_batch_body);
+    let upload: rss_mdm_agent_wire::runtime::TelemetryUpload =
+        serde_json::from_slice(&spool_body(&root, pending.id())).unwrap();
+    assert_eq!(upload.observations[0].id, sample);
+    let receipt = client.telemetry_submit(&pending).await.unwrap();
+    spool.acknowledge(&pending, &receipt).unwrap();
+    assert_eq!(spool.summary().unwrap().pending, 0);
     client.recover_start(offer.task_id()).await.unwrap();
     assert_eq!(client.registration().unwrap(), identity);
 }
@@ -134,9 +180,11 @@ async fn unknown_ack_replays_original_operation_after_restart_and_new_route_gets
     a.register(&mut client).await;
     a.data.lock().unwrap().connection_ack_reply_lost = true;
     assert!(client.drive_connections().await.is_err());
+    assert_eq!(stored(&root)["failure"]["reason"], "network_unavailable");
     let pending = stored(&root)["ack"].clone();
     assert!(!client.connection_status().unwrap().acknowledged);
     drop(client);
+    a.time.set(4);
     let mut client = a.client(&root, OpenMode::Existing);
     client.drive_connections().await.unwrap();
     assert_eq!(stored(&root)["ack"], pending);
@@ -150,6 +198,7 @@ async fn unknown_ack_replays_original_operation_after_restart_and_new_route_gets
     client
         .import_connections(&serde_json::to_vec(&overlap).unwrap())
         .unwrap();
+    a.time.set(7);
     client.drive_connections().await.unwrap();
     let before = stored(&root)["ack"].clone();
     drop(client);
@@ -167,6 +216,7 @@ async fn unknown_ack_replays_original_operation_after_restart_and_new_route_gets
     assert_eq!(client.drive_connections().await, Err(Error::Unavailable));
     assert_ne!(stored(&root)["ack"]["operationId"], before["operationId"]);
     assert_ne!(stored(&root)["ack"]["origin"], before["origin"]);
+    b.time.set(83);
     client.drive_connections().await.unwrap();
     assert!(client.connection_status().unwrap().acknowledged);
 }
@@ -270,12 +320,16 @@ async fn tls_and_http_errors_never_authorize_candidate_switching() {
         axum::http::StatusCode::TOO_MANY_REQUESTS,
         axum::http::StatusCode::SERVICE_UNAVAILABLE,
     ] {
+        a.time
+            .set(a.time.0.load(std::sync::atomic::Ordering::Acquire) + 70);
         a.data.lock().unwrap().connection_get_fault = Some(status);
         assert!(client.drive_connections().await.is_err());
         assert_eq!(client.connection_status().unwrap().origin, ao);
     }
     let before = stored(&root);
     drop(client);
+    a.time
+        .set(a.time.0.load(std::sync::atomic::Ordering::Acquire) + 70);
     cfg.ca_pem = Some(support::pki::unrelated_ca());
     let mut client = Client::open(
         &root.path,
@@ -286,7 +340,8 @@ async fn tls_and_http_errors_never_authorize_candidate_switching() {
     )
     .unwrap();
     assert!(client.drive_connections().await.is_err());
-    assert_eq!(stored(&root), before);
+    assert_eq!(stored(&root)["document"], before["document"]);
+    assert_eq!(stored(&root)["ack"], before["ack"]);
     assert_eq!(client.connection_status().unwrap().origin, ao);
     assert!(a.data.lock().unwrap().connection_ack_calls.is_empty());
 }
@@ -324,4 +379,78 @@ async fn missing_retained_configuration_never_reinitializes_from_the_package_see
         .unwrap(),
         0
     );
+}
+
+#[tokio::test]
+async fn terminal_result_response_loss_never_replays_a_write_at_another_candidate() {
+    let a = Server::tls().await;
+    let b = a.alias().await;
+    a.data.lock().unwrap().unmanage();
+    let root = Root::new();
+    let mut client = a.client(&root, OpenMode::Create);
+    a.register(&mut client).await;
+    let doc = publish(
+        &a,
+        vec![
+            a.url.origin().ascii_serialization(),
+            b.url.origin().ascii_serialization(),
+        ],
+        a.url.origin().ascii_serialization(),
+        2,
+    );
+    client
+        .import_connections(&serde_json::to_vec(&doc).unwrap())
+        .unwrap();
+    let offer = client.claim().await.unwrap().offer.unwrap();
+    let permit = client
+        .authorize_unmanage(&offer, uuid::Uuid::new_v4())
+        .await
+        .unwrap();
+    let permit = client.unmanage_drained(permit).unwrap();
+    let transport = client.unmanage_transport(&permit).unwrap();
+    a.data.lock().unwrap().terminal_reply_lost = true;
+    drop(client);
+    assert!(transport
+        .report(rss_mdm_agent_wire::runtime::UnmanageOutcome::Unknown)
+        .await
+        .is_err());
+    let data = a.data.lock().unwrap();
+    assert_eq!(data.result_calls, 1);
+    assert_eq!(data.results.len(), 1);
+    assert_eq!(
+        data.terminal_call_origins,
+        vec![a.url.authority().to_string()]
+    );
+}
+
+#[tokio::test]
+async fn failing_refresh_and_unknown_ack_wait_for_the_persisted_retry_schedule() {
+    let server = Server::tls().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    server.data.lock().unwrap().connection_get_fault =
+        Some(axum::http::StatusCode::TOO_MANY_REQUESTS);
+    assert!(client.drive_connections().await.is_err());
+    let count = server.data.lock().unwrap().connection_get_calls;
+    for _ in 0..20 {
+        client.drive_connections().await.unwrap();
+    }
+    assert_eq!(server.data.lock().unwrap().connection_get_calls, count);
+    drop(client);
+    let mut client = server.client(&root, OpenMode::Existing);
+    client.drive_connections().await.unwrap();
+    assert_eq!(server.data.lock().unwrap().connection_get_calls, count);
+    server.time.set(4);
+    server.data.lock().unwrap().connection_ack_reply_lost = true;
+    assert!(client.drive_connections().await.is_err());
+    let ack = stored(&root)["ack"].clone();
+    for _ in 0..20 {
+        client.drive_connections().await.unwrap();
+    }
+    assert_eq!(server.data.lock().unwrap().connection_ack_calls.len(), 1);
+    server.time.set(9);
+    client.drive_connections().await.unwrap();
+    assert_eq!(stored(&root)["ack"], ack);
+    assert!(client.connection_status().unwrap().acknowledged);
 }

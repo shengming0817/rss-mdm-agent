@@ -150,6 +150,9 @@ pub struct Data {
     pub connection_failure_calls: Vec<Value>,
     pub connection_ack_reply_lost: bool,
     pub connection_get_fault: Option<StatusCode>,
+    pub terminal_reply_lost: bool,
+    pub terminal_call_origins: Vec<String>,
+    pub connection_get_calls: usize,
     pub telemetry: telemetry::State,
     pub software_source: Option<software_native::Source>,
     pub trust: Value,
@@ -633,6 +636,9 @@ impl Server {
             connection_failure_calls: vec![],
             connection_ack_reply_lost: false,
             connection_get_fault: None,
+            terminal_reply_lost: false,
+            terminal_call_origins: vec![],
+            connection_get_calls: 0,
             telemetry: Default::default(),
             software_source: None,
             trust: Value::Null,
@@ -1057,6 +1063,7 @@ async fn handler(
         return runtime_error(StatusCode::UNAUTHORIZED, ErrorCode::InvalidIdentity);
     }
     if path == "/api/v1/agent/enroll/connections" {
+        d.connection_get_calls += 1;
         if let Some(status) = d.connection_get_fault.take() {
             return (status, axum::Json(json!({"code":"service_unavailable"}))).into_response();
         }
@@ -1080,7 +1087,7 @@ async fn handler(
         }
         d.connection_ack_calls.push(value);
         return if std::mem::take(&mut d.connection_ack_reply_lost) {
-            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+            interrupted_response()
         } else {
             StatusCode::NO_CONTENT.into_response()
         };
@@ -1107,7 +1114,41 @@ async fn handler(
     if !path.starts_with("/api/v1/agent/runtime/") {
         return StatusCode::NOT_FOUND.into_response();
     }
-    runtime_response(&mut d, path, headers, value)
+    let terminal = value
+        .get("event")
+        .and_then(|event| event.get("kind"))
+        .and_then(Value::as_str)
+        == Some("unmanage_result");
+    if terminal {
+        d.terminal_call_origins
+            .push(headers.get("host").unwrap().to_str().unwrap().into());
+    }
+    let response = runtime_response(&mut d, path, headers, value);
+    if terminal && std::mem::take(&mut d.terminal_reply_lost) {
+        interrupted_response()
+    } else {
+        response
+    }
+}
+
+// Commit at the handler, send actual headers and a partial body, then break the TLS stream.
+fn interrupted_response() -> Response {
+    use futures_util::StreamExt;
+    let body =
+        futures_util::stream::once(async { Ok::<_, std::io::Error>(Bytes::from_static(b"{")) })
+            .chain(futures_util::stream::once(async {
+                tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+                Err::<Bytes, _>(std::io::Error::new(
+                    std::io::ErrorKind::ConnectionReset,
+                    "injected response loss",
+                ))
+            }));
+    Response::builder()
+        .status(200)
+        .header("content-type", "application/json")
+        .header("content-length", "128")
+        .body(axum::body::Body::from_stream(body))
+        .unwrap()
 }
 
 fn runtime_response(d: &mut Data, path: &str, headers: HeaderMap, value: Value) -> Response {

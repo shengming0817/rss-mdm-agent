@@ -276,7 +276,13 @@ impl<S: IdentityProvider> DeviceService<S> {
             self.update_identity_gate();
             result?;
         }
-        let _ = network(self.client.drive_connections(), &mut self.core, commands).await;
+        if let Err(error) = network(self.client.drive_connections(), &mut self.core, commands).await
+        {
+            match self.client.connection_status() {
+                Ok(status) => eprintln!("agent_connections: service={} revision={} origin={} acknowledged={} error={error}", status.service_id, status.revision, status.origin, status.acknowledged),
+                Err(_) => eprintln!("agent_connections: state unavailable error={error}"),
+            }
+        }
         // Task trust belongs to the communication owner. A failed refresh retains usable installed keys.
         let _ = network(self.client.drive_task_trust(), &mut self.core, commands).await;
         self.update_identity_gate();

@@ -55,7 +55,7 @@ impl UnmanagePermit {
 /// It cannot authorize work or create a replacement identity.
 pub struct UnmanageTransport {
     http: reqwest::Client,
-    urls: Vec<url::Url>,
+    url: url::Url,
     max: usize,
     timeout: std::time::Duration,
     attempt: Uuid,
@@ -156,10 +156,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         }
         Ok(UnmanageTransport {
             http: self.http.clone(),
-            urls: self.connection_urls(&format!(
-                "api/v1/agent/runtime/tasks/{}/events",
-                permit.task().task_id
-            ))?,
+            url: self.url(&format!("tasks/{}/events", permit.task().task_id))?,
             max: self.store.cfg.limits.response_bytes,
             timeout: self.store.cfg.limits.request_timeout,
             attempt: permit.task().attempt_id,
@@ -270,28 +267,22 @@ impl UnmanageTransport {
             wire::TaskEvent::UnmanageResult { outcome },
             self.context,
         )?;
-        let body = encode(&request)?;
-        let mut accepted = None;
-        for url in self.urls {
-            match crate::client::json_transport(
-                self.http
-                    .post(url)
-                    .timeout(self.timeout)
-                    .header("content-type", "application/json")
-                    .body(body.clone()),
-                self.max,
-            )
-            .await
-            {
-                Err(Error::Network) => continue,
-                Err(error) => return Err(error),
-                Ok(response) => {
-                    accepted = Some(response);
-                    break;
-                }
+        let (status, body) = crate::client::json_transport(
+            self.http
+                .post(self.url)
+                .timeout(self.timeout)
+                .header("content-type", "application/json")
+                .body(encode(&request)?),
+            self.max,
+        )
+        .await
+        .map_err(|error| {
+            if error == Error::Network {
+                Error::Unavailable
+            } else {
+                error
             }
-        }
-        let (status, body) = accepted.ok_or(Error::Unavailable)?;
+        })?;
         if !status.is_success() {
             return Err(Error::Unavailable);
         }

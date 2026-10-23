@@ -9,6 +9,7 @@ publish = false
 [dependencies]
 version-compare = "=0.2.1"
 httpdate = "=1.0.3"
+hyper = { version = "=1.11.1", default-features = false }
 ring = "=0.17.14"
 zeroize.workspace = true
 rustls.workspace = true
