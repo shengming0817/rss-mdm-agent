@@ -41,6 +41,23 @@ fn candidate_requires_current_format_and_valid_identity() {
         ca_pem: Some(String::from_utf8(crate::protocol_test_support::pki::ca()).unwrap()),
         signing_mode: SigningMode::Development,
     };
+    // Exercise the actual public installer CLI through its bounded external reader.
+    // Native image checks deliberately remain in the privileged installation path.
+    let public = root.path.join("candidate.json");
+    std::fs::write(&public, serde_json::to_vec(&candidate).unwrap()).unwrap();
+    let args = [
+        "validate-trust".into(),
+        "--candidate".into(),
+        public.clone().into_os_string(),
+    ];
+    assert_eq!(lifecycle::run(&args), Ok(()));
+    std::fs::write(
+        &public,
+        vec![b' '; rss_mdm_agent_wire::connections::MAX_FILE_BYTES + 1],
+    )
+    .unwrap();
+    assert_eq!(lifecycle::run(&args), Err(Error::Configuration));
+    std::fs::remove_file(public).unwrap();
     let current = serde_json::to_value(&candidate).unwrap();
     let decoded: Candidate = serde_json::from_value(current.clone()).unwrap();
     // Current metadata reaches native artifact checks; this pure fixture has no installed images.
