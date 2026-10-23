@@ -135,61 +135,6 @@ pub(super) fn software_item(
     }))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-    fn query() -> QueryRef {
-        QueryRef {
-            id: plan::id("native:software").unwrap(),
-            revision: Digest::new("11".repeat(32)).unwrap(),
-        }
-    }
-    #[test]
-    fn device_inventory_does_not_expose_other_users_installations() {
-        let row = json!({"id":"installation","native_id":"package","name":"App","version":"1","scope":"user","owner":"other-user","origin":"msix.registered"});
-        assert!(software_item(
-            &row,
-            &query(),
-            &Digest::new("22".repeat(32)).unwrap(),
-            0,
-            "current-user"
-        )
-        .unwrap()
-        .is_none());
-    }
-    #[test]
-    fn application_reference_freezes_the_snapshot_position_without_accepting_paths_as_input() {
-        let row = json!({"id":"installation","native_id":"com.example.app","name":"App","version":"1","scope":"device","owner":"","origin":"application","location":"/Applications/App.app"});
-        let snapshot = Digest::new("22".repeat(32)).unwrap();
-        let item = software_item(&row, &query(), &snapshot, 129, "current-user")
-            .unwrap()
-            .unwrap();
-        assert_eq!(item.reference.cursor.snapshot, snapshot);
-        assert_eq!(item.reference.cursor.offset, 129);
-        assert_eq!(item.kind, InstalledSoftwareKind::Application);
-        assert_eq!(item.scope, DataScope::Device);
-        assert!(serde_json::to_string(&item)
-            .unwrap()
-            .find("/Applications/")
-            .is_none());
-    }
-    #[test]
-    fn a_receipt_is_not_a_gui_application() {
-        let row = json!({"id":"receipt","native_id":"com.example.pkg","name":"Package","version":"1","scope":"device","owner":"","origin":"pkg_receipt"});
-        let item = software_item(
-            &row,
-            &query(),
-            &Digest::new("22".repeat(32)).unwrap(),
-            0,
-            "user",
-        )
-        .unwrap()
-        .unwrap();
-        assert_eq!(item.kind, InstalledSoftwareKind::Pkg);
-    }
-}
-
 impl Core {
     fn software_initiator(
         &self,
@@ -283,7 +228,7 @@ impl Core {
             .as_str()
             .starts_with("local-software:")
             || session.account.subject.as_str() != command.subject
-            || &session.device != &self.host.binding.device
+            || session.device != self.host.binding.device
         {
             return Err(Error::Denied);
         }
@@ -748,4 +693,59 @@ fn software_actions(
         }
     })
     .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    fn query() -> QueryRef {
+        QueryRef {
+            id: plan::id("native:software").unwrap(),
+            revision: Digest::new("11".repeat(32)).unwrap(),
+        }
+    }
+    #[test]
+    fn device_inventory_does_not_expose_other_users_installations() {
+        let row = json!({"id":"installation","native_id":"package","name":"App","version":"1","scope":"user","owner":"other-user","origin":"msix.registered"});
+        assert!(software_item(
+            &row,
+            &query(),
+            &Digest::new("22".repeat(32)).unwrap(),
+            0,
+            "current-user"
+        )
+        .unwrap()
+        .is_none());
+    }
+    #[test]
+    fn application_reference_freezes_the_snapshot_position_without_accepting_paths_as_input() {
+        let row = json!({"id":"installation","native_id":"com.example.app","name":"App","version":"1","scope":"device","owner":"","origin":"application","location":"/Applications/App.app"});
+        let snapshot = Digest::new("22".repeat(32)).unwrap();
+        let item = software_item(&row, &query(), &snapshot, 129, "current-user")
+            .unwrap()
+            .unwrap();
+        assert_eq!(item.reference.cursor.snapshot, snapshot);
+        assert_eq!(item.reference.cursor.offset, 129);
+        assert_eq!(item.kind, InstalledSoftwareKind::Application);
+        assert_eq!(item.scope, DataScope::Device);
+        assert!(serde_json::to_string(&item)
+            .unwrap()
+            .find("/Applications/")
+            .is_none());
+    }
+    #[test]
+    fn a_receipt_is_not_a_gui_application() {
+        let row = json!({"id":"receipt","native_id":"com.example.pkg","name":"Package","version":"1","scope":"device","owner":"","origin":"pkg_receipt"});
+        let item = software_item(
+            &row,
+            &query(),
+            &Digest::new("22".repeat(32)).unwrap(),
+            0,
+            "user",
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(item.kind, InstalledSoftwareKind::Pkg);
+    }
 }

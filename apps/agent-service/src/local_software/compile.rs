@@ -91,6 +91,11 @@ pub(crate) fn recipe(
     };
     if choice.action == LocalSoftwareAction::Detect {
         program.intent = SoftwareOperation::Detect;
+        for step in &mut program.steps {
+            step.uninstall = None;
+            step.upgrade = SoftwareUpgrade::Deny {};
+            step.auxiliary.clear();
+        }
     }
     for step in &mut program.steps {
         rebind(&mut step.install, &run_as, &session, &work_root)?;

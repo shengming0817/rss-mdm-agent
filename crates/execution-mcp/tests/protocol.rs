@@ -394,7 +394,7 @@ async fn official_rmcp_client_can_consume_the_bounded_service() {
             .unwrap()
             .tools
             .len(),
-        14
+        19
     );
     client.cancel().await.unwrap();
     timeout(Duration::from_secs(2), task)
@@ -792,6 +792,21 @@ fn policy_mcp_descriptor_preserves_resource_input_constraints_and_versions() {
     assert!(!validator
         .is_valid(&json!({"locator":{"after":null},"parameters":{"name":"x".repeat(33)}})));
     assert!(!validator.is_valid(&json!({})));
+    assert!(!validator.is_valid(&json!({"locator":{"after":"later"},"parameters":{"name":"Acme"}})));
+    let later = policy_tool(
+        &item,
+        &execution_contract::PolicyLocator {
+            after: Some(execution_contract::Id::new("later").unwrap()),
+        },
+    )
+    .unwrap();
+    let later_validator = jsonschema::validator_for(&later["inputSchema"]).unwrap();
+    assert!(later_validator
+        .is_valid(&json!({"locator":{"after":"later"},"parameters":{"name":"Acme"}})));
+    for after in [serde_json::Value::Null, json!("other")] {
+        assert!(!later_validator
+            .is_valid(&json!({"locator":{"after":after},"parameters":{"name":"Acme"}})));
+    }
     assert_eq!(descriptor["annotations"]["readOnlyHint"], false);
     fn parameter_schema(item: &mut SelfServiceDirectoryItem) -> &mut serde_json::Value {
         let rss_mdm_agent_wire::runtime::SelfServiceTask::Script {

@@ -990,11 +990,7 @@ pub(crate) struct Selection {
 pub(crate) struct Core {
     // Explicit test-owned authority source, absent from every production build and IPC DTO.
     #[cfg(test)]
-    pub(crate) local_policy_fixture: Option<
-        fn(
-            &crate::local_software::LocalSoftwareConfig,
-        ) -> Result<crate::local_software::Policy, Error>,
-    >,
+    pub(crate) local_policy_fixture: Option<crate::local_software::FixturePolicyReader>,
     telemetry: Option<crate::telemetry::Telemetry>,
     data: crate::collected_data::Data,
     pub(crate) app: ExecutionApp<EnterpriseHost, NativeRunner, execution_sqlite::Store>,

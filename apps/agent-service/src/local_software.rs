@@ -7,6 +7,9 @@ use std::{collections::BTreeMap, path::PathBuf};
 pub(crate) mod compile;
 pub mod native;
 
+#[cfg(test)]
+pub(crate) type FixturePolicyReader = fn(&LocalSoftwareConfig) -> Result<Policy, Error>;
+
 /// Installer-owned configuration. A missing policy is unavailable, never an implicit allow.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

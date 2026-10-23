@@ -164,8 +164,11 @@ impl ToolKind {
             Self::LocalSoftwarePrepare => {
                 tool::<LocalSoftwareProposal, execution_contract::LocalSoftwarePrepared>(self)
             }
-            Self::LocalSoftwareStatus | Self::LocalSoftwareCancel => {
+            Self::LocalSoftwareStatus => {
                 tool::<execution_contract::QueryRequest, LocalSoftwareResult>(self)
+            }
+            Self::LocalSoftwareCancel => {
+                tool::<execution_contract::QueryRequest, OperationRequest>(self)
             }
             Self::QueryDirectory => {
                 tool::<execution_contract::QueryDirectory, execution_contract::DataResponse>(self)
@@ -186,7 +189,7 @@ impl ToolKind {
             Self::PrepareOperation => {
                 tool::<OperationProposal, execution_contract::BackendRequest>(self)
             }
-            Self::InvokePolicy => tool::<PolicyToolCall, execution_contract::BackendRequest>(self),
+            Self::InvokePolicy => tool::<PolicyToolCall, OperationRequest>(self),
             Self::PolicyTools => tool::<PolicyToolsQuery, PolicyToolPage>(self),
             Self::PolicyStatus => tool::<OperationRequest, Value>(self),
             Self::Tasks => tool::<Empty, Vec<BackendTask>>(self),
@@ -283,7 +286,13 @@ impl<S: ExecutionServicePort> Handler<S> {
                 max,
             ),
             ToolKind::LocalSoftwareCancel => result(
-                async { Ok(self.service.software_cancel(decode(raw)?, wait).await?) }.await,
+                async {
+                    let value = self.service.software_cancel(decode(raw)?, wait).await?;
+                    Ok(OperationRequest {
+                        operation_request_id: value.prepared.request,
+                    })
+                }
+                .await,
                 max,
             ),
             ToolKind::QueryDirectory
@@ -317,7 +326,7 @@ impl<S: ExecutionServicePort> Handler<S> {
             ToolKind::InvokePolicy => result(
                 async {
                     let input: PolicyToolCall = decode(raw)?;
-                    Ok(self
+                    let value = self
                         .service
                         .invoke_policy(
                             &input.tool,
@@ -327,7 +336,10 @@ impl<S: ExecutionServicePort> Handler<S> {
                             },
                             wait,
                         )
-                        .await?)
+                        .await?;
+                    Ok(OperationRequest {
+                        operation_request_id: value.action.request().clone(),
+                    })
                 }
                 .await,
                 max,

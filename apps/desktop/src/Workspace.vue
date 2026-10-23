@@ -243,8 +243,8 @@ let devicePolling: ReturnType<typeof setInterval> | undefined;
 const lastContentPage = ref("home");
 const newIdentity = () => crypto.randomUUID();
 const software = createSoftware(
-  props.fixture ? null : nativeDataPort(),
-  props.fixture ? null : nativeSoftwarePort(),
+  !props.ready || props.fixture ? null : nativeDataPort(),
+  !props.ready || props.fixture ? null : nativeSoftwarePort(),
 );
 provide(softwareSummaryKey, software.summary);
 onBeforeUnmount(() => software.dispose());

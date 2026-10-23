@@ -4489,8 +4489,14 @@ async fn local_software_case() -> (Case, LocalSoftwareChoice) {
         query:query.clone(),scope:DataScope::Device,request:None,collected_at:Some(c.service.core.host.clock.millis().unwrap()/1000),quality:DataQuality::Complete,enumeration_complete:true,mapping_version:Some(1),fields:Default::default(),
         rows:vec![serde_json::json!({"id":"fixture-receipt","native_id":receipt,"name":"Explicit receipt fixture","version":"1.0.0","scope":"device","owner":"","origin":"pkg_receipt"})],stale:false,next:None,
     }).unwrap();
-    let Reply::SoftwarePage { value: page } = c
-        .policy_call(Request::SoftwareRead {
+    let (reply, receive) = tokio::sync::oneshot::channel();
+    c.service.core.handle(Command {
+        fence_epoch: c.service.core.fences.current(&c.scope()).unwrap(),
+        subject: c.selection.subject.clone(),
+        session: c.selection.session,
+        binding: Some(c.selection.binding.clone()),
+        reply,
+        request: LocalRequest::operation(Request::SoftwareRead {
             context: context.clone(),
             origin: ClientOrigin::Desktop {},
             input: SoftwareRead {
@@ -4501,10 +4507,13 @@ async fn local_software_case() -> (Case, LocalSoftwareChoice) {
                     max_age_seconds: Some(300),
                 },
             },
-        })
-        .await
-    else {
-        panic!("software facts");
+        }),
+    });
+    let reply = receive.await.unwrap();
+    let page = match reply {
+        Reply::SoftwarePage { value } => value,
+        Reply::DataFailure { reason } => panic!("software facts unavailable: {reason:?}"),
+        _ => panic!("unexpected software facts reply"),
     };
     let item = page.items.into_iter().next().unwrap();
     let material = plan::pin(std::path::Path::new("/bin/sh")).unwrap();

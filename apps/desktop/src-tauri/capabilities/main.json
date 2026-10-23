@@ -49,6 +49,12 @@
     "allow-account-recover",
     "allow-appearance-snapshot",
     "allow-device-overview",
-    "allow-development-assembly"
+    "allow-development-assembly",
+    "allow-software-read",
+    "allow-software-prepare",
+    "allow-software-submit",
+    "allow-software-status",
+    "allow-software-cancel",
+    "allow-software-history"
   ]
 }

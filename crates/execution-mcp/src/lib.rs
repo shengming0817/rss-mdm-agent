@@ -125,6 +125,16 @@ pub fn policy_tool(
     }
     let schema =
         execution_contract::query_input_schema(item).map_err(|_| ServiceError::InvalidInput)?;
+    // Codex rust-v0.155.0 tools/src/json_schema/types.rs supports typed properties
+    // and enums; an untyped object const is normalized to a string enum.
+    let after = match &locator.after {
+        Some(value) => serde_json::json!({"type":"string","enum":[value]}),
+        None => serde_json::json!({"type":"null"}),
+    };
+    let locator_schema = serde_json::json!({
+        "type":"object","properties":{"after":after},
+        "required":["after"],"additionalProperties":false
+    });
     let presentation = &item.self_service.presentation;
     let text = |key: &str| {
         presentation
@@ -144,6 +154,6 @@ pub fn policy_tool(
         })
         .unwrap_or_default();
     Ok(
-        serde_json::json!({"name": policy_tool_name(item), "description": format!("{}\n{}\nCategory: {}\nKeywords: {}\nPrerequisites: {}\nSide effects: {}", text("displayName"), text("description"), text("category"), keywords, text("prerequisites"), text("sideEffects")), "inputSchema": {"type":"object","properties":{"locator":{"const":locator},"parameters":schema},"required":["locator","parameters"],"additionalProperties":false}, "annotations": {"readOnlyHint": item.self_service.risk_level == 1 && matches!(item.task, rss_mdm_agent_wire::runtime::SelfServiceTask::Script {..}), "openWorldHint": false, "idempotentHint": false}}),
+        serde_json::json!({"name": policy_tool_name(item), "description": format!("{}\n{}\nCategory: {}\nKeywords: {}\nPrerequisites: {}\nSide effects: {}", text("displayName"), text("description"), text("category"), keywords, text("prerequisites"), text("sideEffects")), "inputSchema": {"type":"object","properties":{"locator":locator_schema,"parameters":schema},"required":["locator","parameters"],"additionalProperties":false}, "annotations": {"readOnlyHint": item.self_service.risk_level == 1 && matches!(item.task, rss_mdm_agent_wire::runtime::SelfServiceTask::Script {..}), "openWorldHint": false, "idempotentHint": false}}),
     )
 }
