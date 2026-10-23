@@ -1129,6 +1129,16 @@ impl Data {
         session: &Id,
         now: u64,
     ) -> Result<CollectedData, Error> {
+        self.read_page(input, caller, session, now)
+            .map(|(value, _)| value)
+    }
+    pub(crate) fn read_page(
+        &self,
+        input: &DataRead,
+        caller: &str,
+        session: &Id,
+        now: u64,
+    ) -> Result<(CollectedData, Digest), Error> {
         if !(1..=128).contains(&input.limit) {
             return Err(Error::Capacity);
         }
@@ -1192,7 +1202,7 @@ impl Data {
         }
         let end = offset + value.rows.len();
         value.next = (end < all.len()).then_some(DataCursor {
-            snapshot,
+            snapshot: snapshot.clone(),
             offset: end as u32,
         });
         value.stale = input.max_age_seconds.is_some_and(|age| {
@@ -1200,7 +1210,7 @@ impl Data {
                 .collected_at
                 .is_none_or(|at| now.saturating_sub(at) > u64::from(age))
         });
-        Ok(value)
+        Ok((value, snapshot))
     }
 }
 fn empty(query: QueryRef, request: Option<RequestId>, quality: DataQuality) -> CollectedData {

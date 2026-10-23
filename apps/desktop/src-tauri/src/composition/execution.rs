@@ -364,6 +364,24 @@ impl ExecutionHandle {
             _ => Err(bad(Error::Unavailable)),
         }
     }
+    pub async fn software_read(&self, input: SoftwareRead) -> ui::Result<SoftwarePage> {
+        match self
+            .request(Request::SoftwareRead {
+                context: self.context_ref()?,
+                origin: self.origin.clone(),
+                input,
+            })
+            .await
+            .map_err(bad)?
+        {
+            Reply::SoftwarePage { value } => Ok(value),
+            Reply::DataFailure { reason } => Err(ui::error(
+                "software_unavailable",
+                format!("软件清单不可用：{reason:?}"),
+            )),
+            _ => Err(bad(Error::Unavailable)),
+        }
+    }
     pub async fn policy_directory(
         &self,
         input: ui::PolicyDirectoryQuery,

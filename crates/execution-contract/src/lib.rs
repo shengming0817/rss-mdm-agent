@@ -20,6 +20,8 @@ mod model;
 mod network;
 mod process;
 mod software;
+mod software_management;
+pub use software_management::*;
 mod software_format;
 mod software_program;
 mod software_progress;

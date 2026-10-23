@@ -36,7 +36,10 @@ impl Core {
         }?;
         Ok(Reply::Data { value })
     }
-    fn local_directory(&mut self, command: &Command) -> Result<Vec<QueryDescriptor>, Error> {
+    pub(super) fn local_directory(
+        &mut self,
+        command: &Command,
+    ) -> Result<Vec<QueryDescriptor>, Error> {
         self.data.install_local()?;
         self.data.install_user(
             &command.subject,

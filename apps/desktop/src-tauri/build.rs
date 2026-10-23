@@ -100,6 +100,7 @@ fn main() {
             "query_status",
             "query_cancel",
             "self_service_observe_software",
+            "software_read",
             "self_service_snapshot",
             "self_service_execute",
             "self_service_confirm",

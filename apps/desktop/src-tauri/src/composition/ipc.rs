@@ -55,6 +55,7 @@ macro_rules! commands {
     }
 }
 commands! {
+    software_read(execution_contract::SoftwareRead) -> execution_contract::SoftwarePage = software_read, employee = false,
     query_directory(execution_contract::QueryDirectory) -> execution_contract::QueryPage = query_directory, employee = false,
     data_read(execution_contract::DataRead) -> execution_contract::CollectedData = data_read, employee = false,
     query_submit(execution_contract::QuerySubmit) -> execution_contract::QueryStatus = query_submit, employee = false,
@@ -414,6 +415,7 @@ pub fn register<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder
         query_status,
         query_cancel,
         self_service_observe_software,
+        software_read,
         self_service_policy_directory,
         self_service_policy_invoke,
         self_service_policy_confirm,
@@ -539,6 +541,7 @@ mod tests {
             "ai_restart_host",
             "ai_export_diagnostics",
             "self_service_observe_software",
+            "software_read",
             "self_service_policy_directory",
             "self_service_policy_invoke",
             "self_service_policy_confirm",

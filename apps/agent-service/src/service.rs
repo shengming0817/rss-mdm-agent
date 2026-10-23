@@ -13,6 +13,7 @@ use execution_runner::{MaterialRegistry, NativeRunner};
 use rss_mdm_agent_wire::runtime as wire;
 mod data;
 mod policy;
+mod software;
 use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
@@ -1312,6 +1313,18 @@ impl Core {
             eprintln!("agent_identity_gate: {error}");
         }
         use execution_ipc::host::{Reply, Request};
+        if let Some(Request::SoftwareRead {
+            context,
+            origin,
+            input,
+        }) = command.request.as_operation()
+        {
+            let reply = self
+                .read_software(&command, context, origin, input)
+                .unwrap_or_else(data::failure);
+            let _ = command.reply.send(reply);
+            return;
+        }
         if let Some(Request::Data {
             context,
             origin,
@@ -1352,6 +1365,7 @@ impl Core {
             match command.request.into_operation() {
                 Some(
                     Request::Data { .. }
+                    | Request::SoftwareRead { .. }
                     | Request::BindContext { .. }
                     | Request::RevokeContext {}
                     | Request::RetireEnterpriseContext { .. }

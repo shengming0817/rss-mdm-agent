@@ -688,6 +688,15 @@ impl NativeContextSession {
     deny_unknown_fields
 )]
 pub enum Request {
+    /// Read user-visible software from an existing authorized data snapshot.
+    SoftwareRead {
+        /// Current authenticated native context.
+        context: execution_contract::NativeContextRef,
+        /// Native-attested source.
+        origin: ClientOrigin,
+        /// Bounded snapshot read.
+        input: execution_contract::SoftwareRead,
+    },
     /// Shared local data boundary, with a native-attested caller context.
     Data {
         /// Current native login binding.
@@ -846,6 +855,11 @@ struct Envelope {
     rename_all_fields = "camelCase"
 )]
 pub enum Reply {
+    /// Typed software facts, independently of enterprise directory availability.
+    SoftwarePage {
+        /// Existing observations with precise snapshot references.
+        value: execution_contract::SoftwarePage,
+    },
     /// Closed data boundary failure.
     DataFailure {
         /// Static non-sensitive classification.

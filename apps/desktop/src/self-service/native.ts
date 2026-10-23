@@ -3,6 +3,7 @@ import { userGeneration } from "../test-users";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import type {
   SelfServicePort,
+  SoftwarePort,
   DataAccessPort,
   Snapshot,
   TaskSubmission,
@@ -44,5 +45,15 @@ export function nativeDataPort(): DataAccessPort | null {
     query_submit: (input) => invoke("query_submit", { input, generation }),
     query_status: (input) => invoke("query_status", { input, generation }),
     query_cancel: (input) => invoke("query_cancel", { input, generation }),
+  };
+}
+
+
+/** Read-only software facts and typed local actions from the same authenticated service. */
+export function nativeSoftwarePort(): SoftwarePort | null {
+  if (!isTauri()) return null;
+  const generation = userGeneration();
+  return {
+    read: (input) => invoke("software_read", { input, generation }),
   };
 }
