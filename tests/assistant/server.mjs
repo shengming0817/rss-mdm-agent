@@ -360,7 +360,7 @@ export async function createFixture() {
           await host.store.listSessions(fixtureCaller, { limit: 50 }),
         );
         const sessionId = sessions.items.find((row) =>
-          row.title.startsWith("原生视觉验收"),
+          row.title?.startsWith("原生视觉验收"),
         ).namespace.sessionId;
         const command = await fixture.command(sessionId);
         await fixture.executionDelivery(sessionId, command.commandId);
