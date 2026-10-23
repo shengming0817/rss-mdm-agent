@@ -200,6 +200,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             profiles: Vec::new(),
             environment: Default::default(),
         };
+        client.initialize_connections()?;
         client.prepare_pending_enrollment()?;
         // Opening retained state must not depend on an expired or unavailable predecessor signer.
         if client.active().is_ok() {
@@ -222,9 +223,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
     }
 
     pub(crate) fn url(&self, path: &str) -> Result<url::Url, Error> {
-        self.store
-            .cfg
-            .origin
+        self.connection_origin()?
             .join(&format!("api/v1/agent/runtime/{path}"))
             .map_err(|_| Error::Configuration)
     }
@@ -233,7 +232,13 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             return Ok(response);
         }
         let max = self.store.cfg.limits.response_bytes;
-        let bytes = bounded(response, max).await?;
+        let bytes = bounded(response, max).await.map_err(|error| {
+            if error == Error::Network {
+                Error::Unavailable
+            } else {
+                error
+            }
+        })?;
         self.runtime_error(&bytes)?;
         Err(Error::Protocol)
     }
@@ -280,7 +285,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                 .body(body.to_owned());
         }
         let max = self.store.cfg.limits.response_bytes;
-        let (status, bytes) = json_transport(request, max).await?;
+        let (status, bytes) = self.agent_json_transport(request, max).await?;
         if !status.is_success() {
             self.runtime_error(&bytes)?;
         }
@@ -860,13 +865,70 @@ pub(crate) fn same_input(a: &wire::TaskPayload, b: &wire::TaskPayload) -> bool {
     }
 }
 
+// reqwest preserves the underlying rustls error; TLS failures must never authorize failover.
+// ref: hyper-util src/client/legacy/connect/dns.rs (GaiResolver returns io::Error);
+// tokio-rustls src/common/mod.rs (TLS protocol errors remain in the error source chain).
+// io::Error::source can skip a wrapped custom error; inspect get_ref as well.
+// A bounded walk fails closed if a future transport adds an unexpectedly deep wrapper.
+fn contains_tls_error(error: &(dyn std::error::Error + 'static), depth: u8) -> bool {
+    if depth == 0 || error.downcast_ref::<rustls::Error>().is_some() {
+        return true;
+    }
+    if let Some(io) = error.downcast_ref::<std::io::Error>() {
+        if io
+            .get_ref()
+            .is_some_and(|inner| contains_tls_error(inner, depth - 1))
+        {
+            return true;
+        }
+    }
+    error
+        .source()
+        .is_some_and(|source| contains_tls_error(source, depth - 1))
+}
+pub(crate) fn transport_error(error: reqwest::Error) -> Error {
+    if contains_tls_error(&error, 16) {
+        return Error::Unavailable;
+    }
+    let mut source: Option<&(dyn std::error::Error + 'static)> = Some(&error);
+    let mut network = error.is_timeout();
+    while let Some(current) = source {
+        if current.downcast_ref::<rustls::Error>().is_some() {
+            return Error::Unavailable;
+        }
+        if let Some(http) = current.downcast_ref::<hyper::Error>() {
+            network |= http.is_incomplete_message();
+        }
+        if let Some(io) = current.downcast_ref::<std::io::Error>() {
+            use std::io::ErrorKind as K;
+            network |= matches!(
+                io.kind(),
+                K::UnexpectedEof
+                    | K::ConnectionRefused
+                    | K::ConnectionReset
+                    | K::ConnectionAborted
+                    | K::NotConnected
+                    | K::TimedOut
+                    | K::NetworkUnreachable
+                    | K::HostUnreachable
+            ) || (error.is_connect() && io.kind() == K::Other);
+        }
+        source = current.source();
+    }
+    if network {
+        Error::Network
+    } else {
+        Error::Unavailable
+    }
+}
+
 // Pure bounded transport; the caller owns all identity, decoding and storage decisions.
 pub(crate) async fn json_transport(
     request: reqwest::RequestBuilder,
     max: usize,
 ) -> Result<(StatusCode, Vec<u8>), Error> {
     let task = tokio::spawn(async move {
-        let mut response = request.send().await.map_err(|_| Error::Unavailable)?;
+        let mut response = request.send().await.map_err(transport_error)?;
         let status = response.status();
         if status != StatusCode::NO_CONTENT
             && !response
@@ -885,7 +947,13 @@ pub(crate) async fn json_transport(
             return Err(Error::Capacity);
         }
         let mut bytes = Vec::new();
-        while let Some(chunk) = response.chunk().await.map_err(|_| Error::Unavailable)? {
+        while let Some(chunk) = response.chunk().await.map_err(|error| {
+            if status.is_success() {
+                transport_error(error)
+            } else {
+                Error::Unavailable
+            }
+        })? {
             if bytes.len().checked_add(chunk.len()).is_none_or(|n| n > max) {
                 return Err(Error::Capacity);
             }
@@ -902,7 +970,7 @@ pub(crate) async fn bounded(mut response: Response, max: usize) -> Result<Vec<u8
         return Err(Error::Capacity);
     }
     let mut bytes = Vec::new();
-    while let Some(chunk) = response.chunk().await.map_err(|_| Error::Unavailable)? {
+    while let Some(chunk) = response.chunk().await.map_err(transport_error)? {
         if bytes.len().checked_add(chunk.len()).is_none_or(|n| n > max) {
             return Err(Error::Capacity);
         }

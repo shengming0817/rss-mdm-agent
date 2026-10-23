@@ -54,12 +54,12 @@ pub(crate) fn platform() -> Result<Platform, Error> {
     }
 }
 pub(crate) fn context(
-    origin: &str,
+    service_id: uuid::Uuid,
     tenant: uuid::Uuid,
     r: &wire::BindingProfile,
 ) -> Result<(execution_app::ServiceBinding, ActorId), Error> {
     use sha2::{Digest as _, Sha256};
-    let bytes = serde_json::to_vec(&(origin, r.registration_id, r.generation))
+    let bytes = serde_json::to_vec(&(service_id, r.registration_id, r.generation))
         .map_err(|_| Error::Protocol)?;
     Ok((
         execution_app::ServiceBinding {

@@ -2,9 +2,9 @@
 use execution_contract::{Digest, Id, RequestId, VersionedRef};
 use serde::{Deserialize, Serialize};
 /// Current desktop/system IPC. No negotiation or legacy parser exists.
-pub const IPC_VERSION: u8 = 1;
+pub const IPC_VERSION: u8 = 2;
 /// Current protected installation document format.
-pub const DEPLOYMENT_VERSION: u32 = 1;
+pub const DEPLOYMENT_VERSION: u32 = 2;
 
 /// Read-only native state, independent from Agent identity and policy authorization.
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema, PartialEq, Eq)]
@@ -167,7 +167,9 @@ pub enum TrustInstallationState {
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RegistrationContext {
-    /// Installed, trusted HTTPS origin; never supplied by the renderer.
+    /// Stable installed service identity; addresses never authorize a user credential.
+    pub service_id: String,
+    /// Selected address for display only.
     pub origin: String,
     /// Installed tenant UUID.
     pub tenant_id: String,
@@ -640,8 +642,6 @@ pub enum NativeAccess {
     User {
         /// Only the employee secret, not the cookie or CSRF header.
         credential: zeroize::Zeroizing<String>,
-        /// Exact credential issuer origin.
-        credential_origin: String,
         /// Verified product identity, distinct from the authenticated OS peer.
         user: rss_mdm_agent_wire::runtime::SelfServiceUser,
     },
@@ -670,15 +670,6 @@ impl NativeContextSession {
         match &self.access {
             NativeAccess::Device {} => None,
             NativeAccess::User { credential, .. } => Some(credential),
-        }
-    }
-    /// Issuer of the protected native credential.
-    pub fn credential_origin(&self) -> Option<&str> {
-        match &self.access {
-            NativeAccess::Device {} => None,
-            NativeAccess::User {
-                credential_origin, ..
-            } => Some(credential_origin),
         }
     }
     /// Retire bearer memory without reclassifying a User context as Device.
@@ -1209,7 +1200,7 @@ mod tests {
         let mut context = super::NativeContextSession {
             access: super::NativeAccess::User {
                 credential: zeroize::Zeroizing::new("c".repeat(64)),
-                credential_origin: "https://org.invalid".into(),
+
                 user: user.clone(),
             },
             generation: execution_contract::Id::new("g").unwrap(),

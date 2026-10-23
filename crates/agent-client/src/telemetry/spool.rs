@@ -144,12 +144,7 @@ impl Spool {
         let conn = Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE)?;
         conn.busy_timeout(std::time::Duration::from_millis(50))?;
         conn.execute_batch("PRAGMA trusted_schema=OFF; PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL; PRAGMA journal_mode=DELETE;")?;
-        let binding = encode(&(
-            cfg.origin.as_str(),
-            cfg.tenant,
-            cfg.platform,
-            cfg.architecture,
-        ))?;
+        let binding = encode(&(cfg.service_id, cfg.tenant, cfg.platform, cfg.architecture))?;
         // A crash before the schema transaction commits leaves a protected blank database.
         // ref: rusqlite src/transaction.rs (schema and identity commit atomically).
         let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
@@ -166,13 +161,13 @@ impl Spool {
                 CREATE TABLE batches(id TEXT PRIMARY KEY,registration TEXT NOT NULL,generation INTEGER NOT NULL,body BLOB NOT NULL,digest TEXT NOT NULL,count INTEGER NOT NULL,first INTEGER NOT NULL,last INTEGER NOT NULL,expires INTEGER NOT NULL,attempts INTEGER NOT NULL DEFAULT 0,due INTEGER NOT NULL DEFAULT 0);
                 CREATE TABLE gaps(reason TEXT PRIMARY KEY,count INTEGER NOT NULL,first INTEGER NOT NULL,last INTEGER NOT NULL);
                 CREATE TABLE receipt(singleton INTEGER PRIMARY KEY CHECK(singleton=1),body BLOB NOT NULL);
-                PRAGMA application_id=1381192781; PRAGMA user_version=1;")?;
+                PRAGMA application_id=1381192781; PRAGMA user_version=2;")?;
             tx.execute("INSERT INTO identity VALUES(?1)", [&binding])?;
             tx.commit()?;
         }
         let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
         let application: i64 = conn.pragma_query_value(None, "application_id", |r| r.get(0))?;
-        if version != 1 || application != 1381192781 {
+        if version != 2 || application != 1381192781 {
             return Err(Error::Schema);
         }
         let original: Vec<u8> = conn.query_row("SELECT binding FROM identity", [], |r| r.get(0))?;

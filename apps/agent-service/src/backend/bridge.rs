@@ -122,6 +122,7 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
     ) -> Result<PreparedExecution, Error> {
         materials.validate_offer(offer)?;
         let (device, platform, run_as, timeout, output) = match offer.payload() {
+            wire::TaskPayload::DeviceAccess(_) => return Err(Error::Unsupported),
             wire::TaskPayload::Unmanage(_) => return Err(Error::Unsupported),
             wire::TaskPayload::Credential(v) => {
                 if plan.spec().launch.interpreter.profile.id.as_str()
@@ -645,6 +646,7 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
                 Some(wire::TaskFailure::LaunchFailed),
             )?;
             return Ok(Some(match payload {
+                wire::TaskPayload::DeviceAccess(_) => return Err(Error::Unsupported),
                 wire::TaskPayload::Script(_) => wire::TaskEvent::Result(wire::TaskResult::new(
                     None,
                     wire::OutputQuality::Failed,
@@ -761,6 +763,7 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
         )?;
         let failure = diagnostics.failure();
         Ok(Some(match payload {
+            wire::TaskPayload::DeviceAccess(_) => return Err(Error::Unsupported),
             wire::TaskPayload::Script(_) => {
                 let output = serde_json::from_str(&stdout).unwrap_or(serde_json::Value::Null);
                 let quality = match process.quality {

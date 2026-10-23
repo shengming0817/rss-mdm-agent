@@ -662,7 +662,7 @@ def assert_refresh_refusal(stderr, case):
     assert len(reports)==1, 'refresh needs one closed failure receipt'
     report=reports[0]
     phase='stop-current' if case=='registration' else 'refresh-preflight'
-    errors={'Identity'} if case in ('registration','tenant','origin','state_root') else {'Identity','Unavailable'}
+    errors={'Identity'} if case in ('registration','tenant','service_id','state_root') else {'Identity','Unavailable'}
     assert report.get('state')=='failed' and report.get('failure_phase')==phase, 'unrelated refresh refusal phase'
     assert report.get('error') in errors, 'unrelated refresh refusal category'
     return report
@@ -706,7 +706,7 @@ def root_refresh_security(root, binary, config, installer_source, phase):
         raise
     next_config=root/'refresh-candidate.json'
     rows=[]
-    cases=['mode','symlink','acl','hash','cdhash','version','ipc_version','tenant','origin','state_root','registration','marker','journal','communication','communication_format','secret']
+    cases=['mode','symlink','acl','hash','cdhash','version','ipc_version','tenant','service_id','state_root','registration','marker','journal','communication','communication_format','secret']
     assert phase in ('preflight','afterStop')
     for name in cases if phase=='preflight' else []:
         changed=copy.deepcopy(document); actual=next_config
@@ -721,7 +721,7 @@ def root_refresh_security(root, binary, config, installer_source, phase):
                 changed['service']['sha256' if name=='hash' else 'cdhash']='0'*(64 if name=='hash' else 40)
             elif name in ['version','ipc_version']: changed[name]=255
             elif name=='tenant': changed['tenant']=str(uuid.uuid4())
-            elif name=='origin': changed['origin']='https://localhost:1/'
+            elif name=='service_id': changed['service_id']=str(uuid.uuid4())
             elif name=='state_root': changed['state_root']=str(root/'other-state')
             elif name in ['marker','journal','communication','communication_format','secret']:
                 # This registration owns only the isolated experiment copy. Prevent its
@@ -1376,7 +1376,7 @@ def main():
         installer.chmod(0o600)
         system_installer_source = installer_source
         shutil.copyfile(lab / 'tls.pem', inputs / 'tls.pem')
-        deployment = dict(**service_versions(), origin=info['origin'].rstrip('/'), tenant=info['tenant'],
+        deployment = dict(**service_versions(), service_id=info['serviceId'], connections=info['connections'], tenant=info['tenant'],
                           software_read_grants=[], signing_keys={'test': info['key']}, ca_file=str(protected / 'ca.pem'),
                           installation_id=str(uuid.uuid4()), installation_artifact=hashlib.sha256(args.binary.read_bytes()).hexdigest(),
                           state_root=str(protected / 'state'),
@@ -1406,7 +1406,7 @@ config['execution']['managers']=[dict(executor='package_installer',image=artifac
 grant=json.loads(%r)
 candidate=dict(version=1,format='macos_pkg',product_version='controlled',target='macos-arm64',
     root=str(root),service=config['service'],desktop=config['service'],runtime_root=str(root/'runtime'),runtime_sha256='0'*64,
-    origin=config['origin'],tenant=config['tenant'],signing_keys=config['signing_keys'],ca_pem=%r,signing_mode='development')
+    service_id=config['service_id'],connections=config['connections'],tenant=config['tenant'],signing_keys=config['signing_keys'],ca_pem=%r,signing_mode='development')
 manifest=(json.dumps(candidate,sort_keys=True)+'\\n').encode();(root/'candidate.json').write_bytes(manifest);os.chmod(root/'candidate.json',0o644)
 config['installation_artifact']=hashlib.sha256(manifest).hexdigest()
 (root/'grant.json').write_text(json.dumps(grant)); os.chmod(root/'grant.json',0o600)

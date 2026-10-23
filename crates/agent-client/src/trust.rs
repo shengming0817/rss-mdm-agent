@@ -229,7 +229,7 @@ impl VerifiedTrust {
         }
         document.validate()?;
         if document.purpose != Purpose::Agent
-            || document.origin != cfg.origin.as_str().trim_end_matches('/')
+            || document.service_id != cfg.service_id
             || document.tenant != cfg.tenant
         {
             return Err(Error::Untrusted);

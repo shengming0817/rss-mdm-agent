@@ -24,6 +24,18 @@ import {
   organizationBuildInput,
 } from "./desktop-organization.mjs";
 
+function seedFile(root) {
+  const path = join(root, "connections.json");
+  writeFileSync(
+    path,
+    JSON.stringify({
+      configuration: { preferredOrigin: "https://agent.fixture.test" },
+      signature: "opaque-public-signature",
+    }),
+  );
+  return path;
+}
+
 test("root env is required, parsed without expansion and only allowed fields are embedded", (t) => {
   const root = mkdtempSync(join(tmpdir(), "rss-organization-env-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -87,7 +99,7 @@ test("desktop and Agent consume the same env CA without embedding paths or priva
     ],
     { stdio: "ignore" },
   );
-  const base = `RSS_AGENT_ORIGIN=https://agent.fixture.test\nRSS_MDM_ORIGIN=https://fixture.test\nRSS_MDM_TENANT_ID=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\nRSS_MDM_ORGANIZATION_LABEL=Fixture\n`;
+  const base = `RSS_AGENT_CONNECTIONS_FILE=${seedFile(root)}\nRSS_MDM_ORIGIN=https://fixture.test\nRSS_MDM_TENANT_ID=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\nRSS_MDM_ORGANIZATION_LABEL=Fixture\n`;
   const configure = (path) =>
     writeFileSync(
       join(root, ".env"),
@@ -109,8 +121,11 @@ test("desktop and Agent consume the same env CA without embedding paths or priva
   const agent = agentOrganizationConfiguration(root, template, installedCa);
   assert.equal(agent.ca, desktop.ca_pem);
   assert.equal(agent.config.ca_file, installedCa);
-  assert.equal(agent.config.origin, "https://agent.fixture.test");
-  assert.notEqual(agent.config.origin, desktop.origin);
+  assert.equal(
+    agent.config.connections.configuration.preferredOrigin,
+    "https://agent.fixture.test",
+  );
+  assert.equal(agent.config.origin, undefined);
   assert.equal(agent.config.tenant, desktop.tenant);
   assert.deepEqual(agent.config.signing_keys, template.signing_keys);
   assert.equal(template.ca_file, "/old");
@@ -133,48 +148,48 @@ test("desktop and Agent consume the same env CA without embedding paths or priva
   );
 });
 
-test("Agent origin normalization matches desktop DNS root-dot rules", (t) => {
-  const root = mkdtempSync(join(tmpdir(), "rss-origin-env-"));
+test("Agent generator passes the signed file unchanged and refuses unsigned origin overrides", (t) => {
+  const root = mkdtempSync(join(tmpdir(), "rss-connection-env-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
+  const file = seedFile(root);
+  const ca = new URL(
+    "../tests/agent-protocol/pki/root-test-ca.pem",
+    import.meta.url,
+  ).pathname;
+  const base = `RSS_AGENT_CONNECTIONS_FILE=${file}\nRSS_AGENT_CA_FILE=${ca}\nRSS_MDM_ORIGIN=https://console.fixture.test\nRSS_MDM_TENANT_ID=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\nRSS_MDM_ORGANIZATION_LABEL=Fixture\n`;
+  writeFileSync(join(root, ".env"), base);
   const template = {
     version: DEPLOYMENT_VERSION,
     ipc_version: IPC_VERSION,
+    service_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
   };
-
-  const configure = (origin) =>
-    writeFileSync(
-      join(root, ".env"),
-      `RSS_AGENT_ORIGIN=${origin}\nRSS_AGENT_CA_FILE=${new URL("../tests/agent-protocol/pki/root-test-ca.pem", import.meta.url).pathname}\nRSS_MDM_ORIGIN=${origin}\nRSS_MDM_TENANT_ID=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\nRSS_MDM_ORGANIZATION_LABEL=Fixture\n`,
-    );
-  configure("https://fixture.test");
+  assert.deepEqual(
+    agentOrganizationConfiguration(root, template, join(root, "ca.pem")).config
+      .connections,
+    JSON.parse(readFileSync(file)),
+  );
   assert.throws(
     () =>
       agentOrganizationConfiguration(
         root,
-        { version: DEPLOYMENT_VERSION, ipc_version: 6 },
-        join(root, "old-ca.pem"),
+        { ...template, ipc_version: 255 },
+        join(root, "ca.pem"),
       ),
-    /current deployment and IPC versions/,
+    /current deployment/,
   );
-  for (const origin of [
-    "https://MDM.EXAMPLE.:443/",
-    "https://example./",
-    "https://nested.mdm.example../",
-  ]) {
-    configure(origin);
-    assert.throws(
-      () => agentOrganizationConfiguration(root, template),
-      /real HTTPS/,
-    );
-  }
-  configure("https://MDM.fixture.test.:443/");
-  assert.equal(
-    agentOrganizationConfiguration(
-      root,
-      template,
-      join(root, "installed-ca.pem"),
-    ).config.origin,
-    "https://mdm.fixture.test",
+  writeFileSync(
+    join(root, ".env"),
+    base + "RSS_AGENT_ORIGIN=https://unsigned.fixture.test\n",
+  );
+  assert.throws(
+    () => agentOrganizationConfiguration(root, template, join(root, "ca.pem")),
+    /retired/,
+  );
+  writeFileSync(join(root, ".env"), base);
+  writeFileSync(file, " ".repeat(65537));
+  assert.throws(
+    () => agentOrganizationConfiguration(root, template, join(root, "ca.pem")),
+    /bounded signed/,
   );
 });
 
@@ -217,7 +232,7 @@ test("real Agent generator CLI preserves user-readable public inputs under restr
   );
   writeFileSync(
     join(root, ".env"),
-    `RSS_AGENT_ORIGIN=https://agent.fixture.test\nRSS_AGENT_CA_FILE=${cert}\nRSS_MDM_ORIGIN=https://fixture.test\nRSS_MDM_TENANT_ID=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\nRSS_MDM_ORGANIZATION_LABEL=Fixture\nRSS_MDM_CA_FILE=${cert}\n`,
+    `RSS_AGENT_CONNECTIONS_FILE=${seedFile(root)}\nRSS_AGENT_CA_FILE=${cert}\nRSS_MDM_ORIGIN=https://fixture.test\nRSS_MDM_TENANT_ID=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\nRSS_MDM_ORGANIZATION_LABEL=Fixture\nRSS_MDM_CA_FILE=${cert}\n`,
   );
   const template = join(root, "template.json"),
     output = join(root, "execution.json"),
@@ -246,7 +261,7 @@ test("real Agent generator CLI preserves user-readable public inputs under restr
     );
     writeFileSync(
       join(root, ".env"),
-      `RSS_AGENT_ORIGIN=https://agent.fixture.test\nRSS_MDM_ORIGIN=https://fixture.test\nRSS_MDM_TENANT_ID=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\nRSS_MDM_ORGANIZATION_LABEL=Fixture\n`,
+      `RSS_AGENT_CONNECTIONS_FILE=${seedFile(root)}\nRSS_MDM_ORIGIN=https://fixture.test\nRSS_MDM_TENANT_ID=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\nRSS_MDM_ORGANIZATION_LABEL=Fixture\n`,
     );
     assert.throws(() =>
       execFileSync(

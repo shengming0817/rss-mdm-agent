@@ -68,9 +68,9 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                 .header("content-type", "application/json")
                 .body(encode(&request)?)
                 .timeout(self.store.cfg.limits.request_timeout);
-            let (status, bytes) =
-                crate::client::json_transport(response, self.store.cfg.limits.response_bytes)
-                    .await?;
+            let (status, bytes) = self
+                .agent_json_transport(response, self.store.cfg.limits.response_bytes)
+                .await?;
             if !status.is_success() {
                 self.runtime_error(&bytes)?;
             }

@@ -10,6 +10,7 @@ enum Action {
     Apply,
     Recover,
     Import,
+    ImportConnections,
     #[cfg(windows)]
     MsiSave,
     #[cfg(windows)]
@@ -35,6 +36,7 @@ impl Action {
             "apply" => Ok(Self::Apply),
             "recover" => Ok(Self::Recover),
             "import" => Ok(Self::Import),
+            "import-connections" => Ok(Self::ImportConnections),
             _ => Err(Error::Configuration),
         }
     }
@@ -66,6 +68,7 @@ impl Options {
                 "--candidate",
                 "--profile",
                 "--configuration",
+                "--connections",
                 "--package-path",
                 "--grant",
                 "--secret-file",
@@ -132,6 +135,16 @@ pub(super) fn run(args: &[OsString]) -> Result<(), Error> {
         return platform::operation_status(
             uuid::Uuid::parse_str(id).map_err(|_| Error::Configuration)?,
         );
+    }
+    if action == "validate-trust" {
+        let bytes = installation_security::read_external(
+            &opts.path("--candidate")?,
+            rss_mdm_agent_wire::connections::MAX_FILE_BYTES * 2,
+        )
+        .map_err(|_| Error::Configuration)?;
+        let candidate: Candidate =
+            serde_json::from_slice(&bytes).map_err(|_| Error::Configuration)?;
+        return candidate.validate_trust();
     }
     let action = Action::parse(&action)?;
     if opts.system()? {
@@ -275,6 +288,32 @@ pub(super) fn run(args: &[OsString]) -> Result<(), Error> {
             result?;
             restart?;
         }
+        Action::ImportConnections => {
+            if !opts.system()? {
+                return Err(Error::Identity);
+            }
+            let config = opts.config()?;
+            let deployment = Deployment::load(&config)?;
+            let bytes = installation_security::read_protected(&opts.path("--connections")?)
+                .map_err(|_| Error::Configuration)?;
+            if bytes.len() > rss_mdm_agent_wire::connections::MAX_FILE_BYTES {
+                return Err(Error::Capacity);
+            }
+            let document = serde_json::from_slice(&bytes).map_err(|_| Error::Protocol)?;
+            let network = deployment.network()?;
+            agent_client::verify_connections(
+                &document,
+                network.service_id,
+                network.tenant,
+                &network.registration_keys,
+            )?;
+            restore_registration(
+                || platform::stop(true, &deployment.service.path, &config),
+                || deployment.communication(false)?.import_connections(&bytes),
+                || platform::register(true, &deployment.service.path, &config),
+            )
+            .map_err(ImportFailure::error)?;
+        }
         Action::Import => {
             if !opts.system()? {
                 return Err(Error::Identity);
@@ -289,7 +328,9 @@ pub(super) fn run(args: &[OsString]) -> Result<(), Error> {
     Ok(())
 }
 pub(super) fn preserved(old: &Deployment, next: &Deployment) -> Result<(), Error> {
-    if old.origin != next.origin
+    if old.service_id != next.service_id
+        || old.signing_keys != next.signing_keys
+        || old.software_read_grants != next.software_read_grants
         || old.tenant != next.tenant
         || old.installation_id != next.installation_id
         || old.state_root != next.state_root
@@ -583,6 +624,7 @@ fn apply(candidate_path: &Path, profile: Option<&PathBuf>, config: &Path) -> Res
     let mut next = candidate.deployment(artifact, profile, config)?;
     if let Some(old) = old {
         next.installation_id = old.installation_id;
+        next.software_read_grants = old.software_read_grants.clone();
         preserved(&old, &next)?;
         if let Some(ca) = &old.ca_file {
             if installation_security::read_protected(ca).map_err(|_| Error::Identity)?

@@ -60,38 +60,22 @@ if (format === "windows_msix" && !process.env.RSS_WINDOWS_PUBLISHER)
   throw Error("MSIX requires a Publisher identity");
 const organization = JSON.parse(readFileSync(resolve(args[input + 1]), "utf8"));
 const allowed = [
-  "origin",
+  "service_id",
+  "connections",
   "tenant",
   "label",
   "signing_keys",
   "ca_pem",
-  "task_trust_origins",
 ];
 if (Object.keys(organization).some((key) => !allowed.includes(key)))
   throw Error("Organization input accepts public trust fields only");
 if (
-  new URL(organization.origin).origin !== organization.origin ||
-  !organization.origin.startsWith("https://") ||
+  !/^[0-9a-f-]{36}$/.test(organization.service_id) ||
   !/^[0-9a-f-]{36}$/.test(organization.tenant) ||
   !organization.label ||
   !Object.keys(organization.signing_keys ?? {}).length
 )
   throw Error("Invalid organization identity or signing keys");
-const taskTrustOrigins = organization.task_trust_origins ?? [];
-if (
-  !Array.isArray(taskTrustOrigins) ||
-  taskTrustOrigins.length > 8 ||
-  new Set(taskTrustOrigins).size !== taskTrustOrigins.length ||
-  taskTrustOrigins.some(
-    (value) =>
-      typeof value !== "string" ||
-      value.length > 2048 ||
-      value.includes("*") ||
-      !value.startsWith("https://") ||
-      new URL(value).origin !== value,
-  )
-)
-  throw Error("Task trust origins must be at most eight exact HTTPS origins");
 for (const pem of [organization.ca_pem].filter(Boolean)) {
   if (
     !/^\s*-----BEGIN CERTIFICATE-----[A-Za-z0-9+/=\s]+-----END CERTIFICATE-----\s*$/.test(
@@ -114,7 +98,6 @@ const env = {
   ...process.env,
   RSS_BUILD_MDM_ORGANIZATION: JSON.stringify({
     origin: desktopConfiguration.origin,
-    agent_origin: organization.origin,
     tenant: organization.tenant,
     label: organization.label,
     ...(desktopConfiguration.ca_pem
@@ -319,8 +302,8 @@ const candidate = {
   desktop: image(desktop),
   runtime_root: join(installed, packagedRuntime.slice(payload.length + 1)),
   runtime_sha256: runtimeTreeSha256(packagedRuntime),
-  origin: organization.origin,
-  task_trust_origins: taskTrustOrigins,
+  service_id: organization.service_id,
+  connections: organization.connections,
   tenant: organization.tenant,
   signing_keys: organization.signing_keys,
   ca_pem: organization.ca_pem ?? null,
@@ -328,6 +311,13 @@ const candidate = {
 };
 const candidateBytes = JSON.stringify(candidate, null, 2) + "\n";
 writeFileSync(join(payload, "candidate.json"), candidateBytes);
+// The production Rust consumer verifies the wire signature, identity and budgets before bundling.
+run(service, [
+  "--installation",
+  "validate-trust",
+  "--candidate",
+  join(payload, "candidate.json"),
+]);
 let packagePath;
 if (windows && format === "windows_msi") {
   const files = [];

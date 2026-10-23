@@ -114,7 +114,9 @@ pub(crate) fn enrollment_error(code: enroll::ErrorCode) -> Error {
         C::ServiceUnavailable => Error::Unavailable,
         C::EnrollmentPaused => Error::EnrollmentPaused,
         C::InvalidIdentity => Error::Identity,
-        C::MalformedRequest => Error::Protocol,
+        C::MalformedRequest
+        | C::ConnectionDeploymentUnobserved
+        | C::ConnectionRetirementBlocked => Error::Protocol,
     }
 }
 /// Encode the fixed producer-compatible RSA PKCS#10 request using the platform signer.

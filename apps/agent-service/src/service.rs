@@ -151,7 +151,7 @@ impl<S: IdentityProvider> DeviceService<S> {
         client.set_profiles(profiles)?;
         platform_private_storage::validate(&config.work_root)?;
         let (binding, actor) = plan::context(
-            client.configuration().origin.as_str(),
+            client.configuration().service_id,
             client.configuration().tenant,
             &client.registration()?,
         )?;
@@ -275,6 +275,13 @@ impl<S: IdentityProvider> DeviceService<S> {
             let result = network(self.client.drive_pki(), &mut self.core, commands).await;
             self.update_identity_gate();
             result?;
+        }
+        if let Err(error) = network(self.client.drive_connections(), &mut self.core, commands).await
+        {
+            match self.client.connection_status() {
+                Ok(status) => eprintln!("agent_connections: service={} revision={} origin={} acknowledged={} error={error}", status.service_id, status.revision, status.origin, status.acknowledged),
+                Err(_) => eprintln!("agent_connections: state unavailable error={error}"),
+            }
         }
         // Task trust belongs to the communication owner. A failed refresh retains usable installed keys.
         let _ = network(self.client.drive_task_trust(), &mut self.core, commands).await;

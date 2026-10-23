@@ -123,6 +123,29 @@ pub fn ca() -> Vec<u8> {
     .unwrap()
     .into_bytes()
 }
+pub fn unrelated_ca() -> Vec<u8> {
+    certificate_signed(
+        renewal_key(),
+        "CN=Other fixture CA",
+        "CN=Other fixture CA",
+        renewal_key().public_key().unwrap().as_ref().to_vec(),
+        vec![
+            extension(
+                BasicConstraints {
+                    ca: true,
+                    path_len_constraint: Some(0),
+                },
+                true,
+            ),
+            extension(KeyUsage(KeyUsages::KeyCertSign | KeyUsages::CRLSign), true),
+        ],
+        4_102_444_800,
+        1,
+    )
+    .to_pem(der::pem::LineEnding::LF)
+    .unwrap()
+    .into_bytes()
+}
 pub fn chain(tenant: uuid::Uuid) -> Vec<String> {
     chain_for(tenant, key().public_key().unwrap().as_ref().to_vec())
 }
@@ -216,7 +239,7 @@ pub fn trust(origin: &str, tenant: uuid::Uuid) -> serde_json::Value {
     let ca = Certificate::from_pem(ca()).unwrap().to_der().unwrap();
     let certificate = base64::engine::general_purpose::STANDARD.encode(&ca);
     let crl = crl(1, 0, 4_102_444_800, &[]);
-    serde_json::json!({ "version":1, "origin":origin.trim_end_matches('/'), "tenant":tenant, "purpose":"agent", "revision":1, "issuers":[{
+    serde_json::json!({ "version":1, "service_id": super::SERVICE_ID, "origin":origin.trim_end_matches('/'), "tenant":tenant, "purpose":"agent", "revision":1, "issuers":[{
         "digest":format!("{:x}", Sha256::digest(&ca)), "mode":"active", "certificate":certificate, "root":certificate,
         "crl":crl, "root_crl":crl, "provisioner":"rss-agent", "kid":"fixture-agent-key"
     }] })

@@ -13,7 +13,7 @@ const SCHEMA: &str = "CREATE TABLE metadata(singleton INTEGER PRIMARY KEY CHECK(
                     CREATE TABLE tasks(id TEXT PRIMARY KEY,body BLOB NOT NULL);
                     CREATE TABLE requests(key TEXT PRIMARY KEY,task TEXT NOT NULL,source TEXT,body BLOB NOT NULL,accepted INTEGER NOT NULL DEFAULT 0 CHECK(accepted IN(0,1)));
                     CREATE TABLE cache_refs(task TEXT NOT NULL,name TEXT NOT NULL,PRIMARY KEY(task,name));
-                    PRAGMA application_id=1380008771; PRAGMA user_version=1;";
+                    PRAGMA application_id=1380008771; PRAGMA user_version=2;";
 pub(crate) struct Store {
     pub conn: Connection,
     pub root: PathBuf,
@@ -65,7 +65,7 @@ impl Store {
         };
         lock.try_lock_exclusive().map_err(|_| Error::Storage)?;
         let binding = encode(&(
-            cfg.origin.as_str(),
+            cfg.service_id,
             cfg.tenant,
             cfg.platform,
             cfg.architecture,
@@ -84,6 +84,10 @@ impl Store {
                 tx.execute(
                     "INSERT INTO state VALUES('execution_context',?1)",
                     [encode(&cfg.execution_context)?],
+                )?;
+                tx.execute(
+                    "INSERT INTO state VALUES('connections',?1)",
+                    [crate::connections::initial_state(&cfg)?],
                 )?;
                 tx.commit()?;
             }
@@ -148,12 +152,12 @@ pub(crate) fn read_existing(root: &Path, cfg: &Config) -> Result<Connection, Err
     let reader = Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
     let version: u32 = reader.pragma_query_value(None, "user_version", |r| r.get(0))?;
     let app: u32 = reader.pragma_query_value(None, "application_id", |r| r.get(0))?;
-    if version != 1 || app != 1380008771 {
+    if version != 2 || app != 1380008771 {
         return Err(Error::Schema);
     }
     validate_schema(&reader)?;
     let binding = encode(&(
-        cfg.origin.as_str(),
+        cfg.service_id,
         cfg.tenant,
         cfg.platform,
         cfg.architecture,
@@ -166,6 +170,7 @@ pub(crate) fn read_existing(root: &Path, cfg: &Config) -> Result<Connection, Err
     if actual != binding {
         return Err(Error::Identity);
     }
+    crate::connections::validate_stored(&reader, cfg)?;
     Ok(reader)
 }
 /// Validate storage format and deployment binding without locks, writes or recovery.

@@ -248,10 +248,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                 .header("content-type", "application/json")
                 .body(body.to_vec());
         }
-        let response = request
-            .send()
-            .await
-            .map_err(|_| Failure::from(Error::Unavailable))?;
+        let response = self.agent_send(request).await.map_err(Failure::from)?;
         let status = response.status();
         let retry_after = response
             .headers()
@@ -272,7 +269,16 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             response,
             self.store.cfg.limits.response_bytes.min(4 * 1024 * 1024),
         )
-        .await?;
+        .await
+        .map_err(|error| {
+            if status.is_success() {
+                self.handle_transport_error(error)
+            } else if error == Error::Network {
+                Error::Unavailable
+            } else {
+                error
+            }
+        })?;
         self.active()?;
         if status.is_success() {
             return Ok(bytes);

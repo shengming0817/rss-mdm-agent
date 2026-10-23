@@ -32,6 +32,7 @@ pub(crate) async fn submit<S: IdentityProvider>(
     }
     service.core.available = None;
     let needs_user = match offer.payload() {
+        wire::TaskPayload::DeviceAccess(_) => return Err(Error::Unsupported),
         wire::TaskPayload::Unmanage(_) => return Err(Error::Unsupported),
         wire::TaskPayload::Credential(_) => false,
         wire::TaskPayload::Collection(p) => {
@@ -334,7 +335,9 @@ fn compile(
     Error,
 > {
     match payload {
-        wire::TaskPayload::Unmanage(_) => Err(Error::Unsupported),
+        wire::TaskPayload::DeviceAccess(_) | wire::TaskPayload::Unmanage(_) => {
+            Err(Error::Unsupported)
+        }
         wire::TaskPayload::Credential(payload) => super::credential::compile(
             offer,
             materials,

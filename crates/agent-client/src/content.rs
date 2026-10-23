@@ -154,7 +154,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                 return Err(Error::Capacity);
             }
             let name = hash(&encode(&(
-                self.store.cfg.origin.as_str(),
+                self.store.cfg.service_id,
                 self.store.cfg.tenant,
                 sha256,
                 length,
@@ -201,7 +201,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         for (key, length, sha256) in artifacts {
             self.verify(&offer.signed, wire::TaskPermit::Offer)?;
             let name = hash(&encode(&(
-                self.store.cfg.origin.as_str(),
+                self.store.cfg.service_id,
                 self.store.cfg.tenant,
                 sha256,
                 length,
@@ -310,7 +310,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                     .header("range", format!("bytes={offset}-"))
                     .header("if-range", &etag);
             }
-            let mut response = request.send().await.map_err(|_| Error::Unavailable)?;
+            let mut response = self.agent_send(request).await?;
             if response.status() == reqwest::StatusCode::RANGE_NOT_SATISFIABLE {
                 return Err(Error::Protocol);
             }
@@ -345,7 +345,12 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             }
             file.seek(SeekFrom::Start(start))?;
             let mut count = start;
-            while let Some(chunk) = response.chunk().await.map_err(|_| Error::Unavailable)? {
+            while let Some(chunk) = response
+                .chunk()
+                .await
+                .map_err(crate::client::transport_error)
+                .map_err(|error| self.handle_transport_error(error))?
+            {
                 count = count
                     .checked_add(chunk.len() as u64)
                     .ok_or(Error::Capacity)?;
@@ -431,6 +436,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
 
 fn artifacts(payload: &wire::TaskPayload) -> Result<Vec<(String, u64, [u8; 32])>, Error> {
     Ok(match payload {
+        wire::TaskPayload::DeviceAccess(_) => return Err(Error::Unsupported),
         wire::TaskPayload::Credential(_) => vec![],
         wire::TaskPayload::Collection(_)
         | wire::TaskPayload::Enrollment(_)

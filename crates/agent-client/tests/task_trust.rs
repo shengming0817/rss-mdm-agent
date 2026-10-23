@@ -288,107 +288,22 @@ async fn same_process_ack_recovery_restores_and_reports_applied_without_refresh(
 }
 
 #[tokio::test]
-async fn protected_exact_origin_allowlist_preserves_identity_and_installed_authority() {
+async fn stable_service_identity_rejects_another_authority_without_discarding_installed_state() {
     let server = Server::tls().await;
     let root = Root::new();
-    let mut cfg = server.config();
-    cfg.task_trust_origins = vec!["https://task-authority.example.org".into()];
-    let open = |mode, config| {
-        agent_client::Client::open(
-            &root.path,
-            config,
-            mode,
-            server.secrets.clone(),
-            server.time.clone(),
-        )
-        .unwrap()
-    };
-    let mut client = open(OpenMode::Create, cfg.clone());
-    client
-        .request_authorization(vec![
-            Capability::InventoryCollectionV1,
-            Capability::TaskExecuteV1,
-        ])
-        .await
-        .unwrap();
-    client.drive_pki().await.unwrap();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
     let identity = client.registration().unwrap();
-    let mut trust = {
-        let data = server.data.lock().unwrap();
-        Trust {
-            version: 1,
-            tenant: data.tenant,
-            origin: String::new(),
-            revision: 1,
-            keys: vec![PublicKey {
-                id: data.task_key_id.clone(),
-                public_key: base64::engine::general_purpose::URL_SAFE_NO_PAD
-                    .encode(data.signer.public_key().as_ref()),
-                state: KeyState::Active,
-            }],
-        }
-    };
-    trust.origin = "https://task-authority.example.org:9445".into();
-    publish(&server, &trust, 70);
-    assert!(matches!(
-        client.drive_task_trust().await,
-        Err(Error::Untrusted)
-    ));
-    assert!(!client.task_trust_acknowledged().unwrap());
-    trust.origin = cfg.task_trust_origins[0].clone();
-    publish(&server, &trust, 80);
-    client.drive_task_trust().await.unwrap();
-    client.runtime_readiness().unwrap();
-    assert!(client.task_trust_acknowledged().unwrap());
-    assert_eq!(client.registration().unwrap(), identity);
     let installed = state(&root)["document"].clone();
-    drop(client);
-    // Removing local approval closes readiness without discarding identity or trust history.
-    let mut removed = cfg.clone();
-    removed.task_trust_origins.clear();
-    let client = open(OpenMode::Existing, removed);
-    assert!(matches!(client.runtime_readiness(), Err(Error::Untrusted)));
-    assert_eq!(client.registration().unwrap(), identity);
-    drop(client);
-    // Even another explicitly approved origin cannot replace the installed authority.
-    cfg.task_trust_origins
-        .push("https://other-authority.example.org".into());
-    let mut client = open(OpenMode::Existing, cfg);
-    trust.origin = "https://other-authority.example.org".into();
+    let mut trust: Trust = serde_json::from_value(installed.clone()).unwrap();
+    trust.service_id = uuid::Uuid::new_v4();
     trust.revision += 1;
-    publish(&server, &trust, 150);
-    assert!(client.drive_task_trust().await.is_err());
+    publish(&server, &trust, 100);
+    assert_eq!(client.drive_task_trust().await, Err(Error::Untrusted));
     assert_eq!(state(&root)["document"], installed);
     assert_eq!(client.registration().unwrap(), identity);
-}
-#[test]
-fn task_trust_allowlist_rejects_ambiguous_or_unbounded_origins() {
-    for value in [
-        "http://example.org",
-        "https://example.org/",
-        "https://example.org/path",
-        "https://example.org?x=1",
-        "https://example.org#x",
-        "https://u:p@example.org",
-        "https://*.example.org",
-    ] {
-        assert!(
-            agent_client::validate_task_trust_origins(&[value.into()]).is_err(),
-            "{value}"
-        );
-    }
-    assert!(
-        agent_client::validate_task_trust_origins(&vec!["https://example.org".into(); 2]).is_err()
-    );
-    assert!(agent_client::validate_task_trust_origins(
-        &(0..9)
-            .map(|i| format!("https://host{i}.example.org"))
-            .collect::<Vec<_>>()
-    )
-    .is_err());
-    agent_client::validate_task_trust_origins(&[
-        "https://example.org".into(),
-        "https://example.org:9445".into(),
-    ])
-    .unwrap();
+    drop(client);
+    let client = server.client(&root, OpenMode::Existing);
+    client.runtime_readiness().unwrap();
+    assert_eq!(client.registration().unwrap(), identity);
 }

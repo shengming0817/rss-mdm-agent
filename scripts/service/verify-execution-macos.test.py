@@ -220,8 +220,10 @@ finally: connection.close()
                 root=Path(directory);backend=root/'backend';output=root/'output'
                 info={'origin':'https://localhost:1','tenant':'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','key':'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
                       'caPem':(Path(__file__).resolve().parents[2]/'tests/agent-protocol/pki/root-test-ca.pem').read_text()}
+                info['serviceId']='dddddddd-dddd-4ddd-8ddd-dddddddddddd'
+                info['connections']={'configuration':{'wireVersion':1,'serviceId':info['serviceId'],'tenantId':info['tenant'],'revision':1,'preferredOrigin':info['origin'],'origins':[info['origin']],'keyId':'test'},'signature':'A'*86}
                 configuration={'configuration':{'wireVersion':1,'configurationId':'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
-                    'tenantId':info['tenant'],'origin':info['origin'],'targets':[{'platform':'macos','architecture':'aarch64'}],
+                    'tenantId':info['tenant'],'connections':info['connections'],'targets':[{'platform':'macos','architecture':'aarch64'}],
                     'expiresAt':9999999999,'quantity':{'kind':'finite','count':2},'keyId':'test'},
                     'secret':'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE','signature':'preparation-only'}
                 # Preparation only: assert the new public input, then stop before authority or TLS.

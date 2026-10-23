@@ -1,5 +1,4 @@
 use crate::{
-    client::json_transport,
     trust::{VerifiedTrust, Watermark},
     Client, Clock, Error, IdentityProvider,
 };
@@ -121,18 +120,17 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             return Ok(());
         }
         let url = self
-            .store
-            .cfg
-            .origin
+            .connection_origin()?
             .join("api/v1/agent/enroll/trust")
             .map_err(|_| Error::Configuration)?;
-        let (status, bytes) = json_transport(
-            self.bootstrap
-                .get(url)
-                .timeout(self.store.cfg.limits.request_timeout),
-            self.store.cfg.limits.response_bytes,
-        )
-        .await?;
+        let (status, bytes) = self
+            .agent_json_transport(
+                self.bootstrap
+                    .get(url)
+                    .timeout(self.store.cfg.limits.request_timeout),
+                self.store.cfg.limits.response_bytes,
+            )
+            .await?;
         if !status.is_success() {
             return Err(Error::Unavailable);
         }
@@ -229,21 +227,20 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             return Ok(());
         }
         let url = self
-            .store
-            .cfg
-            .origin
+            .connection_origin()?
             .join("api/v1/agent/enroll/trust/acknowledgements")
             .map_err(|_| Error::Configuration)?;
         let body = crate::store::encode(&ack.request)?;
-        let (status, bytes) = json_transport(
-            self.http
-                .post(url)
-                .header("content-type", "application/json")
-                .body(body)
-                .timeout(self.store.cfg.limits.request_timeout),
-            self.store.cfg.limits.response_bytes,
-        )
-        .await?;
+        let (status, bytes) = self
+            .agent_json_transport(
+                self.http
+                    .post(url)
+                    .header("content-type", "application/json")
+                    .body(body)
+                    .timeout(self.store.cfg.limits.request_timeout),
+                self.store.cfg.limits.response_bytes,
+            )
+            .await?;
         if !status.is_success() {
             let error: rss_mdm_agent_wire::enroll::ErrorBody = crate::store::decode(&bytes)?;
             self.identity_failure(error.code)?;
@@ -382,20 +379,19 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         };
         self.restore_runtime_transport()?;
         let url = self
-            .store
-            .cfg
-            .origin
+            .connection_origin()?
             .join("api/v1/agent/enroll/trust/observations")
             .map_err(|_| Error::Configuration)?;
-        let (status, bytes) = json_transport(
-            self.http
-                .post(url)
-                .header("content-type", "application/json")
-                .body(crate::store::encode(pending)?)
-                .timeout(self.store.cfg.limits.request_timeout),
-            self.store.cfg.limits.response_bytes,
-        )
-        .await?;
+        let (status, bytes) = self
+            .agent_json_transport(
+                self.http
+                    .post(url)
+                    .header("content-type", "application/json")
+                    .body(crate::store::encode(pending)?)
+                    .timeout(self.store.cfg.limits.request_timeout),
+                self.store.cfg.limits.response_bytes,
+            )
+            .await?;
         if !status.is_success() {
             let error: rss_mdm_agent_wire::enroll::ErrorBody = crate::store::decode(&bytes)?;
             self.identity_failure(error.code)?;

@@ -118,6 +118,7 @@ enum Command {
 pub(crate) struct RegistrationOwner {
     network: agent_client::Config,
     installer_format: Option<rss_mdm_agent_wire::enroll::configuration::InstallerFormat>,
+    service_id: uuid::Uuid,
     origin: String,
     tenant_id: String,
     policy: PeerPolicy,
@@ -153,7 +154,12 @@ impl RegistrationOwner {
         let shared = snapshot.clone();
         let network = deployment.network()?;
         let installer_format = crate::installation::installer_format(&deployment).ok();
-        let origin = deployment.origin.clone();
+        let origin = deployment
+            .connections
+            .configuration
+            .preferred_origin
+            .clone();
+        let service_id = deployment.service_id;
         let tenant_id = deployment.tenant.to_string();
         let policy = deployment.clients.clone();
         let registration_policy = deployment.registration_clients.clone();
@@ -175,6 +181,7 @@ impl RegistrationOwner {
         Ok(Self {
             network,
             installer_format,
+            service_id,
             origin,
             tenant_id,
             policy,
@@ -417,6 +424,7 @@ impl Handler for RegistrationOwner {
                 };
                 Reply::RegistrationContext {
                     value: execution_ipc::host::RegistrationContext {
+                        service_id: self.service_id.to_string(),
                         origin: self.origin.clone(),
                         tenant_id: self.tenant_id.clone(),
                         status,
@@ -895,6 +903,7 @@ mod tests {
         let mut owner = RegistrationOwner {
             network: server.config(),
             installer_format: None,
+            service_id: crate::protocol_test_support::SERVICE_ID,
             origin: server.url.origin().ascii_serialization(),
             tenant_id: server.config().tenant.to_string(),
             policy: policy.clone(),

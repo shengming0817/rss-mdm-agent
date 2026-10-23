@@ -158,17 +158,25 @@ async fn signed_foreign_expired_and_wrong_target_files_are_rejected_before_machi
     let server = Server::tls().await;
     let file = server.configuration();
     let cfg = server.config();
-    for kind in ["tenant", "origin", "target", "expiry"] {
+    for kind in ["tenant", "service", "target", "expiry"] {
         let mut changed = file.clone();
         match kind {
-            "tenant" => changed.configuration.tenant_id = uuid::Uuid::new_v4(),
-            "origin" => changed.configuration.origin = "https://other.example".into(),
+            "tenant" => {
+                changed.configuration.tenant_id = uuid::Uuid::new_v4();
+                changed.configuration.connections.configuration.tenant_id =
+                    changed.configuration.tenant_id;
+            }
+            "service" => {
+                changed.configuration.connections.configuration.service_id = uuid::Uuid::new_v4()
+            }
             "target" => {
                 changed.configuration.targets[0].platform =
                     rss_mdm_agent_wire::runtime::TaskPlatform::Windows
             }
             _ => changed.configuration.expires_at = 1,
         }
+        changed.configuration.connections =
+            support::sign_connections(changed.configuration.connections.configuration);
         changed.signature = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(
             server
                 .data

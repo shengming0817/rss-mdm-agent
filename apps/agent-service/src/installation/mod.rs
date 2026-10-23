@@ -51,9 +51,8 @@ pub struct Candidate {
     pub desktop: Artifact,
     pub runtime_root: PathBuf,
     pub runtime_sha256: String,
-    pub origin: String,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub task_trust_origins: Vec<String>,
+    pub service_id: uuid::Uuid,
+    pub connections: rss_mdm_agent_wire::connections::SignedConfiguration,
     pub tenant: uuid::Uuid,
     pub signing_keys: BTreeMap<String, String>,
     pub ca_pem: Option<String>,
@@ -94,8 +93,8 @@ impl Candidate {
         let candidate: Self = serde_json::from_slice(&bytes).map_err(|_| Error::Configuration)?;
         if candidate.version != 1
             || candidate.service.path != deployment.service.path
-            || candidate.origin != deployment.origin
-            || candidate.task_trust_origins != deployment.task_trust_origins
+            || candidate.service_id != deployment.service_id
+            || candidate.connections != deployment.connections
             || candidate.tenant != deployment.tenant
             || candidate.signing_keys != deployment.signing_keys
             || candidate.ca_pem.as_deref().map(str::as_bytes)
@@ -113,8 +112,21 @@ impl Candidate {
         candidate.validate()?;
         Ok((candidate, hash(&bytes)))
     }
-    fn validate(&self) -> Result<(), Error> {
-        agent_client::validate_task_trust_origins(&self.task_trust_origins)?;
+    fn validate_trust(&self) -> Result<(), Error> {
+        use base64::Engine;
+        let keys = self
+            .signing_keys
+            .iter()
+            .map(|(id, key)| {
+                Ok((
+                    id.clone(),
+                    base64::engine::general_purpose::URL_SAFE_NO_PAD
+                        .decode(key)
+                        .map_err(|_| Error::Configuration)?,
+                ))
+            })
+            .collect::<Result<_, Error>>()?;
+        agent_client::verify_connections(&self.connections, self.service_id, self.tenant, &keys)?;
         if self.version != 1
             || self.target != Target::current().map_err(|_| Error::Unsupported)?
             || !self.root.is_absolute()
@@ -148,15 +160,11 @@ impl Candidate {
         {
             return Err(Error::Configuration);
         }
-        let origin = url::Url::parse(&self.origin).map_err(|_| Error::Configuration)?;
-        if origin.scheme() != "https"
-            || origin.origin().ascii_serialization() != self.origin
-            || !origin.username().is_empty()
-            || origin.password().is_some()
-        {
-            return Err(Error::Configuration);
-        }
         self.format()?;
+        Ok(())
+    }
+    fn validate(&self) -> Result<(), Error> {
+        self.validate_trust()?;
         for image in [&self.service, &self.desktop] {
             image.verify(&image.path).map_err(|_| Error::Identity)?;
             self.target
@@ -229,11 +237,11 @@ impl Candidate {
             interactive: true,
         };
         Ok(Deployment {
-            task_trust_origins: self.task_trust_origins.clone(),
+            service_id: self.service_id,
+            connections: self.connections.clone(),
             software_read_grants: vec![],
             version: execution_ipc::host::DEPLOYMENT_VERSION,
             ipc_version: execution_ipc::host::IPC_VERSION,
-            origin: self.origin.clone(),
             tenant: self.tenant,
             signing_keys: self.signing_keys.clone(),
             ca_file: self.ca_pem.as_ref().map(|_| base.join("https-ca.pem")),
@@ -301,7 +309,8 @@ pub(crate) fn installer_format(
     }
     let candidate: Candidate = serde_json::from_slice(&bytes).map_err(|_| Error::Configuration)?;
     if candidate.version != 1
-        || candidate.origin != deployment.origin
+        || candidate.service_id != deployment.service_id
+        || candidate.connections != deployment.connections
         || candidate.tenant != deployment.tenant
         || candidate.service.path != deployment.service.path
         || candidate.signing_keys != deployment.signing_keys

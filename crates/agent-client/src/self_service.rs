@@ -1,6 +1,5 @@
 //! Device-authenticated employee HTTP; no caller can supply a different endpoint or credential origin.
 use crate::{
-    client::json_transport,
     store::{decode, encode},
     wire, Client, Clock, Error, IdentityProvider,
 };
@@ -43,7 +42,9 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                 .header("content-type", "application/json")
                 .body(body);
         }
-        let (status, bytes) = json_transport(request, self.store.cfg.limits.response_bytes).await?;
+        let (status, bytes) = self
+            .agent_json_transport(request, self.store.cfg.limits.response_bytes)
+            .await?;
         if status == reqwest::StatusCode::NOT_FOUND {
             return Err(Error::NotFound);
         }

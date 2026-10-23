@@ -6,9 +6,6 @@ use serde::{Deserialize, Serialize};
 #[serde(deny_unknown_fields)]
 pub struct OrganizationConfiguration {
     pub origin: String,
-    /// Agent transport paired with this business origin by the trusted build configuration.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub agent_origin: Option<String>,
     pub tenant: String,
     pub label: String,
     /// Optional deployment CA public certificate, embedded only in the native binary.
@@ -61,11 +58,6 @@ fn normalize_origin(origin: &str) -> Result<String, ConfigurationError> {
 impl OrganizationConfiguration {
     pub fn normalize(mut self) -> Result<Self, ConfigurationError> {
         self.origin = normalize_origin(&self.origin)?;
-        self.agent_origin = self
-            .agent_origin
-            .as_deref()
-            .map(normalize_origin)
-            .transpose()?;
         let tenant = uuid::Uuid::parse_str(&self.tenant)
             .map_err(|_| ConfigurationError("RSS_MDM_TENANT_ID (a non-zero UUID)"))?;
         if tenant.is_nil() {
@@ -94,7 +86,6 @@ mod tests {
             tenant: "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA".into(),
             label: " Organization ".into(),
             ca_pem: None,
-            agent_origin: None,
         }
     }
     #[test]
@@ -117,9 +108,6 @@ mod tests {
             let mut value = config();
             value.origin = origin.into();
             assert!(value.normalize().is_err(), "{origin}");
-            let mut value = config();
-            value.agent_origin = Some(origin.into());
-            assert!(value.normalize().is_err(), "agent {origin}");
         }
         for tenant in ["", "invalid", "00000000-0000-0000-0000-000000000000"] {
             let mut value = config();

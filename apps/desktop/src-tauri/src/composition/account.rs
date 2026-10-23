@@ -93,7 +93,6 @@ fn normalize_organization(value: &mut Organization) -> Result<()> {
         tenant: value.tenant_id.clone(),
         label: value.label.clone(),
         ca_pem: None,
-        agent_origin: None,
     })
     .map_err(|_| invalid())?;
     Ok(())
@@ -244,7 +243,6 @@ impl Organizations {
 pub struct EnterpriseSession {
     client: Client,
     organization: Organization,
-    registration_origin: String,
     cookie: String,
     csrf: String,
     principal: String,
@@ -290,26 +288,6 @@ fn organization_ca(organization: &Organization) -> Result<Option<Vec<u8>>> {
     .map_err(|_| invalid())?;
     configured_ca(config, organization)
 }
-fn configured_registration_origin(
-    config: Option<crate::organization_config::OrganizationConfiguration>,
-    organization: &Organization,
-) -> Result<String> {
-    if let Some(config) = config {
-        let config = config.normalize().map_err(|_| invalid())?;
-        if config.origin == organization.origin && config.tenant == organization.tenant_id {
-            return Ok(config.agent_origin.unwrap_or(config.origin));
-        }
-    }
-    Ok(organization.origin.clone())
-}
-pub(super) fn registration_origin(organization: &Organization) -> Result<String> {
-    let config = serde_json::from_str(include_str!(concat!(
-        env!("OUT_DIR"),
-        "/default_organization.json"
-    )))
-    .map_err(|_| invalid())?;
-    configured_registration_origin(config, organization)
-}
 // ref: reqwest v0.13.5 src/async_impl/client.rs (per-client root certificates).
 fn enterprise_client(ca: Option<Vec<u8>>) -> Result<Client> {
     let mut builder = Client::builder()
@@ -353,7 +331,6 @@ impl EnterpriseSession {
         Ok(execution_ipc::host::NativeContextSession {
             access: execution_ipc::host::NativeAccess::User {
                 credential: zeroize::Zeroizing::new(secret.to_owned()),
-                credential_origin: self.registration_origin.clone(),
                 user: rss_mdm_agent_wire::runtime::SelfServiceUser {
                     tenant_id: Uuid::parse_str(&self.organization.tenant_id)
                         .map_err(|_| invalid())?,
@@ -366,8 +343,8 @@ impl EnterpriseSession {
         })
     }
 
-    pub(super) fn matches_registration(&self, origin: &str, tenant: &str) -> bool {
-        self.registration_origin == origin && self.organization.tenant_id == tenant
+    pub(super) fn matches_registration(&self, service_id: &str, tenant: &str) -> bool {
+        self.instance == service_id && self.organization.tenant_id == tenant
     }
     /// Authorize only a machine request obtained through authenticated local IPC.
     pub(super) async fn authorize_registration(&mut self, id: uuid::Uuid) -> Result<()> {
@@ -429,7 +406,6 @@ impl EnterpriseSession {
         login: &str,
         password: zeroize::Zeroizing<String>,
     ) -> Result<Self> {
-        let registration_origin = registration_origin(&organization)?;
         let response = client
             .post(format!(
                 "{}/api/v1/identity/tenants/{}/login",
@@ -460,7 +436,7 @@ impl EnterpriseSession {
         let mut session = Self {
             client,
             organization,
-            registration_origin,
+
             cookie,
             csrf: String::new(),
             principal: String::new(),
@@ -616,37 +592,18 @@ mod tests {
             tenant: org.tenant_id.clone(),
             label: org.label.clone(),
             ca_pem: Some("public-ca".into()),
-            agent_origin: Some("https://agent.fixture.test:9445".into()),
         };
         assert_eq!(
             configured_ca(Some(config.clone()), &org).unwrap(),
             Some(b"public-ca".to_vec())
-        );
-        assert_eq!(
-            configured_registration_origin(Some(config.clone()), &org).unwrap(),
-            "https://agent.fixture.test:9445"
         );
         let mut other = org.clone();
         other.origin = "https://other.fixture.test".into();
         assert!(configured_ca(Some(config.clone()), &other)
             .unwrap()
             .is_none());
-        assert_eq!(
-            configured_registration_origin(Some(config.clone()), &other).unwrap(),
-            other.origin
-        );
         other = org.clone();
         other.tenant_id = Uuid::new_v4().to_string();
-        assert_eq!(
-            configured_registration_origin(Some(config.clone()), &other).unwrap(),
-            other.origin
-        );
-        let mut same_origin = config.clone();
-        same_origin.agent_origin = None;
-        assert_eq!(
-            configured_registration_origin(Some(same_origin), &org).unwrap(),
-            org.origin
-        );
         assert!(configured_ca(Some(config), &other).unwrap().is_none());
         assert!(configured_ca(None, &org).unwrap().is_none());
         assert!(enterprise_client(Some(b"not a certificate".to_vec())).is_err());
@@ -958,7 +915,7 @@ mod tests {
                 origin: "https://example.com".into(),
                 tenant_id: Uuid::new_v4().to_string(),
             },
-            registration_origin: "https://example.com".into(),
+
             cookie: "secret".into(),
             csrf: "secret".into(),
             principal: Uuid::new_v4().to_string(),
@@ -1066,7 +1023,7 @@ pub(super) mod http_tests {
             (200, json!({})),
         ])
         .await;
-        let mut session = EnterpriseSession::login_with_client(
+        let session = EnterpriseSession::login_with_client(
             Client::new(),
             organization,
             "Alice",
@@ -1074,23 +1031,15 @@ pub(super) mod http_tests {
         )
         .await
         .unwrap();
-        // User HTTP remains on the business endpoint; authenticated IPC binds to Agent transport.
-        session.registration_origin = "https://agent.fixture.test:9445".into();
-        assert!(session.matches_registration("https://agent.fixture.test:9445", TENANT));
-        assert!(!session.matches_registration(&session.organization.origin, TENANT));
-        assert!(!session.matches_registration(
-            "https://agent.fixture.test:9445",
-            &Uuid::new_v4().to_string()
-        ));
+        // Account HTTP remains at its website issuer; IPC authority is the authenticated instance.
+        assert!(session.matches_registration(&session.instance, TENANT));
+        assert!(!session.matches_registration(&Uuid::new_v4().to_string(), TENANT));
+        assert!(!session.matches_registration(&session.instance, &Uuid::new_v4().to_string()));
         let native = session.native_session(&Uuid::new_v4().to_string()).unwrap();
-        match native.access {
-            execution_ipc::host::NativeAccess::User {
-                credential_origin, ..
-            } => {
-                assert_eq!(credential_origin, "https://agent.fixture.test:9445");
-            }
-            _ => panic!("expected user context"),
-        }
+        assert_eq!(
+            native.user().unwrap().instance_id.to_string(),
+            session.instance
+        );
         let context = serde_json::to_string(&session.context().unwrap()).unwrap();
         for secret in [
             "password-canary",
@@ -1135,7 +1084,7 @@ pub(super) mod http_tests {
         )
         .await
         .unwrap();
-        assert!(session.matches_registration(&organization.origin, TENANT));
+        assert!(session.matches_registration(&session.instance, TENANT));
         assert!(!session.matches_registration("https://foreign.example", TENANT));
         session.authorize_registration(id).await.unwrap();
         let requests = task.await.unwrap();

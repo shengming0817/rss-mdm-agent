@@ -275,7 +275,14 @@ impl UnmanageTransport {
                 .body(encode(&request)?),
             self.max,
         )
-        .await?;
+        .await
+        .map_err(|error| {
+            if error == Error::Network {
+                Error::Unavailable
+            } else {
+                error
+            }
+        })?;
         if !status.is_success() {
             return Err(Error::Unavailable);
         }

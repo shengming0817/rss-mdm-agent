@@ -52,7 +52,7 @@ impl Limits {
     }
 }
 /// Local permission to disclose one source read credential to one HTTPS origin.
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SoftwareReadGrant {
     /// Exact source and opaque credential reference advertised in execution context.
@@ -65,11 +65,12 @@ pub struct SoftwareReadGrant {
 pub struct Config {
     /// Source read credentials are scoped independently from the device's HTTP identity.
     pub software_read_grants: Vec<SoftwareReadGrant>,
-    /// Fixed origin with no credential/query/fragment/path prefix.
+    /// Initial coordinate derived from the signed seed; loopback fixtures select their listener.
     pub origin: Url,
-    /// Additional exact HTTPS task-trust origins approved by the local administrator.
-    /// These are authority identifiers, never alternate HTTP destinations.
-    pub task_trust_origins: Vec<String>,
+    /// Protected installation identity, independent of all network locations.
+    pub service_id: Uuid,
+    /// Signed initial connection configuration; retained state may hold a newer revision.
+    pub connections: rss_mdm_agent_wire::connections::SignedConfiguration,
     /// Trusted tenant, absent from BindingProfile.
     pub tenant: Uuid,
     /// Actual OS.
@@ -90,7 +91,19 @@ pub struct Config {
 impl Config {
     /// Validate before storage or I/O.
     pub fn validate(&self) -> Result<(), Error> {
-        validate_task_trust_origins(&self.task_trust_origins)?;
+        crate::connections::verify_connections(
+            &self.connections,
+            self.service_id,
+            self.tenant,
+            &self.registration_keys,
+        )
+        .map_err(|_| Error::Configuration)?;
+        if self.transport == Transport::Https
+            && self.origin.origin().ascii_serialization()
+                != self.connections.configuration.preferred_origin
+        {
+            return Err(Error::Configuration);
+        }
         self.execution_context.validate_for(self.platform)?;
         if self.software_read_grants.len() > 16 {
             return Err(Error::Configuration);
@@ -173,28 +186,6 @@ impl Config {
         }
         Ok(())
     }
-}
-/// Validate the bounded administrator-owned task authority allowlist.
-pub fn validate_task_trust_origins(origins: &[String]) -> Result<(), Error> {
-    if origins.len() > 8 {
-        return Err(Error::Configuration);
-    }
-    let mut unique = std::collections::BTreeSet::new();
-    for value in origins {
-        let url = Url::parse(value).map_err(|_| Error::Configuration)?;
-        if value.len() > 2048
-            || value.contains('*')
-            || url.scheme() != "https"
-            || url.host_str().is_none()
-            || !url.username().is_empty()
-            || url.password().is_some()
-            || url.origin().ascii_serialization() != *value
-            || !unique.insert(value)
-        {
-            return Err(Error::Configuration);
-        }
-    }
-    Ok(())
 }
 /// Platform-owned bootstrap secrets and non-exportable device signing keys.
 /// References are frozen by the communication owner before network operations.
