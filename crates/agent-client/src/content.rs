@@ -120,7 +120,11 @@ pub(crate) fn open(path: &Path, write: bool) -> Result<File, Error> {
     }
     Ok(file)
 }
-pub(crate) fn digest(mut file: File) -> Result<[u8; 32], Error> {
+pub(crate) fn digest(file: File) -> Result<[u8; 32], Error> {
+    digest_handle(&file)
+}
+// Windows byte-range locks also exclude another handle in the same process.
+fn digest_handle(mut file: &File) -> Result<[u8; 32], Error> {
     file.seek(SeekFrom::Start(0))?;
     let mut hash = Sha256::new();
     let mut buffer = [0u8; 65536];
@@ -139,10 +143,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         self.now()?;
         let artifacts = artifacts(offer.payload())?;
         let root = self.store.root.join("content");
-        private(&root)?;
-        if root.canonicalize()? != root {
-            return Err(Error::Storage);
-        }
+        crate::store::private_root(&root)?;
         let mut total = 0u64;
         let mut files = Vec::new();
         for (key, length, sha256) in artifacts {
@@ -195,9 +196,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         }
         let root = self.store.root.join("content");
         platform_private_storage::directory(&root)?;
-        if root.canonicalize()? != root {
-            return Err(Error::Storage);
-        }
+        crate::store::private_root(&root)?;
         let mut files = Vec::new();
         for (key, length, sha256) in artifacts {
             self.verify(&offer.signed, wire::TaskPermit::Offer)?;
@@ -253,7 +252,10 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         let mut file = if partial.try_exists()? {
             open(&partial, true)?
         } else {
-            platform_private_storage::create_new(&partial)?
+            // The private creator intentionally returns an exclusive write-only handle.
+            // Reopen with the verified read/write path before taking the durable lease.
+            drop(platform_private_storage::create_new(&partial)?);
+            open(&partial, true)?
         };
         file.try_lock_exclusive().map_err(|_| Error::Storage)?;
         let mut offset = file.metadata()?.len();
@@ -273,7 +275,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         {
             return Err(Error::Capacity);
         }
-        if offset == length && digest(open(&partial, false)?)? != sha256 {
+        if offset == length && digest_handle(&file)? != sha256 {
             file.set_len(0)?;
             offset = 0;
         }
@@ -357,7 +359,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                 return Err(Error::Untrusted);
             }
         }
-        if digest(open(&partial, false)?)? != sha256 {
+        if digest_handle(&file)? != sha256 {
             file.set_len(0)?;
             file.sync_all()?;
             return Err(Error::Untrusted);

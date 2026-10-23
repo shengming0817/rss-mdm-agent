@@ -227,7 +227,7 @@ export class ClaudeAdapter implements ProviderAgentPort {
       const input = new Queue<SDKUserMessage>(1),
         abort = new AbortController(),
         options: Options = {
-          ...sdkOptions(resolved),
+          ...(await sdkOptions(resolved)),
           abortController: abort,
           ...(resume
             ? { resume: binding.nativeSessionId }

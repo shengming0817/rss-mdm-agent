@@ -19,21 +19,18 @@ import { openSqliteStore } from "../../packages/ai-store-sqlite/dist/index.js";
 import { NativeControl } from "../../apps/ai-host/dist/native.js";
 import { PrivateLink } from "../../packages/ai-host/dist/private-link.js";
 import { spawn } from "node:child_process";
+import {
+  createPrivateFile,
+  privateDirectory,
+} from "../../packages/platform-private-storage/dist/index.js";
 import { preparedArtifact } from "../../scripts/preparation.mjs";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { once } from "node:events";
 import { PassThrough } from "node:stream";
-import {
-  mkdtemp,
-  mkdir,
-  readFile,
-  writeFile,
-  rm,
-  realpath,
-} from "node:fs/promises";
+import { readFile, writeFile, rm, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, toNamespacedPath } from "node:path";
 import { startLocalApp } from "../../apps/ai-host/dist/index.js";
 import {
   RuntimeClient,
@@ -241,6 +238,14 @@ export async function modelServer(provider) {
     },
   };
 }
+export async function privateTemporaryDirectory(prefix) {
+  const directory = join(
+    await realpath(tmpdir()),
+    prefix + crypto.randomUUID(),
+  );
+  await privateDirectory(directory);
+  return process.platform === "win32" ? toNamespacedPath(directory) : directory;
+}
 export async function configuration(
   directory,
   provider,
@@ -248,7 +253,7 @@ export async function configuration(
   profile = "conversation",
 ) {
   const nativeDirectory = join(directory, "native");
-  await mkdir(nativeDirectory, { mode: 0o700 });
+  await privateDirectory(nativeDirectory);
   const config = {
     version: 1,
     databasePath: join(directory, "ai.sqlite"),
@@ -292,6 +297,7 @@ export async function configuration(
   );
   await store.close(budget());
   const path = join(directory, "configuration.json");
+  await createPrivateFile(path);
   await writeConfiguration(path, config);
   return { config, path };
 }
@@ -376,7 +382,7 @@ export async function clientAt(
   };
 }
 export async function fixture(t, provider) {
-  const directory = await realpath(await mkdtemp(join(tmpdir(), "rss-a06-")));
+  const directory = await privateTemporaryDirectory("rss-a06-");
   const model = await modelServer(provider);
   const { config, path } = await configuration(
     directory,

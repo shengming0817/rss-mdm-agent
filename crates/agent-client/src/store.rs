@@ -33,13 +33,16 @@ pub(crate) fn private(p: &Path) -> Result<(), Error> {
     platform_private_storage::validate(p)?;
     Ok(())
 }
+pub(crate) fn private_root(root: &Path) -> Result<(), Error> {
+    if !platform_private_storage::is_canonical_path(root)? {
+        return Err(Error::Storage);
+    }
+    private(root)
+}
 impl Store {
     pub fn open(root: &Path, cfg: Config, mode: OpenMode) -> Result<Self, Error> {
         cfg.validate()?;
-        if !root.is_absolute() || root.canonicalize()? != root {
-            return Err(Error::Storage);
-        }
-        private(root)?;
+        private_root(root)?;
         if !root.is_dir() {
             return Err(Error::Storage);
         }
@@ -138,10 +141,7 @@ impl Store {
 
 pub(crate) fn read_existing(root: &Path, cfg: &Config) -> Result<Connection, Error> {
     cfg.validate()?;
-    if !root.is_absolute() || root.canonicalize()? != root {
-        return Err(Error::Storage);
-    }
-    private(root)?;
+    private_root(root)?;
     let path = root.join("communication.sqlite");
     platform_private_storage::validate_sqlite_file(&path)?;
     sidecars(&path)?;
@@ -237,12 +237,18 @@ pub fn validate_stored_identity(
 }
 fn read_identity(root: &Path, cfg: &Config) -> Result<crate::identity::IdentityState, Error> {
     let reader = read_existing(root, cfg)?;
-    let body: Vec<u8> = reader.query_row(
-        "SELECT CASE WHEN length(body)<=?1 THEN body END FROM state WHERE key='identity'",
-        [cfg.limits.response_bytes],
-        |r| r.get(0),
-    )?;
-    decode(&body)
+    let body: Option<Vec<u8>> = reader
+        .query_row(
+            "SELECT CASE WHEN length(body)<=?1 THEN body END FROM state WHERE key='identity'",
+            [cfg.limits.response_bytes],
+            |r| r.get(0),
+        )
+        .optional()?;
+    // Match the communication owner's identity_state: initialization precedes enrollment.
+    body.as_deref()
+        .map(decode)
+        .transpose()
+        .map(Option::unwrap_or_default)
 }
 
 fn sidecars(path: &Path) -> Result<(), Error> {

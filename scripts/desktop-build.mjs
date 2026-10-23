@@ -41,7 +41,7 @@ run(
         : []),
     "--config",
     process.platform === "win32"
-      ? "src-tauri/tauri.windows.conf.json"
+      ? "src-tauri/tauri.runtime.windows.conf.json"
       : "src-tauri/tauri.bundle.conf.json",
   ],
   fileURLToPath(new URL("../apps/desktop", import.meta.url)),

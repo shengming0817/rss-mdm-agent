@@ -6,11 +6,60 @@ use uuid::Uuid;
 mod support;
 use rss_mdm_agent_wire::runtime::{TaskArchitecture, TaskPlatform};
 use support::*;
+#[cfg(windows)]
+#[tokio::test]
+async fn ordinary_windows_path_creates_and_reopens_the_same_private_database() {
+    let server = Server::new().await;
+    let root = Root::new();
+    let ordinary =
+        std::path::PathBuf::from(root.path.to_str().unwrap().strip_prefix(r"\\?\").unwrap());
+    let cfg = server.config();
+    let client = Client::open(
+        &ordinary,
+        cfg.clone(),
+        OpenMode::Create,
+        server.secrets.clone(),
+        server.time.clone(),
+    )
+    .unwrap();
+    drop(client);
+    agent_client::validate_existing(&ordinary, &cfg).unwrap();
+    let mut client = Client::open(
+        &ordinary,
+        cfg,
+        OpenMode::Existing,
+        server.secrets.clone(),
+        server.time.clone(),
+    )
+    .unwrap();
+    assert!(!client.enrollment_status().unwrap().registered);
+    client.set_profiles(vec![ExecutorProfile::PosixSh]).unwrap();
+    server.register(&mut client).await;
+    server.data.lock().unwrap().script();
+    let offer = client.claim().await.unwrap().offer.unwrap();
+    let materials = client.prepare(&offer).await.unwrap();
+    assert!(!materials.files().is_empty());
+}
 #[tokio::test]
 async fn refresh_inspection_reads_live_binding_without_locking_or_creating_state() {
     let server = Server::new().await;
     let root = Root::new();
     let mut client = server.client(&root, OpenMode::Create);
+    let cfg = client.configuration().clone();
+    let unregistered = std::fs::read(root.path.join("communication.sqlite")).unwrap();
+    assert!(
+        agent_client::validate_stored_identity(&root.path, &cfg, &server.secrets)
+            .unwrap()
+            .is_none()
+    );
+    assert!(matches!(
+        agent_client::inspect_binding(&root.path, &cfg),
+        Err(Error::Identity)
+    ));
+    assert_eq!(
+        unregistered,
+        std::fs::read(root.path.join("communication.sqlite")).unwrap()
+    );
     server.register(&mut client).await;
     let cfg = client.configuration().clone();
     let before = std::fs::read(root.path.join("communication.sqlite")).unwrap();
@@ -527,6 +576,7 @@ async fn unknown_communication_schema_preserves_registration_pending_delivery_an
 #[test]
 fn configuration_rejects_untrusted_network_and_unbounded_budgets() {
     let mut cfg = Config {
+        task_trust_origins: vec![],
         software_read_grants: vec![],
         execution_context: rss_mdm_agent_wire::runtime::SoftwareExecutionContext {
             revision: 1,

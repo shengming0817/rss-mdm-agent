@@ -1,2 +1,4 @@
+* text=auto eol=lf
+
 # Unified diff context must preserve upstream whitespace; frozen install validates patches.
 patches/*.patch -whitespace

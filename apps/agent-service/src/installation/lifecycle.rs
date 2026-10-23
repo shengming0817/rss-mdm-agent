@@ -459,6 +459,7 @@ fn restore_registration(
         Err(error) => Err(error),
     };
     if let Err(error) = imported {
+        outcome::failed(error);
         eprintln!("agent_configuration_prepare: {error}");
     }
     // Even a failed stop may have already deregistered the job. Restore its same owner;
@@ -481,15 +482,22 @@ fn import_configuration(path: &Path, config: &Path) -> Result<(), ImportFailure>
     agent_client::verify_configuration(&file, &deployment.network()?, SystemClock::new()?.now()?)?;
     let installer_format = installer_format(&deployment).map_err(ImportFailure::Lifecycle)?;
     restore_registration(
-        || platform::stop(true, &deployment.service.path, config),
         || {
+            outcome::phase("configuration-stop")?;
+            platform::stop(true, &deployment.service.path, config)
+        },
+        || {
+            outcome::phase("configuration-prepare")?;
             let mut client = deployment.communication(true)?;
             if client.enrollment_status()?.registered {
                 return Ok(());
             }
             client.prepare_configuration(file, installer_format, deployment.capabilities())
         },
-        || platform::register(true, &deployment.service.path, config),
+        || {
+            outcome::phase("configuration-restart")?;
+            platform::register(true, &deployment.service.path, config)
+        },
     )
 }
 #[cfg(test)]

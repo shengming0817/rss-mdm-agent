@@ -1,7 +1,7 @@
 {
   "name": "rss-mdm-agent",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.5",
   "license": "MIT",
   "packageManager": "pnpm@11.4.0",
   "engines": {
@@ -24,7 +24,7 @@
     "test:ai-access": "node scripts/run-ai-tests.mjs --node tests/ai-access",
     "check:ai-boundaries": "node --test scripts/ai-boundaries.test.mjs && node scripts/check-ai-boundaries.mjs",
     "build:ai-claude": "pnpm build:ai-contract && pnpm --filter @rss-mdm-agent/ai-adapter-claude build",
-    "test:ai-claude": "node scripts/run-ai-tests.mjs --node tests/ai-adapters/claude",
+    "test:ai-claude": "node scripts/run-ai-tests.mjs tests/ai-adapters/claude",
     "smoke:claude": "node scripts/smoke-claude.mjs",
     "build:ai-store": "pnpm --filter @rss-mdm-agent/ai-store-sqlite... build",
     "test:ai-store": "node scripts/run-ai-tests.mjs tests/ai-store-recovery",

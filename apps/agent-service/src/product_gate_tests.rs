@@ -1051,10 +1051,8 @@ async fn service_assembly_creates_and_reopens_journal_with_its_actual_budgets() 
     let config = ExecutionConfig {
         work_root: root.path.clone(),
         material_root: root.path.join("materials"),
-        interpreters: vec![Interpreter {
-            profile: wire::ExecutorProfile::PosixSh,
-            image: image.clone(),
-        }],
+        // Native collection/telemetry do not require an installed script interpreter.
+        interpreters: vec![],
         managers: vec![],
         processes: 1,
     };

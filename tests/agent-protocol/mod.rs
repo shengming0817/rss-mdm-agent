@@ -790,6 +790,7 @@ impl Server {
     pub fn config(&self) -> Config {
         let data = self.data.lock().unwrap();
         Config {
+            task_trust_origins: vec![],
             software_read_grants: data
                 .software_source
                 .as_ref()

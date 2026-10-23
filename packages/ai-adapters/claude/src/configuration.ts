@@ -1,4 +1,5 @@
-import { readFileSync, lstatSync, mkdirSync, realpathSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
+import { privateDirectory as protectDirectory } from "@rss-mdm-agent/platform-private-storage";
 import { isAbsolute, join } from "node:path";
 import type { Options } from "@anthropic-ai/claude-agent-sdk";
 import type { Binding } from "@rss-mdm-agent/ai-contract/wire";
@@ -57,35 +58,26 @@ export interface ClaudeAdapterOptions {
   callbackTimeoutMs?: number;
 }
 /** Native transcripts and resume state share the credential trust boundary. */
-function privateDirectory(path: string): string {
+async function privateDirectory(path: string): Promise<string> {
   try {
-    if (!isAbsolute(path) || !process.getuid) throw new Error();
-    mkdirSync(path, { recursive: true, mode: 0o700 });
-    const stat = lstatSync(path);
-    if (
-      !stat.isDirectory() ||
-      stat.isSymbolicLink() ||
-      stat.uid !== process.getuid() ||
-      (stat.mode & 0o077) !== 0
-    )
-      throw new Error();
-    const canonical = realpathSync(path),
-      actual = lstatSync(canonical);
-    if (actual.dev !== stat.dev || actual.ino !== stat.ino) throw new Error();
-    return canonical;
+    if (!isAbsolute(path)) throw new Error();
+    await protectDirectory(path);
+    return realpathSync.native(path);
   } catch {
     throw new Error("invalid configuration directory");
   }
 }
 /** No raw SDK option passthrough. Settings, child environment and tool inventory are sealed. */
-export function sdkOptions(resolved: ResolvedClaudeConfiguration): Options {
+export async function sdkOptions(
+  resolved: ResolvedClaudeConfiguration,
+): Promise<Options> {
   const { configuration: config, authentication } = resolved;
   if (!isAbsolute(config.workingDirectory))
     throw new Error("invalid configuration");
   const directory =
     authentication.type === "existing_config"
       ? authentication.directory
-      : privateDirectory(resolved.configurationDirectory);
+      : await privateDirectory(resolved.configurationDirectory);
   if (!isAbsolute(directory)) throw new Error("invalid configuration");
   const env: Record<string, string> = {
     CLAUDE_CONFIG_DIR: directory,

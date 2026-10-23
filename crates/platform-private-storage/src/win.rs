@@ -1,12 +1,13 @@
 use super::*;
 use std::{
     ffi::c_void,
+    fs::OpenOptions,
     os::windows::{
         ffi::OsStrExt,
         fs::OpenOptionsExt,
         io::{AsRawHandle, FromRawHandle},
     },
-    ptr::{null, null_mut},
+    ptr::null_mut,
 };
 use windows_sys::Win32::{
     Foundation::*,
@@ -40,6 +41,9 @@ fn sid(sid: PSID) -> io::Result<String> {
     }
 }
 fn current_sid() -> io::Result<String> {
+    token_sid(TokenUser)
+}
+fn token_sid(class: TOKEN_INFORMATION_CLASS) -> io::Result<String> {
     unsafe {
         let mut token = null_mut();
         if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 {
@@ -49,7 +53,7 @@ fn current_sid() -> io::Result<String> {
         let mut needed = 0;
         let result = GetTokenInformation(
             token,
-            TokenUser,
+            class,
             buffer.as_mut_ptr().cast(),
             (buffer.len() * size_of::<usize>()) as u32,
             &mut needed,
@@ -58,7 +62,12 @@ fn current_sid() -> io::Result<String> {
         if result == 0 {
             return Err(io::Error::last_os_error());
         }
-        sid((*(buffer.as_ptr() as *const TOKEN_USER)).User.Sid)
+        let value = if class == TokenOwner {
+            (*(buffer.as_ptr() as *const TOKEN_OWNER)).Owner
+        } else {
+            (*(buffer.as_ptr() as *const TOKEN_USER)).User.Sid
+        };
+        sid(value)
     }
 }
 fn descriptor() -> io::Result<Local> {
@@ -81,6 +90,23 @@ fn descriptor() -> io::Result<Local> {
     Ok(Local(descriptor))
 }
 pub fn file(file: &File) -> io::Result<()> {
+    file_with_owner(file, None)
+}
+pub fn sqlite_file(path: &Path) -> io::Result<()> {
+    let (directory, name) = parent(path)?;
+    let file = OpenOptions::new()
+        .read(true)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(directory.path.join(name))?;
+    if !file.metadata()?.is_file() {
+        return Err(io::Error::other("private regular file required"));
+    }
+    // SQLite creates WAL/SHM without an explicit owner. Windows may use the
+    // token's default Administrators/System owner instead of TokenUser.
+    // ref: Microsoft Win32 SecAuthZ/owner-of-a-new-object; winnt.h TOKEN_OWNER.
+    file_with_owner(&file, Some(&token_sid(TokenOwner)?))
+}
+fn file_with_owner(file: &File, default_owner: Option<&str>) -> io::Result<()> {
     use std::os::windows::fs::MetadataExt;
     let metadata = file.metadata()?;
     if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
@@ -105,7 +131,10 @@ pub fn file(file: &File) -> io::Result<()> {
             return Err(io::Error::from_raw_os_error(result as i32));
         }
         let _security = Local(security);
-        if acl.is_null() || sid(owner)? != user {
+        let owner = sid(owner)?;
+        let sqlite_default_owner = default_owner == Some(owner.as_str())
+            && matches!(owner.as_str(), "S-1-5-18" | "S-1-5-32-544");
+        if acl.is_null() || (owner != user && !sqlite_default_owner) {
             return Err(io::Error::other("private owner/ACL"));
         }
         for index in 0..(*acl).AceCount as u32 {

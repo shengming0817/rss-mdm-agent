@@ -8,6 +8,7 @@ fn candidate_requires_current_format_and_valid_identity() {
         cdhash: None,
     };
     let candidate = Candidate {
+        task_trust_origins: vec![],
         version: 1,
         format: rss_mdm_agent_wire::enroll::configuration::InstallerFormat::MacosPkg,
         product_version: "test".into(),

@@ -48,12 +48,7 @@ impl Database {
             std::process::id(),
             NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
-        std::fs::create_dir(&root).unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
-        }
+        platform_private_storage::directory(&root).unwrap();
         Self {
             path: root.join("execution.db"),
             root,

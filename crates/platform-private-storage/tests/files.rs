@@ -205,3 +205,30 @@ fn sqlite_metadata_keeps_private_file_type_mode_and_acl_checks() {
         storage::validate_sqlite_file(&path).unwrap();
     }
 }
+
+#[cfg(windows)]
+#[test]
+fn sqlite_default_owner_keeps_private_parent_type_and_acl_checks() {
+    let root = Root::new();
+    let path = root.0.join("journal.sqlite-wal");
+    // Match SQLite's ordinary Win32 file creation under the private parent.
+    fs::write(&path, b"journal").unwrap();
+    storage::validate_sqlite_file(&path).unwrap();
+    let validate_sidecars = || {
+        std::process::Command::new(env!("CARGO_BIN_EXE_rss-private-storage"))
+            .arg("validate-sidecars")
+            .arg(root.0.join("journal.sqlite"))
+            .output()
+            .unwrap()
+    };
+    assert!(validate_sidecars().status.success());
+    assert!(storage::validate_sqlite_file(&root.0).is_err());
+    assert!(std::process::Command::new("icacls.exe")
+        .arg(&path)
+        .args(["/grant", "*S-1-1-0:(R)"])
+        .status()
+        .unwrap()
+        .success());
+    assert!(storage::validate_sqlite_file(&path).is_err());
+    assert!(!validate_sidecars().status.success());
+}
