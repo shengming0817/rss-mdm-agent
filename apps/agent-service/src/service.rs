@@ -1265,6 +1265,7 @@ impl Core {
             Some(
                 execution_ipc::host::Request::BindContext { .. }
                     | Request::RevokeContext {}
+                    | Request::RetireEnterpriseContext { .. }
                     | execution_ipc::host::Request::ObserveSoftware { .. }
                     | execution_ipc::host::Request::PolicyDirectory { .. }
                     | execution_ipc::host::Request::InvokePolicy { .. }
@@ -1285,6 +1286,7 @@ impl Core {
                 Some(
                     Request::BindContext { .. }
                     | Request::RevokeContext {}
+                    | Request::RetireEnterpriseContext { .. }
                     | Request::ObserveSoftware { .. }
                     | Request::PolicyDirectory { .. }
                     | Request::InvokePolicy { .. }

@@ -73,6 +73,7 @@ impl execution_ipc::host::SessionFence for NativeFence {
 }
 #[derive(Clone)]
 pub(super) struct NativeContext {
+    ready: bool,
     session: NativeContextSession,
     scope: SessionKey,
     epoch: u64,
@@ -220,7 +221,7 @@ impl Core {
                 })
                 .map(|(_, value)| value)
                 .ok_or(Error::Identity)?;
-            if self.fences.current(&bound.scope)? != bound.epoch {
+            if !bound.ready || self.fences.current(&bound.scope)? != bound.epoch {
                 return Err(Error::Identity);
             }
             if self.host.clock.millis()? >= bound.expires_at_unix_ms {
@@ -237,7 +238,7 @@ impl Core {
             .contexts
             .get(&peer_key(command)?)
             .ok_or(Error::Identity)?;
-        if self.fences.current(&bound.scope)? != bound.epoch {
+        if !bound.ready || self.fences.current(&bound.scope)? != bound.epoch {
             return Err(Error::Identity);
         }
         if self.host.clock.millis()? >= bound.expires_at_unix_ms {
@@ -547,6 +548,62 @@ impl<S: IdentityProvider> DeviceService<S> {
         let Some(request) = command.request.as_operation() else {
             return Err(Error::Protocol);
         };
+        if let Request::RetireEnterpriseContext {
+            generation,
+            proof,
+            recover,
+        } = request
+        {
+            let key = peer_key(command)?;
+            // Retiring a renderer context and settling its relation are different facts.
+            self.core.fences.revoke(&SessionKey::command(command)?)?;
+            let stored = self.client.current_user_owner()?;
+            if let Some(owner) = stored {
+                let own_generation = generation
+                    .as_ref()
+                    .is_some_and(|g| *g == owner.context.generation);
+                if !*recover && (owner.peer != key || !own_generation) {
+                    return Ok(Reply::CurrentUserSync {
+                        value: self.client.current_user_status()?,
+                    });
+                }
+                if *recover
+                    && self.core.contexts.values().any(|c| {
+                        c.context == owner.context
+                            && c.expires_at_unix_ms > self.core.host.clock.millis().unwrap_or(0)
+                            && self
+                                .core
+                                .fences
+                                .current(&c.scope)
+                                .is_ok_and(|e| e == c.epoch)
+                    })
+                {
+                    return Err(Error::Conflict);
+                }
+                let retained = self
+                    .core
+                    .contexts
+                    .get(&key)
+                    .and_then(|c| c.credential())
+                    .cloned();
+                let proof = proof.as_ref().or(retained.as_ref());
+                let result = network(
+                    self.client
+                        .retire_current_user(&owner, proof.map(|v| v.as_str()), *recover),
+                    &mut self.core,
+                    commands,
+                )
+                .await;
+                if result.is_err() {
+                    return Ok(Reply::CurrentUserSync {
+                        value: self.client.current_user_status()?,
+                    });
+                }
+            }
+            return Ok(Reply::CurrentUserSync {
+                value: self.client.current_user_status()?,
+            });
+        }
         if let Request::BindContext { value, expected } = request {
             if value.credential_origin().is_some_and(|origin| {
                 url::Url::parse(origin).ok().as_ref() != Some(&self.client.configuration().origin)
@@ -587,14 +644,27 @@ impl<S: IdentityProvider> DeviceService<S> {
                 {
                     old.context.clone()
                 }
+                (None, Some(old))
+                    if old.epoch != epoch && !old.ready && old.generation == value.generation =>
+                {
+                    old.context.clone()
+                }
                 (None, Some(old)) if old.epoch != epoch && old.generation != value.generation => {
                     execution_contract::NativeContextRef {
                         id: plan::id(Uuid::new_v4().to_string())?,
                         generation: value.generation.clone(),
                     }
                 }
+                (None, Some(old))
+                    if old.epoch == epoch
+                        && old.generation == value.generation
+                        && old.credential_origin() == value.credential_origin()
+                        && old.user() == value.user() =>
+                {
+                    old.context.clone()
+                }
                 (None, None) => execution_contract::NativeContextRef {
-                    id: plan::id(Uuid::new_v4().to_string())?,
+                    id: value.generation.clone(),
                     generation: value.generation.clone(),
                 },
                 _ => return Err(Error::Identity),
@@ -603,11 +673,52 @@ impl<S: IdentityProvider> DeviceService<S> {
             if let Some(secret) = &lease {
                 self.bridge.protect_user_session(secret)?;
             }
+            self.core.contexts.insert(
+                key.clone(),
+                NativeContext {
+                    ready: value.user().is_none() || expected.is_some(),
+                    session: value.clone(),
+                    scope: scope.clone(),
+                    epoch,
+                    lease: lease.clone(),
+                    context: context.clone(),
+                },
+            );
+            if expected.is_none() {
+                if let (Some(user), Some(secret)) = (value.user(), value.credential()) {
+                    let owner = agent_client::current_user::Owner {
+                        peer: key.clone(),
+                        context: context.clone(),
+                    };
+                    let result = network(
+                        self.client.bind_current_user(&owner, user, secret),
+                        &mut self.core,
+                        commands,
+                    )
+                    .await;
+                    if result.is_err() {
+                        return Ok(Reply::CurrentUserSync {
+                            value: self.client.current_user_status()?,
+                        });
+                    }
+                    // A successful HTTP write can outlive immediate native revocation.
+                    if self.core.fences.current(&scope)? != epoch {
+                        let _ = network(
+                            self.client.retire_current_user(&owner, Some(secret), false),
+                            &mut self.core,
+                            commands,
+                        )
+                        .await;
+                        return Err(Error::Identity);
+                    }
+                }
+            }
             // The control lane may retire the peer while credential preparation is in progress.
             let _fence = self.core.fences.admit(&scope, epoch)?;
             self.core.contexts.insert(
                 key,
                 NativeContext {
+                    ready: true,
                     session: value.clone(),
                     scope,
                     epoch,
