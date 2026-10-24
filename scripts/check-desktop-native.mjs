@@ -868,7 +868,8 @@ try {
         try {
           const value = JSON.parse(line);
           if (value.kind === "desktopService") serviceReady = value;
-          else if (value.kind === "serviceFailure") serviceFailed(new Error(value.error));
+          else if (value.kind === "serviceFailure")
+            serviceFailed(new Error(value.error));
           else {
             servicePending.get(value.id)?.resolve(value.value);
             servicePending.delete(value.id);

@@ -42,6 +42,7 @@ pub fn publish(
         unreachable!()
     };
     *target = receipt.into();
+    let run_as = native.install.run_as;
     spec.definition_digest = Sha256::digest(serde_json::to_vec(&spec.steps).unwrap()).into();
     let mut item = policy_directory_fixture(data.tenant);
     item.subject = SelfServiceSubject::Device {};
@@ -56,7 +57,7 @@ pub fn publish(
             version: spec.steps[0].action.version.clone(),
             variant: "default".into(),
         },
-        run_as: native.install.run_as,
+        run_as,
         target: spec.steps[0].target.clone(),
     };
     data.self_service_software = Some(Template { spec: *spec });
@@ -214,7 +215,14 @@ mod tests {
         )
         .unwrap();
         let mut data = server.data.lock().unwrap();
-        let item = publish(&mut data, package.to_str().unwrap(), "org.rss.fixture", false, 3600).unwrap();
+        let item = publish(
+            &mut data,
+            package.to_str().unwrap(),
+            "org.rss.fixture",
+            false,
+            3600,
+        )
+        .unwrap();
         assert!(data.offer.is_none());
         assert!(data.invocations.is_empty());
         let input = SelfServiceInvoke {

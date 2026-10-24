@@ -386,13 +386,18 @@ fn acknowledging_output_does_not_release_an_unclosed_activity() {
     assert!(!facts.quiescent);
     f.runner.acknowledge_capture(&f.plan, &facts).unwrap();
     assert_eq!(f.runner.evidence(&f.plan, &id).unwrap(), Some(facts));
-    assert!(matches!(f.runner.launch(
-        &f.plan, &AttemptId::new("extra").unwrap(),
-        DispatchAllowance {
-            deadline_unix_ms: now().unwrap() + 1000,
-            remaining_timeout_ms: 1000, remaining_output_bytes: 128,
-        }
-    ), Err(Error::Capacity)));
+    assert!(matches!(
+        f.runner.launch(
+            &f.plan,
+            &AttemptId::new("extra").unwrap(),
+            DispatchAllowance {
+                deadline_unix_ms: now().unwrap() + 1000,
+                remaining_timeout_ms: 1000,
+                remaining_output_bytes: 128,
+            }
+        ),
+        Err(Error::Capacity)
+    ));
 }
 
 #[tokio::test]

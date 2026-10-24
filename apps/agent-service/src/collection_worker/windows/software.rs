@@ -111,30 +111,33 @@ fn uninstall(
     for native in &before {
         budget.check()?;
         let result = (|| {
-        let key = open(&format!("{PATH}\\{native}"))?;
-        let optional = |name: &str| -> Result<String, Status> {
-            match registry::software_string(&key, name) {
-                Ok(v) => Ok(v),
-                Err(Status::Missing) => Ok(String::new()),
-                Err(e) => Err(e),
-            }
-        };
-        let view = match view {
-            w::RegistryView::Registry32 => "32",
-            w::RegistryView::Registry64 => "64",
-        };
-        rows.push(item(
-            &format!("win32.uninstall.{view}"),
-            owner,
-            view,
-            native,
-            optional("DisplayName")?,
-            optional("DisplayVersion")?,
-            optional("Publisher")?,
-            optional("InstallLocation")?,
-        )?)
+            let key = open(&format!("{PATH}\\{native}"))?;
+            let optional = |name: &str| -> Result<String, Status> {
+                match registry::software_string(&key, name) {
+                    Ok(v) => Ok(v),
+                    Err(Status::Missing) => Ok(String::new()),
+                    Err(e) => Err(e),
+                }
+            };
+            let view = match view {
+                w::RegistryView::Registry32 => "32",
+                w::RegistryView::Registry64 => "64",
+            };
+            rows.push(item(
+                &format!("win32.uninstall.{view}"),
+                owner,
+                view,
+                native,
+                optional("DisplayName")?,
+                optional("DisplayVersion")?,
+                optional("Publisher")?,
+                optional("InstallLocation")?,
+            )?)
         })();
         if let Err(error) = result {
+            if matches!(error, Status::Timeout | Status::Truncated) {
+                return Err(error);
+            }
             failure.get_or_insert(error);
         }
     }

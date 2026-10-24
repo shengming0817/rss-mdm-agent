@@ -163,8 +163,8 @@ pub(super) fn registry(kind: w::RegistryType, actual: u32, bytes: &[u8]) -> Resu
                     Value::Array(text.split('\0').map(|s| Value::String(s.into())).collect())
                 }
             } else {
-                let text =
-                    String::from_utf16(words.strip_suffix(&[0]).unwrap_or(&words)).map_err(|_| Status::Invalid)?;
+                let text = String::from_utf16(words.strip_suffix(&[0]).unwrap_or(&words))
+                    .map_err(|_| Status::Invalid)?;
                 if text.contains('\0') {
                     return Err(Status::Invalid);
                 }
@@ -182,7 +182,10 @@ pub(super) fn software_string(actual: u32, bytes: &[u8]) -> Result<String, Statu
         2 => w::RegistryType::ExpandSz,
         _ => return Err(Status::Invalid),
     };
-    registry(kind, actual, bytes)?.as_str().map(str::to_owned).ok_or(Status::Invalid)
+    registry(kind, actual, bytes)?
+        .as_str()
+        .map(str::to_owned)
+        .ok_or(Status::Invalid)
 }
 
 #[cfg(any(windows, test))]
@@ -353,9 +356,9 @@ pub(super) fn adapter_addresses(
             .get("IPAddress")
             .and_then(Value::as_str)
             .ok_or(Status::Missing)?
-            .parse::<std::net::IpAddr>()
-            .map_err(|_| Status::Invalid)?
-            .to_string();
+            .to_owned();
+        // Windows supplies scoped IPv6 strings (for example fe80::1%4). The
+        // wire declares strings; IpAddr parsing would reject valid native data.
         values.insert(ip);
         if values.len() > 64 {
             return Err(Status::Truncated);
