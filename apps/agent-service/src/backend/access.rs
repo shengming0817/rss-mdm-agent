@@ -29,7 +29,10 @@ pub(crate) fn compile(
     }
     task.validate()?;
     materials.validate_offer(offer)?;
-    if task.platform != w::TaskPlatform::Windows || plan::platform()? != Platform::Windows {
+    if !matches!(
+        (task.platform, plan::platform()?),
+        (w::TaskPlatform::Windows, Platform::Windows) | (w::TaskPlatform::Macos, Platform::Macos)
+    ) {
         return Err(Error::Unsupported);
     }
     access.ready(task)?;
@@ -43,6 +46,8 @@ pub(crate) fn compile(
         },
     );
     let create = matches!(task.action, w::AccessAction::Create { .. });
+    let controlled =
+        create || (task.platform == w::TaskPlatform::Macos && access.password(task).is_ok());
     let input_reference = reference(task.task_id.to_string(), task.attempt_id.to_string())?;
     let (plan, mut artifacts) = super::native_worker::compile(
         offer,
@@ -60,7 +65,7 @@ pub(crate) fn compile(
             expires_at: task.expires_at,
             definition_digest: task.definition_digest,
             output: crate::access_worker::OUTPUT_BYTES,
-            stdin: if create {
+            stdin: if controlled {
                 StandardInput::Controlled {
                     reference: input_reference,
                     encoding: TextEncoding::Utf8,
@@ -83,14 +88,14 @@ pub(crate) fn compile(
             .map_err(|_| Error::Protocol)
         },
     )?;
-    if create {
+    if controlled {
         artifacts.controlled_input = Some(access.password(task)?);
     }
     Ok((plan, artifacts))
 }
 pub(crate) fn verify_input(plan: &FrozenExecution, task: &w::AccessTaskSpec) -> Result<(), Error> {
     let root = crate::access_worker::plan_root(plan)?;
-    let installation = match plan.spec().request.parameters.get("access-installation") {
+    let installation: uuid::Uuid = match plan.spec().request.parameters.get("access-installation") {
         Some(InputValue::Literal { value }) => {
             serde_json::from_value(value.clone()).map_err(|_| Error::Untrusted)?
         }

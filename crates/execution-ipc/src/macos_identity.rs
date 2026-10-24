@@ -66,3 +66,19 @@ mod boot_tests {
         );
     }
 }
+
+/// Recheck the kernel boot/session and current GUI owner before a local account ceremony.
+pub fn verify_console(subject: &str, session: u32, binding: &Id) -> Result<(), Error> {
+    let uid: u32 = subject.parse().map_err(|_| Error::Unbound)?;
+    if uid.to_string() != subject
+        || session == 0
+        || !console_user(uid)
+        || binding.as_str() != format!("{}/{}", boot_generation()?.as_str(), session)
+    {
+        return Err(Error::Unbound);
+    }
+    if crate::macos_service::helper_session(uid)? != session {
+        return Err(Error::Unbound);
+    }
+    Ok(())
+}

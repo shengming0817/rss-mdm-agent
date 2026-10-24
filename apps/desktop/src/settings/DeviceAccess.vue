@@ -10,9 +10,16 @@ type Result = SelfServiceCommands["device_access"]["output"];
 type Directory = Extract<Result, { kind: "directory" }>;
 type Task = Extract<Result, { kind: "tasks" }>["tasks"][number];
 const props = withDefaults(
-  defineProps<{ port?: DeviceAccessPort; active?: boolean; ready?: boolean }>(),
+  defineProps<{
+    port?: DeviceAccessPort;
+    active?: boolean;
+    ready?: boolean;
+    platform?: string;
+  }>(),
   { active: true, ready: true },
 );
+const mac = computed(() => props.platform === "macos");
+const macStatus = ref<Extract<Result, { kind: "macStatus" }>>();
 const directory = ref<Directory>(),
   tasks = ref<Task[]>([]),
   selected = ref<Task>();
@@ -40,6 +47,7 @@ function reset() {
   epoch++;
   clearSecret();
   directory.value = undefined;
+  macStatus.value = undefined;
   tasks.value = [];
   busy.value = false;
   message.value = "";
@@ -81,6 +89,10 @@ async function refresh() {
       throw new Error("response");
     directory.value = listing;
     tasks.value = pending.tasks;
+    if (mac.value) {
+      const status = await port({ kind: "macStatus" });
+      if (valid() && status.kind === "macStatus") macStatus.value = status;
+    }
   });
 }
 async function more() {
@@ -106,11 +118,17 @@ async function enroll(policy: string) {
     if (!valid()) return;
     if (result.kind !== "binding") throw new Error("response");
     clearSecret();
-    message.value = "关联请求已确认。请刷新并完成本地验证器设置。";
+    message.value = mac.value
+      ? "关联已确认。请在系统设置的用户与群组中完成 Platform SSO 注册；本地密码登录继续保留。"
+      : "关联请求已确认。请刷新并完成本地验证器设置。";
   });
 }
 async function prepare(task: Task) {
   clearSecret();
+  if (mac.value) {
+    selected.value = task;
+    return;
+  }
   await action(async (port, valid) => {
     const result = await port({ kind: "prepare", task: task.task });
     if (!valid()) return;
@@ -119,6 +137,28 @@ async function prepare(task: Task) {
     selected.value = task;
     secret.value = result.secret;
     message.value = "";
+  });
+}
+async function confirmMac() {
+  const task = selected.value;
+  if (!task) return;
+  const input = {
+    kind: "prepareMac" as const,
+    task: task.task,
+    password: password.value,
+  };
+  password.value = "";
+  await action(async (port, valid) => {
+    try {
+      const result = await port(input);
+      if (!valid()) return;
+      if (result.kind !== "prepared") throw new Error("response");
+      clearSecret();
+      message.value =
+        "本机密码已提交给受控账号操作。Secure Token 和系统注册状态需分别确认。";
+    } finally {
+      input.password = "";
+    }
   });
 }
 async function confirm() {
@@ -147,7 +187,7 @@ async function confirm() {
 }
 function bindingText(binding: Directory["bindings"][number]) {
   if (binding.effect?.state === "unbound")
-    return "RSS 登录已移除，Windows 账户和数据保留";
+    return "RSS 关联已移除，本地账户和数据保留";
   if (binding.revoked) return "已请求移除，等待本机确认";
   if (
     binding.appliedRevision === binding.revision &&
@@ -181,15 +221,52 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <section class="device-access" aria-label="Windows RSS 登录">
-    <h3>Windows RSS 登录</h3>
-    <p>
+  <section
+    class="device-access"
+    :aria-label="mac ? 'Mac Platform SSO' : 'Windows RSS 登录'"
+  >
+    <h3>{{ mac ? "Mac Platform SSO" : "Windows RSS 登录" }}</h3>
+    <p v-if="mac">
+      使用当前本地账号关联 RSS，由系统管理 Secure Enclave
+      注册与认证。本地密码登录始终保留；Secure Token、FileVault 和 SSO
+      是独立状态。
+    </p>
+    <p v-else>
       在 RSS 登录选项中，使用 Windows
       密码和验证器验证码登录；恢复密钥可代替验证码。系统原有登录选项继续保留。
     </p>
-    <p v-if="!available">请登录 RSS 账户并保持当前 Windows 控制台解锁。</p>
+    <p v-if="!available">请登录 RSS 账户并保持当前本地会话解锁。</p>
     <template v-else>
       <button :disabled="busy" @click="refresh">刷新状态</button>
+      <p v-if="macStatus" role="status">
+        扩展：{{
+          macStatus.extensionInstalled ? "已验证安装" : "未安装或需修复"
+        }}； 设备注册：{{
+          macStatus.deviceRegistered === null
+            ? "未知"
+            : macStatus.deviceRegistered
+              ? "已注册"
+              : "未注册"
+        }}； 用户注册：{{
+          macStatus.userRegistered === null
+            ? "未知"
+            : macStatus.userRegistered
+              ? "已注册"
+              : "未注册"
+        }}； SSO：{{
+          macStatus.loginReady === null
+            ? "服务暂不可用"
+            : macStatus.loginReady
+              ? "服务端允许认证，尚需实际登录确认"
+              : "待注册或修复"
+        }}。 系统用户注册：{{
+          macStatus.nativeUserRegistered === null
+            ? "暂无系统回执"
+            : macStatus.nativeUserRegistered
+              ? "已观察"
+              : "未注册"
+        }}。
+      </p>
       <p v-if="failure" role="alert">{{ failure }}</p>
       <p v-if="message" role="status">{{ message }}</p>
       <ul v-if="directory?.bindings.length">
@@ -210,24 +287,57 @@ onUnmounted(() => {
           }}
         </p>
         <button :disabled="busy" @click="enroll(policy.policy)">
-          关联当前 Windows 账户
+          关联当前本地账户
         </button>
       </div>
       <button v-if="directory?.after" :disabled="busy" @click="more">
         更多可用策略
       </button>
       <p>
-        已有绑定的修改、新账户创建和因子重置由管理员在后台授权。Windows
+        已有绑定的修改、新账户创建和认证材料重置由管理员在后台授权。
         本地管理员身份不授予 RSS 管理权限。
       </p>
       <div v-for="task in tasks" :key="task.task">
         <p v-if="task.createName">
           组织已授权创建本地账户：{{ task.createName }}
         </p>
-        <button :disabled="busy" @click="prepare(task)">设置验证器</button>
+        <button :disabled="busy" @click="prepare(task)">
+          {{
+            mac
+              ? task.createName
+                ? "设置本机账号密码"
+                : "完成 Secure Token 授权"
+              : "设置验证器"
+          }}
+        </button>
       </div>
       <form
-        v-if="selected && secret"
+        v-if="mac && selected"
+        autocomplete="off"
+        @submit.prevent="confirmMac"
+      >
+        <label
+          >{{ selected.createName ? "新本地账号密码" : "当前本地账号密码"
+          }}<input
+            v-model="password"
+            type="password"
+            maxlength="256"
+            required
+            autocomplete="new-password"
+        /></label>
+        <p>
+          密码只在本机用于建号。若系统需要 Secure Token
+          授权，请由合格本机管理员完成；未确认前不会显示已完成。
+        </p>
+        <button :disabled="busy" type="submit">
+          {{ selected.createName ? "确认建号" : "由系统请求管理员授权" }}
+        </button>
+        <button :disabled="busy" type="button" @click="clearSecret">
+          取消
+        </button>
+      </form>
+      <form
+        v-if="!mac && selected && secret"
         autocomplete="off"
         @submit.prevent="confirm"
       >

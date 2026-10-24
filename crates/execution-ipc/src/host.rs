@@ -499,6 +499,27 @@ impl Peer {
     pub(crate) fn native_handle(&self) -> usize {
         self.native
     }
+    /// Verify a pinned extension image for a system-selected role or user account.
+    /// This admits no Desktop/helper operation; the caller must restrict the request class first.
+    pub fn authenticate_extension(
+        &self,
+        image: &installation_security::Artifact,
+    ) -> Result<String, execution_app::Error> {
+        #[cfg(target_os = "macos")]
+        {
+            let uid = self.uid.ok_or(execution_app::Error::Denied)?;
+            self.authenticate(&PeerPolicy {
+                images: vec![image.clone()],
+                subjects: vec![uid.to_string()],
+                interactive: false,
+            })
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = image;
+            Err(execution_app::Error::Unsupported)
+        }
+    }
     /// Kernel peer process identity, never accepted from request bytes.
     pub fn pid(&self) -> u32 {
         self.pid
@@ -688,6 +709,11 @@ impl NativeContextSession {
     deny_unknown_fields
 )]
 pub enum Request {
+    /// Only the separately pinned native extension may use this route.
+    PlatformSso {
+        /// Bounded registration operation; never accepts a caller-selected local account.
+        input: crate::platform_sso::Operation,
+    },
     /// Authenticated desktop-only Device Access setup; no AI equivalent.
     DeviceAccess {
         /// Exact current employee context.
@@ -873,6 +899,11 @@ struct Envelope {
     rename_all_fields = "camelCase"
 )]
 pub enum Reply {
+    /// Reply only to an authenticated Platform SSO extension.
+    PlatformSso {
+        /// Bounded result containing no private keys.
+        value: crate::platform_sso::Response,
+    },
     /// Device Access response, including ephemeral local setup material when requested.
     DeviceAccess {
         /// Typed desktop-only result.

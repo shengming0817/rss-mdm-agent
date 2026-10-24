@@ -170,6 +170,7 @@ pub struct Data {
     pub renewal_lookup_calls: Vec<Value>,
     pub renewal_lookup_authenticated: Vec<bool>,
     pub tls_required: bool,
+    pub psso_calls: Vec<(String, Value)>,
     pub employee_calls: Vec<(String, Value)>,
     pub employee_credentials: Vec<bool>,
     pub self_service_directory: Option<SelfServiceDirectoryResponse>,
@@ -658,6 +659,7 @@ impl Server {
             renewal_lookup_calls: Vec::new(),
             renewal_lookup_authenticated: Vec::new(),
             tls_required: tls,
+            psso_calls: vec![],
             employee_calls: vec![],
             employee_credentials: vec![],
             self_service_directory: None,
@@ -1077,6 +1079,21 @@ async fn handler(
         }
         let tenant = d.tenant;
         return current_user::response(&mut d.current_user, tenant, &method, &headers, value);
+    }
+    if path.contains("/platform-sso/") {
+        if !authenticated
+            || headers.contains_key("x-rss-user-session")
+            || headers.contains_key("cookie")
+        {
+            return runtime_error(StatusCode::UNAUTHORIZED, ErrorCode::InvalidIdentity);
+        }
+        d.psso_calls.push((uri.to_string(), value.clone()));
+        if let Some((suffix, body)) = &d.response_override {
+            if path.ends_with(suffix) {
+                return axum::Json(body.clone()).into_response();
+            }
+        }
+        return StatusCode::NOT_FOUND.into_response();
     }
     if path.contains("/self-service") {
         return self_service_response(&mut d, &uri, &headers, value);
