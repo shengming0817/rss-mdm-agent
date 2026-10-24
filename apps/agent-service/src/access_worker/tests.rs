@@ -718,3 +718,16 @@ fn disabling_factors_does_not_require_an_interactive_role_observation() {
         w::AccessEffect::Applied { .. }
     ));
 }
+
+#[test]
+fn health_success_requires_ready_not_merely_an_observed_state() {
+    assert!(component_health(Component::Ready).is_ok());
+    for state in [
+        Component::Unavailable,
+        Component::NotInstalled,
+        Component::MaintenanceDisabled,
+        Component::RebootRequired,
+    ] {
+        assert_eq!(component_health(state), Err(Error::Unavailable));
+    }
+}

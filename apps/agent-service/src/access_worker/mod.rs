@@ -16,6 +16,17 @@ pub(crate) mod macos;
 mod tests;
 #[cfg(windows)]
 mod windows;
+/// Both activation and the health CLI require a usable component, not merely a readable status.
+#[cfg(any(windows, test))]
+pub(crate) fn component_health(
+    state: execution_ipc::device_access::WindowsComponentState,
+) -> Result<(), Error> {
+    if state == execution_ipc::device_access::WindowsComponentState::Ready {
+        Ok(())
+    } else {
+        Err(Error::Unavailable)
+    }
+}
 pub(crate) const PROFILE: &str = "native-device-access-worker";
 pub(crate) const OUTPUT_BYTES: u64 = 16384;
 #[derive(Serialize, Deserialize)]

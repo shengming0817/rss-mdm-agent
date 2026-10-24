@@ -348,6 +348,16 @@ impl<S: IdentityProvider> DeviceService<S> {
     ) -> Result<(), Error> {
         #[cfg(windows)]
         self.core.access.sync_registration(&self.client)?;
+        let result = self.drive_inner(commands).await;
+        // Includes early returns and nested endpoint errors; persisted revocation wins over result.
+        #[cfg(windows)]
+        self.core.access.sync_registration(&self.client)?;
+        result
+    }
+    async fn drive_inner(
+        &mut self,
+        commands: &mut tokio::sync::mpsc::Receiver<Command>,
+    ) -> Result<(), Error> {
         if let Some(deployment) = self
             .installation
             .clone()
@@ -397,7 +407,7 @@ impl<S: IdentityProvider> DeviceService<S> {
             }
         }
         self.activate_enterprise()?;
-        self.update_identity_gate();
+        self.update_identity_gate()?;
         if self.core.stopping {
             return Ok(());
         }
@@ -416,7 +426,7 @@ impl<S: IdentityProvider> DeviceService<S> {
             self.core.reconcile()?;
             self.next_enrollment = std::time::Instant::now() + std::time::Duration::from_secs(2);
             let result = network(self.client.drive_pki(), &mut self.core, commands).await;
-            self.update_identity_gate();
+            self.update_identity_gate()?;
             result?;
         }
         if let Err(error) = network(self.client.drive_connections(), &mut self.core, commands).await
@@ -428,7 +438,7 @@ impl<S: IdentityProvider> DeviceService<S> {
         }
         // Task trust belongs to the communication owner. A failed refresh retains usable installed keys.
         let _ = network(self.client.drive_task_trust(), &mut self.core, commands).await;
-        self.update_identity_gate();
+        self.update_identity_gate()?;
         if !self.core.host.identity_ready() {
             self.core.revoke_preparations()?;
             self.core.reconcile()?;
@@ -786,16 +796,6 @@ impl<S: IdentityProvider> DeviceService<S> {
                     e,
                     Error::CredentialRevoked | Error::CredentialRetired | Error::CertificateExpired
                 ) {
-                    #[cfg(windows)]
-                    if matches!(e, Error::CredentialRevoked) {
-                        device_access::Store::open(
-                            &self.core.access.root,
-                            self.core.access.installation,
-                        )
-                        .map_err(|_| Error::Storage)?
-                        .retire_registration()
-                        .map_err(|_| Error::Storage)?;
-                    }
                     self.core.host.revoked.store(true, Ordering::Release);
                     self.core
                         .app
@@ -1117,7 +1117,9 @@ impl<S: IdentityProvider> DeviceService<S> {
         }
         Ok(())
     }
-    fn update_identity_gate(&mut self) {
+    fn update_identity_gate(&mut self) -> Result<(), Error> {
+        #[cfg(windows)]
+        self.core.access.sync_registration(&self.client)?;
         if let Some(deployment) = &self.installation {
             if self.client.registration().is_ok()
                 && matches!(
@@ -1127,7 +1129,7 @@ impl<S: IdentityProvider> DeviceService<S> {
             {
                 self.core.host.revoked.store(true, Ordering::Release);
                 self.core.host.local_stopped.store(true, Ordering::Release);
-                return;
+                return Ok(());
             }
         }
         match self.client.runtime_deadline().and_then(|until| {
@@ -1156,10 +1158,14 @@ impl<S: IdentityProvider> DeviceService<S> {
                 }
             }
         }
+        Ok(())
     }
     fn drive_error(&mut self, error: Error) {
         eprintln!("agent_drive: {error}");
-        self.update_identity_gate();
+        if let Err(error) = self.update_identity_gate() {
+            self.core.host.revoked.store(true, Ordering::Release);
+            eprintln!("agent_identity_sync: {error}");
+        }
     }
     /// Stop accepted work. Stopping never claims process termination or effect rollback.
     pub fn stop(&mut self) -> Result<(), Error> {

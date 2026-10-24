@@ -77,7 +77,7 @@ fn apply(input: &Input, native: &mut impl Native) -> Result<Effect, Error> {
     if enabled && matches!(ready, Component::RebootRequired | Component::Unavailable) {
         return Ok(Effect::Unknown);
     }
-    if enabled && ready != Component::Ready {
+    if enabled && component_health(ready).is_err() {
         return Ok(Effect::Failed {
             reason: Failure::Unsupported,
         });

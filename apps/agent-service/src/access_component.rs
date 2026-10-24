@@ -121,10 +121,9 @@ pub fn run(args: &[OsString]) -> Result<(), Error> {
         ["health"] => {
             let config =
                 device_access::windows::installation().map_err(|_| Error::Configuration)?;
-            println!(
-                "RSS component: {:?}; DLL not loaded",
-                readiness(&config.root, config.id)?
-            );
+            let state = readiness(&config.root, config.id)?;
+            println!("RSS component: {state:?}; DLL not loaded");
+            crate::access_worker::component_health(state)?;
         }
         ["register", path] => {
             let deployment = crate::deployment::Deployment::load(Path::new(path))?;
