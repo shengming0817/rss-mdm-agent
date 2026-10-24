@@ -335,6 +335,8 @@ async fn current_software_steps_compile_from_exact_prefixed_artifacts() {
         let material_root = root.path.join("materials");
         execution_runner::staging::initialize(&material_root).unwrap();
         let config = ExecutionConfig {
+            #[cfg(test)]
+            worker_image_fixture: None,
             local_permissions: crate::local_permissions::Config {
                 policy_file: "/unavailable/local-permissions.json".into(),
             },

@@ -30,6 +30,11 @@ use std::{
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExecutionConfig {
+    // Explicit non-executing fixture identity; absent from production binaries and wire.
+    #[cfg(test)]
+    #[serde(skip)]
+    pub(crate) worker_image_fixture:
+        Option<fn() -> Result<execution_contract::SoftwareMaterial, Error>>,
     pub local_permissions: crate::local_permissions::Config,
     pub work_root: PathBuf,
     pub material_root: PathBuf,
@@ -157,6 +162,7 @@ impl<S: IdentityProvider> DeviceService<S> {
     }
     // The only production caller supplies MaterialRoot::open. Unit preparation fixtures
     // select an explicit fixture constructor without changing dispatch or journal ownership.
+    #[allow(clippy::too_many_arguments)] // Explicit installation, journal and OS resource owners.
     fn assemble(
         mut client: Client<S, SystemClock>,
         journal: &Path,
@@ -1129,12 +1135,15 @@ impl<S: IdentityProvider> DeviceService<S> {
         } else {
             Ok(())
         };
+        let previews = self.core.cancel_settings_previews();
         let commands = self
             .core
             .app
-            .stop_active(128)
+            .service_shutdown(128)
             .map_err(crate::error::app_error);
         commands?;
+        previews?;
+        self.core.reconcile()?;
         telemetry.map(|_| ())
     }
 }
@@ -2059,7 +2068,7 @@ impl execution_ipc::host::Handler for ServiceHandle {
         let _ = self.call(LocalRequest::Stop, String::new(), 0, None);
         match self
             .completion
-            .recv_timeout(std::time::Duration::from_secs(5))
+            .recv_timeout(std::time::Duration::from_secs(28))
         {
             Ok(Ok(())) => Ok(()),
             _ => Err(execution_app::Error::OutcomeUnknown),

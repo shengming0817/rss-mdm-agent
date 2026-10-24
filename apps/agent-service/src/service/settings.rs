@@ -10,6 +10,44 @@ fn metadata<T: serde::de::DeserializeOwned>(plan: &FrozenExecution, key: &str) -
     serde_json::from_value(value.clone()).map_err(|_| Error::Untrusted)
 }
 impl Core {
+    pub(super) fn cancel_settings_previews(&mut self) -> Result<(), Error> {
+        let mut after = None;
+        loop {
+            let page = self
+                .app
+                .service_tasks(after.as_ref(), 128)
+                .map_err(map_app_error)?;
+            for item in &page.items {
+                let request = &item.action.request_id;
+                let input = self
+                    .app
+                    .service_frozen_input(request)
+                    .map_err(map_app_error)?;
+                if input.spec().request.authority != self.host.root.authority
+                    || input.spec().launch.interpreter.profile.id.as_str()
+                        != local_settings::PROFILE
+                    || item.status.attempts == 0
+                    || item.status.process.as_ref().is_some_and(|p| p.finished)
+                {
+                    continue;
+                }
+                if matches!(
+                    metadata::<Action>(&input, "local-settings-action")?,
+                    Action::Change {
+                        patch: SettingsPatch::Display { .. },
+                        ..
+                    }
+                ) {
+                    match local_settings::decide(&self.config, request, false) {
+                        Ok(()) | Err(Error::Conflict) => {}
+                        Err(error) => return Err(error),
+                    }
+                }
+            }
+            let Some(next) = page.next else { return Ok(()) };
+            after = Some(next);
+        }
+    }
     pub(super) fn capture_settings(&mut self, request: &RequestId) -> Result<(), Error> {
         let frozen = self
             .app
@@ -121,7 +159,7 @@ impl Core {
                 if let SettingsOperation::KeepDisplay { digest, .. } = input {
                     let policy = self.software_policy()?;
                     let action: Action = metadata(&frozen, "local-settings-action")?;
-                    local_settings::Permit::new(frozen.clone(), policy, &action)?
+                    local_settings::Permit::keep(frozen.clone(), policy, &action)?
                         .verify(&frozen, self.host.clock.millis()?)?;
                     if digest != frozen.digest() {
                         return Err(Error::Conflict);
@@ -183,7 +221,7 @@ impl Core {
                 {
                     let original = self.settings_input(command, context, request)?;
                     match metadata::<Action>(&original, "local-settings-action")? {
-                        Action::Change { before, .. } => before,
+                        Action::Change { before, .. } => *before,
                         _ => return Err(Error::Conflict),
                     }
                 } else {
@@ -199,13 +237,17 @@ impl Core {
                     request,
                     Action::Change {
                         expected: expected.clone(),
-                        before,
+                        before: Box::new(before),
                         patch: patch.clone(),
                     },
                 )
             }
         };
-        uuid::Uuid::parse_str(request.as_str()).map_err(|_| Error::Protocol)?;
+        let identity = uuid::Uuid::parse_str(request.as_str()).map_err(|_| Error::Protocol)?;
+        if identity.is_nil() || identity.to_string() != request.as_str() {
+            return Err(Error::Protocol);
+        }
+
         // Global request IDs remain unique across local and enterprise namespaces.
         if self
             .app
@@ -247,9 +289,7 @@ impl Core {
             patch,
         } = &action
         {
-            if !patch.valid()
-                || before.revision != *expected
-                || now.saturating_sub(before.collected_at_unix_ms) > 30_000
+            if !patch.valid() || before.revision != *expected || !local_settings::fresh(before, now)
             {
                 return Err(Error::Conflict);
             }
@@ -385,13 +425,20 @@ impl Core {
             .app
             .status(&self.local_caller(), request)
             .map_err(map_app_error)?;
+        let rejected = matches!(
+            status.phase,
+            execution_app::TaskPhase::AdmissionDenied
+                | execution_app::TaskPhase::FailedBeforeDispatch
+        );
         let mut response = SettingsResponse {
             write_allowed: false,
             request: Some(request.clone()),
             digest: Some(plan.digest().clone()),
-            finished: status.cancel_requested && status.attempts == 0,
+            finished: rejected || status.cancel_requested && status.attempts == 0,
             effect: if status.cancel_requested && status.attempts == 0 {
                 SettingsEffect::Cancelled
+            } else if rejected {
+                SettingsEffect::Failed
             } else if status.attempts == 0 {
                 SettingsEffect::Pending
             } else {
@@ -399,7 +446,7 @@ impl Core {
             },
             snapshot: None,
             keep_before_unix_ms: None,
-            reason: None,
+            reason: rejected.then(|| "执行准入未通过，未开始设置修改".into()),
         };
         if let Some(facts) = self
             .app
@@ -417,13 +464,29 @@ impl Core {
                 response.finished = facts.quiescent;
                 response.reason = Some("执行已中断或缺少完整回读，当前效果无法确认".into());
             }
-            if response.finished {
+            if response.finished && !rejected {
+                let failed_without_effect = response.effect == SettingsEffect::Failed
+                    && (match metadata::<Action>(plan, "local-settings-action")? {
+                        Action::Read { .. } => true,
+                        Action::Change {
+                            before,
+                            patch: SettingsPatch::Display { .. },
+                            ..
+                        } => response
+                            .snapshot
+                            .as_ref()
+                            .is_some_and(|snapshot| snapshot.targets == before.targets),
+                        _ => false,
+                    });
                 let assessment = match response.effect {
                     SettingsEffect::Applied => execution_lifecycle::EffectAssessment::Satisfied,
                     SettingsEffect::Observed
                     | SettingsEffect::OpenRequested
                     | SettingsEffect::Restored => execution_lifecycle::EffectAssessment::NoEffect,
                     SettingsEffect::Conflict => execution_lifecycle::EffectAssessment::NotSatisfied,
+                    SettingsEffect::Failed if failed_without_effect => {
+                        execution_lifecycle::EffectAssessment::NoEffect
+                    }
                     _ => execution_lifecycle::EffectAssessment::Unknown,
                 };
                 self.assess_local(plan, facts, assessment)?;
@@ -455,9 +518,8 @@ fn native_response(
         if value.request.as_ref() != Some(&plan.spec().request.request_id) {
             return Err(Error::Untrusted);
         }
-        if !value.finished && value.effect == SettingsEffect::Preview && !facts.finished {
-            response = Some(value);
-        } else if value.finished
+        let preview = !value.finished && value.effect == SettingsEffect::Preview && !facts.finished;
+        let complete = value.finished
             && facts.finished
             && facts.quiescent
             && facts.quality != OutputQuality::Truncated
@@ -469,8 +531,8 @@ fn native_response(
                         == crate::local_execution::hash(&facts.stdout)
                             .map(|h| h.as_str().to_owned())
                             .unwrap_or_default()
-            })
-        {
+            });
+        if preview || complete {
             response = Some(value);
         }
     }

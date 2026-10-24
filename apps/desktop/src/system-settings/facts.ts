@@ -35,6 +35,13 @@ export function homeFacts(controller?: SystemSettingsController) {
     storage = facts?.storage,
     power = facts?.power;
   const observations = controller?.state.observations;
+  const nativeTime = (section: "network" | "power", label: string) => {
+    const snapshot = observations?.get(section)?.snapshot;
+    if (!snapshot) return "";
+    const age =
+      (controller?.state.now ?? Date.now()) - snapshot.collectedAtUnixMs;
+    return `${label}${age < 0 ? "时间待核实" : age >= 30_000 ? "已过期" : "已读取"} · ${new Date(snapshot.collectedAtUnixMs).toLocaleTimeString()}`;
+  };
   const source = observations
     ?.get("power")
     ?.snapshot?.targets.find((t) => t.id === "power-source");
@@ -94,7 +101,7 @@ export function homeFacts(controller?: SystemSettingsController) {
         : network?.quality === "complete"
           ? `${interfaces.length} 个有地址的接口`
           : "未读取",
-    networkDetail: `${quality(network)}${network?.collectedAt ? ` · ${new Date(network.collectedAt * 1000).toLocaleTimeString()}` : ""}`,
+    networkDetail: `${typeof routeInterface === "string" ? `${nativeTime("network", "路由状态")} · ` : ""}${quality(network)}${network?.collectedAt ? ` · ${new Date(network.collectedAt * 1000).toLocaleTimeString()}` : ""}`,
     storageFree: validStorage ? (free! / 1000 ** 3).toFixed(1) : "—",
     storageDetail: validStorage
       ? `${shared ? "系统卷所属容器" : "系统卷"} · 共 ${(total! / 1000 ** 3).toFixed(1)} GB · ${quality(storage)}`
@@ -108,7 +115,7 @@ export function homeFacts(controller?: SystemSettingsController) {
         : validPercent !== undefined
           ? `${Math.round(validPercent)}%`
           : "—",
-    batteryDetail: `${typeof provider === "string" ? `${provider} · ` : ""}${quality(power)}${power?.collectedAt ? ` · ${new Date(power.collectedAt * 1000).toLocaleTimeString()}` : ""}`,
+    batteryDetail: `${typeof provider === "string" ? `${provider} · ${nativeTime("power", "供电状态")} · ` : ""}${quality(power)}${power?.collectedAt ? ` · ${new Date(power.collectedAt * 1000).toLocaleTimeString()}` : ""}`,
     batteryPercent: batteryPresent !== false ? validPercent : undefined,
   };
 }

@@ -725,6 +725,8 @@ mod gc_tests {
         )
         .unwrap();
         let config = ExecutionConfig {
+            #[cfg(test)]
+            worker_image_fixture: None,
             local_permissions: crate::local_permissions::Config {
                 policy_file: "/unavailable/local-permissions.json".into(),
             },
@@ -774,6 +776,8 @@ mod gc_tests {
         )
         .unwrap();
         let config = ExecutionConfig {
+            #[cfg(test)]
+            worker_image_fixture: None,
             local_permissions: crate::local_permissions::Config {
                 policy_file: "/unavailable/local-permissions.json".into(),
             },

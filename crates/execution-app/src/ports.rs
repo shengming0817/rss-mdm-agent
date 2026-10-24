@@ -129,6 +129,12 @@ pub enum ObservationStage {
 }
 /// Trusted bounded runner seam. Only dispatch may start work; observations never replay it.
 pub trait RunnerPort {
+    /// Keep the original physical owners alive for their bounded stop/cleanup protocol.
+    /// Unsupported adapters cannot imply a completed shutdown.
+    fn shutdown(&self) -> Result<(), Error> {
+        Err(Error::OutcomeUnknown)
+    }
+
     /// Close only original frozen software resources, including after cancellation or expiry.
     /// This permission cannot start or repeat an install, upgrade, removal or detector.
     fn resume_software_cleanup(&self, _resume: SoftwareCleanupResume) -> Result<(), Error> {

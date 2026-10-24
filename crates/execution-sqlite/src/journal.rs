@@ -164,8 +164,8 @@ impl Store {
     }
     pub(crate) fn check_scope(&self, scope: &Scope) -> Result<(), Error> {
         if scope.authority != self.authority
-            && !(self.installation_owner
-                && !matches!(scope.authority, execution_contract::Authority::Test { .. }))
+            && (!self.installation_owner
+                || matches!(scope.authority, execution_contract::Authority::Test { .. }))
         {
             return Err(Error::Denied);
         }

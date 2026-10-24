@@ -69,7 +69,18 @@ impl NativeRunner {
     }
     /// Stop physical owners without changing journal outcomes or manufacturing quiescence.
     pub fn shutdown(&self) -> Result<(), Error> {
-        self.shutdown_until(Instant::now() + Duration::from_secs(3))
+        self.shutdown_until(self.shutdown_deadline()?)
+    }
+    pub(crate) fn shutdown_deadline(&self) -> Result<Instant, Error> {
+        let records = self.records.lock().map_err(|_| Error::Unavailable)?;
+        let display = records.values().any(|r| {
+            display_preview(&r.plan)
+                && r.facts
+                    .lock()
+                    .ok()
+                    .is_some_and(|f| f.as_ref().is_none_or(|f| !f.finished))
+        });
+        Ok(Instant::now() + Duration::from_secs(if display { 25 } else { 3 }))
     }
     pub(crate) fn shutdown_until(&self, until: Instant) -> Result<(), Error> {
         loop {
@@ -354,6 +365,10 @@ impl Drop for NativeRunner {
     }
 }
 impl RunnerPort for NativeRunner {
+    fn shutdown(&self) -> Result<(), Error> {
+        NativeRunner::shutdown(self)
+    }
+
     fn resume_software_cleanup(
         &self,
         resume: execution_app::SoftwareCleanupResume,
@@ -917,11 +932,12 @@ fn run_delegated(
         publish(slot, facts);
     };
     let mut stop_sent = false;
-    let mut ending = deadline + Duration::from_secs(6);
+    let stop_window = Duration::from_secs(if display_preview(plan) { 23 } else { 6 });
+    let mut ending = deadline + stop_window;
     loop {
         if !stop_sent && (cancel.load(Ordering::Acquire) || Instant::now() >= deadline) {
             stop_sent = true;
-            ending = Instant::now() + Duration::from_secs(6);
+            ending = Instant::now() + stop_window;
             let _ = connection.exchange(C::Stop {
                 input: Box::new(plan.spec().clone()),
                 attempt: attempt.clone(),
@@ -1112,8 +1128,7 @@ async fn run(
     let software = invocation.is_some();
     // A native display preview owns a bounded rollback independently of UI cancellation.
     // Keep the original process/job owner alive until it can restore; never detach activity.
-    let display_preview = recipe.launch.interpreter.profile.id.as_str() == "native-settings-worker"
-        && plan.spec().request.operation.resource.id.as_str() == "settings:Display";
+    let display_preview = display_preview(&plan);
     let mut next_session_check = Instant::now();
     loop {
         let clock = Instant::now();
@@ -1287,15 +1302,7 @@ async fn run(
         }
     }
     let collection_closed = collection
-        && (facts.end == ProcessEnd::Exited
-            || display_preview && facts.end == ProcessEnd::Cancelled)
-        && facts.failure_kind == ProcessFailureKind::None
-        && facts.exit_code == Some(0)
-        && serde_json::from_slice::<CollectionCompletion>(&facts.stderr).is_ok_and(|r| {
-            r.closed
-                && r.input_sha256 == recipe.launch.artifact.sha256.as_str()
-                && r.output_sha256 == format!("{:x}", Sha256::digest(&facts.stdout))
-        });
+        && collection_completion(&facts, &recipe.launch.artifact.sha256, display_preview);
     let operation_closed = native_worker
         && facts.end == ProcessEnd::Exited
         && facts.failure_kind == ProcessFailureKind::None
@@ -1345,6 +1352,22 @@ async fn run(
     }
     publish(&facts);
 }
+// Stop classification is preserved separately from a trusted worker's physical closure.
+fn collection_completion(facts: &ProcessEvidence, input: &Digest, display: bool) -> bool {
+    (display || (facts.end == ProcessEnd::Exited && facts.failure_kind == ProcessFailureKind::None))
+        && facts.exit_code == Some(0)
+        && serde_json::from_slice::<CollectionCompletion>(&facts.stderr).is_ok_and(|r| {
+            r.closed
+                && r.input_sha256 == input.as_str()
+                && r.output_sha256 == format!("{:x}", Sha256::digest(&facts.stdout))
+        })
+}
+
+fn display_preview(plan: &FrozenExecution) -> bool {
+    plan.spec().launch.interpreter.profile.id.as_str() == "native-settings-worker"
+        && plan.spec().request.operation.resource.id.as_str() == "settings:Display"
+}
+
 #[cfg(test)]
 pub(crate) mod tests;
 

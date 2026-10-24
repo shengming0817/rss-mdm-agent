@@ -33,7 +33,7 @@ fn recipe(
     ]
     .contains(&launch.interpreter.profile.id.as_str())
     {
-        let image = std::env::current_exe()?;
+        let image = std::path::PathBuf::from(crate::backend::plan::worker_image(config)?.path);
         execution_runner::staging::verify_retained(&image, &launch.interpreter.artifact.sha256)
             .map_err(crate::error::app_error)?;
         image

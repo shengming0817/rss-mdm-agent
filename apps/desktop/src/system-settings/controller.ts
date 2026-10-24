@@ -156,12 +156,22 @@ export function createSystemSettings(
       }),
     );
   }
-  async function poll(section: SettingsSection, request: string, call: number) {
+  async function poll(
+    section: SettingsSection,
+    request: string,
+    call: number,
+    publish = true,
+  ) {
     if (!port) return;
     for (let n = 0; active && call === epoch && n < 300; n++) {
       const response = await port({ kind: "status", request });
       if (!active || call !== epoch) return;
-      accept(section, response);
+      if (publish) accept(section, response);
+      else if (response.finished && response.effect !== "openRequested")
+        state.errors.set(
+          section,
+          response.reason ?? "系统未确认打开设置，请重试。",
+        );
       if (response.finished) return;
       await new Promise((resolve) => setTimeout(resolve, 250));
     }
@@ -169,11 +179,13 @@ export function createSystemSettings(
   async function run(section: SettingsSection, operation: SettingsOperation) {
     if (!port || !active || state.busy.has(section)) return;
     const request = "request" in operation ? operation.request : undefined,
-      call = epoch;
+      call = epoch,
+      navigation = operation.kind === "openNative";
     state.busy.add(section);
-    state.errors.delete(section);
+    if (!navigation) state.errors.delete(section);
     if (
       request &&
+      !navigation &&
       !["status", "cancel", "keepDisplay"].includes(operation.kind)
     ) {
       const pending = state.pending.get(section);
@@ -190,8 +202,14 @@ export function createSystemSettings(
     try {
       const response = await port(operation);
       if (!active || call !== epoch) return;
-      accept(section, response);
-      if (request && !response.finished) await poll(section, request, call);
+      if (!navigation) accept(section, response);
+      else if (response.finished && response.effect !== "openRequested")
+        state.errors.set(
+          section,
+          response.reason ?? "系统未确认打开设置，请重试。",
+        );
+      if (request && !response.finished)
+        await poll(section, request, call, !navigation);
     } catch (error) {
       if (active && call === epoch) state.errors.set(section, message(error));
     } finally {

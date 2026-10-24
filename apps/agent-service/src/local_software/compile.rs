@@ -101,7 +101,7 @@ pub(crate) fn native(
             bytes.len() as u64,
         )
         .map_err(crate::error::app_error)?;
-    let image = plan::pin(&std::env::current_exe()?)?;
+    let image = plan::worker_image(config)?;
     let mut parameters = metadata(choice, item, context, None)?;
     parameters.insert(
         "local-software-native".into(),
@@ -210,7 +210,7 @@ pub(crate) fn native_materials(
     if frozen.spec().launch.interpreter.profile != plan::reference(super::native::PROFILE, "1")? {
         return Err(Error::Untrusted);
     }
-    let interpreter = std::env::current_exe()?;
+    let interpreter = PathBuf::from(plan::worker_image(config)?.path);
     execution_runner::staging::verify_retained(
         &interpreter,
         &frozen.spec().launch.interpreter.artifact.sha256,

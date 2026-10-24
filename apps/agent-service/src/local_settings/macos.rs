@@ -11,6 +11,12 @@ unsafe extern "C" {
     ) -> i32;
 }
 fn call(value: Value) -> Result<Value, Error> {
+    #[cfg(test)]
+    let call_kind = value
+        .get("kind")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown")
+        .to_owned();
     let bytes = serde_json::to_vec(&value).map_err(|_| Error::Protocol)?;
     let mut output = std::ptr::null_mut();
     let mut size = 0;
@@ -29,6 +35,11 @@ fn call(value: Value) -> Result<Value, Error> {
         libc::free(output.cast());
     }
     if code != 0 {
+        #[cfg(test)]
+        eprintln!(
+            "native_settings: kind={} section=native code={code}",
+            call_kind
+        );
         return Err(match code {
             2 => Error::Denied,
             3 => Error::Conflict,

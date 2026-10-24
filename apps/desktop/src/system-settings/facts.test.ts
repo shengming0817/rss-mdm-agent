@@ -3,7 +3,10 @@ import type { CollectedData, QueryDescriptor } from "../self-service/types";
 import { createSystemSettings } from "./controller";
 import { homeFacts } from "./facts";
 const controller = createSystemSettings(null, null);
-afterEach(() => controller.state.facts.clear());
+afterEach(() => {
+  controller.state.facts.clear();
+  controller.state.observations.clear();
+});
 afterAll(() => controller.dispose());
 function put(
   id: string,
@@ -65,4 +68,39 @@ it("uses the system volume's shared APFS container without summing unrelated dis
     storageUsed: 75,
   });
   expect(homeFacts(controller).storageDetail).toContain("系统卷所属容器");
+});
+
+it("reports old native power state even when the battery collection is fresh", () => {
+  put("battery", "hardware.battery", [], {
+    "hardware.battery.charge_percent": 50,
+  });
+  controller.state.observations.set("power", {
+    writeAllowed: false,
+    request: null,
+    digest: null,
+    finished: true,
+    effect: "observed",
+    keepBeforeUnixMs: null,
+    reason: null,
+    snapshot: {
+      section: "power",
+      revision: "a".repeat(64),
+      collectedAtUnixMs: controller.state.now - 60000,
+      source: "native fixture",
+      targets: [
+        {
+          id: "power-source",
+          name: "Power",
+          options: [],
+          writable: false,
+          reason: null,
+          fields: [
+            { key: "source", value: "AC", quality: "complete", reason: null },
+          ],
+        },
+      ],
+    },
+  });
+  expect(homeFacts(controller).battery).toBe("50%");
+  expect(homeFacts(controller).batteryDetail).toContain("供电状态已过期");
 });

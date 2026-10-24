@@ -1074,3 +1074,96 @@ fn backend_start_window_bounds_first_spawn_without_truncating_a_started_process(
         }
     }
 }
+
+#[test]
+fn display_shutdown_waits_for_original_capture_beyond_the_normal_stop_window() {
+    let f = fixture("", vec![LaunchArg::ArtifactPath {}], 4096, 1000);
+    let mut spec = f.plan.spec().clone();
+    spec.launch.interpreter.profile = VersionedRef {
+        id: Id::new("native-settings-worker").unwrap(),
+        revision: Id::new("1").unwrap(),
+    };
+    spec.request.operation.resource = VersionedRef {
+        id: Id::new("settings:Display").unwrap(),
+        revision: Id::new("1").unwrap(),
+    };
+    let plan = FrozenExecution::freeze(spec, &execution_app::test_execution_limits()).unwrap();
+    let attempt = AttemptId::new("display-stop-proof").unwrap();
+    let cancel = Arc::new(AtomicBool::new(false));
+    let capture = Arc::new(Mutex::new(None));
+    f.runner.records.lock().unwrap().insert(
+        attempt.clone(),
+        Record {
+            plan: plan.clone(),
+            _materials: None,
+            cancel: cancel.clone(),
+            facts: capture.clone(),
+            progress: Arc::new(progress::Progress::new()),
+            cleanup_running: Arc::new(AtomicBool::new(false)),
+        },
+    );
+    let id = f.runner.id.clone();
+    let result = capture.clone();
+    let worker = std::thread::spawn(move || {
+        while !cancel.load(Ordering::Acquire) {
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        std::thread::sleep(Duration::from_millis(3200));
+        let mut facts = rejected(&plan, &attempt, &id, ProcessEnd::Unknown);
+        facts.quiescent = false;
+        *result.lock().unwrap() = Some(facts);
+    });
+    let started = Instant::now();
+    f.runner.shutdown().unwrap();
+    worker.join().unwrap();
+    assert!(started.elapsed() >= Duration::from_millis(3200));
+    assert!(
+        !capture.lock().unwrap().as_ref().unwrap().quiescent,
+        "waiting must not manufacture quiescence"
+    );
+}
+
+#[test]
+fn display_closure_receipt_does_not_erase_timeout_or_session_failure_and_rejects_changed_output() {
+    let f = fixture("", vec![LaunchArg::ArtifactPath {}], 4096, 1000);
+    let mut facts = rejected(
+        &f.plan,
+        &AttemptId::new("closure-proof").unwrap(),
+        &f.runner.id,
+        ProcessEnd::TimedOut,
+    );
+    facts.exit_code = Some(0);
+    facts.failure_kind = ProcessFailureKind::Unbound;
+    facts.stdout = b"native readback".to_vec();
+    facts.stderr = serde_json::to_vec(&CollectionCompletion {
+        closed: true,
+        input_sha256: f.plan.spec().launch.artifact.sha256.as_str().into(),
+        output_sha256: format!("{:x}", Sha256::digest(&facts.stdout)),
+        native_output_bytes: 0,
+    })
+    .unwrap();
+    assert!(collection_completion(
+        &facts,
+        &f.plan.spec().launch.artifact.sha256,
+        true
+    ));
+    assert_eq!(facts.end, ProcessEnd::TimedOut);
+    assert_eq!(facts.failure_kind, ProcessFailureKind::Unbound);
+    assert!(!collection_completion(
+        &facts,
+        &f.plan.spec().launch.artifact.sha256,
+        false
+    ));
+    facts.end = ProcessEnd::OutputLimit;
+    assert!(collection_completion(
+        &facts,
+        &f.plan.spec().launch.artifact.sha256,
+        true
+    ));
+    facts.stdout.push(b'!');
+    assert!(!collection_completion(
+        &facts,
+        &f.plan.spec().launch.artifact.sha256,
+        true
+    ));
+}

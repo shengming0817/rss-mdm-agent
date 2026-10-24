@@ -101,6 +101,8 @@ impl Case {
             &root.path.join("execution.sqlite"),
             crate::ProductionStartup::Create,
             ExecutionConfig {
+                #[cfg(test)]
+                worker_image_fixture: None,
                 local_permissions: crate::local_permissions::Config {
                     policy_file: "/unavailable/local-permissions.json".into(),
                 },
@@ -1053,6 +1055,8 @@ async fn service_assembly_creates_and_reopens_journal_with_its_actual_budgets() 
         cdhash: None,
     };
     let config = ExecutionConfig {
+        #[cfg(test)]
+        worker_image_fixture: None,
         local_permissions: crate::local_permissions::Config {
             policy_file: "/unavailable/local-permissions.json".into(),
         },
@@ -4536,6 +4540,7 @@ async fn local_software_case() -> (Case, LocalSoftwareChoice) {
     std::fs::write(&path, serde_json::to_vec(&rules).unwrap()).unwrap();
     c.service.core.config.local_permissions.policy_file = path;
     c.service.core.local_policy_fixture = Some(crate::local_permissions::Policy::fixture);
+    c.service.core.config.worker_image_fixture = Some(fixture_worker_image);
     let choice = LocalSoftwareChoice {
         request: RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap(),
         software: item.reference,
@@ -4560,6 +4565,7 @@ impl Case {
 }
 #[cfg(target_os = "macos")]
 #[tokio::test]
+#[ignore = "requires root for production material/OS identity admission; explicitly run the built test binary"]
 async fn local_software_api_stages_no_attempt_and_replays_the_original_after_lost_ack() {
     let _budget = crate::scenario_budget::enter();
     let (mut c, choice) = local_software_case().await;
@@ -4678,6 +4684,7 @@ async fn local_software_api_stages_no_attempt_and_replays_the_original_after_los
 }
 #[cfg(target_os = "macos")]
 #[tokio::test]
+#[ignore = "requires root for production material/OS identity admission; explicitly run the built test binary"]
 async fn local_software_api_rechecks_rules_and_snapshot_before_any_attempt() {
     let _budget = crate::scenario_budget::enter();
     for changed_rules in [false, true] {
@@ -4747,6 +4754,7 @@ async fn local_software_api_rechecks_rules_and_snapshot_before_any_attempt() {
 
 #[cfg(target_os = "macos")]
 #[tokio::test]
+#[ignore = "requires root for production material/OS identity admission; explicitly run the built test binary"]
 async fn installation_owner_exists_before_registration_and_preserves_both_scopes_after_reopen() {
     use execution_admission::AuthorityVerifier;
     use execution_app::AppHost;
@@ -4763,6 +4771,8 @@ async fn installation_owner_exists_before_registration_and_preserves_both_scopes
         cdhash: None,
     };
     let config = ExecutionConfig {
+        #[cfg(test)]
+        worker_image_fixture: Some(fixture_worker_image),
         local_permissions: crate::local_permissions::Config {
             policy_file: root.path.join("local-permissions.json"),
         },
@@ -5085,11 +5095,22 @@ async fn installation_owner_exists_before_registration_and_preserves_both_scopes
 }
 
 #[tokio::test]
+#[ignore = "requires root for production material/OS identity admission; explicitly run the built test binary"]
 async fn settings_desktop_cache_and_retained_task_are_bound_to_exact_context() {
     use execution_ipc::host::Request;
     let _budget = crate::scenario_budget::enter();
     let mut c = Case::new(None).await;
     c.employee("settings-owner").await;
+    c.service.core.config.worker_image_fixture = Some(fixture_worker_image);
+    let permissions = c._root.path.join("settings-permissions.json");
+    std::fs::write(
+        &permissions,
+        serde_json::to_vec(&crate::local_permissions::Restrictions::installation_default())
+            .unwrap(),
+    )
+    .unwrap();
+    c.service.core.config.local_permissions.policy_file = permissions;
+    c.service.core.local_policy_fixture = Some(crate::local_permissions::Policy::fixture);
     let snapshot = SettingsSnapshot {
         section: SettingsSection::Network,
         revision: Digest::new("a".repeat(64)).unwrap(),
@@ -5116,49 +5137,50 @@ async fn settings_desktop_cache_and_retained_task_are_bound_to_exact_context() {
     assert!(matches!(
         c.policy_call(call(c.context(), c.selection.origin.clone(), read.clone()))
             .await,
-        Reply::Rejected
+        Reply::DataFailure { .. }
     ));
     let mut wrong = c.context();
     wrong.generation = plan::id("other-generation").unwrap();
     assert!(matches!(
         c.policy_call(call(wrong, ClientOrigin::Desktop {}, read))
             .await,
-        Reply::Rejected
+        Reply::DataFailure { .. }
     ));
-    let mut input: ExecutionInput = serde_json::from_str(include_str!(
-        "../../../crates/execution-contract/tests/fixtures/plan.json"
-    ))
-    .unwrap();
     let request = RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap();
-    input.request.request_id = request.clone();
-    input.request.authority = c.service.core.host.root.authority.clone();
-    input.request.actor = c.service.core.host.local_actor.clone();
-    input.request.target.device = c.service.core.host.root.device.clone();
-    input.request.initiator = Initiator::Human {
-        os_session: OsSessionRef {
-            device: c.service.core.host.root.device.clone(),
-            account: OsAccountRef {
-                platform: Platform::Macos,
-                subject: plan::id(&c.selection.subject).unwrap(),
+    let policy =
+        crate::local_permissions::Policy::fixture(&c.service.core.config.local_permissions)
+            .unwrap();
+    let (frozen, artifacts) = crate::local_settings::compile::prepare(
+        crate::local_settings::Action::Read {
+            section: SettingsSection::Network,
+        },
+        request.clone(),
+        &c.service.core.host.root,
+        &c.service.core.host.local_actor,
+        Initiator::Human {
+            os_session: OsSessionRef {
+                device: c.service.core.host.root.device.clone(),
+                account: OsAccountRef {
+                    platform: Platform::Macos,
+                    subject: plan::id(&c.selection.subject).unwrap(),
+                },
+                session: c.selection.binding.clone(),
             },
-            session: c.selection.binding.clone(),
         },
-    };
-    input.launch.interpreter.profile =
-        plan::reference(crate::local_settings::PROFILE, "1").unwrap();
-    input.request.parameters.insert(
-        "local-settings-context".into(),
-        InputValue::Literal {
-            value: serde_json::to_value(c.context()).unwrap(),
-        },
-    );
-    input.request.parameters.insert(
-        "local-settings-action".into(),
-        InputValue::Literal {
-            value: serde_json::json!({"kind":"read","section":"network"}),
-        },
-    );
-    let frozen = FrozenExecution::freeze(input, &plan::storage_limits().input).unwrap();
+        &c.context(),
+        &policy,
+        c.service.core.host.clock.millis().unwrap(),
+        &c.service.core.config,
+        &mut c.service.core.material_root,
+        None,
+    )
+    .unwrap();
+    c.service
+        .core
+        .host
+        .materials
+        .register(&frozen, artifacts)
+        .unwrap();
     c.service
         .core
         .app
@@ -5179,7 +5201,7 @@ async fn settings_desktop_cache_and_retained_task_are_bound_to_exact_context() {
             }
         ))
         .await,
-        Reply::Rejected
+        Reply::DataFailure { .. }
     ));
     assert!(matches!(
         c.policy_call(call(
@@ -5191,7 +5213,7 @@ async fn settings_desktop_cache_and_retained_task_are_bound_to_exact_context() {
             }
         ))
         .await,
-        Reply::Rejected
+        Reply::DataFailure { .. }
     ));
     assert!(
         matches!(c.policy_call(call(c.context(),ClientOrigin::Desktop{},SettingsOperation::Cancel{request:request.clone()})).await,Reply::Settings{value} if value.finished && value.effect==SettingsEffect::Cancelled)
@@ -5216,6 +5238,50 @@ async fn settings_desktop_cache_and_retained_task_are_bound_to_exact_context() {
             SettingsOperation::Status { request }
         ))
         .await,
-        Reply::Rejected
+        Reply::DataFailure { .. }
     ));
+}
+
+fn fixture_worker_image() -> Result<SoftwareMaterial, agent_client::Error> {
+    plan::pin(std::path::Path::new("/bin/sh"))
+}
+
+#[tokio::test]
+async fn settings_cache_is_read_only_and_rejects_ai_and_retired_context_without_os_dispatch() {
+    use execution_ipc::host::Request;
+    let _budget = crate::scenario_budget::enter();
+    let mut c = Case::new(None).await;
+    let call = |context, origin| Request::Settings {
+        context,
+        origin,
+        input: SettingsOperation::Snapshot {
+            section: SettingsSection::Network,
+        },
+    };
+    assert!(
+        matches!(c.policy_call(call(c.context(),ClientOrigin::Desktop{})).await,Reply::Settings {value} if value.snapshot.is_none() && !value.write_allowed)
+    );
+    assert!(matches!(
+        c.policy_call(call(c.context(), c.selection.origin.clone()))
+            .await,
+        Reply::DataFailure {
+            reason: DataError::Denied
+        }
+    ));
+    let old = c.context();
+    c.employee("retired-settings-context").await;
+    assert!(matches!(
+        c.policy_call(call(old, ClientOrigin::Desktop {})).await,
+        Reply::DataFailure {
+            reason: DataError::Denied
+        }
+    ));
+    assert!(c
+        .service
+        .core
+        .app
+        .service_tasks(None, 64)
+        .unwrap()
+        .items
+        .is_empty());
 }

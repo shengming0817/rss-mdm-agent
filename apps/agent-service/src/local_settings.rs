@@ -31,7 +31,7 @@ pub(crate) enum Action {
     },
     Change {
         expected: Digest,
-        before: SettingsSnapshot,
+        before: Box<SettingsSnapshot>,
         patch: SettingsPatch,
     },
     Open {
@@ -70,6 +70,30 @@ impl Permit {
         policy: crate::local_permissions::Policy,
         action: &Action,
     ) -> Result<Self, Error> {
+        Self::checked(plan, policy, action, true)
+    }
+    pub(crate) fn keep(
+        plan: FrozenExecution,
+        policy: crate::local_permissions::Policy,
+        action: &Action,
+    ) -> Result<Self, Error> {
+        if !matches!(
+            action,
+            Action::Change {
+                patch: SettingsPatch::Display { .. },
+                ..
+            }
+        ) {
+            return Err(Error::Denied);
+        }
+        Self::checked(plan, policy, action, false)
+    }
+    fn checked(
+        plan: FrozenExecution,
+        policy: crate::local_permissions::Policy,
+        action: &Action,
+        admission: bool,
+    ) -> Result<Self, Error> {
         policy.current()?;
         if !matches!(plan.spec().request.authority, Authority::Local { .. })
             || plan.spec().launch.interpreter.profile.id.as_str() != PROFILE
@@ -84,9 +108,7 @@ impl Permit {
             patch,
         } = action
         {
-            if before.revision != *expected
-                || now()?.saturating_sub(before.collected_at_unix_ms) > 30_000
-            {
+            if before.revision != *expected || admission && !fresh(before, now()?) {
                 return Err(Error::Conflict);
             }
             if !patch.valid()
@@ -173,7 +195,14 @@ pub(crate) fn control_path(
     request: &RequestId,
 ) -> Result<PathBuf, Error> {
     let id = uuid::Uuid::parse_str(request.as_str()).map_err(|_| Error::Protocol)?;
+    if id.is_nil() || id.to_string() != request.as_str() {
+        return Err(Error::Protocol);
+    }
     Ok(control_root(config)?.join(id.to_string()))
+}
+pub(crate) fn fresh(snapshot: &SettingsSnapshot, now: u64) -> bool {
+    now.checked_sub(snapshot.collected_at_unix_ms)
+        .is_some_and(|age| age < 30_000)
 }
 pub(crate) fn snapshot(section: SettingsSection) -> Result<SettingsSnapshot, Error> {
     #[cfg(target_os = "macos")]
@@ -227,17 +256,22 @@ pub fn run(path: &Path) -> Result<i32, Error> {
         Ok(())
     });
     if let Err(error) = result {
+        let observed = snapshot(input.action.section()).ok();
+        let unchanged_display = !display_unsettled
+            && matches!(&input.action, Action::Change {before,patch:SettingsPatch::Display {..},..} if observed.as_ref().is_some_and(|actual|actual.targets==before.targets));
         let row = serde_json::to_vec(&SettingsResponse {
             write_allowed: false,
             request: Some(input.request.clone()),
             digest: None,
             finished: true,
-            effect: if input.action.is_write() {
+            effect: if matches!(error, Error::Conflict) {
+                SettingsEffect::Conflict
+            } else if input.action.is_write() && !unchanged_display {
                 SettingsEffect::Unknown
             } else {
                 SettingsEffect::Failed
             },
-            snapshot: snapshot(input.action.section()).ok(),
+            snapshot: observed,
             keep_before_unix_ms: None,
             reason: Some(error.to_string()),
         })
@@ -325,10 +359,7 @@ fn execute_inner(
             before,
             patch,
         } => {
-            if !patch.valid()
-                || before.revision != *expected
-                || now()?.saturating_sub(before.collected_at_unix_ms) > 30_000
-            {
+            if !patch.valid() || before.revision != *expected || !fresh(before, now()?) {
                 return Err(Error::Conflict);
             }
             let current = snapshot(section)?;
@@ -353,7 +384,13 @@ fn execute_inner(
             #[cfg(windows)]
             windows::apply(patch, before)?;
             let applied = snapshot(section)?;
-            if !satisfied(patch, &applied) {
+            if !satisfied(patch, &applied)
+                || matches!(patch, SettingsPatch::Display { .. })
+                    && !applied
+                        .targets
+                        .iter()
+                        .any(|t| &t.id == target && t.writable)
+            {
                 #[cfg(target_os = "macos")]
                 if *display_unsettled {
                     macos::preserve_display(&applied)?;
@@ -395,6 +432,7 @@ fn execute_inner(
                     response.effect = SettingsEffect::Conflict;
                     response.snapshot = Some(actual);
                 } else {
+                    keep &= can_keep(input);
                     #[cfg(target_os = "macos")]
                     macos::finish_display(patch, before, keep)?;
                     #[cfg(windows)]
@@ -493,3 +531,54 @@ pub(crate) fn satisfied(patch: &SettingsPatch, snapshot: &SettingsSnapshot) -> b
 
 #[cfg(all(test, target_os = "macos"))]
 mod native_tests;
+
+#[cfg(test)]
+mod control_tests {
+    use super::*;
+    #[test]
+    fn future_or_expired_native_observations_do_not_authorize_edits() {
+        let snapshot = SettingsSnapshot {
+            section: SettingsSection::Display,
+            revision: Digest::new("a".repeat(64)).unwrap(),
+            collected_at_unix_ms: 1000,
+            source: "native fixture".into(),
+            targets: vec![],
+        };
+        assert!(!fresh(&snapshot, 999));
+        assert!(fresh(&snapshot, 1000));
+        assert!(!fresh(&snapshot, 31000));
+    }
+    #[test]
+    fn decision_paths_reject_uuid_aliases_and_nil_instead_of_sharing_another_task_marker() {
+        let config = crate::ExecutionConfig {
+            worker_image_fixture: None,
+            local_permissions: crate::local_permissions::Config {
+                policy_file: "unused".into(),
+            },
+            work_root: std::env::temp_dir(),
+            material_root: std::env::temp_dir().join("settings-control-fixture/materials"),
+            interpreters: vec![],
+            managers: vec![],
+            processes: 1,
+        };
+        let value = "a171d762-7c18-4038-b672-dc9838b869ab";
+        assert_eq!(
+            control_path(&config, &RequestId::new(value).unwrap())
+                .unwrap()
+                .file_name()
+                .unwrap(),
+            value
+        );
+        for value in [
+            value.to_uppercase(),
+            value.replace('-', ""),
+            format!("urn:uuid:{value}"),
+            "00000000-0000-0000-0000-000000000000".into(),
+        ] {
+            assert!(matches!(
+                control_path(&config, &RequestId::new(value).unwrap()),
+                Err(Error::Protocol)
+            ));
+        }
+    }
+}

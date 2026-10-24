@@ -387,3 +387,14 @@ pub(crate) fn pin(path: &Path) -> Result<SoftwareMaterial, Error> {
         artifact: reference,
     })
 }
+
+/// Production always pins its installed service image. Unit tests may explicitly supply
+/// a protected, non-native fixture image to test journal/API semantics without OS effects.
+pub(crate) fn worker_image(config: &crate::ExecutionConfig) -> Result<SoftwareMaterial, Error> {
+    let _ = config;
+    #[cfg(test)]
+    if let Some(image) = config.worker_image_fixture {
+        return image();
+    }
+    pin(&std::env::current_exe()?)
+}

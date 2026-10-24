@@ -78,7 +78,7 @@ pub(crate) fn prepare(
             bytes.len() as u64,
         )
         .map_err(crate::error::app_error)?;
-    let image = plan::pin(&std::env::current_exe()?)?;
+    let image = plan::worker_image(config)?;
     let mut parameters: std::collections::BTreeMap<String, InputValue> = [
         (
             "local-settings-action".into(),

@@ -712,7 +712,7 @@ fn unknown_schema_is_rejected_without_modifying_the_database() {
         Store::open(&db.path, &plan().spec().request.authority, limits()),
         Ok(OpenOutcome::UnsupportedSchema {
             found: 98,
-            supported: 1
+            supported: 2
         })
     ));
     assert!(Store::initialize_test(
@@ -741,7 +741,7 @@ fn newer_schema_is_diagnostics_only_and_corrupt_database_is_never_reinitialized(
         Store::open(&db.path, &plan().spec().request.authority, limits()).unwrap(),
         OpenOutcome::UnsupportedSchema {
             found: 99,
-            supported: 1
+            supported: 2
         }
     ));
     assert_eq!(std::fs::read(&db.path).unwrap(), before);

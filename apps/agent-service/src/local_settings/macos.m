@@ -26,12 +26,16 @@ static NSArray *displays(void) {
         NSArray *modes=CFBridgingRelease(CGDisplayCopyAllDisplayModes(ids[i],(__bridge CFDictionaryRef)@{(__bridge NSString *)kCGDisplayShowDuplicateLowResolutionModes:@YES}));
         NSMutableArray *options=[NSMutableArray array]; NSMutableSet *seen=[NSMutableSet set];
         for (id item in modes) { CGDisplayModeRef m=(__bridge CGDisplayModeRef)item; NSString *mid=modeID(m); if ([seen containsObject:mid]) continue; [seen addObject:mid];
-            if (options.count>=256) {CGDisplayModeRelease(active);return nil;}
+            if (options.count>=255) break;
             NSString *label=[NSString stringWithFormat:@"%zu × %zu (%zu × %zu pixels, %.0f Hz)%@",CGDisplayModeGetWidth(m),CGDisplayModeGetHeight(m),CGDisplayModeGetPixelWidth(m),CGDisplayModeGetPixelHeight(m),CGDisplayModeGetRefreshRate(m),CGDisplayModeGetPixelWidth(m)>CGDisplayModeGetWidth(m)?@" HiDPI":@""];
             [options addObject:@{@"id":mid,@"label":label}]; }
+        BOOL limited=options.count>=255 && modes.count>255;
+        if (![seen containsObject:modeID(active)] || ![options filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:@"id == %@",modeID(active)]].count) {
+            [options addObject:@{@"id":modeID(active),@"label":[NSString stringWithFormat:@"当前模式 %zu × %zu",CGDisplayModeGetWidth(active),CGDisplayModeGetHeight(active)]}];
+        }
         CGRect bounds=CGDisplayBounds(ids[i]); BOOL managed=forced(@"com.apple.windowserver",@[@"DisplaySets",@"DisplayAnyUserSets"]);
         NSArray *fields=@[field(@"mode",modeID(active),nil),field(@"width",@(CGDisplayModeGetWidth(active)),nil),field(@"height",@(CGDisplayModeGetHeight(active)),nil),field(@"pixelWidth",@(CGDisplayModeGetPixelWidth(active)),nil),field(@"pixelHeight",@(CGDisplayModeGetPixelHeight(active)),nil),field(@"origin",@{@"x":@((int)bounds.origin.x),@"y":@((int)bounds.origin.y)},nil),field(@"main",@(ids[i]==CGMainDisplayID()),nil)];
-        [result addObject:target(identity,[NSString stringWithFormat:@"显示器 %u%@",ids[i],CGDisplayIsBuiltin(ids[i])?@"（内置）":@""],fields,options,!managed,managed?@"由组织策略管理":nil)]; CGDisplayModeRelease(active);
+        [result addObject:target(identity,[NSString stringWithFormat:@"显示器 %u%@",ids[i],CGDisplayIsBuiltin(ids[i])?@"（内置）":@""],fields,options,!managed,managed?@"由组织策略管理":limited?@"其他显示模式可在系统设置中选择":nil)]; CGDisplayModeRelease(active);
     }
     [result sortUsingComparator:^NSComparisonResult(NSDictionary *a,NSDictionary *b){return [a[@"id"] compare:b[@"id"]];}];return result;
 }
@@ -90,7 +94,7 @@ static int displayConfigure(NSDictionary *request, BOOL restore, BOOL permanent)
         if(origin && CGConfigureDisplayOrigin(config,ids[i],[origin[@"x"] intValue],[origin[@"y"] intValue])!=kCGErrorSuccess)status=1;
         break;
     }
-    if(status==0){ if(CGCompleteDisplayConfiguration(config,permanent?kCGConfigurePermanently:(restore?kCGConfigureForSession:kCGConfigureForAppOnly))!=kCGErrorSuccess)status=1; }else CGCancelDisplayConfiguration(config);
+    if(status==0){ CGError completed=CGCompleteDisplayConfiguration(config,permanent?kCGConfigurePermanently:(restore?kCGConfigureForSession:kCGConfigureForAppOnly));if(completed!=kCGErrorSuccess)status=10000+completed; }else CGCancelDisplayConfiguration(config);
     return status;
 }
 static int preserveDisplay(NSArray *expected) {

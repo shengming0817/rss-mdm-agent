@@ -30,10 +30,24 @@ fn display_change(before: &SettingsSnapshot) -> SettingsPatch {
         origin: None,
     }
 }
-struct DisplayRestore(SettingsSnapshot, SettingsPatch);
+struct DisplayRestore(SettingsSnapshot, SettingsPatch, bool);
 impl Drop for DisplayRestore {
     fn drop(&mut self) {
         let _ = macos::finish_display(&self.1, &self.0, false);
+        if self.2 {
+            let target = match &self.1 {
+                SettingsPatch::Display { target, .. } => target,
+                _ => return,
+            };
+            if let Some(original) = self.0.targets.iter().find(|t| &t.id == target) {
+                let patch = SettingsPatch::Display {
+                    target: target.clone(),
+                    mode: field(original, "mode").as_str().map(str::to_owned),
+                    origin: serde_json::from_value(field(original, "origin").clone()).ok(),
+                };
+                let _ = macos::finish_display(&patch, &self.0, true);
+            }
+        }
     }
 }
 #[test]
@@ -41,7 +55,7 @@ impl Drop for DisplayRestore {
 fn display_worker_times_out_without_ui_and_native_keep_reads_back() {
     let before = snapshot(SettingsSection::Display).unwrap();
     let patch = display_change(&before);
-    let restore = DisplayRestore(before.clone(), patch.clone());
+    let mut restore = DisplayRestore(before.clone(), patch.clone(), false);
     let account = OsAccountRef {
         platform: Platform::Macos,
         subject: Id::new(execution_ipc::host::current_subject().unwrap()).unwrap(),
@@ -50,7 +64,7 @@ fn display_worker_times_out_without_ui_and_native_keep_reads_back() {
         request: RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap(),
         action: Action::Change {
             expected: before.revision.clone(),
-            before: before.clone(),
+            before: Box::new(before.clone()),
             patch: patch.clone(),
         },
         run_as: RunAs::User {
@@ -63,9 +77,11 @@ fn display_worker_times_out_without_ui_and_native_keep_reads_back() {
         confirm: PathBuf::from("/var/empty/rss-no-display-confirmation"),
         finish_by_unix_ms: now().unwrap() + 25_000,
     };
+    let started = std::time::Instant::now();
     let mut rows = Vec::new();
     let mut unsettled = false;
     execute(&input, &mut unsettled, &mut |r| {
+        eprintln!("display_native_effect={:?}", r.effect);
         rows.push(r);
         Ok(())
     })
@@ -73,6 +89,10 @@ fn display_worker_times_out_without_ui_and_native_keep_reads_back() {
     assert_eq!(rows.first().unwrap().effect, SettingsEffect::Preview);
     assert_eq!(rows.last().unwrap().effect, SettingsEffect::Restored);
     assert!(!unsettled);
+    assert!(
+        started.elapsed() >= std::time::Duration::from_secs(14),
+        "preview ended before its timeout; current session must remain active"
+    );
     let fresh = snapshot(SettingsSection::Display).unwrap();
     assert_eq!(fresh.targets, before.targets);
     macos::apply(&patch, &fresh).unwrap();
@@ -80,6 +100,7 @@ fn display_worker_times_out_without_ui_and_native_keep_reads_back() {
         &patch,
         &snapshot(SettingsSection::Display).unwrap()
     ));
+    restore.2 = true;
     macos::finish_display(&patch, &before, true).unwrap();
     assert!(satisfied(
         &patch,
@@ -183,5 +204,44 @@ fn machine_proxy_and_power_apply_preserve_unmodified_values_and_restore() {
     assert_eq!(
         json!(snapshot(SettingsSection::Power).unwrap().targets),
         json!(before.targets)
+    );
+}
+
+#[test]
+#[ignore = "reads actual macOS displays and asks the native adapter to reject an invalid mode"]
+fn refused_native_display_transaction_proves_no_change_and_closes() {
+    let before = snapshot(SettingsSection::Display).unwrap();
+    let target = before
+        .targets
+        .iter()
+        .find(|t| t.writable)
+        .expect("unmanaged connected display");
+    let input = Input {
+        request: RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap(),
+        action: Action::Change {
+            expected: before.revision.clone(),
+            before: Box::new(before.clone()),
+            patch: SettingsPatch::Display {
+                target: target.id.clone(),
+                mode: Some("not-a-native-mode".into()),
+                origin: None,
+            },
+        },
+        run_as: RunAs::System {
+            platform: Platform::Macos,
+        },
+        session: SessionRequirement::NotRequired {},
+        confirm: PathBuf::from("/var/empty/no-confirmation"),
+        finish_by_unix_ms: now().unwrap() + 25000,
+    };
+    let mut unsettled = false;
+    assert!(matches!(
+        execute(&input, &mut unsettled, &mut |_| Ok(())),
+        Err(Error::Unsupported)
+    ));
+    assert!(!unsettled);
+    assert_eq!(
+        snapshot(SettingsSection::Display).unwrap().targets,
+        before.targets
     );
 }

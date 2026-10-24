@@ -110,3 +110,40 @@ it("late native responses cannot publish into a retired user's page", async () =
   expect(controller.state.observations.size).toBe(0);
   expect(controller.state.facts.size).toBe(0);
 });
+
+it("missing status preserves the original write UUID; native settings remain independently accessible", async () => {
+  const calls: SettingsOperation[] = [];
+  const { controller, identity } = setup(async (operation) => {
+    calls.push(operation);
+    if (operation.kind === "change") throw Error("response lost");
+    if (operation.kind === "status")
+      throw Object.assign(Error("missing"), { code: "notFound" });
+    if (operation.kind === "snapshot") return response();
+    return response({
+      request: "00000000-0000-4000-8000-000000000002",
+      effect: "openRequested",
+    });
+  });
+  identity
+    .mockReturnValueOnce("00000000-0000-4000-8000-000000000001")
+    .mockReturnValueOnce("00000000-0000-4000-8000-000000000002");
+  await controller.load("display");
+  await controller.save(
+    { kind: "display", target: "display", mode: "mode", origin: null },
+    snapshot.revision,
+  );
+  await controller.recover("display");
+  expect(controller.state.pending.get("display")?.request).toBe(
+    "00000000-0000-4000-8000-000000000001",
+  );
+  await controller.openNative("display");
+  expect(calls.filter((c) => c.kind === "change")).toHaveLength(1);
+  expect(calls.find((c) => c.kind === "openNative")).toEqual({
+    kind: "openNative",
+    section: "display",
+    request: "00000000-0000-4000-8000-000000000002",
+  });
+  expect(controller.state.pending.get("display")?.request).toBe(
+    "00000000-0000-4000-8000-000000000001",
+  );
+});

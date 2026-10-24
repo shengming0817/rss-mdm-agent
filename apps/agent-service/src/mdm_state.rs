@@ -92,9 +92,8 @@ pub(crate) fn macos_enrollment_flag(status: &str) -> Option<bool> {
 async fn macos(expected: Option<&str>) -> Option<State> {
     let status = profiles(&["status", "-type", "enrollment"]).await?;
     let status = std::str::from_utf8(&status).ok()?;
-    match macos_enrollment_flag(status)? {
-        false => return Some(State::Unenrolled),
-        true => {}
+    if !macos_enrollment_flag(status)? {
+        return Some(State::Unenrolled);
     }
     let expected = expected?;
     let document = profiles(&["show", "-type", "configuration", "-output", "stdout-xml"]).await?;

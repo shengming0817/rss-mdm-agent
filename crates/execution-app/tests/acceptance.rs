@@ -337,7 +337,7 @@ fn newer_schema_retains_read_only_startup_diagnostic() {
     };
     assert_eq!(
         format!("{error:?}"),
-        "UnsupportedSchema { found: 999, supported: 1 }"
+        "UnsupportedSchema { found: 999, supported: 2 }"
     );
     assert_eq!(std::fs::read(&db.path).unwrap(), before);
     assert_eq!(runner.dispatch_count(), 0);
@@ -2374,7 +2374,7 @@ fn unknown_schema_reports_exact_versions_and_keeps_bytes() {
     };
     assert_eq!(
         error.to_string(),
-        "execution database schema 4 is unsupported; required schema 1; preserve the existing database; initialization and automatic migration are disabled"
+        "execution database schema 4 is unsupported; required schema 2; preserve the existing database; initialization and automatic migration are disabled"
     );
     assert_eq!(std::fs::read(&db.path).unwrap(), before);
 }
@@ -2706,6 +2706,31 @@ fn backend_preparation_is_durable_bound_and_never_dispatches_without_start() {
     };
     app.record_backend_request(&caller(), None, &original)
         .unwrap();
+    // Both preparation and execution reserve UUIDs atomically across actor scopes.
+    let other = execution_app::RequestContext {
+        actor: execution_contract::ActorId::new("other-actor").unwrap(),
+    };
+    let mut occupied = plan().spec().clone();
+    occupied.request.request_id = original.action.request().clone();
+    occupied.request.actor = other.actor.clone();
+    let occupied = FrozenExecution::freeze(occupied, &test_execution_limits()).unwrap();
+    assert!(matches!(
+        app.stage_execution(&other, &occupied),
+        Err(execution_app::Error::Conflict)
+    ));
+    let mut local = plan().spec().clone();
+    local.request.request_id = request("local-before-backend");
+    let local = FrozenExecution::freeze(local, &test_execution_limits()).unwrap();
+    app.stage_execution(&caller(), &local).unwrap();
+    let mut collision = original.clone();
+    let PreparedAction::Offered { offer } = &mut collision.action else {
+        unreachable!()
+    };
+    offer.request = local.spec().request.request_id.clone();
+    assert!(matches!(
+        app.record_backend_request(&other, None, &collision),
+        Err(execution_app::Error::Conflict)
+    ));
     assert_eq!(runner.dispatch_count(), 0);
     assert_eq!(db.count("attempts"), 0);
     drop(app);

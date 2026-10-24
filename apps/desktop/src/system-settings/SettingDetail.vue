@@ -122,6 +122,7 @@ const editable = computed(
     !busy.value &&
     !conflict.value &&
     !!snapshot.value &&
+    controller.state.now >= snapshot.value.collectedAtUnixMs &&
     controller.state.now - snapshot.value.collectedAtUnixMs < 30_000,
 );
 function refresh() {
@@ -341,18 +342,19 @@ function prepare() {
     };
   } else if (effective.value === "power") {
     const timer = (v: string) => /^\d+$/.test(v) && Number(v) <= 1440;
-    if (!timer(displayOff.value) || !timer(sleep.value)) return;
+    const displayChanged =
+      displayOff.value !== String(base("displayOffMinutes") ?? "");
+    const sleepChanged = sleep.value !== String(base("sleepMinutes") ?? "");
+    if (
+      (displayChanged && !timer(displayOff.value)) ||
+      (sleepChanged && !timer(sleep.value))
+    )
+      return;
     patch.value = {
       kind: "power",
       target: t.id,
-      displayOffMinutes:
-        Number(displayOff.value) !== base("displayOffMinutes")
-          ? Number(displayOff.value)
-          : null,
-      sleepMinutes:
-        Number(sleep.value) !== base("sleepMinutes")
-          ? Number(sleep.value)
-          : null,
+      displayOffMinutes: displayChanged ? Number(displayOff.value) : null,
+      sleepMinutes: sleepChanged ? Number(sleep.value) : null,
       mode: energy.value !== base("mode") && energy.value ? energy.value : null,
     };
   } else return;
@@ -390,7 +392,9 @@ async function submit() {
         @click="controller?.retry(effective)"
         >重试原提交</UiButton
       >
-      <UiButton v-if="busy" @click="controller?.cancel(effective)"
+      <UiButton
+        v-if="controller?.state.pending.has(effective)"
+        @click="controller?.cancel(effective)"
         >取消操作</UiButton
       >
     </div>

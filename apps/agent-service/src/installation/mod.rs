@@ -256,6 +256,8 @@ impl Candidate {
                 interactive: true,
             },
             execution: ExecutionConfig {
+                #[cfg(test)]
+                worker_image_fixture: None,
                 local_permissions: crate::local_permissions::Config {
                     policy_file: base.join("local-permissions.json"),
                 },

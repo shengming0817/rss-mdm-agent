@@ -1510,6 +1510,15 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
             after = requests.last().cloned();
         }
     }
+    /// Request stop, await the original physical owners, then retain their final evidence.
+    /// Shutdown itself never manufactures termination or effect facts.
+    pub fn service_shutdown(&mut self, limit: usize) -> Result<(), Error> {
+        let requested = self.stop_active(limit);
+        let physical = self.runner.shutdown();
+        requested?;
+        physical?;
+        self.stop_active(limit)
+    }
     /// Stop live runners on service shutdown. Missing proof remains Unknown in the same journal.
     pub fn stop_active(&mut self, limit: usize) -> Result<(), Error> {
         self.stop_active_matching(limit, |_| true)

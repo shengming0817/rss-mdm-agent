@@ -56,6 +56,7 @@
     "allow-software-submit",
     "allow-software-status",
     "allow-software-cancel",
-    "allow-software-history"
+    "allow-software-history",
+    "allow-system-settings"
   ]
 }

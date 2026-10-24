@@ -416,6 +416,18 @@ export function checkSource(file, source) {
         "crypto",
         "Set",
       ],
+      "apps/desktop/src/system-settings/controller.ts": [
+        "JSON",
+        "Set",
+        "Promise",
+        "crypto",
+        "Symbol",
+        "setInterval",
+        "clearInterval",
+        "setTimeout",
+      ],
+      "apps/desktop/src/system-settings/SettingDetail.vue": ["JSON", "Boolean"],
+      "apps/desktop/src/system-settings/SystemSettings.vue": ["JSON"],
       "apps/desktop/src/software/controller.ts": [
         "JSON",
         "Set",
@@ -726,6 +738,21 @@ export function checkSource(file, source) {
           "(parameterSchema.value as any)?.properties",
         ],
       };
+      dataRoots["apps/desktop/src/system-settings/controller.ts"] = [
+        "families",
+      ];
+      dataRoots["apps/desktop/src/system-settings/SettingDetail.vue"] = [
+        "proxies",
+        "ports",
+        "factLabels",
+        "names",
+        "effectLabels",
+        "labels",
+        "_ctx.proxies",
+        "_ctx.ports",
+        "_ctx.labels",
+        "_ctx.effectLabels",
+      ];
       const dataIndex =
         ts.isElementAccessExpression(node) &&
         (dataRoots[file] ?? []).includes(node.expression.getText(ast)) &&
@@ -1037,7 +1064,7 @@ export function checkTree(treeRoot = root, executable) {
     ipc
       .match(/commands!\s*\{([\s\S]*?)\}/)?.[1]
       .match(
-        /\b(?:self_service_\w+|software_\w+|query_\w+|data_read|device_access)(?=\s*\()/g,
+        /\b(?:self_service_\w+|software_\w+|query_\w+|data_read|device_access|system_settings)(?=\s*\()/g,
       ) ?? [];
   if (
     JSON.stringify(commands.toSorted()) !==

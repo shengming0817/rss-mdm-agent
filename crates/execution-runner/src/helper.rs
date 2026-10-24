@@ -377,7 +377,7 @@ impl host::Handler for Helper {
         Ok(())
     }
     fn stop(&mut self) -> Result<(), Error> {
-        let until = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        let until = self.runner.shutdown_deadline()?;
         for owner in self.physical.values() {
             owner
                 .cancel
@@ -403,6 +403,19 @@ impl host::Handler for Helper {
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
     }
+}
+
+/// The authenticated system connection delegates only compiled native local capabilities.
+pub(crate) fn local_or_enterprise(authority: &Authority, profile: &VersionedRef) -> bool {
+    matches!(authority, Authority::Enterprise { .. })
+        || (matches!(authority, Authority::Local { .. })
+            && profile.revision.as_str() == "1"
+            && [
+                "native-collection-worker",
+                "native-local-software-worker",
+                "native-settings-worker",
+            ]
+            .contains(&profile.id.as_str()))
 }
 
 #[cfg(test)]
@@ -461,17 +474,4 @@ mod shutdown_tests {
         helper.physical.clear();
         assert!(helper.stop().is_ok());
     }
-}
-
-/// The authenticated system connection delegates only compiled native local capabilities.
-pub(crate) fn local_or_enterprise(authority: &Authority, profile: &VersionedRef) -> bool {
-    matches!(authority, Authority::Enterprise { .. })
-        || (matches!(authority, Authority::Local { .. })
-            && profile.revision.as_str() == "1"
-            && [
-                "native-collection-worker",
-                "native-local-software-worker",
-                "native-settings-worker",
-            ]
-            .contains(&profile.id.as_str()))
 }

@@ -268,7 +268,11 @@ impl Data {
         for (title, definition, cardinality, keys) in recipes {
             let budget = w::NativeBudget {
                 timeout_seconds: 60,
-                output_bytes: 2 * 1024 * 1024,
+                output_bytes: if matches!(definition, w::NativeQueryDefinition::System { .. }) {
+                    w::NATIVE_SYSTEM_MAX_BYTES
+                } else {
+                    2 * 1024 * 1024
+                },
                 max_rows: 4096,
             };
             let query = w::NativeQuery {

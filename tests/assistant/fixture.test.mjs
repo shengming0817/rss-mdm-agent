@@ -39,7 +39,6 @@ test("diagnostic and denied scenarios cannot be mistaken for a successful execut
     "notInstalled",
     "disconnected",
     "mismatch",
-    "registrationRequired",
     "notReady",
     "serviceRejected",
     "configurationRequired",
@@ -58,11 +57,11 @@ test("browser factory and native Vite plugin share the same scenario and RPC own
   const origin = new URL(f.url).origin;
   await fetch(origin + "/__fixture/scenario", {
     method: "POST",
-    body: JSON.stringify({ scenario: "registrationRequired" }),
+    body: JSON.stringify({ scenario: "unregistered" }),
   });
   const state = await (await fetch(origin + "/__fixture/state")).json();
   assert.deepEqual(state.service, f.serviceView());
-  assert.equal(state.service.status.readiness.phase, "registrationRequired");
+  assert.equal(state.service.status.readiness.phase, "ready");
   assert.equal((await fetch(origin + "/__fixture/snapshot")).status, 500);
   const registration = async () =>
     (await fetch(origin + "/__fixture/registration")).json();

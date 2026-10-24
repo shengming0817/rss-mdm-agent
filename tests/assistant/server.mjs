@@ -105,6 +105,7 @@ export async function createFixture() {
   let executionState = "running",
     scenario = "running";
   const scenarios = [
+    "unregistered",
     ...Object.keys(serviceViews),
     "proposed",
     "denied",
@@ -132,7 +133,7 @@ export async function createFixture() {
     const view = serviceView();
     if (view.phase !== "connected")
       throw new Error("fixture service unavailable");
-    if (view.status.readiness.phase === "registrationRequired") {
+    if (scenario === "unregistered") {
       return {
         phase: registrationRequested ? "awaitingAuthorization" : "unregistered",
         registered: false,
@@ -161,7 +162,11 @@ export async function createFixture() {
   }
   function available() {
     const view = serviceView();
-    if (view.phase !== "connected" || view.status.readiness.phase !== "ready")
+    if (
+      scenario === "unregistered" ||
+      view.phase !== "connected" ||
+      view.status.readiness.phase !== "ready"
+    )
       throw new Error("fixture service unavailable");
   }
   function details(request) {

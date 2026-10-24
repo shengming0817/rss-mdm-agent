@@ -780,6 +780,8 @@ pub(crate) mod tests {
             },
             helper_work_roots: Default::default(),
             execution: ExecutionConfig {
+                #[cfg(test)]
+                worker_image_fixture: None,
                 local_permissions: crate::local_permissions::Config {
                     policy_file: "/unavailable/local-permissions.json".into(),
                 },
