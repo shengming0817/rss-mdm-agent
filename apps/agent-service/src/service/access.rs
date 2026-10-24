@@ -762,7 +762,17 @@ mod tests {
             )
             .unwrap();
         // Credential expiry is not a remote revocation of the bound offline authority.
-        server.time.set(clock.utc + 400 * 86400);
+        let db = rusqlite::Connection::open(root.path.join("communication.sqlite")).unwrap();
+        let identity: Vec<u8> = db
+            .query_row("SELECT body FROM state WHERE key='identity'", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        let identity: serde_json::Value = serde_json::from_slice(&identity).unwrap();
+        server
+            .time
+            .set(identity["active"]["not_after"].as_i64().unwrap() + 1);
+        drop(db);
         assert_eq!(
             client.enrollment_status().unwrap().failure,
             Some(rss_mdm_agent_wire::enroll::ErrorCode::CertificateExpired)
@@ -801,12 +811,10 @@ mod tests {
         drop(store);
         let mut store = Store::open(&offline, installation).unwrap();
         assert!(!store.enabled(&authority.sid).unwrap());
-        assert_eq!(
-            store
-                .verify(&authority, Factor::Recovery(&recovery), clock, &Plain)
-                .unwrap(),
-            Decision::Disabled
-        );
+        assert!(matches!(
+            store.verify(&authority, Factor::Recovery(&recovery), clock, &Plain),
+            Err(device_access::Error::Changed)
+        ));
         assert!(store.bind_registration(authority.registration()).is_err());
     }
     #[test]
