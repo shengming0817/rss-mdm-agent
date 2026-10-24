@@ -25,21 +25,6 @@ pub fn now() -> Result<u64, Error> {
 fn bad(_: Error) -> ui::ServiceError {
     ui::error("execution_unavailable", "执行服务未确认操作，请查询原任务")
 }
-fn relation_error(phase: CurrentUserSyncPhase) -> ui::ServiceError {
-    match phase {
-        CurrentUserSyncPhase::Conflict => ui::error(
-            "binding_conflict",
-            "当前使用者发生冲突，请明确清理后重新登录",
-        ),
-        CurrentUserSyncPhase::Invalidated => {
-            ui::error("binding_invalidated", "设备身份已变化，请重新登录")
-        }
-        CurrentUserSyncPhase::CleanupPending => {
-            ui::error("cleanup_pending", "退出清理尚未确认，请重试原操作")
-        }
-        _ => ui::error("binding_unknown", "登录确认尚未完成，请重试原操作"),
-    }
-}
 fn mcp_error(error: Error) -> mcp::ServiceError {
     eprintln!("RSS_EXECUTION_MCP_FAILURE code={error:?}");
     match error {
@@ -213,53 +198,8 @@ impl ExecutionHandle {
             .map_err(bad)?
         {
             Reply::ContextBound { value } => Ok(value),
-            Reply::CurrentUserSync { value } => Err(relation_error(value.phase)),
             _ => Err(bad(Error::OutcomeUnknown)),
         }
-    }
-    pub async fn retire_enterprise(
-        &self,
-        generation: Option<Id>,
-        proof: Option<zeroize::Zeroizing<String>>,
-        recover: bool,
-    ) -> ui::Result<()> {
-        match self
-            .request(Request::RetireEnterpriseContext {
-                generation,
-                proof,
-                recover,
-            })
-            .await
-            .map_err(bad)?
-        {
-            Reply::CurrentUserSync { value }
-                if matches!(
-                    value.phase,
-                    CurrentUserSyncPhase::Unbound | CurrentUserSyncPhase::Invalidated
-                ) =>
-            {
-                Ok(())
-            }
-            Reply::CurrentUserSync { value } => Err(relation_error(value.phase)),
-            _ => Err(bad(Error::OutcomeUnknown)),
-        }
-    }
-    pub async fn independent_login_allowed(&self) -> bool {
-        #[cfg(test)]
-        if self.context_transport.is_some() {
-            return false;
-        }
-        tokio::task::spawn_blocking(|| {
-            match ServiceClient::inspect() {
-                execution_ipc::host::ServiceView::NotInstalled => true,
-                execution_ipc::host::ServiceView::Connected { status } if status.readiness == execution_ipc::host::Readiness::Ready => {
-                    matches!(ServiceClient::installed().and_then(|client|client.request(Request::RegistrationStatus {})), Ok(Reply::RegistrationStatus { value }) if !value.registered && value.credential == execution_ipc::host::CredentialStatus::Absent)
-                },
-                _ => false,
-            }
-        })
-        .await
-        .unwrap_or(false)
     }
     fn context_ref(&self) -> ui::Result<execution_contract::NativeContextRef> {
         let snapshot = self

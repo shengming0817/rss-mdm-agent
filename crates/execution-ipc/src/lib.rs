@@ -5,7 +5,7 @@ pub mod device_access;
 mod diagnostics;
 /// Bounded operations reserved for the signed Platform SSO extension.
 pub mod platform_sso;
-pub use diagnostics::record_startup_failure;
+pub use diagnostics::{record_background_failure, record_startup_failure};
 /// Fixed helper protocol and authenticated per-login client. Only runner executes its commands.
 pub mod helper;
 /// Current service wire, installation pins, authenticated peer and ingress port.

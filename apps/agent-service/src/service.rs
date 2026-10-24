@@ -323,6 +323,7 @@ impl<S: IdentityProvider> DeviceService<S> {
                 },
                 mdm_reported: None,
                 contexts: Default::default(),
+                current_user_context: None,
                 fences,
                 credential_leases: Default::default(),
                 policy_commands: Default::default(),
@@ -534,7 +535,10 @@ impl<S: IdentityProvider> DeviceService<S> {
             return Ok(());
         }
         self.next_network = std::time::Instant::now() + std::time::Duration::from_secs(2);
-        self.retire_expired_current_user(commands).await?;
+        self.synchronize_current_user(commands).await?;
+        if !self.core.policy_commands.is_empty() {
+            return Ok(());
+        }
         let caller = self.core.caller();
         if self.waiting.as_ref().is_some_and(|(offer, _)| {
             self.core
@@ -1225,6 +1229,8 @@ pub(crate) struct Core {
     pub(crate) mdm: execution_ipc::host::MdmStatus,
     mdm_reported: Option<wire::MdmEnrollmentState>,
     contexts: policy::Contexts,
+    // Last explicit authenticated login, independent of remote projection acknowledgement.
+    current_user_context: Option<agent_client::current_user::Owner>,
     fences: Arc<policy::Fences>,
     credential_leases: std::collections::BTreeMap<RequestId, Arc<zeroize::Zeroizing<String>>>,
     policy_commands: policy::Commands,
@@ -1941,32 +1947,22 @@ fn network_event(core: &mut Core, event: NetworkEvent) -> Result<bool, Error> {
     }
     Ok(core.stopping)
 }
-// The same owner yields background HTTP for a native identity transition. Original
+// The same owner yields background HTTP for queued native operations. Original
 // durable communication intents remain with their existing owners after cancellation.
 async fn background<T>(
     future: impl std::future::Future<Output = Result<T, Error>>,
     core: &mut Core,
     commands: &mut tokio::sync::mpsc::Receiver<Command>,
 ) -> Result<Option<T>, Error> {
-    let transition = |core: &Core| {
-        core.policy_commands.iter().any(|command| {
-            matches!(
-                command.request.as_operation(),
-                Some(
-                    execution_ipc::host::Request::BindContext { .. }
-                        | execution_ipc::host::Request::RetireEnterpriseContext { .. }
-                )
-            )
-        })
-    };
-    if transition(core) {
+    let queued = |core: &Core| !core.policy_commands.is_empty();
+    if queued(core) {
         return Ok(None);
     }
     let result = network_loop(future, commands, |event| {
-        Ok(network_event(core, event)? || transition(core))
+        Ok(network_event(core, event)? || queued(core))
     })
     .await;
-    if matches!(result, Err(Error::Unavailable)) && !core.stopping && transition(core) {
+    if matches!(result, Err(Error::Unavailable)) && !core.stopping && queued(core) {
         Ok(None)
     } else {
         result.map(Some)

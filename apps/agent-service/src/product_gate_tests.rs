@@ -1382,6 +1382,16 @@ impl Case {
             panic!("AI binding")
         };
         *context = value;
+        let (_sender, mut commands) = tokio::sync::mpsc::channel(1);
+        // Advance the independent presence projection through the existing owner tick.
+        self.service
+            .synchronize_current_user(&mut commands)
+            .await
+            .unwrap();
+        self.service
+            .synchronize_current_user(&mut commands)
+            .await
+            .unwrap();
     }
 }
 #[tokio::test]
@@ -3961,11 +3971,16 @@ async fn startup_authority_requires_current_verified_revision() {
 }
 
 #[tokio::test]
-async fn current_user_lost_ack_keeps_context_closed_and_resumes_original_login() {
+async fn current_user_lost_ack_does_not_gate_native_context_or_device_resources() {
     let _budget = crate::scenario_budget::enter();
     use execution_ipc::host::{NativeAccess, NativeContextSession, Request};
     let mut c = Case::new(None).await;
     c.policy_call(Request::RevokeContext {}).await;
+    let (_sender, mut commands) = tokio::sync::mpsc::channel(1);
+    c.service
+        .synchronize_current_user(&mut commands)
+        .await
+        .unwrap();
     let value = NativeContextSession {
         access: NativeAccess::User {
             credential: zeroize::Zeroizing::new("c".repeat(64)),
@@ -3975,47 +3990,55 @@ async fn current_user_lost_ack_keeps_context_closed_and_resumes_original_login()
         expires_at_unix_ms: c.service.core.host.clock.millis().unwrap() + 60000,
     };
     c._server.data.lock().unwrap().current_user.lose_reply = true;
-    let reply = c
+    let before = c._server.data.lock().unwrap().current_user.inputs.len();
+    let Reply::ContextBound { value: context } = c
         .policy_call(Request::BindContext {
             value: value.clone(),
             expected: None,
         })
-        .await;
-    assert!(
-        matches!(reply,Reply::CurrentUserSync{value} if value.phase==execution_contract::CurrentUserSyncPhase::BindingUnknown)
+        .await
+    else {
+        panic!("local binding waited for MDM presence");
+    };
+    assert_eq!(
+        c._server.data.lock().unwrap().current_user.inputs.len(),
+        before,
+        "native context must perform no presence HTTP"
+    );
+    c.service
+        .synchronize_current_user(&mut commands)
+        .await
+        .unwrap();
+    assert_eq!(
+        c.service.client.current_user_status().unwrap().phase,
+        execution_contract::CurrentUserSyncPhase::BindingUnknown
     );
     assert!(matches!(
         c.policy_call(Request::PolicyDirectory {
-            context: c.context(),
+            context: context.clone(),
             after: None,
             origin: ClientOrigin::Desktop {}
         })
         .await,
-        Reply::Rejected
+        Reply::PolicyDirectory { .. }
     ));
-    // Refresh cannot turn a pending, unpublished binding into a usable context.
-    assert!(matches!(
-        c.policy_call(Request::BindContext {
-            value: value.clone(),
-            expected: Some(value.generation.clone())
-        })
-        .await,
-        Reply::Rejected
-    ));
-    let calls = c._server.data.lock().unwrap().current_user.inputs.len();
     assert!(matches!(
         c.policy_call(Request::BindContext {
             value,
-            expected: None
+            expected: Some(context.id)
         })
         .await,
         Reply::ContextBound { .. }
     ));
+    c.service
+        .synchronize_current_user(&mut commands)
+        .await
+        .unwrap();
     let d = c._server.data.lock().unwrap();
-    assert_eq!(d.current_user.inputs.len(), calls + 1);
+    assert_eq!(d.current_user.inputs.len(), before + 2);
     assert_eq!(
-        d.current_user.inputs[calls - 1],
-        d.current_user.inputs[calls]
+        d.current_user.inputs[before],
+        d.current_user.inputs[before + 1]
     );
 }
 #[tokio::test]
@@ -4064,7 +4087,7 @@ async fn expired_enterprise_lease_settles_current_user_without_a_live_desktop() 
     c._server.data.lock().unwrap().current_user.lose_reply = true;
     c.service.prune_credentials().unwrap();
     c.service
-        .retire_expired_current_user(&mut commands)
+        .synchronize_current_user(&mut commands)
         .await
         .unwrap();
     assert_eq!(
@@ -4072,7 +4095,7 @@ async fn expired_enterprise_lease_settles_current_user_without_a_live_desktop() 
         execution_contract::CurrentUserSyncPhase::CleanupPending
     );
     c.service
-        .retire_expired_current_user(&mut commands)
+        .synchronize_current_user(&mut commands)
         .await
         .unwrap();
     assert_eq!(
@@ -4106,13 +4129,30 @@ async fn expired_other_peer_with_the_same_generation_cannot_retire_latest_owner(
         })
         .await;
     assert!(matches!(reply, Reply::ContextBound { .. }));
+    let original_binding = c.selection.binding.clone();
     c.selection.binding = plan::id("another-authenticated-login").unwrap();
     c.employee("initial").await;
+    // A lost-ACK retry from the older peer is not a new user selection.
+    c.selection.binding = original_binding;
+    let retry = c
+        .policy_call(Request::BindContext {
+            value: NativeContextSession {
+                access: NativeAccess::User {
+                    credential: zeroize::Zeroizing::new("c".repeat(64)),
+                    user: protocol::current_user::user(c.service.client.configuration().tenant),
+                },
+                generation: context.generation,
+                expires_at_unix_ms: c.service.core.host.clock.millis().unwrap() + 100,
+            },
+            expected: None,
+        })
+        .await;
+    assert!(matches!(retry, Reply::ContextBound { .. }));
     let revision = c._server.data.lock().unwrap().current_user.revision;
     tokio::time::sleep(std::time::Duration::from_millis(120)).await;
     let (_sender, mut commands) = tokio::sync::mpsc::channel(1);
     c.service
-        .retire_expired_current_user(&mut commands)
+        .synchronize_current_user(&mut commands)
         .await
         .unwrap();
     assert_eq!(
@@ -4134,6 +4174,11 @@ async fn service_restart_retires_confirmed_relation_and_replays_cleanup_but_pres
         let mut c = Case::new(None).await;
         if unknown_put {
             c.policy_call(Request::RevokeContext {}).await;
+            let (_sender, mut commands) = tokio::sync::mpsc::channel(1);
+            c.service
+                .synchronize_current_user(&mut commands)
+                .await
+                .unwrap();
             c._server.data.lock().unwrap().current_user.lose_reply = true;
             let reply = c
                 .policy_call(Request::BindContext {
@@ -4150,8 +4195,14 @@ async fn service_restart_retires_confirmed_relation_and_replays_cleanup_but_pres
                     expected: None,
                 })
                 .await;
-            assert!(
-                matches!(reply,Reply::CurrentUserSync{value} if value.phase==execution_contract::CurrentUserSyncPhase::BindingUnknown)
+            assert!(matches!(reply, Reply::ContextBound { .. }));
+            c.service
+                .synchronize_current_user(&mut commands)
+                .await
+                .unwrap();
+            assert_eq!(
+                c.service.client.current_user_status().unwrap().phase,
+                execution_contract::CurrentUserSyncPhase::BindingUnknown
             );
         }
         let config = c.service.core.config.clone();
@@ -4191,7 +4242,7 @@ async fn service_restart_retires_confirmed_relation_and_replays_cleanup_but_pres
         let (_sender, mut commands) = tokio::sync::mpsc::channel(1);
         if unknown_put {
             service
-                .retire_expired_current_user(&mut commands)
+                .synchronize_current_user(&mut commands)
                 .await
                 .unwrap();
             assert_eq!(
@@ -4206,7 +4257,7 @@ async fn service_restart_retires_confirmed_relation_and_replays_cleanup_but_pres
         }
         server.data.lock().unwrap().current_user.lose_reply = true;
         service
-            .retire_expired_current_user(&mut commands)
+            .synchronize_current_user(&mut commands)
             .await
             .unwrap();
         assert_eq!(
@@ -4216,7 +4267,7 @@ async fn service_restart_retires_confirmed_relation_and_replays_cleanup_but_pres
         drop(service);
         let mut service = assemble();
         service
-            .retire_expired_current_user(&mut commands)
+            .synchronize_current_user(&mut commands)
             .await
             .unwrap();
         assert_eq!(
