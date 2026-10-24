@@ -944,6 +944,9 @@ mod tests {
                         })
                     }
                 }
+                Request::CurrentUserStatus {} => Ok(Reply::CurrentUserSync {
+                    value: Default::default(),
+                }),
                 _ => panic!("unexpected context request"),
             });
         let (org, server) = server(vec![
