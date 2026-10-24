@@ -12,6 +12,13 @@ const directory = {
 type Reply = Awaited<ReturnType<DeviceAccessPort>>;
 function portWithSetup(setup: () => Promise<Reply>) {
   return vi.fn<DeviceAccessPort>(async (input) => {
+    if (input.kind === "windowsStatus")
+      return {
+        kind: "windowsStatus",
+        component: "ready",
+        factorActive: false,
+        signInRequired: false,
+      };
     if (input.kind === "directory") return directory;
     if (input.kind === "tasks") return { kind: "tasks", tasks: [task] };
     if (input.kind === "prepare") return setup();
@@ -90,6 +97,13 @@ it("clears shown material when its native port owner changes", async () => {
 });
 it("Mac setup uses native password preparation and keeps backend and system facts separate", async () => {
   const port = vi.fn<DeviceAccessPort>(async (input) => {
+    if (input.kind === "windowsStatus")
+      return {
+        kind: "windowsStatus",
+        component: "ready",
+        factorActive: false,
+        signInRequired: false,
+      };
     if (input.kind === "directory") return directory;
     if (input.kind === "tasks") return { kind: "tasks", tasks: [task] };
     if (input.kind === "macStatus")
@@ -134,6 +148,13 @@ it("passes the opaque directory cursor unchanged", async () => {
   const cursor = "signed/a+b==";
   const port = vi.fn<DeviceAccessPort>(async (input) => {
     if (input.kind === "tasks") return { kind: "tasks", tasks: [] };
+    if (input.kind === "windowsStatus")
+      return {
+        kind: "windowsStatus",
+        component: "ready",
+        factorActive: false,
+        signInRequired: false,
+      };
     if (input.kind === "directory")
       return { ...directory, nextCursor: input.cursor ? null : cursor };
     throw new Error("unexpected operation");
@@ -153,6 +174,13 @@ it("passes the opaque directory cursor unchanged", async () => {
 it("shows native account provenance and the actual unbind disposition", async () => {
   const port = vi.fn<DeviceAccessPort>(async (input) => {
     if (input.kind === "tasks") return { kind: "tasks", tasks: [] };
+    if (input.kind === "windowsStatus")
+      return {
+        kind: "windowsStatus",
+        component: "ready",
+        factorActive: false,
+        signInRequired: false,
+      };
     if (input.kind === "directory")
       return {
         ...directory,
@@ -193,5 +221,87 @@ it("shows native account provenance and the actual unbind disposition", async ()
   expect(wrapper.text()).toContain("Entra joined 账号");
   expect(wrapper.text()).toContain("本机登录已限制");
   expect(wrapper.text()).not.toContain("系统账号保持原状");
+  wrapper.unmount();
+});
+
+it.each([
+  ["rebootRequired", "请重启电脑后重试应用"],
+  ["maintenanceDisabled", "组件已由管理员停用"],
+] as const)(
+  "shows %s independently of historical applied receipts",
+  async (component, text) => {
+    const port = vi.fn<DeviceAccessPort>(async (input) => {
+      if (input.kind === "windowsStatus")
+        return {
+          kind: "windowsStatus",
+          component,
+          factorActive: true,
+          signInRequired: false,
+        };
+      if (input.kind === "tasks") return { kind: "tasks", tasks: [] };
+      if (input.kind === "directory")
+        return {
+          ...directory,
+          bindings: [
+            {
+              id: "binding",
+              bindingGeneration: 1,
+              factorGeneration: 1,
+              revision: 1,
+              accountDisposition: "keep",
+              appliedRevision: 1,
+              receivedRevision: 1,
+              revoked: false,
+              account: {
+                platform: "windows",
+                sid: "S-1-5-21-1-2-3-1001",
+                authority: { kind: "local" },
+              },
+              configuration: {
+                mac: null,
+                windowsAccounts: ["local"],
+                selfEnrollment: true,
+                enabled: true,
+                role: null,
+              },
+              effect: {
+                state: "applied",
+                account: {
+                  platform: "windows",
+                  sid: "S-1-5-21-1-2-3-1001",
+                  authority: { kind: "local" },
+                },
+                role: "standard",
+                mac: null,
+                windows: null,
+              },
+            },
+          ],
+        };
+      throw new Error("unexpected operation");
+    });
+    const wrapper = mount(DeviceAccess, { props: { port } });
+    await flushPromises();
+    expect(wrapper.text()).toContain(text);
+    expect(wrapper.text()).toContain("服务端最近回执：RSS 登录已应用");
+    wrapper.unmount();
+  },
+);
+it("keeps local diagnosis when the server is unavailable", async () => {
+  const port = vi.fn<DeviceAccessPort>(async (input) => {
+    if (input.kind === "windowsStatus")
+      return {
+        kind: "windowsStatus",
+        component: "rebootRequired",
+        factorActive: false,
+        signInRequired: true,
+      };
+    throw new Error("offline");
+  });
+  const wrapper = mount(DeviceAccess, { props: { port } });
+  await flushPromises();
+  expect(wrapper.text()).toContain("请重启电脑后重试应用");
+  expect(wrapper.text()).toContain("请注销 Windows 并重新登录");
+  expect(wrapper.text()).toContain("操作尚未确认");
   wrapper.unmount();
 });

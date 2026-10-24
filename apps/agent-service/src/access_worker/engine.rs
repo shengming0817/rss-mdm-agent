@@ -1,5 +1,6 @@
 use super::*;
 use device_access::{Clock, Protector, Store};
+use execution_ipc::device_access::WindowsComponentState as Component;
 use w::{
     AccessAccount as Account, AccessAction as Action, AccessEffect as Effect,
     AccessFailure as Failure, AccessWindowsPlan as Plan,
@@ -13,7 +14,7 @@ pub(super) trait Native: Protector {
         account: &w::AccessAccount,
         disposition: w::AccessAccountDisposition,
     ) -> Result<(), Failure>;
-    fn integration_ready(&self, root: &Path, installation: uuid::Uuid) -> Result<bool, Error>;
+    fn integration_ready(&self, root: &Path, installation: uuid::Uuid) -> Result<Component, Error>;
     fn clock(&self) -> Result<Clock, Error>;
     fn password(&mut self) -> Result<Zeroizing<String>, Error>;
     fn create(&mut self, name: &str, password: &str) -> Result<String, Failure>;
@@ -73,7 +74,10 @@ fn apply(input: &Input, native: &mut impl Native) -> Result<Effect, Error> {
             })
         }
     };
-    if enabled && !ready {
+    if enabled && matches!(ready, Component::RebootRequired | Component::Unavailable) {
+        return Ok(Effect::Unknown);
+    }
+    if enabled && ready != Component::Ready {
         return Ok(Effect::Failed {
             reason: Failure::Unsupported,
         });
@@ -101,12 +105,7 @@ fn apply(input: &Input, native: &mut impl Native) -> Result<Effect, Error> {
         Action::Apply {
             account: Account::Windows { sid, .. },
             configuration,
-        } => {
-            if let Err(reason) = native.inspect(sid) {
-                return Ok(Effect::Failed { reason });
-            }
-            (sid.clone(), configuration, false)
-        }
+        } => (sid.clone(), configuration, false),
         Action::Create {
             name: account_name,
             configuration,

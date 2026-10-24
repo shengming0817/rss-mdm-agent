@@ -118,7 +118,7 @@ unsafe fn counted(value: &LSA_UNICODE_STRING) -> Result<String, F> {
     .map_err(|_| F::AccountChanged)
 }
 /// A real console logon token, never a renderer-supplied name or a SYSTEM process token.
-fn cloud_session(sid: &str) -> Result<(String, i64, Role), F> {
+fn cloud_session(sid: &str) -> Result<(String, i64, Vec<String>), F> {
     let session = unsafe { WTSGetActiveConsoleSessionId() };
     if session == u32::MAX {
         return Err(F::NeedsUser);
@@ -182,14 +182,10 @@ fn cloud_session(sid: &str) -> Result<(String, i64, Role), F> {
     {
         return Err(F::NativeFailure);
     }
-    let role = if unsafe { std::slice::from_raw_parts(token_groups.Groups.as_ptr(), count) }
+    let groups = unsafe { std::slice::from_raw_parts(token_groups.Groups.as_ptr(), count) }
         .iter()
-        .any(|group| unsafe { IsWellKnownSid(group.Sid, WinBuiltinAdministratorsSid) }.as_bool())
-    {
-        Role::Administrator
-    } else {
-        Role::Standard
-    };
+        .map(|group| string_sid(group.Sid))
+        .collect::<Result<Vec<_>, _>>()?;
     let mut data = std::ptr::null_mut();
     if unsafe { LsaGetLogonSessionData(&statistics.AuthenticationId, &mut data) }.0 < 0
         || data.is_null()
@@ -226,12 +222,13 @@ fn cloud_session(sid: &str) -> Result<(String, i64, Role), F> {
         .checked_div(10_000)
         .and_then(|t| t.checked_sub(11_644_473_600_000))
         .ok_or(F::NativeFailure)?;
-    Ok((format!("AzureAD\\{user}"), millis, role))
+    Ok((format!("AzureAD\\{user}"), millis, groups))
 }
 pub(super) fn inspect(sid: &str) -> Result<Option<Account>, F> {
     if let Some(object_id) = crate::entra_object_id(sid) {
         let (tenant_id, join) = cloud_join()?;
-        let (login, time, role) = cloud_session(sid)?;
+        let (login, time, groups) = cloud_session(sid)?;
+        let role = cloud_role(sid, &groups)?;
         if cloud_join()? != (tenant_id, join.clone()) {
             return Err(F::AccountChanged);
         }
@@ -341,4 +338,31 @@ pub(super) fn deny_interactive(sid: &str) -> Result<(), F> {
         }
     }
     Err(F::NativeFailure)
+}
+
+/// Read current local assignments, not the immutable Administrators bit in a logon token.
+fn cloud_role(sid: &str, groups: &[String]) -> Result<Role, F> {
+    let members = administrators()?;
+    if members.iter().any(|member| member == sid) {
+        return Ok(Role::Administrator);
+    }
+    for member in members {
+        if crate::entra_object_id(&member).is_some() {
+            if groups.contains(&member) {
+                return Ok(Role::Administrator);
+            }
+        } else if inspect_local(&member).is_err() {
+            // Unresolved/nested local or directory groups cannot be safely demoted as a user.
+            return Err(F::Unsupported);
+        }
+    }
+    Ok(Role::Standard)
+}
+pub(super) fn configured_cloud_role(sid: &str) -> Result<Role, F> {
+    cloud_join()?;
+    if administrators()?.iter().any(|member| member == sid) {
+        return Ok(Role::Administrator);
+    }
+    let (_, _, groups) = cloud_session(sid)?;
+    cloud_role(sid, &groups)
 }

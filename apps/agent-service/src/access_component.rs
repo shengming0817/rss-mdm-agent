@@ -1,6 +1,7 @@
 //! Independent repair path; never loads the credential provider DLL.
 use agent_client::Error;
 use device_access::windows::{Installation, CONFIG_KEY, PROVIDER_CLSID};
+use execution_ipc::device_access::WindowsComponentState as Component;
 use sha2::{Digest, Sha256};
 use std::{ffi::OsString, path::Path, ptr::null_mut};
 use windows_sys::Win32::System::Registry::*;
@@ -118,8 +119,12 @@ pub fn run(args: &[OsString]) -> Result<(), Error> {
             println!("RSS component disabled and COM registration removed; installation and factor state preserved");
         }
         ["health"] => {
-            health()?;
-            println!("RSS component paths, image and offline storage verified; DLL not loaded");
+            let config =
+                device_access::windows::installation().map_err(|_| Error::Configuration)?;
+            println!(
+                "RSS component: {:?}; DLL not loaded",
+                readiness(&config.root, config.id)?
+            );
         }
         ["register", path] => {
             let deployment = crate::deployment::Deployment::load(Path::new(path))?;
@@ -129,10 +134,6 @@ pub fn run(args: &[OsString]) -> Result<(), Error> {
         _ => return Err(Error::Configuration),
     }
     Ok(())
-}
-pub(crate) fn health() -> Result<(), Error> {
-    let config = device_access::windows::installation().map_err(|_| Error::Configuration)?;
-    health_for(&config)
 }
 fn health_for(config: &Installation) -> Result<(), Error> {
     device_access::Store::open(&config.root, config.id).map_err(|_| Error::Storage)?;
@@ -170,21 +171,35 @@ fn exists(path: &str) -> Result<bool, Error> {
     Ok(true)
 }
 /// A missing Provider permits cleanup; a different registered installation never does.
-pub(crate) fn readiness(root: &Path, installation: uuid::Uuid) -> Result<bool, Error> {
+pub(crate) fn readiness(root: &Path, installation: uuid::Uuid) -> Result<Component, Error> {
     if !exists(CONFIG_KEY)? {
         return if exists(&provider())? {
             Err(Error::Identity)
         } else {
-            Ok(false)
+            Ok(Component::NotInstalled)
         };
     }
     let config = device_access::windows::installation().map_err(|_| Error::Identity)?;
     crate::access_worker::verify_installation(root, installation, &config.root, config.id)?;
-    Ok(health_for(&config).is_ok()
-        && device_access::windows::clock()
+    match get(CONFIG_KEY, "MaintenanceDisabled")?.as_str() {
+        "1" => return Ok(Component::MaintenanceDisabled),
+        "0" => (),
+        _ => return Err(Error::Configuration),
+    }
+    if health_for(&config).is_err() {
+        return Ok(Component::Unavailable);
+    }
+    Ok(
+        if device_access::windows::clock()
             .map_err(|_| Error::Clock)?
             .boot
-            != config.installed_boot)
+            == config.installed_boot
+        {
+            Component::RebootRequired
+        } else {
+            Component::Ready
+        },
+    )
 }
 
 pub(crate) fn remove_for(deployment: &crate::deployment::Deployment) -> Result<(), Error> {

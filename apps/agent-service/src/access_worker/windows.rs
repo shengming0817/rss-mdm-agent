@@ -1,5 +1,6 @@
 use super::*;
 use device_access::{windows::account, Protector, SystemProtector};
+use execution_ipc::device_access::WindowsComponentState as Component;
 use zeroize::Zeroizing;
 pub(super) struct NativeWindows {
     pub root: std::path::PathBuf,
@@ -47,7 +48,7 @@ impl engine::Native for NativeWindows {
     ) -> Result<(), w::AccessFailure> {
         account::dispose(target, disposition)
     }
-    fn integration_ready(&self, root: &Path, installation: uuid::Uuid) -> Result<bool, Error> {
+    fn integration_ready(&self, root: &Path, installation: uuid::Uuid) -> Result<Component, Error> {
         crate::access_component::readiness(root, installation)
     }
     fn clock(&self) -> Result<device_access::Clock, Error> {
@@ -70,7 +71,7 @@ impl engine::Native for NativeWindows {
         account::create(name, password)
     }
     fn inspect(&self, sid: &str) -> Result<w::AccessRole, w::AccessFailure> {
-        account::inspect(sid).map(|v| v.role)
+        account::configured_role(sid)
     }
     fn role(&mut self, sid: &str, role: w::AccessRole) -> Result<(), w::AccessFailure> {
         account::set_role(sid, role)

@@ -195,9 +195,16 @@ fn administrators() -> Result<Vec<String>, F> {
     }
     Err(F::NativeFailure)
 }
+/// Observe current persistent local administrator assignments. Existing tokens refresh at sign-in.
+pub fn configured_role(sid: &str) -> Result<Role, F> {
+    if crate::entra_object_id(sid).is_some() {
+        directory::configured_cloud_role(sid)
+    } else {
+        inspect(sid).map(|account| account.role)
+    }
+}
 pub fn set_role(sid: &str, role: Role) -> Result<(), F> {
-    let current = inspect(sid)?;
-    if current.role == role {
+    if configured_role(sid)? == role {
         return Ok(());
     }
     protect_recovery(sid, role == Role::Standard)?;
@@ -225,8 +232,12 @@ pub fn set_role(sid: &str, role: Role) -> Result<(), F> {
             )
         }
     };
-    if status != 0 || inspect(sid)?.role != role {
+    if ![0, 1377, 1378].contains(&status) {
         return Err(F::NativeFailure);
+    }
+    if configured_role(sid)? != role {
+        // Group-inherited administration must not remove the entire group or claim success.
+        return Err(F::Unsupported);
     }
     Ok(())
 }

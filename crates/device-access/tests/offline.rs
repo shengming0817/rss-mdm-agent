@@ -563,3 +563,81 @@ fn old_schema_is_rejected_without_reinitializing_material() {
         1
     );
 }
+
+#[test]
+fn changed_join_retires_cloud_factors_durably_but_preserves_local_binding() {
+    let f = Fixture::new();
+    let (mut store, local_recovery, _, _, _) = f.setup();
+    store.observe_join("entra:first", 200).unwrap();
+    let mut cloud = f.authority.clone();
+    cloud.sid = "S-1-12-1-1-2-3-4".into();
+    cloud.source = rss_mdm_agent_wire::runtime::AccessWindowsAuthority::Entra {
+        tenant_id: Uuid::new_v4(),
+        object_id: entra_object_id(&cloud.sid).unwrap(),
+    };
+    cloud.join = "entra:first".into();
+    cloud.login = "AzureAD\\user@example.test".into();
+    cloud.binding = Uuid::new_v4();
+    cloud.principal = Uuid::new_v4();
+    let mut candidate = Candidate::generate().unwrap();
+    let secret = candidate.totp_secret().to_vec();
+    let recovery = candidate.recovery_secret().to_owned();
+    assert!(candidate
+        .confirm(&code(&secret, f.clock.utc), f.clock)
+        .unwrap());
+    let operation = Uuid::new_v4();
+    store.stage(operation, &candidate, &TestProtector).unwrap();
+    let facts = AccessWindowsFacts {
+        factor_generation: 1,
+        recovery: CredentialReceipt {
+            subject: CredentialSubject::RssLogin {
+                binding: cloud.binding,
+                binding_generation: 1,
+                sid: cloud.sid.clone(),
+            },
+            material: Uuid::new_v4(),
+            version: 1,
+        },
+    };
+    store
+        .activate(
+            cloud.clone(),
+            1,
+            true,
+            operation,
+            facts,
+            f.clock,
+            &TestProtector,
+        )
+        .unwrap();
+    assert!(store.enabled(&cloud.sid).unwrap());
+    store.observe_join("entra:second", 300).unwrap();
+    drop(store);
+    let mut store = Store::open(&f.root, f.id).unwrap();
+    assert!(store.authority(&cloud.sid).unwrap().is_none());
+    let clock = Clock {
+        utc: f.clock.utc + 30,
+        monotonic: f.clock.monotonic + 30,
+        ..f.clock
+    };
+    for factor in [
+        Factor::Recovery(&recovery),
+        Factor::Totp(&code(&secret, clock.utc)),
+    ] {
+        assert_eq!(
+            store.verify(&cloud, factor, clock, &TestProtector).unwrap(),
+            Decision::Disabled
+        );
+    }
+    assert_eq!(
+        store
+            .verify(
+                &f.authority,
+                Factor::Recovery(&local_recovery),
+                clock,
+                &TestProtector
+            )
+            .unwrap(),
+        Decision::Accepted
+    );
+}

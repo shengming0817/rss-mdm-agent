@@ -362,7 +362,10 @@ impl<S: agent_client::IdentityProvider> super::DeviceService<S> {
         };
         owner.validate(&self.core.access.fences)?;
         #[cfg(windows)]
-        {
+        if !matches!(
+            input,
+            Op::WindowsStatus {} | Op::Directory { .. } | Op::Tasks {}
+        ) {
             let native = device_access::windows::account::inspect(&owner.subject)
                 .map_err(|_| Error::Identity)?;
             if let Some(logon_millis) = native.logon_millis {
@@ -407,6 +410,37 @@ impl<S: agent_client::IdentityProvider> super::DeviceService<S> {
                 Out::Prepared {}
             }
             Op::MacStatus {} => Out::MacStatus(self.mac_access_status(command, commands).await?),
+            Op::WindowsStatus {} => {
+                #[cfg(windows)]
+                {
+                    use execution_ipc::device_access::{WindowsComponentState, WindowsStatus};
+                    let mut status = WindowsStatus {
+                        component: crate::access_component::readiness(
+                            &self.core.access.root,
+                            self.core.access.installation,
+                        )
+                        .unwrap_or(WindowsComponentState::Unavailable),
+                        factor_active: None,
+                        sign_in_required: false,
+                    };
+                    if let Ok(mut store) = device_access::Store::open(
+                        &self.core.access.root,
+                        self.core.access.installation,
+                    ) {
+                        status.factor_active = store.enabled(&owner.subject).ok();
+                        let native = device_access::windows::account::inspect(&owner.subject)
+                            .map_err(|_| Error::Identity)?;
+                        if let Some(logon) = native.logon_millis {
+                            status.sign_in_required = store
+                                .require_join_session(&native.join, logon, crate::wall()? as i64)
+                                .is_err();
+                        }
+                    }
+                    Out::WindowsStatus(status)
+                }
+                #[cfg(not(windows))]
+                return Err(Error::Unsupported);
+            }
             Op::Directory { cursor } => Out::Directory(
                 super::network(
                     self.client.access_directory(&proof, cursor.as_deref()),

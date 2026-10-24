@@ -20,6 +20,14 @@ const props = withDefaults(
 );
 const mac = computed(() => props.platform === "macos");
 const macStatus = ref<Extract<Result, { kind: "macStatus" }>>();
+const windowsStatus = ref<Extract<Result, { kind: "windowsStatus" }>>();
+const componentText = {
+  ready: "组件检查通过，实际登录仍需验证",
+  rebootRequired: "组件已注册，请重启电脑后重试应用",
+  notInstalled: "组件未安装，请联系管理员",
+  maintenanceDisabled: "组件已由管理员停用，需维修后启用",
+  unavailable: "组件检查失败，请联系管理员维修",
+};
 const directory = ref<Directory>(),
   tasks = ref<Task[]>([]),
   selected = ref<Task>();
@@ -48,6 +56,7 @@ function reset() {
   clearSecret();
   directory.value = undefined;
   macStatus.value = undefined;
+  windowsStatus.value = undefined;
   tasks.value = [];
   busy.value = false;
   message.value = "";
@@ -80,6 +89,13 @@ async function action(
 }
 async function refresh() {
   await action(async (port, valid) => {
+    if (!mac.value) {
+      windowsStatus.value = undefined;
+      const status = await port({ kind: "windowsStatus" });
+      if (!valid()) return;
+      if (status.kind !== "windowsStatus") throw new Error("response");
+      windowsStatus.value = status;
+    }
     const [listing, pending] = await Promise.all([
       port({ kind: "directory", cursor: null }),
       port({ kind: "tasks" }),
@@ -207,7 +223,9 @@ function bindingText(binding: Directory["bindings"][number]) {
     binding.appliedRevision === binding.revision &&
     binding.effect?.state === "applied"
   )
-    return binding.configuration.enabled ? "RSS 登录已应用" : "RSS 登录已停用";
+    return binding.configuration.enabled
+      ? "服务端最近回执：RSS 登录已应用"
+      : "服务端最近回执：RSS 登录已停用";
   if (binding.effect?.state === "failed") return "本机应用失败，需要处理后重试";
   if (binding.effect?.state === "unknown")
     return "本机结果未确定，请联系管理员核查";
@@ -256,6 +274,24 @@ onUnmounted(() => {
     <p v-if="!available">请登录 RSS 账户并保持当前本地会话解锁。</p>
     <template v-else>
       <button :disabled="busy" @click="refresh">刷新状态</button>
+      <p v-if="!mac" role="status">
+        本机当前状态：{{
+          windowsStatus
+            ? componentText[windowsStatus.component]
+            : "尚未取得本机观察"
+        }}。 当前账号因子：{{
+          windowsStatus?.factorActive === true
+            ? "已启用"
+            : windowsStatus?.factorActive === false
+              ? "未启用"
+              : "未知"
+        }}。
+        <span v-if="windowsStatus?.signInRequired"
+          >请注销 Windows
+          并重新登录，再关联账号；注销与重启组件是不同操作。</span
+        >
+        管理员组配置修改后，已有会话的权限需注销并重新登录才会刷新。
+      </p>
       <p v-if="macStatus" role="status">
         扩展：{{
           macStatus.extensionInstalled ? "已验证安装" : "未安装或需修复"

@@ -527,6 +527,9 @@ export type Operation =
       kind: "macStatus";
     }
   | {
+      kind: "windowsStatus";
+    }
+  | {
       /**
        * Policy cursor.
        */
@@ -613,6 +616,21 @@ export type Response =
        * Server user-registration fact.
        */
       userRegistered: boolean | null;
+    }
+  | {
+      /**
+       * Component check at this observation.
+       */
+      component: WindowsComponentState;
+      /**
+       * Current bound factor is enabled; null means observation unavailable.
+       */
+      factorActive: boolean | null;
+      kind: "windowsStatus";
+      /**
+       * First Entra binding needs a Windows session newer than the observed join.
+       */
+      signInRequired: boolean;
     }
   | {
       /**
@@ -708,6 +726,18 @@ export type Response =
   | {
       kind: "prepared";
     };
+/**
+ * Current credential-provider installation observation.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "WindowsComponentState".
+ */
+export type WindowsComponentState =
+  | "ready"
+  | "rebootRequired"
+  | "notInstalled"
+  | "maintenanceDisabled"
+  | "unavailable";
 /**
  * Stable local account identity, never a display name or a transient Unix UID.
  *

@@ -2,6 +2,7 @@
 use super::*;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use device_access::{Clock, Protector, Store};
+use execution_ipc::device_access::WindowsComponentState as Component;
 use rsa::{pkcs8::EncodePublicKey, rand_core::OsRng, RsaPrivateKey};
 use std::sync::LazyLock;
 use uuid::Uuid;
@@ -23,6 +24,8 @@ struct Fake {
     fail_create: bool,
     fail_dispose: bool,
     installed: bool,
+    reboot_required: bool,
+    inspect_unavailable: bool,
     registered: Option<(PathBuf, Uuid)>,
 }
 impl Protector for Fake {
@@ -57,14 +60,20 @@ impl engine::Native for Fake {
         }
         Ok(())
     }
-    fn integration_ready(&self, root: &Path, installation: Uuid) -> Result<bool, Error> {
+    fn integration_ready(&self, root: &Path, installation: Uuid) -> Result<Component, Error> {
         if let Some((actual_root, actual_id)) = &self.registered {
             verify_installation(root, installation, actual_root, *actual_id)?;
             Store::open(actual_root, *actual_id).map_err(|_| Error::Storage)?;
         } else if self.installed {
             return Err(Error::Identity);
         }
-        Ok(self.installed)
+        Ok(if !self.installed {
+            Component::NotInstalled
+        } else if self.reboot_required {
+            Component::RebootRequired
+        } else {
+            Component::Ready
+        })
     }
     fn clock(&self) -> Result<Clock, Error> {
         Ok(self.clock)
@@ -81,6 +90,9 @@ impl engine::Native for Fake {
         }
     }
     fn inspect(&self, _: &str) -> Result<w::AccessRole, w::AccessFailure> {
+        if self.inspect_unavailable {
+            return Err(w::AccessFailure::NeedsUser);
+        }
         Ok(self.role)
     }
     fn role(&mut self, _: &str, role: w::AccessRole) -> Result<(), w::AccessFailure> {
@@ -127,6 +139,8 @@ fn fixture(create: bool) -> (Root, Input, Fake, Vec<u8>, String) {
         fail_create: false,
         fail_dispose: false,
         installed: true,
+        reboot_required: false,
+        inspect_unavailable: false,
         registered: None,
     };
     let configuration = w::AccessConfiguration {
@@ -639,5 +653,68 @@ fn uncertain_os_disposition_cannot_restore_revoked_factors() {
         w::AccessEffect::Unbound {
             disposition: w::AccessAccountDisposition::Disable
         }
+    ));
+}
+
+#[test]
+fn reboot_barrier_retries_the_same_attempt_after_reboot() {
+    let (_root, input, mut native, _, recovery) = fixture(false);
+    native.reboot_required = true;
+    assert_eq!(
+        engine::execute(&input, &mut native).unwrap().effect,
+        w::AccessEffect::Unknown
+    );
+    assert!(stored_result(&input.root, &input.task).unwrap().is_none());
+    native.reboot_required = false;
+    let ack = ack(&input, recovery);
+    assert!(matches!(
+        engine::execute(&input, &mut native).unwrap().effect,
+        w::AccessEffect::Applied { .. }
+    ));
+    ack.join().unwrap();
+}
+
+#[test]
+fn disabling_factors_does_not_require_an_interactive_role_observation() {
+    let (_root, mut input, mut native, _, recovery) = fixture(false);
+    let ack = ack(&input, recovery.clone());
+    let w::AccessEffect::Applied {
+        windows: Some(facts),
+        ..
+    } = engine::execute(&input, &mut native).unwrap().effect
+    else {
+        panic!("not applied")
+    };
+    ack.join().unwrap();
+    input.task.task_id = Uuid::new_v4();
+    input.task.attempt_id = Uuid::new_v4();
+    input.task.revision += 1;
+    input.task.windows = Some(w::AccessWindowsPlan::Preserve { facts });
+    let w::AccessAction::Apply { configuration, .. } = &mut input.task.action else {
+        unreachable!()
+    };
+    configuration.enabled = false;
+    native.inspect_unavailable = true;
+    assert_eq!(
+        engine::execute(&input, &mut native).unwrap().effect,
+        w::AccessEffect::Unknown
+    );
+    let mut store = Store::open(&input.root, input.installation).unwrap();
+    assert!(!store.enabled(SID).unwrap());
+    assert_eq!(
+        store
+            .verify(
+                &authority(&input.task, SID, &native).unwrap(),
+                device_access::Factor::Recovery(&recovery),
+                native.clock,
+                &native
+            )
+            .unwrap(),
+        device_access::Decision::Disabled
+    );
+    native.inspect_unavailable = false;
+    assert!(matches!(
+        engine::execute(&input, &mut native).unwrap().effect,
+        w::AccessEffect::Applied { .. }
     ));
 }
