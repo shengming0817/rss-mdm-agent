@@ -41,6 +41,7 @@ export function freezeCandidate(
     securityProbe,
     untrustedProbe,
     platformSso,
+    windowsLogin,
     runtime,
   },
 ) {
@@ -52,6 +53,7 @@ export function freezeCandidate(
       securityProbe,
       untrustedProbe,
       platformSso,
+      windowsLogin,
     })
       .filter(([, path]) => path)
       .map(([name, path]) => [name, image(path)]),
@@ -165,6 +167,7 @@ if (
         {
           "security-probe": "securityProbe",
           "untrusted-probe": "untrustedProbe",
+          "windows-login": "windowsLogin",
         }[rawName] ?? rawName;
       assert.ok(
         [
@@ -172,6 +175,7 @@ if (
           "backend",
           "desktop",
           "securityProbe",
+          "windowsLogin",
           "untrustedProbe",
           "runtime",
           "output",

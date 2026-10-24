@@ -16,6 +16,17 @@ pub(crate) mod macos;
 mod tests;
 #[cfg(windows)]
 mod windows;
+/// Both activation and the health CLI require a usable component, not merely a readable status.
+#[cfg(any(windows, test))]
+pub(crate) fn component_health(
+    state: execution_ipc::device_access::WindowsComponentState,
+) -> Result<(), Error> {
+    if state == execution_ipc::device_access::WindowsComponentState::Ready {
+        Ok(())
+    } else {
+        Err(Error::Unavailable)
+    }
+}
 pub(crate) const PROFILE: &str = "native-device-access-worker";
 pub(crate) const OUTPUT_BYTES: u64 = 16384;
 #[derive(Serialize, Deserialize)]
@@ -46,8 +57,33 @@ pub(crate) fn plan_root(plan: &execution_contract::FrozenExecution) -> Result<Pa
     }
 }
 #[cfg(any(windows, test))]
-pub(crate) fn authority(task: &w::AccessTaskSpec, sid: &str) -> device_access::Authority {
-    device_access::Authority {
+fn authority(
+    task: &w::AccessTaskSpec,
+    sid: &str,
+    native: &impl engine::Native,
+) -> Result<device_access::Authority, Error> {
+    let (source, login, join) = native.identity(sid).map_err(|_| Error::Identity)?;
+    let actual = w::AccessAccount::Windows {
+        sid: sid.into(),
+        authority: source.clone(),
+    };
+    match &task.action {
+        w::AccessAction::Apply { account, .. } | w::AccessAction::Unbind { account, .. }
+            if account != &actual =>
+        {
+            return Err(Error::Identity)
+        }
+        w::AccessAction::Create { .. } if source != w::AccessWindowsAuthority::Local => {
+            return Err(Error::Identity)
+        }
+        _ => (),
+    }
+    Ok(device_access::Authority {
+        instance: task.instance_id,
+        principal: task.principal_id,
+        source,
+        login,
+        join,
         tenant: task.tenant_id,
         device: task.device_id.clone(),
         registration: task.registration_id,
@@ -56,7 +92,7 @@ pub(crate) fn authority(task: &w::AccessTaskSpec, sid: &str) -> device_access::A
         binding_generation: task.binding_generation,
         factor_generation: task.factor_generation,
         sid: sid.into(),
-    }
+    })
 }
 /// Verify the consumer registration against the task's frozen storage identity.
 // ref: rustls verify.rs@2976d90 (verification receives the caller's expected identity).
@@ -168,7 +204,13 @@ pub fn run(path: &Path) -> Result<i32, Error> {
     execution_runner::staging::verify_worker_identity(&input.run_as, &input.session)
         .map_err(crate::error::app_error)?;
     #[cfg(windows)]
-    let result = engine::execute(&input, &mut windows::NativeWindows)?;
+    let result = engine::execute(
+        &input,
+        &mut windows::NativeWindows {
+            root: input.root.clone(),
+            installation: input.installation,
+        },
+    )?;
     #[cfg(target_os = "macos")]
     let result = macos::execute(&input)?;
     #[cfg(not(any(windows, target_os = "macos")))]

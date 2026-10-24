@@ -20,6 +20,24 @@ const props = withDefaults(
 );
 const mac = computed(() => props.platform === "macos");
 const macStatus = ref<Extract<Result, { kind: "macStatus" }>>();
+const windowsStatus = ref<Extract<Result, { kind: "windowsStatus" }>>();
+function componentText(
+  component: Extract<Result, { kind: "windowsStatus" }>["component"],
+) {
+  switch (component) {
+    case "ready":
+      return "组件检查通过，实际登录仍需验证";
+    case "rebootRequired":
+      return "组件已注册，请重启电脑后重试应用";
+    case "notInstalled":
+      return "组件未安装，请联系管理员";
+    case "maintenanceDisabled":
+      return "组件已由管理员停用，需维修后启用";
+    case "unavailable":
+      return "组件检查失败，请联系管理员维修";
+  }
+}
+
 const directory = ref<Directory>(),
   tasks = ref<Task[]>([]),
   selected = ref<Task>();
@@ -48,6 +66,7 @@ function reset() {
   clearSecret();
   directory.value = undefined;
   macStatus.value = undefined;
+  windowsStatus.value = undefined;
   tasks.value = [];
   busy.value = false;
   message.value = "";
@@ -80,8 +99,15 @@ async function action(
 }
 async function refresh() {
   await action(async (port, valid) => {
+    if (!mac.value) {
+      windowsStatus.value = undefined;
+      const status = await port({ kind: "windowsStatus" });
+      if (!valid()) return;
+      if (status.kind !== "windowsStatus") throw new Error("response");
+      windowsStatus.value = status;
+    }
     const [listing, pending] = await Promise.all([
-      port({ kind: "directory", after: null }),
+      port({ kind: "directory", cursor: null }),
       port({ kind: "tasks" }),
     ]);
     if (!valid()) return;
@@ -96,10 +122,10 @@ async function refresh() {
   });
 }
 async function more() {
-  const after = directory.value?.after;
-  if (!after) return;
+  const cursor = directory.value?.nextCursor;
+  if (!cursor) return;
   await action(async (port, valid) => {
-    const result = await port({ kind: "directory", after });
+    const result = await port({ kind: "directory", cursor });
     if (!valid()) return;
     if (result.kind !== "directory") throw new Error("response");
     directory.value = {
@@ -185,15 +211,38 @@ async function confirm() {
     }
   });
 }
+function accountText(binding: Directory["bindings"][number]) {
+  const account = binding.account;
+  if (!account) return "账号待确认";
+  if (account.platform === "macos") return "macOS 账号";
+  switch (account.authority.kind) {
+    case "local":
+      return "Windows 本地账号";
+    case "active_directory":
+      return "AD 域账号";
+    case "entra":
+      return "Entra joined 账号";
+  }
+}
 function bindingText(binding: Directory["bindings"][number]) {
-  if (binding.effect?.state === "unbound")
-    return "RSS 关联已移除，本地账户和数据保留";
+  if (binding.effect?.state === "unbound") {
+    switch (binding.effect.disposition) {
+      case "keep":
+        return "RSS 关联已移除，系统账号保持原状";
+      case "disable":
+        return "RSS 关联已移除，本机登录已限制";
+      case "standard":
+        return "RSS 关联已移除，本机管理员资格已移除";
+    }
+  }
   if (binding.revoked) return "已请求移除，等待本机确认";
   if (
     binding.appliedRevision === binding.revision &&
     binding.effect?.state === "applied"
   )
-    return binding.configuration.enabled ? "RSS 登录已应用" : "RSS 登录已停用";
+    return binding.configuration.enabled
+      ? "服务端最近回执：RSS 登录已应用"
+      : "服务端最近回执：RSS 登录已停用";
   if (binding.effect?.state === "failed") return "本机应用失败，需要处理后重试";
   if (binding.effect?.state === "unknown")
     return "本机结果未确定，请联系管理员核查";
@@ -235,9 +284,31 @@ onUnmounted(() => {
       在 RSS 登录选项中，使用 Windows
       密码和验证器验证码登录；恢复密钥可代替验证码。系统原有登录选项继续保留。
     </p>
+    <p v-if="!mac">
+      首次启用或设备重新加入 Entra 后，请注销 Windows
+      并重新登录，再关联当前账号。
+    </p>
     <p v-if="!available">请登录 RSS 账户并保持当前本地会话解锁。</p>
     <template v-else>
       <button :disabled="busy" @click="refresh">刷新状态</button>
+      <p v-if="!mac" role="status">
+        本机当前状态：{{
+          windowsStatus
+            ? componentText(windowsStatus.component)
+            : "尚未取得本机观察"
+        }}。 当前账号因子：{{
+          windowsStatus?.factorActive === true
+            ? "已启用"
+            : windowsStatus?.factorActive === false
+              ? "未启用"
+              : "未知"
+        }}。
+        <span v-if="windowsStatus?.signInRequired"
+          >请注销 Windows
+          并重新登录，再关联账号；注销与重启组件是不同操作。</span
+        >
+        管理员组配置修改后，已有会话的权限需注销并重新登录才会刷新。
+      </p>
       <p v-if="macStatus" role="status">
         扩展：{{
           macStatus.extensionInstalled ? "已验证安装" : "未安装或需修复"
@@ -271,7 +342,7 @@ onUnmounted(() => {
       <p v-if="message" role="status">{{ message }}</p>
       <ul v-if="directory?.bindings.length">
         <li v-for="binding in directory.bindings" :key="binding.id">
-          {{ bindingText(binding) }}
+          {{ accountText(binding) }} · {{ bindingText(binding) }}
         </li>
       </ul>
       <div v-for="policy in directory?.policies" :key="policy.policy">
@@ -287,10 +358,10 @@ onUnmounted(() => {
           }}
         </p>
         <button :disabled="busy" @click="enroll(policy.policy)">
-          关联当前本地账户
+          关联当前 Windows / macOS 账号
         </button>
       </div>
-      <button v-if="directory?.after" :disabled="busy" @click="more">
+      <button v-if="directory?.nextCursor" :disabled="busy" @click="more">
         更多可用策略
       </button>
       <p>

@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 pub mod current_user;
 pub(crate) mod pki;
+pub mod projection;
 pub mod self_service_software;
 pub mod software_native;
 pub mod telemetry;
@@ -365,7 +366,10 @@ impl Data {
             queries: [("items".into(), query)].into(),
         })
         .unwrap();
+        let (fields, mappings) = projection::native(&plan);
         let task = CollectionTaskSpec {
+            fields,
+            mappings,
             wire_version: COLLECTION_TASK_VERSION,
             tenant_id: self.tenant,
             device_id: "device-1".into(),
@@ -432,6 +436,7 @@ impl Data {
             "windows"
         }
         .into();
+        (task.fields, task.mappings) = projection::native(&task.plan);
         task.plan_digest = task.plan.digest();
         task.execution = NativeExecutionBinding::bind(&task.plan, &execution_context()).unwrap();
         self.offer = Some(self.signed(TaskPayload::Collection(task)));
@@ -458,6 +463,7 @@ impl Data {
             queries: [("items".into(), query)].into(),
         })
         .unwrap();
+        (task.fields, task.mappings) = projection::native(&task.plan);
         task.plan_digest = task.plan.digest();
         task.platform = TaskPlatform::Macos;
         task.resource.variant = "macos".into();
@@ -468,6 +474,7 @@ impl Data {
         self.attempt = Uuid::new_v4();
         self.reset_current_task();
         let spec = TaskSpec {
+            projection: ScriptProjection::None,
             execution_target: SoftwareExecutionTarget::Device,
             wire_version: 1,
             tenant_id: self.tenant,

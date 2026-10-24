@@ -74,7 +74,7 @@ async fn registration_distinguishes_rejection_from_unknown_and_malformed_success
     let input = w::Registration {
         operation_id: Uuid::new_v4(),
         challenge_id: Uuid::new_v4(),
-        signing_key: key.clone(),
+        signing_key: Some(key.clone()),
         encryption_key: key,
         proof: "test-proof".into(),
     };

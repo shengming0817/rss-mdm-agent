@@ -29,3 +29,20 @@ pub(crate) fn generated_uid(subject: &str) -> Result<Option<String>, Error> {
         Ok(None)
     }
 }
+
+/// Windows authority is native evidence, never a renderer claim.
+pub(crate) fn windows_authority(
+    subject: &str,
+) -> Result<Option<rss_mdm_agent_wire::runtime::AccessWindowsAuthority>, Error> {
+    #[cfg(windows)]
+    {
+        device_access::windows::account::inspect(subject)
+            .map(|a| Some(a.source))
+            .map_err(|_| Error::Identity)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = subject;
+        Ok(None)
+    }
+}

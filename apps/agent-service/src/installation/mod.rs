@@ -42,6 +42,8 @@ pub use windows::worker;
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Candidate {
+    pub windows_login: Option<Artifact>,
+    pub windows_publisher: Option<String>,
     pub platform_sso: Option<crate::deployment::PlatformSsoConfiguration>,
     pub version: u8,
     pub format: rss_mdm_agent_wire::enroll::configuration::InstallerFormat,
@@ -81,7 +83,7 @@ pub fn hash(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 impl Candidate {
-    fn retained(config: &Path, deployment: &Deployment) -> Result<Self, Error> {
+    pub(crate) fn retained(config: &Path, deployment: &Deployment) -> Result<Self, Error> {
         let path = config
             .parent()
             .ok_or(Error::Configuration)?
@@ -92,7 +94,7 @@ impl Candidate {
             return Err(Error::Identity);
         }
         let candidate: Self = serde_json::from_slice(&bytes).map_err(|_| Error::Configuration)?;
-        if candidate.version != 1
+        if candidate.version != 2
             || serde_json::to_value(&candidate.platform_sso).ok()
                 != serde_json::to_value(&deployment.platform_sso).ok()
             || candidate.service.path != deployment.service.path
@@ -130,7 +132,7 @@ impl Candidate {
             })
             .collect::<Result<_, Error>>()?;
         agent_client::verify_connections(&self.connections, self.service_id, self.tenant, &keys)?;
-        if self.version != 1
+        if self.version != 2
             || self.target != Target::current().map_err(|_| Error::Unsupported)?
             || !self.root.is_absolute()
             || self.tenant.is_nil()
@@ -170,12 +172,33 @@ impl Candidate {
                 return Err(Error::Configuration);
             }
         }
+        if let Some(dll) = &self.windows_login {
+            if self.target.platform() != "win32"
+                || self.format()? != "windows_exe"
+                || !dll.path.starts_with(&self.root)
+                || dll.path == self.service.path
+                || dll.path == self.desktop.path
+                || dll.path.extension().and_then(|v| v.to_str()) != Some("dll")
+            {
+                return Err(Error::Configuration);
+            }
+        }
+        if self.target.platform() == "win32" && self.signing_mode == SigningMode::Release {
+            if !self.windows_publisher.as_deref().is_some_and(digest_valid) {
+                return Err(Error::Identity);
+            }
+        } else if self.windows_publisher.is_some() {
+            return Err(Error::Configuration);
+        }
         self.format()?;
         Ok(())
     }
-    fn validate(&self) -> Result<(), Error> {
+    pub(crate) fn validate(&self) -> Result<(), Error> {
         self.validate_trust()?;
-        for image in [&self.service, &self.desktop] {
+        for image in [&self.service, &self.desktop]
+            .into_iter()
+            .chain(self.windows_login.iter())
+        {
             image.verify(&image.path).map_err(|_| Error::Identity)?;
             self.target
                 .verify_image(&image.path)
@@ -313,32 +336,39 @@ fn retire_payload(candidate: &Candidate) -> Result<PathBuf, Error> {
     Ok(target)
 }
 /// Installed format from the same protected manifest used for deployment integrity.
+impl Candidate {
+    pub(crate) fn installed(deployment: &Deployment) -> Result<Self, Error> {
+        let path = deployment
+            .service
+            .path
+            .parent()
+            .ok_or(Error::Configuration)?
+            .join("candidate.json");
+        let bytes = installation_security::read_protected(&path).map_err(|_| Error::Identity)?;
+        if hash(&bytes) != deployment.installation_artifact {
+            return Err(Error::Identity);
+        }
+        let candidate: Candidate =
+            serde_json::from_slice(&bytes).map_err(|_| Error::Configuration)?;
+        if candidate.version != 2
+            || candidate.service_id != deployment.service_id
+            || candidate.connections != deployment.connections
+            || candidate.tenant != deployment.tenant
+            || candidate.service.path != deployment.service.path
+            || candidate.signing_keys != deployment.signing_keys
+        {
+            return Err(Error::Identity);
+        }
+        candidate.validate_trust()?;
+        Ok(candidate)
+    }
+}
 pub(crate) fn installer_format(
     deployment: &Deployment,
 ) -> Result<rss_mdm_agent_wire::enroll::configuration::InstallerFormat, Error> {
-    let path = deployment
-        .service
-        .path
-        .parent()
-        .ok_or(Error::Configuration)?
-        .join("candidate.json");
-    let bytes = installation_security::read_protected(&path).map_err(|_| Error::Identity)?;
-    if hash(&bytes) != deployment.installation_artifact {
-        return Err(Error::Identity);
-    }
-    let candidate: Candidate = serde_json::from_slice(&bytes).map_err(|_| Error::Configuration)?;
-    if candidate.version != 1
-        || candidate.service_id != deployment.service_id
-        || candidate.connections != deployment.connections
-        || candidate.tenant != deployment.tenant
-        || candidate.service.path != deployment.service.path
-        || candidate.signing_keys != deployment.signing_keys
-    {
-        return Err(Error::Identity);
-    }
-    candidate.format()?;
-    Ok(candidate.format)
+    Ok(Candidate::installed(deployment)?.format)
 }
+
 /// Every native utility uses a fixed absolute path and bounded execution; output is never logged.
 fn utility(path: &Path, args: &[OsString]) -> Result<(std::process::ExitStatus, Vec<u8>), Error> {
     utility_with_timeout(path, args, Duration::from_secs(20))

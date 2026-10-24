@@ -28,12 +28,19 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
     pub async fn access_directory(
         &self,
         proof: &str,
-        after: Option<Uuid>,
+        cursor: Option<&str>,
     ) -> Result<wire::AccessDirectory, Error> {
-        let path = after.map_or_else(
-            || "device-access".to_owned(),
-            |id| format!("device-access?after={id}"),
-        );
+        let mut path = "device-access?limit=100".to_owned();
+        if let Some(cursor) = cursor {
+            if cursor.is_empty() || cursor.len() > 4096 || cursor.chars().any(char::is_control) {
+                return Err(Error::Protocol);
+            }
+            let query = url::form_urlencoded::Serializer::new(String::new())
+                .append_pair("cursor", cursor)
+                .finish();
+            path.push('&');
+            path.push_str(&query);
+        }
         self.self_service_json(Some(proof), Method::GET, &path, None)
             .await
     }

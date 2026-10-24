@@ -151,6 +151,7 @@ pub fn configuration(
     let now = server.time.now().unwrap();
     let policy = Uuid::new_v4();
     let configuration = TelemetryConfiguration {
+        resource_digest: [7; 32],
         tenant_id: d.tenant,
         device_id: registration.device_id.clone(),
         registration_id: registration.registration_id,
@@ -181,9 +182,9 @@ pub fn configuration(
             max_rows: 1,
             mappings: [(
                 "custom.load".into(),
-                TelemetryValueMapping {
+                ValueMapping {
                     pointer: "/load".into(),
-                    conversion: TelemetryConversion::Identity,
+                    conversion: Conversion::Identity,
                     columns: Default::default(),
                 },
             )]
@@ -280,21 +281,29 @@ pub fn native_performance_configuration(
     c.fields[0].unit = Some("bytes".into());
     c.execution_millis = 2000;
     c.collector = TelemetryCollector::Native {
+        plan_digest: plan.digest(),
         plan,
         mappings: [(
             "custom.load".into(),
-            TelemetryNativeMapping {
+            AgentCollectionMapping {
+                missing: NativeMissing::Missing,
                 counter_normalization: None,
                 query: "memory".into(),
-                mapping: TelemetryValueMapping {
-                    pointer: "/0/total_bytes".into(),
-                    conversion: TelemetryConversion::Integer,
+                mapping: ValueMapping {
+                    pointer: "/total_bytes".into(),
+                    conversion: Conversion::Integer,
                     columns: Default::default(),
                 },
             },
         )]
         .into(),
     };
+    if let TelemetryCollector::Native {
+        plan, plan_digest, ..
+    } = &mut c.collector
+    {
+        *plan_digest = plan.digest();
+    }
     sign(&server.data.lock().unwrap(), c)
 }
 
@@ -304,7 +313,12 @@ pub fn native_network_configuration(
     registration: &BindingProfile,
 ) -> SignedTelemetryConfiguration {
     let mut c = native_performance_configuration(server, registration).configuration;
-    let TelemetryCollector::Native { plan, mappings } = &mut c.collector else {
+    let TelemetryCollector::Native {
+        plan,
+        mappings,
+        plan_digest: _,
+    } = &mut c.collector
+    else {
         unreachable!()
     };
     let mut spec = plan.spec().clone();
@@ -325,23 +339,23 @@ pub fn native_network_configuration(
     *plan = NativeCollectionPlan::try_from(spec).unwrap();
     let m = mappings.get_mut("custom.load").unwrap();
     m.counter_normalization = Some(NativeCounterNormalization::LocalCumulativeV1);
-    m.mapping = TelemetryValueMapping {
+    m.mapping = ValueMapping {
         pointer: String::new(),
-        conversion: TelemetryConversion::Identity,
+        conversion: Conversion::Identity,
         columns: [
             (
                 "id".into(),
-                TelemetryValueMapping {
+                ValueMapping {
                     pointer: "/id".into(),
-                    conversion: TelemetryConversion::Identity,
+                    conversion: Conversion::Identity,
                     columns: Default::default(),
                 },
             ),
             (
                 "bytes".into(),
-                TelemetryValueMapping {
+                ValueMapping {
                     pointer: "/received_bytes".into(),
-                    conversion: TelemetryConversion::Integer,
+                    conversion: Conversion::Integer,
                     columns: Default::default(),
                 },
             ),
@@ -373,5 +387,11 @@ pub fn native_network_configuration(
     binding.value_path = vec!["bytes".into()];
     binding.interval_start_path = Some(vec!["start".into()]);
     binding.max_resources = 4;
+    if let TelemetryCollector::Native {
+        plan, plan_digest, ..
+    } = &mut c.collector
+    {
+        *plan_digest = plan.digest();
+    }
     sign(&server.data.lock().unwrap(), c)
 }

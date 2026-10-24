@@ -844,7 +844,7 @@ mod tests {
             id: coordinate.source,
             version: coordinate.source_version,
             revoked: false,
-            signing_key: key.clone(),
+            signing_key: Some(key.clone()),
             encryption_key: key,
         };
         assert!(!registration_unresolved(&root, &coordinate, Some(&current)).unwrap());

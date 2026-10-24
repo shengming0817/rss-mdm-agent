@@ -21,4 +21,4 @@ uuid = { version = "=1.26.0", features = ["v4", "serde"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Threading", "Win32_System_SystemInformation", "Wdk_System_SystemInformation", "Win32_System_Registry"] }
-windows = { version = "=0.61.3", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_NetworkManagement_NetManagement"] }
+windows = { version = "=0.61.3", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Security_Authentication_Identity", "Win32_Security_Cryptography", "Win32_System_RemoteDesktop", "Win32_NetworkManagement_NetManagement"] }

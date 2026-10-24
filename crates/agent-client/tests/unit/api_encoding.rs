@@ -8,7 +8,7 @@ fn preserves_task_signatures_and_step_digest() {
     for (body, expected) in [
         (
             include_bytes!("../fixtures/script-task-v1.json").as_slice(),
-            "6080741b91b8c100415abd7828401dae5e984cef7f1025bd4f89509fd5bbe7db",
+            "a742a501f9d921411fa6410461274dda780dcda4996eb9704dd709ccc9dc108b",
         ),
         (
             include_bytes!("../fixtures/software-task-v1.json").as_slice(),
@@ -176,7 +176,7 @@ fn reports_sort_fields_and_preserve_explicit_nullable_metadata() {
 }
 
 #[test]
-// Formal agent-wire protocol vectors at d6f647e2c02503d93ccb6288016978056f0fc28c.
+// Fixed-seed native vectors updated for the explicit projection contract at 87ab4fc6.
 fn native_vectors_bind_independent_signing_domains_and_result_identity() {
     use base64::Engine;
     use rss_mdm_agent_wire::runtime::*;

@@ -175,6 +175,7 @@ mod tests {
     fn baseline() -> (w::TelemetryConfiguration, ExecutionInput, Artifacts) {
         let id = "11111111-1111-4111-8111-111111111111";
         let c = w::TelemetryConfiguration {
+            resource_digest: [0; 32],
             tenant_id: id.parse().unwrap(),
             device_id: "device-1".into(),
             registration_id: id.parse().unwrap(),

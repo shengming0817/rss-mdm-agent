@@ -156,7 +156,7 @@ impl execution_lifecycle::ObservationVerifier for EffectEvidence<'_> {
             .map_err(|_| E::Untrusted)?
             .ok_or(E::Unavailable)?;
         let assessment = match result.effect {
-            w::AccessEffect::Applied { .. } | w::AccessEffect::Unbound => A::Satisfied,
+            w::AccessEffect::Applied { .. } | w::AccessEffect::Unbound { .. } => A::Satisfied,
             w::AccessEffect::Failed { .. } => A::NoEffect,
             w::AccessEffect::Unknown => return Err(E::Unavailable),
         };

@@ -11,7 +11,25 @@ use std::path::{Path, PathBuf};
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
+mod registration;
 mod storage;
+pub use registration::Registration;
+
+/// Canonical Entra object coordinate encoded in a Windows cloud SID; not proof of its issuer.
+pub fn entra_object_id(sid: &str) -> Option<Uuid> {
+    let mut words = sid.strip_prefix("S-1-12-1-")?.split('-');
+    let mut bytes = [0u8; 16];
+    for chunk in bytes.chunks_exact_mut(4) {
+        let text = words.next()?;
+        let value: u32 = text.parse().ok()?;
+        if value.to_string() != text {
+            return None;
+        }
+        chunk.copy_from_slice(&value.to_le_bytes());
+    }
+    let id = Uuid::from_bytes_le(bytes);
+    (words.next().is_none() && !id.is_nil()).then_some(id)
+}
 #[cfg(test)]
 mod tests;
 #[cfg(windows)]
@@ -76,6 +94,11 @@ impl Clock {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Authority {
+    pub instance: Uuid,
+    pub principal: Uuid,
+    pub source: rss_mdm_agent_wire::runtime::AccessWindowsAuthority,
+    pub login: String,
+    pub join: String,
     pub tenant: Uuid,
     pub device: String,
     pub registration: Uuid,
@@ -89,10 +112,19 @@ impl Authority {
     fn validate(&self) -> Result<(), Error> {
         AccessAccount::Windows {
             sid: self.sid.clone(),
+            authority: self.source.clone(),
         }
         .validate()
         .map_err(|_| Error::Invalid)?;
-        if self.tenant.is_nil()
+        if self.instance.is_nil()
+            || self.principal.is_nil()
+            || self.join.is_empty()
+            || self.join.len() > 512
+            || self.join.chars().any(char::is_control)
+            || self.login.is_empty()
+            || self.login.len() > 512
+            || self.login.chars().any(char::is_control)
+            || self.tenant.is_nil()
             || self.registration.is_nil()
             || self.binding.is_nil()
             || self.device.is_empty()
@@ -166,6 +198,7 @@ struct Record {
     authority: Authority,
     revision: i64,
     enabled: bool,
+    revoked: bool,
     secret: Vec<u8>, // DPAPI ciphertext, never a clear TOTP key.
     recovery_hash: Vec<u8>,
     recovery_secret: Vec<u8>,
@@ -304,6 +337,10 @@ impl Store {
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         let mut record = load(&tx, sid)?.ok_or(Error::Changed)?;
+        registration::admit(&tx, &record.authority)?;
+        if record.revoked {
+            return Err(Error::Changed);
+        }
         let authority = &record.authority;
         if authority.binding != *binding
             || authority.binding_generation != *binding_generation
@@ -370,6 +407,10 @@ impl Store {
             return Err(Error::Invalid);
         };
         let record = load(&self.conn, sid)?.ok_or(Error::Changed)?;
+        registration::admit(&self.conn, &record.authority)?;
+        if record.revoked {
+            return Err(Error::Changed);
+        }
         let a = &record.authority;
         if a.tenant != task.tenant_id
             || a.device != task.device_id
@@ -419,6 +460,10 @@ impl Store {
             return Err(Error::Invalid);
         };
         let record = load(&self.conn, sid)?.ok_or(Error::Changed)?;
+        registration::admit(&self.conn, &record.authority)?;
+        if record.revoked {
+            return Err(Error::Changed);
+        }
         let a = &record.authority;
         Ok(a.tenant == task.tenant_id
             && a.device == task.device_id
@@ -480,12 +525,13 @@ impl Store {
         }
         let candidate = self.candidate(operation, protector)?;
         let secret = protector.seal(&candidate.secret)?;
-        let record = Record {
+        let mut record = Record {
             recovery_hash: recovery_hash(&authority, &candidate.recovery),
             recovery_secret: protector.seal(candidate.recovery.as_bytes())?,
             authority,
             revision,
             enabled,
+            revoked: false,
             secret,
             facts,
             consumed_step: candidate.confirmed_step.ok_or(Error::Invalid)?,
@@ -500,6 +546,7 @@ impl Store {
         let tx = self
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        registration::admit(&tx, &record.authority)?;
         if let Some(old) = load(&tx, &record.authority.sid)? {
             if old.authority == record.authority
                 && old.facts == record.facts
@@ -509,15 +556,37 @@ impl Store {
                 // Do not reset consumed steps or failure budgets on delivery replay.
                 return Ok(());
             }
-            if old.authority.tenant != record.authority.tenant
-                || old.authority.device != record.authority.device
-                || old.authority.registration_generation != record.authority.registration_generation
-                || old.authority.registration != record.authority.registration
-                || old.authority.binding != record.authority.binding
-                || old.authority.binding_generation > record.authority.binding_generation
-                || old.authority.factor_generation >= record.authority.factor_generation
-                || old.revision >= revision
+            if !old.revoked
+                && (old.authority.tenant != record.authority.tenant
+                    || old.authority.instance != record.authority.instance
+                    || old.authority.principal != record.authority.principal
+                    || old.authority.source != record.authority.source
+                    || old.authority.join != record.authority.join
+                    || old.authority.registration != record.authority.registration
+                    || old.authority.registration_generation
+                        != record.authority.registration_generation
+                    || old.authority.binding != record.authority.binding
+                    || old.authority.binding_generation > record.authority.binding_generation
+                    || old.authority.factor_generation >= record.authority.factor_generation
+                    || old.revision >= revision)
             {
+                return Err(Error::Changed);
+            }
+            if old.authority.binding == record.authority.binding
+                && old.authority.factor_generation >= record.authority.factor_generation
+            {
+                return Err(Error::Changed);
+            }
+            // A new factor cannot erase the native account's durable failure budget or clock floor.
+            record.failures = old.failures;
+            record.lock_seconds = old.lock_seconds;
+            record.lock_until = if old.boot == clock.boot {
+                old.lock_until
+            } else {
+                clock.monotonic.saturating_add(old.lock_seconds)
+            };
+            record.utc = old.utc.max(clock.utc);
+            if old.boot == clock.boot && clock.monotonic < old.monotonic {
                 return Err(Error::Changed);
             }
         }
@@ -542,7 +611,12 @@ impl Store {
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         let mut record = load(&tx, &authority.sid)?.ok_or(Error::Changed)?;
-        if record.authority != *authority || record.facts != *facts || revision < record.revision {
+        registration::admit(&tx, authority)?;
+        if record.revoked
+            || record.authority != *authority
+            || record.facts != *facts
+            || revision < record.revision
+        {
             return Err(Error::Changed);
         }
         record.revision = revision;
@@ -553,61 +627,50 @@ impl Store {
     }
     pub fn revoke(&mut self, authority: &Authority, revision: i64) -> Result<(), Error> {
         authority.validate()?;
+        if revision < 1 {
+            return Err(Error::Invalid);
+        }
         self.check_files()?;
         let tx = self
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        if let Some(record) = load(&tx, &authority.sid)? {
-            let old = &record.authority;
-            if old.tenant != authority.tenant
-                || old.device != authority.device
-                || old.registration != authority.registration
-                || old.registration_generation != authority.registration_generation
-                || old.binding != authority.binding
-                || old.binding_generation > authority.binding_generation
-                || record.revision >= revision
+        registration::require(&tx, authority)?;
+        if let Some(mut record) = load(&tx, &authority.sid)? {
+            if record.authority != *authority
+                || record.revision > revision
+                || (record.revision == revision && !record.revoked)
             {
                 return Err(Error::Changed);
             }
-            tx.execute("DELETE FROM bindings WHERE sid=?1", [&authority.sid])?;
+            record.revision = revision;
+            record.enabled = false;
+            record.revoked = true;
+            save(&tx, &record)?;
         }
+        registration::record_revocation(&tx, authority, revision)?;
         tx.commit()?;
         Ok(())
     }
-    pub fn unbind(&mut self, authority: &Authority) -> Result<(), Error> {
-        self.check_files()?;
-        let tx = self
-            .conn
-            .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        if let Some(record) = load(&tx, &authority.sid)? {
-            if record.authority != *authority {
-                return Err(Error::Changed);
-            }
-            tx.execute("DELETE FROM bindings WHERE sid=?1", [&authority.sid])?;
-        }
-        tx.commit()?;
-        Ok(())
-    }
-    /// Safe tile discovery. Verification rechecks enabled state inside its transaction.
     pub fn enabled(&self, sid: &str) -> Result<bool, Error> {
-        self.check_files()?;
-        Ok(load(&self.conn, sid)?.is_some_and(|record| record.enabled))
+        Ok(self.authority(sid)?.is_some())
     }
     pub fn facts(&self, authority: &Authority) -> Result<AccessWindowsFacts, Error> {
         self.check_files()?;
         let record = load(&self.conn, &authority.sid)?.ok_or(Error::Changed)?;
-        if record.authority != *authority {
+        if record.revoked || record.authority != *authority {
             return Err(Error::Changed);
         }
         Ok(record.facts)
     }
     pub fn verify(
         &mut self,
-        sid: &str,
+        expected: &Authority,
         factor: Factor<'_>,
         clock: Clock,
         protector: &impl Protector,
     ) -> Result<Decision, Error> {
+        expected.validate()?;
+        let sid = &expected.sid;
         clock.validate()?;
         self.check_files()?;
         let tx = self
@@ -616,8 +679,12 @@ impl Store {
         let Some(mut record) = load(&tx, sid)? else {
             return Ok(Decision::Disabled);
         };
-        if !record.enabled {
+        registration::require(&tx, &record.authority)?;
+        if record.revoked || !record.enabled {
             return Ok(Decision::Disabled);
+        }
+        if &record.authority != expected {
+            return Err(Error::Changed);
         }
         let same_boot = record.boot == clock.boot;
         let monotonic_ok = !same_boot || clock.monotonic >= record.monotonic;
@@ -757,7 +824,7 @@ fn valid_recovery(value: &str) -> bool {
 }
 fn recovery_hash(authority: &Authority, value: &str) -> Vec<u8> {
     let mut context = digest::Context::new(&digest::SHA256);
-    context.update(b"rss-mdm/offline-recovery/v1\0");
+    context.update(b"rss-mdm/offline-recovery/v2\0");
     context.update(&serde_json::to_vec(authority).expect("authority serialization"));
     context.update(value.as_bytes());
     context.finish().as_ref().to_vec()

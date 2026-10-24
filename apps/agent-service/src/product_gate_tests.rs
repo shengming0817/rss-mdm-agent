@@ -4345,7 +4345,7 @@ async fn local_data_queries_keep_os_prerequisites_exact_authority_and_offline_re
     use execution_ipc::host::{NativeAccess, NativeContextSession, Request};
     let mut c = Case::new(None).await;
     c.service.client.drive_pki().await.unwrap();
-    c.service.update_identity_gate();
+    c.service.update_identity_gate().unwrap();
     assert!(c.service.core.host.identity_ready());
     let context = c.context();
     let origin = ClientOrigin::Desktop {};

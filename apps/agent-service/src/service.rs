@@ -298,6 +298,8 @@ impl<S: IdentityProvider> DeviceService<S> {
             matches!(startup, ProductionStartup::Create),
             fences.clone(),
         )?;
+        #[cfg(windows)]
+        access.sync_registration(&client)?;
         Ok(Self {
             client,
             core: Core {
@@ -342,6 +344,18 @@ impl<S: IdentityProvider> DeviceService<S> {
     }
     /// Reconcile persisted intents and deliver existing evidence before claiming new work.
     async fn drive(
+        &mut self,
+        commands: &mut tokio::sync::mpsc::Receiver<Command>,
+    ) -> Result<(), Error> {
+        #[cfg(windows)]
+        self.core.access.sync_registration(&self.client)?;
+        let result = self.drive_inner(commands).await;
+        // Includes early returns and nested endpoint errors; persisted revocation wins over result.
+        #[cfg(windows)]
+        self.core.access.sync_registration(&self.client)?;
+        result
+    }
+    async fn drive_inner(
         &mut self,
         commands: &mut tokio::sync::mpsc::Receiver<Command>,
     ) -> Result<(), Error> {
@@ -394,7 +408,7 @@ impl<S: IdentityProvider> DeviceService<S> {
             }
         }
         self.activate_enterprise()?;
-        self.update_identity_gate();
+        self.update_identity_gate()?;
         if self.core.stopping {
             return Ok(());
         }
@@ -414,7 +428,7 @@ impl<S: IdentityProvider> DeviceService<S> {
             self.core.reconcile()?;
             self.next_enrollment = std::time::Instant::now() + std::time::Duration::from_secs(2);
             let result = background(self.client.drive_pki(), &mut self.core, commands).await;
-            self.update_identity_gate();
+            self.update_identity_gate()?;
             if result?.is_none() {
                 return Ok(());
             }
@@ -437,7 +451,7 @@ impl<S: IdentityProvider> DeviceService<S> {
         ) {
             return Ok(());
         }
-        self.update_identity_gate();
+        self.update_identity_gate()?;
         if !self.core.host.identity_ready() {
             self.core.revoke_preparations()?;
             self.core.reconcile()?;
@@ -779,6 +793,10 @@ impl<S: IdentityProvider> DeviceService<S> {
             let generated_uid =
                 crate::account_identity::generated_uid(&helper.context().subject).ok()?;
             Some(wire::SoftwareInteractiveUser {
+                windows_authority: crate::account_identity::windows_authority(
+                    &helper.context().subject,
+                )
+                .ok()?,
                 identity: helper.context().subject.clone(),
                 session_id: login_id(helper.context()),
                 administrator: false,
@@ -1123,7 +1141,9 @@ impl<S: IdentityProvider> DeviceService<S> {
         }
         Ok(())
     }
-    fn update_identity_gate(&mut self) {
+    fn update_identity_gate(&mut self) -> Result<(), Error> {
+        #[cfg(windows)]
+        self.core.access.sync_registration(&self.client)?;
         if let Some(deployment) = &self.installation {
             if self.client.registration().is_ok()
                 && matches!(
@@ -1133,7 +1153,7 @@ impl<S: IdentityProvider> DeviceService<S> {
             {
                 self.core.host.revoked.store(true, Ordering::Release);
                 self.core.host.local_stopped.store(true, Ordering::Release);
-                return;
+                return Ok(());
             }
         }
         match self.client.runtime_deadline().and_then(|until| {
@@ -1162,10 +1182,14 @@ impl<S: IdentityProvider> DeviceService<S> {
                 }
             }
         }
+        Ok(())
     }
     fn drive_error(&mut self, error: Error) {
         eprintln!("agent_drive: {error}");
-        self.update_identity_gate();
+        if let Err(error) = self.update_identity_gate() {
+            self.core.host.revoked.store(true, Ordering::Release);
+            eprintln!("agent_identity_sync: {error}");
+        }
     }
     /// Stop accepted work. Stopping never claims process termination or effect rollback.
     pub fn stop(&mut self) -> Result<(), Error> {

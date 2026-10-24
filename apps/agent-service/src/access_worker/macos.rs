@@ -232,6 +232,8 @@ fn facts(account: &NativeAccount) -> w::AccessMacFacts {
         }
     });
     w::AccessMacFacts {
+        password_sync: Observation::Unknown,
+        keychain_sync: Observation::Unknown,
         secure_token,
         volume_owner,
         filevault_unlock,
@@ -248,7 +250,14 @@ pub(super) fn execute(input: &Input) -> Result<w::AccessResult, Error> {
     }
     let result = apply(input).unwrap_or(Effect::Unknown);
     let result = report(task, result);
-    if result.effect.complete() {
+    if match &task.action {
+        Action::Apply { configuration, .. } | Action::Create { configuration, .. } => {
+            result.effect.complete(configuration)
+        }
+        Action::Unbind { disposition, .. } => {
+            matches!(result.effect, Effect::Unbound { disposition: actual } if actual == *disposition)
+        }
+    } {
         state::write(&input.root, &name(task, "result"), &result)?;
     }
     Ok(result)
@@ -374,7 +383,11 @@ fn apply(input: &Input) -> Result<Effect, Error> {
         }
         Action::Unbind {
             account: Account::Macos { generated_uid },
+            disposition,
         } => {
+            if *disposition != w::AccessAccountDisposition::Keep {
+                return Err(Error::Unsupported);
+            }
             let name = crate::service::platform_sso::binding_name(&generated_uid.to_string())?;
             if let Some(mut binding) =
                 state::read_optional::<platform_sso::LocalBinding>(&input.root, &name)?
@@ -389,7 +402,9 @@ fn apply(input: &Input) -> Result<Effect, Error> {
                 binding.revision = task.revision;
                 state::write(&input.root, &name, &binding)?;
             }
-            return Ok(Effect::Unbound);
+            return Ok(Effect::Unbound {
+                disposition: *disposition,
+            });
         }
         _ => return Err(Error::Unsupported),
     };
