@@ -157,6 +157,7 @@ impl Data {
             native.install.run_as = ExecutionIdentity::LoggedInUser;
             native.upgrade_invocation.run_as = ExecutionIdentity::LoggedInUser;
             spec.execution_context.interactive_user = Some(SoftwareInteractiveUser {
+                windows_authority: None,
                 identity: "501".into(),
                 generated_uid: Some(Uuid::new_v4().to_string()),
                 session_id,
@@ -170,6 +171,7 @@ impl Data {
             step.action.package = "Fixture.App".into();
             // WinGet system tasks still require the existing independently observed admin login.
             spec.execution_context.interactive_user = Some(SoftwareInteractiveUser {
+                windows_authority: None,
                 identity: "S-1-5-21-100-200-300-1001".into(),
                 generated_uid: None,
                 session_id: Uuid::new_v4(),

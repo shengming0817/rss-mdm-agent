@@ -372,6 +372,8 @@ fn refresh(
         persistent(current, config)?;
     }
     persistent(candidate, next_config)?;
+    #[cfg(windows)]
+    crate::access_component::preflight(&next)?;
     outcome::phase("refresh-quiescence")?;
     platform::quiescent(&old, config)?;
     transition(|action| {

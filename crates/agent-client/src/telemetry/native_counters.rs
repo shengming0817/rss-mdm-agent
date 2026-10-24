@@ -14,7 +14,7 @@ pub(super) fn install(db: &Connection) -> Result<(), Error> {
 fn field_key(
     source: &str,
     field: &w::FieldDefinition,
-    mapping: &w::TelemetryNativeMapping,
+    mapping: &w::AgentCollectionMapping,
     plan: &w::NativeCollectionPlan,
 ) -> Result<String, Error> {
     Ok(format!(
@@ -30,7 +30,7 @@ pub(super) fn reclaim(
     let mut keep = std::collections::BTreeSet::new();
     for signed in configurations {
         let c = &signed.configuration;
-        if let w::TelemetryCollector::Native { mappings, plan } = &c.collector {
+        if let w::TelemetryCollector::Native { mappings, plan, .. } = &c.collector {
             for field in &c.fields {
                 if let Some(mapping) = mappings
                     .get(field.key.as_str())
@@ -60,7 +60,7 @@ pub(super) fn normalize(
     at: i64,
     values: &mut BTreeMap<w::FieldKey, w::TelemetryReading>,
 ) -> Result<(), Error> {
-    let w::TelemetryCollector::Native { mappings, plan } = &c.collector else {
+    let w::TelemetryCollector::Native { mappings, plan, .. } = &c.collector else {
         return Ok(());
     };
     let mut fields = Vec::new();

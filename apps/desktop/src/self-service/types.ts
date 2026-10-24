@@ -527,10 +527,13 @@ export type Operation =
       kind: "macStatus";
     }
   | {
+      kind: "windowsStatus";
+    }
+  | {
       /**
        * Policy cursor.
        */
-      after: string | null;
+      cursor: string | null;
       kind: "directory";
     }
   | {
@@ -616,14 +619,29 @@ export type Response =
     }
   | {
       /**
-       * Cursor for the next policy scan.
+       * Component check at this observation.
        */
-      after: string | null;
+      component: WindowsComponentState;
+      /**
+       * Current bound factor is enabled; null means observation unavailable.
+       */
+      factorActive: boolean | null;
+      kind: "windowsStatus";
+      /**
+       * First Entra binding needs a Windows session newer than the observed join.
+       */
+      signInRequired: boolean;
+    }
+  | {
       /**
        * This authenticated person's bindings in the current device registration.
        */
       bindings: AccessBindingStatus[];
       kind: "directory";
+      /**
+       * Cursor for the next policy scan.
+       */
+      nextCursor: string | null;
       /**
        * Eligible policies in this scan page.
        */
@@ -645,6 +663,10 @@ export type Response =
        * Actual native account, if known.
        */
       account: AccessAccount | null;
+      /**
+       * Desired account handling on revocation.
+       */
+      accountDisposition: AccessAccountDisposition;
       /**
        * Last confirmed applied revision.
        */
@@ -705,6 +727,18 @@ export type Response =
       kind: "prepared";
     };
 /**
+ * Current credential-provider installation observation.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "WindowsComponentState".
+ */
+export type WindowsComponentState =
+  | "ready"
+  | "rebootRequired"
+  | "notInstalled"
+  | "maintenanceDisabled"
+  | "unavailable";
+/**
  * Stable local account identity, never a display name or a transient Unix UID.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
@@ -712,9 +746,13 @@ export type Response =
  */
 export type AccessAccount =
   | {
+      /**
+       * Local machine, AD domain or Entra tenant authority; never inferred from a name.
+       */
+      authority: AccessWindowsAuthority;
       platform: "windows";
       /**
-       * SID returned by the authenticated native account operation.
+       * SID returned by the native account operation.
        */
       sid: string;
     }
@@ -726,12 +764,68 @@ export type AccessAccount =
       platform: "macos";
     };
 /**
+ * Stable Windows identity authority. Display names and email addresses are excluded.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "AccessWindowsAuthority".
+ */
+export type AccessWindowsAuthority =
+  | {
+      kind: "local";
+    }
+  | {
+      /**
+       * SID of the native AD domain, excluding the user's RID.
+       */
+      domainSid: string;
+      kind: "active_directory";
+    }
+  | {
+      kind: "entra";
+      /**
+       * Immutable user object identifier within that tenant.
+       */
+      objectId: string;
+      /**
+       * Tenant that owns the native directory account.
+       */
+      tenantId: string;
+    };
+/**
+ * Explicit OS account handling when removing RSS integration. Data is always retained.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "AccessAccountDisposition".
+ */
+export type AccessAccountDisposition = "keep" | "disable" | "standard";
+/**
+ * Device-wide login mode; every user on one Mac consumes the same system profile.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "AuthenticationMode".
+ */
+export type AuthenticationMode = "secure_enclave" | "password";
+/**
+ * An explicit platform login policy, independent for login, unlock and FileVault.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "LoginPolicy".
+ */
+export type LoginPolicy = "local" | "attempt" | "require";
+/**
  * Requested account privilege. Absence preserves an existing account's privilege.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
  * via the `definition` "AccessRole".
  */
 export type AccessRole = "standard" | "administrator";
+/**
+ * Windows account classes admitted by the selected policy.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "AccessWindowsKind".
+ */
+export type AccessWindowsKind = "local" | "active_directory" | "entra";
 /**
  * Effect receipt. Received/start ACKs are carried by the existing task protocol separately.
  *
@@ -759,6 +853,10 @@ export type AccessEffect =
       windows: AccessWindowsFacts | null;
     }
   | {
+      /**
+       * Verified account handling; account data is retained.
+       */
+      disposition: AccessAccountDisposition;
       state: "unbound";
     }
   | {
@@ -2336,6 +2434,10 @@ export interface AccessBindingStatus {
    */
   account: AccessAccount | null;
   /**
+   * Desired account handling on revocation.
+   */
+  accountDisposition: AccessAccountDisposition;
+  /**
    * Last confirmed applied revision.
    */
   appliedRevision: number | null;
@@ -2384,6 +2486,10 @@ export interface AccessConfiguration {
    */
   enabled: boolean;
   /**
+   * Device-wide Mac profile settings; absence excludes Mac integration from this policy.
+   */
+  mac: LoginConfiguration | null;
+  /**
    * Explicit role convergence; null preserves existing role, new accounts default standard.
    */
   role: AccessRole | null;
@@ -2391,6 +2497,50 @@ export interface AccessConfiguration {
    * Permit the first association to the currently authenticated interactive local account.
    */
   selfEnrollment: boolean;
+  /**
+   * Explicit admitted Windows account authorities.
+   */
+  windowsAccounts: AccessWindowsKind[];
+}
+/**
+ * Business configuration compiled into one device-wide System profile. No deployment secrets.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "LoginConfiguration".
+ */
+export interface LoginConfiguration {
+  /**
+   * Chosen native authentication method.
+   */
+  authentication: AuthenticationMode;
+  /**
+   * Policy for Apple silicon FileVault unlock.
+   */
+  filevault: LoginPolicy;
+  /**
+   * Policy for the login window.
+   */
+  login: LoginPolicy;
+  /**
+   * Exact local maintenance account short names excluded from platform login policy.
+   */
+  maintenanceAccounts: string[];
+  /**
+   * Explicit offline allowance, in seconds; never synthesized by the server.
+   */
+  offlineGraceSeconds: number | null;
+  /**
+   * Configured password provider identity; required only in Password mode.
+   */
+  passwordProvider: string | null;
+  /**
+   * Explicit allowance for unregistered accounts, in seconds.
+   */
+  registrationGraceSeconds: number | null;
+  /**
+   * Policy for screen unlock.
+   */
+  unlock: LoginPolicy;
 }
 /**
  * Apple account facts are separate from PSSO registration and Secure Enclave keys.
@@ -2403,6 +2553,14 @@ export interface AccessMacFacts {
    * Actual FileVault unlock eligibility, not merely the disk encryption setting.
    */
   filevaultUnlock: AccessObservation;
+  /**
+   * Native login keychain synchronization, independent of account password success.
+   */
+  keychainSync: AccessObservation;
+  /**
+   * Native account password synchronization, never inferred from the IdP exchange.
+   */
+  passwordSync: AccessObservation;
   /**
    * The account's Secure Token status, not Bootstrap Token custody.
    */

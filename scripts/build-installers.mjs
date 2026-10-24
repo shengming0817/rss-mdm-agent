@@ -250,6 +250,22 @@ cpSync(
   service,
 );
 sign(service);
+let windowsLogin;
+if (windows && format === "windows_exe" && process.arch === "x64") {
+  run("cargo", [
+    "build",
+    "--locked",
+    "--release",
+    "-p",
+    "windows-credential-provider",
+  ]);
+  windowsLogin = join(payload, "windows_credential_provider.dll");
+  cpSync(
+    join(cargoTargetDir(root), "release/windows_credential_provider.dll"),
+    windowsLogin,
+  );
+  sign(windowsLogin);
+}
 let desktop, packagedRuntime, psso;
 if (windows) {
   desktop = join(payload, "rss-mdm-desktop.exe");
@@ -307,7 +323,26 @@ function image(path) {
   }
   return result;
 }
+let windowsPublisher = null;
+if (windows && release) {
+  const literal = service.replaceAll("'", "''");
+  const result = spawnSync(
+    "powershell.exe",
+    [
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
+      `$s=Get-AuthenticodeSignature -LiteralPath '${literal}'; if ($s.Status -ne 'Valid' -or !$s.SignerCertificate) { exit 1 }; ([System.Security.Cryptography.SHA256]::Create().ComputeHash($s.SignerCertificate.RawData) | ForEach-Object { $_.ToString('x2') }) -join ''`,
+    ],
+    { encoding: "utf8", timeout: 20000 },
+  );
+  windowsPublisher = result.stdout?.trim();
+  if (result.status !== 0 || !/^[a-f0-9]{64}$/.test(windowsPublisher ?? ""))
+    throw Error("Release publisher identity unavailable");
+}
 const candidate = {
+  windows_login: windowsLogin ? image(windowsLogin) : null,
+  windows_publisher: windowsPublisher,
   platform_sso: psso?.teamId
     ? {
         extension: image(psso.binary),
@@ -315,7 +350,7 @@ const candidate = {
         teamId: psso.teamId,
       }
     : null,
-  version: 1,
+  version: 2,
   format,
   product_version: version,
   target,

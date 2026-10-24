@@ -47,6 +47,9 @@ fn local_console() -> Result<()> {
 fn store() -> Result<Store> {
     local_console()?;
     let config = device_access::windows::installation().map_err(unavailable)?;
+    if device_access::windows::clock().map_err(unavailable)?.boot == config.installed_boot {
+        return Err(E_ACCESSDENIED.into());
+    }
     Store::open(&config.root, config.id).map_err(unavailable)
 }
 #[implement(IClassFactory)]
@@ -234,23 +237,36 @@ impl ICredentialProviderSetUserArray_Impl for Provider_Impl {
         }
         for index in 0..count {
             let user = unsafe { users.GetAt(index)? };
-            if unsafe { user.GetProviderID()? } != Identity_LocalUserProvider {
-                continue;
-            }
             let raw = unsafe { user.GetSid()? };
             let sid = unsafe { serialization::text(PCWSTR(raw.0), 256) };
             unsafe {
                 CoTaskMemFree(Some(raw.0.cast()));
             }
             let sid = sid?;
-            if serialization::account(&sid).is_err()
-                || !offline.enabled(&sid).map_err(unavailable)?
-            {
+            let Some(authority) = offline.authority(&sid).map_err(unavailable)? else {
+                continue;
+            };
+            if serialization::account(&authority).is_err() {
                 continue;
             }
+            let login = match unsafe {
+                user.GetStringValue(
+                    &windows::Win32::Storage::EnhancedStorage::PKEY_Identity_QualifiedUserName,
+                )
+            } {
+                Ok(raw) => {
+                    let value = unsafe { serialization::text(PCWSTR(raw.0), 513) };
+                    unsafe {
+                        CoTaskMemFree(Some(raw.0.cast()));
+                    }
+                    value?
+                }
+                Err(_) => authority.login.clone(),
+            };
             let credential: ICredentialProviderCredential2 = Credential {
                 _life: Lifetime::new(),
-                sid,
+                authority,
+                login,
                 scenario,
                 input: Mutex::new(Input {
                     password: Zeroizing::new(String::new()),
@@ -280,7 +296,8 @@ impl Input {
 #[implement(ICredentialProviderCredential2)]
 struct Credential {
     _life: Lifetime,
-    sid: String,
+    authority: device_access::Authority,
+    login: String,
     scenario: CREDENTIAL_PROVIDER_USAGE_SCENARIO,
     input: Mutex<Input>,
 }
@@ -304,7 +321,7 @@ impl Credential_Impl {
 }
 impl ICredentialProviderCredential2_Impl for Credential_Impl {
     fn GetUserSid(&self) -> Result<PWSTR> {
-        copy(&self.sid)
+        copy(&self.authority.sid)
     }
 }
 impl ICredentialProviderCredential_Impl for Credential_Impl {
@@ -442,10 +459,10 @@ impl ICredentialProviderCredential_Impl for Credential_Impl {
             )
         };
         let result = (|| {
-            serialization::account(&self.sid)?;
+            serialization::account(&self.authority)?;
             let decision = store()?
                 .verify(
-                    &self.sid,
+                    &self.authority,
                     if recovery {
                         Factor::Recovery(&factor)
                     } else {
@@ -458,7 +475,7 @@ impl ICredentialProviderCredential_Impl for Credential_Impl {
             if decision != Decision::Accepted {
                 return Err(Error::from(E_ACCESSDENIED));
             }
-            serialization::pack(&self.sid, &password, self.scenario)
+            serialization::pack(&self.authority, &self.login, &password, self.scenario)
         })();
         // Clear both native buffers and LogonUI fields on success, failure and cancelled retry.
         drop(password);
@@ -479,8 +496,8 @@ impl ICredentialProviderCredential_Impl for Credential_Impl {
     }
     fn ReportResult(
         &self,
-        _: NTSTATUS,
-        _: NTSTATUS,
+        status: NTSTATUS,
+        substatus: NTSTATUS,
         text: *mut PWSTR,
         icon: *mut CREDENTIAL_PROVIDER_STATUS_ICON,
     ) -> Result<()> {
@@ -491,6 +508,13 @@ impl ICredentialProviderCredential_Impl for Credential_Impl {
             *text = PWSTR::null();
             *icon = CPSI_NONE;
         }
-        self.clear()
+        self.clear()?;
+        if let Some(message) = crate::status::message(status.0, substatus.0) {
+            unsafe {
+                *text = copy(message)?;
+                *icon = CPSI_ERROR;
+            }
+        }
+        Ok(())
     }
 }

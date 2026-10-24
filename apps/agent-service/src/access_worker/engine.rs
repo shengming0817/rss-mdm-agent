@@ -1,5 +1,6 @@
 use super::*;
 use device_access::{Clock, Protector, Store};
+use execution_ipc::device_access::WindowsComponentState as Component;
 use w::{
     AccessAccount as Account, AccessAction as Action, AccessEffect as Effect,
     AccessFailure as Failure, AccessWindowsPlan as Plan,
@@ -7,7 +8,13 @@ use w::{
 use zeroize::Zeroizing;
 
 pub(super) trait Native: Protector {
-    fn integration_ready(&self, root: &Path, installation: uuid::Uuid) -> Result<bool, Error>;
+    fn identity(&self, sid: &str) -> Result<(w::AccessWindowsAuthority, String, String), Failure>;
+    fn dispose(
+        &mut self,
+        account: &w::AccessAccount,
+        disposition: w::AccessAccountDisposition,
+    ) -> Result<(), Failure>;
+    fn integration_ready(&self, root: &Path, installation: uuid::Uuid) -> Result<Component, Error>;
     fn clock(&self) -> Result<Clock, Error>;
     fn password(&mut self) -> Result<Zeroizing<String>, Error>;
     fn create(&mut self, name: &str, password: &str) -> Result<String, Failure>;
@@ -67,34 +74,38 @@ fn apply(input: &Input, native: &mut impl Native) -> Result<Effect, Error> {
             })
         }
     };
-    if enabled && !ready {
+    if enabled && matches!(ready, Component::RebootRequired | Component::Unavailable) {
+        return Ok(Effect::Unknown);
+    }
+    if enabled && component_health(ready).is_err() {
         return Ok(Effect::Failed {
             reason: Failure::Unsupported,
         });
     }
     if let Action::Unbind {
-        account: Account::Windows { sid },
+        disposition,
+        account: account @ Account::Windows { .. },
     } = &task.action
     {
-        store
-            .revoke(&authority(task, sid), task.revision)
-            .map_err(storage)?;
-        return Ok(Effect::Unbound);
+        store.revoke_task(task).map_err(storage)?;
+        return Ok(match native.dispose(account, *disposition) {
+            Ok(()) => Effect::Unbound {
+                disposition: *disposition,
+            },
+            Err(Failure::NativeFailure) => Effect::Unknown,
+            Err(reason) => Effect::Failed { reason },
+        });
     }
+    store.admit_task(task).map_err(storage)?;
     // Require already confirmed setup before touching an OS account.
     if matches!(task.windows, Some(Plan::Initialize { .. })) {
         store.candidate(task.task_id, native).map_err(storage)?;
     }
     let (sid, configuration, created) = match &task.action {
         Action::Apply {
-            account: Account::Windows { sid },
+            account: Account::Windows { sid, .. },
             configuration,
-        } => {
-            if let Err(reason) = native.inspect(sid) {
-                return Ok(Effect::Failed { reason });
-            }
-            (sid.clone(), configuration, false)
-        }
+        } => (sid.clone(), configuration, false),
         Action::Create {
             name: account_name,
             configuration,
@@ -110,6 +121,9 @@ fn apply(input: &Input, native: &mut impl Native) -> Result<Effect, Error> {
                 }
                 None => {
                     let password = native.password()?;
+                    if native.clock()?.utc >= task.deadline {
+                        return Err(Error::Expired);
+                    }
                     state::write(
                         &input.root,
                         &marker,
@@ -138,7 +152,10 @@ fn apply(input: &Input, native: &mut impl Native) -> Result<Effect, Error> {
         }
         _ => return Err(Error::Unsupported),
     };
-    let account = Account::Windows { sid: sid.clone() };
+    let account = Account::Windows {
+        sid: sid.clone(),
+        authority: native.identity(&sid).map_err(|_| Error::Identity)?.0,
+    };
     account.validate()?;
     state::write(
         &input.root,
@@ -153,9 +170,12 @@ fn apply(input: &Input, native: &mut impl Native) -> Result<Effect, Error> {
     )?;
     let facts = match task.windows.as_ref().ok_or(Error::Protocol)? {
         Plan::Preserve { facts } => {
+            if native.clock()?.utc >= task.deadline {
+                return Err(Error::Expired);
+            }
             store
                 .configure(
-                    &authority(task, &sid),
+                    &authority(task, &sid, native)?,
                     task.revision,
                     configuration.enabled,
                     facts,
@@ -224,9 +244,12 @@ fn apply(input: &Input, native: &mut impl Native) -> Result<Effect, Error> {
                 factor_generation: task.factor_generation,
                 recovery: receipt,
             };
+            if native.clock()?.utc >= task.deadline {
+                return Err(Error::Expired);
+            }
             store
                 .activate(
-                    authority(task, &sid),
+                    authority(task, &sid, native)?,
                     task.revision,
                     configuration.enabled,
                     task.task_id,
@@ -255,7 +278,10 @@ fn apply(input: &Input, native: &mut impl Native) -> Result<Effect, Error> {
     }
     let role = native.inspect(&sid).map_err(|_| Error::Unavailable)?;
     if configuration.role.is_some_and(|expected| expected != role)
-        || store.facts(&authority(task, &sid)).map_err(storage)? != facts
+        || store
+            .facts(&authority(task, &sid, native)?)
+            .map_err(storage)?
+            != facts
     {
         return Ok(Effect::Unknown);
     }

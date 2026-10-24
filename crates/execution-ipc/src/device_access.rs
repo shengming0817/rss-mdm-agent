@@ -22,10 +22,12 @@ pub enum Operation {
     },
     /// Read separate extension, server and native observations for the current account.
     MacStatus {},
+    /// Current local component and factor observations, independent of historical receipts.
+    WindowsStatus {},
     /// Discover eligible first-enrollment policies and own binding states.
     Directory {
         /// Policy cursor.
-        after: Option<Uuid>,
+        cursor: Option<String>,
     },
     /// Begin an authenticated first association.
     Begin(w::AccessBegin),
@@ -75,6 +77,8 @@ pub struct SetupTask {
 pub enum Response {
     /// Diagnostic facts do not authorize login or prove a complete application SSO flow.
     MacStatus(MacStatus),
+    /// Local observations do not prove a successful Windows login.
+    WindowsStatus(WindowsStatus),
     /// Backend-owned safe discovery result.
     Directory(w::AccessDirectory),
     /// Challenge retained in native memory; nonce is not sent to the renderer.
@@ -85,7 +89,7 @@ pub enum Response {
         expires_at: i64,
     },
     /// Confirmed desired binding; not evidence of Applied.
-    Binding(w::AccessBindingStatus),
+    Binding(Box<w::AccessBindingStatus>),
     /// Pending signed initialization tasks.
     Tasks {
         /// Tasks for the current person.
@@ -121,4 +125,31 @@ pub struct MacStatus {
     pub native_user_registered: Option<bool>,
     /// Native observation UTC milliseconds.
     pub observed_at: Option<u64>,
+}
+
+/// Current credential-provider installation observation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum WindowsComponentState {
+    /// Candidate, storage and boot barrier verified.
+    Ready,
+    /// Candidate registered during this boot; activation must retry after reboot.
+    RebootRequired,
+    /// No RSS component installed.
+    NotInstalled,
+    /// Explicit administrative maintenance disable.
+    MaintenanceDisabled,
+    /// Local checks failed; never interpreted as ready.
+    Unavailable,
+}
+/// Current native account's observations; no authority to mutate it.
+#[derive(Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WindowsStatus {
+    /// Component check at this observation.
+    pub component: WindowsComponentState,
+    /// Current bound factor is enabled; null means observation unavailable.
+    pub factor_active: Option<bool>,
+    /// First Entra binding needs a Windows session newer than the observed join.
+    pub sign_in_required: bool,
 }

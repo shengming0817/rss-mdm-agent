@@ -34,3 +34,24 @@ fn recovery_encoding_is_canonical_256_bits() {
     assert!(constant_equal(b"a", b"a"));
     assert!(!constant_equal(b"a", b"b"));
 }
+
+#[test]
+fn cloud_sid_object_coordinate_is_canonical_but_does_not_supply_a_tenant() {
+    let id = uuid::Uuid::parse_str("00112233-4455-6677-8899-aabbccddeeff").unwrap();
+    let bytes = id.to_bytes_le();
+    let words: Vec<_> = bytes
+        .chunks_exact(4)
+        .map(|b| u32::from_le_bytes(b.try_into().unwrap()).to_string())
+        .collect();
+    let sid = format!("S-1-12-1-{}", words.join("-"));
+    assert_eq!(super::entra_object_id(&sid), Some(id));
+    for bad in [
+        "S-1-5-21-1-2-3-4",
+        "S-1-12-1-1-2-3",
+        "S-1-12-1-01-2-3-4",
+        "S-1-12-1-0-0-0-0",
+        "S-1-12-1-1-2-3-4294967296",
+    ] {
+        assert_eq!(super::entra_object_id(bad), None);
+    }
+}

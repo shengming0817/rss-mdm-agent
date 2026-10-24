@@ -350,9 +350,9 @@ async fn signed_native_network_mapping_normalizes_two_observations_and_preserves
     let native = mappings.get_mut(key.as_str()).unwrap();
     native.mapping.columns.insert(
         "start".into(),
-        w::TelemetryValueMapping {
+        w::ValueMapping {
             pointer: "/sent_bytes".into(),
-            conversion: w::TelemetryConversion::Integer,
+            conversion: w::Conversion::Integer,
             columns: Default::default(),
         },
     );

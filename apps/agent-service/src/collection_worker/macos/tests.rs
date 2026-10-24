@@ -69,7 +69,10 @@ pub(super) fn input(q: w::NativeQuery) -> Input {
             session_id: id,
         }
     };
+    let (fields, mappings) = crate::protocol_test_support::projection::native(&plan);
     let task = w::CollectionTaskSpec {
+        fields,
+        mappings,
         wire_version: w::COLLECTION_TASK_VERSION,
         tenant_id: id,
         device_id: "fixture-device".into(),

@@ -360,7 +360,10 @@ pub(super) fn verify_signatures(candidate: &Candidate) -> Result<(), Error> {
     if candidate.signing_mode == SigningMode::Development {
         return Ok(());
     }
-    for image in [&candidate.service, &candidate.desktop] {
+    for image in [&candidate.service, &candidate.desktop]
+        .into_iter()
+        .chain(candidate.windows_login.iter())
+    {
         let name = wide(&image.path);
         let mut file = WINTRUST_FILE_INFO {
             cbStruct: std::mem::size_of::<WINTRUST_FILE_INFO>() as u32,
@@ -384,6 +387,38 @@ pub(super) fn verify_signatures(candidate: &Candidate) -> Result<(), Error> {
                 (&mut data as *mut WINTRUST_DATA).cast(),
             )
         };
+        let publisher = if status == 0 {
+            unsafe {
+                let provider = WTHelperProvDataFromStateData(data.hWVTStateData);
+                let signer = if provider.is_null() {
+                    std::ptr::null_mut()
+                } else {
+                    WTHelperGetProvSignerFromChain(provider, 0, 0, 0)
+                };
+                if signer.is_null()
+                    || (*signer).csCertChain == 0
+                    || (*signer).pasCertChain.is_null()
+                {
+                    None
+                } else {
+                    let cert = (*(*signer).pasCertChain).pCert;
+                    if cert.is_null()
+                        || (*cert).cbCertEncoded == 0
+                        || (*cert).cbCertEncoded > 65536
+                        || (*cert).pbCertEncoded.is_null()
+                    {
+                        None
+                    } else {
+                        Some(hash(std::slice::from_raw_parts(
+                            (*cert).pbCertEncoded,
+                            (*cert).cbCertEncoded as usize,
+                        )))
+                    }
+                }
+            }
+        } else {
+            None
+        };
         data.dwStateAction = WTD_STATEACTION_CLOSE;
         unsafe {
             WinVerifyTrust(
@@ -392,7 +427,7 @@ pub(super) fn verify_signatures(candidate: &Candidate) -> Result<(), Error> {
                 (&mut data as *mut WINTRUST_DATA).cast(),
             );
         }
-        if status != 0 {
+        if status != 0 || publisher.as_ref() != candidate.windows_publisher.as_ref() {
             return Err(Error::Identity);
         }
     }

@@ -1,6 +1,7 @@
 //! Independent repair path; never loads the credential provider DLL.
 use agent_client::Error;
 use device_access::windows::{Installation, CONFIG_KEY, PROVIDER_CLSID};
+use execution_ipc::device_access::WindowsComponentState as Component;
 use sha2::{Digest, Sha256};
 use std::{ffi::OsString, path::Path, ptr::null_mut};
 use windows_sys::Win32::System::Registry::*;
@@ -95,7 +96,7 @@ fn image(path: &Path) -> Result<String, Error> {
     std::io::copy(&mut file, &mut digest)?;
     Ok(format!("{:x}", digest.finalize()))
 }
-/// SYSTEM command: register <private-root> <installation-uuid> <absolute-dll>, health, disable, cleanup.
+/// SYSTEM repair: register <protected-deployment-config>, health, disable, cleanup.
 pub fn run(args: &[OsString]) -> Result<(), Error> {
     if !cfg!(target_arch = "x86_64") {
         return Err(Error::Unsupported);
@@ -107,51 +108,31 @@ pub fn run(args: &[OsString]) -> Result<(), Error> {
         .collect::<Result<_, _>>()?;
     match values.as_slice() {
         ["disable"] => {
+            set(CONFIG_KEY, "MaintenanceDisabled", "1")?;
             delete(&provider())?;
             println!("RSS provider disabled; system providers preserved");
         }
         ["cleanup"] => {
+            set(CONFIG_KEY, "MaintenanceDisabled", "1")?;
             delete(&provider())?;
             delete(&class())?;
-            delete(CONFIG_KEY)?;
-            println!("RSS component registration removed; account and factor storage preserved");
+            println!("RSS component disabled and COM registration removed; installation and factor state preserved");
         }
         ["health"] => {
-            health()?;
-            println!("RSS component paths, image and offline storage verified; DLL not loaded");
+            let config =
+                device_access::windows::installation().map_err(|_| Error::Configuration)?;
+            let state = readiness(&config.root, config.id)?;
+            println!("RSS component: {state:?}; DLL not loaded");
+            crate::access_worker::component_health(state)?;
         }
-        ["register", root, id, dll] => {
-            let config = Installation {
-                root: Path::new(root).into(),
-                id: id.parse().map_err(|_| Error::Configuration)?,
-            };
-            let hash = image(Path::new(dll))?;
-            // Never initialize during repair: service initialization is the only create path.
-            device_access::Store::open(&config.root, config.id).map_err(|_| Error::Storage)?;
-            delete(&provider())?;
-            set(
-                CONFIG_KEY,
-                "Installation",
-                &serde_json::to_string(&config).map_err(|_| Error::Configuration)?,
-            )?;
-            set(CONFIG_KEY, "ImageSha256", &hash)?;
-            let inproc = format!("{}\\InprocServer32", class());
-            set(&inproc, "", dll)?;
-            set(&inproc, "ThreadingModel", "Apartment")?;
-            set(&provider(), "", "RSS Device Access")?;
-            if let Err(error) = health() {
-                delete(&provider())?;
-                return Err(error);
-            }
-            println!("RSS provider registered; system providers preserved");
+        ["register", path] => {
+            let deployment = crate::deployment::Deployment::load(Path::new(path))?;
+            install_for(&deployment, true)?;
+            println!("RSS provider candidate registered; reboot required after candidate changes");
         }
         _ => return Err(Error::Configuration),
     }
     Ok(())
-}
-pub(crate) fn health() -> Result<(), Error> {
-    let config = device_access::windows::installation().map_err(|_| Error::Configuration)?;
-    health_for(&config)
 }
 fn health_for(config: &Installation) -> Result<(), Error> {
     device_access::Store::open(&config.root, config.id).map_err(|_| Error::Storage)?;
@@ -189,17 +170,35 @@ fn exists(path: &str) -> Result<bool, Error> {
     Ok(true)
 }
 /// A missing Provider permits cleanup; a different registered installation never does.
-pub(crate) fn readiness(root: &Path, installation: uuid::Uuid) -> Result<bool, Error> {
+pub(crate) fn readiness(root: &Path, installation: uuid::Uuid) -> Result<Component, Error> {
     if !exists(CONFIG_KEY)? {
         return if exists(&provider())? {
             Err(Error::Identity)
         } else {
-            Ok(false)
+            Ok(Component::NotInstalled)
         };
     }
     let config = device_access::windows::installation().map_err(|_| Error::Identity)?;
     crate::access_worker::verify_installation(root, installation, &config.root, config.id)?;
-    Ok(health_for(&config).is_ok())
+    match get(CONFIG_KEY, "MaintenanceDisabled")?.as_str() {
+        "1" => return Ok(Component::MaintenanceDisabled),
+        "0" => (),
+        _ => return Err(Error::Configuration),
+    }
+    if health_for(&config).is_err() {
+        return Ok(Component::Unavailable);
+    }
+    Ok(
+        if device_access::windows::clock()
+            .map_err(|_| Error::Clock)?
+            .boot
+            == config.installed_boot
+        {
+            Component::RebootRequired
+        } else {
+            Component::Ready
+        },
+    )
 }
 
 pub(crate) fn remove_for(deployment: &crate::deployment::Deployment) -> Result<(), Error> {
@@ -213,7 +212,91 @@ pub(crate) fn remove_for(deployment: &crate::deployment::Deployment) -> Result<(
         &config.root,
         config.id,
     )?;
+    device_access::Store::open(&config.root, config.id)
+        .map_err(|_| Error::Storage)?
+        .retire_registration()
+        .map_err(|_| Error::Storage)?;
     delete(&provider())?;
     delete(&class())?;
     delete(CONFIG_KEY)
+}
+
+/// Both unattended installation and explicit repair consume the same frozen candidate.
+pub(crate) fn install_for(
+    deployment: &crate::deployment::Deployment,
+    repair: bool,
+) -> Result<(), Error> {
+    device_access::windows::require_system().map_err(|_| Error::Denied)?;
+    let candidate = crate::installation::Candidate::installed(deployment)?;
+    candidate.validate()?;
+    let Some(dll) = candidate.windows_login.as_ref() else {
+        return if exists(&provider())? {
+            Err(Error::Unsupported)
+        } else {
+            Ok(())
+        };
+    };
+    let root = crate::access_worker::root(&deployment.execution);
+    device_access::Store::open(&root, deployment.service_id).map_err(|_| Error::Storage)?;
+    if !repair && exists(CONFIG_KEY)? {
+        match get(CONFIG_KEY, "MaintenanceDisabled")?.as_str() {
+            "1" => return Ok(()),
+            "0" => (),
+            _ => return Err(Error::Configuration),
+        }
+    }
+    let digest = image(&dll.path)?;
+    if digest != dll.sha256 {
+        return Err(Error::Identity);
+    }
+    let old = if exists(CONFIG_KEY)? && exists(&class())? {
+        Some(device_access::windows::installation().map_err(|_| Error::Identity)?)
+    } else {
+        None
+    };
+    if let Some(old) = &old {
+        crate::access_worker::verify_installation(&root, deployment.service_id, &old.root, old.id)?;
+    }
+    let unchanged = old.is_some() && get(CONFIG_KEY, "ImageSha256")? == digest;
+    let config = Installation {
+        root,
+        id: deployment.service_id,
+        installed_boot: if unchanged {
+            old.as_ref().ok_or(Error::Identity)?.installed_boot
+        } else {
+            device_access::windows::clock()
+                .map_err(|_| Error::Clock)?
+                .boot
+        },
+    };
+    delete(&provider())?;
+    set(
+        CONFIG_KEY,
+        "Installation",
+        &serde_json::to_string(&config).map_err(|_| Error::Configuration)?,
+    )?;
+    set(CONFIG_KEY, "ImageSha256", &digest)?;
+    set(CONFIG_KEY, "MaintenanceDisabled", "0")?;
+    let inproc = format!("{}\\InprocServer32", class());
+    set(&inproc, "", dll.path.to_str().ok_or(Error::Configuration)?)?;
+    set(&inproc, "ThreadingModel", "Apartment")?;
+    set(&provider(), "", "RSS Device Access")?;
+    if let Err(error) = health_for(&config) {
+        delete(&provider())?;
+        return Err(error);
+    }
+    Ok(())
+}
+
+pub(crate) fn preflight(deployment: &crate::deployment::Deployment) -> Result<(), Error> {
+    let candidate = crate::installation::Candidate::installed(deployment)?;
+    if candidate.windows_login.is_none() && exists(&provider())? {
+        return Err(Error::Unsupported);
+    }
+    device_access::Store::open(
+        &crate::access_worker::root(&deployment.execution),
+        deployment.service_id,
+    )
+    .map_err(|_| Error::Storage)?;
+    Ok(())
 }

@@ -387,6 +387,8 @@ impl Deployment {
             self.helpers(),
             self.installation_id,
         )?;
+        #[cfg(windows)]
+        crate::access_component::install_for(self, false)?;
         service.installation = Some(self.clone());
         let marker = self.state_root.join("execution-initialized");
         if !marker.exists() {

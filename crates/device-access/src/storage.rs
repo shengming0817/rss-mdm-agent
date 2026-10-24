@@ -1,9 +1,12 @@
 use super::*;
 const SCHEMA: &str = "CREATE TABLE installation(id TEXT NOT NULL);
+CREATE TABLE registration(id INTEGER PRIMARY KEY CHECK(id=1),body BLOB NOT NULL);
+CREATE TABLE join_epoch(id INTEGER PRIMARY KEY CHECK(id=1),fingerprint TEXT NOT NULL,observed INTEGER NOT NULL);
+CREATE TABLE revoked(binding TEXT PRIMARY KEY,generation INTEGER NOT NULL,revision INTEGER NOT NULL);
 CREATE TABLE candidates(id TEXT PRIMARY KEY,body BLOB NOT NULL);
 CREATE TABLE bindings(sid TEXT PRIMARY KEY,body BLOB NOT NULL);
 CREATE TABLE recovery_uses(id TEXT PRIMARY KEY,body BLOB NOT NULL);
-PRAGMA application_id=1380204865; PRAGMA user_version=1;";
+PRAGMA application_id=1380204865; PRAGMA user_version=2;";
 pub(super) fn open(root: &Path, installation: Uuid, create: bool) -> Result<Store, Error> {
     if installation.is_nil() || !platform_private_storage::is_canonical_path(root)? {
         return Err(Error::Invalid);
@@ -38,7 +41,7 @@ pub(super) fn open(root: &Path, installation: Uuid, create: bool) -> Result<Stor
     let app: i64 = conn.pragma_query_value(None, "application_id", |r| r.get(0))?;
     let binding: String = conn.query_row("SELECT id FROM installation", [], |r| r.get(0))?;
     let mode: String = conn.pragma_query_value(None, "journal_mode", |r| r.get(0))?;
-    if version != 1 || app != 1380204865 || binding != installation.to_string() || mode != "delete"
+    if version != 2 || app != 1380204865 || binding != installation.to_string() || mode != "delete"
     {
         return Err(Error::Invalid);
     }

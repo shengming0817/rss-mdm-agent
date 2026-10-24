@@ -634,6 +634,11 @@ fn rss_rotation_changes_only_recovery_after_ack_and_verification_reuses_material
         sid: sid.clone(),
     };
     let authority = Authority {
+        instance: uuid::Uuid::new_v4(),
+        principal: uuid::Uuid::new_v4(),
+        join: "local-machine".into(),
+        source: rss_mdm_agent_wire::runtime::AccessWindowsAuthority::Local,
+        login: "LOCAL\\test".into(),
         tenant: task.task.tenant_id,
         device: task.task.device_id.clone(),
         registration: task.task.registration_id,
@@ -661,9 +666,10 @@ fn rss_rotation_changes_only_recovery_after_ack_and_verification_reuses_material
         material: uuid::Uuid::new_v4(),
         version: 1,
     };
+    store.bind_registration(authority.registration()).unwrap();
     store
         .activate(
-            authority,
+            authority.clone(),
             1,
             true,
             setup,
@@ -699,14 +705,14 @@ fn rss_rotation_changes_only_recovery_after_ack_and_verification_reuses_material
     assert_ne!(&*new, &old);
     assert_eq!(
         store
-            .verify(&sid, Factor::Recovery(&old), clock, &native)
+            .verify(&authority, Factor::Recovery(&old), clock, &native)
             .unwrap(),
         Decision::Denied
     );
     for _ in 0..2 {
         assert_eq!(
             store
-                .verify(&sid, Factor::Recovery(&new), clock, &native)
+                .verify(&authority, Factor::Recovery(&new), clock, &native)
                 .unwrap(),
             Decision::Accepted
         );
@@ -714,7 +720,7 @@ fn rss_rotation_changes_only_recovery_after_ack_and_verification_reuses_material
     assert_eq!(
         store
             .verify(
-                &sid,
+                &authority,
                 Factor::Totp(&factor_code(&totp, clock.utc)),
                 clock,
                 &native
@@ -730,7 +736,7 @@ fn rss_rotation_changes_only_recovery_after_ack_and_verification_reuses_material
     assert_eq!(
         store
             .verify(
-                &sid,
+                &authority,
                 Factor::Totp(&factor_code(&totp, next.utc)),
                 next,
                 &native

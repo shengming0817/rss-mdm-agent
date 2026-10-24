@@ -526,7 +526,7 @@ async fn signed_native_performance_configuration_is_consumed_from_the_runtime_ro
         .await
         .unwrap();
     assert_eq!(c.payload().source, w::Source::AgentNative);
-    let w::TelemetryCollector::Native { plan, mappings } = &c.payload().collector else {
+    let w::TelemetryCollector::Native { plan, mappings, .. } = &c.payload().collector else {
         panic!("native configuration was not retained");
     };
     assert!(matches!(

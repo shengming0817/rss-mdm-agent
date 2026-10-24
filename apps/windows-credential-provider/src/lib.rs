@@ -5,3 +5,6 @@
 mod provider;
 #[cfg(windows)]
 mod serialization;
+
+#[cfg(any(windows, test))]
+mod status;
