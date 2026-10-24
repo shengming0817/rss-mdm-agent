@@ -69,6 +69,7 @@ pub(super) struct State {
     pending: BTreeMap<Uuid, Pending>,
     next_retirement: Option<std::time::Instant>,
     retirement_cursor: Option<String>,
+    retiring: bool,
 }
 /// Root-owned record name; a generated UID cannot introduce path syntax.
 pub(crate) fn binding_name(account: &str) -> Result<String, Error> {
@@ -150,7 +151,12 @@ impl<S: IdentityProvider> DeviceService<S> {
         if command.reply.is_closed() {
             return Ok(());
         }
-        let result = self.platform_sso(&command, commands).await;
+        let result =
+            if self.core.psso.retiring && !cleanup_operation(command.request.as_operation()) {
+                Err(Error::Denied)
+            } else {
+                self.platform_sso(&command, commands).await
+            };
         let reply = match result {
             Ok(value) => Reply::PlatformSso { value },
             Err(Error::Unavailable | Error::Network | Error::Storage) => Reply::Unavailable,
@@ -367,6 +373,99 @@ impl<S: IdentityProvider> DeviceService<S> {
     }
 }
 
+fn observation_owner(
+    retained: &::platform_sso::Context,
+    current: &::platform_sso::Context,
+) -> bool {
+    let mut retained = retained.clone();
+    if retained.binding_revision > current.binding_revision {
+        return false;
+    }
+    retained.binding_revision = current.binding_revision;
+    retained == *current
+}
+fn cleanup_operation(request: Option<&Request>) -> bool {
+    matches!(
+        request,
+        Some(Request::PlatformSso {
+            input: Operation::Observe { .. } | Operation::Unregister { .. }
+        })
+    )
+}
+impl<S: IdentityProvider> DeviceService<S> {
+    /// Keep authenticated native cleanup alive after business admission is revoked.
+    pub(super) async fn drain_platform_sso(
+        &mut self,
+        commands: &mut tokio::sync::mpsc::Receiver<Command>,
+    ) -> Result<bool, Error> {
+        self.core.psso.retiring = true;
+        self.core.psso.pending.clear();
+        let root = self.core.access.root.clone();
+        if !root.exists() {
+            return Ok(true);
+        }
+        sweep_retirement(&root, self.core.access.installation)?;
+        while let Ok(command) = commands.try_recv() {
+            self.core.handle(command);
+        }
+        self.drive_platform_sso(commands).await?;
+        sweep_retirement(&root, self.core.access.installation)
+    }
+}
+/// The existing owner lock serializes retirement with registering and late completion.
+fn sweep_retirement(root: &std::path::Path, installation: Uuid) -> Result<bool, Error> {
+    let _lock = state::lock(root)?;
+    state::write(root, "platform-sso.disabled", &Disabled { installation })?;
+    let mut complete = true;
+    let mut count = 0;
+    for entry in std::fs::read_dir(root)? {
+        let name = entry?
+            .file_name()
+            .into_string()
+            .map_err(|_| Error::Storage)?;
+        if name.ends_with(".psso-retire") {
+            complete = false;
+            continue;
+        }
+        let in_flight = name.ends_with(".psso-registering");
+        if !in_flight && !name.ends_with(".psso-source") {
+            continue;
+        }
+        count += 1;
+        if count > 256 {
+            return Err(Error::Capacity);
+        }
+        let c: Coordinate = state::read_optional(root, &name)?.ok_or(Error::Storage)?;
+        if c.context.installation != installation
+            || c.file(if in_flight { "registering" } else { "source" })? != name
+        {
+            return Err(Error::Identity);
+        }
+        let retired: Option<Coordinate> = state::read_optional(root, &c.file("retired")?)?;
+        let native: Option<NativeObservation> =
+            state::read_optional(root, &c.file("observation")?)?;
+        if retired.as_ref() == Some(&c) && native_cleared(&c, in_flight, native.as_ref()) {
+            state::remove(root, &name)?;
+        } else {
+            if retired.as_ref() != Some(&c) {
+                state::write(root, &c.file("retire")?, &c)?;
+            }
+            complete = false;
+        }
+    }
+    Ok(complete)
+}
+fn native_cleared(c: &Coordinate, in_flight: bool, native: Option<&NativeObservation>) -> bool {
+    in_flight
+        || native.is_some_and(|n| {
+            n.source == c.source
+                && n.source_version == c.source_version
+                && n.binding_generation == c.context.binding_generation
+                && !n.user_registered
+                && (c.context.kind == w::Kind::User || !n.device_registered)
+        })
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct NativeObservation {
@@ -419,7 +518,7 @@ impl<S: IdentityProvider> DeviceService<S> {
             if let Some(o) = observation.filter(|o| {
                 context.binding_generation == o.binding_generation
                     && retained.as_ref().is_some_and(|c| {
-                        c.context == context
+                        observation_owner(&c.context, &context)
                             && c.source == o.source
                             && c.source_version == o.source_version
                     })
@@ -641,12 +740,11 @@ pub(crate) fn save_binding(
                     state::read_optional(root, &coordinate.file("retired")?)?;
                 let observation: Option<NativeObservation> =
                     state::read_optional(root, &coordinate.file("observation")?)?;
-                let native_done = file.ends_with(".psso-registering")
-                    || observation.is_some_and(|n| {
-                        n.source == coordinate.source
-                            && n.source_version == coordinate.source_version
-                            && !n.user_registered
-                    });
+                let native_done = native_cleared(
+                    &coordinate,
+                    file.ends_with(".psso-registering"),
+                    observation.as_ref(),
+                );
                 if retired.as_ref() == Some(&coordinate) && native_done {
                     state::remove(root, &file)?;
                 } else {
@@ -821,14 +919,7 @@ pub(crate) fn component(
             state::read_optional(&root, &coordinate.file("observation")?)?;
         let remote_done = retired.as_ref().is_some_and(|r| r == coordinate);
         // An in-flight record never authorized saving an Apple login configuration.
-        let native_done = *in_flight
-            || native.is_some_and(|n| {
-                n.source == coordinate.source
-                    && n.source_version == coordinate.source_version
-                    && n.binding_generation == coordinate.context.binding_generation
-                    && !n.user_registered
-                    && (coordinate.context.kind == w::Kind::User || !n.device_registered)
-            });
+        let native_done = native_cleared(coordinate, *in_flight, native.as_ref());
         complete &= remote_done && native_done;
         observations.push(serde_json::json!({"source": coordinate.source, "sourceVersion": coordinate.source_version,
             "scope": coordinate.context.kind, "remoteRetired": remote_done,
@@ -1045,6 +1136,64 @@ mod tests {
                 .is_some()
         );
         assert_eq!(save_binding(&root, &old), Err(Error::Identity));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn revision_only_updates_preserve_observations_but_not_registration_authority() {
+        let old = coordinate().context;
+        let mut current = old.clone();
+        current.binding_revision += 1;
+        assert!(observation_owner(&old, &current));
+        assert!(old != current);
+        current.binding_generation = Some(2);
+        assert!(!observation_owner(&old, &current));
+        current = old.clone();
+        current
+            .configuration
+            .as_mut()
+            .unwrap()
+            .maintenance_accounts
+            .push("recovery".into());
+        assert!(!observation_owner(&old, &current));
+    }
+    #[test]
+    fn retirement_drain_preserves_native_cleanup_and_never_reopens_registration() {
+        let root = std::env::temp_dir().join(format!("psso-drain-{}", Uuid::new_v4()));
+        platform_private_storage::directory(&root).unwrap();
+        let c = coordinate();
+        state::write(&root, &c.file("source").unwrap(), &c).unwrap();
+        assert!(!sweep_retirement(&root, c.context.installation).unwrap());
+        assert_eq!(enabled(&root, c.context.installation), Err(Error::Denied));
+        finish_retirement(&root, &c).unwrap();
+        assert!(!sweep_retirement(&root, c.context.installation).unwrap());
+        state::write(
+            &root,
+            &c.file("observation").unwrap(),
+            &serde_json::json!({
+                "source": c.source, "sourceVersion": c.source_version, "bindingGeneration": 1,
+                "observedAt": 10, "deviceRegistered": true, "userRegistered": false
+            }),
+        )
+        .unwrap();
+        assert!(sweep_retirement(&root, c.context.installation).unwrap());
+        assert!(
+            state::read_optional::<Coordinate>(&root, &c.file("retired").unwrap())
+                .unwrap()
+                .is_some()
+        );
+        assert!(!cleanup_operation(Some(&Request::PlatformSso {
+            input: Operation::Bootstrap {
+                scope: w::Kind::Device,
+                authentication: w::AuthenticationMode::Password
+            }
+        })));
+        assert!(cleanup_operation(Some(&Request::PlatformSso {
+            input: Operation::Unregister {
+                scope: w::Kind::User,
+                source: c.source,
+                source_version: 1
+            }
+        })));
         std::fs::remove_dir_all(root).unwrap();
     }
     #[test]

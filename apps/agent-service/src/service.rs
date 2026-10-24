@@ -368,6 +368,10 @@ impl<S: IdentityProvider> DeviceService<S> {
                 self.core.revoke_preparations()?;
                 self.release_waiting();
                 self.stop()?;
+                #[cfg(target_os = "macos")]
+                if !self.drain_platform_sso(commands).await? {
+                    return Ok(());
+                }
                 if self
                     .core
                     .app
