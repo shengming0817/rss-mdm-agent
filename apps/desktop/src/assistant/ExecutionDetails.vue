@@ -248,6 +248,15 @@ const text = (value: unknown) => JSON.stringify(value, null, 2);
             details.status.process.quiescent ? "已确认" : "未确认"
           }}；输出质量：{{ qualities(details.status.process.quality) }}
         </p>
+        <p
+          v-if="
+            details.action.execution.kind === 'process' &&
+            details.status.process.finished &&
+            !details.status.process.quiescent
+          "
+        >
+          解释器已返回；执行结果与活动清理分别记录。清理尚未确认，资源回收与退管继续受限。
+        </p>
         <p>结束原因：{{ ends(details.status.process.end) }}</p>
         <p>机制诊断：{{ failures(details.status.process.failureKind) }}</p>
         <p v-if="details.status.process.failureKind !== 'none'">

@@ -50,7 +50,6 @@ fn run(_data_root: Option<std::path::PathBuf>) -> Result<(), Box<dyn std::error:
             eprintln!("RSS_DESKTOP_ASSEMBLY {}", serde_json::json!({"mode": if cfg!(feature = "dev-fixture") { "fixture" } else { "production" }, "productionIPC": !cfg!(feature = "dev-fixture")}));
             #[cfg(not(feature = "dev-fixture"))]
             {
-            rss_mdm_desktop::composition::execution::install_user_helper()?;
             let root = match &_data_root {
                 Some(root) => root.clone(),
                 None => app.path().app_data_dir()?.join("desktop"),

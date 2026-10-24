@@ -75,6 +75,8 @@ assert.ok(
 );
 let serviceWorker,
   serviceReady,
+  serviceFinishing = false,
+  browserClosing,
   serviceOutput = "",
   serviceSequence = 0;
 const servicePending = new Map();
@@ -228,13 +230,21 @@ for (const signal of ["SIGINT", "SIGTERM"])
     spawnError = new Error("native acceptance cancelled");
     // The dev wrapper owns Tauri/Vite/main and their bounded process-group shutdown.
     signalRoot("SIGTERM");
-    serviceWorker?.kill("SIGTERM");
+    // The coordinator retains the administrator channel until finally reaps our clients.
   });
 const mark = (value) => {
   stage = value;
   result.stage = value;
   writeReport();
   console.log(`[native] ${value}`);
+};
+const serviceFailed = (error) => {
+  spawnError ??= error;
+  faultAbort.abort(error);
+  for (const pending of servicePending.values()) pending.reject(spawnError);
+  servicePending.clear();
+  // Closing the owned session interrupts an in-flight WebDriver command as well as wait().
+  browserClosing ??= browser?.deleteSession().catch(() => {});
 };
 const wait = async (check, timeout = 60000) => {
   const deadline = Date.now() + timeout;
@@ -843,17 +853,11 @@ try {
       ],
       { cwd: root, detached: true, stdio: ["pipe", "pipe", "pipe"] },
     );
-    serviceWorker.on("error", (error) => {
-      spawnError = error;
-    });
-    serviceWorker.stdin.on("error", (error) => {
-      for (const pending of servicePending.values()) pending.reject(error);
-      servicePending.clear();
-    });
-    serviceWorker.on("exit", () => {
-      for (const pending of servicePending.values())
-        pending.reject(new Error("controlled service owner exited"));
-      servicePending.clear();
+    serviceWorker.on("error", serviceFailed);
+    serviceWorker.stdin.on("error", serviceFailed);
+    serviceWorker.on("exit", (code) => {
+      if (!serviceFinishing || code !== 0)
+        serviceFailed(new Error("controlled service owner exited"));
     });
     serviceWorker.stdout.setEncoding("utf8");
     serviceWorker.stdout.on("data", (chunk) => {
@@ -864,6 +868,8 @@ try {
         try {
           const value = JSON.parse(line);
           if (value.kind === "desktopService") serviceReady = value;
+          else if (value.kind === "serviceFailure")
+            serviceFailed(new Error(value.error));
           else {
             servicePending.get(value.id)?.resolve(value.value);
             servicePending.delete(value.id);
@@ -2624,8 +2630,10 @@ try {
     }
   }
   awake?.kill("SIGTERM");
-  if (browser && !cancelled)
-    await Promise.race([browser.deleteSession().catch(() => {}), delay(5000)]);
+  if (browser) {
+    browserClosing ??= browser.deleteSession().catch(() => {});
+    await Promise.race([browserClosing, delay(5000)]);
+  }
   if (rootAlive()) {
     if (receipt?.pid) {
       try {
@@ -2735,6 +2743,7 @@ try {
       serviceWorker.signalCode === null
     ) {
       try {
+        serviceFinishing = true;
         await serviceCall("finish", {
           status: result.status,
           request: fixture?.facts.request,

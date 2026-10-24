@@ -234,8 +234,8 @@ impl DesktopRuntime {
         if self.execution.revoke_context().await.is_err() {
             return Ok(false);
         }
-        // Activation publishes only after current-user settlement. Any ambiguous result
-        // retains this same pending generation for the shared account recovery entry.
+        // Machine activation and enterprise authentication are already established.
+        // Native execution acknowledgement is independent of the MDM presence projection.
         Ok(self
             .activate_context(next)
             .await?
@@ -325,9 +325,11 @@ mod tests {
             .execution
             .clone()
             .with_context_transport(move |request| match request {
-                Request::RetireEnterpriseContext { .. } => Ok(Reply::CurrentUserSync {
-                    value: Default::default(),
-                }),
+                Request::CurrentUserStatus {} | Request::RetireEnterpriseContext { .. } => {
+                    Ok(Reply::CurrentUserSync {
+                        value: Default::default(),
+                    })
+                }
                 Request::RevokeContext {} => {
                     bound.store(false, Ordering::Release);
                     Ok(Reply::ContextRevoked)
@@ -343,12 +345,7 @@ mod tests {
                         "uncertain prior binding must be retired"
                     );
                     if calls.fetch_add(1, Ordering::AcqRel) == 0 {
-                        return Ok(Reply::CurrentUserSync {
-                            value: execution_contract::CurrentUserSync {
-                                phase: execution_contract::CurrentUserSyncPhase::BindingUnknown,
-                                current: None,
-                            },
-                        });
+                        return Err(execution_app::Error::OutcomeUnknown);
                     }
                     Ok(Reply::ContextBound {
                         value: execution_contract::NativeContextRef {
@@ -376,10 +373,7 @@ mod tests {
             .await
             .unwrap());
         assert_eq!(attempts.load(Ordering::Acquire), 0);
-        assert!(runtime
-            .policy_execution_for(generation.as_str())
-            .await
-            .is_err());
+        assert!(runtime.execution_for(generation.as_str()).await.is_err());
         current.status.phase = RegistrationPhase::Active;
         current.status.registered = true;
         // A retained identity with no active credential still cannot disclose the cookie.
@@ -389,30 +383,24 @@ mod tests {
             .unwrap());
         assert_eq!(attempts.load(Ordering::Acquire), 0);
         current.status.credential = CredentialStatus::Active;
+        assert!(!runtime
+            .registration_handoff(&current, intent, &generation)
+            .await
+            .unwrap());
+        let authenticated = runtime.identity.snapshot().unwrap();
+        assert_eq!(authenticated.generation, generation);
+        assert!(authenticated.execution_binding.is_none());
         assert_eq!(
-            runtime
-                .registration_handoff(&current, intent, &generation)
-                .await
-                .unwrap_err()
-                .code,
-            "binding_unknown"
-        );
-        assert!(runtime.identity.snapshot().is_err());
-        assert_eq!(
-            runtime.account_status().unwrap().binding,
+            runtime.account_status().await.unwrap().binding,
             ai_session_contract::AccountBindingState::BindingUnknown
         );
         assert!(native_bound.load(Ordering::Acquire));
-        assert!(runtime
-            .policy_execution_for(generation.as_str())
-            .await
-            .is_err());
         assert!(runtime
             .registration_handoff(&current, intent, &generation)
             .await
             .unwrap());
         let directory = runtime
-            .policy_execution_for(generation.as_str())
+            .execution_for(generation.as_str())
             .await
             .unwrap()
             .policy_directory(crate::self_service::PolicyDirectoryQuery { after: None })

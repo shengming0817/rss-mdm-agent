@@ -155,6 +155,8 @@ impl Native for Fake {
     }
 }
 fn input(root: &Root, operation: Op) -> Input {
+    // Material preparation must finish before the short-lived authorization starts.
+    let public_key = STANDARD.encode(KEY.to_public_key().to_public_key_der().unwrap().as_bytes());
     let mut task = w::CredentialTaskSpec {
         wire_version: 1,
         tenant_id: uuid::Uuid::from_u128(1),
@@ -175,8 +177,7 @@ fn input(root: &Root, operation: Op) -> Input {
         operation,
         recipient: w::CredentialRecipient {
             key_id: "a".repeat(64),
-            public_key: STANDARD
-                .encode(KEY.to_public_key().to_public_key_der().unwrap().as_bytes()),
+            public_key,
         },
         expected: vec![],
         recovery: None,

@@ -43,9 +43,6 @@ pub struct WorkerRequest {
     /// Native work that has started without verified completion.
     #[serde(skip)]
     pub native_pending: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    /// EXE effects may escape the job; this fact can never be cleared by a later tool exit.
-    #[serde(skip)]
-    pub external_pending: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// Current producer-owned behavior and signatures, already frozen in the signed task.
     pub action: wire::SoftwareTaskAction,
     /// Exact physical operation.
@@ -118,14 +115,33 @@ pub fn run(path: &std::path::Path) -> Result<i32, Error> {
     } else {
         None
     };
+    let scripted_detector = request.operation == WorkerOperation::Detect
+        && matches!(
+            crate::backend::commands::software_commands(&request.action)?.detection,
+            Some(wire::SoftwareTaskDetection::Script { .. })
+        );
     #[cfg(target_os = "macos")]
-    let outcome = if !matches!(request.export, wire::SoftwareTaskExport::Direct) {
+    let outcome = if scripted_detector {
+        source::detect(&request).map(|state| result(0, Some(state), String::new()))
+    } else if matches!(
+        request.action.behavior,
+        wire::SoftwareTaskBehavior::Pkg(_) | wire::SoftwareTaskBehavior::Bundle(_)
+    ) {
+        native_package(&request, before.as_ref())
+    } else if !matches!(request.export, wire::SoftwareTaskExport::Direct) {
         source::execute(&request, before.as_ref())
     } else {
         macos::execute(&request, before.as_ref())
     };
     #[cfg(windows)]
-    let outcome = if !matches!(request.export, wire::SoftwareTaskExport::Direct) {
+    let outcome = if scripted_detector {
+        source::detect(&request).map(|state| result(0, Some(state), String::new()))
+    } else if matches!(
+        request.action.behavior,
+        wire::SoftwareTaskBehavior::Msi(_) | wire::SoftwareTaskBehavior::Bundle(_)
+    ) {
+        native_package(&request, before.as_ref())
+    } else if !matches!(request.export, wire::SoftwareTaskExport::Direct) {
         source::execute(&request, before.as_ref())
     } else {
         windows::execute(&request, before.as_ref())
@@ -139,16 +155,21 @@ pub fn run(path: &std::path::Path) -> Result<i32, Error> {
             .load(std::sync::atomic::Ordering::Acquire);
         failed
     });
-    if request
-        .external_pending
-        .load(std::sync::atomic::Ordering::Acquire)
-    {
-        result.1.closed = false;
-    }
     if matches!(request.export, wire::SoftwareTaskExport::Direct)
         && !matches!(request.action.behavior, wire::SoftwareTaskBehavior::Dmg(_))
         && request.resource_root.exists()
     {
+        result.1.closed = false;
+    }
+    #[cfg(target_os = "macos")]
+    if scripted_detector
+        || (request.operation != WorkerOperation::Detect
+            && matches!(
+                request.action.behavior,
+                wire::SoftwareTaskBehavior::Bundle(_)
+            ))
+    {
+        // Arbitrary shell completion does not close escaped descendants.
         result.1.closed = false;
     }
     result.1.native_output_bytes = request
@@ -175,6 +196,104 @@ mod material;
 mod source;
 #[cfg(windows)]
 mod windows;
+
+fn native_package(
+    request: &WorkerRequest,
+    before: Option<&SoftwareState>,
+) -> Result<(i32, SoftwareWorkerResult), Error> {
+    let commands = crate::backend::commands::software_commands(&request.action)?;
+    if request.operation == WorkerOperation::Detect {
+        return Ok(result(0, Some(source::detect(request)?), String::new()));
+    }
+    if !matches!(
+        commands.detection,
+        Some(wire::SoftwareTaskDetection::Script { .. })
+    ) && before != Some(&source::detect(request)?)
+    {
+        return Err(Error::Conflict);
+    }
+    let removal = matches!(
+        request.operation,
+        WorkerOperation::Uninstall | WorkerOperation::RemovePrevious
+    );
+    let command = match request.operation {
+        WorkerOperation::Install => commands.install,
+        WorkerOperation::Upgrade => commands.upgrade.ok_or(Error::Unsupported)?,
+        WorkerOperation::Uninstall | WorkerOperation::RemovePrevious => {
+            commands.uninstall.ok_or(Error::Unsupported)?
+        }
+        _ => return Err(Error::Unsupported),
+    };
+    for signature in &request.action.signatures {
+        #[cfg(windows)]
+        windows::authenticode(request, &signature.artifact)?;
+        #[cfg(target_os = "macos")]
+        macos::verify_code(
+            request,
+            &request.material(&signature.artifact)?,
+            if matches!(request.action.behavior, wire::SoftwareTaskBehavior::Pkg(_)) {
+                "install"
+            } else {
+                "execute"
+            },
+            Some(&signature.artifact),
+        )?;
+    }
+    let (image, args) = if let wire::SoftwareTaskBehavior::Bundle(b) = &request.action.behavior {
+        let script = if removal {
+            b.uninstall.as_ref().ok_or(Error::Unsupported)?
+        } else {
+            &b.install
+        };
+        let profile = crate::backend::plan::script_profile(match script.interpreter {
+            wire::SoftwareTaskInterpreter::PowerShell7 => wire::ExecutorProfile::PowerShell7,
+            wire::SoftwareTaskInterpreter::PosixSh => wire::ExecutorProfile::PosixSh,
+            wire::SoftwareTaskInterpreter::Bash => wire::ExecutorProfile::Bash,
+        })?;
+        let args = profile.materialized_file_argv(
+            &request.material(&script.entry)?.to_string_lossy(),
+            &command.arguments,
+        );
+        (
+            request.tool(if removal {
+                "uninstall-interpreter"
+            } else {
+                "install-interpreter"
+            })?,
+            args,
+        )
+    } else {
+        let key = if removal {
+            commands.removal_artifact.ok_or(Error::Unsupported)?
+        } else {
+            request.action.behavior.installer()
+        };
+        let package = request.material(key)?.to_string_lossy().into_owned();
+        let mut args: Vec<String> =
+            if matches!(request.action.behavior, wire::SoftwareTaskBehavior::Msi(_)) {
+                vec![
+                    if removal { "/x".into() } else { "/i".into() },
+                    package,
+                    "/qn".into(),
+                    "/norestart".into(),
+                ]
+            } else {
+                vec!["-pkg".into(), package, "-target".into(), "/".into()]
+            };
+        args.extend(command.arguments.clone());
+        (request.tool("installer")?, args)
+    };
+    let (code, stdout, stderr) = run_tool(request, &image, &args)?;
+    Ok(result(
+        code,
+        None,
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&stdout),
+            String::from_utf8_lossy(&stderr)
+        ),
+    ))
+}
 
 fn result(
     code: i32,
@@ -217,9 +336,23 @@ fn run_tool_environment(
     if let Some(environment) = environment {
         command.env_clear().envs(environment);
     }
-    if image.starts_with(&request.resource_root) {
+    if let wire::SoftwareTaskBehavior::Bundle(b) = &request.action.behavior {
+        let script = if matches!(
+            request.operation,
+            WorkerOperation::Uninstall | WorkerOperation::RemovePrevious
+        ) {
+            b.uninstall.as_ref().ok_or(Error::Unsupported)?
+        } else {
+            &b.install
+        };
+        let path = request.material(&script.entry)?;
+        let depth = std::path::Path::new(&script.entry).components().count();
+        command.current_dir(path.ancestors().nth(depth).ok_or(Error::Untrusted)?);
+    } else if image.starts_with(&request.resource_root) {
         command.current_dir(image.parent().ok_or(Error::Protocol)?);
     }
+    #[cfg(windows)]
+    let mut scope = native_process::OwnedHost::prepare(&mut command)?;
     let mut child = command
         .args(args)
         .stdin(Stdio::null())
@@ -227,10 +360,13 @@ fn run_tool_environment(
         .stderr(Stdio::piped())
         .spawn()?;
     request.native_pending.store(true, Ordering::Release);
-    if matches!(request.action.behavior, wire::SoftwareTaskBehavior::Exe(_))
-        && image.starts_with(&request.resource_root)
-    {
-        request.external_pending.store(true, Ordering::Release);
+    #[cfg(windows)]
+    if let Err(error) = scope.attach(child.id()) {
+        let _ = child.kill();
+        if child.wait().is_ok() {
+            request.native_pending.store(false, Ordering::Release);
+        }
+        return Err(error.into());
     }
     let observed = request.native_output.clone();
     let bound = request
@@ -262,6 +398,9 @@ fn run_tool_environment(
     );
     let status = loop {
         if observed.load(Ordering::Acquire) > bound {
+            #[cfg(windows)]
+            scope.terminate()?;
+            #[cfg(not(windows))]
             let _ = child.kill();
         }
         if let Some(status) = child.try_wait()? {
@@ -269,6 +408,13 @@ fn run_tool_environment(
         }
         std::thread::sleep(Duration::from_millis(10));
     };
+    #[cfg(windows)]
+    while !scope.empty() {
+        if observed.load(Ordering::Acquire) > bound {
+            scope.terminate()?;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
     let stdout = stdout.join().map_err(|_| Error::Unavailable)??;
     let stderr = stderr.join().map_err(|_| Error::Unavailable)??;
     if observed.load(Ordering::Acquire) > bound {

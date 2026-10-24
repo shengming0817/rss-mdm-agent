@@ -1,4 +1,4 @@
-//! Frozen physical recipes for EXE, MSIX and selected DMG payloads.
+//! One native worker recipe for every platform installer and package manager.
 use super::*;
 use crate::software_worker::{WorkerOperation as O, WorkerRequest};
 use rss_mdm_agent_wire::runtime as wire;
@@ -101,18 +101,7 @@ fn command(
                 stderr: TextEncoding::Utf8,
             },
             cwd: work_root.to_str().ok_or(Error::Configuration)?.into(),
-            env: command
-                .environment
-                .iter()
-                .map(|(key, value)| {
-                    Ok((
-                        EnvironmentKey::new(key).map_err(|_| Error::Protocol)?,
-                        InputValue::Literal {
-                            value: serde_json::Value::String(value.clone()),
-                        },
-                    ))
-                })
-                .collect::<Result<_, Error>>()?,
+            env: plan::environment(&command.environment)?,
         },
         run_as,
         session_requirement: session,
@@ -162,22 +151,6 @@ pub(super) fn compile(
 ) -> Result<(SoftwareProgramStep, SoftwareStepArtifacts), Error> {
     let action = &step.action;
     let commands = crate::backend::commands::software_commands(action)?;
-    if let wire::SoftwareTaskBehavior::Exe(exe) = &action.behavior {
-        if intent != SoftwareOperation::Detect {
-            let key = if intent == SoftwareOperation::Uninstall {
-                &exe.uninstall.as_ref().ok_or(Error::Unsupported)?.installer
-            } else {
-                &exe.installer
-            };
-            if !action.signatures.iter().any(|signature| {
-                signature.artifact == *key
-                    && signature.mechanism == wire::SoftwareTaskSignatureMechanism::Authenticode
-            }) {
-                return Err(Error::Unsupported);
-            }
-        }
-    }
-
     let mut compiler = Compiler {
         config,
         root,
@@ -207,6 +180,62 @@ pub(super) fn compile(
             .ok_or(Error::Protocol)?
             .to_owned();
         compiler.files.insert(key, (path, reference));
+    }
+    let platform = plan::platform()?;
+    let bundle = action.behavior.bundle().map(|b| BundleManifest {
+        schema: V1,
+        platform,
+        architecture: architecture.clone(),
+        entries: b
+            .entries
+            .iter()
+            .map(|(name, entry)| {
+                (
+                    name.clone(),
+                    BundleFile {
+                        length: entry.length,
+                        sha256: entry.sha256,
+                    },
+                )
+            })
+            .collect(),
+    });
+    if let Some(manifest) = &bundle {
+        let primary = compiler
+            .files
+            .get(action.behavior.installer())
+            .cloned()
+            .ok_or(Error::Untrusted)?;
+        let members = compiler
+            .root
+            .bundle(
+                helper.as_ref().map(|h| h.context().subject.as_str()),
+                &primary.0,
+                &primary.1.sha256,
+                manifest,
+            )
+            .map_err(crate::error::app_error)?;
+        let entry = &commands.install_script.ok_or(Error::Protocol)?.entry;
+        let depth = Path::new(entry).components().count();
+        let path = members.get(entry).ok_or(Error::Untrusted)?;
+        let directory = path
+            .ancestors()
+            .nth(depth)
+            .ok_or(Error::Untrusted)?
+            .to_owned();
+        if directory.join(entry) != *path {
+            return Err(Error::Untrusted);
+        }
+        compiler.bundle_root = Some(directory);
+        for (name, path) in members {
+            compiler.files.insert(
+                name.clone(),
+                (
+                    path,
+                    artifact(&manifest.entries.get(&name).ok_or(Error::Untrusted)?.sha256)?,
+                ),
+            );
+        }
     }
     let mut tools = BTreeMap::new();
     match &action.behavior {
@@ -279,41 +308,149 @@ pub(super) fn compile(
                 tools.insert("pkgutil".into(), pin(Path::new("/usr/sbin/pkgutil"))?);
             }
         }
-        wire::SoftwareTaskBehavior::Exe(_) | wire::SoftwareTaskBehavior::Msix(_) => {
-            if !action.signatures.is_empty() {
+        wire::SoftwareTaskBehavior::Msi(_) | wire::SoftwareTaskBehavior::Pkg(_) => {
+            let kind = if matches!(action.behavior, wire::SoftwareTaskBehavior::Msi(_)) {
+                SoftwareManagerKind::Msi
+            } else {
+                SoftwareManagerKind::PackageInstaller
+            };
+            let manager = config
+                .managers
+                .iter()
+                .find(|m| m.executor == kind)
+                .ok_or(Error::Unsupported)?;
+            manager
+                .image
+                .verify(&manager.image.path)
+                .map_err(|_| Error::Untrusted)?;
+            tools.insert("installer".into(), pin(&manager.image.path)?);
+            if matches!(action.behavior, wire::SoftwareTaskBehavior::Pkg(_)) {
+                tools.insert("pkgutil".into(), pin(Path::new("/usr/sbin/pkgutil"))?);
+                tools.insert("spctl".into(), pin(Path::new("/usr/sbin/spctl"))?);
+            }
+        }
+        wire::SoftwareTaskBehavior::Bundle(b) => {
+            for (name, script) in std::iter::once(("install-interpreter", &b.install))
+                .chain(b.uninstall.as_ref().map(|s| ("uninstall-interpreter", s)))
+            {
+                let profile = match script.interpreter {
+                    wire::SoftwareTaskInterpreter::PowerShell7 => {
+                        wire::ExecutorProfile::PowerShell7
+                    }
+                    wire::SoftwareTaskInterpreter::PosixSh => wire::ExecutorProfile::PosixSh,
+                    wire::SoftwareTaskInterpreter::Bash => wire::ExecutorProfile::Bash,
+                };
                 let interpreter = config
                     .interpreters
                     .iter()
-                    .find(|i| i.profile == wire::ExecutorProfile::PowerShell7)
+                    .find(|i| i.profile == profile)
                     .ok_or(Error::Unsupported)?;
                 interpreter
                     .image
                     .verify(&interpreter.image.path)
                     .map_err(|_| Error::Untrusted)?;
-                tools.insert("pwsh".into(), pin(&interpreter.image.path)?);
-                let script = b"param([string]$Path,[string]$Publisher)\n$ErrorActionPreference='Stop'\n$s=Get-AuthenticodeSignature -LiteralPath $Path\nif($s.Status -ne 'Valid' -or $null -eq $s.SignerCertificate -or $s.SignerCertificate.Subject -cne $Publisher){exit 1}\nexit 0\n";
-                use sha2::{Digest as _, Sha256};
-                let digest: [u8; 32] = Sha256::digest(script).into();
-                let reference = artifact(&digest)?;
-                let path = compiler
-                    .root
-                    .publish(
-                        helper.as_ref().map(|h| h.context().subject.as_str()),
-                        std::io::Cursor::new(script),
-                        &reference.sha256,
-                        script.len() as u64,
-                    )
-                    .map_err(crate::error::app_error)?;
-                tools.insert(
-                    "authenticode".into(),
-                    SoftwareMaterial {
-                        path: path.to_str().ok_or(Error::Configuration)?.into(),
-                        artifact: reference,
-                    },
-                );
+                tools.insert(name.into(), pin(&interpreter.image.path)?);
+            }
+            #[cfg(target_os = "macos")]
+            for (name, path) in [
+                ("codesign", "/usr/bin/codesign"),
+                ("spctl", "/usr/sbin/spctl"),
+            ] {
+                tools.insert(name.into(), pin(Path::new(path))?);
             }
         }
-        _ => return Err(Error::Unsupported),
+        wire::SoftwareTaskBehavior::Exe(_) | wire::SoftwareTaskBehavior::Msix(_) => (),
+    }
+    if let Some(wire::SoftwareTaskDetection::Script { command }) = commands.detection {
+        let profile = match command.interpreter {
+            wire::SoftwareTaskInterpreter::PowerShell7 => wire::ExecutorProfile::PowerShell7,
+            wire::SoftwareTaskInterpreter::PosixSh => wire::ExecutorProfile::PosixSh,
+            wire::SoftwareTaskInterpreter::Bash => wire::ExecutorProfile::Bash,
+        };
+        let interpreter = config
+            .interpreters
+            .iter()
+            .find(|i| i.profile == profile)
+            .ok_or(Error::Unsupported)?;
+        interpreter
+            .image
+            .verify(&interpreter.image.path)
+            .map_err(|_| Error::Untrusted)?;
+        tools.insert("detect-interpreter".into(), pin(&interpreter.image.path)?);
+        #[cfg(target_os = "macos")]
+        if action.signatures.iter().any(|s| {
+            s.artifact == command.entry
+                && s.mechanism == wire::SoftwareTaskSignatureMechanism::AppleDeveloperId
+        }) {
+            for (name, path) in [
+                ("codesign", "/usr/bin/codesign"),
+                ("spctl", "/usr/sbin/spctl"),
+            ] {
+                tools.insert(name.into(), pin(Path::new(path))?);
+            }
+        }
+    }
+    if action
+        .signatures
+        .iter()
+        .any(|s| s.mechanism == wire::SoftwareTaskSignatureMechanism::Authenticode)
+    {
+        let interpreter = config
+            .interpreters
+            .iter()
+            .find(|i| i.profile == wire::ExecutorProfile::PowerShell7)
+            .ok_or(Error::Unsupported)?;
+        interpreter
+            .image
+            .verify(&interpreter.image.path)
+            .map_err(|_| Error::Untrusted)?;
+        tools.insert("pwsh".into(), pin(&interpreter.image.path)?);
+        let script = b"param([string]$Path,[string]$Publisher)\n$ErrorActionPreference='Stop'\n$s=Get-AuthenticodeSignature -LiteralPath $Path\nif($s.Status -ne 'Valid' -or $null -eq $s.SignerCertificate -or $s.SignerCertificate.Subject -cne $Publisher){exit 1}\nexit 0\n";
+        use sha2::{Digest as _, Sha256};
+        let digest: [u8; 32] = Sha256::digest(script).into();
+        let reference = artifact(&digest)?;
+        let path = compiler
+            .root
+            .publish(
+                helper.as_ref().map(|h| h.context().subject.as_str()),
+                std::io::Cursor::new(script),
+                &reference.sha256,
+                script.len() as u64,
+            )
+            .map_err(crate::error::app_error)?;
+        tools.insert(
+            "authenticode".into(),
+            SoftwareMaterial {
+                path: path.to_str().ok_or(Error::Configuration)?.into(),
+                artifact: reference,
+            },
+        );
+    }
+    if matches!(
+        action.behavior,
+        wire::SoftwareTaskBehavior::Msi(_) | wire::SoftwareTaskBehavior::Pkg(_)
+    ) {
+        let name = if matches!(action.behavior, wire::SoftwareTaskBehavior::Msi(_)) {
+            "package.msi"
+        } else {
+            "package.pkg"
+        };
+        let keys = std::iter::once(action.behavior.installer())
+            .chain(commands.removal_artifact)
+            .collect::<std::collections::BTreeSet<_>>();
+        for key in keys {
+            let (path, reference) = compiler.files.get(key).cloned().ok_or(Error::Untrusted)?;
+            let exported = compiler
+                .root
+                .native_export(
+                    &path,
+                    &reference.sha256,
+                    name,
+                    helper.as_ref().map(|h| h.context().subject.as_str()),
+                )
+                .map_err(crate::error::app_error)?;
+            compiler.files.insert(key.into(), (exported, reference));
+        }
     }
     let primary = compiler
         .files
@@ -322,6 +459,18 @@ pub(super) fn compile(
         .1
         .clone();
     let format = match &action.behavior {
+        wire::SoftwareTaskBehavior::Bundle(_) => SoftwareFormat::Bundle {
+            manifest: bundle.ok_or(Error::Protocol)?,
+            limits: BundleLimits {
+                archive_bytes: 4 * 1024 * 1024 * 1024,
+                files: 4096,
+                file_bytes: 1024 * 1024 * 1024,
+                expanded_bytes: 8 * 1024 * 1024 * 1024,
+                depth: 32,
+            },
+        },
+        wire::SoftwareTaskBehavior::Msi(_) => SoftwareFormat::Msi {},
+        wire::SoftwareTaskBehavior::Pkg(_) => SoftwareFormat::Pkg {},
         wire::SoftwareTaskBehavior::Winget(_) => {
             let wire::SoftwareTaskExport::Winget { binding, .. } = &step.export else {
                 return Err(Error::Protocol);
@@ -407,7 +556,6 @@ pub(super) fn compile(
                 receipt: package(receipt)?,
             },
         },
-        _ => return Err(Error::Unsupported),
     };
     let source_command = if intent == SoftwareOperation::Uninstall {
         commands.uninstall.ok_or(Error::Unsupported)?
@@ -418,7 +566,6 @@ pub(super) fn compile(
     let request = WorkerRequest {
         intent,
         export: step.export.clone(),
-        external_pending: Default::default(),
         native_pending: Default::default(),
         native_output: Default::default(),
         action: action.clone(),
@@ -536,28 +683,38 @@ pub(super) fn compile(
         }
         SoftwareOperation::Detect => (),
     }
-    let (detection, detector_source) =
-        if let Some(wire::SoftwareTaskDetection::Script { command: script }) = commands.detection {
-            let primary = compiler
-                .files
-                .get(action.behavior.installer())
-                .cloned()
-                .ok_or(Error::Untrusted)?;
-            let (command, source, _) = compiler.command(
-                CommandKind::script(script),
-                format.adapter(),
-                &primary,
-                SoftwareOperation::Detect,
-                &action.version,
-                &action.package,
-            )?;
+    let (detection, detector_source) = match commands.detection {
+        Some(wire::SoftwareTaskDetection::MsiProduct {
+            product_code,
+            version,
+        }) => (
+            SoftwareDetector::MsiProduct {
+                product_code: product_code.clone(),
+                version: package(version)?,
+            },
+            None,
+        ),
+        Some(wire::SoftwareTaskDetection::PkgReceipt { receipt, version }) => (
+            SoftwareDetector::PkgReceipt {
+                receipt: receipt.clone(),
+                version: package(version)?,
+            },
+            None,
+        ),
+        Some(wire::SoftwareTaskDetection::Script { command: script }) => {
+            let (mut detector, source) = build(&mut compiler, O::Detect, &script.invocation)?;
+            detector.exit_codes = SoftwareExitCodes {
+                success: [0].into(),
+                reboot: Default::default(),
+            };
             (
                 SoftwareDetector::Script {
-                    invocation: Box::new(command),
+                    invocation: Box::new(detector),
                 },
-                source,
+                Some(Box::new(source)),
             )
-        } else {
+        }
+        _ => {
             let (mut detector, source) = build(&mut compiler, O::Detect, commands.install)?;
             detector.exit_codes = SoftwareExitCodes {
                 success: [0].into(),
@@ -567,9 +724,10 @@ pub(super) fn compile(
                 SoftwareDetector::Script {
                     invocation: Box::new(detector),
                 },
-                source,
+                Some(Box::new(source)),
             )
-        };
+        }
+    };
     let mut files = request
         .materials
         .values()
@@ -635,7 +793,7 @@ pub(super) fn compile(
         },
         SoftwareStepArtifacts {
             mutations,
-            detection: Some(Box::new(detector_source)),
+            detection: detector_source,
             files: files
                 .into_iter()
                 .map(|m| (PathBuf::from(m.path), m.artifact))

@@ -222,6 +222,35 @@ pub(super) fn register(system: bool, binary: &Path, config: &Path) -> Result<(),
         } else if !deployment.helper_work_roots.is_empty() {
             write_job(false, binary, config)?;
         }
+        for subject in deployment.helper_work_roots.keys() {
+            let domain = format!("gui/{subject}");
+            let (status, _) = utility(
+                Path::new("/bin/launchctl"),
+                &["print".into(), domain.clone().into()],
+            )?;
+            if status.code() == Some(125) {
+                continue;
+            }
+            if !status.success() {
+                return Err(Error::Unavailable);
+            }
+            let endpoint = format!("{domain}/{LABEL}.user");
+            match registered(&endpoint)? {
+                None => {
+                    command(
+                        Path::new("/bin/launchctl"),
+                        &["bootstrap".into(), domain.into(), helper.clone().into()],
+                    )?;
+                }
+                Some(0) => {
+                    command(
+                        Path::new("/bin/launchctl"),
+                        &["kickstart".into(), endpoint.into()],
+                    )?;
+                }
+                Some(_) => (),
+            }
+        }
     }
     // Registration and process startup are independent. A configured daemon must acquire a PID.
     {

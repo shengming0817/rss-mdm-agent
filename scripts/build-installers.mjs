@@ -3,6 +3,8 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import {
   cpSync,
+  chmodSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
   readdirSync,
@@ -233,7 +235,7 @@ pnpm(
     "tauri",
     "build",
     "--config",
-    JSON.stringify({ build: { beforeBuildCommand: "pnpm -w build" } }),
+    JSON.stringify({ version, build: { beforeBuildCommand: "pnpm -w build" } }),
     "--config",
     windows
       ? "src-tauri/tauri.runtime.windows.conf.json"
@@ -288,6 +290,19 @@ if (windows) {
       : (process.env.RSS_MACOS_DEVELOPMENT_SIGNING_IDENTITY ?? "-"),
     release: true,
   });
+  // Public installed resources must be readable by the actual login, including
+  // codesign's resource verification under a restrictive build umask.
+  const publicModes = (path) => {
+    const metadata = lstatSync(path);
+    if (metadata.isSymbolicLink()) return;
+    chmodSync(
+      path,
+      metadata.isDirectory() || metadata.mode & 0o111 ? 0o755 : 0o644,
+    );
+    if (metadata.isDirectory())
+      for (const name of readdirSync(path)) publicModes(join(path, name));
+  };
+  publicModes(app);
   sign(
     app,
     containerEntitlements(app, join(output, "container-entitlements.plist")),

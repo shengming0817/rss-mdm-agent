@@ -167,6 +167,10 @@ fn main() {
             .unwrap()
             .is_none());
         f.runner.acknowledge_capture(&f.plan, &facts).unwrap();
-        assert!(f.runner.records.lock().unwrap().is_empty());
+        assert_eq!(
+            f.runner.records.lock().unwrap().is_empty(),
+            facts.quiescent,
+            "{case}"
+        );
     }
 }

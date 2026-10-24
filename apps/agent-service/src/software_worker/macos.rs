@@ -632,12 +632,21 @@ fn bundle_from(
 fn package_value(value: &str) -> Result<PackageValue, Error> {
     PackageValue::new(value).map_err(|_| Error::Protocol)
 }
-fn verify_code(
+pub(super) fn verify_code(
     request: &WorkerRequest,
     path: &Path,
     kind: &str,
     artifact: Option<&str>,
 ) -> Result<(), Error> {
+    let requirements = request
+        .action
+        .signatures
+        .iter()
+        .filter(|s| artifact == Some(s.artifact.as_str()))
+        .collect::<Vec<_>>();
+    if requirements.is_empty() {
+        return Ok(());
+    }
     if kind == "execute" || kind == "open" {
         if native(
             request,
@@ -657,12 +666,7 @@ fn verify_code(
             return Err(Error::Untrusted);
         }
         let details = std::str::from_utf8(&details).map_err(|_| Error::Protocol)?;
-        for signature in request
-            .action
-            .signatures
-            .iter()
-            .filter(|signature| artifact == Some(signature.artifact.as_str()))
-        {
+        for signature in &requirements {
             if signature.mechanism != wire::SoftwareTaskSignatureMechanism::AppleDeveloperId
                 || !details
                     .lines()
@@ -677,18 +681,13 @@ fn verify_code(
             native(request, "pkgutil", &["--check-signature", text(path)?])?;
         let certificate = std::str::from_utf8(&certificate).map_err(|_| Error::Protocol)?;
         if code != 0
-            || request
-                .action
-                .signatures
-                .iter()
-                .filter(|signature| artifact == Some(signature.artifact.as_str()))
-                .any(|s| {
-                    s.mechanism != wire::SoftwareTaskSignatureMechanism::AppleDeveloperId
-                        || !certificate.lines().any(|line| {
-                            line.contains("Developer ID Installer:")
-                                && line.trim_end().ends_with(&format!("({})", s.publisher))
-                        })
-                })
+            || requirements.iter().any(|s| {
+                s.mechanism != wire::SoftwareTaskSignatureMechanism::AppleDeveloperId
+                    || !certificate.lines().any(|line| {
+                        line.contains("Developer ID Installer:")
+                            && line.trim_end().ends_with(&format!("({})", s.publisher))
+                    })
+            })
         {
             return Err(Error::Untrusted);
         }
@@ -1664,7 +1663,6 @@ mod tests {
             export: wire::SoftwareTaskExport::Direct,
             native_output: Default::default(),
             native_pending: Default::default(),
-            external_pending: Default::default(),
             action,
             operation: WorkerOperation::Cleanup,
             materials: [
@@ -1734,7 +1732,21 @@ mod tests {
                 .load(std::sync::atomic::Ordering::Acquire),
             0
         );
-        // Real pkgutil rejects these invalid frozen bytes; no installer is available.
+        // No package signature is required unless the backend explicitly declares it.
+        let removal = request.material("removal").unwrap();
+        verify_code(&request, &removal, "install", Some("removal")).unwrap();
+        assert_eq!(
+            request
+                .native_output
+                .load(std::sync::atomic::Ordering::Acquire),
+            0
+        );
+        request.action.signatures.push(wire::SoftwareTaskSignature {
+            artifact: "removal".into(),
+            mechanism: wire::SoftwareTaskSignatureMechanism::AppleDeveloperId,
+            publisher: "UNTRUSTED".into(),
+        });
+        // An explicit requirement must still reject the invalid frozen bytes.
         assert!(matches!(
             execute(&request, Some(&SoftwareState::Absent {})),
             Err(Error::Untrusted)

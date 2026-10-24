@@ -46,14 +46,56 @@ pub(crate) fn storage_identity(file: &File) -> Result<(u64, u64), Error> {
 pub(crate) fn storage_links(file: &File) -> Result<u64, Error> {
     Ok(file.metadata().map_err(|_| Error::Storage)?.nlink())
 }
-pub(crate) fn journal_identity(path: &Path) -> Result<(u64, u64), Error> {
-    // Never open/close another SQLite descriptor: POSIX close releases byte-range locks.
+// ref: apple-oss-distributions/xnu bsd/man/man2/getattrlist.2.
+// A volume UUID survives remounts; st_dev is only a mount-local identifier.
+pub(crate) fn journal_identity(path: &Path) -> Result<([u8; 16], u64), Error> {
+    use std::ffi::{CStr, CString};
+    use std::os::unix::ffi::OsStrExt;
+    // Never open/close another SQLite descriptor: POSIX close releases its locks.
     let meta = path.symlink_metadata().map_err(|_| Error::Storage)?;
     if !meta.is_file() {
         return Err(Error::Denied);
     }
-    Ok((meta.dev(), meta.ino()))
+    let name = CString::new(path.as_os_str().as_bytes()).map_err(|_| Error::Storage)?;
+    let mut filesystem = std::mem::MaybeUninit::<libc::statfs>::uninit();
+    // SAFETY: pathname is NUL terminated and the output has the native statfs layout.
+    if unsafe { libc::statfs(name.as_ptr(), filesystem.as_mut_ptr()) } != 0 {
+        return Err(Error::Storage);
+    }
+    // SAFETY: successful statfs initialized the output including its terminated mount name.
+    let filesystem = unsafe { filesystem.assume_init() };
+    let mount = unsafe { CStr::from_ptr(filesystem.f_mntonname.as_ptr()) };
+    let mut attributes = libc::attrlist {
+        bitmapcount: libc::ATTR_BIT_MAP_COUNT,
+        reserved: 0,
+        commonattr: 0,
+        volattr: libc::ATTR_VOL_INFO | libc::ATTR_VOL_UUID,
+        dirattr: 0,
+        fileattr: 0,
+        forkattr: 0,
+    };
+    let mut bytes = [0u8; 20];
+    // SAFETY: this single fixed-size attribute occupies length + 16 UUID bytes.
+    if unsafe {
+        libc::getattrlist(
+            mount.as_ptr(),
+            (&mut attributes as *mut libc::attrlist).cast(),
+            bytes.as_mut_ptr().cast(),
+            bytes.len(),
+            0,
+        )
+    } != 0
+        || u32::from_ne_bytes(bytes[..4].try_into().map_err(|_| Error::Storage)?) != 20
+        || bytes[4..].iter().all(|v| *v == 0)
+    {
+        return Err(Error::Storage);
+    }
+    Ok((
+        bytes[4..].try_into().map_err(|_| Error::Storage)?,
+        meta.ino(),
+    ))
 }
+
 fn walk(
     path: &Path,
     directory: Option<bool>,

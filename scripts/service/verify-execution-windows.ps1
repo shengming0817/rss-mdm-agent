@@ -32,7 +32,6 @@ foreach ($Sid in @($Identity.User.Value,'S-1-5-18','S-1-5-32-544')) {
 }
 Set-Acl -LiteralPath $Output -AclObject $Acl
 $Receipt=[ordered]@{status='running';phase=$Phase;utc=[DateTime]::UtcNow.ToString('o');osVersion=[Environment]::OSVersion.Version.ToString();architecture=[Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString().ToLowerInvariant();subject=$Identity.User.Value;session=(Get-Process -Id $PID).SessionId;candidate=$Frozen;acceptanceEnvironment=@{node=$NodeVersion;powershell=$PSVersionTable.PSVersion.ToString()};signature=(Get-AuthenticodeSignature -LiteralPath $Binary).Status.ToString();scenarios=@{};unexecuted=@('remote/same-name pipe','wrong SID/session','fake server','weak ACL/reparse','LocalSystem/user DPAPI separation','malformed/replay/expiry requests','old-connection revocation','real desktop/Codex','Host/worker Job Object recovery')}
-$HelperCreated=$false
 try {
     switch ($Phase) {
         DeviceAccessHealth {
@@ -58,9 +57,8 @@ try {
         }
         VerifyUser {
             $TaskName='RssExecution-'+$Identity.User.Value
-            if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) { throw 'Existing helper registration; refusing replacement' }
-            & $Owner -Action Install -Scope User -Binary $Binary -Config $Config
-            $HelperCreated=$true
+            if (!(Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue)) { throw 'Installation owner did not register the login helper' }
+            & $Owner -Action Status -Scope User -Binary $Binary -Config $Config
             $Baseline=(& $Binary --config $Config --query | ConvertFrom-Json)
             if ($LASTEXITCODE -ne 0 -or $Baseline.reply.kind -ne 'tasks') { throw 'Authorized query baseline failed; security negatives not executed' }
             $Receipt.scenarios.authorized=$Baseline
@@ -89,10 +87,6 @@ try {
     $Receipt.status='failed'; $Receipt.error=$_.Exception.Message
     throw
 } finally {
-    if ($HelperCreated) {
-        try { & $Owner -Action Remove -Scope User -Binary $Binary -Config $Config; $Receipt.scenarios.helperCleanup='complete' }
-        catch { $Receipt.status='failed'; $Receipt.cleanupError=$_.Exception.Message }
-    }
     try { $null=& node (Join-Path $Root 'scripts/native-candidate.mjs') verify $Candidate; if ($LASTEXITCODE -ne 0) { throw 'Candidate changed' } }
     catch { $Receipt.status='failed'; $Receipt.candidateError=$_.Exception.Message }
     $Receipt | ConvertTo-Json -Depth 50 | Set-Content -LiteralPath (Join-Path $Output 'receipt.json') -Encoding utf8

@@ -51,17 +51,16 @@ class BackendLifecycleTests(unittest.TestCase):
             with self.subTest(change=change), self.assertRaises(AssertionError):
                 acceptance.completed_replay_offer(value, completion)
 
-    def test_desktop_and_direct_journeys_pass_the_actual_offer_through_security_completion(self):
-        for desktop in (True, False):
-          with self.subTest(desktop=desktop), tempfile.TemporaryDirectory() as directory:
+    def test_security_completion_keeps_the_original_policy_offer(self):
+        with tempfile.TemporaryDirectory() as directory:
             root = Path(directory); (root/'package-payload').mkdir()
             (root/'package-payload/fixed.txt').write_bytes(b'original effect')
             (root/'service-stderr.log').write_bytes(b'')
             offer = dict(request='original', task='run', attempt='attempt', revision='c'*64)
             record = dict(action=dict(initiator=dict(attempt='attempt')), status=dict(attempts=1))
-            action = dict(kind='policy', choice=dict(request='original'), runId='run', offer=offer) if desktop else dict(kind='offered', offer=offer)
+            action = dict(kind='policy', choice=dict(request='original'), runId='run', offer=offer)
             current = dict(available=[], preparations=[dict(action=action)], value=dict(items=[record]))
-            replay = acceptance.completed_replay_offer(current, dict(request='original', record=record)) if desktop else offer
+            replay = acceptance.completed_replay_offer(current, dict(request='original', record=record))
             expiring = dict(request='expired', task='expired-run', attempt='expired-attempt', revision='b'*64, expiresAt=0)
             probe = MagicMock(); probe.suspended.side_effect = nullcontext
             def reply(request):
@@ -69,11 +68,15 @@ class BackendLifecycleTests(unittest.TestCase):
                 if request['method'] == 'serviceStatus':
                     return dict(transport='reply', peerUid=0, peerPid=123,
                         envelope=dict(reply=dict(kind='serviceStatus', value=dict(readiness=dict(phase='ready')))))
-                if request['request'] == 'expired': kind = 'unavailable'
+                if request['request'] == 'expired': kind = 'pending'
                 elif request != acceptance.offer_request(offer): kind = 'rejected'
                 return dict(transport='reply', peerUid=0, envelope=dict(reply=dict(kind=kind)))
             probe.request.side_effect = reply
             command = MagicMock(side_effect=lambda name, **kw: dict(startRequests=1) if name == 'status' else expiring)
+            expired_record = dict(action=dict(initiator=dict(attempt='expired-attempt')), status=dict(attempts=1))
+            views = lambda: dict(current, value=dict(items=[record, expired_record]))
+            expiring['expiresAt'] = time.time()+20
+            def elapse(seconds): expiring['expiresAt'] = 0
             administrator = MagicMock()
             administrator.command.side_effect = lambda name: dict(driverDiagnostics='RSS_HELPER_ENDPOINT_INVALID', preflight=dict(originalPid=123)) if name == 'refresh_preflight' else dict(afterStop=dict(verified=True))
             matrix = acceptance.security_matrix()
@@ -81,13 +84,14 @@ class BackendLifecycleTests(unittest.TestCase):
             matrix['staleHelperPending'] = dict(original=True)
             with patch.object(acceptance, 'run'), patch.object(acceptance, 'native_stale_helper_security'), \
                  patch.object(acceptance, 'native_revocation_security') as revocation, \
-                 patch.object(acceptance, 'await_offer', return_value=expiring), patch.object(acceptance.time, 'sleep'):
-                acceptance.complete_native_security(probe, matrix, lambda: current, command, root/'fixed.pkg', 'receipt',
+                 patch.object(acceptance, 'native_policy_offer', return_value=expiring), patch.object(acceptance.time, 'sleep', side_effect=elapse):
+                acceptance.complete_native_security(probe, matrix, views, command, root/'fixed.pkg', 'receipt',
                     lambda attempt, seconds: dict(startRequests=1), lambda: dict(receiptPresent=True, payloadMatches=True),
                     root, root/'installer', root/'service', root/'config', administrator, replay)
             revocation.assert_called_once()
             for name in ('offer_tamper', 'offer_replay', 'offer_expiry'):
                 self.assertEqual(matrix['scenarios'][name]['status'], 'passed')
+            self.assertEqual(matrix['scenarios']['offer_expiry']['evidence']['mode'], 'completedReplay')
             self.assertEqual(matrix['scenarios']['offer_tamper']['evidence']['offer'], offer)
             self.assertEqual([value.args[0] for value in probe.request.call_args_list].count(acceptance.offer_request(offer)), 2)
 
@@ -459,13 +463,14 @@ class EvidenceTests(unittest.TestCase):
 
     def test_desktop_pass_requires_terminal_acknowledged_process_and_independent_effect(self):
         record = {'action':{'initiator':{'kind':'backend','attempt':'attempt'}},'status':{'operationRequestId':'request','attempts':1,'process':{'finished':True,'end':'exited','exitCode':0}}}
-        event = {'kind':'software_result','steps':[{'process':{'kind':'exited','code':0},'diagnostics':{'failure':None},'after':{'state':'unknown'}}]}
+        event = {'kind':'software_result','steps':[{'process':{'kind':'exited','code':0},'diagnostics':{'failure':None},'after':{'state':'present'}}]}
         backend = {'startRequests':1,'results':{'op':{'attemptId':'attempt','event':event}},'acknowledged':['op']}
         effect = {'receiptPresent':True,'payloadPresent':True,'payloadMatches':True}
         acceptance.validate_desktop_completion([record], backend, effect, 'request')
-        for failure in ['running','unacknowledged','failed','effect','request','redispatch']:
+        for failure in ['running','unacknowledged','failed','effect','request','redispatch','detection']:
             r, b, e = copy.deepcopy(record), copy.deepcopy(backend), copy.deepcopy(effect)
-            if failure=='running': r['status']['process']['finished']=False
+            if failure=='detection': b['results']['op']['event']['steps'][0]['after']['state']='unknown'
+            elif failure=='running': r['status']['process']['finished']=False
             elif failure=='unacknowledged': b['acknowledged']=[]
             elif failure=='failed': b['results']['op']['event']['steps'][0]['process']['code']=1
             elif failure=='effect': e['payloadMatches']=False
@@ -479,25 +484,6 @@ class EvidenceTests(unittest.TestCase):
         acceptance.validate_desktop_completion([record], backend, absent, 'request')
         with self.assertRaises(AssertionError):
             acceptance.validate_desktop_completion([record], backend, {**absent,'receiptPresent':True}, 'request')
-
-    def test_known_macos_uncertainty_is_preserved_and_requires_independent_effect(self):
-        record={'action':{'initiator':{'kind':'backend','attempt':'a'}},'status':{
-            'operationRequestId':'r','attempts':1,'phase':'outcomeUnknown',
-            'process':{'finished':True,'end':'exited','exitCode':0,'quiescent':False}}}
-        event={'kind':'software_result','steps':[{'process':{'kind':'exited','code':0},
-            'diagnostics':{'failure':'capture_failed'},'after':{'state':'unknown'}}]}
-        backend={'startRequests':1,'results':{'op':{'attemptId':'a','event':event}},'acknowledged':['op']}
-        effect={key:True for key in ('receiptPresent','payloadPresent','payloadMatches')}
-        result=acceptance.validate_desktop_completion([record],backend,effect,'r')
-        self.assertTrue(result['executionUncertain'])
-        for change in ('phase','quiescent','effect','failure'):
-            r,b,e=copy.deepcopy(record),copy.deepcopy(backend),copy.deepcopy(effect)
-            if change=='phase': r['status']['phase']='completed'
-            elif change=='quiescent':r['status']['process']['quiescent']=True
-            elif change=='effect':e['payloadMatches']=False
-            else:b['results']['op']['event']['steps'][0]['diagnostics']['failure']='cancelled'
-            with self.subTest(change=change),self.assertRaises(AssertionError):
-                acceptance.validate_desktop_completion([r],b,e,'r')
 
     def test_journal_proof_reads_capture_for_the_original_attempt_not_snapshot_fields(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -523,6 +509,40 @@ class EvidenceTests(unittest.TestCase):
             acceptance.validate_journal_completion(proof,completion)
             proof['records'][0]['process']=None
             with self.assertRaises(AssertionError): acceptance.validate_journal_completion(proof,completion)
+
+    def test_software_probe_uses_directory_choice_and_original_policy_binding(self):
+        context=dict(id='native',generation='login')
+        item=dict(policyId='policy',policyRevision=2,policyVersion='version')
+        choice={}
+        class Probe:
+            def request(self, request):
+                if request['method']=='bindContext': kind,value='contextBound',context
+                elif request['method']=='policyDirectory': kind,value='policyDirectory',dict(items=[item])
+                else:
+                    self.outer.assertEqual(request['method'],'invokePolicy')
+                    self.outer.assertEqual(request['context'],context)
+                    choice.update(request['choice']);kind,value='policyRequest',dict(action=dict(choice=choice))
+                return dict(transport='reply',peerUid=0,envelope=dict(reply=dict(kind=kind,value=value)))
+        probe=Probe();probe.outer=self
+        calls=[]
+        def command(method, **arguments):
+            calls.append(method);return dict(policyId='policy')
+        actual, selected=acceptance.native_policy_choice(probe,command,'package','receipt')
+        self.assertEqual(actual,context);self.assertEqual(selected,choice)
+        self.assertEqual(calls,['software-catalog'])
+        self.assertEqual(selected['policyRevision'],2)
+
+    def test_failure_cleanup_waits_for_the_original_parent_scope_confirmation(self):
+        for frame, expected in [(dict(method='finish',processScopeEmpty=True),True),
+            (dict(method='finish',processScopeEmpty=False),False),
+            (dict(method='query',processScopeEmpty=True),False), (None,False)]:
+            read,write=os.pipe()
+            with os.fdopen(read,'rb') as stream, os.fdopen(write,'wb') as parent:
+                if frame is not None:
+                    parent.write((json.dumps(frame)+'\n').encode());parent.flush()
+                    self.assertEqual(acceptance.wait_desktop_cleanup(stream,.1),expected)
+                else:
+                    self.assertFalse(acceptance.wait_desktop_cleanup(stream,.01))
 
     def test_eof_or_failed_parent_cannot_finish_worker_as_passed(self):
         for finish in [None, {'status':'failed'}, {'status':'cancelled'}, {'status':'passed'}]:

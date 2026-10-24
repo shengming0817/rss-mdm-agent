@@ -657,10 +657,8 @@ pub(super) fn invocation_detection(
             && facts.quality == OutputQuality::Complete
         {
             if let Ok(result) = serde_json::from_slice::<SoftwareWorkerResult>(&facts.stdout) {
-                if result.closed {
-                    if let Some(state) = result.detected {
-                        return state;
-                    }
+                if let Some(state) = result.detected {
+                    return state;
                 }
             }
         }

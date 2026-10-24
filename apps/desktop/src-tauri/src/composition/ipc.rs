@@ -35,10 +35,10 @@ fn decode_connection(
 }
 // Production commands and generated UI contract share these signatures.
 macro_rules! commands {
-    ($($name:ident($input:ty) -> $output:ty = $method:ident, employee = $employee:literal),+ $(,)?) => {
+    ($($name:ident($input:ty) -> $output:ty = $method:ident),+ $(,)?) => {
         $(#[tauri::command]
         pub async fn $name(state: State<'_, DesktopRuntime>, generation: String, input: serde_json::Value) -> Result<$output> {
-            let handle = if $employee { state.policy_execution_for(&generation).await? } else { state.execution_for(&generation)? };
+            let handle = state.execution_for(&generation).await?;
             let output = handle.$method(decode::<$input>(input)?).await;
             state.current(&generation)?;
             output
@@ -55,31 +55,31 @@ macro_rules! commands {
     }
 }
 commands! {
-    network_check(execution_contract::NetworkCheckOperation) -> execution_app::NetworkCheckResponse = network_check, employee = false,
-    system_settings(execution_contract::SettingsOperation) -> execution_contract::SettingsResponse = system_settings, employee = false,
-    device_access(execution_ipc::device_access::Operation) -> execution_ipc::device_access::Response = device_access, employee = true,
-    software_prepare(execution_contract::LocalSoftwareChoice) -> execution_contract::LocalSoftwarePrepared = software_prepare, employee = false,
-    software_submit(execution_contract::LocalSoftwareSubmission) -> execution_app::LocalSoftwareStatus = software_submit, employee = false,
-    software_status(execution_contract::QueryRequest) -> execution_app::LocalSoftwareStatus = software_status, employee = false,
-    software_cancel(execution_contract::QueryRequest) -> execution_app::LocalSoftwareStatus = software_cancel, employee = false,
-    software_history(execution_contract::SoftwareHistoryQuery) -> execution_app::LocalSoftwareHistory = software_history, employee = false,
-    software_read(execution_contract::SoftwareRead) -> execution_contract::SoftwarePage = software_read, employee = false,
-    query_directory(execution_contract::QueryDirectory) -> execution_contract::QueryPage = query_directory, employee = false,
-    data_read(execution_contract::DataRead) -> execution_contract::CollectedData = data_read, employee = false,
-    query_submit(execution_contract::QuerySubmit) -> execution_contract::QueryStatus = query_submit, employee = false,
-    query_status(execution_contract::QueryRequest) -> execution_contract::QueryStatus = query_status, employee = false,
-    query_cancel(execution_contract::QueryRequest) -> execution_contract::QueryStatus = query_cancel, employee = false,
-    self_service_observe_software(execution_contract::SoftwareReadChoice) -> execution_contract::BackendRequest = observe_software, employee = false,
-    self_service_policy_directory(PolicyDirectoryQuery) -> rss_mdm_agent_wire::runtime::SelfServiceDirectoryResponse = policy_directory, employee = true,
-    self_service_policy_invoke(execution_contract::PolicyInvocation) -> execution_contract::BackendRequest = invoke_policy, employee = true,
-    ai_operation_submit(execution_contract::PolicySubmission) -> execution_contract::BackendRequest = submit_policy, employee = true,
-    self_service_policy_confirm(ActionRef) -> execution_contract::BackendRequest = confirm_policy, employee = true,
-    self_service_policy_status(ActionRef) -> PolicyStatus = policy_status, employee = true,
-    self_service_recent_tasks(RecentTasksQuery) -> execution_app::RecentTaskPage = recent_tasks, employee = false,
-    self_service_snapshot(SnapshotQuery) -> Snapshot = snapshot, employee = false,
-    self_service_execute(execution_contract::BackendSelection) -> execution_contract::TaskSubmission = execute_ui, employee = false,
-    self_service_confirm(execution_contract::BackendSelection) -> execution_contract::TaskSubmission = confirm_ui, employee = false,
-    self_service_cancel(ActionRef) -> execution_app::BackendTaskView = cancel_ui, employee = false,
+    network_check(execution_contract::NetworkCheckOperation) -> execution_app::NetworkCheckResponse = network_check,
+    system_settings(execution_contract::SettingsOperation) -> execution_contract::SettingsResponse = system_settings,
+    device_access(execution_ipc::device_access::Operation) -> execution_ipc::device_access::Response = device_access,
+    software_prepare(execution_contract::LocalSoftwareChoice) -> execution_contract::LocalSoftwarePrepared = software_prepare,
+    software_submit(execution_contract::LocalSoftwareSubmission) -> execution_app::LocalSoftwareStatus = software_submit,
+    software_status(execution_contract::QueryRequest) -> execution_app::LocalSoftwareStatus = software_status,
+    software_cancel(execution_contract::QueryRequest) -> execution_app::LocalSoftwareStatus = software_cancel,
+    software_history(execution_contract::SoftwareHistoryQuery) -> execution_app::LocalSoftwareHistory = software_history,
+    software_read(execution_contract::SoftwareRead) -> execution_contract::SoftwarePage = software_read,
+    query_directory(execution_contract::QueryDirectory) -> execution_contract::QueryPage = query_directory,
+    data_read(execution_contract::DataRead) -> execution_contract::CollectedData = data_read,
+    query_submit(execution_contract::QuerySubmit) -> execution_contract::QueryStatus = query_submit,
+    query_status(execution_contract::QueryRequest) -> execution_contract::QueryStatus = query_status,
+    query_cancel(execution_contract::QueryRequest) -> execution_contract::QueryStatus = query_cancel,
+    self_service_observe_software(execution_contract::SoftwareReadChoice) -> execution_contract::BackendRequest = observe_software,
+    self_service_policy_directory(PolicyDirectoryQuery) -> rss_mdm_agent_wire::runtime::SelfServiceDirectoryResponse = policy_directory,
+    self_service_policy_invoke(execution_contract::PolicyInvocation) -> execution_contract::BackendRequest = invoke_policy,
+    ai_operation_submit(execution_contract::PolicySubmission) -> execution_contract::BackendRequest = submit_policy,
+    self_service_policy_confirm(ActionRef) -> execution_contract::BackendRequest = confirm_policy,
+    self_service_policy_status(ActionRef) -> PolicyStatus = policy_status,
+    self_service_recent_tasks(RecentTasksQuery) -> execution_app::RecentTaskPage = recent_tasks,
+    self_service_snapshot(SnapshotQuery) -> Snapshot = snapshot,
+    self_service_execute(execution_contract::BackendSelection) -> execution_contract::TaskSubmission = execute_ui,
+    self_service_confirm(execution_contract::BackendSelection) -> execution_contract::TaskSubmission = confirm_ui,
+    self_service_cancel(ActionRef) -> execution_app::BackendTaskView = cancel_ui,
 }
 #[tauri::command]
 pub async fn execution_task_details(
@@ -89,7 +89,7 @@ pub async fn execution_task_details(
 ) -> Result<execution_app::BackendTaskView> {
     let request = execution_contract::RequestId::new(request_id)
         .map_err(|_| error("input", "无效任务编号"))?;
-    let handle = state.execution_for(&generation)?;
+    let handle = state.execution_for(&generation).await?;
     let result = handle
         .details(request)
         .await
@@ -149,10 +149,10 @@ pub async fn account_logout(state: State<'_, DesktopRuntime>) -> Result<()> {
     state.logout().await
 }
 #[tauri::command]
-pub fn account_status(
+pub async fn account_status(
     state: State<'_, DesktopRuntime>,
 ) -> Result<ai_session_contract::AccountStatus> {
-    state.account_status()
+    state.account_status().await
 }
 #[tauri::command]
 pub fn account_organizations(

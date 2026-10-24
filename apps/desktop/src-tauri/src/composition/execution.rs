@@ -25,21 +25,6 @@ pub fn now() -> Result<u64, Error> {
 fn bad(_: Error) -> ui::ServiceError {
     ui::error("execution_unavailable", "执行服务未确认操作，请查询原任务")
 }
-fn relation_error(phase: CurrentUserSyncPhase) -> ui::ServiceError {
-    match phase {
-        CurrentUserSyncPhase::Conflict => ui::error(
-            "binding_conflict",
-            "当前使用者发生冲突，请明确清理后重新登录",
-        ),
-        CurrentUserSyncPhase::Invalidated => {
-            ui::error("binding_invalidated", "设备身份已变化，请重新登录")
-        }
-        CurrentUserSyncPhase::CleanupPending => {
-            ui::error("cleanup_pending", "退出清理尚未确认，请重试原操作")
-        }
-        _ => ui::error("binding_unknown", "登录确认尚未完成，请重试原操作"),
-    }
-}
 fn mcp_error(error: Error) -> mcp::ServiceError {
     eprintln!("RSS_EXECUTION_MCP_FAILURE code={error:?}");
     match error {
@@ -213,53 +198,32 @@ impl ExecutionHandle {
             .map_err(bad)?
         {
             Reply::ContextBound { value } => Ok(value),
-            Reply::CurrentUserSync { value } => Err(relation_error(value.phase)),
             _ => Err(bad(Error::OutcomeUnknown)),
         }
     }
-    pub async fn retire_enterprise(
-        &self,
-        generation: Option<Id>,
-        proof: Option<zeroize::Zeroizing<String>>,
-        recover: bool,
-    ) -> ui::Result<()> {
+    pub async fn current_user_status(&self) -> ui::Result<CurrentUserSync> {
+        match self
+            .request(Request::CurrentUserStatus {})
+            .await
+            .map_err(bad)?
+        {
+            Reply::CurrentUserSync { value } => Ok(value),
+            _ => Err(bad(Error::OutcomeUnknown)),
+        }
+    }
+    pub async fn recover_current_user(&self) -> ui::Result<CurrentUserSync> {
         match self
             .request(Request::RetireEnterpriseContext {
-                generation,
-                proof,
-                recover,
+                generation: None,
+                proof: None,
+                recover: true,
             })
             .await
             .map_err(bad)?
         {
-            Reply::CurrentUserSync { value }
-                if matches!(
-                    value.phase,
-                    CurrentUserSyncPhase::Unbound | CurrentUserSyncPhase::Invalidated
-                ) =>
-            {
-                Ok(())
-            }
-            Reply::CurrentUserSync { value } => Err(relation_error(value.phase)),
+            Reply::CurrentUserSync { value } => Ok(value),
             _ => Err(bad(Error::OutcomeUnknown)),
         }
-    }
-    pub async fn independent_login_allowed(&self) -> bool {
-        #[cfg(test)]
-        if self.context_transport.is_some() {
-            return false;
-        }
-        tokio::task::spawn_blocking(|| {
-            match ServiceClient::inspect() {
-                execution_ipc::host::ServiceView::NotInstalled => true,
-                execution_ipc::host::ServiceView::Connected { status } if status.readiness == execution_ipc::host::Readiness::Ready => {
-                    matches!(ServiceClient::installed().and_then(|client|client.request(Request::RegistrationStatus {})), Ok(Reply::RegistrationStatus { value }) if !value.registered && value.credential == execution_ipc::host::CredentialStatus::Absent)
-                },
-                _ => false,
-            }
-        })
-        .await
-        .unwrap_or(false)
     }
     fn context_ref(&self) -> ui::Result<execution_contract::NativeContextRef> {
         let snapshot = self
@@ -1234,110 +1198,6 @@ fn pending_operation(value: execution_contract::BackendRequest) -> mcp::Operatio
     }
 }
 
-fn helper_is_ready(
-    reply: Result<Reply, Error>,
-    expected: &execution_ipc::helper::UserContext,
-) -> Result<bool, Error> {
-    match reply {
-        Ok(Reply::HelperStatus { value })
-            if value.subject == expected.subject
-                && value.session == expected.session
-                && value.binding == expected.binding
-                && expected.work_root.canonicalize().ok().as_ref() == Some(&value.work_root) =>
-        {
-            Ok(true)
-        }
-        Ok(Reply::Unavailable) | Err(Error::Unavailable | Error::OutcomeUnknown) => Ok(false),
-        Ok(_) => Err(Error::Denied),
-        Err(error) => Err(error),
-    }
-}
-
-/// Reuse the verified current helper or ask its installation owner to start it.
-pub fn install_user_helper() -> Result<(), Error> {
-    use std::{
-        collections::BTreeMap,
-        path::PathBuf,
-        process::{Command, Stdio},
-        time::{Duration, Instant},
-    };
-    #[derive(serde::Deserialize)]
-    struct Pin {
-        version: u32,
-        ipc_version: u8,
-        service: installation_security::Artifact,
-        helper_work_roots: BTreeMap<String, PathBuf>,
-    }
-    let path = installation_security::deployment_path().map_err(|_| Error::Configuration)?;
-    match std::fs::symlink_metadata(&path) {
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(_) => return Err(Error::Unavailable),
-        Ok(_) => (),
-    }
-    let pin: Pin = serde_json::from_slice(
-        &installation_security::read_protected(&path).map_err(|_| Error::Denied)?,
-    )
-    .map_err(|_| Error::Configuration)?;
-    if pin.version != execution_ipc::host::DEPLOYMENT_VERSION
-        || pin.ipc_version != execution_ipc::host::IPC_VERSION
-    {
-        return Err(Error::Configuration);
-    }
-    let subject = execution_ipc::host::current_subject()?;
-    if !pin.helper_work_roots.contains_key(&subject) {
-        return Ok(());
-    }
-    pin.service
-        .verify(&pin.service.path)
-        .map_err(|_| Error::Denied)?;
-    installation_security::Target::current()
-        .map_err(|_| Error::Denied)?
-        .verify_image(&pin.service.path)
-        .map_err(|_| Error::Denied)?;
-    let expected = execution_ipc::helper::UserContext {
-        subject: subject.clone(),
-        session: execution_ipc::host::current_session()?,
-        binding: execution_ipc::host::current_session_binding()?,
-        work_root: pin.helper_work_roots[&subject].clone(),
-    };
-    if helper_is_ready(
-        ServiceClient::installed().and_then(|client| client.request(Request::HelperStatus {})),
-        &expected,
-    )? {
-        return Ok(());
-    }
-    let mut child = Command::new(&pin.service.path)
-        .arg("--installation")
-        .arg("install")
-        .arg("--scope")
-        .arg("user")
-        .arg("--binary")
-        .arg(&pin.service.path)
-        .arg("--config")
-        .arg(&path)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|_| Error::Unavailable)?;
-    let deadline = Instant::now() + Duration::from_secs(30);
-    loop {
-        if let Some(status) = child.try_wait().map_err(|_| Error::Unavailable)? {
-            return if status.success() {
-                Ok(())
-            } else {
-                Err(Error::Unavailable)
-            };
-        }
-        if Instant::now() >= deadline {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(Error::Unavailable);
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    }
-}
-
 fn data_error(error: mcp::ServiceError) -> ui::ServiceError {
     ui::error(
         match error {
@@ -1358,58 +1218,6 @@ fn data_error(error: mcp::ServiceError) -> ui::ServiceError {
 #[cfg(test)]
 mod selection_tests {
     use super::*;
-
-    #[test]
-    fn helper_reuse_requires_every_current_native_coordinate_and_a_real_helper_reply() {
-        let root = std::env::temp_dir().join(format!("rss-helper-proof-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir(&root).unwrap();
-        let expected = execution_ipc::helper::UserContext {
-            subject: "501".into(),
-            session: 42,
-            binding: Id::new("current-login").unwrap(),
-            work_root: root.clone(),
-        };
-        let mut verified = expected.clone();
-        verified.work_root = root.canonicalize().unwrap();
-        assert!(helper_is_ready(
-            Ok(Reply::HelperStatus {
-                value: verified.clone()
-            }),
-            &expected
-        )
-        .unwrap());
-        for field in 0..4 {
-            let mut foreign = verified.clone();
-            match field {
-                0 => foreign.subject = "502".into(),
-                1 => foreign.session += 1,
-                2 => foreign.binding = Id::new("retired-login").unwrap(),
-                _ => foreign.work_root = root.join("foreign"),
-            }
-            assert!(matches!(
-                helper_is_ready(Ok(Reply::HelperStatus { value: foreign }), &expected),
-                Err(Error::Denied)
-            ));
-        }
-        assert!(!helper_is_ready(Ok(Reply::Unavailable), &expected).unwrap());
-        assert!(!helper_is_ready(Err(Error::OutcomeUnknown), &expected).unwrap());
-        assert!(matches!(
-            helper_is_ready(Ok(Reply::Rejected), &expected),
-            Err(Error::Denied)
-        ));
-        assert!(matches!(
-            helper_is_ready(
-                Ok(Reply::ServiceStatus {
-                    value: execution_ipc::host::ServiceStatus::new(
-                        execution_ipc::host::Readiness::Ready
-                    )
-                }),
-                &expected
-            ),
-            Err(Error::Denied)
-        ));
-        std::fs::remove_dir(root).unwrap();
-    }
 
     #[test]
     fn lost_selection_reply_recovers_original_request_and_confirmation() {
