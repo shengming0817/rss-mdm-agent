@@ -168,6 +168,7 @@ fn selected_accounts_and_user_certificates_bind_exact_identity() {
     let mut context = crate::protocol_test_support::execution_context();
     context.user_helper = true;
     context.interactive_user = Some(w::SoftwareInteractiveUser {
+        windows_authority: None,
         identity: "S-1-5-21-1-2-3-1001".into(),
         session_id: uuid::Uuid::from_u128(1),
         administrator: false,

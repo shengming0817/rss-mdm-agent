@@ -49,13 +49,10 @@ pub(super) fn readings(
             check_keys(c, mappings.keys())?;
             for field in &c.fields {
                 let mapping = mappings.get(field.key.as_str()).ok_or(Error::Protocol)?;
-                values.insert(
-                    field.key,
-                    reading(field, project(&output, mapping, 0)?, now)?,
-                );
+                values.insert(field.key, reading(field, project(&output, mapping)?, now)?);
             }
         }
-        w::TelemetryCollector::Native { plan, mappings } => {
+        w::TelemetryCollector::Native { plan, mappings, .. } => {
             let native: w::NativeCollectionResult =
                 serde_json::from_value(output).map_err(|_| Error::Protocol)?;
             native.validate_for(plan, now / 1_000_000)?;
@@ -78,9 +75,16 @@ pub(super) fn readings(
                 mapping.validate_counter_normalization(&query.definition, field)?;
                 let result = native.queries.get(&mapping.query).ok_or(Error::Protocol)?;
                 let valid = result.complete_for(query, now / 1_000_000);
-                let value = if valid {
-                    let input = serde_json::to_value(&result.rows).map_err(|_| Error::Protocol)?;
-                    let mut projected = project(&input, &mapping.mapping, 0)?;
+                let value = if valid
+                    && (query.cardinality == w::NativeCardinality::List || !result.rows.is_empty())
+                {
+                    let input = if query.cardinality == w::NativeCardinality::List {
+                        serde_json::to_value(&result.rows)
+                    } else {
+                        serde_json::to_value(result.rows.first().ok_or(Error::Protocol)?)
+                    }
+                    .map_err(|_| Error::Protocol)?;
+                    let mut projected = project(&input, &mapping.mapping)?;
                     if mapping.counter_normalization.is_some() {
                         // The signed wire contract reserves this property for the Agent.
                         // Spool atomically replaces this candidate with the durable baseline start.
@@ -98,7 +102,7 @@ pub(super) fn readings(
                         }
                     }
                     reading(field, projected, now)?
-                } else if result.status == w::NativeQueryStatus::Missing {
+                } else if valid || result.status == w::NativeQueryStatus::Missing {
                     w::TelemetryReading::Missing {
                         interval_start: None,
                         context: None,
@@ -160,139 +164,21 @@ fn scalar(t: &w::ValueType, v: &Json, depth: usize) -> Result<w::Scalar, Error> 
         T::Record{properties}=>{let a=v.as_object().ok_or(Error::Protocol)?;if a.keys().any(|k|!properties.contains_key(k)){return Err(Error::Protocol);}let mut result=BTreeMap::new();for(k,p)in properties{match a.get(k){Some(v)=>{result.insert(k.clone(),scalar(&p.value_type,v,depth+1)?);},None if p.required=>return Err(Error::Protocol),None=>()}}w::Scalar::Object(result)},
     })
 }
-fn token(v: &Json) -> Result<String, Error> {
-    match v {
-        Json::String(v) => Ok(v.clone()),
-        Json::Number(_) | Json::Bool(_) => Ok(v.to_string()),
-        _ => Err(Error::Protocol),
+fn project(input: &Json, mapping: &w::ValueMapping) -> Result<Json, Error> {
+    mapping.validate()?;
+    let value = input.pointer(&mapping.pointer).ok_or(Error::Protocol)?;
+    if mapping.columns.is_empty() {
+        return mapping.project_selected(value).map_err(Into::into);
     }
-}
-fn integer(v: &Json) -> Result<i64, Error> {
-    v.as_i64()
-        .or_else(|| v.as_str()?.parse().ok())
-        .ok_or(Error::Protocol)
-}
-fn unsigned(v: &Json) -> Result<u64, Error> {
-    v.as_u64()
-        .or_else(|| v.as_str()?.parse().ok())
-        .ok_or(Error::Protocol)
-}
-fn project(input: &Json, m: &w::TelemetryValueMapping, depth: usize) -> Result<Json, Error> {
-    if depth > 6 || m.pointer.len() > 1024 || m.columns.len() > 64 {
-        return Err(Error::Capacity);
-    }
-    let value = input.pointer(&m.pointer).ok_or(Error::Protocol)?;
-    if !m.columns.is_empty() {
-        if !matches!(m.conversion, w::TelemetryConversion::Identity) {
-            return Err(Error::Protocol);
-        }
-        let rows = value
-            .as_array()
-            .filter(|v| v.len() <= 4096)
-            .ok_or(Error::Capacity)?;
-        return Ok(Json::Array(
-            rows.iter()
-                .map(|row| {
-                    m.columns
-                        .iter()
-                        .map(|(k, v)| Ok((k.clone(), project(row, v, depth + 1)?)))
-                        .collect::<Result<serde_json::Map<_, _>, Error>>()
-                        .map(Json::Object)
-                })
-                .collect::<Result<_, _>>()?,
-        ));
-    }
-    use w::TelemetryConversion as C;
-    Ok(match &m.conversion {
-        C::Identity => value.clone(),
-        C::Integer => integer(value)?.into(),
-        C::Number => {
-            let n = value
-                .as_f64()
-                .or_else(|| value.as_str()?.parse::<f64>().ok())
-                .filter(|v| v.is_finite())
-                .ok_or(Error::Protocol)?;
-            json!(n)
-        }
-        C::Enum { values } => values.get(&token(value)?).ok_or(Error::Protocol)?.clone(),
-        C::ArrayMember {
-            member,
-            present,
-            absent,
-        } => {
-            let values = value
-                .as_array()
-                .ok_or(Error::Protocol)?
-                .iter()
-                .map(integer)
-                .collect::<Result<Vec<_>, _>>()?;
-            if values.contains(member) {
-                present
-            } else {
-                absent
-            }
-            .clone()
-        }
-        C::Scale {
-            numerator,
-            denominator,
-        } => {
-            let n = u128::from(unsigned(value)?)
-                .checked_mul(u128::from(*numerator))
-                .ok_or(Error::Protocol)?;
-            if *denominator == 0 || n % u128::from(*denominator) != 0 {
-                return Err(Error::Protocol);
-            }
-            let n = u64::try_from(n / u128::from(*denominator)).map_err(|_| Error::Protocol)?;
-            json!(n)
-        }
-        C::Bitmask { flags } => {
-            let mut n = unsigned(value)?;
-            let mut result = Vec::new();
-            for (k, v) in flags {
-                let bit = k.parse::<u64>().map_err(|_| Error::Protocol)?;
-                if bit.count_ones() != 1 {
-                    return Err(Error::Protocol);
-                }
-                if n & bit != 0 {
-                    result.push(v.clone());
-                    n &= !bit;
-                }
-            }
-            if n != 0 {
-                return Err(Error::Protocol);
-            }
-            result.sort();
-            json!(result)
-        }
-        C::CimTime => cim_time(value.as_str().ok_or(Error::Protocol)?)?.into(),
-    })
-}
-fn cim_time(v: &str) -> Result<i64, Error> {
-    if v.len() != 25 || !v.is_ascii() || &v[14..15] != "." || !matches!(&v[21..22], "+" | "-") {
-        return Err(Error::Protocol);
-    }
-    let n = |a, b| v[a..b].parse::<i32>().map_err(|_| Error::Protocol);
-    let date = time::Date::from_calendar_date(
-        n(0, 4)?,
-        time::Month::try_from(n(4, 6)? as u8).map_err(|_| Error::Protocol)?,
-        n(6, 8)? as u8,
-    )
-    .map_err(|_| Error::Protocol)?;
-    let clock = time::Time::from_hms_micro(
-        n(8, 10)? as u8,
-        n(10, 12)? as u8,
-        n(12, 14)? as u8,
-        n(15, 21)? as u32,
-    )
-    .map_err(|_| Error::Protocol)?;
-    let offset = time::UtcOffset::from_whole_seconds(
-        n(22, 25)? * 60 * if &v[21..22] == "-" { -1 } else { 1 },
-    )
-    .map_err(|_| Error::Protocol)?;
-    Ok(time::PrimitiveDateTime::new(date, clock)
-        .assume_offset(offset)
-        .unix_timestamp())
+    let rows = value
+        .as_array()
+        .filter(|v| v.len() <= 4096)
+        .ok_or(Error::Capacity)?;
+    Ok(Json::Array(
+        rows.iter()
+            .map(|row| mapping.project_selected(row).map_err(Into::into))
+            .collect::<Result<_, Error>>()?,
+    ))
 }
 fn path<'a>(value: &'a w::Scalar, path: &[String]) -> Option<&'a w::Scalar> {
     let mut v = value;
@@ -416,8 +302,8 @@ pub(super) fn admit_schema(schema: &Json) -> Result<(), Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn mapping(conversion: w::TelemetryConversion) -> w::TelemetryValueMapping {
-        w::TelemetryValueMapping {
+    fn mapping(conversion: w::Conversion) -> w::ValueMapping {
+        w::ValueMapping {
             pointer: "/n".into(),
             conversion,
             columns: Default::default(),
@@ -427,35 +313,31 @@ mod tests {
     fn projection_rejects_overflow_unknown_bits_and_lossy_scaling() {
         assert!(project(
             &json!({"n":"18446744073709551615"}),
-            &mapping(w::TelemetryConversion::Integer),
-            0
+            &mapping(w::Conversion::Integer),
         )
         .is_err());
         assert!(project(
             &json!({"n":3}),
-            &mapping(w::TelemetryConversion::Scale {
+            &mapping(w::Conversion::Scale {
                 numerator: 1,
                 denominator: 2
             }),
-            0
         )
         .is_err());
         assert!(project(
             &json!({"n":8}),
-            &mapping(w::TelemetryConversion::Bitmask {
+            &mapping(w::Conversion::Bitmask {
                 flags: [("1".into(), "one".into())].into()
             }),
-            0
         )
         .is_err());
         assert_eq!(
             project(
                 &json!({"n":"1048576"}),
-                &mapping(w::TelemetryConversion::Scale {
+                &mapping(w::Conversion::Scale {
                     numerator: 1,
                     denominator: 1024
                 }),
-                0
             )
             .unwrap(),
             json!(1024)
@@ -471,8 +353,23 @@ mod tests {
     }
     #[test]
     fn cim_time_requires_a_complete_calendar_and_timezone() {
-        assert_eq!(cim_time("19700101010000.000000+060").unwrap(), 0);
-        assert!(cim_time("20260230010000.000000+000").is_err());
-        assert!(cim_time("2026**********.******+***").is_err());
+        assert_eq!(
+            project(
+                &json!({"n":"19700101010000.000000+060"}),
+                &mapping(w::Conversion::CimTime)
+            )
+            .unwrap(),
+            json!(0)
+        );
+        assert!(project(
+            &json!({"n":"20260230010000.000000+000"}),
+            &mapping(w::Conversion::CimTime)
+        )
+        .is_err());
+        assert!(project(
+            &json!({"n":"2026**********.******+***"}),
+            &mapping(w::Conversion::CimTime)
+        )
+        .is_err());
     }
 }

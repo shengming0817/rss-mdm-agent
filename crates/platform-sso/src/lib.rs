@@ -157,7 +157,7 @@ impl Registration {
                 !s.revoked
                     && s.id == self.source_id
                     && s.version == self.source_version
-                    && s.signing_key == self.signing_key
+                    && s.signing_key.as_ref() == Some(&self.signing_key)
                     && s.encryption_key == self.encryption_key
             })
     }

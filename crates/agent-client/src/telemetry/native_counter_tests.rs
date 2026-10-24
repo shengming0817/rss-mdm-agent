@@ -373,7 +373,8 @@ async fn native_integer_baselines_samples_and_configuration_remain_exact_after_r
     let r = server.register(&mut client).await;
     let mut signed = fixture::native_network_configuration(&server, &r);
     // Ordinary identities retain their previous bytes when no precision correction is needed.
-    let w::TelemetryCollector::Native { plan, mappings } = &signed.configuration.collector else {
+    let w::TelemetryCollector::Native { plan, mappings, .. } = &signed.configuration.collector
+    else {
         unreachable!()
     };
     assert_eq!(
