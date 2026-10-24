@@ -529,7 +529,7 @@ impl<S: agent_client::IdentityProvider> super::DeviceService<S> {
                     self.core.access.setups.insert(
                         *task,
                         Setup {
-                            owner,
+                            owner: owner.clone(),
                             candidate,
                             confirmed: false,
                         },
