@@ -6,9 +6,7 @@ param(
     [Parameter(Mandatory)][string]$Config,
     [Parameter(Mandatory)][string]$Output,
     [string]$CurrentBinary,
-    [string]$CurrentConfig,
-    [string]$ProviderDll,
-    [string]$ProviderSha256
+    [string]$CurrentConfig
 )
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
@@ -39,8 +37,12 @@ try {
     switch ($Phase) {
         DeviceAccessHealth {
             if ($Identity.User.Value -ne 'S-1-5-18' -or [Runtime.InteropServices.RuntimeInformation]::OSArchitecture -ne 'X64') { throw 'DeviceAccessHealth requires LocalSystem on x64' }
-            if (!$ProviderDll -or $ProviderSha256 -notmatch '^[a-fA-F0-9]{64}$') { throw 'Fixed provider path and SHA256 required' }
-            $ProviderDll=[IO.Path]::GetFullPath($ProviderDll)
+            if (!$Frozen.binaries.PSObject.Properties['windowsLogin']) { throw 'Frozen Windows login DLL required' }
+            $ProviderDll=[IO.Path]::GetFullPath($Frozen.binaries.windowsLogin.path)
+            $ProviderSha256=$Frozen.binaries.windowsLogin.sha256
+            $ProviderSignature=Get-AuthenticodeSignature -LiteralPath $ProviderDll
+            $ServiceSignature=Get-AuthenticodeSignature -LiteralPath $Binary
+            if ($ProviderSignature.Status -ne 'Valid' -or $ServiceSignature.Status -ne 'Valid' -or $ProviderSignature.SignerCertificate.Thumbprint -ne $ServiceSignature.SignerCertificate.Thumbprint) { throw 'Signed candidate with matching publishers required' }
             $Actual=(Get-FileHash -LiteralPath $ProviderDll -Algorithm SHA256).Hash
             if ($Actual -ine $ProviderSha256) { throw 'Provider candidate hash mismatch' }
             $Class='Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Classes\CLSID\{C61C6B95-9162-42A2-B80B-61EBCA730510}\InprocServer32'
