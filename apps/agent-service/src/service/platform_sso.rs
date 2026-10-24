@@ -464,6 +464,10 @@ impl<S: IdentityProvider> DeviceService<S> {
             w::Kind::Device => status.device_source,
             w::Kind::User => status.user_source,
         };
+        if registration_unresolved(&self.core.access.root, coordinate, source.as_ref())? {
+            // Absence is a snapshot, not a fence against a still-unresolved first registration.
+            return Err(Error::Unavailable);
+        }
         // The decision avoids unnecessary writes; the server CAS is the race fence.
         let response = match ::platform_sso::retirement(
             coordinate.source,
@@ -686,6 +690,17 @@ fn finish_retirement(root: &std::path::Path, coordinate: &Coordinate) -> Result<
     Ok(())
 }
 
+fn registration_unresolved(
+    root: &std::path::Path,
+    coordinate: &Coordinate,
+    source: Option<&w::SourceStatus>,
+) -> Result<bool, Error> {
+    let pending: Option<Coordinate> = state::read_optional(root, &coordinate.file("registering")?)?;
+    Ok(pending.as_ref() == Some(coordinate)
+        && source
+            .is_none_or(|s| s.id == coordinate.source && s.version < coordinate.source_version))
+}
+
 fn retain_registration(root: &std::path::Path, coordinate: &Coordinate) -> Result<bool, Error> {
     let _lock = state::lock(root)?;
     match enabled(root, coordinate.context.installation) {
@@ -722,6 +737,30 @@ mod tests {
             source: Uuid::from_u128(6),
             source_version: 1,
         }
+    }
+    #[test]
+    fn missing_source_does_not_settle_an_unknown_inflight_registration() {
+        let root = std::env::temp_dir().join(format!("psso-unknown-{}", Uuid::new_v4()));
+        platform_private_storage::directory(&root).unwrap();
+        let coordinate = coordinate();
+        assert!(!registration_unresolved(&root, &coordinate, None).unwrap());
+        state::write(&root, &coordinate.file("registering").unwrap(), &coordinate).unwrap();
+        assert!(registration_unresolved(&root, &coordinate, None).unwrap());
+        let key = w::PublicKey {
+            kty: "EC".into(),
+            crv: "P-256".into(),
+            x: String::new(),
+            y: String::new(),
+        };
+        let current = w::SourceStatus {
+            id: coordinate.source,
+            version: coordinate.source_version,
+            revoked: false,
+            signing_key: key.clone(),
+            encryption_key: key,
+        };
+        assert!(!registration_unresolved(&root, &coordinate, Some(&current)).unwrap());
+        std::fs::remove_dir_all(root).unwrap();
     }
     #[test]
     fn late_registration_after_disable_is_retired_without_authorizing_native_configuration() {

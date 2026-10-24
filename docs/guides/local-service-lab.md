@@ -383,6 +383,6 @@ P6 可由 root 对固定安装的 Agent 调用：
 "$Agent" --platform-sso-component cleanup
 ```
 
-`disable` 持久阻止新注册；`retire` 将已记录的精确 source/version 交给现有服务恢复循环。远端注销使用原子版本条件，回执丢失可回读，不能撤销替换注册。`cleanup` 只有在远端撤销与对应原生清理观察均被确认后才移除本机公共元数据，否则返回未完成并保留事实。它不模拟 LoginManager，不删除 OS 账号或私钥。Apple 配置移除及系统材料清理必须通过合法扩展上下文；网络、服务或该上下文不可用时不能报告注销完成。
+`disable` 持久阻止新注册；`retire` 将已记录的精确 source/version 交给现有服务恢复循环。远端注销使用原子版本条件，回执丢失可回读，不能撤销替换注册。首次注册结果未知且查询尚无 source 时，保留在途坐标，不能把单次未查到视为远端已清理；须等待已注册／已撤销或替换源等确定证据。`cleanup` 只有在远端撤销与对应原生清理观察均被确认后才移除本机公共元数据，否则返回未完成并保留事实。它不模拟 LoginManager，不删除 OS 账号或私钥。Apple 配置移除及系统材料清理必须通过合法扩展上下文；网络、服务或该上下文不可用时不能报告注销完成。
 
 正式支持证据必须包含签名嵌入、系统识别、系统发起的设备/用户注册回调、已有账号与受控建号、注册/认证/修复/解绑、锁屏及会话切换、旧代/重放/取消/中断/回执丢失/换钥/撤销，以及 Desktop 或 Agent 停止时的本地登录。构建与协议测试不能替代这些证据；缺受管测试机、有效签名、配置或域关联时保留真实加载/回调阻塞。来源：[Apple 注册设备和用户](https://developer.apple.com/documentation/authenticationservices/registering-devices-and-users)，SDK 26.4 AuthenticationServices 头文件。
