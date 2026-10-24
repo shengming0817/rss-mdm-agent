@@ -38,14 +38,18 @@ pub fn copy(value: &str) -> Result<PWSTR> {
     }
     Ok(PWSTR(allocation))
 }
-/// Local SAM lookup must resolve back to the same SID. Display names never select an identity.
-pub fn account(sid: &str) -> Result<(String, String)> {
-    let account =
-        device_access::windows::account::inspect(sid).map_err(|_| Error::from(E_ACCESSDENIED))?;
-    if !account.enabled {
+/// Uses the exact persisted native identity; display names never choose a binding.
+pub fn account(authority: &device_access::Authority) -> Result<(String, String)> {
+    device_access::windows::account::verify_bound(authority)
+        .map_err(|_| Error::from(E_ACCESSDENIED))?;
+    let (domain, user) = authority
+        .login
+        .split_once('\\')
+        .ok_or_else(|| Error::from(E_ACCESSDENIED))?;
+    if domain.is_empty() || user.is_empty() {
         return Err(E_ACCESSDENIED.into());
     }
-    Ok((account.domain, account.name))
+    Ok((domain.into(), user.into()))
 }
 
 fn package() -> Result<u32> {
@@ -72,14 +76,40 @@ fn package() -> Result<u32> {
 }
 /// Called after durable factor consumption. LSA alone verifies the Windows password.
 pub fn pack(
-    sid: &str,
+    authority: &device_access::Authority,
+    qualified_login: &str,
     password: &str,
     scenario: CREDENTIAL_PROVIDER_USAGE_SCENARIO,
 ) -> Result<CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION> {
     if scenario != CPUS_LOGON && scenario != CPUS_UNLOCK_WORKSTATION {
         return Err(E_INVALIDARG.into());
     }
-    let (domain, user) = account(sid)?;
+    let (domain, user) = account(authority)?;
+    if qualified_login.is_empty()
+        || qualified_login.len() > 512
+        || qualified_login.chars().any(char::is_control)
+    {
+        return Err(E_INVALIDARG.into());
+    }
+    let (domain, user) = if matches!(
+        authority.source,
+        rss_mdm_agent_wire::runtime::AccessWindowsAuthority::Local
+    ) {
+        let current = device_access::windows::account::inspect(&authority.sid)
+            .map_err(|_| Error::from(E_ACCESSDENIED))?;
+        (current.domain, current.name)
+    } else {
+        qualified_login
+            .split_once('\\')
+            .map(|(d, u)| (d.to_owned(), u.to_owned()))
+            .unwrap_or((domain, user))
+    };
+    if matches!(
+        authority.source,
+        rss_mdm_agent_wire::runtime::AccessWindowsAuthority::Entra { .. }
+    ) {
+        return pack_cloud(qualified_login, password);
+    }
     let package = package()?;
     let clear = Zeroizing::new(wide(password));
     let mut protected = Zeroizing::new(Vec::<u16>::new());
@@ -149,6 +179,64 @@ pub fn pack(
         ulAuthenticationPackage: package,
         clsidCredentialProvider: super::provider::CLSID,
         cbSerialization: total as u32,
+        rgbSerialization: buffer,
+    })
+}
+
+// ref: Microsoft Windows-classic-samples CSampleCredential::GetSerialization, identity-provider branch.
+fn pack_cloud(login: &str, password: &str) -> Result<CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION> {
+    let package = package()?;
+    let mut login = wide(login);
+    let mut password = Zeroizing::new(wide(password));
+    let flags = CRED_PACK_PROTECTED_CREDENTIALS | CRED_PACK_ID_PROVIDER_CREDENTIALS;
+    let mut count = 0;
+    if unsafe {
+        CredPackAuthenticationBufferW(
+            flags,
+            PWSTR(login.as_mut_ptr()),
+            PWSTR(password.as_mut_ptr()),
+            None,
+            &mut count,
+        )
+    }
+    .is_ok()
+        || unsafe { GetLastError() } != ERROR_INSUFFICIENT_BUFFER
+        || count == 0
+        || count > 32768
+    {
+        return Err(E_ACCESSDENIED.into());
+    }
+    let buffer = unsafe { CoTaskMemAlloc(count as usize) }.cast::<u8>();
+    if buffer.is_null() {
+        return Err(E_OUTOFMEMORY.into());
+    }
+    let capacity = count;
+    if let Err(error) = unsafe {
+        CredPackAuthenticationBufferW(
+            flags,
+            PWSTR(login.as_mut_ptr()),
+            PWSTR(password.as_mut_ptr()),
+            Some(buffer.cast()),
+            &mut count,
+        )
+    } {
+        unsafe {
+            std::ptr::write_bytes(buffer, 0, capacity as usize);
+            CoTaskMemFree(Some(buffer.cast()));
+        }
+        return Err(error);
+    }
+    if count > capacity {
+        unsafe {
+            std::ptr::write_bytes(buffer, 0, capacity as usize);
+            CoTaskMemFree(Some(buffer.cast()));
+        }
+        return Err(E_UNEXPECTED.into());
+    }
+    Ok(CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION {
+        ulAuthenticationPackage: package,
+        clsidCredentialProvider: super::provider::CLSID,
+        cbSerialization: count,
         rgbSerialization: buffer,
     })
 }

@@ -10,6 +10,7 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
+rss-mdm-agent-wire.workspace = true
 device-access = { path = "../../crates/device-access" }
 zeroize.workspace = true
 
