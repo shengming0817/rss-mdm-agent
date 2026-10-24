@@ -828,6 +828,8 @@ onBeforeUnmount(() => {
           @navigate="emit('navigate', $event)"
         />
         <ToolsPage
+          :execution="controller"
+          :active="page === 'device-tools'"
           @navigation="toolsPage = $event"
           v-if="ready"
           v-show="page === 'device-tools'"
