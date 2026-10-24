@@ -3207,6 +3207,23 @@ fn failed_resource_claims_require_resource_closure_even_after_reopen() {
                 &host,
             )
             .unwrap();
+        let resource = host
+            .plan
+            .exclusive_resource_keys()
+            .unwrap()
+            .into_iter()
+            .next()
+            .unwrap();
+        assert_eq!(
+            store.resource_owner(&resource, &host).unwrap(),
+            Some(host.plan.spec().request.request_id.clone())
+        );
+        let mut denied = host.clone();
+        denied.denied.push(Access::RunnerFact);
+        assert!(matches!(
+            store.resource_owner(&resource, &denied),
+            Err(JournalError::Denied)
+        ));
         let attempt = AttemptId::new("attempt-1").unwrap();
         let process = |code| {
             Box::new(ProcessEvidence {
@@ -3345,6 +3362,10 @@ fn failed_resource_claims_require_resource_closure_even_after_reopen() {
             .unwrap();
         drop(store);
         let mut store = db.open();
+        assert_eq!(
+            store.resource_owner(&resource, &host).unwrap(),
+            image.then(|| host.plan.spec().request.request_id.clone())
+        );
         assert_eq!(db.count("resource_claims"), if image { 1 } else { 0 });
         if image {
             assert_eq!(

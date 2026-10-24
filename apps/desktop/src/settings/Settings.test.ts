@@ -78,7 +78,6 @@ async function setup() {
   const host = createHostSettings({
     read: async () => status,
     restart: async () => status,
-    export: async () => true,
   });
   await host.refresh();
   const wrapper = mount(Settings, {

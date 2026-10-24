@@ -5444,3 +5444,179 @@ async fn settings_cache_is_read_only_and_rejects_ai_and_retired_context_without_
         .items
         .is_empty());
 }
+
+#[tokio::test]
+async fn network_check_defaults_and_invalid_targets_use_the_authenticated_service_boundary() {
+    let _budget = crate::scenario_budget::enter();
+    let mut c = Case::new(None).await;
+    c.employee("network-test").await;
+    use execution_ipc::host::Request;
+    let request = RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap();
+    let call = |context, origin, input| Request::NetworkCheck {
+        context,
+        origin,
+        input,
+    };
+    assert!(matches!(
+        c.policy_call(call(
+            c.context(),
+            ClientOrigin::Desktop {},
+            NetworkCheckOperation::Defaults
+        ))
+        .await,
+        Reply::NetworkDefaults {
+            target: Some(NetworkTarget { port: 443, .. })
+        }
+    ));
+    assert!(matches!(
+        c.policy_call(call(
+            c.context(),
+            c.selection.origin.clone(),
+            NetworkCheckOperation::Defaults
+        ))
+        .await,
+        Reply::DataFailure {
+            reason: DataError::Denied
+        }
+    ));
+    let invalid = NetworkCheckOperation::Run {
+        request: request.clone(),
+        target: NetworkTarget {
+            host: "https://example.com/command".into(),
+            port: 443,
+        },
+    };
+    assert!(matches!(
+        c.policy_call(call(c.context(), ClientOrigin::Desktop {}, invalid))
+            .await,
+        Reply::DataFailure {
+            reason: DataError::InvalidInput
+        }
+    ));
+    assert!(!c
+        .service
+        .core
+        .app
+        .has_service_execution(&request, &c.service.core.host.root.device)
+        .unwrap());
+    let retired = c.context();
+    c.employee("network-next-user").await;
+    assert!(matches!(
+        c.policy_call(call(
+            retired,
+            ClientOrigin::Desktop {},
+            NetworkCheckOperation::Defaults
+        ))
+        .await,
+        Reply::DataFailure {
+            reason: DataError::Denied
+        }
+    ));
+}
+
+#[tokio::test]
+async fn network_check_replay_and_cancel_keep_the_original_sqlite_plan_and_login() {
+    let _budget = crate::scenario_budget::enter();
+    let mut c = Case::new(None).await;
+    c.employee("network-request-owner").await;
+    let request = RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap();
+    let target = NetworkTarget {
+        host: "example.com".into(),
+        port: 443,
+    };
+    let policy =
+        crate::local_permissions::Policy::fixture(&c.service.core.config.local_permissions)
+            .unwrap();
+    let os_session = OsSessionRef {
+        device: c.service.core.host.root.device.clone(),
+        account: OsAccountRef {
+            platform: Platform::Macos,
+            subject: plan::id(&c.selection.subject).unwrap(),
+        },
+        session: c.selection.binding.clone(),
+    };
+    // Seed an undispatched journal record; no physical fixture is claimed as a network check.
+    let (settings, _) = crate::local_settings::compile::prepare(
+        crate::local_settings::Action::Read {
+            section: SettingsSection::Network,
+        },
+        request.clone(),
+        &c.service.core.host.root,
+        &c.service.core.host.local_actor,
+        Initiator::Human {
+            os_session: os_session.clone(),
+        },
+        &c.context(),
+        &policy,
+        c.service.core.host.clock.millis().unwrap(),
+        &c.service.core.config,
+        &mut c.service.core.material_root,
+        None,
+    )
+    .unwrap();
+    let mut input = settings.spec().clone();
+    input.request.operation.action = plan::id(crate::network_check::ACTION).unwrap();
+    input.launch.interpreter.profile = plan::reference(crate::network_check::PROFILE, "1").unwrap();
+    input.launch.argv = vec![
+        LaunchArg::Literal {
+            value: "--network-check-worker".into(),
+        },
+        LaunchArg::ArtifactPath {},
+    ];
+    input.request.parameters.insert(
+        "network-check-context".into(),
+        InputValue::Literal {
+            value: serde_json::to_value(c.context()).unwrap(),
+        },
+    );
+    input.request.parameters.insert(
+        "network-check-target".into(),
+        InputValue::Literal {
+            value: serde_json::to_value(&target).unwrap(),
+        },
+    );
+    let frozen = FrozenExecution::freeze(input, &plan::storage_limits().input).unwrap();
+    c.service
+        .core
+        .app
+        .stage_execution(&c.service.core.local_caller(), &frozen)
+        .unwrap();
+    use execution_ipc::host::Request;
+    let call = |context, input| Request::NetworkCheck {
+        context,
+        origin: ClientOrigin::Desktop {},
+        input,
+    };
+    for _ in 0..2 {
+        assert!(
+            matches!(c.policy_call(call(c.context(),NetworkCheckOperation::Run {request:request.clone(),target:target.clone()})).await,Reply::NetworkCheck {value} if value.status.content_digest==*frozen.digest() && value.status.attempts==0 && value.result.is_none())
+        );
+    }
+    assert!(matches!(
+        c.policy_call(call(
+            c.context(),
+            NetworkCheckOperation::Run {
+                request: request.clone(),
+                target: NetworkTarget {
+                    host: "other.example".into(),
+                    port: 80
+                }
+            }
+        ))
+        .await,
+        Reply::DataFailure {
+            reason: DataError::Conflict
+        }
+    ));
+    assert!(
+        matches!(c.policy_call(call(c.context(),NetworkCheckOperation::Cancel {request:request.clone()})).await,Reply::NetworkCheck {value} if value.status.phase==execution_app::TaskPhase::Cancelled && value.status.attempts==0)
+    );
+    c.employee("network-retired-owner").await;
+    assert!(matches!(
+        c.policy_call(call(c.context(), NetworkCheckOperation::Status { request }))
+            .await,
+        Reply::DataFailure {
+            reason: DataError::Denied
+        }
+    ));
+}
