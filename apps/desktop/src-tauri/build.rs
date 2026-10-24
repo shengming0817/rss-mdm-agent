@@ -14,6 +14,16 @@ fn write_if_changed(path: &std::path::Path, bytes: &[u8]) {
 }
 
 fn main() {
+    println!("cargo:rerun-if-changed=src/device_access_presence.m");
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
+        cc::Build::new()
+            .file("src/device_access_presence.m")
+            .flag("-fobjc-arc")
+            .flag("-fblocks")
+            .compile("rss_device_access_presence");
+        println!("cargo:rustc-link-lib=framework=LocalAuthentication");
+        println!("cargo:rustc-link-lib=framework=AppKit");
+    }
     println!("cargo:rerun-if-env-changed=RSS_BUILD_MDM_ORGANIZATION");
     println!("cargo:rerun-if-changed=src/organization_config.rs");
     let organization =

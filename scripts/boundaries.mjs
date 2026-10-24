@@ -953,6 +953,8 @@ export function checkTree(treeRoot = root, executable) {
         "futures-util.workspace = true",
         'tauri-plugin-wdio-webdriver = { path = "../../../vendor/tauri-plugin-wdio-webdriver", version = "=1.4.0", optional = true }',
         "tauri-build.workspace = true",
+        // Build-only compiler for the fixed LocalAuthentication presence bridge.
+        'cc = "=1.4.5"',
         // Build-time validation reuses the same serialization and URL parser as native connections.
         "serde.workspace = true",
         "url.workspace = true",

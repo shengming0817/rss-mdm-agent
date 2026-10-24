@@ -12,10 +12,20 @@ use std::{
     time::Duration,
 };
 
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PlatformSsoConfiguration {
+    pub extension: installation_security::Artifact,
+    pub origin: String,
+    pub team_id: String,
+}
+
 /// Administrator-owned deployment data. It contains references and public trust pins, never secrets.
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Deployment {
+    /// Optional installed macOS PSSO component. Absence means not installed, never a compatibility fallback.
+    pub platform_sso: Option<PlatformSsoConfiguration>,
     pub software_read_grants: Vec<agent_client::SoftwareReadGrant>,
     pub version: u32,
     pub ipc_version: u8,
@@ -460,6 +470,14 @@ impl Deployment {
         if crate::installation::unmanage_supported(self) {
             values.push(C::DeviceUnmanageV1);
         }
+        if cfg!(all(target_os = "macos", target_arch = "aarch64"))
+            && self
+                .platform_sso
+                .as_ref()
+                .is_some_and(|v| v.verify().is_ok())
+        {
+            values.push(C::DeviceAccessV1);
+        }
         if cfg!(windows) {
             values.push(C::CredentialsWindowsV1);
             if cfg!(target_arch = "x86_64") {
@@ -744,6 +762,7 @@ pub(crate) mod tests {
             cdhash: None,
         };
         Deployment {
+            platform_sso: None,
             service_id: crate::protocol_test_support::SERVICE_ID,
             connections: crate::protocol_test_support::signed_connections(
                 "https://agent.example.org".into(),

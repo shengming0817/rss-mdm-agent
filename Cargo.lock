@@ -111,6 +111,7 @@ dependencies = [
  "native-process",
  "platform-credentials",
  "platform-private-storage",
+ "platform-sso",
  "plist",
  "quick-xml",
  "reqwest",
@@ -1306,6 +1307,7 @@ dependencies = [
  "execution-contract",
  "installation-security",
  "libc",
+ "platform-sso",
  "rss-mdm-agent-wire",
  "schemars 1.2.2",
  "serde",
@@ -3565,6 +3567,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "platform-sso"
+version = "0.1.0"
+dependencies = [
+ "base64 0.23.1",
+ "rss-mdm-agent-wire",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "url",
+ "uuid",
+]
+
+[[package]]
+name = "platform-sso-extension"
+version = "0.1.0"
+dependencies = [
+ "execution-ipc",
+ "platform-sso",
+ "rss-mdm-agent-wire",
+ "serde",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
 name = "plist"
 version = "1.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4067,7 +4094,7 @@ dependencies = [
 [[package]]
 name = "rss-mdm-agent-wire"
 version = "1.0.0"
-source = "git+https://dev.azure.com/shengming0923/rss/_git/rss-mdm?rev=74cf17086482db0589ea967ba20e452a9627980c#74cf17086482db0589ea967ba20e452a9627980c"
+source = "git+https://dev.azure.com/shengming0923/rss/_git/rss-mdm?rev=e0c6351688aaa1a43666b681ab4860b2fedcb6d9#e0c6351688aaa1a43666b681ab4860b2fedcb6d9"
 dependencies = [
  "base64 0.22.1",
  "ordered-float",
@@ -4086,6 +4113,7 @@ version = "0.1.0"
 dependencies = [
  "aes-gcm",
  "ai-session-contract",
+ "cc",
  "constant_time_eq",
  "execution-admission",
  "execution-app",

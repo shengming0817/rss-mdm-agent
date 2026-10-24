@@ -181,4 +181,4 @@ fn wire_values_roundtrip_and_reject_unknown_authority() {
 #[cfg(target_os = "macos")]
 mod attempt_group;
 #[cfg(target_os = "macos")]
-pub use attempt_group::AttemptGroup;
+pub use attempt_group::{AttemptGroup, TerminalGroup};

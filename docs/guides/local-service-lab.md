@@ -363,3 +363,26 @@ Credential Provider 是独立 `windows-credential-provider` cdylib，与 Agent �
 离线验证先持久消费 TOTP，再向 Windows 序列化密码；Windows 密码错误仍消耗该时间步。TOTP 为六位、30 秒、前后一步，持久限速从第五次失败开始；重启不能清零失败预算，时钟回拨拒绝动态码。恢复密钥可重复使用、无期限，只替代 RSS 因子，仍需正确 Windows 密码。网络或 Agent 停机不影响已激活的离线验证。解绑只移除 RSS 集成，不删除账户、数据或角色；既有角色仅在明确授权时修改，并保护最后一个可用管理员。
 
 目标机可在已有固定候选验收中运行 `verify-execution-windows.ps1 -Phase DeviceAccessHealth -Candidate <候选> -Config <配置> -Output <新回执目录> -ProviderDll <固定DLL> -ProviderSha256 <预先固定SHA256>`，要求 LocalSystem/x64。此阶段只记录组件健康证据。必须另在原生 LogonUI 验证首次登录/解锁、离线、错误密码后的 OTP 重放、并发消费、重启限速、时钟回拨、恢复密钥轮换、账户角色保护、卸载及故障禁用。AD/Entra/MSA、RDP、UAC 与全入口 MFA 均不在当前承诺内。开发机 macOS 不执行 Windows 构建、测试或验收。
+
+### macOS Platform SSO 开发组件（Apple silicon / 26.4）
+
+候选只针对 macOS 26.4 / SDK 26.4、Apple silicon；实际系统加载和回调必须在已获授权的受管测试机验证。`crates/platform-sso` 持有协议组合与恢复决策，`apps/platform-sso-extension` 是 Apple 系统入口和本地 FFI；私钥、系统令牌及注册数据库由 Apple Framework 持有。PSSO 1.0 使用共享设备密钥和 `UserSecureEnclaveKey`，保留本地密码登录，不提供密码同步、ADE/JIT、Authorization Plugin 或严格在线登录。
+
+使用现有构建 runner 执行 `node scripts/build-platform-sso.mjs --verify-abi`，生成原生 `.appex` 并运行 C/Rust/系统签名 ABI 测试（测试进程不执行系统注册）。默认 ad-hoc 仅用于编译、链接和包结构检查，不证明系统接纳。指定 `RSS_MACOS_DEVELOPMENT_SIGNING_IDENTITY` 时，使用已获批准的开发签名材料；签名团队、profile 的 AppIdentifier、扩展 ID `com.rss.mdmagent.psso`、容器 `com.rss.mdmagent` 及 HTTPS AASA 必须匹配。现有 installer builder 嵌入同一子产物并重签容器；正式公证及安装升级验收由发布流程提供。构建输出 `systemAccepted: false` 不得改读为注册通过。
+
+部署的可选 `platform_sso` 配置包含固定扩展 artifact、`team_id` 和配置中的 console HTTPS `origin`。仅真实安装的受保护映像通过摘要、Apple 签名与精确平台核对后才公布能力。扩展通过既有 XPC 服务调用有限注册操作，其实际进程身份不能调用 Desktop、AI 或通用执行入口。普通认证由系统直接处理，Desktop 可以退出。
+
+Mac 设备访问页面复用员工确认及签名任务。已有账号按真实控制台会话和 GeneratedUID 关联；建号及角色变更必须由后台授权任务发起。Mac 路径不使用 Windows TOTP。密码只经短暂本机受控输入进入固定系统工具，Secure Token 需要合格管理员的系统交互授权；页面准备完成不代表账号任务或系统注册成功。Secure Token、volume ownership、FileVault 资格分别回读，无法证明的状态保持未知。解绑保留账号、数据及既有 Secure Token。
+
+P6 可由 root 对固定安装的 Agent 调用：
+
+```sh
+"$Agent" --platform-sso-component inspect
+"$Agent" --platform-sso-component disable
+"$Agent" --platform-sso-component retire
+"$Agent" --platform-sso-component cleanup
+```
+
+`disable` 持久阻止新注册；`retire` 将已记录的精确 source/version 交给现有服务恢复循环。远端注销使用原子版本条件，回执丢失可回读，不能撤销替换注册。首次注册结果未知且查询尚无 source 时，保留在途坐标，不能把单次未查到视为远端已清理；须等待已注册／已撤销或替换源等确定证据。明确拒绝且未提交的注册会结清对应在途记录。诊断中的 `registrationRecord` 仅区分在途与服务端接受记录，不表示 Apple 已保存配置。`cleanup` 只有在远端撤销与对应原生清理观察均被确认后才移除本机公共元数据，否则返回未完成并保留事实。它不模拟 LoginManager，不删除 OS 账号或私钥。Apple 配置移除及系统材料清理必须通过合法扩展上下文；网络、服务或该上下文不可用时不能报告注销完成。
+
+正式支持证据必须包含签名嵌入、系统识别、系统发起的设备/用户注册回调、已有账号与受控建号、注册/认证/修复/解绑、锁屏及会话切换、旧代/重放/取消/中断/回执丢失/换钥/撤销，以及 Desktop 或 Agent 停止时的本地登录。构建与协议测试不能替代这些证据；缺受管测试机、有效签名、配置或域关联时保留真实加载/回调阻塞。来源：[Apple 注册设备和用户](https://developer.apple.com/documentation/authenticationservices/registering-devices-and-users)，SDK 26.4 AuthenticationServices 头文件。
