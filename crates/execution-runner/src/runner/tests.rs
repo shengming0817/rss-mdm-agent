@@ -582,8 +582,8 @@ fn macos_capture_is_durable_and_reopened_attempt_does_not_launch() {
         std::thread::sleep(Duration::from_millis(20));
     }
     assert!(
-        carrier.0.records.lock().unwrap().is_empty(),
-        "capture acknowledgement retires process owner"
+        !carrier.0.records.lock().unwrap().is_empty(),
+        "capture acknowledgement retains the owner while activity closure is unknown"
     );
     assert_eq!(carrier.1.load(Ordering::SeqCst), 1);
     drop(app);
@@ -824,7 +824,7 @@ fn application_cancel_captures_real_process_and_reopen_does_not_dispatch() {
         assert!(Instant::now() < until);
         std::thread::sleep(Duration::from_millis(10));
     }
-    assert!(carrier.0.records.lock().unwrap().is_empty());
+    assert!(!carrier.0.records.lock().unwrap().is_empty());
     drop(app);
     drop(carrier);
     let empty = TestCarrier(

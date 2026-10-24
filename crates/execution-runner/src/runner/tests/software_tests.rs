@@ -2,10 +2,10 @@
 use super::*;
 #[test]
 fn unknown_detector_activity_keeps_real_exit_and_cannot_skip_to_mutation() {
-    let script = "printf '%s\\n' '{\"nativeOutputBytes\":0,\"detected\":{\"kind\":\"absent\"},\"closed\":false,\"diagnostics\":\"\"}'\n";
+    let script = "printf '{\"kind\":\"absent\"}'\n";
     let f = fixture(script, vec![LaunchArg::ArtifactPath {}], 4096, 5000);
     let input = f.plan.spec();
-    let mut invocation = SoftwareInvocation {
+    let invocation = SoftwareInvocation {
         launch: input.launch.clone(),
         run_as: input.run_as.clone(),
         session_requirement: input.session_requirement.clone(),
@@ -16,7 +16,6 @@ fn unknown_detector_activity_keeps_real_exit_and_cannot_skip_to_mutation() {
             reboot: Default::default(),
         },
     };
-    invocation.launch.interpreter.profile.id = Id::new("native-software-worker").unwrap();
     let mut p = input.clone();
     p.request.parameters.clear();
     p.request.initiator = Initiator::Policy {
@@ -123,7 +122,7 @@ fn unknown_detector_activity_keeps_real_exit_and_cannot_skip_to_mutation() {
         .checkpoints
         .iter()
         .any(|c| matches!(c, SoftwareCheckpoint::End {
- process: Some(p), detected: Some(SoftwareState::Absent {}), quiescent: false, .. } if p.exit_code == Some(0))));
+ process: Some(p), detected: Some(SoftwareState::Absent {}), quiescent: false, .. } if p.exit_code == Some(0))), "{progress:?}");
     assert!(!progress.complete(&plan));
     assert_eq!(carrier.1.load(Ordering::SeqCst), 1);
     let sqlite = rusqlite::Connection::open(f.root.join("software.sqlite")).unwrap();
@@ -160,7 +159,8 @@ fn main() {
         std::fs::write("changed", b"").unwrap();
         "null"
     };
-    println!("{{\"nativeOutputBytes\":0,\"detected\":{state},\"closed\":true,\"diagnostics\":\"\"}}");
+    let closed = lines.next().unwrap();
+    println!("{{\"nativeOutputBytes\":0,\"detected\":{state},\"closed\":{closed},\"diagnostics\":\"\"}}");
 }
 "#).unwrap();
     assert!(std::process::Command::new("rustc")
@@ -178,13 +178,14 @@ fn main() {
         Sha256::digest(std::fs::read(&executable).unwrap())
     ))
     .unwrap();
-    for (intent, before, target, expected, expected_phase) in [
+    for (intent, before, target, expected, expected_phase, closed) in [
         (
             SoftwareOperation::Install,
             r#"{"kind":"present","version":"1.0"}"#,
             "1.0",
             true,
             None,
+            true,
         ),
         (
             SoftwareOperation::Uninstall,
@@ -192,6 +193,7 @@ fn main() {
             "1.0",
             true,
             None,
+            true,
         ),
         (
             SoftwareOperation::Install,
@@ -199,6 +201,7 @@ fn main() {
             "1.0",
             true,
             Some(SoftwarePhase::Upgrade),
+            true,
         ),
         (
             SoftwareOperation::Uninstall,
@@ -206,6 +209,7 @@ fn main() {
             "1.1",
             true,
             Some(SoftwarePhase::Mutation),
+            true,
         ),
         (
             SoftwareOperation::Install,
@@ -213,6 +217,15 @@ fn main() {
             "1.0",
             false,
             None,
+            true,
+        ),
+        (
+            SoftwareOperation::Install,
+            r#"{"kind":"absent"}"#,
+            "1.0",
+            false,
+            None,
+            false,
         ),
     ] {
         let after = if intent == SoftwareOperation::Uninstall {
@@ -220,7 +233,7 @@ fn main() {
         } else {
             format!(r#"{{"kind":"present","version":"{target}"}}"#)
         };
-        let payload = |label: &str| format!("{label}\n{before}\n{after}\n");
+        let payload = |label: &str| format!("{label}\n{before}\n{after}\n{closed}\n");
         let f = fixture(
             &payload("observe"),
             vec![LaunchArg::ArtifactPath {}],
@@ -396,6 +409,16 @@ fn main() {
             vec![SoftwarePhase::Before]
         };
         assert_eq!(phases, expected_phases);
+        if !closed {
+            assert!(progress.checkpoints.iter().any(|c| matches!(
+                c,
+                SoftwareCheckpoint::End {
+                    detected: Some(SoftwareState::Absent {}),
+                    quiescent: false,
+                    ..
+                }
+            )));
+        }
         if let Some(phase) = expected_phase {
             assert_eq!(
                 std::fs::read_to_string(f.root.join("calls")).unwrap(),
@@ -414,7 +437,7 @@ fn main() {
                 .query_row("SELECT count(*) FROM resource_claims", [], |r| r
                     .get::<_, i64>(0))
                 .unwrap(),
-            0
+            i64::from(!closed)
         );
     }
 }
