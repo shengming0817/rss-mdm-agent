@@ -180,8 +180,9 @@ fn executable(
     }
     let (code, stdout, stderr) = run_tool(request, &image, &invocation.arguments)?;
     drop(leases);
-    fs::remove_dir_all(&request.resource_root)?;
-    Ok(result(
+    // An arbitrary EXE can delegate work to WMI or a service outside this Job.
+    // Retain the layout and activity barrier without installer-specific closure proof.
+    let mut outcome = result(
         code,
         None,
         format!(
@@ -189,7 +190,9 @@ fn executable(
             String::from_utf8_lossy(&stdout),
             String::from_utf8_lossy(&stderr),
         ),
-    ))
+    );
+    outcome.1.closed = false;
+    Ok(outcome)
 }
 
 pub(super) fn detect(
