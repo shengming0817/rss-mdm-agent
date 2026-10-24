@@ -6,11 +6,20 @@ import {
   Search,
   ArrowUpRight,
 } from "@rss-mdm-agent/ui";
+import type { SearchEntry, NavigationTarget } from "./page-navigation";
 const props = defineProps<{
   request: number;
-  entries: { page: string; id: string; title: string; group: string }[];
+  entries: SearchEntry[];
+  loading: boolean;
+  complete: boolean;
+  hasMore: boolean;
+  error: string;
 }>();
-const emit = defineEmits<{ select: [entry: { page: string; id: string }] }>();
+const emit = defineEmits<{
+  select: [entry: NavigationTarget];
+  more: [];
+  retry: [];
+}>();
 const searchOpen = ref(false),
   query = ref(""),
   active = ref(0);
@@ -45,6 +54,15 @@ watch(
   () => props.request,
   () => {
     searchOpen.value = true;
+  },
+);
+watch(
+  () => props.entries,
+  () => {
+    active.value = Math.min(
+      active.value,
+      Math.max(0, filtered.value.length - 1),
+    );
   },
 );
 watch(query, () => {
@@ -129,9 +147,29 @@ watch(searchOpen, async (open) => {
           </button>
         </template>
         <p v-if="!filtered.length" class="workspace-search-empty" role="status">
-          没有找到匹配的入口，试试其他关键词。
+          {{
+            complete
+              ? "没有找到匹配的入口，试试其他关键词。"
+              : "当前加载范围没有匹配项，可继续查找。"
+          }}
         </p>
       </div>
+      <p role="status">
+        {{
+          loading
+            ? "正在读取授权目录…"
+            : complete
+              ? "当前可搜索目录已读取完整"
+              : "搜索仅覆盖当前加载范围"
+        }}
+      </p>
+      <p v-if="error" role="alert">
+        {{ error
+        }}<button :disabled="loading" @click="emit('retry')">重试读取</button>
+      </p>
+      <button v-if="hasMore" :disabled="loading" @click="emit('more')">
+        继续查找
+      </button>
       <footer class="workspace-search-hint">
         <span><kbd>↑</kbd> <kbd>↓</kbd> 选择</span><span><kbd>↵</kbd> 打开</span
         ><span>点击外部或按 Esc 关闭</span>

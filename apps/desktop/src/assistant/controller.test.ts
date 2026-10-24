@@ -131,7 +131,7 @@ describe("assistant application ownership", () => {
       next: "older-page",
     });
     await t.c.connect();
-    const candidate = resourceContext(resourceOffer()!, "s1")!;
+    const candidate = resourceContext(resourceOffer()!, "s1", "anonymous")!;
     const wrapper = mount(ContextPanel, {
       props: {
         wide: false,
@@ -1292,7 +1292,7 @@ describe("resource composition ownership", () => {
     await t.c.connect();
     await t.c.select("session-1");
     t.c.draft.value = "解释版本";
-    const context = resourceContext(resourceOffer(), "s1")!;
+    const context = resourceContext(resourceOffer(), "s1", "anonymous")!;
     t.c.stageContext(context);
     expect(t.submit).not.toHaveBeenCalled();
     expect(t.client.createSession).not.toHaveBeenCalled();
@@ -1311,12 +1311,12 @@ describe("resource composition ownership", () => {
     await t.c.connect();
     await t.c.select("session-1");
     t.c.draft.value = "original";
-    t.c.stageContext(resourceContext(resourceOffer(), "s1")!);
+    t.c.stageContext(resourceContext(resourceOffer(), "s1", "anonymous")!);
     t.submit.mockRejectedValueOnce(new ClientError("transport_closed"));
     await t.c.prompt();
     const original = JSON.parse(JSON.stringify(t.submit.mock.calls[0][0]));
     t.c.draft.value = "next question";
-    t.c.stageContext(resourceContext(offer(), "s1")!);
+    t.c.stageContext(resourceContext(offer(), "s1", "anonymous")!);
     const next = t.c.context.value;
     await t.c.retry();
     expect(t.submit.mock.calls[1][0]).toEqual(original);
@@ -1330,7 +1330,7 @@ describe("resource composition ownership", () => {
     await t.c.connect();
     t.c.create();
     t.c.draft.value = "question";
-    t.c.stageContext(resourceContext(resourceOffer(), "s1")!);
+    t.c.stageContext(resourceContext(resourceOffer(), "s1", "anonymous")!);
     vi.mocked(t.client.restore).mockImplementation(async (id) => ({
       ...structuredClone(t.view),
       namespace: { ...t.view.namespace, sessionId: id },
@@ -1361,7 +1361,7 @@ describe("resource composition ownership", () => {
     await t.c.connect();
     await t.c.select("session-1");
     t.c.draft.value = "question";
-    t.c.stageContext(resourceContext(resourceOffer(), "s1")!);
+    t.c.stageContext(resourceContext(resourceOffer(), "s1", "anonymous")!);
     t.c.create();
     expect(t.c.context.value).toBeUndefined();
     await t.c.select("session-1");
@@ -1375,3 +1375,44 @@ describe("resource composition ownership", () => {
     t.c.dispose();
   });
 });
+
+it("invalidates page attachments in every conversation while the sidebar is closed and retains question text", () => {
+  const c = createAssistant(
+    undefined,
+    () => "id",
+    () => 100,
+    "tenant-a",
+  );
+  const make = (revision: string) =>
+    pageContext(
+      "software-management",
+      "软件管理",
+      [],
+      [
+        {
+          id: "r",
+          title: "Visible",
+          description: "Only display",
+          source: "service",
+          revision,
+          validUntil: 1000,
+        },
+      ],
+      "tenant-a",
+      100,
+    );
+  const original = make("one");
+  c.stageContext(original);
+  c.draft.value = "keep my question";
+  c.state.drafts.set("background", {
+    text: "background question",
+    context: original,
+  });
+  c.validatePageContexts([make("two")]);
+  expect(c.context.value?.stale).toBe(true);
+  expect(c.draft.value).toBe("keep my question");
+  expect(c.state.drafts.get("background")?.context?.stale).toBe(true);
+  c.dispose();
+  expect(c.state.drafts.size).toBe(0);
+});
+import { pageContext } from "../workspace/page-context";

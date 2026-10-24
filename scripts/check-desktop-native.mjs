@@ -388,22 +388,33 @@ const navigate = async (name) => {
       await fixtureControls();
       await browser.execute(
         (value) => {
-          const select = document.querySelector('[aria-label="原有业务验证"]');
+          const select = document.querySelector('[aria-label="业务页面"]');
           select.value = value;
           select.dispatchEvent(new Event("change", { bubbles: true }));
         },
-        name === "软件中心" ? "software" : "tasks",
+        name === "软件中心" ? "software-management" : "tasks",
       );
       await wait(() =>
         browser.execute(
           () =>
-            document.querySelector(".self-service")?.getClientRects().length >
-            0,
+            document
+              .querySelector(".software-production, .task-records")
+              ?.getClientRects().length > 0,
         ),
       );
     } else {
       await openAgentSettings("运行与诊断");
       await click("执行服务记录");
+    }
+    if (name === "软件中心") {
+      if (!visualOnly) {
+        await expandNavigation();
+        await click(
+          "软件管理",
+          '//*[contains(@class,"workspace-primary-navigation")]',
+        );
+      }
+      await click("企业软件");
     }
     return;
   }

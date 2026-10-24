@@ -25,6 +25,8 @@ export function nativePort(): SelfServicePort | null {
       invoke("self_service_policy_status", { input, generation }),
     observe_software: (input) =>
       invoke("self_service_observe_software", { input, generation }),
+    recent_tasks: (input) =>
+      invoke("self_service_recent_tasks", { input, generation }),
     snapshot: (input) =>
       invoke<Snapshot>("self_service_snapshot", { input, generation }),
     execute: (input) =>

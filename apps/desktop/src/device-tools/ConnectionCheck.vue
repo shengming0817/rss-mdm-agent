@@ -4,7 +4,11 @@ import { currentUser } from "../test-users";
 import type { NetworkCheckPort } from "../self-service/native";
 import type { NetworkCheckStatus, NetworkFinding } from "../self-service/types";
 const props = withDefaults(
-  defineProps<{ port: NetworkCheckPort | null; active?: boolean }>(),
+  defineProps<{
+    port: NetworkCheckPort | null;
+    active?: boolean;
+    initialRequest?: string;
+  }>(),
   { active: true },
 );
 const emit = defineEmits<{ task: [request: string] }>();
@@ -126,6 +130,18 @@ async function call(kind: "run" | "status" | "cancel") {
     if (generation === epoch) busy.value = false;
   }
 }
+watch(
+  () => props.initialRequest,
+  (original) => {
+    if (!original || original === request.value) return;
+    epoch++;
+    busy.value = false;
+    value.value = undefined;
+    request.value = original;
+    void call("status");
+  },
+  { immediate: true },
+);
 watch(
   () => currentUser.value?.generation,
   () => {

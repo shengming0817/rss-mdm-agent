@@ -271,6 +271,7 @@ export async function createFixture() {
           "/__fixture/registration-request",
           "/__fixture/state",
           "/__fixture/scenario",
+          "/__fixture/recent_tasks",
           "/__fixture/snapshot",
           "/__fixture/execute",
           "/__fixture/confirm",
@@ -338,6 +339,15 @@ export async function createFixture() {
           case "/__fixture/scenario":
             selectScenario(input.scenario);
             value = {};
+            break;
+          case "/__fixture/recent_tasks":
+            value = {
+              items: snapshot().requests.map((details) => ({
+                details,
+                recordedAtUnixMs: 1000,
+              })),
+              next: null,
+            };
             break;
           case "/__fixture/snapshot":
             value = snapshot(input);

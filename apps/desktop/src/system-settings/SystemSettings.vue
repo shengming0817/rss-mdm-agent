@@ -125,6 +125,31 @@ emit(
           return `${observed}${facts.length ? ` · ${JSON.stringify(facts)}` : ""}`;
         })(),
         source: "本机状态",
+        revision: JSON.stringify([
+          controller?.state.observations.get(item.id as SettingsSection)
+            ?.snapshot?.revision,
+          controller?.relevant(item.id as SettingsSection).map((source) => {
+            const value = controller.state.facts.get(
+              source.reference.id,
+            )?.value;
+            return [
+              source.reference,
+              value?.collectedAt,
+              value?.quality,
+              value?.stale,
+            ];
+          }),
+        ]),
+        collectedAt: controller?.state.observations.get(
+          item.id as SettingsSection,
+        )?.snapshot?.collectedAtUnixMs,
+        validUntil: (() => {
+          const snapshot = controller?.state.observations.get(
+            item.id as SettingsSection,
+          )?.snapshot;
+          return snapshot ? snapshot.collectedAtUnixMs + 30_000 : undefined;
+        })(),
+        verified: !controller?.state.errors.has(item.id as SettingsSection),
       })),
     ),
     setQuery: (value: string) => (query.value = value),

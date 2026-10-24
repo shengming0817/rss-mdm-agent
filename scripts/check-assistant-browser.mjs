@@ -69,8 +69,10 @@ const navigate = async (name) => {
   if (["软件中心", "请求与任务"].includes(name)) {
     await fixtureControls();
     await page
-      .getByLabel("原有业务验证", { exact: true })
-      .selectOption(name === "软件中心" ? "software" : "tasks");
+      .getByLabel("业务页面", { exact: true })
+      .selectOption(name === "软件中心" ? "software-management" : "tasks");
+    if (name === "软件中心")
+      await page.getByRole("button", { name: "企业软件", exact: true }).click();
     return;
   }
   if (name === "设置") {

@@ -10,15 +10,9 @@ const facts = computed(() => homeFacts(settings));
 import { UiPopover, Package, Sparkles } from "@rss-mdm-agent/ui";
 import type { Controller } from "../self-service/controller";
 import type { DeviceOverview } from "../self-service/types";
-import {
-  softwarePreviewKey,
-  type SoftwarePreview,
-} from "../catalog-preview/software-preview";
-import { homePreviewKey, type HomePreview } from "./preview";
+import { activityKey, taskPhase } from "../self-service/activity";
 const props = defineProps<{
   controller: Controller;
-  fixture?: boolean;
-  preview: boolean;
   draft: string;
   connected: boolean;
   device?: DeviceOverview | null;
@@ -26,32 +20,22 @@ const props = defineProps<{
 const emit = defineEmits<{
   navigate: [page: string, section?: string];
   "update:draft": [text: string];
+  open: [target: import("../workspace/page-navigation").NavigationTarget];
+  task: [request: string];
 }>();
-const sample = inject<HomePreview | undefined>(homePreviewKey, undefined);
-const fixtureCatalog = inject<SoftwarePreview | undefined>(
-  softwarePreviewKey,
-  undefined,
-);
+const activity = inject(activityKey, undefined);
 const summary = inject(softwareSummaryKey, undefined);
-const catalog = computed(() => (props.fixture ? fixtureCatalog : undefined));
-const installed = computed(() =>
-  props.fixture
-    ? (catalog.value?.items.filter((e) => e.installed) ?? [])
-    : (summary?.value.items.map((item) => ({
-        id: item.reference.installation,
-        name: item.name,
-        letter: item.name.slice(0, 1),
-      })) ?? []),
+const installed = computed(
+  () =>
+    summary?.value.items.map((item) => ({
+      id: item.reference.installation,
+      name: item.name,
+      letter: item.name.slice(0, 1),
+      revision: JSON.stringify(item.reference),
+    })) ?? [],
 );
-const updates = computed(() =>
-  props.fixture
-    ? (catalog.value?.items.filter((e) => e.installed && e.version !== e.latest)
-        .length ?? 0)
-    : (summary?.value.updates ?? 0),
-);
-const softwareRead = computed(() =>
-  props.fixture ? !!catalog.value : !!summary?.value.sources,
-);
+const updates = computed(() => summary?.value.updates);
+const softwareRead = computed(() => summary?.value.read ?? false);
 const addressesOpen = ref(false);
 </script>
 <template>
@@ -60,7 +44,7 @@ const addressesOpen = ref(false);
       <section class="home-hero" aria-label="我的电脑概览">
         <div class="home-hero-copy">
           <span class="design-eyebrow">● YOUR EVERYDAY COMPANION</span>
-          <h2>好状态，<br />开启好的一天。</h2>
+          <h2>我的电脑，<br />状态与操作一目了然。</h2>
           <p>
             {{ device?.attributes.computerName ?? "你的电脑" }} · 设备概览<br />常用应用、设备状态，都在这里。
           </p>
@@ -96,8 +80,12 @@ const addressesOpen = ref(false);
       >
         <span class="stat-label"
           ><SettingsGlyph kind="network" :size="17" />网络连接</span
-        ><strong>{{ sample?.network ?? facts.network }}</strong
-        ><small>{{ sample?.networkDetail ?? facts.networkDetail }}</small>
+        ><strong>{{ facts.network }}</strong
+        ><small>{{
+          settings?.state.busy.has("network")
+            ? "读取中…"
+            : settings?.state.errors.get("network") || facts.networkDetail
+        }}</small>
       </button>
       <button
         type="button"
@@ -106,13 +94,13 @@ const addressesOpen = ref(false);
         <span class="stat-label"
           ><SettingsGlyph kind="storage" :size="17" />存储空间</span
         ><strong
-          >{{ sample?.storageFree ?? facts.storageFree
-          }}<em v-if="sample || facts.storageUsed !== undefined"
-            >GB 可用</em
-          ></strong
-        ><small>{{ sample?.storageDetail ?? facts.storageDetail }}</small
-        ><span class="stat-track storage-track"
-          ><i :style="{ width: sample ? '64%' : `${facts.storageUsed ?? 0}%` }"
+          >{{ facts.storageFree
+          }}<em v-if="facts.storageUsed !== undefined">GB 可用</em></strong
+        ><small>{{ facts.storageDetail }}</small
+        ><span
+          v-if="facts.storageUsed !== undefined"
+          class="stat-track storage-track"
+          ><i :style="{ width: `${facts.storageUsed}%` }"
         /></span>
       </button>
       <button
@@ -121,14 +109,14 @@ const addressesOpen = ref(false);
       >
         <span class="stat-label"
           ><SettingsGlyph kind="power" :size="17" />电池与电源</span
-        ><strong
-          >{{ sample?.battery ?? facts.battery
-          }}<em v-if="sample">电量</em></strong
-        ><small>{{ sample?.batteryDetail ?? facts.batteryDetail }}</small
-        ><span class="stat-track power-track"
+        ><strong>{{ facts.battery }}</strong
+        ><small>{{ facts.batteryDetail }}</small
+        ><span
+          v-if="facts.batteryPercent !== undefined"
+          class="stat-track power-track"
           ><i
             :style="{
-              width: sample ? '86%' : `${facts.batteryPercent ?? 0}%`,
+              width: `${facts.batteryPercent}%`,
             }"
         /></span>
       </button>
@@ -142,16 +130,21 @@ const addressesOpen = ref(false);
           >{{ softwareRead ? installed.length : "—" }}<em>个已安装</em></strong
         ><small>{{
           softwareRead
-            ? `当前加载范围 · ${updates} 个固定更新候选`
+            ? `${summary?.complete ? "完整清单" : "部分或过期清单"} · 当前加载 ${installed.length} 项 · ${updates ?? "—"} 个固定更新候选`
             : "软件清单尚未读取"
         }}</small
+        ><small v-if="summary?.loading">读取中…</small
+        ><small v-if="summary?.error" role="status">{{ summary.error }}</small
+        ><small v-if="summary?.collectedAt"
+          >观察于
+          {{ new Date(summary.collectedAt * 1000).toLocaleString() }}</small
         ><span class="stat-link">查看更新 →</span>
       </button>
     </div>
     <div class="home-bottom">
       <section>
         <div class="section-heading">
-          <h3>你的常用应用</h3>
+          <h3>已安装应用</h3>
           <button
             class="text-link"
             @click="emit('navigate', 'software-management')"
@@ -163,13 +156,20 @@ const addressesOpen = ref(false);
           <button
             v-for="item in installed.slice(0, 4)"
             :key="item.id"
-            @click="emit('navigate', 'software-management', item.id)"
+            @click="
+              emit('open', {
+                kind: 'resource',
+                page: 'software-management',
+                id: item.id,
+                revision: item.revision,
+              })
+            "
           >
             <span class="home-app-icon" :class="item.id">{{ item.letter }}</span
             ><span>{{ item.name }}</span>
           </button>
           <p v-if="!installed.length" class="home-empty">
-            软件清单尚未接入，先去发现适合你的应用。
+            {{ softwareRead ? "当前加载范围没有应用。" : "软件清单尚未读取。" }}
           </p>
         </div>
         <div class="home-tip">
@@ -181,17 +181,48 @@ const addressesOpen = ref(false);
       <section>
         <div class="section-heading"><h3>最近动态</h3></div>
         <div class="home-activity">
-          <div v-for="item in sample?.activities ?? []" :key="item.title">
-            <span class="activity-symbol"
-              ><SettingsGlyph kind="security" :size="17" /></span
-            ><span
-              ><strong>{{ item.title }}</strong
-              ><small>{{ item.description }}</small></span
-            ><time>{{ item.time }}</time>
-          </div>
-          <p v-if="!sample?.activities.length" class="home-empty">
-            暂无操作记录
+          <button
+            v-for="item in activity?.state.items.slice(0, 6) ?? []"
+            :key="item.details.action.requestId"
+            @click="emit('task', item.details.action.requestId)"
+            class="activity-row"
+          >
+            <span
+              ><strong
+                >{{ item.details.action.operation.action }} ·
+                {{ item.details.action.operation.resource.id }}</strong
+              >
+              <small
+                >{{ taskPhase[item.details.status.phase] ?? "状态未知"
+                }}{{
+                  item.details.status.cancelRequested
+                    ? " · 已请求取消，终止单独核实"
+                    : ""
+                }}</small
+              ></span
+            >
+            <time>{{ new Date(item.recordedAtUnixMs).toLocaleString() }}</time>
+          </button>
+          <p v-if="!activity?.state.loaded" class="home-empty">
+            {{ activity?.available ? "动态尚未读取" : "执行服务未连接" }}
           </p>
+          <p v-else-if="!activity.state.items.length" class="home-empty">
+            {{
+              activity.state.next
+                ? "当前页无可见记录，仍可继续读取"
+                : "暂无操作记录"
+            }}
+          </p>
+          <p v-if="activity?.state.error" role="status">
+            {{ activity.state.error }}
+          </p>
+          <button
+            v-if="activity?.state.next"
+            :disabled="activity.state.loading"
+            @click="activity.load(true)"
+          >
+            继续读取动态
+          </button>
           <div v-if="controller.state.error" role="status">
             <span
               ><strong>任务需要关注</strong
@@ -489,7 +520,13 @@ const addressesOpen = ref(false);
   background: var(--rss-color-surface);
   padding: 0 17px;
 }
-.home-activity > div {
+.home-activity > div,
+.activity-row {
+  width: 100%;
+  text-align: left;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
   display: flex;
   align-items: center;
   gap: 12px;

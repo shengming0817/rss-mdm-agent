@@ -1,4 +1,7 @@
 .software-production {
+  height: 100%;
+  overflow: auto;
+  box-sizing: border-box;
   padding: 24px 28px;
   min-width: 0;
 }

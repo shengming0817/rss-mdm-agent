@@ -43,6 +43,13 @@ const emit = defineEmits<{ close: []; main: []; history: []; attach: [] }>();
     <p class="page-assistant-location" :title="context.path.join(' › ')">
       <span>当前页面</span>{{ context.path.join(" › ") }}
     </p>
+    <button
+      aria-label="附加当前页面上下文"
+      :disabled="context.stale"
+      @click="emit('attach')"
+    >
+      附加当前页面
+    </button>
     <div class="page-assistant-host"><slot /></div>
   </section>
 </template>

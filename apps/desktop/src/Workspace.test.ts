@@ -3,7 +3,9 @@ import { DOMWrapper, mount, flushPromises } from "@vue/test-utils";
 import { it, expect, vi } from "vitest";
 import Workspace from "./Workspace.vue";
 import Assistant from "./assistant/Assistant.vue";
-import SelfService from "./self-service/SelfService.vue";
+import BackendOffers from "./self-service/BackendOffers.vue";
+import SoftwareManagement from "./software/SoftwareManagement.vue";
+import Tasks from "./self-service/Tasks.vue";
 import { resourceOffer, snapshot } from "../../../tests/self-service/support";
 import { createHostSettings } from "./settings/controller";
 
@@ -13,7 +15,7 @@ it("requires explicit conversation selection, keeps one view and preserves stage
     props: {
       ready: true,
       busy: false,
-      page: "software",
+      page: "software-management",
       host: createHostSettings(undefined),
       selfServicePort: {
         ...policyFixturePort,
@@ -26,7 +28,13 @@ it("requires explicit conversation selection, keeps one view and preserves stage
       },
     },
   });
-  const resource = w.getComponent(SelfService);
+  (
+    w
+      .getComponent(SoftwareManagement)
+      .emitted("navigation")!
+      .at(-1)![0] as import("./workspace/page-navigation").PageNavigation
+  ).openSection("enterprise");
+  const resource = w.getComponent(BackendOffers);
   await flushPromises();
   const resourceTrigger = resource.get('[data-action="resource-details"]');
   await resourceTrigger.trigger("click");
@@ -118,7 +126,7 @@ it("uses one content header, a sidebar brand and a main welcome without remounti
     ).toBeDefined();
     await assistant.get('[data-action="suggest-prompt"]').trigger("click");
     expect(c.draft.value).toBe("已有草稿");
-    await w.setProps({ page: "software" });
+    await w.setProps({ page: "software-management" });
     await w.setProps({ page: "assistant" });
     expect(w.getComponent(Assistant).get("textarea").element).toBe(input);
   } finally {
@@ -137,7 +145,7 @@ it("changes the same assistant to compact resource presentation and stages sugge
     props: {
       ready: true,
       busy: false,
-      page: "software",
+      page: "software-management",
       host: createHostSettings(undefined),
       selfServicePort: {
         ...policyFixturePort,
@@ -156,6 +164,13 @@ it("changes the same assistant to compact resource presentation and stages sugge
     const c = view.props("controller");
     const input = view.get("textarea").element;
     const prompt = vi.spyOn(c, "prompt");
+    (
+      w
+        .getComponent(SoftwareManagement)
+        .emitted("navigation")!
+        .at(-1)![0] as import("./workspace/page-navigation").PageNavigation
+    ).openSection("enterprise");
+    await flushPromises();
     await w.get('[data-action="resource-details"]').trigger("click");
     expect(execute).not.toHaveBeenCalled();
     await w.get('[data-action="ask-ai"]').trigger("click");
@@ -218,9 +233,6 @@ it("opens system settings separately from application settings and preserves ass
   expect(w.find(".page-assistant-panel").exists()).toBe(true);
   expect(w.emitted("navigate")?.at(-1)).toEqual(["system-settings"]);
 
-  expect(w.getComponent(SelfService).props("controller").state.page).not.toBe(
-    "system-settings",
-  );
   await w.setProps({ page: "assistant" });
   expect(w.getComponent(Assistant).props("controller")).toBe(assistant);
   expect(assistant.draft.value).toBe("保留这个问题");
@@ -240,7 +252,7 @@ it("keeps navigation and account access after login failure without displaying a
     await flushPromises();
     expect(w.find(".workspace-primary-navigation").exists()).toBe(true);
     expect(w.find(".workspace-settings-footer").exists()).toBe(true);
-    expect(w.findComponent(SelfService).exists()).toBe(false);
+    expect(w.findComponent(Tasks).exists()).toBe(false);
     expect(w.findComponent(Assistant).exists()).toBe(false);
     expect(w.get(".workspace-page-header h1").text()).toBe("设置");
   } finally {

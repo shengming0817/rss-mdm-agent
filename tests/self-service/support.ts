@@ -54,12 +54,14 @@ export function resourceOffer(): BackendTask {
 /** Empty formal directory is explicit fixture data, never a production fallback. */
 export const policyFixturePort: Pick<
   SelfServicePort,
+  | "recent_tasks"
   | "policy_directory"
   | "policy_invoke"
   | "policy_confirm"
   | "policy_status"
   | "observe_software"
 > = {
+  recent_tasks: async () => ({ items: [], next: null }),
   policy_directory: async () => ({ items: [], nextCursor: null, asOf: 1000 }),
   policy_invoke: async () => {
     throw new Error("fixture policy not configured");

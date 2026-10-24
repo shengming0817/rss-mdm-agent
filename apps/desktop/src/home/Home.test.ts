@@ -1,22 +1,14 @@
-import { DOMWrapper, mount } from "@vue/test-utils";
-import { expect, it } from "vitest";
+import { DOMWrapper, mount, flushPromises } from "@vue/test-utils";
+import { expect, it, vi } from "vitest";
 import Home from "./Home.vue";
 import { createController } from "../self-service/controller";
-const controller = () =>
-  createController(null, {
-    available: [],
-    preparations: [],
-    requests: [],
-    selected: null,
-    next: null,
-  });
+const controller = () => createController(null);
 it("shows device values as plain text and exposes all addresses without an unavailable banner", async () => {
   const c = controller();
   const wrapper = mount(Home, {
     attachTo: document.body,
     props: {
       controller: c,
-      preview: true,
       draft: "",
       connected: false,
       device: {
@@ -52,3 +44,37 @@ it("shows device values as plain text and exposes all addresses without an unava
   wrapper.unmount();
   c.dispose();
 });
+
+it("distinguishes missing data, a complete empty software observation and partial loaded counts", async () => {
+  const ports = fixtureLocalPorts();
+  const read = vi.fn(async () => ({
+    query: { id: "software.installations", revision: "1".repeat(64) },
+    collectedAt: Math.floor(Date.now() / 1000),
+    quality: "complete" as const,
+    enumerationComplete: true,
+    stale: false,
+    items: [],
+    next: null,
+  }));
+  const model = createSoftware(ports.data, { ...ports.software!, read });
+  const w = mount(Home, {
+    props: { controller: controller(), draft: "", connected: false },
+    global: { provide: { [softwareSummaryKey as symbol]: model.summary } },
+  });
+  try {
+    expect(w.text()).toContain("软件清单尚未读取");
+    expect(w.find(".storage-track").exists()).toBe(false);
+    await model.discover();
+    await flushPromises();
+    expect(w.text()).toContain("完整清单");
+    expect(w.text()).toContain("当前加载 0 项");
+    model.state.sources[0].page!.enumerationComplete = false;
+    await flushPromises();
+    expect(w.text()).toContain("部分或过期清单");
+  } finally {
+    w.unmount();
+    model.dispose();
+  }
+});
+import { fixtureLocalPorts } from "../../../../tests/assistant/local-ports";
+import { createSoftware, softwareSummaryKey } from "../software/controller";

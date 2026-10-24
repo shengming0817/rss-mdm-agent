@@ -29,13 +29,7 @@ function fixture() {
   return {
     value,
     port,
-    c: createController(port, {
-      available: [],
-      preparations: [],
-      selected: null,
-      requests: [],
-      next: null,
-    }),
+    c: createController(port),
   };
 }
 describe("backend task selection", () => {

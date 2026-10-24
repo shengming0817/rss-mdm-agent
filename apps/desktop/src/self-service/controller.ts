@@ -1,19 +1,15 @@
 import { reactive } from "vue";
 import type { BackendTask, SelfServicePort, Snapshot } from "./types";
 
-export function createController(
-  port: SelfServicePort | null,
-  preview: Snapshot,
-) {
+export function createController(port: SelfServicePort | null) {
   const state = reactive({
-    snapshot: port ? (null as Snapshot | null) : preview,
-    page: "home",
+    snapshot: null as Snapshot | null,
     item: null as BackendTask | null,
     taskId: "",
     loading: false,
     busy: false,
     uncertain: false,
-    error: "",
+    error: port ? "" : "本机执行服务未连接",
     after: null as string | null,
     previous: [] as (string | null)[],
   });
@@ -132,9 +128,6 @@ export function createController(
       }
     }
   }
-  function navigate(page: string) {
-    state.page = page;
-  }
   async function next() {
     if (!state.snapshot?.next || state.loading) return;
     state.previous.push(state.after);
@@ -166,7 +159,6 @@ export function createController(
     confirm,
     confirmPreparation,
     cancel,
-    navigate,
     next,
     previous,
     first,

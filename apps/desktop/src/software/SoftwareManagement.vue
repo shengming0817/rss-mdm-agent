@@ -6,6 +6,8 @@ import {
   onMounted,
   ref,
   watch,
+  inject,
+  reactive,
 } from "vue";
 import { Package, UiSearchInput } from "@rss-mdm-agent/ui";
 import type { PageNavigation } from "../workspace/page-navigation";
@@ -24,24 +26,33 @@ import {
   type SoftwareController,
 } from "./controller";
 import { nativeDataPort, nativeSoftwarePort } from "../self-service/native";
-import { currentUser } from "../test-users";
+import { directoryKey, policyResource } from "../self-service/directory";
+import BackendOffers from "../self-service/BackendOffers.vue";
 import "./software.css";
 const props = defineProps<{
   model?: SoftwareController;
   execution?: Controller;
+  active?: boolean;
+  contextKey?: string;
 }>();
 const emit = defineEmits<{
   navigation: [state: PageNavigation];
   navigate: [page: string];
+  askAi: [item: BackendTask, trigger: HTMLElement];
 }>();
 const c = props.model ?? createSoftware(nativeDataPort(), nativeSoftwarePort());
 const s = c.state;
+const directory = inject(directoryKey, undefined);
+const enterprise = ref<InstanceType<typeof PolicySelfService>>();
 const section = ref("installed"),
   query = ref(""),
   kind = ref(""),
   selected = ref(""),
   operation = ref("");
 const heading = ref<HTMLElement>();
+const listing = ref<HTMLElement>();
+let listScroll = 0;
+let origin: HTMLElement | undefined;
 const sections = [
   { id: "installed", title: "已安装" },
   { id: "updates", title: "可更新" },
@@ -104,9 +115,6 @@ function openSection(id: string) {
   } else if (c.installed.value.some((item) => installationKey(item) === id)) {
     section.value = "installed";
     selected.value = id;
-  } else if (id.startsWith("operation:")) {
-    section.value = "operations";
-    operation.value = id.slice(10);
   }
 }
 function reset() {
@@ -115,6 +123,32 @@ function reset() {
   query.value = "";
   kind.value = "";
 }
+async function openResource(id: string, revision: string) {
+  const item = c.installed.value.find(
+    (item) =>
+      installationKey(item) === id &&
+      JSON.stringify(item.reference) === revision,
+  );
+  if (item) {
+    section.value = "installed";
+    await inspect(item);
+    return true;
+  }
+  const policy = directory?.state.items.find(
+    (item) =>
+      item.task.kind === "software" &&
+      `policy:${item.policyId}` === id &&
+      JSON.stringify([
+        item.policyId,
+        item.policyRevision,
+        item.policyVersion,
+      ]) === revision,
+  );
+  if (!policy) return false;
+  section.value = "enterprise";
+  await nextTick();
+  return enterprise.value?.openPolicy(policy.policyId) ?? false;
+}
 function navigation(): PageNavigation {
   return {
     sections,
@@ -122,18 +156,93 @@ function navigation(): PageNavigation {
     path: current.value
       ? [{ id: selected.value, title: current.value.name }]
       : [],
-    resources: c.installed.value.map((item) => ({
-      id: installationKey(item),
-      title: item.name,
-      description: `${kinds[item.kind]} · ${item.scope.kind === "device" ? "设备级" : "当前用户"}`,
-      version: item.version ?? undefined,
-      status: "上次采集时已安装",
-      source: item.origin,
-    })),
-    searchEntries: c.installed.value.map((item) => ({
-      id: installationKey(item),
-      title: item.name,
-    })),
+    resources:
+      section.value === "enterprise"
+        ? enterprise.value?.resource
+          ? [enterprise.value.resource]
+          : (directory?.state.items
+              .filter((item) => item.task.kind === "software")
+              .map((item) => policyResource(item, directory)) ?? [])
+        : (current.value ? [current.value] : filtered.value).map((item) => ({
+            id: installationKey(item),
+            title: item.name,
+            description: `${kinds[item.kind]} · ${item.scope.kind === "device" ? "设备级" : "当前用户"}`,
+            version: item.version ?? undefined,
+            status: c.summary.value.complete
+              ? "上次采集时已安装"
+              : "部分或过期安装观察",
+            source: item.origin,
+            revision: JSON.stringify(item.reference),
+            collectedAt:
+              c.summary.value.collectedAt == null
+                ? undefined
+                : c.summary.value.collectedAt * 1000,
+            validUntil:
+              c.summary.value.collectedAt == null
+                ? 0
+                : (c.summary.value.collectedAt + 300) * 1000,
+            verified:
+              !c.summary.value.error &&
+              c.state.sources.some(
+                (source) =>
+                  source.page?.items.some(
+                    (row) =>
+                      JSON.stringify(row.reference) ===
+                      JSON.stringify(item.reference),
+                  ) && !source.page.stale,
+              ),
+          })),
+    searchEntries: [
+      ...c.installed.value.map((item) => ({
+        id: installationKey(item),
+        title: item.name,
+        revision: JSON.stringify(item.reference),
+      })),
+      ...(directory?.state.items
+        .filter((item) => item.task.kind === "software")
+        .map((item) => ({
+          id: `policy:${item.policyId}`,
+          title:
+            typeof item.selfService.presentation.displayName === "string"
+              ? item.selfService.presentation.displayName
+              : item.policyId,
+          revision: JSON.stringify([
+            item.policyId,
+            item.policyRevision,
+            item.policyVersion,
+          ]),
+        })) ?? []),
+    ],
+    openResource,
+    async openRequest(request: string) {
+      section.value = "operations";
+      operation.value = request;
+      await nextTick();
+    },
+    search: {
+      loading:
+        s.loading ||
+        s.sources.some((source) => source.busy) ||
+        !!directory?.state.loading,
+      complete: c.summary.value.complete && !!directory?.state.complete,
+      hasMore:
+        !!s.directoryNext ||
+        s.sources.some((source) => !!source.after) ||
+        !!directory?.state.next,
+      error:
+        s.error ||
+        s.sources.find((source) => source.error)?.error ||
+        directory?.state.error ||
+        "",
+      async loadMore() {
+        if (s.directoryNext) await c.discover(true);
+        else {
+          const source = s.sources.find((source) => source.after);
+          if (source) await c.read(source, true);
+        }
+        if (directory?.state.next) await directory.load(true);
+      },
+    },
     reset,
     openSection,
     setQuery: (text) => {
@@ -141,15 +250,37 @@ function navigation(): PageNavigation {
     },
   };
 }
+const navigationState = reactive(navigation());
+emit("navigation", navigationState);
 watch(
-  [section, query, current, () => c.installed.value],
-  () => emit("navigation", navigation()),
-  { immediate: true },
+  [
+    section,
+    query,
+    current,
+    () => c.installed.value,
+    () => directory?.state,
+    () => c.summary.value,
+    () => enterprise.value?.resource,
+  ],
+  () => Object.assign(navigationState, navigation()),
+  { immediate: true, deep: true },
 );
 async function inspect(item: InstalledSoftware) {
+  origin = Array.from(
+    listing.value?.querySelectorAll<HTMLElement>("[data-software]") ?? [],
+  ).find((button) => button.dataset.software === installationKey(item));
+  listScroll =
+    listing.value?.closest<HTMLElement>(".software-production")?.scrollTop ?? 0;
   selected.value = installationKey(item);
   await nextTick();
   heading.value?.focus();
+}
+async function back() {
+  selected.value = "";
+  await nextTick();
+  const scroller = listing.value?.closest<HTMLElement>(".software-production");
+  if (scroller) scroller.scrollTop = listScroll;
+  if (origin?.isConnected) origin.focus({ preventScroll: true });
 }
 async function act(item: InstalledSoftware, action: LocalSoftwareAction) {
   const prepared = await c.prepare(item, action);
@@ -157,18 +288,10 @@ async function act(item: InstalledSoftware, action: LocalSoftwareAction) {
   operation.value = prepared.request;
   if (action === "launch" || action === "detect") await c.submit(prepared);
 }
-function backend(item: BackendTask) {
-  props.execution?.select(item);
-  emit("navigate", "software");
-}
-watch(currentUser, () => {
-  reset();
-  operation.value = "";
-  c.dispose();
-});
 onMounted(() => {
   void c.discover();
   void c.history();
+  if (directory && !directory.state.asOf) void directory.load();
 });
 onBeforeUnmount(() => {
   if (!props.model) c.dispose();
@@ -279,13 +402,17 @@ onBeforeUnmount(() => {
           </button>
         </div>
       </details>
-      <div class="software-grid">
+      <div ref="listing" class="software-grid">
         <article
           v-for="item in filtered"
           :key="installationKey(item)"
           class="software-card"
         >
-          <button class="software-title" @click="inspect(item)">
+          <button
+            :data-software="installationKey(item)"
+            class="software-title"
+            @click="inspect(item)"
+          >
             <Package :size="24" aria-hidden="true" /><span
               ><strong>{{ item.name }}</strong
               ><small
@@ -312,6 +439,7 @@ onBeforeUnmount(() => {
       </div>
       <p v-if="!filtered.length && !s.loading">当前加载范围内没有匹配软件。</p>
       <section v-if="current" class="software-detail" aria-label="软件详情">
+        <button class="software-detail-back" @click="back">返回软件列表</button>
         <h3 ref="heading" tabindex="-1">{{ current.name }}</h3>
         <p>
           {{ current.nativeId }} · {{ current.origin }} ·
@@ -337,29 +465,27 @@ onBeforeUnmount(() => {
         :key="operation"
         :request="operation"
         :port="c.port"
+        :visible="active !== false"
         @changed="c.accept"
       />
     </template>
-    <template v-if="section === 'enterprise'">
+    <section v-show="section === 'enterprise'">
       <PolicySelfService
+        ref="enterprise"
         :port="execution?.port ?? null"
         :records="execution?.state.snapshot?.preparations ?? []"
         kind="software"
         :filter="query"
         @changed="execution?.refresh()"
       />
-      <section aria-label="当前已签名的软件任务">
-        <h3>当前已签名的软件任务</h3>
-        <p>这是执行服务已提供的精确任务，安装状态和升级资格由执行服务核实。</p>
-        <article v-for="offer in offers" :key="offer.request">
-          <strong>{{ offer.presentation.title }}</strong
-          ><button :disabled="!offer.userInitiated" @click="backend(offer)">
-            查看并确认原任务
-          </button>
-        </article>
-        <p v-if="!offers.length">当前没有已提供的软件任务。</p>
-      </section>
-    </template>
+      <BackendOffers
+        v-if="execution"
+        :controller="execution"
+        kind="software"
+        :context-key="contextKey"
+        @ask-ai="(item, trigger) => emit('askAi', item, trigger)"
+      />
+    </section>
     <section v-if="section === 'operations'" aria-label="本地软件操作历史">
       <p v-if="s.historyError" role="alert">{{ s.historyError }}</p>
       <button :disabled="s.historyBusy" @click="c.history()">
@@ -396,6 +522,7 @@ onBeforeUnmount(() => {
         :key="operation"
         :request="operation"
         :port="c.port"
+        :visible="active !== false"
         @changed="c.accept"
       />
     </section>

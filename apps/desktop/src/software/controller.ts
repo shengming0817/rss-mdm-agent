@@ -39,6 +39,7 @@ export function createSoftware(
 ) {
   const state = reactive({
     sources: [] as Source[],
+    now: Date.now(),
     directoryNext: null as string | null,
     directoryComplete: false,
     loading: false,
@@ -56,6 +57,9 @@ export function createSoftware(
   });
   let active = true,
     epoch = 0;
+  const timer = setInterval(() => {
+    if (active) state.now = Date.now();
+  }, 1000);
   const seenDirectory = new Set<string>(),
     seenHistory = new Set<string>();
   function accept(value: LocalSoftwareStatus) {
@@ -108,10 +112,28 @@ export function createSoftware(
           s.page &&
           !s.after &&
           !s.page.stale &&
+          s.page.collectedAt != null &&
+          s.page.collectedAt * 1000 <= state.now &&
+          state.now - s.page.collectedAt * 1000 <= 300_000 &&
           s.page.quality === "complete" &&
           s.page.enumerationComplete &&
           !s.error,
       ),
+    read:
+      state.directoryComplete &&
+      state.sources.length > 0 &&
+      state.sources.every((s) => !!s.page),
+    loading: state.loading || state.sources.some((s) => s.busy),
+    error: state.error || state.sources.find((s) => s.error)?.error || "",
+    collectedAt: state.sources.reduce<number | null>(
+      (time, s) =>
+        s.page?.collectedAt == null
+          ? time
+          : time == null
+            ? s.page.collectedAt
+            : Math.min(time, s.page.collectedAt),
+      null,
+    ),
     sources: state.sources.length,
   }));
   async function read(source: Source, append = false) {
@@ -383,6 +405,7 @@ export function createSoftware(
   }
   function dispose() {
     active = false;
+    clearInterval(timer);
     ++epoch;
     state.sources = [];
     state.operations.clear();

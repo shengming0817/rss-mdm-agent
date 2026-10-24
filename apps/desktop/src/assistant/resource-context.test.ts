@@ -14,7 +14,7 @@ describe("resource context projection", () => {
       inputs: { secret: "SECRET_INPUT" },
       deviceList: ["SECRET_DEVICE"],
     });
-    const c = resourceContext(item, "live");
+    const c = resourceContext(item, "live", "anonymous");
     expect(c.path).toEqual(["软件中心", "未提供分类", "办公套件", "软件详情"]);
     const data = JSON.parse(c.text.split("\n").slice(1).join("\n"));
     expect(data.resourceVersions).toEqual([
@@ -45,16 +45,23 @@ describe("resource context projection", () => {
   });
   it("freezes the projection and invalidates revised, replaced or removed resources", () => {
     const item = resourceOffer();
-    const c = resourceContext(item, "s1");
+    const c = resourceContext(item, "s1", "anonymous");
     const original = c.text;
-    expect(contextCurrent(c, [item], "s1")).toBe(true);
+    expect(contextCurrent(c, [item], "s1", "anonymous")).toBe(true);
     item.revision = "b".repeat(64);
     expect(c.text).toBe(original);
-    expect(contextCurrent(c, [item], "s1")).toBe(false);
-    expect(contextCurrent(c, [], "s1")).toBe(false);
-    expect(contextCurrent(c, [resourceOffer()], "live")).toBe(false);
+    expect(contextCurrent(c, [item], "s1", "anonymous")).toBe(false);
+    expect(contextCurrent(c, [], "s1", "anonymous")).toBe(false);
+    expect(contextCurrent(c, [resourceOffer()], "live", "anonymous")).toBe(
+      false,
+    );
     expect(
-      contextCurrent(c, [{ ...resourceOffer(), task: "replacement" }], "s1"),
+      contextCurrent(
+        c,
+        [{ ...resourceOffer(), task: "replacement" }],
+        "s1",
+        "anonymous",
+      ),
     ).toBe(false);
   });
   it("projects scripts without invention and blocks empty, stale or over-budget submissions", () => {
@@ -65,7 +72,7 @@ describe("resource context projection", () => {
         summary: { kind: "script" as const, identity: "system" as const },
       },
     };
-    const c = resourceContext(item, "s1");
+    const c = resourceContext(item, "s1", "anonymous");
     expect(c.path).toEqual(["工具中心", "未提供分类", "诊断脚本", "脚本详情"]);
     expect(c.text).toContain('"resourceVersions": []');
     expect(c.text).not.toContain("system");

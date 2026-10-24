@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import PolicyExecutionContext from "./PolicyExecutionContext.vue";
-import { computed, onMounted, onBeforeUnmount, ref, watch } from "vue";
+import { computed, inject, onMounted, onBeforeUnmount, ref, watch } from "vue";
 import Ajv, { type AnySchema } from "ajv";
 import type {
   SelfServicePort,
@@ -9,6 +9,7 @@ import type {
   PolicyStatus,
   BackendRequest,
 } from "./types";
+import { createDirectory, directoryKey, policyResource } from "./directory";
 import { currentUser } from "../test-users";
 import PolicyPreparation from "./PolicyPreparation.vue";
 const props = withDefaults(
@@ -52,8 +53,19 @@ const visibleDirectory = computed(() =>
         .includes((props.filter ?? "").trim().toLocaleLowerCase()),
   ),
 );
-const directory = ref<SelfServiceDirectoryItem[]>([]),
-  selected = ref<SelfServiceDirectoryItem>(),
+const sharedDirectory = inject(directoryKey, undefined);
+const catalog =
+  sharedDirectory?.port === props.port
+    ? sharedDirectory
+    : createDirectory(props.port);
+const directory = computed(() =>
+  catalog.state.items.filter((item) =>
+    props.kind
+      ? item.task.kind === props.kind
+      : item.task.kind !== "enrollment",
+  ),
+);
+const selected = ref<SelfServiceDirectoryItem>(),
   inputs = ref<Record<string, string>>({}),
   choice = ref<PolicyChoice>(),
   request = ref(""),
@@ -132,75 +144,34 @@ const resolved = computed(() =>
     ]),
   ),
 );
-const nextCursor = ref<string | null>(null);
-const directoryComplete = ref(false);
-const directoryWindowed = ref(false);
-const locators = new Map<string, string | null>();
-const visited = new Set<string>();
+const nextCursor = computed(() => catalog.state.next);
+const directoryComplete = computed(() => catalog.state.complete);
+const directoryWindowed = computed(() => catalog.state.windowed);
+const locators = catalog.locators;
 async function refresh() {
-  await loadDirectory(false);
+  await catalog.load();
 }
 async function loadMore() {
-  await loadDirectory(true);
-}
-async function loadDirectory(append: boolean) {
-  if (!props.port || busy.value || (append && !nextCursor.value)) return;
-  if (!append) {
-    ++epoch;
-    directory.value = [];
-    nextCursor.value = null;
-    directoryComplete.value = false;
-    directoryWindowed.value = false;
-    locators.clear();
-    visited.clear();
-    if (!request.value) {
-      selected.value = undefined;
-      choice.value = undefined;
-    }
-  }
-  busy.value = true;
-  const current = epoch;
-  const after = append ? nextCursor.value : null;
-  try {
-    if (visited.size >= 2048) throw new Error("capacity");
-    const value = await props.port.policy_directory({ after });
-    if (current !== epoch) return;
-    if (
-      value.nextCursor &&
-      (value.nextCursor === after || visited.has(value.nextCursor))
-    )
-      throw new Error("cursor");
-    if (after) visited.add(after);
-    const items = value.items.filter((item) =>
-      props.kind
-        ? item.task.kind === props.kind
-        : item.task.kind !== "enrollment",
-    );
-    for (const item of items) locators.set(item.policyId, after);
-    const merged = new Map(
-      directory.value.map((item) => [item.policyId, item]),
-    );
-    for (const item of items) merged.set(item.policyId, item);
-    if (merged.size > 1024) directoryWindowed.value = true;
-    directory.value = [...merged.values()].slice(-1024);
-    const retained = new Set(directory.value.map((item) => item.policyId));
-    for (const id of locators.keys())
-      if (!retained.has(id) && id !== selected.value?.policyId)
-        locators.delete(id);
-    nextCursor.value = value.nextCursor;
-    directoryComplete.value = !value.nextCursor && !directoryWindowed.value;
-    error.value = "";
-  } catch {
-    if (current === epoch)
-      error.value =
-        "目录读取未完成；已加载条目保留，可重试本页。刷新可重新开始发现。";
-  } finally {
-    if (current === epoch) busy.value = false;
-  }
+  await catalog.load(true);
 }
 onBeforeUnmount(() => {
   ++epoch;
+  if (catalog !== sharedDirectory) catalog.dispose();
 });
+const resource = computed(() =>
+  selected.value ? policyResource(selected.value, catalog) : undefined,
+);
+defineExpose({
+  resource,
+  openPolicy(id: string) {
+    if (request.value || props.allowNewRequests === false) return false;
+    const item = directory.value.find((item) => item.policyId === id);
+    if (!item) return false;
+    select(item);
+    return true;
+  },
+});
+
 function select(item: SelfServiceDirectoryItem) {
   if (request.value || props.allowNewRequests === false) return;
   selected.value = item;
@@ -358,7 +329,9 @@ async function cancel(id: string) {
     if (current === epoch) busy.value = false;
   }
 }
-onMounted(refresh);
+onMounted(() => {
+  if (!catalog.state.asOf) void refresh();
+});
 watch(
   () => currentUser.value?.generation,
   () => {
@@ -367,12 +340,11 @@ watch(
     inputs.value = {};
     fieldErrors.value = new Map();
     error.value = "";
-    directory.value = [];
     selected.value = undefined;
     choice.value = undefined;
     request.value = "";
     status.value = undefined;
-    void refresh();
+    if (catalog !== sharedDirectory) catalog.dispose();
   },
 );
 function presentationText(value: unknown, fallback = "未提供"): string {
@@ -383,7 +355,9 @@ function presentationText(value: unknown, fallback = "未提供"): string {
   <section class="policy-self-service" aria-label="企业自助任务">
     <div class="section-heading">
       <h3>{{ kind === "enrollment" ? "MDM 注册" : "企业自助任务" }}</h3>
-      <button :disabled="busy" @click="refresh">刷新任务</button>
+      <button :disabled="busy || catalog.state.loading" @click="refresh">
+        刷新任务
+      </button>
     </div>
     <label v-if="kind === 'software'"
       >发布分类
@@ -405,13 +379,23 @@ function presentationText(value: unknown, fallback = "未提供"): string {
           : "目录尚未完整，搜索与计数仅覆盖当前加载范围"
       }}。
     </p>
-    <button v-if="nextCursor" :disabled="busy" @click="loadMore">
+    <button
+      v-if="nextCursor"
+      :disabled="busy || catalog.state.loading"
+      @click="loadMore"
+    >
       继续加载
     </button>
-    <button v-if="error && !nextCursor" :disabled="busy" @click="refresh">
+    <button
+      v-if="error && !nextCursor"
+      :disabled="busy || catalog.state.loading"
+      @click="refresh"
+    >
       重试读取
     </button>
-    <p v-if="error" role="status">{{ error }}</p>
+    <p v-if="error || catalog.state.error" role="status">
+      {{ error || catalog.state.error }}
+    </p>
     <p
       v-if="
         kind === 'enrollment' &&

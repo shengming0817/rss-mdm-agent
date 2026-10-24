@@ -28,7 +28,17 @@ const quality = (value?: CollectedData) =>
       ? "观察已过期"
       : value.quality === "complete"
         ? "已采集"
-        : value.quality;
+        : ((
+            {
+              partial: "部分结果",
+              truncated: "结果已截断",
+              failed: "采集失败",
+              unsupported: "不支持",
+              denied: "无权读取",
+              empty: "已采集，结果为空",
+              mappingUnsupported: "映射不支持",
+            } as Record<string, string>
+          )[value.quality] ?? "结果未知");
 const collectedTime = (value?: CollectedData) =>
   value?.collectedAt == null
     ? ""
