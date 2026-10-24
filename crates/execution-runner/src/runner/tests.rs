@@ -172,7 +172,7 @@ fn exhausted_descriptors_report_capacity_and_release_capture_before_recovery() {
     assert_eq!(facts.failure_kind, ProcessFailureKind::None);
     assert_eq!(facts.stdout, b"recovered");
     f.runner.acknowledge_capture(&f.plan, &facts).unwrap();
-    assert!(f.runner.records.lock().unwrap().is_empty());
+    assert!(!f.runner.records.lock().unwrap().is_empty());
 }
 #[test]
 fn argv_is_literal_and_exit_is_not_effect_or_tree_proof() {
@@ -377,38 +377,27 @@ fn host_death_closes_owner_pipe_and_reaps_cooperative_group() {
 }
 
 #[test]
-fn acknowledged_final_capture_releases_slots_without_evicting_live_owners() {
+fn acknowledging_output_does_not_release_an_unclosed_activity() {
     let mut f = fixture("printf ok\n", vec![LaunchArg::ArtifactPath {}], 128, 1000);
     f.runner.capacity = 1;
-    for n in 0..4 {
-        let id = AttemptId::new(format!("serial-{n}")).unwrap();
-        f.runner
-            .launch(
-                &f.plan,
-                &id,
-                DispatchAllowance {
-                    deadline_unix_ms: now().unwrap() + 1000,
-                    remaining_timeout_ms: 1000,
-                    remaining_output_bytes: 128,
-                },
-            )
-            .unwrap();
-        assert!(matches!(
-            f.runner.launch(
-                &f.plan,
-                &AttemptId::new("extra").unwrap(),
-                DispatchAllowance {
-                    deadline_unix_ms: now().unwrap() + 1000,
-                    remaining_timeout_ms: 1000,
-                    remaining_output_bytes: 128
-                }
-            ),
-            Err(Error::Capacity)
-        ));
-        let facts = finish(&f, &id);
-        f.runner.acknowledge_capture(&f.plan, &facts).unwrap();
-        assert!(f.runner.evidence(&f.plan, &id).unwrap().is_none());
-    }
+    let id = start(&f, 128, 1000);
+    let facts = finish(&f, &id);
+    assert!(facts.finished);
+    assert!(!facts.quiescent);
+    f.runner.acknowledge_capture(&f.plan, &facts).unwrap();
+    assert_eq!(f.runner.evidence(&f.plan, &id).unwrap(), Some(facts));
+    assert!(matches!(
+        f.runner.launch(
+            &f.plan,
+            &AttemptId::new("extra").unwrap(),
+            DispatchAllowance {
+                deadline_unix_ms: now().unwrap() + 1000,
+                remaining_timeout_ms: 1000,
+                remaining_output_bytes: 128,
+            }
+        ),
+        Err(Error::Capacity)
+    ));
 }
 
 #[tokio::test]
@@ -593,8 +582,8 @@ fn macos_capture_is_durable_and_reopened_attempt_does_not_launch() {
         std::thread::sleep(Duration::from_millis(20));
     }
     assert!(
-        carrier.0.records.lock().unwrap().is_empty(),
-        "capture acknowledgement retires process owner"
+        !carrier.0.records.lock().unwrap().is_empty(),
+        "capture acknowledgement retains the owner while activity closure is unknown"
     );
     assert_eq!(carrier.1.load(Ordering::SeqCst), 1);
     drop(app);
@@ -835,7 +824,7 @@ fn application_cancel_captures_real_process_and_reopen_does_not_dispatch() {
         assert!(Instant::now() < until);
         std::thread::sleep(Duration::from_millis(10));
     }
-    assert!(carrier.0.records.lock().unwrap().is_empty());
+    assert!(!carrier.0.records.lock().unwrap().is_empty());
     drop(app);
     drop(carrier);
     let empty = TestCarrier(

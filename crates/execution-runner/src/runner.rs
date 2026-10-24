@@ -660,7 +660,7 @@ impl RunnerPort for NativeRunner {
             {
                 return Err(Error::Conflict);
             }
-            if plan.spec().execution.software_program().is_none()
+            if (plan.spec().execution.software_program().is_none() && facts.quiescent)
                 || record.progress.complete(plan)?
                 || record.progress.closed(plan)?
             {

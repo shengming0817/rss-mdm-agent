@@ -4,7 +4,7 @@ use super::*;
 use ::windows::{
     core::HSTRING,
     ApplicationModel::Package,
-    Management::Deployment::{PackageInstallState, PackageManager, PackageTypes},
+    Management::Deployment::{PackageManager, PackageTypes},
     Win32::System::WinRT::{RoInitialize, RoUninitialize, RO_INIT_MULTITHREADED},
 };
 use std::collections::{BTreeMap, BTreeSet};
@@ -107,36 +107,45 @@ fn uninstall(
         Err(e) => return Err(e),
     };
     let before = registry::names(&root, budget, 65535)?;
+    let mut failure = None;
     for native in &before {
         budget.check()?;
-        let key = open(&format!("{PATH}\\{native}"))?;
-        let optional = |name: &str| -> Result<String, Status> {
-            match registry::value(&key, name, w::RegistryType::Sz) {
-                Ok(v) => v.as_str().map(str::to_owned).ok_or(Status::Invalid),
-                Err(Status::Missing) => Ok(String::new()),
-                Err(e) => Err(e),
+        let result = (|| {
+            let key = open(&format!("{PATH}\\{native}"))?;
+            let optional = |name: &str| -> Result<String, Status> {
+                match registry::software_string(&key, name) {
+                    Ok(v) => Ok(v),
+                    Err(Status::Missing) => Ok(String::new()),
+                    Err(e) => Err(e),
+                }
+            };
+            let view = match view {
+                w::RegistryView::Registry32 => "32",
+                w::RegistryView::Registry64 => "64",
+            };
+            rows.push(item(
+                &format!("win32.uninstall.{view}"),
+                owner,
+                view,
+                native,
+                optional("DisplayName")?,
+                optional("DisplayVersion")?,
+                optional("Publisher")?,
+                optional("InstallLocation")?,
+            )?)
+        })();
+        if let Err(error) = result {
+            if matches!(error, Status::Timeout | Status::Truncated) {
+                return Err(error);
             }
-        };
-        let view = match view {
-            w::RegistryView::Registry32 => "32",
-            w::RegistryView::Registry64 => "64",
-        };
-        rows.push(item(
-            &format!("win32.uninstall.{view}"),
-            owner,
-            view,
-            native,
-            optional("DisplayName")?,
-            optional("DisplayVersion")?,
-            optional("Publisher")?,
-            optional("InstallLocation")?,
-        )?)?;
+            failure.get_or_insert(error);
+        }
     }
     let after = registry::names(&root, budget, 65535)?;
     if before.into_iter().collect::<BTreeSet<_>>() != after.into_iter().collect() {
         return Err(Status::Invalid);
     }
-    Ok(())
+    failure.map_or(Ok(()), Err)
 }
 fn package(p: &Package, owner: &str, origin: &str) -> Result<Row, Status> {
     let identity = p.Id().map_err(error)?;
@@ -188,17 +197,16 @@ fn packages(
             budget.check()?;
             let user = users.Current().map_err(error)?;
             let sid = text(user.UserSecurityId().map_err(error)?)?;
-            if !expected.contains(&sid)
-                || !owners.insert(sid.clone())
-                || user.InstallState().map_err(error)? != PackageInstallState::Installed
-            {
+            if !owners.insert(sid.clone()) {
                 return Err(Status::Invalid);
             }
-            rows.push(package(&p, &sid, "msix.registered")?)?;
+            if super::super::values::package_installed(user.InstallState().map_err(error)?.0)? {
+                if !expected.contains(&sid) {
+                    return Err(Status::Partial);
+                }
+                rows.push(package(&p, &sid, "msix.registered")?)?;
+            }
             users.MoveNext().map_err(error)?;
-        }
-        if owners.is_empty() {
-            return Err(Status::Invalid);
         }
         iterator.MoveNext().map_err(error)?;
     }

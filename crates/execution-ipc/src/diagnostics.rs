@@ -16,6 +16,10 @@ pub(crate) fn record(stage: Stage, error: Error) {
 pub fn record_startup_failure(kind: ProcessFailureKind) {
     emit(Stage::Startup, kind);
 }
+/// Record an independent background projection failure through the existing OS sink.
+pub fn record_background_failure(kind: ProcessFailureKind) {
+    emit(Stage::Reconcile, kind);
+}
 fn line(stage: Stage, kind: ProcessFailureKind, mode: &str) -> String {
     format!("rss-execution stage={stage:?} failure={kind:?} mode={mode}")
 }

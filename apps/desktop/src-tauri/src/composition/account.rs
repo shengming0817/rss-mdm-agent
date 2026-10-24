@@ -305,16 +305,6 @@ fn enterprise_client(ca: Option<Vec<u8>>) -> Result<Client> {
 }
 
 impl EnterpriseSession {
-    pub(super) fn employee_proof(&self) -> Result<zeroize::Zeroizing<String>> {
-        let proof = self
-            .cookie
-            .strip_prefix("__Host-identity-session=")
-            .ok_or_else(invalid)?;
-        if proof.len() != 64 || !proof.bytes().all(|b| b.is_ascii_hexdigit()) {
-            return Err(invalid());
-        }
-        Ok(zeroize::Zeroizing::new(proof.to_owned()))
-    }
     pub(super) fn native_session(
         &self,
         generation: &str,

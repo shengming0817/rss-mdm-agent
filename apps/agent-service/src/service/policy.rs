@@ -76,7 +76,6 @@ impl execution_ipc::host::SessionFence for NativeFence {
 }
 #[derive(Clone)]
 pub(super) struct NativeContext {
-    ready: bool,
     session: NativeContextSession,
     scope: SessionKey,
     epoch: u64,
@@ -224,7 +223,7 @@ impl Core {
                 })
                 .map(|(_, value)| value)
                 .ok_or(Error::Identity)?;
-            if !bound.ready || self.fences.current(&bound.scope)? != bound.epoch {
+            if self.fences.current(&bound.scope)? != bound.epoch {
                 return Err(Error::Identity);
             }
             if self.host.clock.millis()? >= bound.expires_at_unix_ms {
@@ -236,7 +235,7 @@ impl Core {
     pub(super) fn data_contexts(&self) -> Vec<(String, Id, execution_contract::NativeContextRef)> {
         self.contexts
             .values()
-            .filter(|c| c.ready && self.fences.current(&c.scope).ok() == Some(c.epoch))
+            .filter(|c| self.fences.current(&c.scope).ok() == Some(c.epoch))
             .map(|c| {
                 (
                     c.scope.subject.clone(),
@@ -256,7 +255,6 @@ impl Core {
             .get(&peer_key(command)?)
             .ok_or(Error::Identity)?;
         if self.stopping
-            || !bound.ready
             || self.fences.current(&bound.scope)? != bound.epoch
             || &bound.context != expected
         {
@@ -272,7 +270,7 @@ impl Core {
             .contexts
             .get(&peer_key(command)?)
             .ok_or(Error::Identity)?;
-        if !bound.ready || self.fences.current(&bound.scope)? != bound.epoch {
+        if self.fences.current(&bound.scope)? != bound.epoch {
             return Err(Error::Identity);
         }
         if self.host.clock.millis()? >= bound.expires_at_unix_ms {
@@ -315,10 +313,7 @@ impl Core {
             .values()
             .find(|bound| bound.scope == scope && &bound.context == session_binding)
             .ok_or(Error::Identity)?;
-        if !current.ready
-            || self.fences.current(&scope)? != current.epoch
-            || current.user() != Some(user)
-        {
+        if self.fences.current(&scope)? != current.epoch || current.user() != Some(user) {
             return Err(Error::Identity);
         }
         if self.host.clock.millis()? >= current.expires_at_unix_ms {
@@ -366,7 +361,6 @@ impl Core {
                             current.scope.subject == subject
                                 && Some(&current.scope.binding) == binding
                                 && current.context == expected
-                                && current.ready
                                 && self.fences.current(&current.scope).ok() == Some(current.epoch)
                                 && self
                                     .host
@@ -749,6 +743,11 @@ impl<S: IdentityProvider> DeviceService<S> {
         request: &Request,
         commands: &mut tokio::sync::mpsc::Receiver<Command>,
     ) -> Result<Reply, Error> {
+        if let Request::CurrentUserStatus {} = request {
+            return Ok(Reply::CurrentUserSync {
+                value: self.client.current_user_status()?,
+            });
+        }
         if let Request::RetireEnterpriseContext {
             generation,
             proof,
@@ -838,8 +837,7 @@ impl<S: IdentityProvider> DeviceService<S> {
             let old = self.core.contexts.get(&key);
             let context = match (expected, old) {
                 (Some(id), Some(old))
-                    if old.ready
-                        && &old.context.id == id
+                    if &old.context.id == id
                         && old.epoch == epoch
                         && old.expires_at_unix_ms > self.core.host.clock.millis()?
                         && old.generation == value.generation
@@ -848,7 +846,9 @@ impl<S: IdentityProvider> DeviceService<S> {
                     old.context.clone()
                 }
                 (None, Some(old))
-                    if old.epoch != epoch && !old.ready && old.generation == value.generation =>
+                    if old.epoch != epoch
+                        && old.generation == value.generation
+                        && old.user() == value.user() =>
                 {
                     old.context.clone()
                 }
@@ -876,54 +876,27 @@ impl<S: IdentityProvider> DeviceService<S> {
                 self.bridge.protect_user_session(secret)?;
                 self.core.data.protect(secret)?;
             }
-            self.core.contexts.insert(
-                key.clone(),
-                NativeContext {
-                    ready: value.user().is_none() || expected.is_some(),
-                    session: value.clone(),
-                    scope: scope.clone(),
-                    epoch,
-                    lease: lease.clone(),
-                    context: context.clone(),
-                },
-            );
-            if expected.is_none() {
-                if let (Some(user), Some(secret)) = (value.user(), value.credential()) {
-                    let owner = agent_client::current_user::Owner {
-                        peer: key.clone(),
-                        context: context.clone(),
-                    };
-                    let result = network(
-                        self.client.bind_current_user(&owner, user, secret),
-                        &mut self.core,
-                        commands,
-                    )
-                    .await;
-                    if let Err(error) = result {
-                        let mut status = self.client.current_user_status()?;
-                        if error == Error::Conflict {
-                            status.phase = agent_client::current_user::Phase::Conflict;
-                        }
-                        return Ok(Reply::CurrentUserSync { value: status });
-                    }
-                    // A successful HTTP write can outlive immediate native revocation.
-                    if self.core.fences.current(&scope)? != epoch {
-                        let _ = network(
-                            self.client.retire_current_user(&owner, Some(secret), false),
-                            &mut self.core,
-                            commands,
-                        )
-                        .await;
-                        return Err(Error::Identity);
-                    }
-                }
-            }
             // The control lane may retire the peer while credential preparation is in progress.
             let _fence = self.core.fences.admit(&scope, epoch)?;
+            // Lease refreshes from older peers must not replace a later explicit login.
+            if expected.is_none() && old.is_none_or(|old| old.generation != value.generation) {
+                if value.user().is_some() {
+                    self.core.current_user_context = Some(agent_client::current_user::Owner {
+                        peer: key.clone(),
+                        context: context.clone(),
+                    });
+                } else if self
+                    .core
+                    .current_user_context
+                    .as_ref()
+                    .is_some_and(|o| o.peer == key)
+                {
+                    self.core.current_user_context = None;
+                }
+            }
             self.core.contexts.insert(
                 key,
                 NativeContext {
-                    ready: true,
                     session: value.clone(),
                     scope,
                     epoch,
@@ -1817,33 +1790,89 @@ impl<S: IdentityProvider> DeviceService<S> {
 }
 
 impl<S: IdentityProvider> DeviceService<S> {
-    pub(super) async fn retire_expired_current_user(
+    pub(super) async fn synchronize_current_user(
         &mut self,
         commands: &mut tokio::sync::mpsc::Receiver<Command>,
     ) -> Result<(), Error> {
-        let Some(owner) = self.client.current_user_owner()? else {
-            return Ok(());
-        };
         let now = self.core.host.clock.millis()?;
-        let status = self.client.current_user_status()?;
-        // Confirmed relation state survives a service restart; native grants do not.
-        // Without its exact live context, settle that known revision rather than
-        // retaining a departed user forever. Unknown PUTs remain explicit recovery.
-        let expired =
-            self.core.contexts.get(&owner.peer).is_none_or(|bound| {
-                bound.context != owner.context || now >= bound.expires_at_unix_ms
-            });
-        if status.phase == agent_client::current_user::Phase::CleanupPending
-            || (expired && status.phase == agent_client::current_user::Phase::Bound)
-        {
-            // No new revision on CAS conflict, and an uncertain PUT still needs
-            // its original proof or explicit recovery. Revoke IPC alone is not logout.
-            let _ = network(
+        let live = |bound: &NativeContext| {
+            now < bound.expires_at_unix_ms
+                && self
+                    .core
+                    .fences
+                    .current(&bound.scope)
+                    .is_ok_and(|epoch| epoch == bound.epoch)
+        };
+        let owner = self.client.current_user_owner()?;
+        let phase = self.client.current_user_status()?.phase;
+        // Finish the original uncertain PUT with its exact proof; a later login cannot
+        // rewrite that operation. Confirmed presence follows the latest explicit login.
+        let selected = if phase == agent_client::current_user::Phase::BindingUnknown {
+            owner.as_ref()
+        } else {
+            self.core.current_user_context.as_ref()
+        };
+        let desired = selected.and_then(|selected| {
+            self.core
+                .contexts
+                .get(&selected.peer)
+                .filter(|bound| {
+                    live(bound) && bound.context == selected.context && bound.user().is_some()
+                })
+                .map(|bound| (selected.clone(), bound.clone()))
+        });
+        let result = if phase == agent_client::current_user::Phase::CleanupPending {
+            let Some(owner) = owner else {
+                return Ok(());
+            };
+            background(
                 self.client.retire_current_user(&owner, None, false),
                 &mut self.core,
                 commands,
             )
-            .await;
+            .await
+            .map(|_| ())
+        } else if let Some((selected, bound)) = desired {
+            if matches!(
+                phase,
+                agent_client::current_user::Phase::Conflict
+                    | agent_client::current_user::Phase::Invalidated
+            ) || (phase == agent_client::current_user::Phase::Bound
+                && owner.as_ref() == Some(&selected))
+            {
+                return Ok(());
+            }
+            let (Some(user), Some(proof)) = (bound.user(), bound.credential()) else {
+                return Ok(());
+            };
+            background(
+                self.client.bind_current_user(&selected, user, proof),
+                &mut self.core,
+                commands,
+            )
+            .await
+            .map(|_| ())
+        } else if let Some(owner) = owner {
+            if !matches!(
+                phase,
+                agent_client::current_user::Phase::Bound
+                    | agent_client::current_user::Phase::CleanupPending
+            ) {
+                return Ok(());
+            }
+            background(
+                self.client.retire_current_user(&owner, None, false),
+                &mut self.core,
+                commands,
+            )
+            .await
+            .map(|_| ())
+        } else {
+            return Ok(());
+        };
+        if let Err(error) = result {
+            // A presence projection grants no execution authority and never closes local login.
+            execution_ipc::record_background_failure(crate::deployment::startup_failure(error));
         }
         Ok(())
     }

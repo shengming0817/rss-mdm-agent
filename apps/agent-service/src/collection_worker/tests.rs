@@ -129,7 +129,24 @@ fn registry_values_are_typed_exact_and_not_expanded() {
     );
     assert!(registry(w::RegistryType::Dword, 11, &[0; 8]).is_err());
     assert!(registry(w::RegistryType::Dword, 4, &[0; 3]).is_err());
-    assert!(registry(w::RegistryType::Sz, 1, &utf16("unterminated")).is_err());
+    for text in ["", "unterminated", "%ProgramFiles%\\RSS"] {
+        for kind in [1, 2] {
+            assert_eq!(software_string(kind, &utf16(text)).unwrap(), text);
+        }
+    }
+    assert_eq!(
+        registry(w::RegistryType::Sz, 1, &utf16("unterminated")).unwrap(),
+        json!("unterminated")
+    );
+    assert!(software_string(4, &0u32.to_le_bytes()).is_err());
+    assert!(software_string(1, &[1]).is_err());
+    assert!(software_string(1, &utf16("one\0two")).is_err());
+    assert!(software_string(1, &[0, 0xd8]).is_err());
+    for state in [0, 1, 6] {
+        assert!(!package_installed(state).unwrap());
+    }
+    assert!(package_installed(2).unwrap());
+    assert!(package_installed(3).is_err());
     assert!(registry(w::RegistryType::Sz, 1, &[0, 0xd8, 0, 0]).is_err());
 }
 #[test]
@@ -279,30 +296,35 @@ fn malformed_quiescent_query_output_does_not_discard_other_queries() {
     .is_err());
 }
 #[test]
-fn adapter_inventory_joins_addresses_without_requiring_a_loopback_adapter() {
-    let adapters = vec![Row::from([("InterfaceIndex".into(), json!(2))])];
-    let addresses = vec![
-        Row::from([
-            ("InterfaceIndex".into(), json!(1)),
-            ("IPAddress".into(), json!("127.0.0.1")),
-        ]),
-        Row::from([
-            ("InterfaceIndex".into(), json!(2)),
-            ("IPAddress".into(), json!("192.0.2.1")),
-        ]),
-        Row::from([
-            ("InterfaceIndex".into(), json!(2)),
-            ("IPAddress".into(), json!("192.0.2.1")),
-        ]),
+fn adapter_inventory_joins_addresses_without_rewriting_scoped_ipv6() {
+    let adapters = vec![Row::from([("InterfaceIndex".into(), json!(4))])];
+    let native = [
+        (4, "fe80::1%4"),
+        (4, "2001:db8::1"),
+        (4, "2001:db8::2"),
+        (1, "::1"),
+        (4, "192.0.2.1"),
+        (1, "127.0.0.1"),
+        (4, "192.0.2.1"),
     ];
+    let addresses = native
+        .into_iter()
+        .map(|(index, ip)| {
+            Row::from([
+                ("InterfaceIndex".into(), json!(index)),
+                ("IPAddress".into(), json!(ip)),
+            ])
+        })
+        .collect();
     let joined = adapter_addresses(&adapters, addresses).unwrap();
     assert_eq!(joined.len(), 1);
-    assert_eq!(joined[&2], ["192.0.2.1".to_owned()].into());
-    let invalid = vec![Row::from([
-        ("InterfaceIndex".into(), json!(2)),
-        ("IPAddress".into(), json!("bad")),
-    ])];
-    assert_eq!(adapter_addresses(&adapters, invalid), Err(Status::Invalid));
+    assert_eq!(
+        joined[&4],
+        ["fe80::1%4", "2001:db8::1", "2001:db8::2", "192.0.2.1"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect()
+    );
     assert_eq!(
         adapter_addresses(&[adapters[0].clone(), adapters[0].clone()], vec![]),
         Err(Status::Invalid)

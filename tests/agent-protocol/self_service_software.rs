@@ -17,6 +17,8 @@ pub fn publish(
     data: &mut Data,
     path: &str,
     receipt: &str,
+    user: bool,
+    validity_seconds: i64,
 ) -> Result<SelfServiceDirectoryItem, &'static str> {
     if !idle(data) {
         return Err("current task has not settled");
@@ -25,11 +27,11 @@ pub fn publish(
     data.task = Uuid::new_v4();
     data.attempt = Uuid::new_v4();
     data.bytes = bytes;
-    data.software(1, false);
+    data.software(1, user);
     let TaskPayload::Software(mut spec) = data.offer.take().unwrap().payload else {
         unreachable!()
     };
-    spec.expires_at = data.time.now().unwrap() + 3600;
+    spec.expires_at = data.time.now().unwrap() + validity_seconds.clamp(2, 3600);
     let SoftwareTaskBehavior::Pkg(native) = &mut spec.steps[0].action.behavior else {
         unreachable!()
     };
@@ -40,6 +42,7 @@ pub fn publish(
         unreachable!()
     };
     *target = receipt.into();
+    let run_as = native.install.run_as;
     spec.definition_digest = Sha256::digest(serde_json::to_vec(&spec.steps).unwrap()).into();
     let mut item = policy_directory_fixture(data.tenant);
     item.subject = SelfServiceSubject::Device {};
@@ -54,8 +57,8 @@ pub fn publish(
             version: spec.steps[0].action.version.clone(),
             variant: "default".into(),
         },
-        run_as: ExecutionIdentity::System,
-        target: SoftwareExecutionTarget::Device,
+        run_as,
+        target: spec.steps[0].target.clone(),
     };
     data.self_service_software = Some(Template { spec: *spec });
     data.self_service_directory = Some(SelfServiceDirectoryResponse {
@@ -212,7 +215,14 @@ mod tests {
         )
         .unwrap();
         let mut data = server.data.lock().unwrap();
-        let item = publish(&mut data, package.to_str().unwrap(), "org.rss.fixture").unwrap();
+        let item = publish(
+            &mut data,
+            package.to_str().unwrap(),
+            "org.rss.fixture",
+            false,
+            3600,
+        )
+        .unwrap();
         assert!(data.offer.is_none());
         assert!(data.invocations.is_empty());
         let input = SelfServiceInvoke {

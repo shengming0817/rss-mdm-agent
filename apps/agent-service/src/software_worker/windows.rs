@@ -29,18 +29,26 @@ pub(super) fn execute(
         _ => Err(Error::Unsupported),
     }
 }
-fn authenticode(request: &WorkerRequest, key: &str) -> Result<(), Error> {
+pub(super) fn authenticode(request: &WorkerRequest, key: &str) -> Result<(), Error> {
     for signature in request
         .action
         .signatures
         .iter()
         .filter(|s| s.artifact == key)
     {
-        if !matches!(
-            signature.mechanism,
-            wire::SoftwareTaskSignatureMechanism::Authenticode
-                | wire::SoftwareTaskSignatureMechanism::Msix
-        ) {
+        if signature.mechanism == wire::SoftwareTaskSignatureMechanism::Msix {
+            let wire::SoftwareTaskBehavior::Msix(msix) = &request.action.behavior else {
+                return Err(Error::Untrusted);
+            };
+            if signature.publisher != msix.identity.publisher
+                || key != request.action.behavior.installer()
+            {
+                return Err(Error::Untrusted);
+            }
+            // PackageManager validates the native MSIX signature and certificate trust.
+            continue;
+        }
+        if signature.mechanism != wire::SoftwareTaskSignatureMechanism::Authenticode {
             return Err(Error::Untrusted);
         }
         let args = script_plan::ScriptProfile::PowerShell7.materialized_file_argv(
@@ -84,12 +92,6 @@ fn executable(
         }
         _ => return Err(Error::Unsupported),
     };
-    if !request.action.signatures.iter().any(|signature| {
-        signature.artifact == *key
-            && signature.mechanism == wire::SoftwareTaskSignatureMechanism::Authenticode
-    }) {
-        return Err(Error::Unsupported);
-    }
     for artifact in request
         .action
         .signatures
@@ -177,19 +179,20 @@ fn executable(
         return Err(Error::Untrusted);
     }
     let (code, stdout, stderr) = run_tool(request, &image, &invocation.arguments)?;
-    // Root/Job completion cannot bind work delegated through services or WMI to this attempt.
-    // Retain the exact layout for that activity; never infer closure from desired-state detection.
-    let mut completion = result(
+    drop(leases);
+    // An arbitrary EXE can delegate work to WMI or a service outside this Job.
+    // Retain the layout and activity barrier without installer-specific closure proof.
+    let mut outcome = result(
         code,
         None,
         format!(
-            "{}{}\nexternal installer completion is unproven; retained layout and software claim",
+            "{}{}",
             String::from_utf8_lossy(&stdout),
             String::from_utf8_lossy(&stderr),
         ),
     );
-    completion.1.closed = false;
-    Ok(completion)
+    outcome.1.closed = false;
+    Ok(outcome)
 }
 
 pub(super) fn detect(
@@ -552,7 +555,12 @@ fn deployment(
                 Deployment::TargetUserRegistration { .. } => {
                     let options = AddPackageOptions::new().map_err(|_| Error::Unsupported)?;
                     options
-                        .SetAllowUnsigned(msix.allow_unsigned)
+                        .SetAllowUnsigned(
+                            msix.allow_unsigned
+                                && !request.action.signatures.iter().any(|s| {
+                                    s.mechanism == wire::SoftwareTaskSignatureMechanism::Msix
+                                }),
+                        )
                         .map_err(|_| Error::Unsupported)?;
                     options
                         .SetForceUpdateFromAnyVersion(
@@ -857,5 +865,5 @@ pub(crate) fn sideload_allowed() -> Result<bool, Error> {
         status.ok().map_err(|_| Error::Unavailable)?;
         return Ok(length == 4 && value == 1);
     }
-    Ok(false)
+    Ok(crate::os_version::current()? >= [10, 0, 19041, 0])
 }

@@ -148,11 +148,8 @@ pub(super) fn registry(kind: w::RegistryType, actual: u32, bytes: &[u8]) -> Resu
                 .chunks_exact(2)
                 .map(|b| u16::from_le_bytes([b[0], b[1]]))
                 .collect();
-            if words.last() != Some(&0) {
-                return Err(Status::Invalid);
-            }
             if kind == MultiSz {
-                if words.len() < 2 || words[words.len() - 2] != 0 {
+                if !words.ends_with(&[0, 0]) {
                     return Err(Status::Invalid);
                 }
                 let text =
@@ -166,8 +163,8 @@ pub(super) fn registry(kind: w::RegistryType, actual: u32, bytes: &[u8]) -> Resu
                     Value::Array(text.split('\0').map(|s| Value::String(s.into())).collect())
                 }
             } else {
-                let text =
-                    String::from_utf16(&words[..words.len() - 1]).map_err(|_| Status::Invalid)?;
+                let text = String::from_utf16(words.strip_suffix(&[0]).unwrap_or(&words))
+                    .map_err(|_| Status::Invalid)?;
                 if text.contains('\0') {
                     return Err(Status::Invalid);
                 }
@@ -177,6 +174,29 @@ pub(super) fn registry(kind: w::RegistryType, actual: u32, bytes: &[u8]) -> Resu
     };
     Ok(value)
 }
+// Software metadata may use either native string type; values stay unexpanded.
+#[cfg(any(windows, test))]
+pub(super) fn software_string(actual: u32, bytes: &[u8]) -> Result<String, Status> {
+    let kind = match actual {
+        1 => w::RegistryType::Sz,
+        2 => w::RegistryType::ExpandSz,
+        _ => return Err(Status::Invalid),
+    };
+    registry(kind, actual, bytes)?
+        .as_str()
+        .map(str::to_owned)
+        .ok_or(Status::Invalid)
+}
+
+#[cfg(any(windows, test))]
+pub(super) fn package_installed(state: i32) -> Result<bool, Status> {
+    match state {
+        2 => Ok(true),
+        0 | 1 | 6 => Ok(false),
+        _ => Err(Status::Invalid),
+    }
+}
+
 /// Retains bounded evidence, and never infers natural completion from the row limit.
 pub(super) struct Rows<'a> {
     pub query: &'a w::NativeQuery,
@@ -336,9 +356,9 @@ pub(super) fn adapter_addresses(
             .get("IPAddress")
             .and_then(Value::as_str)
             .ok_or(Status::Missing)?
-            .parse::<std::net::IpAddr>()
-            .map_err(|_| Status::Invalid)?
-            .to_string();
+            .to_owned();
+        // Windows supplies scoped IPv6 strings (for example fe80::1%4). The
+        // wire declares strings; IpAddr parsing would reject valid native data.
         values.insert(ip);
         if values.len() > 64 {
             return Err(Status::Truncated);

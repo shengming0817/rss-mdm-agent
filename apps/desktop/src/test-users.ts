@@ -220,6 +220,10 @@ export function accountErrorMessage(error: unknown): string {
   if (code === "default_organization")
     return "默认组织名称来自应用内置配置；请选择其它连接。";
   if (code === "cancelled") return "已取消登录";
+  if (code === "execution_unavailable")
+    return "本机执行服务未确认身份切换，请在设置中检查服务状态。";
+  if (code === "current_user_unconfirmed")
+    return "设备当前使用者尚未清理，请重试；本机工作区仍可使用。";
   if (typeof code === "string" && code.startsWith("account/")) {
     const [, stage, reason] = code.split("/");
     try {

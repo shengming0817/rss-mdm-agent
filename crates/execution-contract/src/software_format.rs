@@ -64,7 +64,7 @@ pub enum SoftwareSignature {
         /// Approved native publisher.
         publisher: PackageValue,
     },
-    /// Apple Developer ID TeamIdentifier on image and selected payload.
+    /// Apple Developer ID TeamIdentifier on the exact declared artifact.
     AppleDeveloperId {
         /// Exact image or package artifact.
         artifact: ExactArtifactRef,

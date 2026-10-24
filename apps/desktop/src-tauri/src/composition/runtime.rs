@@ -27,7 +27,6 @@ pub struct DesktopRuntime {
     pub organizations: std::sync::Mutex<super::account::Organizations>,
     identity: super::identity::IdentityOwner,
     cleanup_pending: AtomicBool,
-    retiring_account: AtomicBool,
     account_failure: std::sync::Mutex<Option<ai_session_contract::AccountFailure>>,
     account_binding: std::sync::Mutex<ai_session_contract::AccountBindingState>,
     host: super::supervisor::HostSupervisor,
@@ -78,9 +77,11 @@ impl DesktopRuntime {
                     },
                 }),
                 Request::RevokeContext {} => Ok(Reply::ContextRevoked),
-                Request::RetireEnterpriseContext { .. } => Ok(Reply::CurrentUserSync {
-                    value: Default::default(),
-                }),
+                Request::CurrentUserStatus {} | Request::RetireEnterpriseContext { .. } => {
+                    Ok(Reply::CurrentUserSync {
+                        value: Default::default(),
+                    })
+                }
                 _ => Err(execution_app::Error::Unavailable),
             }
         });
@@ -96,7 +97,6 @@ impl DesktopRuntime {
                     .map_err(|_| "organization settings unavailable")?,
             ),
             cleanup_pending: AtomicBool::new(false),
-            retiring_account: AtomicBool::new(false),
             account_failure: std::sync::Mutex::new(None),
             account_binding: std::sync::Mutex::new(
                 ai_session_contract::AccountBindingState::Unbound,
@@ -160,30 +160,40 @@ impl DesktopRuntime {
             .map_err(|_| unavailable())?
             .require(generation)
     }
-    pub fn execution_for(&self, generation: &str) -> ui::Result<ExecutionHandle> {
-        let context = self.current(generation)?;
+    pub async fn execution_for(&self, generation: &str) -> ui::Result<ExecutionHandle> {
+        let _switch = self.switching.lock().await;
+        self.retry_cleanup().await?;
+        let mut context = self.current_locked(generation)?;
+        if context.execution_binding.is_none() {
+            self.bind_execution_context(&mut context).await?;
+            self.users
+                .lock()
+                .map_err(|_| unavailable())?
+                .replace_current(context.clone())?;
+        }
         self.execution
             .for_caller(context.user.user_id.as_str())
             .map_err(|_| unavailable())
     }
-    pub async fn policy_execution_for(&self, generation: &str) -> ui::Result<ExecutionHandle> {
-        let _switch = self.switching.lock().await;
-        let context = self.current_locked(generation)?;
-        let handle = self
-            .execution
-            .for_caller(context.user.user_id.as_str())
-            .map_err(|_| unavailable())?;
-        if context.execution_binding.is_none() {
-            return Err(unavailable());
-        }
-        Ok(handle)
-    }
-    pub fn account_status(&self) -> ui::Result<ai_session_contract::AccountStatus> {
+    pub async fn account_status(&self) -> ui::Result<ai_session_contract::AccountStatus> {
+        use ai_session_contract::AccountBindingState as B;
+        use execution_contract::CurrentUserSyncPhase as P;
+        let local = *self.account_binding.lock().map_err(|_| unavailable())?;
+        let binding = match self.execution.current_user_status().await {
+            Ok(status) => match status.phase {
+                P::BindingUnknown => B::BindingUnknown,
+                P::CleanupPending => B::CleanupPending,
+                P::Conflict => B::Conflict,
+                P::Invalidated => B::Invalidated,
+                P::Unbound | P::Bound => local,
+            },
+            Err(_) => local,
+        };
         Ok(ai_session_contract::AccountStatus {
             kind: ai_session_contract::AccountStatusKind::AccountStatus,
             schema_version: ai_session_contract::AccountStatusSchemaVersion::VALUE,
             current: self.users.lock().map_err(|_| unavailable())?.page().current,
-            binding: *self.account_binding.lock().map_err(|_| unavailable())?,
+            binding,
             failure: self
                 .account_failure
                 .lock()
@@ -204,52 +214,12 @@ impl DesktopRuntime {
     // Every identity transition attempts remote retirement even after local persistence fails.
     async fn retire_locked(&self) -> ui::Result<()> {
         self.registration_epoch.fetch_add(1, Ordering::AcqRel);
-        let pending = self
-            .identity
-            .pending
-            .lock()
-            .map_err(|_| unavailable())?
-            .clone();
-        // Keep the retiring incarnation after its public view is revoked. A failed
-        // DELETE must retry with the original generation, not become an ownerless ACK.
-        let retiring = pending.or_else(|| self.identity.snapshot().ok());
-        let generation = retiring.as_ref().map(|u| u.generation.to_string());
-        *self.identity.pending.lock().map_err(|_| unavailable())? = retiring;
-        let enterprise = self.identity.session()?.is_some();
         let local = self.revoke_locked().await;
-        if enterprise
-            && *self.account_binding.lock().map_err(|_| unavailable())?
-                != ai_session_contract::AccountBindingState::NotApplicable
-        {
-            self.retiring_account.store(true, Ordering::Release);
-            let proof = self
-                .identity
-                .session()?
-                .map(|account| account.employee_proof())
-                .transpose()?;
-            let retired = self
-                .execution
-                .retire_enterprise(
-                    generation.and_then(|g| execution_contract::Id::new(g).ok()),
-                    proof,
-                    false,
-                )
-                .await;
-            if let Err(error) = retired {
-                self.record_binding_error(&error)?;
-                if error.code != "binding_conflict" && error.code != "binding_invalidated" {
-                    *self.account_binding.lock().map_err(|_| unavailable())? =
-                        ai_session_contract::AccountBindingState::CleanupPending;
-                }
-                return Err(error);
-            }
-        }
         let remote = self.logout_remote().await;
-        self.retiring_account.store(false, Ordering::Release);
         *self.identity.pending.lock().map_err(|_| unavailable())? = None;
         *self.account_binding.lock().map_err(|_| unavailable())? =
             ai_session_contract::AccountBindingState::Unbound;
-        self.account_result(remote.and(local))
+        self.account_result(local.and(remote))
     }
     pub async fn select_user(&self, name: &str) -> ui::Result<ai_session_contract::UserContext> {
         let _switch = self.switching.lock().await;
@@ -258,9 +228,15 @@ impl DesktopRuntime {
             .lock()
             .map_err(|_| unavailable())?
             .prepare(name)?;
-        self.retire_locked().await?;
+        let retired = self.retire_locked().await;
+        if let Err(error) = &retired {
+            if error.code != "logout_unconfirmed" {
+                return Err(error.clone());
+            }
+        }
         let context = self.users.lock().map_err(|_| unavailable())?.commit(page)?;
-        self.account_result(self.activate_context(context).await)
+        let context = self.activate_context(context).await?;
+        self.account_result(retired.map(|()| context))
     }
     async fn retry_cleanup(&self) -> ui::Result<()> {
         if self.cleanup_pending.load(Ordering::Acquire) {
@@ -304,10 +280,15 @@ impl DesktopRuntime {
     }
     pub async fn logout(&self) -> ui::Result<()> {
         let _switch = self.switching.lock().await;
-        self.retire_locked().await?;
+        let retired = self.retire_locked().await;
+        if let Err(error) = &retired {
+            if error.code != "logout_unconfirmed" {
+                return Err(error.clone());
+            }
+        }
         let context = self.users.lock().map_err(|_| unavailable())?.device()?;
         self.activate_context(context).await?;
-        Ok(())
+        retired
     }
     async fn logout_remote(&self) -> ui::Result<()> {
         match self.identity.take_session()? {
@@ -323,8 +304,14 @@ impl DesktopRuntime {
     pub async fn select_device(&self) -> ui::Result<ai_session_contract::UserContext> {
         let _switch = self.switching.lock().await;
         let next = self.users.lock().map_err(|_| unavailable())?.device()?;
-        self.retire_locked().await?;
-        self.account_result(self.activate_context(next).await)
+        let retired = self.retire_locked().await;
+        if let Err(error) = &retired {
+            if error.code != "logout_unconfirmed" {
+                return Err(error.clone());
+            }
+        }
+        let context = self.activate_context(next).await?;
+        self.account_result(retired.map(|()| context))
     }
     pub async fn login(
         &self,
@@ -344,116 +331,104 @@ impl DesktopRuntime {
         Fut: std::future::Future<Output = ui::Result<super::account::EnterpriseSession>>,
     {
         let _switch = self.switching.lock().await;
-        // Revoke before authenticating another organization: a failed login cannot retain the old grant.
-        self.retire_locked().await?;
-        let account = self.account_result(authenticate().await)?;
+        // Retire the old local authority before changing organizations. Remote logout
+        // confirmation does not grant or withhold access to the device workspace.
+        if let Err(error) = self.retire_locked().await {
+            if error.code != "logout_unconfirmed" {
+                return Err(error);
+            }
+            execution_ipc::record_background_failure(
+                execution_contract::ProcessFailureKind::Unavailable,
+            );
+        }
+        let account = match authenticate().await {
+            Ok(account) => account,
+            Err(error) => {
+                let device = self.users.lock().map_err(|_| unavailable())?.device()?;
+                self.activate_context(device).await?;
+                return self.account_result(Err(error));
+            }
+        };
         let next = account.context()?;
         self.identity.set_session(Some(account))?;
-        *self.identity.pending.lock().map_err(|_| unavailable())? = Some(next.clone());
-        let result = self.activate_context(next).await;
-        let result = match result {
-            Err(error)
-                if !matches!(
-                    error.code,
-                    "binding_unknown"
-                        | "binding_conflict"
-                        | "binding_invalidated"
-                        | "cleanup_pending"
-                        | "execution_unavailable"
-                ) =>
-            {
-                match self.retire_locked().await {
-                    Ok(()) => Err(error),
-                    Err(retired) => Err(retired),
-                }
-            }
-            other => other,
-        };
-        if let Err(error) = &result {
-            if self.identity.session()?.is_some() {
-                self.record_binding_error(error)?;
+        match self.activate_context(next).await {
+            Ok(context) => self.account_result(Ok(context)),
+            Err(error) => {
+                let _ = self.retire_locked().await;
+                Err(error)
             }
         }
-        self.account_result(result)
+    }
+    async fn bind_execution_context(
+        &self,
+        next: &mut ai_session_contract::UserContext,
+    ) -> ui::Result<()> {
+        let session = match &next.identity {
+            ai_session_contract::AccountIdentity::UserDevice { .. } => self
+                .identity
+                .session()?
+                .ok_or_else(unavailable)?
+                .native_session(next.generation.as_str())?,
+            ai_session_contract::AccountIdentity::Device { .. } => {
+                execution_ipc::host::NativeContextSession {
+                    access: execution_ipc::host::NativeAccess::Device {},
+                    generation: execution_contract::Id::new(next.generation.as_str())
+                        .map_err(|_| unavailable())?,
+                    expires_at_unix_ms: u64::MAX,
+                }
+            }
+        };
+        let expected = next
+            .execution_binding
+            .as_ref()
+            .map(|id| execution_contract::Id::new(id.as_str()).map_err(|_| unavailable()))
+            .transpose()?;
+        let result = self.execution.bind_context(session, expected).await;
+        match result {
+            Ok(binding) => {
+                next.execution_binding =
+                    Some(binding.id.as_str().parse().map_err(|_| unavailable())?);
+                *self.account_binding.lock().map_err(|_| unavailable())? = if matches!(
+                    next.identity,
+                    ai_session_contract::AccountIdentity::UserDevice { .. }
+                ) {
+                    ai_session_contract::AccountBindingState::Bound
+                } else {
+                    ai_session_contract::AccountBindingState::Unbound
+                };
+                Ok(())
+            }
+            Err(error) => {
+                next.execution_binding = None;
+                *self.account_binding.lock().map_err(|_| unavailable())? =
+                    ai_session_contract::AccountBindingState::BindingUnknown;
+                Err(error)
+            }
+        }
     }
     async fn activate_context(
         &self,
         mut next: ai_session_contract::UserContext,
     ) -> ui::Result<ai_session_contract::UserContext> {
-        let session = match self.identity.session()? {
-            Some(account) => account.native_session(next.generation.as_str())?,
-            None => execution_ipc::host::NativeContextSession {
-                access: execution_ipc::host::NativeAccess::Device {},
-                generation: execution_contract::Id::new(next.generation.as_str())
-                    .map_err(|_| unavailable())?,
-                expires_at_unix_ms: u64::MAX,
-            },
-        };
-        let published = async {
-            match self.execution.bind_context(session, None).await {
-                Ok(binding) => {
-                    next.execution_binding =
-                        Some(binding.id.as_str().parse().map_err(|_| unavailable())?);
-                    *self.account_binding.lock().map_err(|_| unavailable())? =
-                        if self.identity.session()?.is_some() {
-                            ai_session_contract::AccountBindingState::Bound
-                        } else {
-                            ai_session_contract::AccountBindingState::Unbound
-                        };
-                }
-                Err(error) => {
-                    if self.cleanup_pending.load(Ordering::Acquire)
-                        || !self.execution.independent_login_allowed().await
-                    {
-                        return Err(error);
-                    }
-                    *self.account_binding.lock().map_err(|_| unavailable())? =
-                        ai_session_contract::AccountBindingState::NotApplicable;
-                }
+        // Authentication and local profile publication do not depend on execution service availability.
+        // A missing native binding is retried only by an actual resource operation or explicit recovery.
+        if self.bind_execution_context(&mut next).await.is_err() {
+            execution_ipc::record_background_failure(
+                execution_contract::ProcessFailureKind::Unavailable,
+            );
+        }
+        let published = self.users.lock().map_err(|_| unavailable())?.activate(next);
+        let context = match published {
+            Ok(context) => context,
+            Err(error) => {
+                // Publication failure must retire an acknowledged or uncertain local grant.
+                // The existing cleanup barrier retains an unconfirmed native revocation.
+                let _ = self.revoke_locked().await;
+                return Err(error);
             }
-            self.users.lock().map_err(|_| unavailable())?.activate(next)
-        }
-        .await;
-        if let Err(error) = &published {
-            if self.identity.session()?.is_some()
-                && matches!(
-                    error.code,
-                    "binding_unknown"
-                        | "binding_conflict"
-                        | "binding_invalidated"
-                        | "cleanup_pending"
-                        | "execution_unavailable"
-                )
-            {
-                self.record_binding_error(error)?;
-            }
-        }
-        if published.is_ok() {
-            *self.identity.pending.lock().map_err(|_| unavailable())? = None;
-        }
-        if published.as_ref().is_err_and(|error| {
-            !matches!(
-                error.code,
-                "binding_unknown" | "binding_conflict" | "binding_invalidated" | "cleanup_pending"
-            )
-        }) {
-            // Ownership transfers only after local publication. Retain uncertain
-            // native retirement so the background owner can retry the same cleanup.
-            self.cleanup_pending.store(true, Ordering::Release);
-            self.detach_views().await;
-            let _ = self.retry_cleanup().await;
-        }
-        published
-    }
-    fn record_binding_error(&self, error: &ui::ServiceError) -> ui::Result<()> {
-        use ai_session_contract::AccountBindingState as B;
-        *self.account_binding.lock().map_err(|_| unavailable())? = match error.code {
-            "binding_conflict" => B::Conflict,
-            "binding_invalidated" => B::Invalidated,
-            "cleanup_pending" => B::CleanupPending,
-            _ => B::BindingUnknown,
         };
-        Ok(())
+        *self.identity.pending.lock().map_err(|_| unavailable())? = None;
+        Ok(context)
     }
     pub async fn recover_account(
         &self,
@@ -462,22 +437,24 @@ impl DesktopRuntime {
         let _switch = self.switching.lock().await;
         self.retry_cleanup().await?;
         if clear {
-            self.revoke_locked().await?;
-            let result = self.execution.retire_enterprise(None, None, true).await;
-            if let Err(error) = result {
-                self.record_binding_error(&error)?;
-                return Err(error);
+            let retired = self.retire_locked().await;
+            if let Err(error) = &retired {
+                if error.code != "logout_unconfirmed" {
+                    return Err(error.clone());
+                }
             }
-            self.logout_remote().await?;
-            self.retiring_account.store(false, Ordering::Release);
-            *self.identity.pending.lock().map_err(|_| unavailable())? = None;
-            *self.account_binding.lock().map_err(|_| unavailable())? =
-                ai_session_contract::AccountBindingState::Unbound;
-            return Ok(None);
-        }
-        if self.retiring_account.load(Ordering::Acquire) {
-            self.retire_locked().await?;
-            return Ok(None);
+            // Explicit recovery is the sole permission to abandon an unreplayable
+            // projection PUT. It does not clear its retained evidence.
+            let projection = self.execution.recover_current_user().await;
+            let device = self.users.lock().map_err(|_| unavailable())?.device()?;
+            let context = self.activate_context(device).await?;
+            if projection?.phase != execution_contract::CurrentUserSyncPhase::Unbound {
+                return Err(ui::error(
+                    "current_user_unconfirmed",
+                    "设备当前使用者尚未清理，请重试；本机工作区仍可使用",
+                ));
+            }
+            return retired.map(|()| Some(context));
         }
         let pending = self
             .identity
@@ -485,19 +462,25 @@ impl DesktopRuntime {
             .lock()
             .map_err(|_| unavailable())?
             .clone();
-        if let Some(context) = pending {
+        let Some(mut context) = pending.or_else(|| self.identity.snapshot().ok()) else {
+            return Ok(None);
+        };
+        if matches!(
+            context.identity,
+            ai_session_contract::AccountIdentity::UserDevice { .. }
+        ) {
             let mut account = self.identity.session()?.ok_or_else(unavailable)?;
             account.verify().await?;
             self.identity.set_session(Some(account))?;
-            let result = self.activate_context(context).await;
-            if let Err(error) = &result {
-                self.record_binding_error(error)?;
-            }
-            return result.map(Some);
         }
-        // A local logout may be complete while its remote DELETE is still pending.
-        self.retire_locked().await?;
-        Ok(None)
+        self.bind_execution_context(&mut context).await?;
+        let context = self
+            .users
+            .lock()
+            .map_err(|_| unavailable())?
+            .activate(context)?;
+        *self.identity.pending.lock().map_err(|_| unavailable())? = None;
+        Ok(Some(context))
     }
     /// Single-flight refresh performs HTTP on a cloned session, outside identity and transition locks.
     pub async fn verify_account(&self) -> ui::Result<()> {
@@ -604,22 +587,24 @@ impl DesktopRuntime {
             {
                 return Ok(());
             }
-            self.retire_locked().await?;
+            if let Err(retired) = self.retire_locked().await {
+                if retired.code != "logout_unconfirmed" {
+                    return Err(retired);
+                }
+            }
+            let device = self.users.lock().map_err(|_| unavailable())?.device()?;
+            self.activate_context(device).await?;
             return self.account_result(Err(error));
         }
         let mut refreshed = account.context()?;
         refreshed.generation = before.generation.clone();
         refreshed.execution_binding = before.execution_binding.clone();
-        if let Some(expected) = &before.execution_binding {
-            self.execution
-                .bind_context(
-                    account.native_session(before.generation.as_str())?,
-                    Some(
-                        execution_contract::Id::new(expected.as_str())
-                            .map_err(|_| unavailable())?,
-                    ),
-                )
-                .await?;
+        if refreshed.execution_binding.is_some()
+            && self.bind_execution_context(&mut refreshed).await.is_err()
+        {
+            execution_ipc::record_background_failure(
+                execution_contract::ProcessFailureKind::Unavailable,
+            );
         }
         self.identity.set_session(Some(account))?;
         self.users
@@ -627,11 +612,14 @@ impl DesktopRuntime {
             .map_err(|_| unavailable())?
             .replace_current(refreshed.clone())?;
         if let Some(process) = self.process() {
-            process
+            if process
                 .control
                 .refresh(&refreshed, Duration::from_secs(2))
                 .await
-                .map_err(|_| unavailable())?;
+                .is_err()
+            {
+                eprintln!("RSS_AI_CONTEXT_REFRESH_UNAVAILABLE");
+            }
         }
         Ok(())
     }
@@ -686,9 +674,7 @@ impl DesktopRuntime {
     }
     pub async fn shutdown(&self) {
         let _switch = self.switching.lock().await;
-        // Shutdown uses the same remote relation retirement as explicit logout.
-        // Even if settlement is unknown, close every local process/handle; do not
-        // destroy the employee proof by logging out its remote session first.
+        // Local fences and processes close independently of the MDM presence projection.
         if self.retire_locked().await.is_err() {
             eprintln!("RSS_CONTEXT_RETIREMENT_UNCONFIRMED");
         }
@@ -755,6 +741,85 @@ mod tests {
         bound
     }
     #[tokio::test]
+    async fn unresolved_projection_is_visible_and_explicit_recovery_precedes_the_device_binding() {
+        use execution_ipc::host::{Reply, Request};
+        let root =
+            std::env::temp_dir().join(format!("rss-projection-recovery-{}", uuid::Uuid::new_v4()));
+        let mut runtime = DesktopRuntime::start_with_key_backend(
+            &root,
+            &root.join("missing"),
+            ai_session_contract::HostStatusSource::DevelopmentOverride,
+            NoKey,
+        )
+        .await
+        .unwrap();
+        let unknown = Arc::new(AtomicBool::new(true));
+        let progress = unknown.clone();
+        let events = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let observed = events.clone();
+        runtime.execution = runtime
+            .execution
+            .clone()
+            .with_context_transport(move |request| match request {
+                Request::CurrentUserStatus {} => Ok(Reply::CurrentUserSync {
+                    value: execution_contract::CurrentUserSync {
+                        phase: if progress.load(Ordering::Acquire) {
+                            execution_contract::CurrentUserSyncPhase::BindingUnknown
+                        } else {
+                            execution_contract::CurrentUserSyncPhase::Unbound
+                        },
+                        current: None,
+                    },
+                }),
+                Request::RevokeContext {} => {
+                    observed.lock().unwrap().push("revoke");
+                    Ok(Reply::ContextRevoked)
+                }
+                Request::RetireEnterpriseContext {
+                    recover: true,
+                    generation: None,
+                    proof: None,
+                } => {
+                    observed.lock().unwrap().push("recover");
+                    progress.store(false, Ordering::Release);
+                    Ok(Reply::CurrentUserSync {
+                        value: Default::default(),
+                    })
+                }
+                Request::BindContext { value, .. } => {
+                    observed.lock().unwrap().push("bind");
+                    Ok(Reply::ContextBound {
+                        value: execution_contract::NativeContextRef {
+                            id: execution_contract::Id::new("device-after-recovery").unwrap(),
+                            generation: value.generation,
+                        },
+                    })
+                }
+                _ => panic!("unexpected recovery transport request"),
+            });
+        assert_eq!(
+            runtime.account_status().await.unwrap().binding,
+            ai_session_contract::AccountBindingState::BindingUnknown
+        );
+        let context = runtime.recover_account(true).await.unwrap().unwrap();
+        assert!(matches!(
+            context.identity,
+            ai_session_contract::AccountIdentity::Device { .. }
+        ));
+        assert!(!unknown.load(Ordering::Acquire));
+        let events = events.lock().unwrap().clone();
+        assert!(
+            events.iter().position(|v| *v == "recover").unwrap()
+                < events.iter().position(|v| *v == "bind").unwrap()
+        );
+        assert_eq!(
+            runtime.account_status().await.unwrap().binding,
+            ai_session_contract::AccountBindingState::Unbound
+        );
+        runtime.shutdown().await;
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[tokio::test]
     async fn failed_publication_retires_binding_or_retains_the_same_cleanup_barrier() {
         for lost in [false, true] {
             let root = std::env::temp_dir().join(format!("rss-publish-{}", uuid::Uuid::new_v4()));
@@ -789,7 +854,7 @@ mod tests {
         }
     }
     #[tokio::test]
-    async fn failed_login_publication_clears_account_owner_and_reports_remote_logout_failure() {
+    async fn failed_login_publication_clears_account_and_preserves_the_storage_failure() {
         use super::super::account::{
             http_tests::{access, identity, server},
             EnterpriseSession,
@@ -828,18 +893,10 @@ mod tests {
                 })
                 .await
                 .unwrap_err();
-            assert_eq!(
-                error.code,
-                if logout_status == 200 {
-                    "users_unavailable"
-                } else {
-                    "logout_unconfirmed"
-                }
-            );
+            assert_eq!(error.code, "users_unavailable");
             assert!(runtime.identity.session().unwrap().is_none());
             assert!(runtime.identity.snapshot().is_err());
             assert!(!bound.load(Ordering::Acquire));
-            assert!(runtime.account_status().unwrap().failure.is_some());
             assert!(server
                 .await
                 .unwrap()
@@ -851,7 +908,7 @@ mod tests {
         }
     }
     #[tokio::test]
-    async fn unknown_relation_keeps_login_private_and_retries_the_original_generation() {
+    async fn native_unavailability_preserves_login_and_rebinds_the_original_generation() {
         use super::super::account::{
             http_tests::{access, identity, server},
             EnterpriseSession,
@@ -873,19 +930,11 @@ mod tests {
             .clone()
             .with_context_transport(move |request| match request {
                 Request::RevokeContext {} => Ok(Reply::ContextRevoked),
-                Request::RetireEnterpriseContext { .. } => Ok(Reply::CurrentUserSync {
-                    value: Default::default(),
-                }),
                 Request::BindContext { value, .. } => {
                     let mut seen = requests.lock().unwrap();
                     seen.push(value.generation.clone());
-                    if seen.len() == 1 {
-                        Ok(Reply::CurrentUserSync {
-                            value: execution_contract::CurrentUserSync {
-                                phase: execution_contract::CurrentUserSyncPhase::BindingUnknown,
-                                current: None,
-                            },
-                        })
+                    if seen.len() <= 2 {
+                        Err(execution_app::Error::OutcomeUnknown)
                     } else {
                         Ok(Reply::ContextBound {
                             value: execution_contract::NativeContextRef {
@@ -895,18 +944,19 @@ mod tests {
                         })
                     }
                 }
+                Request::CurrentUserStatus {} => Ok(Reply::CurrentUserSync {
+                    value: Default::default(),
+                }),
                 _ => panic!("unexpected context request"),
             });
         let (org, server) = server(vec![
             (200, identity()),
             (200, identity()),
             (200, access()),
-            (200, identity()),
-            (200, access()),
             (200, json!({})),
         ])
         .await;
-        let error = runtime
+        let authenticated = runtime
             .login_with(|| {
                 EnterpriseSession::login_with_client(
                     reqwest::Client::new(),
@@ -916,22 +966,36 @@ mod tests {
                 )
             })
             .await
-            .unwrap_err();
-        assert_eq!(error.code, "binding_unknown");
-        assert!(runtime.identity.snapshot().is_err());
-        assert!(runtime.identity.session().unwrap().is_some());
-        assert_eq!(
-            runtime.account_status().unwrap().binding,
-            ai_session_contract::AccountBindingState::BindingUnknown
-        );
-        let published = runtime.recover_account(false).await.unwrap().unwrap();
+            .unwrap();
+        assert!(authenticated.execution_binding.is_none());
         assert_eq!(
             runtime.identity.snapshot().unwrap().generation,
-            published.generation
+            authenticated.generation
         );
+        assert!(runtime.identity.session().unwrap().is_some());
+        assert_eq!(
+            runtime.account_status().await.unwrap().binding,
+            ai_session_contract::AccountBindingState::BindingUnknown
+        );
+        assert!(runtime
+            .execution_for(authenticated.generation.as_str())
+            .await
+            .is_err());
+        assert!(runtime
+            .identity
+            .snapshot()
+            .unwrap()
+            .execution_binding
+            .is_none());
+        assert!(runtime
+            .execution_for(authenticated.generation.as_str())
+            .await
+            .is_ok());
+        let published = runtime.identity.snapshot().unwrap();
+        assert!(published.execution_binding.is_some());
         let seen = seen.lock().unwrap().clone();
-        assert_eq!(seen.len(), 2);
-        assert_eq!(seen[0], seen[1]);
+        assert_eq!(seen.len(), 3);
+        assert!(seen.iter().all(|generation| generation == &seen[0]));
         assert_eq!(published.generation.as_str(), seen[0].as_str());
         runtime.logout().await.unwrap();
         server.await.unwrap();
@@ -939,7 +1003,7 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
     #[tokio::test]
-    async fn logout_retries_the_same_retiring_generation_before_remote_logout() {
+    async fn logout_and_shutdown_do_not_wait_for_mdm_presence_retirement() {
         use super::super::account::{
             http_tests::{access, identity, server},
             EnterpriseSession,
@@ -955,35 +1019,20 @@ mod tests {
             )
             .await
             .unwrap();
-            let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
-            let calls = seen.clone();
-            runtime.execution = runtime
-                .execution
-                .clone()
-                .with_context_transport(move |request| match request {
-                    Request::RevokeContext {} => Ok(Reply::ContextRevoked),
-                    Request::BindContext { value, .. } => Ok(Reply::ContextBound {
-                        value: execution_contract::NativeContextRef {
-                            id: value.generation.clone(),
-                            generation: value.generation,
-                        },
-                    }),
-                    Request::RetireEnterpriseContext { generation, .. } => {
-                        let mut seen = calls.lock().unwrap();
-                        seen.push(generation);
-                        Ok(Reply::CurrentUserSync {
-                            value: execution_contract::CurrentUserSync {
-                                phase: if seen.len() == 1 && !shutdown {
-                                    execution_contract::CurrentUserSyncPhase::CleanupPending
-                                } else {
-                                    execution_contract::CurrentUserSyncPhase::Unbound
-                                },
-                                current: None,
+            runtime.execution =
+                runtime
+                    .execution
+                    .clone()
+                    .with_context_transport(|request| match request {
+                        Request::RevokeContext {} => Ok(Reply::ContextRevoked),
+                        Request::BindContext { value, .. } => Ok(Reply::ContextBound {
+                            value: execution_contract::NativeContextRef {
+                                id: value.generation.clone(),
+                                generation: value.generation,
                             },
-                        })
-                    }
-                    _ => panic!("unexpected context request"),
-                });
+                        }),
+                        _ => panic!("local lifecycle must not issue MDM presence retirement"),
+                    });
             let (org, server) = server(vec![
                 (200, identity()),
                 (200, identity()),
@@ -1005,17 +1054,20 @@ mod tests {
             if shutdown {
                 runtime.shutdown().await;
             } else {
-                assert_eq!(runtime.logout().await.unwrap_err().code, "cleanup_pending");
-                assert!(runtime.identity.snapshot().is_err());
-                assert!(runtime.identity.session().unwrap().is_some());
-                runtime.recover_account(false).await.unwrap();
+                runtime.logout().await.unwrap();
+                let device = runtime.identity.snapshot().unwrap();
+                assert!(matches!(
+                    device.identity,
+                    ai_session_contract::AccountIdentity::Device { .. }
+                ));
+                assert!(runtime
+                    .execution_for(device.generation.as_str())
+                    .await
+                    .is_ok());
                 runtime.shutdown().await;
             }
-            let seen = seen.lock().unwrap().clone();
-            assert_eq!(seen.len(), if shutdown { 1 } else { 2 });
-            assert!(seen.iter().all(|generation| generation
-                .as_ref()
-                .is_some_and(|g| g.as_str() == context.generation.as_str())));
+            assert!(runtime.current(context.generation.as_str()).is_err());
+            assert!(runtime.identity.session().unwrap().is_none());
             assert!(server
                 .await
                 .unwrap()
@@ -1043,7 +1095,10 @@ mod tests {
         assert_eq!(status["diagnostic"]["code"], "runtime_missing");
         assert!(!status.to_string().contains(root.to_str().unwrap()));
         let user = runtime.select_user("Alice").await.unwrap();
-        assert!(runtime.execution_for(user.generation.as_str()).is_ok());
+        assert!(runtime
+            .execution_for(user.generation.as_str())
+            .await
+            .is_ok());
         {
             let _switch = runtime.switching.lock().await;
             assert!(runtime.current(user.generation.as_str()).is_ok());
@@ -1075,10 +1130,19 @@ mod tests {
         let test = runtime.select_user("访客").await.unwrap();
         let guest = runtime.select_device().await.unwrap();
         assert_ne!(test.user.user_id, guest.user.user_id);
-        assert!(runtime.execution_for(test.generation.as_str()).is_err());
-        assert!(runtime.execution_for(guest.generation.as_str()).is_ok());
+        assert!(runtime
+            .execution_for(test.generation.as_str())
+            .await
+            .is_err());
+        assert!(runtime
+            .execution_for(guest.generation.as_str())
+            .await
+            .is_ok());
         runtime.logout().await.unwrap();
-        assert!(runtime.execution_for(guest.generation.as_str()).is_err());
+        assert!(runtime
+            .execution_for(guest.generation.as_str())
+            .await
+            .is_err());
         let again = runtime.select_user("访客").await.unwrap();
         assert_eq!(test.user.user_id, again.user.user_id);
         runtime.shutdown().await;
@@ -1127,7 +1191,7 @@ mod tests {
                 })
                 .await
                 .unwrap();
-            assert!(runtime.execution_for(a.generation.as_str()).is_ok());
+            assert!(runtime.execution_for(a.generation.as_str()).await.is_ok());
             let responses = if fail_b {
                 vec![(401, json!({"code":"invalid_credential"}))]
             } else {
@@ -1156,7 +1220,16 @@ mod tests {
             assert!(runtime.current(a.generation.as_str()).is_err());
             if fail_b {
                 assert!(b.is_err());
-                assert!(runtime.users.lock().unwrap().current().is_err());
+                let device = runtime.identity.snapshot().unwrap();
+                assert!(matches!(
+                    device.identity,
+                    ai_session_contract::AccountIdentity::Device { .. }
+                ));
+                assert!(runtime
+                    .execution_for(device.generation.as_str())
+                    .await
+                    .is_ok());
+                assert!(runtime.identity.session().unwrap().is_none());
             } else {
                 let b = b.unwrap();
                 assert_ne!(a.generation, b.generation);
@@ -1173,7 +1246,7 @@ mod tests {
         }
     }
     #[tokio::test]
-    async fn every_switch_reports_failed_remote_logout_after_revoking_local_access() {
+    async fn remote_logout_failure_preserves_device_access_and_allows_another_login() {
         use super::super::account::{
             http_tests::{access, identity, server},
             EnterpriseSession,
@@ -1211,11 +1284,33 @@ mod tests {
             let result = match mode {
                 "test" => runtime.select_user("Alice").await,
                 "guest" => runtime.select_device().await,
-                _ => runtime.login_with(|| async { panic!("must not authenticate a new organization before reporting unconfirmed logout") }).await,
+                _ => {
+                    runtime
+                        .login_with(|| async {
+                            assert!(runtime.identity.session().unwrap().is_none());
+                            Err(ui::error("invalid_credential", "invalid credential"))
+                        })
+                        .await
+                }
             };
-            assert_eq!(result.err().unwrap().code, "logout_unconfirmed");
+            assert_eq!(
+                result.err().unwrap().code,
+                if mode == "enterprise" {
+                    "invalid_credential"
+                } else {
+                    "logout_unconfirmed"
+                }
+            );
             assert!(runtime.current(a.generation.as_str()).is_err());
-            assert!(runtime.users.lock().unwrap().current().is_err());
+            let current = runtime.identity.snapshot().unwrap();
+            assert!(matches!(
+                current.identity,
+                ai_session_contract::AccountIdentity::Device { .. }
+            ));
+            assert!(runtime
+                .execution_for(current.generation.as_str())
+                .await
+                .is_ok());
             server.await.unwrap();
             runtime.shutdown().await;
             std::fs::remove_dir_all(root).unwrap();
@@ -1271,12 +1366,12 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
     #[tokio::test]
-    async fn temporary_identity_failure_preserves_snapshot_and_coalesces_refresh() {
+    async fn identity_refresh_coalesces_and_keeps_the_device_workspace_after_revocation() {
         use super::super::account::{
             http_tests::{access, identity, server},
             EnterpriseSession,
         };
-        for status in [429, 503] {
+        for status in [429, 503, 401] {
             let root = std::env::temp_dir().join(format!("rss-refresh-{}", uuid::Uuid::new_v4()));
             private_directory(&root).unwrap();
             let root = root.canonicalize().unwrap();
@@ -1314,14 +1409,31 @@ mod tests {
                 assert!(runtime.current(context.generation.as_str()).is_ok());
             }
             let (first, second) = tokio::join!(runtime.verify_account(), runtime.verify_account());
-            first.unwrap();
-            second.unwrap();
-            assert_eq!(
-                serde_json::to_value(runtime.current(context.generation.as_str()).unwrap())
-                    .unwrap(),
-                before
-            );
-            runtime.select_device().await.unwrap();
+            if status == 401 {
+                assert!(first.is_err());
+                // A second concurrent reader may observe the newly activated device workspace.
+                let _ = second;
+                assert!(runtime.current(context.generation.as_str()).is_err());
+                assert!(runtime.identity.session().unwrap().is_none());
+                let device = runtime.identity.snapshot().unwrap();
+                assert!(matches!(
+                    device.identity,
+                    ai_session_contract::AccountIdentity::Device { .. }
+                ));
+                assert!(runtime
+                    .execution_for(device.generation.as_str())
+                    .await
+                    .is_ok());
+            } else {
+                first.unwrap();
+                second.unwrap();
+                assert_eq!(
+                    serde_json::to_value(runtime.current(context.generation.as_str()).unwrap())
+                        .unwrap(),
+                    before
+                );
+                runtime.select_device().await.unwrap();
+            }
             assert_eq!(server.await.unwrap().len(), 5);
             runtime.shutdown().await;
             std::fs::remove_dir_all(root).unwrap();
@@ -1449,11 +1561,17 @@ mod tests {
         assert!(old.stop.is_cancelled());
         assert!(runtime.receive(&connection).await.is_err());
         assert!(runtime.views.is_empty().await);
-        assert!(runtime.execution_for(context.generation.as_str()).is_err());
+        assert!(runtime
+            .execution_for(context.generation.as_str())
+            .await
+            .is_err());
         let renewed = runtime.identity.snapshot().unwrap();
         assert_ne!(renewed.generation, context.generation);
         assert_eq!(renewed.user.user_id, context.user.user_id);
-        assert!(runtime.execution_for(renewed.generation.as_str()).is_ok());
+        assert!(runtime
+            .execution_for(renewed.generation.as_str())
+            .await
+            .is_ok());
         runtime.shutdown().await;
         assert_eq!(
             runtime.restart(a.generation.0 as u64).await.phase,

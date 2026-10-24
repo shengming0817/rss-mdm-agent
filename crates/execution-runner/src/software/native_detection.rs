@@ -150,14 +150,26 @@ pub(crate) fn not_downgrade(step: &SoftwareProgramStep, state: &SoftwareState) -
             .and_then(|v| <[u16; 4]>::try_from(v).ok())
             .is_some_and(|old| old <= identity.version);
     }
-    if matches!(step.format, SoftwareFormat::DmgApp { .. }) {
-        let parse = |v: &str| -> Option<[u64; 3]> {
-            let values = v
-                .split('.')
-                .map(str::parse::<u64>)
-                .collect::<Result<Vec<_>, _>>()
-                .ok()?;
-            values.try_into().ok()
+    if matches!(
+        step.format,
+        SoftwareFormat::DmgApp { .. } | SoftwareFormat::Exe { .. }
+    ) {
+        let parse = |v: &str| -> Option<[u64; 4]> {
+            let fields = v.split('.').collect::<Vec<_>>();
+            if fields.is_empty()
+                || fields.len() > 4
+                || (matches!(step.format, SoftwareFormat::DmgApp { .. }) && fields.len() != 3)
+            {
+                return None;
+            }
+            let mut values = [0; 4];
+            for (index, field) in fields.iter().enumerate() {
+                if field.is_empty() || !field.bytes().all(|c| c.is_ascii_digit()) {
+                    return None;
+                }
+                values[index] = field.parse().ok()?;
+            }
+            Some(values)
         };
         return matches!((parse(version.as_str()),parse(step.version.as_str())),(Some(old),Some(new)) if old <= new);
     }
@@ -185,5 +197,34 @@ pub(crate) fn not_downgrade(step: &SoftwareProgramStep, state: &SoftwareState) -
     ) {
         (Some(old), Some(new)) => old <= new,
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod version_tests {
+    use super::*;
+    #[test]
+    fn exe_numeric_versions_support_upgrade_without_permitting_downgrade_or_guessing_labels() {
+        let input: execution_contract::ExecutionInput = serde_json::from_str(include_str!(
+            "../../../execution-contract/tests/fixtures/software.json"
+        ))
+        .unwrap();
+        let mut step = input.execution.software_program().unwrap().steps[0].clone();
+        step.format = SoftwareFormat::Exe {
+            layout: Default::default(),
+        };
+        step.version = PackageValue::new("26.05").unwrap();
+        for (installed, expected) in [
+            ("26.04", true),
+            ("26.05.0.0", true),
+            ("26.06", false),
+            ("preview.26", false),
+            ("26..04", false),
+        ] {
+            let state = SoftwareState::Present {
+                version: PackageValue::new(installed).unwrap(),
+            };
+            assert_eq!(not_downgrade(&step, &state), expected, "{installed}");
+        }
     }
 }

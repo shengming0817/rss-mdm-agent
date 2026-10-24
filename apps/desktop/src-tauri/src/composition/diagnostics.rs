@@ -161,7 +161,7 @@ pub async fn prepare(state: &DesktopRuntime, scopes: Scopes) -> Result<Preview> 
     if scopes.device {
         content["device"] = json!({"platform":std::env::consts::OS,"architecture":std::env::consts::ARCH,"available":false});
         if let Some(owner) = &owner {
-            if let Ok(handle) = state.execution_for(owner) {
+            if let Ok(handle) = state.execution_for(owner).await {
                 if let Ok(Ok(value)) =
                     tokio::time::timeout(Duration::from_secs(3), handle.device_diagnostics()).await
                 {
@@ -173,7 +173,7 @@ pub async fn prepare(state: &DesktopRuntime, scopes: Scopes) -> Result<Preview> 
     if scopes.execution {
         content["execution"] = json!({"available":false,"reason":"unboundOrUnavailable"});
         if let Some(owner) = &owner {
-            if let Ok(handle) = state.execution_for(owner) {
+            if let Ok(handle) = state.execution_for(owner).await {
                 if let Ok(Ok(value)) =
                     tokio::time::timeout(Duration::from_secs(5), execution_projection(&handle))
                         .await

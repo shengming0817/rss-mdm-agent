@@ -15,8 +15,6 @@ pub struct SoftwareCommands<'a> {
     pub detection: Option<&'a wire::SoftwareTaskDetection>,
     /// Bundle install entry.
     pub install_script: Option<&'a wire::SoftwareTaskScript>,
-    /// Bundle removal entry.
-    pub uninstall_script: Option<&'a wire::SoftwareTaskScript>,
     /// Exact removal artifact; it may differ from the install artifact.
     pub removal_artifact: Option<&'a str>,
 }
@@ -31,7 +29,6 @@ pub fn software_commands(action: &wire::SoftwareTaskAction) -> Result<SoftwareCo
             uninstall: n.uninstall.as_ref().map(|v| &v.invocation),
             detection: Some(&n.detect),
             install_script: None,
-            uninstall_script: None,
             removal_artifact: n.uninstall.as_ref().map(|v| v.installer.as_str()),
         },
         B::Exe(n) => SoftwareCommands {
@@ -41,7 +38,6 @@ pub fn software_commands(action: &wire::SoftwareTaskAction) -> Result<SoftwareCo
             uninstall: n.uninstall.as_ref().map(|v| &v.invocation),
             detection: Some(&n.detect),
             install_script: None,
-            uninstall_script: None,
             removal_artifact: n.uninstall.as_ref().map(|v| v.installer.as_str()),
         },
         B::Bundle(b) => SoftwareCommands {
@@ -51,7 +47,6 @@ pub fn software_commands(action: &wire::SoftwareTaskAction) -> Result<SoftwareCo
             uninstall: b.uninstall.as_ref().map(|v| &v.invocation),
             detection: Some(&b.detect),
             install_script: Some(&b.install),
-            uninstall_script: b.uninstall.as_ref(),
             removal_artifact: None,
         },
         B::Dmg(d) => {
@@ -71,7 +66,6 @@ pub fn software_commands(action: &wire::SoftwareTaskAction) -> Result<SoftwareCo
                 uninstall,
                 detection: None,
                 install_script: None,
-                uninstall_script: None,
                 removal_artifact,
             }
         }
@@ -82,7 +76,6 @@ pub fn software_commands(action: &wire::SoftwareTaskAction) -> Result<SoftwareCo
             uninstall: m.uninstall.then_some(&m.invocation),
             detection: None,
             install_script: None,
-            uninstall_script: None,
             removal_artifact: None,
         },
     })

@@ -156,7 +156,7 @@ fn text(bytes: Vec<u8>) -> Result<String, Error> {
     }
     Ok(text.into())
 }
-fn detect(request: &WorkerRequest) -> Result<SoftwareState, Error> {
+pub(super) fn detect(request: &WorkerRequest) -> Result<SoftwareState, Error> {
     let commands = crate::backend::commands::software_commands(&request.action)?;
     match commands.detection.ok_or(Error::Unsupported)? {
         wire::SoftwareTaskDetection::MsiProduct {
@@ -213,6 +213,41 @@ fn detect(request: &WorkerRequest) -> Result<SoftwareState, Error> {
                     },
                 },
             )
+        }
+        wire::SoftwareTaskDetection::Script { command } => {
+            // Material digest and declared publisher checks belong to this same native owner,
+            // before the detector can run with its configured OS identity.
+            #[cfg(windows)]
+            super::windows::authenticode(request, &command.entry)?;
+            #[cfg(target_os = "macos")]
+            if request
+                .action
+                .signatures
+                .iter()
+                .any(|s| s.artifact == command.entry)
+            {
+                super::macos::verify_code(
+                    request,
+                    &request.material(&command.entry)?,
+                    "execute",
+                    Some(&command.entry),
+                )?;
+            }
+            let profile = crate::backend::plan::script_profile(match command.interpreter {
+                wire::SoftwareTaskInterpreter::PowerShell7 => wire::ExecutorProfile::PowerShell7,
+                wire::SoftwareTaskInterpreter::PosixSh => wire::ExecutorProfile::PosixSh,
+                wire::SoftwareTaskInterpreter::Bash => wire::ExecutorProfile::Bash,
+            })?;
+            let args = profile.materialized_file_argv(
+                &request.material(&command.entry)?.to_string_lossy(),
+                &command.invocation.arguments,
+            );
+            let (code, stdout, _) =
+                super::run_tool(request, &request.tool("detect-interpreter")?, &args)?;
+            if code != 0 {
+                return Err(Error::Unavailable);
+            }
+            serde_json::from_slice(&stdout).map_err(|_| Error::Protocol)
         }
         #[cfg(windows)]
         detection @ wire::SoftwareTaskDetection::Registry { .. } => {

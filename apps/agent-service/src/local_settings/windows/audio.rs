@@ -1,7 +1,7 @@
 //! Read default current-login endpoints through Core Audio; no default-device setter.
 //! ref: microsoft/windows-rs@0.61.3 Win32/Media/Audio/{IMMDeviceEnumerator,Endpoints/IAudioEndpointVolume}.
 use super::*;
-use windows::Win32::{
+use ::windows::Win32::{
     Devices::FunctionDiscovery::PKEY_Device_FriendlyName,
     Media::Audio::{Endpoints::IAudioEndpointVolume, *},
     System::Com::{

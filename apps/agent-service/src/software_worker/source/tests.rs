@@ -58,7 +58,6 @@ pub(super) fn fixture(root: &Root) -> WorkerRequest {
         operation: WorkerOperation::Prepare,
         native_output: Default::default(),
         native_pending: Default::default(),
-        external_pending: Default::default(),
         materials: [
             ("native-source".into(), material(&pack)),
             ("package".into(), material(&installer)),
@@ -81,6 +80,51 @@ pub(super) fn fixture(root: &Root) -> WorkerRequest {
         output_bytes: 1_048_576,
         step: 0,
     }
+}
+
+#[test]
+fn script_detector_honors_arguments_and_rejects_a_declared_invalid_publisher_before_execution() {
+    let root = Root::new();
+    let mut request = fixture(&root);
+    request.operation = WorkerOperation::Detect;
+    let script = root.path.join("detector.sh");
+    let marker = root.path.join("detector-ran");
+    fs::write(
+        &script,
+        b"#!/bin/sh\nprintf '%s' \"$2\" > \"$1\"\nprintf '%s\\n' '{\"kind\":\"absent\"}'\n",
+    )
+    .unwrap();
+    request
+        .materials
+        .insert("detector".into(), material(&script));
+    request
+        .tools
+        .insert("detect-interpreter".into(), material(Path::new("/bin/sh")));
+    request
+        .tools
+        .insert("codesign".into(), material(Path::new("/usr/bin/codesign")));
+    let wire::SoftwareTaskBehavior::Brew(native) = &mut request.action.behavior else {
+        unreachable!()
+    };
+    let mut invocation = native.install.clone();
+    invocation.arguments = vec![marker.to_str().unwrap().into(), " literal ; $(x) ".into()];
+    native.detect = wire::SoftwareTaskDetection::Script {
+        command: wire::SoftwareTaskScript {
+            entry: "detector".into(),
+            interpreter: wire::SoftwareTaskInterpreter::PosixSh,
+            invocation,
+        },
+    };
+    assert_eq!(detect(&request).unwrap(), SoftwareState::Absent {});
+    assert_eq!(fs::read_to_string(&marker).unwrap(), " literal ; $(x) ");
+    fs::remove_file(&marker).unwrap();
+    request.action.signatures.push(wire::SoftwareTaskSignature {
+        artifact: "detector".into(),
+        mechanism: wire::SoftwareTaskSignatureMechanism::AppleDeveloperId,
+        publisher: "UNTRUSTED".into(),
+    });
+    assert!(matches!(detect(&request), Err(Error::Untrusted)));
+    assert!(!marker.exists());
 }
 
 #[test]

@@ -217,18 +217,7 @@ pub(crate) fn script(
     } else {
         None
     };
-    let env = payload
-        .environment
-        .iter()
-        .map(|(k, v)| {
-            Ok((
-                EnvironmentKey::new(k).map_err(|_| Error::Protocol)?,
-                InputValue::Literal {
-                    value: serde_json::Value::String(v.clone()),
-                },
-            ))
-        })
-        .collect::<Result<BTreeMap<_, _>, Error>>()?;
+    let env = environment(&payload.environment)?;
     let output = OutputSpec {
         format: OutputFormat::Json {
             max_rows: payload.max_rows,
@@ -397,4 +386,66 @@ pub(crate) fn worker_image(config: &crate::ExecutionConfig) -> Result<SoftwareMa
         return image(config);
     }
     pin(&std::env::current_exe()?)
+}
+
+/// Product-owned native startup inputs are frozen with the remote RSS_PARAM_ values.
+pub(crate) fn environment(
+    input: &BTreeMap<String, String>,
+) -> Result<BTreeMap<EnvironmentKey, InputValue>, Error> {
+    #[cfg(windows)]
+    let system_root = Some(
+        crate::os_version::system_root()?
+            .into_string()
+            .map_err(|_| Error::Configuration)?,
+    );
+    #[cfg(not(windows))]
+    let system_root = None;
+    freeze_environment(input, system_root)
+}
+
+fn freeze_environment(
+    input: &BTreeMap<String, String>,
+    system_root: Option<String>,
+) -> Result<BTreeMap<EnvironmentKey, InputValue>, Error> {
+    let mut values = input.clone();
+    if let Some(system_root) = system_root {
+        values.insert("SystemRoot".into(), system_root);
+    }
+    values
+        .into_iter()
+        .map(|(key, value)| {
+            Ok((
+                EnvironmentKey::new(key).map_err(|_| Error::Protocol)?,
+                InputValue::Literal {
+                    value: serde_json::Value::String(value),
+                },
+            ))
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod environment_tests {
+    use super::*;
+    #[test]
+    fn native_startup_value_is_frozen_without_inheriting_host_environment() {
+        let input = BTreeMap::from([
+            ("RSS_PARAM_NAME".into(), "value".into()),
+            ("SystemRoot".into(), "foreign".into()),
+        ]);
+        let result = freeze_environment(&input, Some(r"C:\Windows".into())).unwrap();
+        assert_eq!(result.len(), 2);
+        assert_eq!(
+            result[&EnvironmentKey::new("SystemRoot").unwrap()],
+            InputValue::Literal {
+                value: r"C:\Windows".into()
+            }
+        );
+        assert_eq!(
+            result[&EnvironmentKey::new("RSS_PARAM_NAME").unwrap()],
+            InputValue::Literal {
+                value: "value".into()
+            }
+        );
+    }
 }

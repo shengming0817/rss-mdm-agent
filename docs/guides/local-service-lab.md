@@ -31,7 +31,7 @@
 
 安装成功与认证 readiness 分开核实，使用获准的普通用户运行已安装桌面的 `--service-probe`。共享注册文件仍由管理员负责保管和清理，安装器不删除它。
 
-初装从实际互动登录发现主体及 helper 路径；无人登录的静默初装可省略 profile，以空 IPC 用户集合启动机器注册；管理员需要预设桌面访问主体时提供受保护的 profile（`subjects` 与 `helper_work_roots`）。Windows EXE 接受 `/S /PROFILE=绝对路径`；macOS 可先固定 profile 于 `/Library/Application Support/RSS MDM Agent/install-profile.json` 再运行 `installer -pkg ... -target /`。桌面启动请求 Rust owner 注册当前配置用户的 helper，AI Host 随该桌面运行。
+初装从实际互动登录发现主体及 helper 路径；无人登录的静默初装可省略 profile，以空 IPC 用户集合启动机器注册；管理员需要预设桌面访问主体时提供受保护的 profile（`subjects` 与 `helper_work_roots`）。Windows EXE 接受 `/S /PROFILE=绝对路径`；macOS 可先固定 profile 于 `/Library/Application Support/RSS MDM Agent/install-profile.json` 再运行 `installer -pkg ... -target /`。Rust 安装 owner 在安装、升级时登记配置用户的 helper，并启动当前登录用户实例；其余用户由系统登录任务启动。桌面只消费 IPC，AI Host 随桌面运行。
 
 设备退管由服务端普通 Policy `unmanage_device` 发起。Agent 验证绑定当前租户、注册、设备和任务的签名 Start，持久接受后关闭新执行准入，读取 journal 的真实静止证明，再将卸载交给独立安装 worker。离线、证书故障和 MDM Profile 消失不构成卸载授权。产品 `uninstall` 和 system `remove` 入口必须携带 `--operation <已接受任务 UUID>`；仅传 UUID 不授予权限，缺少原 Start 或排空证明均拒绝。Windows NSIS 可传 `/RETIREMENT=<任务 UUID>`，MSI 对应 `RSSRETIREMENTTASK`；普通系统卸载入口不会隐式申请退管。
 
@@ -57,9 +57,9 @@ node scripts/agent-organization.mjs --config /private/execution-template.json --
 
 首次注册使用上文的 Agent 内企业登录或完整签名配置。机器请求、CSR、公钥引用与签发/激活操作由系统服务持久保存；重试使用原操作。人工换证仍保持原 Registration、存储位置和 journal。初始化遇到不支持的数据库或缺失的原状态时保留原文件并拒绝，不通过清库或换目录绕过未决任务。
 
-macOS 系统注册：`python3 scripts/service/execution-macos.py install --scope system --binary <root 拥有的绝对产物路径> --config <受保护配置>`，需要管理员执行。用户在自己的 GUI 登录中运行同一安装脚本，改为 `--scope user`；程序参数固定为 `--user-helper`，只注册当前实际 OS 会话。`--config` 可省略以使用默认部署路径。状态查询用 `rss-execution-service --config <配置> --query`，客户端和服务必须互相匹配真实 OS 身份与程序 pin。
+macOS 系统注册：`python3 scripts/service/execution-macos.py install --scope system --binary <root 拥有的绝对产物路径> --config <受保护配置>`，需要管理员执行。安装 owner 同时登记用户 LaunchAgent；程序参数固定为 `--user-helper`，由对应 GUI 登录会话运行。`--config` 可省略以使用默认部署路径。状态查询用 `rss-execution-service --config <配置> --query`，客户端和服务必须互相匹配真实 OS 身份与程序 pin。
 
-Windows 使用 PowerShell 7 运行 `scripts/service/execution-windows.ps1 -Action Install -Scope System -Binary <绝对 exe 路径> -Config <受保护配置>`，SCM 使用 LocalSystem。用户 helper 用 `-Scope User`，调度任务以实际登录账号启动。跨会话不继承系统进程句柄，使用认证命名管道派发。
+Windows 使用 PowerShell 7 运行 `scripts/service/execution-windows.ps1 -Action Install -Scope System -Binary <绝对 exe 路径> -Config <受保护配置>`，SCM 使用 LocalSystem。安装 owner 同时登记用户登录任务，以对应用户的非提升权限令牌启动 helper。跨会话不继承系统进程句柄，使用认证命名管道派发。
 
 隔离验收使用 `remove-lab-registration`（PowerShell wrapper 为 `RemoveLabRegistration`），只允许非默认配置且原生注册参数精确匹配本次 config/binary；保留凭据、程序和 journal，不授予生产退管能力。用户 helper 的 remove 只移除该用户自己的匹配注册；生产 system remove 必须消费上述已接受退管任务，不能作为产品卸载的未授权旁路。安装升级内部的服务替换与补偿不使用产品退管入口。install 仍拒绝已有注册。生产桌面读取默认受保护部署 pin；自定义配置仅用于显式部署和隔离验收。
 
@@ -107,7 +107,7 @@ Windows 原生路径支持经 Windows Installer 与受保护缓存重新核实�
 
 真实 osquery 接缝使用 `OSQUERY_TEST_BINARY=<已独立验证的官方二进制绝对路径> python3 scripts/build-run.py -- cargo test --locked -p execution-runner --test osquery -- --ignored`。macOS 必须保留官方 `.app` 完整结构以验证签名，单独复制 Mach-O 文件会破坏签名。该测试验证固定参数、字面量绑定和成功零行；不替代系统服务身份或完整平台部署验收。可复现候选为官方 5.23.1 的 `osquery-5.23.1_1.macos_arm64.tar.gz`，SHA-256 为 `5484f0b62e05a7b2fa9d6e43f038915ea2b7ce063d59bd671ede0cf8dd0552da`。
 
-执行上下文使用本机数值 OS 版本和认证 helper 的登录世代，待确认注册与 claim 保留原上下文。生产编译器消费当前远程 V1 的 MSI、PKG、Bundle、离线 EXE、MSIX、DMG，以及绑定实际 target/publication 的 WinGet/Brew 原生发布源。EXE 仅执行完整离线布局、显式参数和明确卸载入口；退出码与重启按源任务策略解释，不自动重启。实际启动 EXE 后，当前 V1 没有可信外部安装会话完成协议，因此保留真实退出码与重启事实，同时报告 Unknown、保留离线布局与排他；Job 归零或检测命中不解除该限制。MSIX 明确区分目标用户注册与未来用户设备 provisioning，后者不改写已有用户注册；只查询既有侧载/依赖，不导入证书、改策略或终止应用。DMG 用镜像的完整长度/SHA256 确认内容身份，只读挂载并精确选择 app/内含 PKG，不计算独立 app 目录摘要；app 保留内部链接与 quarantine，经原生签名/Gatekeeper 检查再复制或原子替换。运行中应用拒绝替换/删除；普通 app 卸载直接核对声明的目标、Bundle ID、版本、上下文、签名与架构，不挂载镜像或比较镜像目录；删除使用本次尝试的短期对象快照和私有隔离，失败保留清理记录。卸载不清理用户数据。挂载、staging 和物理阶段在同一 attempt 中核算，Unknown 保留证据与排他，不重新执行安装。DMG 在原 invocation 内预留最多四分之一预算用于清理，取消/超时/重启后的恢复只使用原冻结 Cleanup 和递增日志序号；清理资源不改写未知安装事实，原活动未证明结束时仍保留排他。内含 PKG 必须通过原生签名与 Gatekeeper；未签名包被拒绝。
+执行上下文使用本机数值 OS 版本和认证 helper 的登录世代，待确认注册与 claim 保留原上下文。生产编译器消费当前远程 V1 的 MSI、PKG、Bundle、离线 EXE、MSIX、DMG，以及绑定实际 target/publication 的 WinGet/Brew 原生发布源。EXE 仅执行完整离线布局、显式参数和明确卸载入口；退出码与重启按源任务策略解释，不自动重启。EXE 的完成同时要求原进程退出、Windows Job 收敛和独立版本检测；未结束或检测不确定时保留 Unknown、材料与排他。MSIX 明确区分目标用户注册与未来用户设备 provisioning，后者不改写已有用户注册；只查询既有侧载/依赖，不导入证书、改策略或终止应用。DMG 用镜像的完整长度/SHA256 确认内容身份，只读挂载并精确选择 app/内含 PKG，不计算独立 app 目录摘要；app 保留内部链接与 quarantine，按后台声明执行签名/Gatekeeper 检查，再复制或原子替换。运行中应用拒绝替换/删除；普通 app 卸载直接核对声明的目标、Bundle ID、版本、上下文、签名与架构，不挂载镜像或比较镜像目录；删除使用本次尝试的短期对象快照和私有隔离，失败保留清理记录。卸载不清理用户数据。挂载、staging 和物理阶段在同一 attempt 中核算，Unknown 保留证据与排他，不重新执行安装。DMG 在原 invocation 内预留最多四分之一预算用于清理，取消/超时/重启后的恢复只使用原冻结 Cleanup 和递增日志序号；清理资源不改写未知安装事实，原活动未证明结束时仍保留排他。签名列表为空时，MSI、PKG、EXE、DMG 所选载荷及 Bundle 均允许企业未签名内容；存在要求时，对声明的材料核实对应机制和发布者。MSIX 的包身份、系统信任及显式 `allow_unsigned` 仍由原生部署 API 执行。
 
 WinGet/Brew 使用签名任务中的完整源绑定、文档摘要和物料集合；Offer 阶段只读取并缓存，Start 后才准备原生源并执行。WinGet 从实际 REST source 读取并核实固定发布文档，生成本次私有 singleton manifest 交给原生 `--manifest` 安装；包 ID、版本和安装器 SHA256 来自该固定文件，scope/架构由任务确定，不在线重新解析或写入全局源。设备须已允许 LocalManifestFiles，Agent 不修改该策略；Brew 仅在原登录用户 helper 下消费固定 parentless Git commit，使用完整 tap/package 名、固定 bottle/cask 缓存，并关闭自动更新、隐式依赖与源码构建。原生调用不接受尾随参数覆盖上述选择，仍允许协议批准的 RSS_PARAM 环境输入。版本与安装效果由独立检测核实，退出零不视为已安装；重启沿用当前格式的原材料与 journal，不重新下载安装。
 
@@ -188,9 +188,10 @@ Host/launcher 故障、保留后代和未知 scope。真实 Codex 链分别验�
 回执用 `journeyStatus` 表示本次旅程结果，用 `security.scenarios` 逐项记录
 `passed / failed / notApplicable / notExecuted`，完整矩阵由 `security.status` 汇总。
 旅程通过但矩阵未完成时顶层为 `partial`。旧 `unexecutedSecurity` 字段直接退出，不双读旧回执。
-macOS 普通 PKG 包装执行保留既有保守语义：不保证逃逸后代停止，可能返回
-`outcomeUnknown / capture_failed`。回执保留 `executionUncertain`；旅程仅在原尝试、
-后台确认、安装器退出及独立设备效果全部相符时接纳该已知不确定性，不改写执行成功。
+普通脚本的解释器结果与活动清理分别记录：完整结果不要求先证明所有后代已结束，
+但未知活动仍阻止安全回收和退管。脚本返回成功不证明任意后台活动已停止。
+PKG 使用原生软件 worker；旅程要求原调用、后台确认、安装器结果、After 检测与独立设备效果一致，
+不再接纳旧包装路径的 `capture_failed / Unknown` 作为成功基线。
 刷新停止前先验证原 PID、持久事实和正常用户健康查询；停止后失败比较完整配置值，
 保留注册、凭据及 journal，不要求旧 PID 存活。SQLite 权限检查不得另开、关闭活跃
 数据或 sidecar 文件，以免释放同进程 POSIX 锁并破坏 WAL 共享内存。

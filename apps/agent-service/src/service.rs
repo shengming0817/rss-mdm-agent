@@ -327,6 +327,7 @@ impl<S: IdentityProvider> DeviceService<S> {
                 },
                 mdm_reported: None,
                 contexts: Default::default(),
+                current_user_context: None,
                 fences,
                 credential_leases: Default::default(),
                 policy_commands: Default::default(),
@@ -415,6 +416,7 @@ impl<S: IdentityProvider> DeviceService<S> {
         if self.core.stopping {
             return Ok(());
         }
+        self.drive_policy(commands).await?;
         self.core.step_telemetry();
         if std::time::Instant::now() >= self.next_enrollment {
             self.core.access.prune();
@@ -429,19 +431,30 @@ impl<S: IdentityProvider> DeviceService<S> {
             }
             self.core.reconcile()?;
             self.next_enrollment = std::time::Instant::now() + std::time::Duration::from_secs(2);
-            let result = network(self.client.drive_pki(), &mut self.core, commands).await;
+            let result = background(self.client.drive_pki(), &mut self.core, commands).await;
             self.update_identity_gate()?;
-            result?;
+            if result?.is_none() {
+                return Ok(());
+            }
         }
-        if let Err(error) = network(self.client.drive_connections(), &mut self.core, commands).await
-        {
+        let connections =
+            background(self.client.drive_connections(), &mut self.core, commands).await;
+        if matches!(connections, Ok(None)) {
+            return Ok(());
+        }
+        if let Err(error) = connections {
             match self.client.connection_status() {
                 Ok(status) => eprintln!("agent_connections: service={} revision={} origin={} acknowledged={} error={error}", status.service_id, status.revision, status.origin, status.acknowledged),
                 Err(_) => eprintln!("agent_connections: state unavailable error={error}"),
             }
         }
         // Task trust belongs to the communication owner. A failed refresh retains usable installed keys.
-        let _ = network(self.client.drive_task_trust(), &mut self.core, commands).await;
+        if matches!(
+            background(self.client.drive_task_trust(), &mut self.core, commands).await,
+            Ok(None)
+        ) {
+            return Ok(());
+        }
         self.update_identity_gate()?;
         if !self.core.host.identity_ready() {
             self.core.revoke_preparations()?;
@@ -456,18 +469,25 @@ impl<S: IdentityProvider> DeviceService<S> {
             .transpose()?
             .flatten()
         {
-            let result = network(
+            let result = background(
                 async { Ok(crate::telemetry::request(&self.client, &action).await) },
                 &mut self.core,
                 commands,
             )
             .await;
             if let Some(telemetry) = &mut self.core.telemetry {
-                telemetry.apply(&action, result.unwrap_or_else(|e| Err(e.into())))?;
+                telemetry.apply(
+                    &action,
+                    result
+                        .unwrap_or_else(|e| Some(Err(e.into())))
+                        .unwrap_or_else(|| Err(Error::Unavailable.into())),
+                )?;
+            }
+            if !self.core.policy_commands.is_empty() {
+                return Ok(());
             }
         }
         self.prune_credentials()?;
-        self.drive_policy(commands).await?;
         if let Some((offer, _)) = &self.waiting {
             let request = backend::request_id(offer)?;
             if self
@@ -535,7 +555,10 @@ impl<S: IdentityProvider> DeviceService<S> {
             return Ok(());
         }
         self.next_network = std::time::Instant::now() + std::time::Duration::from_secs(2);
-        self.retire_expired_current_user(commands).await?;
+        self.synchronize_current_user(commands).await?;
+        if !self.core.policy_commands.is_empty() {
+            return Ok(());
+        }
         let caller = self.core.caller();
         if self.waiting.as_ref().is_some_and(|(offer, _)| {
             self.core
@@ -1038,6 +1061,7 @@ impl<S: IdentityProvider> DeviceService<S> {
                             command=commands.recv()=>match command{Some(command)=>self.core.handle(command),None=>break},
                             _=timer.tick()=>{if let Err(error)=self.drive(&mut commands).await{self.drive_error(error);}}
                         }
+                        if let Err(error)=self.drive_policy(&mut commands).await{self.drive_error(error);}
                         if self.core.selected.is_some(){if let Err(error)=self.drive(&mut commands).await{self.drive_error(error);}}
                         *published.lock().map_err(|_| Error::Unavailable)? = crate::registration::project(self.client.enrollment_status()?);
                     }
@@ -1235,6 +1259,8 @@ pub(crate) struct Core {
     pub(crate) mdm: execution_ipc::host::MdmStatus,
     mdm_reported: Option<wire::MdmEnrollmentState>,
     contexts: policy::Contexts,
+    // Last explicit authenticated login, independent of remote projection acknowledgement.
+    current_user_context: Option<agent_client::current_user::Owner>,
     fences: Arc<policy::Fences>,
     credential_leases: std::collections::BTreeMap<RequestId, Arc<zeroize::Zeroizing<String>>>,
     policy_commands: policy::Commands,
@@ -1651,6 +1677,7 @@ impl Core {
                     | Request::LocalSoftware { .. }
                     | Request::BindContext { .. }
                     | Request::RevokeContext {}
+                    | Request::CurrentUserStatus {}
                     | Request::RetireEnterpriseContext { .. }
                     | execution_ipc::host::Request::ObserveSoftware { .. }
                     | execution_ipc::host::Request::PolicyDirectory { .. }
@@ -1679,6 +1706,7 @@ impl Core {
                     | Request::LocalSoftware { .. }
                     | Request::BindContext { .. }
                     | Request::RevokeContext {}
+                    | Request::CurrentUserStatus {}
                     | Request::RetireEnterpriseContext { .. }
                     | Request::ObserveSoftware { .. }
                     | Request::PolicyDirectory { .. }
@@ -1983,16 +2011,37 @@ pub(crate) async fn network<T>(
     core: &mut Core,
     commands: &mut tokio::sync::mpsc::Receiver<Command>,
 ) -> Result<T, Error> {
-    network_loop(future, commands, |event| {
-        core.enforce_identity_gate()?;
-        match event {
-            NetworkEvent::Reconcile => core.reconcile()?,
-            NetworkEvent::Command(command) => core.handle(*command),
-            NetworkEvent::Closed => core.stopping = true,
-        }
-        Ok(core.stopping)
+    network_loop(future, commands, |event| network_event(core, event)).await
+}
+fn network_event(core: &mut Core, event: NetworkEvent) -> Result<bool, Error> {
+    core.enforce_identity_gate()?;
+    match event {
+        NetworkEvent::Reconcile => core.reconcile()?,
+        NetworkEvent::Command(command) => core.handle(*command),
+        NetworkEvent::Closed => core.stopping = true,
+    }
+    Ok(core.stopping)
+}
+// The same owner yields background HTTP for queued native operations. Original
+// durable communication intents remain with their existing owners after cancellation.
+async fn background<T>(
+    future: impl std::future::Future<Output = Result<T, Error>>,
+    core: &mut Core,
+    commands: &mut tokio::sync::mpsc::Receiver<Command>,
+) -> Result<Option<T>, Error> {
+    let queued = |core: &Core| !core.policy_commands.is_empty();
+    if queued(core) {
+        return Ok(None);
+    }
+    let result = network_loop(future, commands, |event| {
+        Ok(network_event(core, event)? || queued(core))
     })
-    .await
+    .await;
+    if matches!(result, Err(Error::Unavailable)) && !core.stopping && queued(core) {
+        Ok(None)
+    } else {
+        result.map(Some)
+    }
 }
 // One synchronous callback borrows the owner exclusively; neither a task nor a lock owns journal IO.
 // ref: tokio tokio-1.47.1 tokio/src/sync/mpsc/bounded.rs (single receiver, cancel-safe recv).

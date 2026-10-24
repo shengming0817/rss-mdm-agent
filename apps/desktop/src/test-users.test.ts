@@ -117,23 +117,25 @@ it("closes assistant modals when leaving the page and preserves the conversation
     wrapper.unmount();
   }
 });
-it("keeps settings selected when navigation needs an unselected user", async () => {
+it("keeps device pages navigable without an enterprise account", async () => {
   vi.mocked(invoke).mockImplementation(async (command) => {
     if (command === "test_users")
       return { schemaVersion: 1, kind: "testUserPage", users: [] };
+    if (command === "select_device") return current;
     throw { code: "ai_unavailable" };
   });
   const wrapper = mount(App);
   try {
     await flushPromises();
-    await wrapper.get(".login-diagnostics").trigger("click");
+    expect(wrapper.find(".login-screen").exists()).toBe(false);
     const assistant = wrapper
       .findAll("button")
       .find((b) => b.text() === "AI 助手");
     if (assistant) await assistant.trigger("click");
     await flushPromises();
-    expect(wrapper.find(".settings").isVisible()).toBe(true);
-    expect(wrapper.get("h1").text()).toBe("设置");
+    expect(wrapper.findComponent(Workspace).props("ready")).toBe(true);
+    if (assistant)
+      expect(wrapper.findComponent(Workspace).props("page")).toBe("assistant");
   } finally {
     wrapper.unmount();
   }
@@ -220,29 +222,66 @@ it("keeps the current workspace mounted and inert while a switch is pending", as
   wrapper.unmount();
 });
 
-it("opens enterprise login first and keeps guest and diagnostics reachable", async () => {
+it("opens the device workspace without enterprise login", async () => {
   vi.mocked(invoke).mockImplementation(async (command) => {
     if (command === "test_users")
       return { schemaVersion: 1, kind: "testUserPage", users: [] };
     if (command === "account_organizations") return settingsPage();
+    if (command === "select_device") return current;
     throw { code: "ai_unavailable" };
   });
   const wrapper = mount(App);
   try {
     await flushPromises();
-    expect(wrapper.text()).toContain("欢迎回到工作空间");
-    expect(wrapper.find('input[type="password"]').exists()).toBe(true);
-    const guest = wrapper
-      .findAll("button")
-      .find((b) => b.text() === "暂不登录，使用本机工作区");
-    expect(guest).toBeDefined();
-    await guest!.trigger("click");
-    await flushPromises();
+    expect(wrapper.find(".login-screen").exists()).toBe(false);
+    expect(wrapper.findComponent(Workspace).props("ready")).toBe(true);
+    expect(currentUser.value?.identity.mode).toBe("device");
     expect(invoke).toHaveBeenCalledWith("select_device");
   } finally {
     wrapper.unmount();
   }
 });
+
+it.each([
+  "binding_unknown",
+  "cleanup_pending",
+  "conflict",
+  "invalidated",
+] as const)(
+  "allows editing and submitting another login after %s",
+  async (binding) => {
+    accountBinding.value = binding;
+    const organization = {
+      id: "enterprise",
+      label: "Enterprise",
+      origin: "https://mdm.fixture.test",
+      tenantId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    };
+    vi.mocked(invoke).mockResolvedValue(
+      settingsPage([organization], organization.id),
+    );
+    const wrapper = mount(Account, { props: { loading: false } });
+    try {
+      await flushPromises();
+      const login = wrapper.get('[aria-label="企业账号"]');
+      const password = wrapper.get('[aria-label="企业账号密码"]');
+      expect(login.attributes("disabled")).toBeUndefined();
+      expect(password.attributes("disabled")).toBeUndefined();
+      await login.setValue("another-account");
+      await password.setValue("another-password");
+      await wrapper.get("form").trigger("submit");
+      expect(wrapper.emitted("login")?.[0]).toEqual([
+        {
+          organizationId: organization.id,
+          login: "another-account",
+          password: "another-password",
+        },
+      ]);
+    } finally {
+      wrapper.unmount();
+    }
+  },
+);
 
 it("preselects the embedded organization without logging in and allows another organization", async () => {
   const embedded = {
@@ -404,7 +443,8 @@ it("focuses the default AI page after the selected workspace is replaced", async
   const wrapper = mount(App, { attachTo: document.body });
   try {
     await flushPromises();
-    await wrapper.get(".login-diagnostics").trigger("click");
+    wrapper.getComponent(Workspace).vm.$emit("navigate", "settings");
+    await flushPromises();
     await wrapper.get('[aria-label="测试用户名"]').setValue("Alice");
     (
       wrapper.get('[aria-label="测试用户名"]').element as HTMLInputElement
@@ -473,7 +513,7 @@ it.each(["cleanup_pending", "conflict"] as const)(
     expect(wrapper.text()).toContain("清理后重新登录");
     expect(
       wrapper.get('[aria-label="企业账号密码"]').attributes("disabled"),
-    ).toBeDefined();
+    ).toBeUndefined();
     wrapper.unmount();
   },
 );

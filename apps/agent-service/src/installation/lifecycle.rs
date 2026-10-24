@@ -371,7 +371,6 @@ fn refresh(
     crate::service::platform_sso::upgrade_preflight(&old)?;
     if current.exists() {
         Deployment::load_persistent(config)?;
-        persistent(current, config)?;
     }
     persistent(candidate, next_config)?;
     #[cfg(windows)]
@@ -388,7 +387,10 @@ fn refresh(
                 publish(config, &json(&next)?)
             }
             Step::RegisterCandidate => platform::register(true, candidate, config),
-            Step::StopCandidate => platform::stop(true, candidate, config),
+            Step::StopCandidate => {
+                platform::quiescent(&next, config)?;
+                platform::stop(true, candidate, config)
+            }
             Step::RemoveCandidate => platform::remove(true, candidate, config),
             Step::RestoreCurrent => publish(config, &json(&old)?),
             Step::RegisterCurrent => platform::register(true, current, config),

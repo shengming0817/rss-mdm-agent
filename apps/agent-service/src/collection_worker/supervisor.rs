@@ -32,7 +32,7 @@ pub(super) fn query(
         .env_clear()
         // COM/WMI needs the OS directory even in a minimal environment. Derive
         // it from Windows, never from task input or inherited environment.
-        .env("SystemRoot", system_root()?)
+        .env("SystemRoot", crate::os_version::system_root()?)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -110,21 +110,4 @@ pub(super) fn query(
         return Err(Error::Unavailable);
     }
     Ok(decode_query(q, &bytes, time))
-}
-
-// ref: Microsoft GetSystemWindowsDirectoryW (sysinfoapi.h).
-fn system_root() -> Result<std::ffi::OsString, Error> {
-    use std::os::windows::ffi::OsStringExt;
-    let mut buffer = vec![0u16; 32768];
-    // SAFETY: buffer is writable for the supplied number of UTF-16 code units.
-    let length = unsafe {
-        windows_sys::Win32::System::SystemInformation::GetSystemWindowsDirectoryW(
-            buffer.as_mut_ptr(),
-            buffer.len() as u32,
-        )
-    } as usize;
-    if length == 0 || length >= buffer.len() {
-        return Err(Error::Unavailable);
-    }
-    Ok(std::ffi::OsString::from_wide(&buffer[..length]))
 }

@@ -62,6 +62,8 @@ async fn main() {
                     "software-catalog" => {
                         let item = protocol::self_service_software::publish(
                             &mut data, command["path"].as_str().unwrap(), command["receipt"].as_str().unwrap(),
+                            command["user"].as_bool().unwrap_or(false),
+                            command["validitySeconds"].as_i64().unwrap_or(3600),
                         );
                         match item {
                             Ok(item) => println!("{}", serde_json::json!({"policyId":item.policy_id,"policyRevision":item.policy_revision,"policyVersion":item.policy_version,"item":item})),
