@@ -156,7 +156,7 @@ fn text(bytes: Vec<u8>) -> Result<String, Error> {
     }
     Ok(text.into())
 }
-fn detect(request: &WorkerRequest) -> Result<SoftwareState, Error> {
+pub(super) fn detect(request: &WorkerRequest) -> Result<SoftwareState, Error> {
     let commands = crate::backend::commands::software_commands(&request.action)?;
     match commands.detection.ok_or(Error::Unsupported)? {
         wire::SoftwareTaskDetection::MsiProduct {

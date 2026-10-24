@@ -58,7 +58,6 @@ pub(super) fn fixture(root: &Root) -> WorkerRequest {
         operation: WorkerOperation::Prepare,
         native_output: Default::default(),
         native_pending: Default::default(),
-        external_pending: Default::default(),
         materials: [
             ("native-source".into(), material(&pack)),
             ("package".into(), material(&installer)),

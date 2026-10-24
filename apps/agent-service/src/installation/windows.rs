@@ -167,13 +167,14 @@ fn wait_stopped(handle: &Sc) -> Result<(), Error> {
 }
 pub(super) fn register(system: bool, binary: &Path, config: &Path) -> Result<(), Error> {
     if !system {
-        return task_register(binary, config);
+        let subject = execution_ipc::host::current_subject().map_err(crate::error::app_error)?;
+        return task_register(&subject, binary, config, true);
     }
     let deployment = Deployment::load(config)?;
     if deployment.service.path != binary {
         return Err(Error::Identity);
     }
-    register_verified(binary, config)
+    register_verified(binary, config, &deployment)
 }
 /// Compensation only: the retained executable validates its own persistent format.
 pub(super) fn restore_registration(binary: &Path, config: &Path) -> Result<(), Error> {
@@ -189,9 +190,9 @@ pub(super) fn restore_registration(binary: &Path, config: &Path) -> Result<(), E
             "--validate-persistent".into(),
         ],
     )?;
-    register_verified(binary, config)
+    register_verified(binary, config, &deployment)
 }
-fn register_verified(binary: &Path, config: &Path) -> Result<(), Error> {
+fn register_verified(binary: &Path, config: &Path, deployment: &Deployment) -> Result<(), Error> {
     let handle = if let Some(handle) = service(NAME)? {
         owned(&handle, binary, config)?;
         handle
@@ -229,13 +230,18 @@ fn register_verified(binary: &Path, config: &Path) -> Result<(), Error> {
     loop {
         let value = state(&handle)?;
         if value.dwCurrentState == SERVICE_RUNNING && value.dwProcessId != 0 {
-            return Ok(());
+            break;
         }
         if value.dwCurrentState == SERVICE_STOPPED || Instant::now() >= deadline {
             return Err(Error::Unavailable);
         }
         std::thread::sleep(Duration::from_millis(50));
     }
+    let active = execution_ipc::host::active_user_session().ok().map(|v| v.0);
+    for subject in deployment.helper_work_roots.keys() {
+        task_register(subject, binary, config, active.as_ref() == Some(subject))?;
+    }
+    Ok(())
 }
 pub(super) fn stop(system: bool, binary: &Path, config: &Path) -> Result<(), Error> {
     if !system {
@@ -729,31 +735,125 @@ fn task_owned(
     binary: &Path,
     config: &Path,
 ) -> Result<(), Error> {
-    let xml = unsafe { task.Xml() }
-        .map_err(|_| Error::Unavailable)?
-        .to_string();
-    super::task_document::owned(
-        &xml,
-        subject,
-        binary.to_str().ok_or(Error::Configuration)?,
-        &format!("--config {} --user-helper", quote(config)?),
-    )
-}
-fn task_register(binary: &Path, config: &Path) -> Result<(), Error> {
-    use ::windows::Win32::System::{TaskScheduler::*, Variant::VARIANT};
-    let subject = execution_ipc::host::current_subject().map_err(crate::error::app_error)?;
-    let deployment = Deployment::load(config)?;
-    if !deployment.helper_work_roots.contains_key(&subject) {
+    use ::windows::{
+        core::{Interface, BSTR},
+        Win32::{Foundation::VARIANT_BOOL, System::TaskScheduler::*},
+    };
+    // ref: microsoft/windows-rs 0.61.3 TaskScheduler: read the native definition;
+    // the scheduler may normalize account names and omit an implicit action context.
+    let expected_arguments = format!("--config {} --user-helper", quote(config)?);
+    let read = || -> ::windows::core::Result<(String, String, bool)> {
+        unsafe {
+            let definition = task.Definition()?;
+            let principal = definition.Principal()?;
+            let mut user = BSTR::new();
+            let mut login = TASK_LOGON_TYPE::default();
+            let mut level = TASK_RUNLEVEL_TYPE::default();
+            principal.UserId(&mut user)?;
+            principal.LogonType(&mut login)?;
+            principal.RunLevel(&mut level)?;
+            let actions = definition.Actions()?;
+            let triggers = definition.Triggers()?;
+            let mut action_count = 0;
+            let mut trigger_count = 0;
+            actions.Count(&mut action_count)?;
+            triggers.Count(&mut trigger_count)?;
+            if action_count != 1 || trigger_count != 1 {
+                return Ok((user.to_string(), String::new(), false));
+            }
+            let action: IExecAction = actions.get_Item(1)?.cast()?;
+            let trigger: ILogonTrigger = triggers.get_Item(1)?.cast()?;
+            let mut program = BSTR::new();
+            let mut arguments = BSTR::new();
+            let mut cwd = BSTR::new();
+            let mut trigger_user = BSTR::new();
+            action.Path(&mut program)?;
+            action.Arguments(&mut arguments)?;
+            action.WorkingDirectory(&mut cwd)?;
+            trigger.UserId(&mut trigger_user)?;
+            let settings = definition.Settings()?;
+            let mut battery = VARIANT_BOOL::default();
+            let mut stop_battery = VARIANT_BOOL::default();
+            let mut enabled = VARIANT_BOOL::default();
+            let mut limit = BSTR::new();
+            let mut instances = TASK_INSTANCES_POLICY::default();
+            settings.DisallowStartIfOnBatteries(&mut battery)?;
+            settings.StopIfGoingOnBatteries(&mut stop_battery)?;
+            settings.Enabled(&mut enabled)?;
+            settings.ExecutionTimeLimit(&mut limit)?;
+            settings.MultipleInstances(&mut instances)?;
+            Ok((
+                user.to_string(),
+                trigger_user.to_string(),
+                login == TASK_LOGON_INTERACTIVE_TOKEN
+                    && level == TASK_RUNLEVEL_LUA
+                    && program.to_string() == binary.to_string_lossy()
+                    && arguments.to_string() == expected_arguments
+                    && cwd.is_empty()
+                    && !battery.as_bool()
+                    && !stop_battery.as_bool()
+                    && enabled.as_bool()
+                    && limit.to_string() == "PT0S"
+                    && instances == TASK_INSTANCES_IGNORE_NEW,
+            ))
+        }
+    };
+    let (user, trigger, valid) = read().map_err(|_| Error::Identity)?;
+    if !valid || !same_account(&user, subject)? || !same_account(&trigger, subject)? {
         return Err(Error::Identity);
     }
-    if let Some(task) = task_get(&subject)? {
-        task_owned(&task, &subject, binary, config)?;
-        return task_start(&task);
+    Ok(())
+}
+fn same_account(account: &str, subject: &str) -> Result<bool, Error> {
+    if account == subject {
+        return Ok(true);
+    }
+    let mut sid = [0u32; 17];
+    let mut sid_bytes = std::mem::size_of_val(&sid) as u32;
+    let mut domain = [0u16; 256];
+    let mut domain_length = domain.len() as u32;
+    let mut kind = 0;
+    // SAFETY: fixed writable SID/domain buffers and terminated account name.
+    if unsafe {
+        LookupAccountNameW(
+            null(),
+            wide(account).as_ptr(),
+            sid.as_mut_ptr().cast(),
+            &mut sid_bytes,
+            domain.as_mut_ptr(),
+            &mut domain_length,
+            &mut kind,
+        )
+    } == 0
+    {
+        return Err(Error::Identity);
+    }
+    let mut value = null_mut();
+    // SAFETY: successful lookup initialized a SID; ConvertSid allocates a terminated string.
+    if unsafe { ConvertSidToStringSidW(sid.as_mut_ptr().cast(), &mut value) } == 0 {
+        return Err(Error::Identity);
+    }
+    let actual = unsafe { text(value) };
+    unsafe {
+        LocalFree(value.cast());
+    }
+    Ok(actual? == subject)
+}
+
+fn task_register(subject: &str, binary: &Path, config: &Path, start: bool) -> Result<(), Error> {
+    use ::windows::Win32::System::{TaskScheduler::*, Variant::VARIANT};
+    let deployment = Deployment::load(config)?;
+    if !deployment.helper_work_roots.contains_key(subject) {
+        return Err(Error::Identity);
+    }
+    if let Some(task) = task_get(subject)? {
+        task_owned(&task, subject, binary, config)?;
+        return if start { task_start(&task) } else { Ok(()) };
     }
     let xml = format!(
         r#"<?xml version="1.0"?><Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task"><Triggers><LogonTrigger><UserId>{}</UserId></LogonTrigger></Triggers><Principals><Principal id="User"><UserId>{}</UserId><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal></Principals><Settings><DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries><StopIfGoingOnBatteries>false</StopIfGoingOnBatteries><Enabled>true</Enabled><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><ExecutionTimeLimit>PT0S</ExecutionTimeLimit></Settings><Actions Context="User"><Exec><Command>{}</Command><Arguments>{}</Arguments></Exec></Actions></Task>"#,
-        escape(&subject),
-        escape(&subject),
+        escape(subject),
+        escape(subject),
         escape(binary.to_str().ok_or(Error::Configuration)?),
         escape(&format!("--config {} --user-helper", quote(config)?))
     );
@@ -763,14 +863,18 @@ fn task_register(binary: &Path, config: &Path) -> Result<(), Error> {
             &format!("RssExecution-{subject}").into(),
             &xml.into(),
             TASK_CREATE.0,
-            &VARIANT::from(subject.as_str()),
+            &VARIANT::from(subject),
             &empty,
             TASK_LOGON_INTERACTIVE_TOKEN,
             &empty,
         )
     }
     .map_err(|_| Error::Unavailable)?;
-    task_start(&task)
+    if start {
+        task_start(&task)
+    } else {
+        Ok(())
+    }
 }
 fn task_start(
     task: &::windows::Win32::System::TaskScheduler::IRegisteredTask,

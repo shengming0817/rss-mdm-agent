@@ -21,27 +21,7 @@ fn artifact(bytes: &[u8; 32]) -> Result<ExactArtifactRef, Error> {
         sha256: Digest::new(hex(bytes)).map_err(|_| Error::Protocol)?,
     })
 }
-#[derive(Clone, Copy)]
-enum CommandKind {
-    Native(SoftwareManagerKind),
-    Script(wire::SoftwareTaskInterpreter),
-}
-impl CommandKind {
-    fn script(
-        script: &wire::SoftwareTaskScript,
-    ) -> (Self, Option<&str>, &wire::SoftwareTaskInvocation) {
-        (
-            Self::Script(script.interpreter),
-            Some(&script.entry),
-            &script.invocation,
-        )
-    }
-}
-type CompiledCommand = (
-    SoftwareInvocation,
-    Artifacts,
-    Vec<(PathBuf, ExactArtifactRef)>,
-);
+type CompiledCommand = (SoftwareInvocation, Artifacts);
 struct Compiler<'a> {
     config: &'a ExecutionConfig,
     root: &'a mut execution_runner::staging::MaterialRoot,
@@ -50,15 +30,8 @@ struct Compiler<'a> {
     bundle_root: Option<PathBuf>,
 }
 impl Compiler<'_> {
-    fn command(
-        &mut self,
-        (kind, entry, command): (CommandKind, Option<&str>, &wire::SoftwareTaskInvocation),
-        adapter: SoftwareKind,
-        payload: &(PathBuf, ExactArtifactRef),
-        operation: SoftwareOperation,
-        version: &str,
-        package: &str,
-    ) -> Result<CompiledCommand, Error> {
+    fn command(&mut self, script: &wire::SoftwareTaskScript) -> Result<CompiledCommand, Error> {
+        let command = &script.invocation;
         let (run_as, session, work_root, delegate) = match command.run_as {
             wire::ExecutionIdentity::System => (
                 RunAs::System {
@@ -87,18 +60,10 @@ impl Compiler<'_> {
                 )
             }
         };
-        let profile = match kind {
-            CommandKind::Native(SoftwareManagerKind::Msi | SoftwareManagerKind::Winget)
-            | CommandKind::Script(wire::SoftwareTaskInterpreter::PowerShell7) => {
-                wire::ExecutorProfile::PowerShell7
-            }
-            CommandKind::Native(
-                SoftwareManagerKind::PackageInstaller | SoftwareManagerKind::Brew,
-            )
-            | CommandKind::Script(wire::SoftwareTaskInterpreter::PosixSh) => {
-                wire::ExecutorProfile::PosixSh
-            }
-            CommandKind::Script(wire::SoftwareTaskInterpreter::Bash) => wire::ExecutorProfile::Bash,
+        let profile = match script.interpreter {
+            wire::SoftwareTaskInterpreter::PowerShell7 => wire::ExecutorProfile::PowerShell7,
+            wire::SoftwareTaskInterpreter::PosixSh => wire::ExecutorProfile::PosixSh,
+            wire::SoftwareTaskInterpreter::Bash => wire::ExecutorProfile::Bash,
         };
         let interpreter = self
             .config
@@ -110,77 +75,16 @@ impl Compiler<'_> {
             .image
             .verify(&interpreter.image.path)
             .map_err(|_| Error::Untrusted)?;
-        let mut files = vec![payload.clone()];
-        let mut arguments = Vec::new();
-        let (content, content_ref) = if let CommandKind::Native(executor) = kind {
-            if entry.is_some() {
-                return Err(Error::Protocol);
-            }
-            let manager = self
-                .config
-                .managers
-                .iter()
-                .find(|m| m.executor == executor)
-                .ok_or(Error::Unsupported)?;
-            manager
-                .image
-                .verify(&manager.image.path)
-                .map_err(|_| Error::Untrusted)?;
-            let manager_ref = ExactArtifactRef {
-                resource: reference("native-manager", &manager.image.sha256)?,
-                sha256: Digest::new(&manager.image.sha256).map_err(|_| Error::Configuration)?,
-            };
-            files.push((manager.image.path.clone(), manager_ref));
-            let wrapper = wrapper(adapter, operation)?;
-            use sha2::{Digest as _, Sha256};
-            let digest: [u8; 32] = Sha256::digest(wrapper).into();
-            let reference = artifact(&digest)?;
-            let path = self
-                .root
-                .publish(
-                    delegate.as_ref().map(|h| h.context().subject.as_str()),
-                    std::io::Cursor::new(wrapper),
-                    &reference.sha256,
-                    wrapper.len() as u64,
-                )
-                .map_err(crate::error::app_error)?;
-            arguments.extend([
-                manager
-                    .image
-                    .path
-                    .to_str()
-                    .ok_or(Error::Configuration)?
-                    .to_owned(),
-                payload.0.to_str().ok_or(Error::Configuration)?.to_owned(),
-                package.to_owned(),
-                version.to_owned(),
-            ]);
-            (path, reference)
-        } else {
-            let key = entry.ok_or(Error::Protocol)?;
-            let (path, reference) = self.files.get(key).cloned().ok_or(Error::Untrusted)?;
-            if self.bundle_root.is_some() {
-                (path, reference)
-            } else {
-                let length = std::fs::metadata(&path)?.len();
-                let path = self
-                    .root
-                    .publish(
-                        delegate.as_ref().map(|h| h.context().subject.as_str()),
-                        std::fs::File::open(path)?,
-                        &reference.sha256,
-                        length,
-                    )
-                    .map_err(crate::error::app_error)?;
-                (path, reference)
-            }
-        };
-        arguments.extend(command.arguments.clone());
+        let (content, content_ref) = self
+            .files
+            .get(&script.entry)
+            .cloned()
+            .ok_or(Error::Untrusted)?;
         let launch = script_launch(
             command,
             interpreter,
             content_ref,
-            arguments,
+            command.arguments.clone(),
             self.bundle_root.as_ref().unwrap_or(&work_root),
         )?;
         let invocation = SoftwareInvocation {
@@ -204,7 +108,6 @@ impl Compiler<'_> {
                 work_root,
                 controlled_input: None,
             },
-            files,
         ))
     }
 }
@@ -231,18 +134,7 @@ fn script_launch(
                 stderr: TextEncoding::Utf8,
             },
             cwd: cwd.to_str().ok_or(Error::Configuration)?.into(),
-            env: command
-                .environment
-                .iter()
-                .map(|(key, value)| {
-                    Ok((
-                        EnvironmentKey::new(key).map_err(|_| Error::Protocol)?,
-                        InputValue::Literal {
-                            value: serde_json::Value::String(value.clone()),
-                        },
-                    ))
-                })
-                .collect::<Result<_, Error>>()?,
+            env: plan::environment(&command.environment)?,
         },
         &plan::storage_limits().input,
     )
@@ -283,17 +175,6 @@ pub(crate) fn compile(
     let mut steps = Vec::new();
     let mut sources = Vec::new();
     for (index, step) in payload.steps.iter().enumerate() {
-        let action = &step.action;
-        if !action.signatures.is_empty()
-            && !matches!(
-                action.behavior,
-                wire::SoftwareTaskBehavior::Exe(_)
-                    | wire::SoftwareTaskBehavior::Msix(_)
-                    | wire::SoftwareTaskBehavior::Dmg(_)
-            )
-        {
-            return Err(Error::Unsupported);
-        }
         match (&step.target, helper.as_ref()) {
             (wire::SoftwareExecutionTarget::Device, _) => (),
             (
@@ -307,309 +188,17 @@ pub(crate) fn compile(
             _ => return Err(Error::Identity),
         }
 
-        if matches!(
-            action.behavior,
-            wire::SoftwareTaskBehavior::Exe(_)
-                | wire::SoftwareTaskBehavior::Msix(_)
-                | wire::SoftwareTaskBehavior::Dmg(_)
-                | wire::SoftwareTaskBehavior::Winget(_)
-                | wire::SoftwareTaskBehavior::Brew(_)
-        ) {
-            let (compiled, source) = native::compile(
-                (step, index),
-                payload,
-                materials,
-                (config, root),
-                helper.clone(),
-                intent,
-                (&architecture, plan::pin(&std::env::current_exe()?)?),
-            )?;
-            steps.push(compiled);
-            sources.push(source);
-            continue;
-        }
-        let commands = crate::backend::commands::software_commands(action)?;
-        let (adapter, native) = match &action.behavior {
-            wire::SoftwareTaskBehavior::Msi(n) => {
-                (SoftwareKind::Msi, Some((SoftwareManagerKind::Msi, n)))
-            }
-            wire::SoftwareTaskBehavior::Pkg(n) => (
-                SoftwareKind::Pkg,
-                Some((SoftwareManagerKind::PackageInstaller, n)),
-            ),
-            wire::SoftwareTaskBehavior::Bundle(_) => (
-                if platform == Platform::Macos {
-                    SoftwareKind::MacosBundle
-                } else {
-                    SoftwareKind::WindowsBundle
-                },
-                None,
-            ),
-            _ => return Err(Error::Unsupported),
-        };
-        let install_command = if let Some(script) = commands.install_script {
-            CommandKind::script(script)
-        } else {
-            (
-                CommandKind::Native(native.ok_or(Error::Unsupported)?.0),
-                None,
-                commands.install,
-            )
-        };
-        let mut compiler = Compiler {
-            config,
-            root,
-            helper: helper.clone(),
-            files: BTreeMap::new(),
-            bundle_root: None,
-        };
-        for declared in &step.artifacts {
-            let key = &declared.key;
-            let file = materials
-                .files()
-                .iter()
-                .find(|f| f.key() == key)
-                .ok_or(Error::Untrusted)?;
-            let reference = artifact(&declared.sha256)?;
-            let path = compiler
-                .root
-                .publish(
-                    helper.as_ref().map(|h| h.context().subject.as_str()),
-                    file.reader()?,
-                    &reference.sha256,
-                    declared.length,
-                )
-                .map_err(crate::error::app_error)?;
-            compiler.files.insert(
-                declared
-                    .key
-                    .strip_prefix(&format!("{index}/"))
-                    .ok_or(Error::Protocol)?
-                    .to_owned(),
-                (path, reference),
-            );
-        }
-        let mut primary = compiler
-            .files
-            .get(action.behavior.installer())
-            .cloned()
-            .ok_or(Error::Untrusted)?;
-        if let Some(name) = native_export_name(adapter) {
-            primary.0 = compiler
-                .root
-                .native_export(
-                    &primary.0,
-                    &primary.1.sha256,
-                    &name,
-                    helper.as_ref().map(|h| h.context().subject.as_str()),
-                )
-                .map_err(crate::error::app_error)?;
-        }
-        let bundle = action.behavior.bundle().map(|b| BundleManifest {
-            schema: V1,
-            platform,
-            architecture: architecture.clone(),
-            entries: b
-                .entries
-                .iter()
-                .map(|(name, entry)| {
-                    (
-                        name.clone(),
-                        BundleFile {
-                            length: entry.length,
-                            sha256: entry.sha256,
-                        },
-                    )
-                })
-                .collect(),
-        });
-        if let Some(manifest) = &bundle {
-            let members = compiler
-                .root
-                .bundle(
-                    helper.as_ref().map(|h| h.context().subject.as_str()),
-                    &primary.0,
-                    &primary.1.sha256,
-                    manifest,
-                )
-                .map_err(crate::error::app_error)?;
-            compiler.bundle_root = Some(bundle_directory(
-                &members,
-                &commands.install_script.ok_or(Error::Protocol)?.entry,
-            )?);
-            for (name, path) in members {
-                let declared = manifest.entries.get(&name).ok_or(Error::Untrusted)?;
-                compiler
-                    .files
-                    .insert(name, (path, artifact(&declared.sha256)?));
-            }
-        }
-        let (install, install_source, mut files) = compiler.command(
-            install_command,
-            adapter,
-            &primary,
-            SoftwareOperation::Install,
-            &action.version,
-            &action.package,
+        let (compiled, source) = native::compile(
+            (step, index),
+            payload,
+            materials,
+            (config, root),
+            helper.clone(),
+            intent,
+            (&architecture, plan::worker_image(config)?),
         )?;
-        let removal = if let Some(invocation) = commands.uninstall {
-            let command = if let Some(script) = commands.uninstall_script {
-                CommandKind::script(script)
-            } else {
-                (
-                    CommandKind::Native(native.ok_or(Error::Unsupported)?.0),
-                    None,
-                    invocation,
-                )
-            };
-            let payload = if let Some(key) = commands.removal_artifact {
-                compiler.files.get(key).cloned().ok_or(Error::Untrusted)?
-            } else {
-                primary.clone()
-            };
-            Some(compiler.command(
-                command,
-                adapter,
-                &payload,
-                SoftwareOperation::Uninstall,
-                &action.version,
-                &action.package,
-            )?)
-        } else {
-            None
-        };
-        let upgrade = if let Some(command) = commands.upgrade {
-            Some(compiler.command(
-                if let Some(script) = commands.install_script {
-                    CommandKind::script(script)
-                } else {
-                    (
-                        CommandKind::Native(native.ok_or(Error::Unsupported)?.0),
-                        None,
-                        command,
-                    )
-                },
-                adapter,
-                &primary,
-                SoftwareOperation::Install,
-                &action.version,
-                &action.package,
-            )?)
-        } else {
-            None
-        };
-        let uninstall = removal.as_ref().map(|(command, _, _)| command.clone());
-        let mut physical_sources = BTreeMap::new();
-        if intent == SoftwareOperation::Install {
-            if let Some((_, source, extra)) = &upgrade {
-                physical_sources.insert(SoftwarePhase::Upgrade, Box::new(source.clone()));
-                files.extend(extra.clone());
-            }
-            if let Some((_, source, extra)) = &removal {
-                physical_sources.insert(SoftwarePhase::Removal, Box::new(source.clone()));
-                files.extend(extra.clone());
-            }
-        }
-        let mutation = match intent {
-            SoftwareOperation::Install => Some(Box::new(install_source)),
-            SoftwareOperation::Uninstall => removal.map(|(_, source, extra)| {
-                files.extend(extra);
-                Box::new(source)
-            }),
-            SoftwareOperation::Detect => None,
-        };
-        let (detection, detector_source) = match commands.detection.ok_or(Error::Unsupported)? {
-            wire::SoftwareTaskDetection::MsiProduct {
-                product_code,
-                version,
-            } => (
-                SoftwareDetector::MsiProduct {
-                    product_code: product_code.clone(),
-                    version: package(version)?,
-                },
-                None,
-            ),
-            wire::SoftwareTaskDetection::PkgReceipt { receipt, version } => (
-                SoftwareDetector::PkgReceipt {
-                    receipt: receipt.clone(),
-                    version: package(version)?,
-                },
-                None,
-            ),
-            wire::SoftwareTaskDetection::Script { command: script } => {
-                let (invocation, source, extra) = compiler.command(
-                    CommandKind::script(script),
-                    adapter,
-                    &primary,
-                    SoftwareOperation::Detect,
-                    &action.version,
-                    &action.package,
-                )?;
-                files.extend(extra);
-                (
-                    SoftwareDetector::Script {
-                        invocation: Box::new(invocation),
-                    },
-                    Some(Box::new(source)),
-                )
-            }
-            _ => return Err(Error::Unsupported),
-        };
-        files.extend(compiler.files.values().cloned());
-        steps.push(SoftwareProgramStep {
-            format: match adapter {
-                SoftwareKind::Msi => SoftwareFormat::Msi {},
-                SoftwareKind::Pkg => SoftwareFormat::Pkg {},
-                SoftwareKind::WindowsBundle | SoftwareKind::MacosBundle => SoftwareFormat::Bundle {
-                    manifest: bundle.clone().ok_or(Error::Protocol)?,
-                    limits: BundleLimits {
-                        archive_bytes: 4 * 1024 * 1024 * 1024,
-                        files: 4096,
-                        file_bytes: 1024 * 1024 * 1024,
-                        expanded_bytes: 8 * 1024 * 1024 * 1024,
-                        depth: 32,
-                    },
-                },
-                _ => return Err(Error::Unsupported),
-            },
-            package: package(&action.package)?,
-            version: package(&action.version)?,
-            architecture: architecture.clone(),
-            payload: primary.1,
-            materials: files
-                .iter()
-                .map(|(path, artifact)| {
-                    Ok(SoftwareMaterial {
-                        path: path.to_str().ok_or(Error::Configuration)?.into(),
-                        artifact: artifact.clone(),
-                    })
-                })
-                .collect::<Result<_, Error>>()?,
-            signatures: Vec::new(),
-            upgrade: match commands.upgrade_policy {
-                wire::SoftwareTaskUpgrade::InPlace => SoftwareUpgrade::InPlace {
-                    invocation: Box::new(upgrade.ok_or(Error::Unsupported)?.0),
-                },
-                wire::SoftwareTaskUpgrade::UninstallThenInstall => {
-                    SoftwareUpgrade::UninstallThenInstall {}
-                }
-                wire::SoftwareTaskUpgrade::Deny => SoftwareUpgrade::Deny {},
-            },
-            install,
-            auxiliary: Default::default(),
-            uninstall,
-            detection,
-            allow_downgrade: action.downgrade == wire::SoftwareTaskDowngrade::Allow,
-            allow_reboot: action.reboot == wire::SoftwareTaskReboot::Report,
-        });
-        if let Some(source) = mutation {
-            physical_sources.insert(SoftwarePhase::Mutation, source);
-        }
-        sources.push(SoftwareStepArtifacts {
-            mutations: physical_sources,
-            detection: detector_source,
-            files,
-        });
+        steps.push(compiled);
+        sources.push(source);
     }
     let (timeout, output) = crate::backend::commands::software_budget(payload)?;
     let mut controller = steps.first().ok_or(Error::Protocol)?.install.launch.clone();
@@ -687,41 +276,6 @@ pub(crate) fn compile(
         },
     ))
 }
-fn wrapper(adapter: SoftwareKind, operation: SoftwareOperation) -> Result<&'static [u8], Error> {
-    Ok(match (adapter, operation) {
-        (SoftwareKind::Pkg, SoftwareOperation::Install) => b"#!/bin/sh\nset -eu\nmanager=$1; payload=$2; shift 4\nexec \"$manager\" -pkg \"$payload\" -target / \"$@\"\n",
-        (SoftwareKind::Msi, SoftwareOperation::Install) => b"param($Manager,$Payload,$Package,$Version)\n$ErrorActionPreference='Stop'\n& $Manager /i $Payload /qn /norestart @args\nexit $LASTEXITCODE\n",
-        (SoftwareKind::Msi, SoftwareOperation::Uninstall) => b"param($Manager,$Payload,$Package,$Version)\n$ErrorActionPreference='Stop'\n& $Manager /x $Payload /qn /norestart @args\nexit $LASTEXITCODE\n",
-        _ => return Err(Error::Unsupported),
-    })
-}
-
-fn bundle_directory(members: &BTreeMap<String, PathBuf>, entry: &str) -> Result<PathBuf, Error> {
-    let path = std::path::Path::new(entry);
-    let depth = path.components().count();
-    if depth == 0
-        || !path
-            .components()
-            .all(|c| matches!(c, std::path::Component::Normal(_)))
-    {
-        return Err(Error::Protocol);
-    }
-    let target = members.get(entry).ok_or(Error::Untrusted)?;
-    let root = target.ancestors().nth(depth).ok_or(Error::Untrusted)?;
-    if root.join(path) != *target {
-        return Err(Error::Untrusted);
-    }
-    Ok(root.to_path_buf())
-}
-// Native package managers require these filenames; the name never comes from a wire path.
-pub(crate) fn native_export_name(adapter: SoftwareKind) -> Option<String> {
-    Some(match adapter {
-        SoftwareKind::Pkg => "package.pkg".into(),
-        SoftwareKind::Msi => "package.msi".into(),
-        _ => return None,
-    })
-}
-
 #[cfg(test)]
 mod review_tests {
     use super::*;
@@ -825,14 +379,6 @@ mod review_tests {
                 assert_eq!(launch.stdin, StandardInput::Closed {});
                 assert_eq!(launch.output.format, OutputFormat::Text {});
             }
-        }
-    }
-    #[test]
-    fn review_regression_declared_bundle_entry_determines_its_root() {
-        let root = std::env::temp_dir().join("bundle-directory-proof");
-        for entry in ["setup.sh", "scripts/nested/setup.sh"] {
-            let members = [(entry.to_owned(), root.join(entry))].into();
-            assert_eq!(bundle_directory(&members, entry).unwrap(), root);
         }
     }
 }

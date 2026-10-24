@@ -104,3 +104,21 @@ mod tests {
         assert_ne!(super::current().unwrap(), [0; 4]);
     }
 }
+
+#[cfg(windows)]
+// ref: Microsoft GetSystemWindowsDirectoryW (sysinfoapi.h).
+pub(crate) fn system_root() -> Result<std::ffi::OsString, agent_client::Error> {
+    use std::os::windows::ffi::OsStringExt;
+    let mut buffer = vec![0u16; 32768];
+    // SAFETY: buffer is writable for the supplied number of UTF-16 code units.
+    let length = unsafe {
+        windows_sys::Win32::System::SystemInformation::GetSystemWindowsDirectoryW(
+            buffer.as_mut_ptr(),
+            buffer.len() as u32,
+        )
+    } as usize;
+    if length == 0 || length >= buffer.len() {
+        return Err(agent_client::Error::Unavailable);
+    }
+    Ok(std::ffi::OsString::from_wide(&buffer[..length]))
+}

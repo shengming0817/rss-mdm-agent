@@ -1597,7 +1597,7 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
             administrator_session.command('initialize')
 
         helper = True
-        run('/usr/bin/python3', str(installer), 'install', '--scope', 'user', '--binary', str(binary), '--config', str(config))
+        run('/usr/bin/python3', str(installer), 'status', '--scope', 'user', '--binary', str(binary), '--config', str(config))
         helper = True
         # A native PID is distinct from the asynchronous registration owner's readiness.
         deadline=time.monotonic()+15
@@ -1748,11 +1748,10 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
                 length=contained_pkg.stat().st_size,sha256=list(hashlib.sha256(contained_pkg.read_bytes()).digest()),bundle=contained_receipt,version='1.0')
             pkg_remote = completed(pkg_task['attempt'],120)
             pkg_event = acknowledged_result(pkg_remote,pkg_task['attempt'])
-            assert pkg_event['steps'][0]['process']['kind'] == 'exited' and pkg_event['steps'][0]['process']['code'] != 0
-            assert pkg_event['steps'][0]['after']['state'] == 'absent'
-            assert not (protected/'contained-package-payload/fixed.txt').exists()
-            assert subprocess.run(['/usr/sbin/pkgutil','--pkg-info-plist',contained_receipt],capture_output=True).returncode != 0
-            receipt['scenarios']['dmg_contained_pkg_unsigned_rejected'] = pkg_remote
+            assert pkg_event['steps'][0]['process'] == {'kind':'exited','code':0}
+            assert (protected/'contained-package-payload/fixed.txt').read_text() == 'controlled package payload\n'
+            assert subprocess.run(['/usr/sbin/pkgutil','--pkg-info-plist',contained_receipt],capture_output=True).returncode == 0
+            receipt['scenarios']['dmg_contained_pkg_unsigned_installed'] = pkg_remote
         third = command('package', path=str(pkg), receipt=package_receipt, user=bool(native_probe))
         if native_probe:
             offer=await_offer(query,third['task'])

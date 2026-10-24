@@ -2395,7 +2395,7 @@
           },
           {
             "additionalProperties": false,
-            "description": "Apple Developer ID TeamIdentifier on image and selected payload.",
+            "description": "Apple Developer ID TeamIdentifier on the exact declared artifact.",
             "properties": {
               "artifact": {
                 "$ref": "#/$defs/ExactArtifactRef",

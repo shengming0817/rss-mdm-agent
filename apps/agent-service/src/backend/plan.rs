@@ -217,18 +217,7 @@ pub(crate) fn script(
     } else {
         None
     };
-    let env = payload
-        .environment
-        .iter()
-        .map(|(k, v)| {
-            Ok((
-                EnvironmentKey::new(k).map_err(|_| Error::Protocol)?,
-                InputValue::Literal {
-                    value: serde_json::Value::String(v.clone()),
-                },
-            ))
-        })
-        .collect::<Result<BTreeMap<_, _>, Error>>()?;
+    let env = environment(&payload.environment)?;
     let output = OutputSpec {
         format: OutputFormat::Json {
             max_rows: payload.max_rows,
@@ -397,4 +386,33 @@ pub(crate) fn worker_image(config: &crate::ExecutionConfig) -> Result<SoftwareMa
         return image(config);
     }
     pin(&std::env::current_exe()?)
+}
+
+/// Product-owned native startup inputs are frozen with the remote RSS_PARAM_ values.
+pub(crate) fn environment(
+    input: &BTreeMap<String, String>,
+) -> Result<BTreeMap<EnvironmentKey, InputValue>, Error> {
+    let values = input.clone();
+    #[cfg(windows)]
+    let values = {
+        let mut values = values;
+        values.insert(
+            "SystemRoot".into(),
+            crate::os_version::system_root()?
+                .into_string()
+                .map_err(|_| Error::Configuration)?,
+        );
+        values
+    };
+    values
+        .into_iter()
+        .map(|(key, value)| {
+            Ok((
+                EnvironmentKey::new(key).map_err(|_| Error::Protocol)?,
+                InputValue::Literal {
+                    value: serde_json::Value::String(value),
+                },
+            ))
+        })
+        .collect()
 }
