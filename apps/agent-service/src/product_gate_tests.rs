@@ -4059,14 +4059,30 @@ async fn current_user_lost_ack_does_not_gate_native_context_or_device_resources(
         .synchronize_current_user(&mut commands)
         .await
         .unwrap();
-    let d = c._server.data.lock().unwrap();
-    assert_eq!(d.current_user.inputs.len(), before + 2);
-    assert_eq!(
-        d.current_user.inputs[before],
-        d.current_user.inputs[before + 1]
-    );
-    drop(d);
-    c.employee("lost-projection-logout").await;
+    {
+        let d = c._server.data.lock().unwrap();
+        assert_eq!(d.current_user.inputs.len(), before + 2);
+        assert_eq!(
+            d.current_user.inputs[before],
+            d.current_user.inputs[before + 1]
+        );
+    }
+    c.policy_call(Request::RevokeContext {}).await;
+    assert!(matches!(
+        c.policy_call(Request::BindContext {
+            expected: None,
+            value: NativeContextSession {
+                access: NativeAccess::User {
+                    credential: zeroize::Zeroizing::new("c".repeat(64)),
+                    user: protocol::current_user::user(c.service.client.configuration().tenant),
+                },
+                generation: plan::id("lost-projection-logout").unwrap(),
+                expires_at_unix_ms: c.service.core.host.clock.millis().unwrap() + 60_000,
+            },
+        })
+        .await,
+        Reply::ContextBound { .. }
+    ));
     c._server.data.lock().unwrap().current_user.lose_reply = true;
     c.service
         .synchronize_current_user(&mut commands)
