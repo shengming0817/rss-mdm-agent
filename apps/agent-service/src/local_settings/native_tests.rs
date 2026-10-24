@@ -50,6 +50,22 @@ impl Drop for DisplayRestore {
         }
     }
 }
+
+struct SettingRestore(SettingsSection, SettingsPatch);
+impl Drop for SettingRestore {
+    fn drop(&mut self) {
+        let restored = snapshot(self.0).and_then(|current| {
+            if satisfied(&self.1, &current) {
+                Ok(())
+            } else {
+                macos::apply(&self.1, &current)
+            }
+        });
+        if let Err(error) = restored {
+            eprintln!("native_setting_restore_failed: {error:?}");
+        }
+    }
+}
 #[test]
 #[ignore = "changes an actual display for 15 seconds; run explicitly in the logged-in macOS session"]
 fn display_worker_times_out_without_ui_and_native_keep_reads_back() {
@@ -137,6 +153,14 @@ fn machine_proxy_and_power_apply_preserve_unmodified_values_and_restore() {
         socks: None,
         bypass: Some(bypass),
     };
+    let restoration = SettingsPatch::Proxy {
+        target: t.id.clone(),
+        http: None,
+        https: None,
+        socks: None,
+        bypass: Some(original),
+    };
+    let _restore = SettingRestore(SettingsSection::Network, restoration.clone());
     macos::apply(&patch, &before).unwrap();
     let actual = snapshot(SettingsSection::Network).unwrap();
     let applied = actual.targets.iter().find(|v| v.id == t.id).unwrap();
@@ -152,13 +176,6 @@ fn machine_proxy_and_power_apply_preserve_unmodified_values_and_restore() {
         .filter(|f| f.key != "bypass")
         .cloned()
         .collect::<Vec<_>>();
-    let restoration = SettingsPatch::Proxy {
-        target: t.id.clone(),
-        http: None,
-        https: None,
-        socks: None,
-        bypass: Some(original),
-    };
     let restored = macos::apply(&restoration, &actual);
     restored.unwrap();
     assert_eq!(preserved, unchanged);
@@ -168,11 +185,13 @@ fn machine_proxy_and_power_apply_preserve_unmodified_values_and_restore() {
         before.targets
     );
     let before = snapshot(SettingsSection::Power).unwrap();
-    for t in before
+    let targets = before
         .targets
         .iter()
         .filter(|t| t.writable && ["ac", "dc"].contains(&t.id.as_str()))
-    {
+        .collect::<Vec<_>>();
+    assert!(!targets.is_empty(), "requires writable native AC/DC timers");
+    for t in targets {
         let minutes = field(t, "displayOffMinutes").as_u64().unwrap() as u16;
         let patch = SettingsPatch::Power {
             target: t.id.clone(),
@@ -180,18 +199,17 @@ fn machine_proxy_and_power_apply_preserve_unmodified_values_and_restore() {
             sleep_minutes: None,
             mode: None,
         };
+        let restoration = SettingsPatch::Power {
+            target: t.id.clone(),
+            display_off_minutes: Some(minutes),
+            sleep_minutes: None,
+            mode: None,
+        };
+        let _restore = SettingRestore(SettingsSection::Power, restoration.clone());
         let fresh = snapshot(SettingsSection::Power).unwrap();
         macos::apply(&patch, &fresh).unwrap();
         let actual = snapshot(SettingsSection::Power).unwrap();
-        let restored = macos::apply(
-            &SettingsPatch::Power {
-                target: t.id.clone(),
-                display_off_minutes: Some(minutes),
-                sleep_minutes: None,
-                mode: None,
-            },
-            &actual,
-        );
+        let restored = macos::apply(&restoration, &actual);
         restored.unwrap();
         assert!(satisfied(&patch, &actual));
         let applied = actual.targets.iter().find(|v| v.id == t.id).unwrap();
@@ -200,6 +218,7 @@ fn machine_proxy_and_power_apply_preserve_unmodified_values_and_restore() {
             snapshot(SettingsSection::Power).unwrap().targets,
             fresh.targets
         );
+        eprintln!("native_power_verified_target={}", t.id);
     }
     assert_eq!(
         json!(snapshot(SettingsSection::Power).unwrap().targets),

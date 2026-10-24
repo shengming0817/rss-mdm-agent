@@ -138,9 +138,9 @@ pub(crate) fn native(
                 },
                 operation: Operation {
                     action: plan::id(match choice.action {
-                        LocalSoftwareAction::Launch => "software.launch",
-                        LocalSoftwareAction::Uninstall => "software.uninstall",
-                        LocalSoftwareAction::Detect => "software.detect",
+                        LocalSoftwareAction::Launch => "local-software.launch",
+                        LocalSoftwareAction::Uninstall => "local-software.uninstall",
+                        LocalSoftwareAction::Detect => "local-software.detect",
                         _ => return Err(Error::Unsupported),
                     })?,
                     resource: plan::reference(&item.native_id, policy.revision.as_str())?,

@@ -4622,11 +4622,13 @@ impl Case {
 async fn local_software_api_stages_no_attempt_and_replays_the_original_after_lost_ack() {
     let _budget = crate::scenario_budget::enter();
     let (mut c, choice) = local_software_case().await;
-    let Reply::SoftwarePrepared { value: prepared } = c
+    let prepared = match c
         .local_software_call(LocalSoftwareOperation::Prepare(choice.clone()), true)
         .await
-    else {
-        panic!("prepare");
+    {
+        Reply::SoftwarePrepared { value } => value,
+        Reply::DataFailure { reason } => panic!("prepare: {reason:?}"),
+        _ => panic!("unexpected prepare reply"),
     };
     assert_eq!(
         c.service
@@ -4742,11 +4744,13 @@ async fn local_software_api_rechecks_rules_and_snapshot_before_any_attempt() {
     let _budget = crate::scenario_budget::enter();
     for changed_rules in [false, true] {
         let (mut c, choice) = local_software_case().await;
-        let Reply::SoftwarePrepared { value: prepared } = c
+        let prepared = match c
             .local_software_call(LocalSoftwareOperation::Prepare(choice.clone()), false)
             .await
-        else {
-            panic!("prepare");
+        {
+            Reply::SoftwarePrepared { value } => value,
+            Reply::DataFailure { reason } => panic!("prepare: {reason:?}"),
+            _ => panic!("unexpected prepare reply"),
         };
         if changed_rules {
             let path = &c.service.core.config.local_permissions.policy_file;
@@ -4813,6 +4817,7 @@ async fn installation_owner_exists_before_registration_and_preserves_both_scopes
     use execution_app::AppHost;
     let _budget = crate::scenario_budget::enter();
     let server = protocol::Server::new().await;
+    server.data.lock().unwrap().explicit_offers = true;
     let root = protocol::Root::new();
     let clock = SystemClock::new().unwrap();
     server.time.set(clock.now().unwrap());
@@ -4940,8 +4945,15 @@ async fn installation_owner_exists_before_registration_and_preserves_both_scopes
     assert!(service.client.has_pending_enrollment().unwrap());
     assert_eq!(service.core.host.service_binding().unwrap(), root_binding);
     server.data.lock().unwrap().registration_failure = false;
-    service.next_enrollment = std::time::Instant::now();
-    service.drive(&mut commands).await.unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while service.client.registration().is_err() {
+            service.next_enrollment = std::time::Instant::now();
+            service.drive(&mut commands).await.unwrap();
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .expect("the production enrollment retry must eventually register");
     assert_eq!(
         service.client.registration().unwrap().capabilities,
         capabilities
