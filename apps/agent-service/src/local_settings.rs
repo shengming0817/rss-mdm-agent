@@ -265,6 +265,41 @@ fn execute(
     display_unsettled: &mut bool,
     emit: &mut impl FnMut(SettingsResponse) -> Result<(), Error>,
 ) -> Result<(), Error> {
+    let result = execute_inner(input, display_unsettled, emit);
+    if result.is_err() && *display_unsettled {
+        if let Action::Change {
+            before,
+            patch: patch @ SettingsPatch::Display { .. },
+            ..
+        } = &input.action
+        {
+            // Native configuration calls are synchronous. A refused/no-op transaction can
+            // close only after an independent observation; a known preview is restored.
+            if let Ok(actual) = snapshot(SettingsSection::Display) {
+                if actual.targets == before.targets {
+                    *display_unsettled = false;
+                } else if satisfied(patch, &actual) {
+                    #[cfg(target_os = "macos")]
+                    let restored = macos::finish_display(patch, before, false);
+                    #[cfg(windows)]
+                    let restored = windows::finish_display(patch, before, false);
+                    if restored.is_ok()
+                        && snapshot(SettingsSection::Display)
+                            .is_ok_and(|s| s.targets == before.targets)
+                    {
+                        *display_unsettled = false;
+                    }
+                }
+            }
+        }
+    }
+    result
+}
+fn execute_inner(
+    input: &Input,
+    display_unsettled: &mut bool,
+    emit: &mut impl FnMut(SettingsResponse) -> Result<(), Error>,
+) -> Result<(), Error> {
     let section = input.action.section();
     let mut response = SettingsResponse {
         write_allowed: false,
@@ -337,6 +372,9 @@ fn execute(
                 // Monotonic cutoff cannot be extended by wall-clock adjustments or UI lifecycle.
                 let cutoff = std::time::Instant::now() + std::time::Duration::from_secs(15);
                 while std::time::Instant::now() < cutoff && now()? < deadline {
+                    if !can_keep(input) {
+                        break;
+                    }
                     if let Ok(bytes) = installation_security::read_protected(&input.confirm) {
                         if let Ok(decision) = serde_json::from_slice::<DisplayDecision>(&bytes) {
                             if decision.request == input.request {
@@ -347,6 +385,9 @@ fn execute(
                     }
                     std::thread::sleep(std::time::Duration::from_millis(100));
                 }
+                // A revoked login or expired execution cannot retain the preview, even
+                // if a previously written keep marker remains readable.
+                keep &= can_keep(input);
                 let actual = snapshot(section)?;
                 if actual.targets != applied.targets {
                     #[cfg(target_os = "macos")]
@@ -378,6 +419,10 @@ fn execute(
         }
     }
     emit(response)
+}
+fn can_keep(input: &Input) -> bool {
+    now().is_ok_and(|now| now < input.finish_by_unix_ms)
+        && execution_runner::staging::verify_worker_identity(&input.run_as, &input.session).is_ok()
 }
 pub(crate) fn satisfied(patch: &SettingsPatch, snapshot: &SettingsSnapshot) -> bool {
     let target = match patch {

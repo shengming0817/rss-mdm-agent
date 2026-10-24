@@ -341,6 +341,13 @@ impl Data {
         session: &Id,
         snapshot: &SettingsSnapshot,
     ) -> Result<(), Error> {
+        // Reconciliation revisits retained tasks in UUID order, not observation order.
+        if self
+            .settings_read(subject, session, snapshot.section)?
+            .is_some_and(|current| current.collected_at_unix_ms >= snapshot.collected_at_unix_ms)
+        {
+            return Ok(());
+        }
         self.store.write(
             &format!(
                 "settings/{}/{:?}",

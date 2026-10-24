@@ -108,7 +108,7 @@ export function homeFacts(controller?: SystemSettingsController) {
         : validPercent !== undefined
           ? `${Math.round(validPercent)}%`
           : "—",
-    batteryDetail: typeof provider === "string" ? provider : quality(power),
+    batteryDetail: `${typeof provider === "string" ? `${provider} · ` : ""}${quality(power)}${power?.collectedAt ? ` · ${new Date(power.collectedAt * 1000).toLocaleTimeString()}` : ""}`,
     batteryPercent: batteryPresent !== false ? validPercent : undefined,
   };
 }

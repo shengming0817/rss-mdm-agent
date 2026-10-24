@@ -1130,7 +1130,7 @@ async fn run(
             if let Some(cause) = cause {
                 facts.end = cause;
                 stop_at = Some(clock);
-                if !(display_preview && cause == ProcessEnd::Cancelled) {
+                if !display_preview {
                     owner.stop();
                 }
             }
@@ -1141,11 +1141,13 @@ async fn run(
                 && platform::identity(recipe.run_as, recipe.session).is_err()
             {
                 fail_running(&mut facts, &mut stop_at, ProcessFailureKind::Unbound, clock);
-                owner.stop();
+                if !display_preview {
+                    owner.stop();
+                }
             }
         }
         if let Some(stop) = stop_at {
-            let grace = if display_preview && facts.end == ProcessEnd::Cancelled {
+            let grace = if display_preview {
                 Duration::from_secs(17)
             } else {
                 Duration::from_millis(200)

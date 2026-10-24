@@ -42,6 +42,10 @@ fn display_worker_times_out_without_ui_and_native_keep_reads_back() {
     let before = snapshot(SettingsSection::Display).unwrap();
     let patch = display_change(&before);
     let restore = DisplayRestore(before.clone(), patch.clone());
+    let account = OsAccountRef {
+        platform: Platform::Macos,
+        subject: Id::new(execution_ipc::host::current_subject().unwrap()).unwrap(),
+    };
     let input = Input {
         request: RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap(),
         action: Action::Change {
@@ -49,10 +53,13 @@ fn display_worker_times_out_without_ui_and_native_keep_reads_back() {
             before: before.clone(),
             patch: patch.clone(),
         },
-        run_as: RunAs::System {
-            platform: Platform::Macos,
+        run_as: RunAs::User {
+            account: account.clone(),
         },
-        session: SessionRequirement::NotRequired {},
+        session: SessionRequirement::ActiveUser {
+            account,
+            session: execution_ipc::host::current_session_binding().unwrap(),
+        },
         confirm: PathBuf::from("/var/empty/rss-no-display-confirmation"),
         finish_by_unix_ms: now().unwrap() + 25_000,
     };

@@ -183,6 +183,7 @@ pub(super) fn apply(patch: &SettingsPatch, before: &SettingsSnapshot) -> Result<
     {
         return Err(Error::Unsupported);
     }
+    let endpoints_changed = [http, https, socks].iter().any(|p| p.is_some());
     let mut servers = parse(&current.server, current.flags & PROXY_TYPE_PROXY != 0)?;
     if let Some(all) = servers.remove("all") {
         for protocol in ["http", "https", "socks", "ftp"] {
@@ -200,24 +201,32 @@ pub(super) fn apply(patch: &SettingsPatch, before: &SettingsSnapshot) -> Result<
             }
         }
     }
-    let server = servers
-        .iter()
-        .filter(|(_, p)| p.enabled)
-        .map(|(key, p)| format!("{key}={}:{}", p.host, p.port))
-        .collect::<Vec<_>>()
-        .join(";");
+    let server = if !endpoints_changed {
+        current.server.clone()
+    } else {
+        servers
+            .iter()
+            .filter(|(_, p)| p.enabled)
+            .map(|(key, p)| format!("{key}={}:{}", p.host, p.port))
+            .collect::<Vec<_>>()
+            .join(";")
+    };
     let bypass = bypass
         .as_ref()
         .map(|v| v.join(";"))
         .unwrap_or(current.bypass);
     // Preserve all PAC/WPAD flags, and do not write automatic URL or discovery options.
-    let flags = (current.flags & !PROXY_TYPE_PROXY)
-        | PROXY_TYPE_DIRECT
-        | if server.is_empty() {
-            0
-        } else {
-            PROXY_TYPE_PROXY
-        };
+    let flags = if !endpoints_changed {
+        current.flags
+    } else {
+        (current.flags & !PROXY_TYPE_PROXY)
+            | PROXY_TYPE_DIRECT
+            | if server.is_empty() {
+                0
+            } else {
+                PROXY_TYPE_PROXY
+            }
+    };
     let mut server = wide(&server);
     let mut bypass = wide(&bypass);
     let mut values = [INTERNET_PER_CONN_OPTIONW::default(); 3];

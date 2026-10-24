@@ -409,41 +409,8 @@ impl Core {
             if facts.content_digest != *plan.digest() {
                 return Err(Error::Untrusted);
             }
-            let rows = facts
-                .stdout
-                .split(|b| *b == b'\n')
-                .filter(|row| !row.is_empty())
-                .collect::<Vec<_>>();
-            if rows.len() > 2 {
-                return Err(Error::Protocol);
-            }
-            for row in rows {
-                let Ok(value) = serde_json::from_slice::<SettingsResponse>(row) else {
-                    continue;
-                };
-                if value.request.as_ref() != Some(request) {
-                    return Err(Error::Untrusted);
-                }
-                if !value.finished && value.effect == SettingsEffect::Preview && !facts.finished {
-                    response = value;
-                } else if value.finished
-                    && facts.finished
-                    && facts.quiescent
-                    && facts.quality != OutputQuality::Truncated
-                    && facts.total_output_bytes <= plan.spec().budget.total_output_bytes
-                    && serde_json::from_slice::<CollectionCompletion>(&facts.stderr).is_ok_and(
-                        |proof| {
-                            proof.closed
-                                && proof.input_sha256 == plan.spec().launch.artifact.sha256.as_str()
-                                && proof.output_sha256
-                                    == crate::local_execution::hash(&facts.stdout)
-                                        .map(|h| h.as_str().to_owned())
-                                        .unwrap_or_default()
-                        },
-                    )
-                {
-                    response = value;
-                }
+            if let Some(value) = native_response(plan, &facts)? {
+                response = value;
             }
             if facts.finished && !response.finished {
                 response.effect = SettingsEffect::Unknown;
@@ -465,5 +432,113 @@ impl Core {
         response.request = Some(request.clone());
         response.digest = Some(plan.digest().clone());
         Ok(response)
+    }
+}
+
+fn native_response(
+    plan: &FrozenExecution,
+    facts: &ProcessEvidence,
+) -> Result<Option<SettingsResponse>, Error> {
+    let mut response = None;
+    let rows = facts
+        .stdout
+        .split(|b| *b == b'\n')
+        .filter(|row| !row.is_empty())
+        .collect::<Vec<_>>();
+    if rows.len() > 2 {
+        return Err(Error::Protocol);
+    }
+    for row in rows {
+        let Ok(value) = serde_json::from_slice::<SettingsResponse>(row) else {
+            continue;
+        };
+        if value.request.as_ref() != Some(&plan.spec().request.request_id) {
+            return Err(Error::Untrusted);
+        }
+        if !value.finished && value.effect == SettingsEffect::Preview && !facts.finished {
+            response = Some(value);
+        } else if value.finished
+            && facts.finished
+            && facts.quiescent
+            && facts.quality != OutputQuality::Truncated
+            && facts.total_output_bytes <= plan.spec().budget.total_output_bytes
+            && serde_json::from_slice::<CollectionCompletion>(&facts.stderr).is_ok_and(|proof| {
+                proof.closed
+                    && proof.input_sha256 == plan.spec().launch.artifact.sha256.as_str()
+                    && proof.output_sha256
+                        == crate::local_execution::hash(&facts.stdout)
+                            .map(|h| h.as_str().to_owned())
+                            .unwrap_or_default()
+            })
+        {
+            response = Some(value);
+        }
+    }
+    Ok(response)
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn native_effect_requires_exact_complete_quiescent_hashed_worker_evidence() {
+        let plan = decode_execution(
+            include_bytes!("../../../../crates/execution-contract/tests/fixtures/plan.json"),
+            &plan::storage_limits().input,
+        )
+        .unwrap();
+        let plan = FrozenExecution::freeze(plan, &plan::storage_limits().input).unwrap();
+        let value = SettingsResponse {
+            write_allowed: false,
+            request: Some(plan.spec().request.request_id.clone()),
+            digest: None,
+            finished: true,
+            effect: SettingsEffect::Applied,
+            snapshot: None,
+            keep_before_unix_ms: None,
+            reason: None,
+        };
+        let stdout = serde_json::to_vec(&value).unwrap();
+        let stderr = serde_json::to_vec(&CollectionCompletion {
+            closed: true,
+            input_sha256: plan.spec().launch.artifact.sha256.as_str().into(),
+            output_sha256: crate::local_execution::hash(&stdout)
+                .unwrap()
+                .as_str()
+                .into(),
+            native_output_bytes: 0,
+        })
+        .unwrap();
+        let mut facts = ProcessEvidence {
+            content_digest: plan.digest().clone(),
+            attempt_id: AttemptId::new("attempt").unwrap(),
+            runner: plan::id("fixture-native").unwrap(),
+            scope: ProcessScope::NotStarted {},
+            finished: true,
+            exit_code: Some(0),
+            end: ProcessEnd::Exited,
+            failure_kind: ProcessFailureKind::None,
+            quiescent: true,
+            total_output_bytes: (stdout.len() + stderr.len()) as u64,
+            stdout,
+            stderr,
+            quality: OutputQuality::Complete,
+        };
+        assert_eq!(
+            native_response(&plan, &facts).unwrap().unwrap().effect,
+            SettingsEffect::Applied
+        );
+        facts.quiescent = false;
+        assert!(native_response(&plan, &facts).unwrap().is_none());
+        facts.quiescent = true;
+        facts.quality = OutputQuality::Truncated;
+        assert!(native_response(&plan, &facts).unwrap().is_none());
+        facts.quality = OutputQuality::Complete;
+        facts.stderr.clear();
+        assert!(native_response(&plan, &facts).unwrap().is_none());
+        facts.exit_code = Some(0);
+        assert!(
+            native_response(&plan, &facts).unwrap().is_none(),
+            "zero exit is not effect proof"
+        );
     }
 }

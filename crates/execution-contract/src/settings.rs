@@ -157,10 +157,10 @@ impl SettingsPatch {
         fn endpoint(p: &ProxyEndpoint) -> bool {
             (p.host.is_empty() && !p.enabled
                 || text(&p.host)
-                    && !p
-                        .host
-                        .chars()
-                        .any(|c| c.is_whitespace() || matches!(c, '/' | '\\' | '@' | '?' | '#')))
+                    && !p.host.chars().any(|c| {
+                        c.is_whitespace()
+                            || matches!(c, '/' | '\\' | '@' | '?' | '#' | ';' | '=' | ',')
+                    }))
                 && (!p.enabled || p.port != 0)
         }
         match self {
@@ -342,6 +342,8 @@ mod tests {
         };
         assert!(patch(valid.clone()).valid());
         for host in [
+            "proxy-a:8080;https=proxy-b",
+            "proxy=other",
             "https://proxy.test",
             "user:secret@proxy.test",
             "a\nb",

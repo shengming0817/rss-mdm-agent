@@ -4863,15 +4863,26 @@ async fn installation_owner_exists_before_registration_and_preserves_both_scopes
     );
     *service.core.host.local_read.lock().unwrap() = None;
     assert!(service.core.host.verify(&local, &attempt).is_err());
+    let capabilities = vec![
+        wire::Capability::InventoryCollectionV1,
+        wire::Capability::TaskExecuteV1,
+    ];
     service
         .client
-        .request_authorization(vec![
-            wire::Capability::InventoryCollectionV1,
-            wire::Capability::TaskExecuteV1,
-        ])
-        .await
+        .prepare_authorization(capabilities.clone())
         .unwrap();
-    service.client.drive_pki().await.unwrap();
+    let (_sender, mut commands) = tokio::sync::mpsc::channel(8);
+    server.data.lock().unwrap().registration_failure = true;
+    assert!(service.drive(&mut commands).await.is_err());
+    assert!(service.client.has_pending_enrollment().unwrap());
+    assert_eq!(service.core.host.service_binding().unwrap(), root_binding);
+    server.data.lock().unwrap().registration_failure = false;
+    service.next_enrollment = std::time::Instant::now();
+    service.drive(&mut commands).await.unwrap();
+    assert_eq!(
+        service.client.registration().unwrap().capabilities,
+        capabilities
+    );
     service.client.drive_task_trust().await.unwrap();
     service.activate_enterprise().unwrap();
     assert_eq!(service.core.host.service_binding().unwrap(), root_binding);
@@ -5071,4 +5082,140 @@ async fn installation_owner_exists_before_registration_and_preserves_both_scopes
             .digest(),
         local.digest()
     );
+}
+
+#[tokio::test]
+async fn settings_desktop_cache_and_retained_task_are_bound_to_exact_context() {
+    use execution_ipc::host::Request;
+    let _budget = crate::scenario_budget::enter();
+    let mut c = Case::new(None).await;
+    c.employee("settings-owner").await;
+    let snapshot = SettingsSnapshot {
+        section: SettingsSection::Network,
+        revision: Digest::new("a".repeat(64)).unwrap(),
+        collected_at_unix_ms: c.service.core.host.clock.millis().unwrap(),
+        source: "native fixture".into(),
+        targets: vec![],
+    };
+    c.service
+        .core
+        .data
+        .settings_write(&c.selection.subject, &c.selection.binding, &snapshot)
+        .unwrap();
+    let call = |context, origin, input| Request::Settings {
+        context,
+        origin,
+        input,
+    };
+    let read = SettingsOperation::Snapshot {
+        section: SettingsSection::Network,
+    };
+    assert!(
+        matches!(c.policy_call(call(c.context(),ClientOrigin::Desktop{},read.clone())).await,Reply::Settings {value} if value.snapshot==Some(snapshot.clone()) && !value.write_allowed && value.reason.is_some())
+    );
+    assert!(matches!(
+        c.policy_call(call(c.context(), c.selection.origin.clone(), read.clone()))
+            .await,
+        Reply::Rejected
+    ));
+    let mut wrong = c.context();
+    wrong.generation = plan::id("other-generation").unwrap();
+    assert!(matches!(
+        c.policy_call(call(wrong, ClientOrigin::Desktop {}, read))
+            .await,
+        Reply::Rejected
+    ));
+    let mut input: ExecutionInput = serde_json::from_str(include_str!(
+        "../../../crates/execution-contract/tests/fixtures/plan.json"
+    ))
+    .unwrap();
+    let request = RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap();
+    input.request.request_id = request.clone();
+    input.request.authority = c.service.core.host.root.authority.clone();
+    input.request.actor = c.service.core.host.local_actor.clone();
+    input.request.target.device = c.service.core.host.root.device.clone();
+    input.request.initiator = Initiator::Human {
+        os_session: OsSessionRef {
+            device: c.service.core.host.root.device.clone(),
+            account: OsAccountRef {
+                platform: Platform::Macos,
+                subject: plan::id(&c.selection.subject).unwrap(),
+            },
+            session: c.selection.binding.clone(),
+        },
+    };
+    input.launch.interpreter.profile =
+        plan::reference(crate::local_settings::PROFILE, "1").unwrap();
+    input.request.parameters.insert(
+        "local-settings-context".into(),
+        InputValue::Literal {
+            value: serde_json::to_value(c.context()).unwrap(),
+        },
+    );
+    input.request.parameters.insert(
+        "local-settings-action".into(),
+        InputValue::Literal {
+            value: serde_json::json!({"kind":"read","section":"network"}),
+        },
+    );
+    let frozen = FrozenExecution::freeze(input, &plan::storage_limits().input).unwrap();
+    c.service
+        .core
+        .app
+        .stage_execution(&c.service.core.local_caller(), &frozen)
+        .unwrap();
+    for _ in 0..2 {
+        assert!(
+            matches!(c.policy_call(call(c.context(),ClientOrigin::Desktop{},SettingsOperation::Status{request:request.clone()})).await,Reply::Settings{value} if value.digest.as_ref()==Some(frozen.digest()) && value.effect==SettingsEffect::Pending)
+        );
+    }
+    assert!(matches!(
+        c.policy_call(call(
+            c.context(),
+            ClientOrigin::Desktop {},
+            SettingsOperation::Refresh {
+                request: request.clone(),
+                section: SettingsSection::Power
+            }
+        ))
+        .await,
+        Reply::Rejected
+    ));
+    assert!(matches!(
+        c.policy_call(call(
+            c.context(),
+            ClientOrigin::Desktop {},
+            SettingsOperation::KeepDisplay {
+                request: request.clone(),
+                digest: frozen.digest().clone()
+            }
+        ))
+        .await,
+        Reply::Rejected
+    ));
+    assert!(
+        matches!(c.policy_call(call(c.context(),ClientOrigin::Desktop{},SettingsOperation::Cancel{request:request.clone()})).await,Reply::Settings{value} if value.finished && value.effect==SettingsEffect::Cancelled)
+    );
+    assert!(
+        matches!(c.policy_call(call(c.context(),ClientOrigin::Desktop{},SettingsOperation::Refresh{request:request.clone(),section:SettingsSection::Network})).await,Reply::Settings{value} if value.finished && value.digest.as_ref()==Some(frozen.digest()))
+    );
+    assert_eq!(
+        c.service
+            .core
+            .app
+            .status(&c.service.core.local_caller(), &request)
+            .unwrap()
+            .attempts,
+        0
+    );
+    c.employee("new-login-context").await;
+    assert!(matches!(
+        c.policy_call(call(
+            c.context(),
+            ClientOrigin::Desktop {},
+            SettingsOperation::Status { request }
+        ))
+        .await,
+        Reply::Rejected
+    ));
 }

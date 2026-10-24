@@ -811,3 +811,32 @@ async fn observed_backend_definitions_never_create_or_replace_compiled_local_rul
     );
     assert_eq!(local.read.deadline, first.read.deadline);
 }
+
+#[tokio::test]
+async fn old_settings_tasks_cannot_replace_a_newer_observation() {
+    let _budget = crate::scenario_budget::enter();
+    let server = Server::new().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    let mut data = projection(&client);
+    let session = id("settings-session");
+    let mut value = SettingsSnapshot {
+        section: SettingsSection::Network,
+        revision: Digest::new("a".repeat(64)).unwrap(),
+        collected_at_unix_ms: 200,
+        source: "fixture native".into(),
+        targets: vec![],
+    };
+    data.settings_write("0", &session, &value).unwrap();
+    value.collected_at_unix_ms = 100;
+    value.revision = Digest::new("b".repeat(64)).unwrap();
+    data.settings_write("0", &session, &value).unwrap();
+    assert_eq!(
+        data.settings_read("0", &session, SettingsSection::Network)
+            .unwrap()
+            .unwrap()
+            .collected_at_unix_ms,
+        200
+    );
+}

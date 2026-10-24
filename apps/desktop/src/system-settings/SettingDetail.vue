@@ -49,6 +49,7 @@ const proxies = reactive<Record<(typeof protocols)[number], ProxyEndpoint>>({
 });
 const ports = reactive({ http: "", https: "", socks: "" });
 const original = ref("");
+const submitting = ref(false);
 const form = () =>
   JSON.stringify({
     mode: mode.value,
@@ -65,11 +66,22 @@ const dirty = computed(
   () => original.value !== "" && original.value !== form(),
 );
 const formRevision = ref("");
+const adoption = ref(0);
 watch(
-  [() => target.value?.id, () => snapshot.value?.revision],
+  [
+    () => target.value?.id,
+    () => snapshot.value?.revision,
+    () => adoption.value,
+  ],
   ([identity, revision], previous) => {
     if (
       dirty.value &&
+      !(
+        submitting.value &&
+        ["applied", "preview", "restored"].includes(
+          response.value?.effect ?? "",
+        )
+      ) &&
       previous &&
       identity === previous[0] &&
       revision !== previous[1]
@@ -349,7 +361,12 @@ function prepare() {
 async function submit() {
   if (!patch.value || !editable.value) return;
   confirmation.value = false;
-  await controller?.save(patch.value, formRevision.value);
+  submitting.value = true;
+  try {
+    await controller?.save(patch.value, formRevision.value);
+  } finally {
+    submitting.value = false;
+  }
 }
 </script>
 <template>
@@ -381,8 +398,16 @@ async function submit() {
       本机服务不可用，尚未读取系统状态。
     </p>
     <p v-if="error" role="alert">{{ error }}</p>
-    <p v-if="response?.request" role="status">
-      {{ effectLabels[response.effect]
+    <UiButton
+      v-if="conflict"
+      @click="
+        original = '';
+        adoption++;
+      "
+      >放弃草稿，采用最新状态</UiButton
+    >
+    <p v-if="response?.request || response?.reason" role="status">
+      {{ response ? effectLabels[response.effect] : ""
       }}<span v-if="response.reason"> · {{ response.reason }}</span>
     </p>
     <p v-if="snapshot" class="observation-time">
