@@ -56,17 +56,61 @@ it("retains failed page cursors and detects a repeated continuation", async () =
   c.dispose();
 });
 
-it("refreshes the first page after loading more without treating its next cursor as a cycle", async () => {
+it("refreshes the browsed page count with fresh cursors, including empty authorized pages", async () => {
   const recent = vi
     .fn()
     .mockResolvedValueOnce({ items: [], next: "10" })
     .mockResolvedValueOnce({ items: [], next: "5" })
-    .mockResolvedValueOnce({ items: [], next: "10" });
+    .mockResolvedValueOnce({ items: [], next: "11" })
+    .mockResolvedValueOnce({ items: [], next: "6" });
   const c = createActivity({ recent_tasks: recent });
   await c.load();
   await c.load(true);
   await c.load();
   expect(c.state.error).toBe("");
-  expect(c.state.next).toBe("10");
+  expect(c.state.next).toBe("6");
+  expect(recent.mock.calls).toEqual([
+    [{ before: null }],
+    [{ before: "10" }],
+    [{ before: null }],
+    [{ before: "11" }],
+  ]);
+  c.dispose();
+});
+
+it("retains all browsed records and the cursor when a later refresh page fails", async () => {
+  const task = (id: string, phase = "running") => {
+    const details = executionTask();
+    details.action.requestId = id;
+    details.status.phase = phase as typeof details.status.phase;
+    return { details, recordedAtUnixMs: 1000 };
+  };
+  const recent = vi
+    .fn()
+    .mockResolvedValueOnce({ items: [task("first")], next: "10" })
+    .mockResolvedValueOnce({ items: [task("second")], next: "5" })
+    .mockResolvedValueOnce({ items: [task("new")], next: "11" })
+    .mockRejectedValueOnce(Error("offline"));
+  const c = createActivity({ recent_tasks: recent });
+  await c.load();
+  await c.load(true);
+  await c.load();
+  expect(c.state.items.map((item) => item.details.action.requestId)).toEqual([
+    "first",
+    "second",
+  ]);
+  expect(c.state.next).toBe("5");
+  expect(c.state.error).toContain("未完成");
+  recent
+    .mockResolvedValueOnce({ items: [task("new")], next: "12" })
+    .mockResolvedValueOnce({ items: [task("first", "verified")], next: null });
+  await c.load();
+  expect(c.state.items.map((item) => item.details.action.requestId)).toEqual([
+    "new",
+    "first",
+  ]);
+  expect(c.state.items[1].details.status.phase).toBe("verified");
+  expect(c.state.next).toBeNull();
+  expect(c.state.error).toBe("");
   c.dispose();
 });

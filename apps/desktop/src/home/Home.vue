@@ -185,10 +185,15 @@ const addressesOpen = ref(false);
         </div>
       </section>
       <section>
-        <div class="section-heading"><h3>最近动态</h3></div>
+        <div class="section-heading">
+          <h3>最近动态</h3>
+          <button class="text-link" @click="emit('navigate', 'tasks')">
+            查看任务记录 ›
+          </button>
+        </div>
         <div class="home-activity">
           <button
-            v-for="item in activity?.state.items.slice(0, 6) ?? []"
+            v-for="item in activity?.state.items ?? []"
             :key="item.details.action.requestId"
             @click="emit('task', item.details.action.requestId)"
             class="activity-row"

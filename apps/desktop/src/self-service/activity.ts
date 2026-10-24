@@ -11,36 +11,46 @@ export function createActivity(
     error: "",
   });
   let active = true,
-    epoch = 0;
-  const seen = new Set<string>();
+    epoch = 0,
+    pages = 0;
+  let seen = new Set<string>();
   async function load(append = false) {
     if (!port || !active || state.loading || (append && !state.next)) return;
-    const call = epoch,
-      before = append ? state.next : null;
+    const call = epoch;
+    let before = append ? state.next : null;
     state.loading = true;
     try {
-      const page = await port.recent_tasks({ before });
-      if (!active || call !== epoch) return;
-      if (
-        page.next &&
-        (page.next === before ||
-          (append && seen.has(page.next)) ||
-          (append && seen.size >= 2048))
-      )
-        throw Error("cursor");
-      if (!append) seen.clear();
-      if (before) seen.add(before);
+      // ref: TanStack/query packages/query-core/src/infiniteQueryBehavior.ts
+      // Refresh the browsed page count using fresh cursors, then publish atomically.
+      const visited = new Set(append ? seen : []);
       const items = new Map(
         (append ? state.items : []).map((item) => [
           item.details.action.requestId,
           item,
         ]),
       );
-      for (const item of page.items)
-        if (!append || !items.has(item.details.action.requestId))
-          items.set(item.details.action.requestId, item);
+      let count = 0;
+      do {
+        const page = await port.recent_tasks({ before });
+        if (!active || call !== epoch) return;
+        if (
+          page.next &&
+          (page.next === before ||
+            visited.has(page.next) ||
+            visited.size >= 2048)
+        )
+          throw Error("cursor");
+        if (before) visited.add(before);
+        for (const item of page.items)
+          if (!items.has(item.details.action.requestId))
+            items.set(item.details.action.requestId, item);
+        before = page.next;
+        count++;
+      } while (!append && before && count < pages && items.size < 512);
       state.items = [...items.values()].slice(0, 512);
-      state.next = state.items.length >= 512 ? null : page.next;
+      state.next = state.items.length >= 512 ? null : before;
+      pages = append ? pages + count : count;
+      seen = visited;
       state.loaded = true;
       state.error = "";
     } catch {

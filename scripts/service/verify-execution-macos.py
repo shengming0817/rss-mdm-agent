@@ -326,7 +326,22 @@ def await_offer(query, task):
         time.sleep(.05)
 
 
-def native_offer_security(probe, matrix, query, command, package, receipt, completed, effect, protected):
+def completed_replay_offer(current, completion):
+    request = completion['request']
+    attempt = completion['record']['action']['initiator']['attempt']
+    offers = []
+    for row in current['preparations']:
+        action = row['action']
+        offer = action.get('offer')
+        if offer and offer['request'] == request and offer['attempt'] == attempt:
+            if action['kind'] == 'policy':
+                assert action['choice']['request'] == request and action['runId'] == offer['task'], 'original policy association changed'
+            offers.append(offer)
+    assert len(offers) == 1, 'original completed offer missing or duplicated'
+    return offers[0]
+
+
+def native_offer_security(probe, matrix, query, command, package, receipt, completed, effect, protected, replay_offer):
     prior = query()['available']
     if prior:
         command('cancel')
@@ -334,7 +349,7 @@ def native_offer_security(probe, matrix, query, command, package, receipt, compl
         while query()['available']:
             assert time.monotonic()<deadline, 'previous unselected catalog offer did not withdraw'
             time.sleep(.1)
-    offer = matrix.pop('replayOffer')
+    offer = replay_offer
     request = offer_request(offer)
     task=dict(task=offer['task'],attempt=offer['attempt'])
     original=[r for r in query()['value']['items'] if r['action']['initiator'].get('attempt')==task['attempt']]
@@ -539,7 +554,7 @@ def native_stale_helper_security(probe, matrix, query, command, protected, prior
 
 
 def complete_native_security(probe, matrix, query, command, package, package_receipt, completed, effect,
-        protected, installer, binary, config, administrator):
+        protected, installer, binary, config, administrator, replay_offer):
     if matrix['scenarios']['restart_old_connection']['status']!='passed':
         native_restart_security(probe,matrix,command,administrator)
     prior=query()
@@ -564,7 +579,7 @@ def complete_native_security(probe, matrix, query, command, package, package_rec
     security_result(matrix,'refresh_after_stop',results['afterStop'])
     run('/usr/bin/python3',str(installer),'install','--scope','user','--binary',str(binary),'--config',str(config))
     query()
-    native_offer_security(probe,matrix,query,command,package,package_receipt,completed,effect,protected)
+    native_offer_security(probe,matrix,query,command,package,package_receipt,completed,effect,protected,replay_offer)
     native_revocation_security(probe,matrix,query,command,package,package_receipt,protected)
 
 
@@ -1664,7 +1679,7 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
                 target_file = protected / 'package-payload/fixed.txt'
                 return {'receiptPresent': detected.returncode == 0, 'payloadPresent': target_file.exists(),
                     'payloadMatches': target_file.exists() and target_file.read_text() == 'controlled package payload\n'}
-            finish = completion = None
+            finish = completion = replay_offer = None
             for line in sys.stdin:
                 request = json.loads(line)
                 method = request['method']
@@ -1700,6 +1715,7 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
                         assert time.monotonic() < deadline, 'terminal process/result deadline exceeded'
                         time.sleep(.2)
                     completion = validate_desktop_completion(current['value']['items'], remote, effect(), request['request'])
+                    if native_probe: replay_offer = completed_replay_offer(current, completion)
                     value = completion
                 elif method == 'finish':
                     finish = request
@@ -1721,7 +1737,7 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
             security_result(receipt['security'],'process_scope_empty',dict(finish=finish))
             if native_probe:
                 complete_native_security(native_probe,receipt['security'],query,command,pkg,package_receipt,
-                    completed,effect,protected,installer,binary,config,administrator_session)
+                    completed,effect,protected,installer,binary,config,administrator_session,replay_offer)
             receipt['status'] = 'passed'
             print(json.dumps(dict(id=finish['id'],value=dict(journeyStatus='passed'))),flush=True)
             return
@@ -1763,7 +1779,7 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
         third = command('package', path=str(pkg), receipt=package_receipt, user=bool(native_probe))
         if native_probe:
             offer=await_offer(query,third['task'])
-            receipt['security']['replayOffer']=offer
+            replay_offer=offer
             assert_native_reply(native_probe.request(offer_request(offer)), 'queued')
         package = completed(third['attempt'], 60)
         event = acknowledged_result(package, third['attempt'])
@@ -1913,7 +1929,7 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
                 payload_file=protected/'package-payload/fixed.txt'
                 return dict(receiptPresent=detected.returncode==0,payloadMatches=payload_file.exists() and payload_file.read_text()=='controlled package payload\n')
             complete_native_security(native_probe,receipt['security'],query,command,pkg,package_receipt,
-                completed,effect,protected,installer,binary,config,administrator_session)
+                completed,effect,protected,installer,binary,config,administrator_session,replay_offer)
         receipt['status'] = 'passed'
     except BaseException as error:
         receipt['status'] = 'cancelled' if isinstance(error, (AuthorizationCancelled, InterruptedError)) else 'failed'
