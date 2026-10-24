@@ -331,6 +331,8 @@ fn run_tool_environment(
     } else if image.starts_with(&request.resource_root) {
         command.current_dir(image.parent().ok_or(Error::Protocol)?);
     }
+    #[cfg(windows)]
+    let mut scope = native_process::OwnedHost::prepare(&mut command)?;
     let mut child = command
         .args(args)
         .stdin(Stdio::null())
@@ -338,6 +340,8 @@ fn run_tool_environment(
         .stderr(Stdio::piped())
         .spawn()?;
     request.native_pending.store(true, Ordering::Release);
+    #[cfg(windows)]
+    scope.attach(child.id())?;
     let observed = request.native_output.clone();
     let bound = request
         .output_bytes
@@ -368,6 +372,9 @@ fn run_tool_environment(
     );
     let status = loop {
         if observed.load(Ordering::Acquire) > bound {
+            #[cfg(windows)]
+            scope.terminate()?;
+            #[cfg(not(windows))]
             let _ = child.kill();
         }
         if let Some(status) = child.try_wait()? {
@@ -375,6 +382,13 @@ fn run_tool_environment(
         }
         std::thread::sleep(Duration::from_millis(10));
     };
+    #[cfg(windows)]
+    while !scope.empty() {
+        if observed.load(Ordering::Acquire) > bound {
+            scope.terminate()?;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
     let stdout = stdout.join().map_err(|_| Error::Unavailable)??;
     let stderr = stderr.join().map_err(|_| Error::Unavailable)??;
     if observed.load(Ordering::Acquire) > bound {

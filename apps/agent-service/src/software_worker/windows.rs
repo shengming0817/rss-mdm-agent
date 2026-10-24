@@ -179,19 +179,17 @@ fn executable(
         return Err(Error::Untrusted);
     }
     let (code, stdout, stderr) = run_tool(request, &image, &invocation.arguments)?;
-    // Root/Job completion cannot bind work delegated through services or WMI to this attempt.
-    // Retain the exact layout for that activity; never infer closure from desired-state detection.
-    let mut completion = result(
+    drop(leases);
+    fs::remove_dir_all(&request.resource_root)?;
+    Ok(result(
         code,
         None,
         format!(
-            "{}{}\nexternal installer completion is unproven; retained layout and software claim",
+            "{}{}",
             String::from_utf8_lossy(&stdout),
             String::from_utf8_lossy(&stderr),
         ),
-    );
-    completion.1.closed = false;
-    Ok(completion)
+    ))
 }
 
 pub(super) fn detect(
