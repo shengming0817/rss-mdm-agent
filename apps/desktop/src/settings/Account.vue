@@ -337,6 +337,9 @@ async function tabKeys(event: KeyboardEvent) {
           <div class="login-feedback" :role="feedback ? 'alert' : 'status'">
             {{ feedback || "登录后，此账号将成为受管设备的当前使用者。" }}
           </div>
+          <p v-if="unresolved">
+            登录或设备当前使用者同步尚未确认。可重试原操作，或清理后重新登录；设备工作区仍可使用。
+          </p>
           <div v-if="unresolved" class="recovery-actions">
             <button
               type="button"

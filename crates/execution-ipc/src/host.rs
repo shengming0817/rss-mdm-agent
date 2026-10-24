@@ -782,6 +782,8 @@ pub enum Request {
         /// Existing binding for a refresh; absence requires a retired or absent context.
         expected: Option<Id>,
     },
+    /// Read durable projection progress without changing the local execution context.
+    CurrentUserStatus {},
     /// Drain the exact enterprise relation after immediate local fencing.
     RetireEnterpriseContext {
         /// Original native login incarnation, absent only for explicit crash recovery.

@@ -4036,6 +4036,8 @@ async fn current_user_lost_ack_does_not_gate_native_context_or_device_resources(
         c.service.client.current_user_status().unwrap().phase,
         execution_contract::CurrentUserSyncPhase::BindingUnknown
     );
+    assert!(matches!(c.policy_call(Request::CurrentUserStatus {}).await,
+        Reply::CurrentUserSync { value } if value.phase == execution_contract::CurrentUserSyncPhase::BindingUnknown));
     assert!(matches!(
         c.policy_call(Request::PolicyDirectory {
             context: context.clone(),
@@ -4062,6 +4064,35 @@ async fn current_user_lost_ack_does_not_gate_native_context_or_device_resources(
     assert_eq!(
         d.current_user.inputs[before],
         d.current_user.inputs[before + 1]
+    );
+    drop(d);
+    c.employee("lost-projection-logout").await;
+    c._server.data.lock().unwrap().current_user.lose_reply = true;
+    c.service
+        .synchronize_current_user(&mut commands)
+        .await
+        .unwrap();
+    c.policy_call(Request::RevokeContext {}).await;
+    let writes = c._server.data.lock().unwrap().current_user.inputs.len();
+    c.service
+        .synchronize_current_user(&mut commands)
+        .await
+        .unwrap();
+    assert_eq!(
+        c._server.data.lock().unwrap().current_user.inputs.len(),
+        writes
+    );
+    assert!(matches!(c.policy_call(Request::RetireEnterpriseContext {
+        generation: None, proof: None, recover: true,
+    }).await, Reply::CurrentUserSync { value } if value.phase == execution_contract::CurrentUserSyncPhase::Unbound));
+    c.employee("after-explicit-projection-recovery").await;
+    c.service
+        .synchronize_current_user(&mut commands)
+        .await
+        .unwrap();
+    assert_eq!(
+        c.service.client.current_user_status().unwrap().phase,
+        execution_contract::CurrentUserSyncPhase::Bound
     );
 }
 #[tokio::test]

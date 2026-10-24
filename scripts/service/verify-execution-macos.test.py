@@ -68,7 +68,7 @@ class BackendLifecycleTests(unittest.TestCase):
                 if request['method'] == 'serviceStatus':
                     return dict(transport='reply', peerUid=0, peerPid=123,
                         envelope=dict(reply=dict(kind='serviceStatus', value=dict(readiness=dict(phase='ready')))))
-                if request['request'] == 'expired': kind = 'pending' if expiring['expiresAt'] > 0 else 'unavailable'
+                if request['request'] == 'expired': kind = 'pending'
                 elif request != acceptance.offer_request(offer): kind = 'rejected'
                 return dict(transport='reply', peerUid=0, envelope=dict(reply=dict(kind=kind)))
             probe.request.side_effect = reply
@@ -91,6 +91,7 @@ class BackendLifecycleTests(unittest.TestCase):
             revocation.assert_called_once()
             for name in ('offer_tamper', 'offer_replay', 'offer_expiry'):
                 self.assertEqual(matrix['scenarios'][name]['status'], 'passed')
+            self.assertEqual(matrix['scenarios']['offer_expiry']['evidence']['mode'], 'completedReplay')
             self.assertEqual(matrix['scenarios']['offer_tamper']['evidence']['offer'], offer)
             self.assertEqual([value.args[0] for value in probe.request.call_args_list].count(acceptance.offer_request(offer)), 2)
 

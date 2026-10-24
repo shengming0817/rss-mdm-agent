@@ -325,9 +325,11 @@ mod tests {
             .execution
             .clone()
             .with_context_transport(move |request| match request {
-                Request::RetireEnterpriseContext { .. } => Ok(Reply::CurrentUserSync {
-                    value: Default::default(),
-                }),
+                Request::CurrentUserStatus {} | Request::RetireEnterpriseContext { .. } => {
+                    Ok(Reply::CurrentUserSync {
+                        value: Default::default(),
+                    })
+                }
                 Request::RevokeContext {} => {
                     bound.store(false, Ordering::Release);
                     Ok(Reply::ContextRevoked)
@@ -389,7 +391,7 @@ mod tests {
         assert_eq!(authenticated.generation, generation);
         assert!(authenticated.execution_binding.is_none());
         assert_eq!(
-            runtime.account_status().unwrap().binding,
+            runtime.account_status().await.unwrap().binding,
             ai_session_contract::AccountBindingState::BindingUnknown
         );
         assert!(native_bound.load(Ordering::Acquire));

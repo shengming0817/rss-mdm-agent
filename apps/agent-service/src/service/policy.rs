@@ -743,6 +743,11 @@ impl<S: IdentityProvider> DeviceService<S> {
         request: &Request,
         commands: &mut tokio::sync::mpsc::Receiver<Command>,
     ) -> Result<Reply, Error> {
+        if let Request::CurrentUserStatus {} = request {
+            return Ok(Reply::CurrentUserSync {
+                value: self.client.current_user_status()?,
+            });
+        }
         if let Request::RetireEnterpriseContext {
             generation,
             proof,

@@ -77,9 +77,11 @@ impl DesktopRuntime {
                     },
                 }),
                 Request::RevokeContext {} => Ok(Reply::ContextRevoked),
-                Request::RetireEnterpriseContext { .. } => Ok(Reply::CurrentUserSync {
-                    value: Default::default(),
-                }),
+                Request::CurrentUserStatus {} | Request::RetireEnterpriseContext { .. } => {
+                    Ok(Reply::CurrentUserSync {
+                        value: Default::default(),
+                    })
+                }
                 _ => Err(execution_app::Error::Unavailable),
             }
         });
@@ -173,12 +175,25 @@ impl DesktopRuntime {
             .for_caller(context.user.user_id.as_str())
             .map_err(|_| unavailable())
     }
-    pub fn account_status(&self) -> ui::Result<ai_session_contract::AccountStatus> {
+    pub async fn account_status(&self) -> ui::Result<ai_session_contract::AccountStatus> {
+        use ai_session_contract::AccountBindingState as B;
+        use execution_contract::CurrentUserSyncPhase as P;
+        let local = *self.account_binding.lock().map_err(|_| unavailable())?;
+        let binding = match self.execution.current_user_status().await {
+            Ok(status) => match status.phase {
+                P::BindingUnknown => B::BindingUnknown,
+                P::CleanupPending => B::CleanupPending,
+                P::Conflict => B::Conflict,
+                P::Invalidated => B::Invalidated,
+                P::Unbound | P::Bound => local,
+            },
+            Err(_) => local,
+        };
         Ok(ai_session_contract::AccountStatus {
             kind: ai_session_contract::AccountStatusKind::AccountStatus,
             schema_version: ai_session_contract::AccountStatusSchemaVersion::VALUE,
             current: self.users.lock().map_err(|_| unavailable())?.page().current,
-            binding: *self.account_binding.lock().map_err(|_| unavailable())?,
+            binding,
             failure: self
                 .account_failure
                 .lock()
@@ -428,8 +443,17 @@ impl DesktopRuntime {
                     return Err(error.clone());
                 }
             }
+            // Explicit recovery is the sole permission to abandon an unreplayable
+            // projection PUT. It does not clear its retained evidence.
+            let projection = self.execution.recover_current_user().await;
             let device = self.users.lock().map_err(|_| unavailable())?.device()?;
             let context = self.activate_context(device).await?;
+            if projection?.phase != execution_contract::CurrentUserSyncPhase::Unbound {
+                return Err(ui::error(
+                    "current_user_unconfirmed",
+                    "设备当前使用者尚未清理，请重试；本机工作区仍可使用",
+                ));
+            }
             return retired.map(|()| Some(context));
         }
         let pending = self
@@ -717,6 +741,85 @@ mod tests {
         bound
     }
     #[tokio::test]
+    async fn unresolved_projection_is_visible_and_explicit_recovery_precedes_the_device_binding() {
+        use execution_ipc::host::{Reply, Request};
+        let root =
+            std::env::temp_dir().join(format!("rss-projection-recovery-{}", uuid::Uuid::new_v4()));
+        let mut runtime = DesktopRuntime::start_with_key_backend(
+            &root,
+            &root.join("missing"),
+            ai_session_contract::HostStatusSource::DevelopmentOverride,
+            NoKey,
+        )
+        .await
+        .unwrap();
+        let unknown = Arc::new(AtomicBool::new(true));
+        let progress = unknown.clone();
+        let events = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let observed = events.clone();
+        runtime.execution = runtime
+            .execution
+            .clone()
+            .with_context_transport(move |request| match request {
+                Request::CurrentUserStatus {} => Ok(Reply::CurrentUserSync {
+                    value: execution_contract::CurrentUserSync {
+                        phase: if progress.load(Ordering::Acquire) {
+                            execution_contract::CurrentUserSyncPhase::BindingUnknown
+                        } else {
+                            execution_contract::CurrentUserSyncPhase::Unbound
+                        },
+                        current: None,
+                    },
+                }),
+                Request::RevokeContext {} => {
+                    observed.lock().unwrap().push("revoke");
+                    Ok(Reply::ContextRevoked)
+                }
+                Request::RetireEnterpriseContext {
+                    recover: true,
+                    generation: None,
+                    proof: None,
+                } => {
+                    observed.lock().unwrap().push("recover");
+                    progress.store(false, Ordering::Release);
+                    Ok(Reply::CurrentUserSync {
+                        value: Default::default(),
+                    })
+                }
+                Request::BindContext { value, .. } => {
+                    observed.lock().unwrap().push("bind");
+                    Ok(Reply::ContextBound {
+                        value: execution_contract::NativeContextRef {
+                            id: execution_contract::Id::new("device-after-recovery").unwrap(),
+                            generation: value.generation,
+                        },
+                    })
+                }
+                _ => panic!("unexpected recovery transport request"),
+            });
+        assert_eq!(
+            runtime.account_status().await.unwrap().binding,
+            ai_session_contract::AccountBindingState::BindingUnknown
+        );
+        let context = runtime.recover_account(true).await.unwrap().unwrap();
+        assert!(matches!(
+            context.identity,
+            ai_session_contract::AccountIdentity::Device { .. }
+        ));
+        assert!(!unknown.load(Ordering::Acquire));
+        let events = events.lock().unwrap().clone();
+        assert!(
+            events.iter().position(|v| *v == "recover").unwrap()
+                < events.iter().position(|v| *v == "bind").unwrap()
+        );
+        assert_eq!(
+            runtime.account_status().await.unwrap().binding,
+            ai_session_contract::AccountBindingState::Unbound
+        );
+        runtime.shutdown().await;
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[tokio::test]
     async fn failed_publication_retires_binding_or_retains_the_same_cleanup_barrier() {
         for lost in [false, true] {
             let root = std::env::temp_dir().join(format!("rss-publish-{}", uuid::Uuid::new_v4()));
@@ -868,7 +971,7 @@ mod tests {
         );
         assert!(runtime.identity.session().unwrap().is_some());
         assert_eq!(
-            runtime.account_status().unwrap().binding,
+            runtime.account_status().await.unwrap().binding,
             ai_session_contract::AccountBindingState::BindingUnknown
         );
         assert!(runtime

@@ -149,10 +149,10 @@ pub async fn account_logout(state: State<'_, DesktopRuntime>) -> Result<()> {
     state.logout().await
 }
 #[tauri::command]
-pub fn account_status(
+pub async fn account_status(
     state: State<'_, DesktopRuntime>,
 ) -> Result<ai_session_contract::AccountStatus> {
-    state.account_status()
+    state.account_status().await
 }
 #[tauri::command]
 pub fn account_organizations(

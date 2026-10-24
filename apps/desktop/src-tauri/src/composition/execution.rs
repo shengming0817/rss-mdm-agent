@@ -201,6 +201,30 @@ impl ExecutionHandle {
             _ => Err(bad(Error::OutcomeUnknown)),
         }
     }
+    pub async fn current_user_status(&self) -> ui::Result<CurrentUserSync> {
+        match self
+            .request(Request::CurrentUserStatus {})
+            .await
+            .map_err(bad)?
+        {
+            Reply::CurrentUserSync { value } => Ok(value),
+            _ => Err(bad(Error::OutcomeUnknown)),
+        }
+    }
+    pub async fn recover_current_user(&self) -> ui::Result<CurrentUserSync> {
+        match self
+            .request(Request::RetireEnterpriseContext {
+                generation: None,
+                proof: None,
+                recover: true,
+            })
+            .await
+            .map_err(bad)?
+        {
+            Reply::CurrentUserSync { value } => Ok(value),
+            _ => Err(bad(Error::OutcomeUnknown)),
+        }
+    }
     fn context_ref(&self) -> ui::Result<execution_contract::NativeContextRef> {
         let snapshot = self
             .users

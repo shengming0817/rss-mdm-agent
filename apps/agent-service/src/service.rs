@@ -1649,6 +1649,7 @@ impl Core {
                     | Request::LocalSoftware { .. }
                     | Request::BindContext { .. }
                     | Request::RevokeContext {}
+                    | Request::CurrentUserStatus {}
                     | Request::RetireEnterpriseContext { .. }
                     | execution_ipc::host::Request::ObserveSoftware { .. }
                     | execution_ipc::host::Request::PolicyDirectory { .. }
@@ -1677,6 +1678,7 @@ impl Core {
                     | Request::LocalSoftware { .. }
                     | Request::BindContext { .. }
                     | Request::RevokeContext {}
+                    | Request::CurrentUserStatus {}
                     | Request::RetireEnterpriseContext { .. }
                     | Request::ObserveSoftware { .. }
                     | Request::PolicyDirectory { .. }

@@ -425,20 +425,22 @@ def native_offer_security(probe, matrix, query, command, package, receipt, compl
     security_begin(matrix,'offer_expiry')
     offer = native_policy_offer(probe, query, command, package, receipt, validity_seconds=30)
     completed(offer['attempt'], 25)
+    original_expiry = [r for r in query()['value']['items'] if r['action']['initiator'].get('attempt') == offer['attempt']]
     request = offer_request(offer)
     assert_native_reply(probe.request(request), 'pending')
     starts = command('status')['startRequests']
     time.sleep(max(0, offer['expiresAt'] + .2 - time.time()))
-    # Expired offers may already have been removed; both closed business outcomes deny admission.
+    # This offer already has its original journal record. Expiry never invalidates
+    # an idempotent replay; unused admission expiry is covered by the real TLS/SQLite test.
     replies = [probe.request(request) for _ in range(2)]
     for response in replies:
-        assert response.get('envelope', {}).get('reply', {}).get('kind') in ('rejected', 'unavailable')
-        assert response.get('transport') == 'reply' and response.get('peerUid') == 0
+        assert_native_reply(response, 'pending')
     assert command('status')['startRequests'] == starts
     records = [r for r in query()['value']['items'] if r['action']['initiator'].get('attempt') == offer['attempt']]
     assert len(records) == 1 and records[0]['status']['attempts'] == 1
+    assert records == original_expiry, 'expired replay changed the original execution facts'
     assert payload_file.read_bytes() == before['bytes'] and payload_file.stat().st_mtime_ns == before['mtime']
-    security_result(matrix, 'offer_expiry', dict(offer=offer, replies=replies, startRequests=starts))
+    security_result(matrix, 'offer_expiry', dict(mode='completedReplay', offer=offer, replies=replies, startRequests=starts))
 
 
 def native_revocation_security(probe, matrix, query, command, package, receipt, protected):
