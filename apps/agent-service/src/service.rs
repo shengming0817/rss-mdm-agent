@@ -298,6 +298,8 @@ impl<S: IdentityProvider> DeviceService<S> {
             matches!(startup, ProductionStartup::Create),
             fences.clone(),
         )?;
+        #[cfg(windows)]
+        access.sync_registration(&client)?;
         Ok(Self {
             client,
             core: Core {
@@ -344,6 +346,8 @@ impl<S: IdentityProvider> DeviceService<S> {
         &mut self,
         commands: &mut tokio::sync::mpsc::Receiver<Command>,
     ) -> Result<(), Error> {
+        #[cfg(windows)]
+        self.core.access.sync_registration(&self.client)?;
         if let Some(deployment) = self
             .installation
             .clone()
@@ -756,6 +760,10 @@ impl<S: IdentityProvider> DeviceService<S> {
             let generated_uid =
                 crate::account_identity::generated_uid(&helper.context().subject).ok()?;
             Some(wire::SoftwareInteractiveUser {
+                windows_authority: crate::account_identity::windows_authority(
+                    &helper.context().subject,
+                )
+                .ok()?,
                 identity: helper.context().subject.clone(),
                 session_id: login_id(helper.context()),
                 administrator: false,
@@ -778,6 +786,16 @@ impl<S: IdentityProvider> DeviceService<S> {
                     e,
                     Error::CredentialRevoked | Error::CredentialRetired | Error::CertificateExpired
                 ) {
+                    #[cfg(windows)]
+                    if matches!(e, Error::CredentialRevoked) {
+                        device_access::Store::open(
+                            &self.core.access.root,
+                            self.core.access.installation,
+                        )
+                        .map_err(|_| Error::Storage)?
+                        .retire_registration()
+                        .map_err(|_| Error::Storage)?;
+                    }
                     self.core.host.revoked.store(true, Ordering::Release);
                     self.core
                         .app

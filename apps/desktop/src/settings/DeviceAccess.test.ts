@@ -6,7 +6,7 @@ const task = { task: "task-id", binding: "binding-id", createName: "newuser" };
 const directory = {
   kind: "directory" as const,
   policies: [],
-  after: null,
+  nextCursor: null,
   bindings: [],
 };
 type Reply = Awaited<ReturnType<DeviceAccessPort>>;
@@ -127,5 +127,71 @@ it("Mac setup uses native password preparation and keeps backend and system fact
   ).toBe(false);
   expect(wrapper.find("form").exists()).toBe(false);
   expect(wrapper.html()).not.toContain("transient-password");
+  wrapper.unmount();
+});
+
+it("passes the opaque directory cursor unchanged", async () => {
+  const cursor = "signed/a+b==";
+  const port = vi.fn<DeviceAccessPort>(async (input) => {
+    if (input.kind === "tasks") return { kind: "tasks", tasks: [] };
+    if (input.kind === "directory")
+      return { ...directory, nextCursor: input.cursor ? null : cursor };
+    throw new Error("unexpected operation");
+  });
+  const wrapper = mount(DeviceAccess, { props: { port } });
+  await flushPromises();
+  await wrapper
+    .findAll("button")
+    .find((b) => b.text() === "更多可用策略")!
+    .trigger("click");
+  await flushPromises();
+  expect(port).toHaveBeenCalledWith({ kind: "directory", cursor });
+  expect(wrapper.text()).not.toContain("更多可用策略");
+  wrapper.unmount();
+});
+
+it("shows native account provenance and the actual unbind disposition", async () => {
+  const port = vi.fn<DeviceAccessPort>(async (input) => {
+    if (input.kind === "tasks") return { kind: "tasks", tasks: [] };
+    if (input.kind === "directory")
+      return {
+        ...directory,
+        bindings: [
+          {
+            id: "binding",
+            bindingGeneration: 2,
+            factorGeneration: 1,
+            revision: 3,
+            accountDisposition: "disable",
+            appliedRevision: 3,
+            receivedRevision: 3,
+            revoked: true,
+            account: {
+              platform: "windows",
+              sid: "S-1-12-1-1-2-3-4",
+              authority: {
+                kind: "entra",
+                tenantId: "tenant",
+                objectId: "object",
+              },
+            },
+            configuration: {
+              mac: null,
+              windowsAccounts: ["entra"],
+              selfEnrollment: true,
+              enabled: false,
+              role: null,
+            },
+            effect: { state: "unbound", disposition: "disable" },
+          },
+        ],
+      };
+    throw new Error("unexpected operation");
+  });
+  const wrapper = mount(DeviceAccess, { props: { port } });
+  await flushPromises();
+  expect(wrapper.text()).toContain("Entra joined 账号");
+  expect(wrapper.text()).toContain("本机登录已限制");
+  expect(wrapper.text()).not.toContain("系统账号保持原状");
   wrapper.unmount();
 });

@@ -25,7 +25,7 @@ pub enum Operation {
     /// Discover eligible first-enrollment policies and own binding states.
     Directory {
         /// Policy cursor.
-        after: Option<Uuid>,
+        cursor: Option<String>,
     },
     /// Begin an authenticated first association.
     Begin(w::AccessBegin),

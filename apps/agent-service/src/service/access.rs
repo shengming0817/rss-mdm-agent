@@ -18,6 +18,39 @@ pub(crate) struct State {
     fences: Arc<super::policy::Fences>,
 }
 impl State {
+    #[cfg(windows)]
+    pub(super) fn sync_registration<S: agent_client::IdentityProvider>(
+        &self,
+        client: &agent_client::Client<S, super::SystemClock>,
+    ) -> Result<(), Error> {
+        let mut store = device_access::Store::open(&self.root, self.installation)
+            .map_err(|_| Error::Storage)?;
+        match client.registration() {
+            Ok(r) => store
+                .bind_registration(device_access::Registration {
+                    tenant: client.configuration().tenant,
+                    device: r.device_id,
+                    id: r.registration_id,
+                    generation: r.generation,
+                })
+                .map_err(|_| Error::Identity)?,
+            Err(Error::Identity) => store.retire_registration().map_err(|_| Error::Storage)?,
+            Err(error) => return Err(error),
+        }
+        match device_access::windows::account::current_cloud_join() {
+            Ok(join) => {
+                store
+                    .observe_join(&join, crate::wall()? as i64)
+                    .map_err(|_| Error::Storage)?;
+            }
+            Err(
+                rss_mdm_agent_wire::runtime::AccessFailure::Unsupported
+                | rss_mdm_agent_wire::runtime::AccessFailure::AccountChanged,
+            ) => (),
+            Err(_) => return Err(Error::Identity),
+        }
+        Ok(())
+    }
     pub fn new(
         config: &crate::ExecutionConfig,
         installation: Uuid,
@@ -237,11 +270,14 @@ fn console(subject: &str, session: u32, binding: &execution_contract::Id) -> Res
         Err(Error::Unsupported)
     }
 }
-fn local_account(subject: &str) -> Result<w::AccessAccount, Error> {
+fn native_account(subject: &str) -> Result<w::AccessAccount, Error> {
     #[cfg(windows)]
     {
+        let account =
+            device_access::windows::account::inspect(subject).map_err(|_| Error::Identity)?;
         Ok(w::AccessAccount::Windows {
             sid: subject.into(),
+            authority: account.source,
         })
     }
     #[cfg(target_os = "macos")]
@@ -287,7 +323,7 @@ impl<S: agent_client::IdentityProvider> super::DeviceService<S> {
             return Err(Error::Denied);
         }
         if let w::AccessAction::Apply { account, .. } = &spec.action {
-            if *account != local_account(subject)? {
+            if *account != native_account(subject)? {
                 return Err(Error::Denied);
             }
         }
@@ -325,6 +361,21 @@ impl<S: agent_client::IdentityProvider> super::DeviceService<S> {
                 .min(crate::wall()?.saturating_add(600_000)),
         };
         owner.validate(&self.core.access.fences)?;
+        #[cfg(windows)]
+        {
+            let native = device_access::windows::account::inspect(&owner.subject)
+                .map_err(|_| Error::Identity)?;
+            if let Some(logon_millis) = native.logon_millis {
+                let mut store = device_access::Store::open(
+                    &self.core.access.root,
+                    self.core.access.installation,
+                )
+                .map_err(|_| Error::Storage)?;
+                store
+                    .require_join_session(&native.join, logon_millis, crate::wall()? as i64)
+                    .map_err(|_| Error::Identity)?;
+            }
+        }
         self.core.access.prune();
         let output = match input {
             Op::PrepareMac { task, password } => {
@@ -356,9 +407,9 @@ impl<S: agent_client::IdentityProvider> super::DeviceService<S> {
                 Out::Prepared {}
             }
             Op::MacStatus {} => Out::MacStatus(self.mac_access_status(command, commands).await?),
-            Op::Directory { after } => Out::Directory(
+            Op::Directory { cursor } => Out::Directory(
                 super::network(
-                    self.client.access_directory(&proof, *after),
+                    self.client.access_directory(&proof, cursor.as_deref()),
                     &mut self.core,
                     commands,
                 )
@@ -377,17 +428,20 @@ impl<S: agent_client::IdentityProvider> super::DeviceService<S> {
                 owner.validate(&self.core.access.fences)?;
                 if challenge.local_session
                     != (w::AccessLocalSession {
-                        account: local_account(&owner.subject)?,
+                        account: native_account(&owner.subject)?,
                         session_id: super::login_binding_id(&owner.binding),
                     })
                 {
                     return Err(Error::Untrusted);
                 }
                 let expires_at = challenge.expires_at;
-                self.core
-                    .access
-                    .challenges
-                    .insert(begin.operation_id, Challenge { owner, challenge });
+                self.core.access.challenges.insert(
+                    begin.operation_id,
+                    Challenge {
+                        owner: owner.clone(),
+                        challenge,
+                    },
+                );
                 Out::Challenge {
                     operation: begin.operation_id,
                     expires_at,
@@ -562,6 +616,7 @@ impl<S: agent_client::IdentityProvider> super::DeviceService<S> {
                 Out::Prepared {}
             }
         };
+        owner.validate(&self.core.access.fences)?;
         // HTTP awaits can process revocation; do not release setup material across a stale context.
         if self.core.context(command)?.context != *context {
             return Err(Error::Identity);

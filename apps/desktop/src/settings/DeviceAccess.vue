@@ -81,7 +81,7 @@ async function action(
 async function refresh() {
   await action(async (port, valid) => {
     const [listing, pending] = await Promise.all([
-      port({ kind: "directory", after: null }),
+      port({ kind: "directory", cursor: null }),
       port({ kind: "tasks" }),
     ]);
     if (!valid()) return;
@@ -96,10 +96,10 @@ async function refresh() {
   });
 }
 async function more() {
-  const after = directory.value?.after;
-  if (!after) return;
+  const cursor = directory.value?.nextCursor;
+  if (!cursor) return;
   await action(async (port, valid) => {
-    const result = await port({ kind: "directory", after });
+    const result = await port({ kind: "directory", cursor });
     if (!valid()) return;
     if (result.kind !== "directory") throw new Error("response");
     directory.value = {
@@ -185,9 +185,23 @@ async function confirm() {
     }
   });
 }
+function accountText(binding: Directory["bindings"][number]) {
+  const account = binding.account;
+  if (!account) return "账号待确认";
+  if (account.platform === "macos") return "macOS 账号";
+  return {
+    local: "Windows 本地账号",
+    active_directory: "AD 域账号",
+    entra: "Entra joined 账号",
+  }[account.authority.kind];
+}
 function bindingText(binding: Directory["bindings"][number]) {
   if (binding.effect?.state === "unbound")
-    return "RSS 关联已移除，本地账户和数据保留";
+    return {
+      keep: "RSS 关联已移除，系统账号保持原状",
+      disable: "RSS 关联已移除，本机登录已限制",
+      standard: "RSS 关联已移除，本机管理员资格已移除",
+    }[binding.effect.disposition];
   if (binding.revoked) return "已请求移除，等待本机确认";
   if (
     binding.appliedRevision === binding.revision &&
@@ -235,6 +249,10 @@ onUnmounted(() => {
       在 RSS 登录选项中，使用 Windows
       密码和验证器验证码登录；恢复密钥可代替验证码。系统原有登录选项继续保留。
     </p>
+    <p v-if="!mac">
+      首次启用或设备重新加入 Entra 后，请注销 Windows
+      并重新登录，再关联当前账号。
+    </p>
     <p v-if="!available">请登录 RSS 账户并保持当前本地会话解锁。</p>
     <template v-else>
       <button :disabled="busy" @click="refresh">刷新状态</button>
@@ -271,7 +289,7 @@ onUnmounted(() => {
       <p v-if="message" role="status">{{ message }}</p>
       <ul v-if="directory?.bindings.length">
         <li v-for="binding in directory.bindings" :key="binding.id">
-          {{ bindingText(binding) }}
+          {{ accountText(binding) }} · {{ bindingText(binding) }}
         </li>
       </ul>
       <div v-for="policy in directory?.policies" :key="policy.policy">
@@ -287,10 +305,10 @@ onUnmounted(() => {
           }}
         </p>
         <button :disabled="busy" @click="enroll(policy.policy)">
-          关联当前本地账户
+          关联当前 Windows / macOS 账号
         </button>
       </div>
-      <button v-if="directory?.after" :disabled="busy" @click="more">
+      <button v-if="directory?.nextCursor" :disabled="busy" @click="more">
         更多可用策略
       </button>
       <p>

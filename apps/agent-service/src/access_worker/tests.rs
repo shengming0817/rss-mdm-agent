@@ -21,6 +21,7 @@ struct Fake {
     enables: usize,
     role: w::AccessRole,
     fail_create: bool,
+    fail_dispose: bool,
     installed: bool,
     registered: Option<(PathBuf, Uuid)>,
 }
@@ -33,6 +34,29 @@ impl Protector for Fake {
     }
 }
 impl engine::Native for Fake {
+    fn identity(
+        &self,
+        _: &str,
+    ) -> Result<(w::AccessWindowsAuthority, String, String), w::AccessFailure> {
+        Ok((
+            w::AccessWindowsAuthority::Local,
+            "LOCAL\\test".into(),
+            "local-machine".into(),
+        ))
+    }
+    fn dispose(
+        &mut self,
+        _: &w::AccessAccount,
+        disposition: w::AccessAccountDisposition,
+    ) -> Result<(), w::AccessFailure> {
+        if self.fail_dispose {
+            return Err(w::AccessFailure::NativeFailure);
+        }
+        if disposition == w::AccessAccountDisposition::Standard {
+            self.role = w::AccessRole::Standard;
+        }
+        Ok(())
+    }
     fn integration_ready(&self, root: &Path, installation: Uuid) -> Result<bool, Error> {
         if let Some((actual_root, actual_id)) = &self.registered {
             verify_installation(root, installation, actual_root, *actual_id)?;
@@ -101,10 +125,13 @@ fn fixture(create: bool) -> (Root, Input, Fake, Vec<u8>, String) {
         enables: 0,
         role: w::AccessRole::Administrator,
         fail_create: false,
+        fail_dispose: false,
         installed: true,
         registered: None,
     };
     let configuration = w::AccessConfiguration {
+        mac: None,
+        windows_accounts: vec![w::AccessWindowsKind::Local],
         self_enrollment: true,
         enabled: true,
         role: None,
@@ -136,7 +163,10 @@ fn fixture(create: bool) -> (Root, Input, Fake, Vec<u8>, String) {
             }
         } else {
             w::AccessAction::Apply {
-                account: w::AccessAccount::Windows { sid: SID.into() },
+                account: w::AccessAccount::Windows {
+                    sid: SID.into(),
+                    authority: w::AccessWindowsAuthority::Local,
+                },
                 configuration,
             }
         },
@@ -165,6 +195,9 @@ fn fixture(create: bool) -> (Root, Input, Fake, Vec<u8>, String) {
         session: SessionRequirement::NotRequired {},
     };
     let mut store = Store::create(&root.0, input.installation).unwrap();
+    store
+        .bind_registration(authority(&input.task, SID, &native).unwrap().registration())
+        .unwrap();
     native.registered = Some((input.root.clone(), input.installation));
     let mut candidate = device_access::Candidate::generate().unwrap();
     let secret = candidate.totp_secret().to_vec();
@@ -186,7 +219,10 @@ fn ack(input: &Input, expected: String) -> std::thread::JoinHandle<w::Credential
                     .expect("Prepared precedes escrow");
                 assert_eq!(
                     prepared.account,
-                    w::AccessAccount::Windows { sid: SID.into() }
+                    w::AccessAccount::Windows {
+                        sid: SID.into(),
+                        authority: w::AccessWindowsAuthority::Local
+                    }
                 );
                 let material = &escrow.materials[0];
                 let key = KEY
@@ -240,7 +276,7 @@ fn initialize_preserve_and_unbind_use_real_factor_state_and_exact_ack() {
     assert_eq!(
         store
             .verify(
-                SID,
+                &authority(&input.task, SID, &native).unwrap(),
                 device_access::Factor::Totp(&otp(&secret, native.clock.utc)),
                 native.clock,
                 &native
@@ -254,7 +290,7 @@ fn initialize_preserve_and_unbind_use_real_factor_state_and_exact_ack() {
     assert_eq!(
         store
             .verify(
-                SID,
+                &authority(&input.task, SID, &native).unwrap(),
                 device_access::Factor::Totp(&next),
                 native.clock,
                 &native
@@ -269,11 +305,17 @@ fn initialize_preserve_and_unbind_use_real_factor_state_and_exact_ack() {
     assert!(engine::execute(&input, &mut native)
         .unwrap()
         .effect
-        .complete());
+        .complete(&w::AccessConfiguration {
+            mac: None,
+            windows_accounts: vec![w::AccessWindowsKind::Local],
+            self_enrollment: true,
+            enabled: true,
+            role: None
+        }));
     assert_eq!(
         store
             .verify(
-                SID,
+                &authority(&input.task, SID, &native).unwrap(),
                 device_access::Factor::Totp(&next),
                 native.clock,
                 &native
@@ -287,16 +329,22 @@ fn initialize_preserve_and_unbind_use_real_factor_state_and_exact_ack() {
     input.task.revision = 3;
     input.task.windows = None;
     input.task.action = w::AccessAction::Unbind {
-        account: w::AccessAccount::Windows { sid: SID.into() },
+        disposition: w::AccessAccountDisposition::Keep,
+        account: w::AccessAccount::Windows {
+            sid: SID.into(),
+            authority: w::AccessWindowsAuthority::Local,
+        },
     };
     assert_eq!(
         engine::execute(&input, &mut native).unwrap().effect,
-        w::AccessEffect::Unbound
+        w::AccessEffect::Unbound {
+            disposition: w::AccessAccountDisposition::Keep
+        }
     );
     assert_eq!(
         store
             .verify(
-                SID,
+                &authority(&input.task, SID, &native).unwrap(),
                 device_access::Factor::Recovery(&recovery),
                 native.clock,
                 &native
@@ -314,7 +362,13 @@ fn creation_activates_before_enable_and_replay_does_not_recreate_account() {
     assert!(engine::execute(&input, &mut native)
         .unwrap()
         .effect
-        .complete());
+        .complete(&w::AccessConfiguration {
+            mac: None,
+            windows_accounts: vec![w::AccessWindowsKind::Local],
+            self_enrollment: true,
+            enabled: true,
+            role: None
+        }));
     ack.join().unwrap();
     assert_eq!(native.role, w::AccessRole::Standard);
     assert_eq!(native.creates, 1);
@@ -322,7 +376,13 @@ fn creation_activates_before_enable_and_replay_does_not_recreate_account() {
     assert!(engine::execute(&input, &mut native)
         .unwrap()
         .effect
-        .complete());
+        .complete(&w::AccessConfiguration {
+            mac: None,
+            windows_accounts: vec![w::AccessWindowsKind::Local],
+            self_enrollment: true,
+            enabled: true,
+            role: None
+        }));
     assert_eq!(native.creates, 1);
     assert_eq!(native.enables, 1);
 }
@@ -373,29 +433,49 @@ fn different_valid_provider_store_rejects_enable_disable_and_unbind_before_mutat
     native.registered = Some((other.root.clone(), other.installation));
     for action in [
         w::AccessAction::Apply {
-            account: w::AccessAccount::Windows { sid: SID.into() },
+            account: w::AccessAccount::Windows {
+                sid: SID.into(),
+                authority: w::AccessWindowsAuthority::Local,
+            },
             configuration: w::AccessConfiguration {
+                mac: None,
+                windows_accounts: vec![w::AccessWindowsKind::Local],
                 enabled: true,
                 self_enrollment: true,
                 role: Some(w::AccessRole::Standard),
             },
         },
         w::AccessAction::Apply {
-            account: w::AccessAccount::Windows { sid: SID.into() },
+            account: w::AccessAccount::Windows {
+                sid: SID.into(),
+                authority: w::AccessWindowsAuthority::Local,
+            },
             configuration: w::AccessConfiguration {
+                mac: None,
+                windows_accounts: vec![w::AccessWindowsKind::Local],
                 enabled: false,
                 self_enrollment: true,
                 role: None,
             },
         },
         w::AccessAction::Unbind {
-            account: w::AccessAccount::Windows { sid: SID.into() },
+            disposition: w::AccessAccountDisposition::Keep,
+            account: w::AccessAccount::Windows {
+                sid: SID.into(),
+                authority: w::AccessWindowsAuthority::Local,
+            },
         },
     ] {
         input.task.task_id = Uuid::new_v4();
         input.task.attempt_id = Uuid::new_v4();
         input.task.revision += 1;
-        input.task.windows = if matches!(action, w::AccessAction::Unbind { .. }) {
+        input.task.windows = if matches!(
+            action,
+            w::AccessAction::Unbind {
+                disposition: w::AccessAccountDisposition::Keep,
+                ..
+            }
+        ) {
             None
         } else {
             Some(w::AccessWindowsPlan::Preserve {
@@ -470,10 +550,94 @@ fn absent_provider_allows_disable_and_unbind_of_the_current_store() {
     input.task.revision += 1;
     input.task.windows = None;
     input.task.action = w::AccessAction::Unbind {
-        account: w::AccessAccount::Windows { sid: SID.into() },
+        disposition: w::AccessAccountDisposition::Keep,
+        account: w::AccessAccount::Windows {
+            sid: SID.into(),
+            authority: w::AccessWindowsAuthority::Local,
+        },
     };
     assert_eq!(
         engine::execute(&input, &mut native).unwrap().effect,
-        w::AccessEffect::Unbound
+        w::AccessEffect::Unbound {
+            disposition: w::AccessAccountDisposition::Keep
+        }
     );
+}
+
+#[test]
+fn unbind_before_initialize_blocks_late_account_creation() {
+    let (_root, input, mut native, _, _) = fixture(true);
+    let mut unlink = input.task.clone();
+    unlink.task_id = Uuid::new_v4();
+    unlink.attempt_id = Uuid::new_v4();
+    unlink.revision += 1;
+    unlink.windows = None;
+    unlink.action = w::AccessAction::Unbind {
+        account: w::AccessAccount::Windows {
+            sid: SID.into(),
+            authority: w::AccessWindowsAuthority::Local,
+        },
+        disposition: w::AccessAccountDisposition::Keep,
+    };
+    let removal = Input {
+        task: unlink,
+        root: input.root.clone(),
+        installation: input.installation,
+        image_sha256: input.image_sha256.clone(),
+        run_as: input.run_as.clone(),
+        session: input.session.clone(),
+    };
+    assert!(matches!(
+        engine::execute(&removal, &mut native).unwrap().effect,
+        w::AccessEffect::Unbound { .. }
+    ));
+    assert!(matches!(
+        engine::execute(&input, &mut native).unwrap().effect,
+        w::AccessEffect::Unknown
+    ));
+    assert_eq!(native.creates, 0);
+    assert!(pending(&input.root, &input.task).unwrap().is_none());
+}
+
+#[test]
+fn uncertain_os_disposition_cannot_restore_revoked_factors() {
+    let (_root, mut input, mut native, _, recovery) = fixture(false);
+    let acknowledgement = ack(&input, recovery.clone());
+    let _ = engine::execute(&input, &mut native).unwrap();
+    acknowledgement.join().unwrap();
+    input.task.task_id = Uuid::new_v4();
+    input.task.attempt_id = Uuid::new_v4();
+    input.task.revision += 1;
+    input.task.windows = None;
+    input.task.action = w::AccessAction::Unbind {
+        account: w::AccessAccount::Windows {
+            sid: SID.into(),
+            authority: w::AccessWindowsAuthority::Local,
+        },
+        disposition: w::AccessAccountDisposition::Disable,
+    };
+    native.fail_dispose = true;
+    assert!(matches!(
+        engine::execute(&input, &mut native).unwrap().effect,
+        w::AccessEffect::Unknown
+    ));
+    let mut store = Store::open(&input.root, input.installation).unwrap();
+    assert_eq!(
+        store
+            .verify(
+                &authority(&input.task, SID, &native).unwrap(),
+                device_access::Factor::Recovery(&recovery),
+                native.clock,
+                &native
+            )
+            .unwrap(),
+        device_access::Decision::Disabled
+    );
+    native.fail_dispose = false;
+    assert!(matches!(
+        engine::execute(&input, &mut native).unwrap().effect,
+        w::AccessEffect::Unbound {
+            disposition: w::AccessAccountDisposition::Disable
+        }
+    ));
 }
