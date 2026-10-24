@@ -516,9 +516,13 @@ function presentationText(value: unknown, fallback = "未提供"): string {
         <p>{{ selected.selfService.presentation.sideEffects }}</p>
         <PolicyExecutionContext :task="selected.task" />
         <p v-for="(source, name) in parameterSources" :key="name">
-          <template v-if="source.kind === 'fixed'">{{ name }}（固定）：{{ JSON.stringify(source.value) }}</template>
-        </p>
-      </template><button :disabled="busy">{{ scriptTask ? '运行' : '核对执行参数' }}</button>
+          <template v-if="source.kind === 'fixed'"
+            >{{ name }}（固定）：{{ JSON.stringify(source.value) }}</template
+          >
+        </p> </template
+      ><button :disabled="busy">
+        {{ scriptTask ? "运行" : "核对执行参数" }}
+      </button>
     </form>
     <section
       v-if="choice && !request && !scriptTask && allowNewRequests !== false"
