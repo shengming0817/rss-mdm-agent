@@ -459,13 +459,14 @@ class EvidenceTests(unittest.TestCase):
 
     def test_desktop_pass_requires_terminal_acknowledged_process_and_independent_effect(self):
         record = {'action':{'initiator':{'kind':'backend','attempt':'attempt'}},'status':{'operationRequestId':'request','attempts':1,'process':{'finished':True,'end':'exited','exitCode':0}}}
-        event = {'kind':'software_result','steps':[{'process':{'kind':'exited','code':0},'diagnostics':{'failure':None},'after':{'state':'unknown'}}]}
+        event = {'kind':'software_result','steps':[{'process':{'kind':'exited','code':0},'diagnostics':{'failure':None},'after':{'state':'present'}}]}
         backend = {'startRequests':1,'results':{'op':{'attemptId':'attempt','event':event}},'acknowledged':['op']}
         effect = {'receiptPresent':True,'payloadPresent':True,'payloadMatches':True}
         acceptance.validate_desktop_completion([record], backend, effect, 'request')
-        for failure in ['running','unacknowledged','failed','effect','request','redispatch']:
+        for failure in ['running','unacknowledged','failed','effect','request','redispatch','detection']:
             r, b, e = copy.deepcopy(record), copy.deepcopy(backend), copy.deepcopy(effect)
-            if failure=='running': r['status']['process']['finished']=False
+            if failure=='detection': b['results']['op']['event']['steps'][0]['after']['state']='unknown'
+            elif failure=='running': r['status']['process']['finished']=False
             elif failure=='unacknowledged': b['acknowledged']=[]
             elif failure=='failed': b['results']['op']['event']['steps'][0]['process']['code']=1
             elif failure=='effect': e['payloadMatches']=False
@@ -479,25 +480,6 @@ class EvidenceTests(unittest.TestCase):
         acceptance.validate_desktop_completion([record], backend, absent, 'request')
         with self.assertRaises(AssertionError):
             acceptance.validate_desktop_completion([record], backend, {**absent,'receiptPresent':True}, 'request')
-
-    def test_known_macos_uncertainty_is_preserved_and_requires_independent_effect(self):
-        record={'action':{'initiator':{'kind':'backend','attempt':'a'}},'status':{
-            'operationRequestId':'r','attempts':1,'phase':'outcomeUnknown',
-            'process':{'finished':True,'end':'exited','exitCode':0,'quiescent':False}}}
-        event={'kind':'software_result','steps':[{'process':{'kind':'exited','code':0},
-            'diagnostics':{'failure':'capture_failed'},'after':{'state':'unknown'}}]}
-        backend={'startRequests':1,'results':{'op':{'attemptId':'a','event':event}},'acknowledged':['op']}
-        effect={key:True for key in ('receiptPresent','payloadPresent','payloadMatches')}
-        result=acceptance.validate_desktop_completion([record],backend,effect,'r')
-        self.assertTrue(result['executionUncertain'])
-        for change in ('phase','quiescent','effect','failure'):
-            r,b,e=copy.deepcopy(record),copy.deepcopy(backend),copy.deepcopy(effect)
-            if change=='phase': r['status']['phase']='completed'
-            elif change=='quiescent':r['status']['process']['quiescent']=True
-            elif change=='effect':e['payloadMatches']=False
-            else:b['results']['op']['event']['steps'][0]['diagnostics']['failure']='cancelled'
-            with self.subTest(change=change),self.assertRaises(AssertionError):
-                acceptance.validate_desktop_completion([r],b,e,'r')
 
     def test_journal_proof_reads_capture_for_the_original_attempt_not_snapshot_fields(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -523,6 +505,40 @@ class EvidenceTests(unittest.TestCase):
             acceptance.validate_journal_completion(proof,completion)
             proof['records'][0]['process']=None
             with self.assertRaises(AssertionError): acceptance.validate_journal_completion(proof,completion)
+
+    def test_software_probe_uses_directory_choice_and_original_policy_binding(self):
+        context=dict(id='native',generation='login')
+        item=dict(policyId='policy',policyRevision=2,policyVersion='version')
+        choice={}
+        class Probe:
+            def request(self, request):
+                if request['method']=='bindContext': kind,value='contextBound',context
+                elif request['method']=='policyDirectory': kind,value='policyDirectory',dict(items=[item])
+                else:
+                    self.outer.assertEqual(request['method'],'invokePolicy')
+                    self.outer.assertEqual(request['context'],context)
+                    choice.update(request['choice']);kind,value='policyRequest',dict(action=dict(choice=choice))
+                return dict(transport='reply',peerUid=0,envelope=dict(reply=dict(kind=kind,value=value)))
+        probe=Probe();probe.outer=self
+        calls=[]
+        def command(method, **arguments):
+            calls.append(method);return dict(policyId='policy')
+        actual, selected=acceptance.native_policy_choice(probe,command,'package','receipt')
+        self.assertEqual(actual,context);self.assertEqual(selected,choice)
+        self.assertEqual(calls,['software-catalog'])
+        self.assertEqual(selected['policyRevision'],2)
+
+    def test_failure_cleanup_waits_for_the_original_parent_scope_confirmation(self):
+        for frame, expected in [(dict(method='finish',processScopeEmpty=True),True),
+            (dict(method='finish',processScopeEmpty=False),False),
+            (dict(method='query',processScopeEmpty=True),False), (None,False)]:
+            read,write=os.pipe()
+            with os.fdopen(read,'rb') as stream, os.fdopen(write,'wb') as parent:
+                if frame is not None:
+                    parent.write((json.dumps(frame)+'\n').encode());parent.flush()
+                    self.assertEqual(acceptance.wait_desktop_cleanup(stream,.1),expected)
+                else:
+                    self.assertFalse(acceptance.wait_desktop_cleanup(stream,.01))
 
     def test_eof_or_failed_parent_cannot_finish_worker_as_passed(self):
         for finish in [None, {'status':'failed'}, {'status':'cancelled'}, {'status':'passed'}]:

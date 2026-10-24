@@ -89,6 +89,7 @@ class NativeProbe:
         self._start()
 
     def _start(self):
+        self.policy_context = None
         self.process = subprocess.Popen([str(self.binary), '--config', str(self.config)], stdin=subprocess.PIPE,
             stdout=subprocess.PIPE, stderr=self.log, text=True)
         self.exchange = BackendExchange(self.process, timeout=6)
@@ -317,12 +318,47 @@ def offer_request(offer):
         attempt=offer['attempt'], revision=offer['revision'], origin=dict(kind='desktop'))
 
 
-def await_offer(query, task):
-    deadline = time.monotonic() + 15
+def native_policy_choice(probe, command, package, receipt, user=False, validity_seconds=3600):
+    catalog = command('software-catalog', path=str(package), receipt=receipt,
+        user=user, validitySeconds=validity_seconds)
+    assert 'error' not in catalog, 'software catalog publication failed'
+    context = getattr(probe, 'policy_context', None)
+    if context is None:
+        bound = probe.request(dict(method='bindContext', expected=None, value=dict(
+            access=dict(kind='device'), generation=str(uuid.uuid4()),
+            expiresAtUnixMs=int((time.time()+3600)*1000))))
+        assert_native_reply(bound, 'contextBound')
+        context = probe.policy_context = bound['envelope']['reply']['value']
+    directory = probe.request(dict(method='policyDirectory', context=context, after=None, origin=dict(kind='desktop')))
+    assert_native_reply(directory, 'policyDirectory')
+    items = [item for item in directory['envelope']['reply']['value']['items']
+        if item['policyId'] == catalog['policyId']]
+    assert len(items) == 1, 'published Policy missing from the authorized directory'
+    item = items[0]
+    choice = dict(request=str(uuid.uuid4()), policyId=item['policyId'],
+        policyRevision=item['policyRevision'], policyVersion=item['policyVersion'], parameters={})
+    prepared = probe.request(dict(method='invokePolicy', context=context, choice=choice,
+        locator=dict(after=None), origin=dict(kind='desktop')))
+    assert_native_reply(prepared, 'policyRequest')
+    assert prepared['envelope']['reply']['value']['action']['choice'] == choice
+    return context, choice
+
+
+def native_policy_offer(probe, query, command, package, receipt, user=False, validity_seconds=3600):
+    context, choice = native_policy_choice(probe, command, package, receipt, user, validity_seconds)
+    confirmed = probe.request(dict(method='confirmPolicy', context=context, request=choice['request']))
+    assert_native_reply(confirmed, 'policyRequest')
+    deadline = time.monotonic()+30
     while True:
-        available = [offer for offer in query()['available'] if offer['task'] == task]
-        if available: return available[0]
-        assert time.monotonic() < deadline, 'offer did not reach the authenticated service'
+        current = query()
+        rows = [row for row in current['preparations']
+            if row['action']['kind'] == 'policy' and row['action']['choice']['request'] == choice['request']]
+        if rows and rows[0]['action'].get('offer'):
+            assert len(rows) == 1, 'duplicate original Policy request'
+            offer = rows[0]['action']['offer']
+            assert offer['request'] == choice['request'] and offer['task'] == rows[0]['action']['runId']
+            return offer
+        assert time.monotonic() < deadline, 'original Policy offer did not bind'
         time.sleep(.05)
 
 
@@ -334,8 +370,8 @@ def completed_replay_offer(current, completion):
         action = row['action']
         offer = action.get('offer')
         if offer and offer['request'] == request and offer['attempt'] == attempt:
-            if action['kind'] == 'policy':
-                assert action['choice']['request'] == request and action['runId'] == offer['task'], 'original policy association changed'
+            assert action['kind'] == 'policy', 'software replay requires its original Policy invocation'
+            assert action['choice']['request'] == request and action['runId'] == offer['task'], 'original policy association changed'
             offers.append(offer)
     assert len(offers) == 1, 'original completed offer missing or duplicated'
     return offers[0]
@@ -387,8 +423,10 @@ def native_offer_security(probe, matrix, query, command, package, receipt, compl
     security_result(matrix, 'offer_replay', dict(first=first, second=second, record=matching[0],
         backend=remote, effect=outcome))
     security_begin(matrix,'offer_expiry')
-    expiring = command('package', path=str(package), receipt=receipt, user=True, validitySeconds=6)
-    offer = await_offer(query, expiring['task']); request = offer_request(offer)
+    offer = native_policy_offer(probe, query, command, package, receipt, validity_seconds=30)
+    completed(offer['attempt'], 25)
+    request = offer_request(offer)
+    assert_native_reply(probe.request(request), 'pending')
     starts = command('status')['startRequests']
     time.sleep(max(0, offer['expiresAt'] + .2 - time.time()))
     # Expired offers may already have been removed; both closed business outcomes deny admission.
@@ -397,12 +435,15 @@ def native_offer_security(probe, matrix, query, command, package, receipt, compl
         assert response.get('envelope', {}).get('reply', {}).get('kind') in ('rejected', 'unavailable')
         assert response.get('transport') == 'reply' and response.get('peerUid') == 0
     assert command('status')['startRequests'] == starts
-    assert not any(r['action']['initiator'].get('attempt') == expiring['attempt'] for r in query()['value']['items'])
+    records = [r for r in query()['value']['items'] if r['action']['initiator'].get('attempt') == offer['attempt']]
+    assert len(records) == 1 and records[0]['status']['attempts'] == 1
+    assert payload_file.read_bytes() == before['bytes'] and payload_file.stat().st_mtime_ns == before['mtime']
     security_result(matrix, 'offer_expiry', dict(offer=offer, replies=replies, startRequests=starts))
 
 
 def native_revocation_security(probe, matrix, query, command, package, receipt, protected):
     security_begin(matrix,'revocation_active_process')
+    context, choice = native_policy_choice(probe, command, package, receipt)
     marker, tail = protected/'revoke-started', protected/'revoke-tail'
     active = command('script', timeout=60,
         body="umask 022; printf '%s' \"$$\" > "+shlex.quote(str(marker))+
@@ -415,8 +456,7 @@ def native_revocation_security(probe, matrix, query, command, package, receipt, 
         assert time.monotonic()<deadline, 'revocation process did not start'
         time.sleep(.05)
     start_wait_ms=(time.monotonic()-waiting_started)*1000
-    task = command('package', path=str(package), receipt=receipt, user=True)
-    offer = await_offer(query, task['task']); request = offer_request(offer)
+    request = dict(method='confirmPolicy', context=context, request=choice['request'])
     starts = command('status')['startRequests']
     security_begin(matrix,'revocation_preopened')
     connection = probe.open(establish=True)
@@ -536,9 +576,9 @@ def native_stale_helper_security(probe, matrix, query, command, protected, prior
     payload_file=protected/'package-payload/fixed.txt'
     before=(payload_file.read_bytes(),payload_file.stat().st_mtime_ns)
     starts=command('status')['startRequests']
-    task=command('package',path=str(package),receipt=package_receipt,user=True)
-    offer=await_offer(query,task['task'])
-    response=probe.request(offer_request(offer));assert_native_reply(response,'queued')
+    offer=native_policy_offer(probe,query,command,package,package_receipt,user=True)
+    task=dict(task=offer['task'],attempt=offer['attempt'])
+    response=probe.request(offer_request(offer));assert_native_reply(response,'pending')
     deadline=time.monotonic()+15
     while True:
         value=query()
@@ -1240,16 +1280,12 @@ def validate_desktop_completion(records, backend, effect, request):
         else:
             assert step['process'] == {'kind':'exited','code':0}, 'installer failed or did not run'
             assert process['end'] == 'exited' and process['exitCode'] == 0
-            failure=step['diagnostics']['failure']
-            if failure is not None:
-                assert failure=='capture_failed' and process.get('quiescent') is False
-                assert record['status']['phase']=='outcomeUnknown' and step['after']['state']=='unknown'
-            assert step['after']['state'] in ('present','unknown')
+            assert step['diagnostics']['failure'] is None, 'native software capture failed'
+            assert step['after']['state'] == 'present', 'native software detection did not complete'
     present = all(effect[key] is True for key in ('receiptPresent','payloadPresent','payloadMatches'))
     absent = all(effect[key] is False for key in ('receiptPresent','payloadPresent','payloadMatches'))
     assert present or (cancelled and absent), 'independent device effect conflicts with terminal result'
-    return {'request':request, 'record':record, 'backend':backend, 'effect':effect,
-        'executionUncertain':record['status'].get('phase')=='outcomeUnknown'}
+    return {'request':request, 'record':record, 'backend':backend, 'effect':effect}
 
 
 def journal_proof(path):
@@ -1274,6 +1310,23 @@ def validate_journal_completion(proof, completion):
     assert process['attemptId']==completion['record']['status']['attemptId'], 'journal attempt changed'
     assert process['end']==completion['record']['status']['process']['end'], 'journal process result changed'
     assert process['exitCode']==completion['record']['status']['process']['exitCode'], 'journal exit result changed'
+
+
+def wait_desktop_cleanup(stream, timeout=90):
+    # Keep the original administrator channel alive until the parent has reaped clients.
+    deadline = time.monotonic()+timeout
+    data = bytearray()
+    while time.monotonic() < deadline and len(data) <= 65536:
+        if not select.select([stream], [], [], max(0, deadline-time.monotonic()))[0]:
+            return False
+        chunk = os.read(stream.fileno(), 65537-len(data))
+        if not chunk: return False
+        data.extend(chunk)
+        if b'\n' in data:
+            try: finish = json.loads(data.split(b'\n', 1)[0])
+            except (ValueError, UnicodeError): return False
+            return finish.get('method') == 'finish' and finish.get('processScopeEmpty') is True
+    return False
 
 
 def validate_desktop_finish(finish, evidence):
@@ -1368,6 +1421,8 @@ def main():
                    osVersion=run('/usr/bin/sw_vers','-productVersion').stdout.strip(), subject=dict(uid=os.geteuid(),session=run('/bin/launchctl','managername').stdout.strip()), candidate=frozen, journal=None, scenarios={}, security=security_matrix(), acceptanceEnvironment=acceptance_environment)
     installed = helper = False
     administrator_session = backend = exchange = backend_log = protected = native_probe = probe_log = None
+    desktop_ready = desktop_finish_received = False
+    desktop_cleanup = True
     try:
         # Verify before copying. Installation must preserve these bytes and code identities.
         receipt['inputArtifacts'] = {field: candidate_identity(value) for field in ['binary','desktop'] if (value := getattr(args,field)) is not None}
@@ -1672,6 +1727,8 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
             run('/usr/bin/pkgbuild', '--root', str(payload), '--identifier', package_receipt,
                 '--version', '1.0', '--install-location', str(protected / 'package-payload'), str(pkg))
             catalog = command('software-catalog', path=str(pkg), receipt=package_receipt)
+            desktop_ready = True
+            desktop_cleanup = False
             print(json.dumps({'kind': 'desktopService', 'desktop': str(protected / 'rss-mdm-desktop'),
                 'service': receipt['artifact'], 'config': str(default_config), 'catalog': catalog, 'journalOwner': 'agent-service'}), flush=True)
             def effect():
@@ -1719,6 +1776,8 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
                     value = completion
                 elif method == 'finish':
                     finish = request
+                    desktop_finish_received = True
+                    desktop_cleanup = request.get('processScopeEmpty') is True
                     break
                 else: raise RuntimeError('unknown native harness control')
                 print(json.dumps({'id': request['id'], 'value': value}), flush=True)
@@ -1775,24 +1834,23 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
             assert (protected/'contained-package-payload/fixed.txt').read_text() == 'controlled package payload\n'
             assert subprocess.run(['/usr/sbin/pkgutil','--pkg-info-plist',contained_receipt],capture_output=True).returncode == 0
             receipt['scenarios']['dmg_contained_pkg_unsigned_installed'] = pkg_remote
-        third = command('package', path=str(pkg), receipt=package_receipt, user=bool(native_probe))
         if native_probe:
-            offer=await_offer(query,third['task'])
-            replay_offer=offer
-            assert_native_reply(native_probe.request(offer_request(offer)), 'queued')
+            replay_offer = native_policy_offer(native_probe, query, command, pkg, package_receipt)
+            third = dict(task=replay_offer['task'], attempt=replay_offer['attempt'])
+        else:
+            third = command('package', path=str(pkg), receipt=package_receipt)
         package = completed(third['attempt'], 60)
         event = acknowledged_result(package, third['attempt'])
         assert event['kind'] == 'software_result' and len(event['steps']) == 1
         step = event['steps'][0]
         assert step['process'] == {'kind':'exited','code':0}
-        assert step['diagnostics']['failure'] == 'capture_failed'
+        assert step['diagnostics']['failure'] is None
         assert (protected / 'package-payload/fixed.txt').read_text() == 'controlled package payload\n'
         import plistlib
         installed_receipt = plistlib.loads(run('/usr/sbin/pkgutil', '--pkg-info-plist', package_receipt).stdout.encode())
         assert installed_receipt['pkg-version'] == '1.0'
-        # macOS process groups cannot establish global quiescence. Keep Unknown while
-        # independently requiring the actual installer exit, receipt and payload facts.
-        assert step['after']['state'] in ('present', 'unknown')
+        assert step['after']['state'] == 'present'
+        assert step['after']['version'] == '1.0'
         receipt['scenarios']['package_exit_and_independent_effect'] = package
         final = query()
         for attempt in [first['attempt'], second['attempt'], third['attempt']]:
@@ -1931,6 +1989,9 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
                 completed,effect,protected,installer,binary,config,administrator_session,replay_offer)
         receipt['status'] = 'passed'
     except BaseException as error:
+        if args.desktop and desktop_ready and not desktop_finish_received:
+            print(json.dumps(dict(kind='serviceFailure', error=str(error))), flush=True)
+            desktop_cleanup = wait_desktop_cleanup(sys.stdin)
         receipt['status'] = 'cancelled' if isinstance(error, (AuthorizationCancelled, InterruptedError)) else 'failed'
         receipt['error'] = str(error)
         if args.security:
@@ -1953,7 +2014,9 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
             try: native_probe.close()
             except BaseException as error: cleanup_errors.append(str(error))
         if probe_log: probe_log.close()
-        if helper:
+        if args.desktop and desktop_ready and not desktop_cleanup:
+            cleanup_errors.append('parent client cleanup was not confirmed')
+        if helper and desktop_cleanup:
             try:
                 helper_plist=Path('/Library/LaunchAgents/com.rss-mdm.agent.execution.user.plist')
                 if helper_plist.exists():
@@ -1963,7 +2026,7 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
                     assert lookup.returncode==113, 'helper registration missing its owned removal evidence'
             except BaseException as error:
                 cleanup_errors.append(str(error))
-        if administrator_session and administrator_session.reader:
+        if administrator_session and administrator_session.reader and desktop_cleanup:
             try:
                 proof = administrator_session.command('cleanup')
                 if proof: receipt['journalProof'] = proof
