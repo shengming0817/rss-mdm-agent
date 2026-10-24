@@ -145,7 +145,7 @@ async function enroll(policy: string) {
     if (result.kind !== "binding") throw new Error("response");
     clearSecret();
     message.value = mac.value
-      ? "关联已确认。请在系统设置的用户与群组中完成 Platform SSO 注册；本地密码登录继续保留。"
+      ? "关联已确认。请在系统设置的用户与群组中完成 Platform SSO 注册；登录、解锁及磁盘恢复按组织策略执行。"
       : "关联请求已确认。请刷新并完成本地验证器设置。";
   });
 }
@@ -276,9 +276,10 @@ onUnmounted(() => {
   >
     <h3>{{ mac ? "Mac Platform SSO" : "Windows RSS 登录" }}</h3>
     <p v-if="mac">
-      使用当前本地账号关联 RSS，由系统管理 Secure Enclave
-      注册与认证。本地密码登录始终保留；Secure Token、FileVault 和 SSO
-      是独立状态。
+      使用当前本地账号关联 RSS，由系统按组织配置使用 Secure Enclave 或 Password
+      注册与认证。登录窗口、锁屏和 FileVault
+      分别受策略约束；离线可用性及恢复入口需按实际配置核实。Secure
+      Token、FileVault 和 SSO 是独立状态。
     </p>
     <p v-else>
       在 RSS 登录选项中，使用 Windows
@@ -310,7 +311,13 @@ onUnmounted(() => {
         管理员组配置修改后，已有会话的权限需注销并重新登录才会刷新。
       </p>
       <p v-if="macStatus" role="status">
-        扩展：{{
+        模式：{{
+          macStatus.configuration?.authentication === "password"
+            ? "Password"
+            : macStatus.configuration
+              ? "Secure Enclave"
+              : "待同步配置"
+        }}； 扩展：{{
           macStatus.extensionInstalled ? "已验证安装" : "未安装或需修复"
         }}； 设备注册：{{
           macStatus.deviceRegistered === null
@@ -337,6 +344,21 @@ onUnmounted(() => {
               ? "已观察"
               : "未注册"
         }}。
+      </p>
+      <p
+        v-if="macStatus?.configuration?.authentication === 'password'"
+        role="status"
+      >
+        密码交换：{{
+          macStatus.passwordExchange?.state === "succeeded"
+            ? "服务端已验证"
+            : macStatus.passwordExchange?.state === "rejected"
+              ? "凭据被拒绝"
+              : macStatus.passwordExchange?.state === "unavailable"
+                ? "服务暂不可用"
+                : "尚无确定结果"
+        }}。 本地密码与登录钥匙串同步仍须分别核实；请从系统设置的 Platform SSO
+        入口完成注册或修复。离线本地改密不会自动更新组织密码。
       </p>
       <p v-if="failure" role="alert">{{ failure }}</p>
       <p v-if="message" role="status">{{ message }}</p>

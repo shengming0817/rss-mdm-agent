@@ -34,6 +34,19 @@ def absent_execution_registration():
         yield
 
 
+class PssoPreflightTests(unittest.TestCase):
+    def test_missing_candidate_blocks_without_claiming_system_acceptance(self):
+        from types import SimpleNamespace
+        with tempfile.TemporaryDirectory() as directory:
+            args = SimpleNamespace(output=Path(directory))
+            self.assertEqual(acceptance.psso_preflight(args, None), 1)
+            receipt = json.loads((args.output/'psso-preflight.json').read_text())
+            self.assertEqual(receipt['status'], 'blocked')
+            self.assertFalse(receipt['systemAccepted'])
+            self.assertTrue(receipt['blockers'])
+            self.assertTrue(all(s['status']=='notExecuted' for s in receipt['scenarios'].values()))
+
+
 class BackendLifecycleTests(unittest.TestCase):
     def test_completed_offer_is_bound_to_the_original_policy_request_and_execution(self):
         offer = dict(request='original', attempt='attempt', task='run', revision='a'*64)

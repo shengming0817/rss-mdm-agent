@@ -109,6 +109,20 @@ it("Mac setup uses native password preparation and keeps backend and system fact
     if (input.kind === "macStatus")
       return {
         kind: "macStatus",
+        configuration: {
+          authentication: "password",
+          passwordProvider: "00000000-0000-0000-0000-000000000001",
+          login: "require",
+          unlock: "require",
+          filevault: "require",
+          offlineGraceSeconds: null,
+          registrationGraceSeconds: null,
+          maintenanceAccounts: ["maintenance"],
+        },
+        passwordExchange: {
+          attemptId: "00000000-0000-0000-0000-000000000002",
+          state: "succeeded",
+        },
         extensionInstalled: true,
         deviceRegistered: true,
         userRegistered: true,
@@ -124,6 +138,10 @@ it("Mac setup uses native password preparation and keeps backend and system fact
   await flushPromises();
   expect(wrapper.text()).toContain("尚需实际登录确认");
   expect(wrapper.text()).toContain("暂无系统回执");
+  expect(wrapper.text()).toContain("服务端已验证");
+  expect(wrapper.text()).toContain("同步仍须分别核实");
+  expect(wrapper.text()).toContain("离线可用性及恢复入口需按实际配置核实");
+  expect(wrapper.text()).not.toContain("本地密码登录始终保留");
   await wrapper
     .findAll("button")
     .find((b) => b.text() === "设置本机账号密码")!

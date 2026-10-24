@@ -383,7 +383,7 @@ Windows x64 NSIS 候选包含 CP DLL；其他架构及 MSI/MSIX 未装配该组�
 
 ### macOS Platform SSO 开发组件（Apple silicon / 26.4）
 
-候选只针对 macOS 26.4 / SDK 26.4、Apple silicon；实际系统加载和回调必须在已获授权的受管测试机验证。`crates/platform-sso` 持有协议组合与恢复决策，`apps/platform-sso-extension` 是 Apple 系统入口和本地 FFI；私钥、系统令牌及注册数据库由 Apple Framework 持有。PSSO 1.0 使用共享设备密钥和 `UserSecureEnclaveKey`，保留本地密码登录，不提供密码同步、ADE/JIT、Authorization Plugin 或严格在线登录。
+候选只针对 macOS 26.4 / SDK 26.4、Apple silicon；实际系统加载和回调必须在已获授权的受管测试机验证。`crates/platform-sso` 持有协议组合与恢复决策，`apps/platform-sso-extension` 是 Apple 系统入口和本地 FFI；私钥、系统令牌及注册数据库由 Apple Framework 持有。PSSO 1.0 使用共享设备密钥，候选支持 `UserSecureEnclaveKey` 与 Password 注册／认证协议。Password 同步与登录策略由 Apple 系统执行；RSS 不持有密码权威或第二套同步引擎。SE 保留本地密码登录；Password 按签名任务消费登录窗口、锁屏、FileVault 各自的 Local／Attempt／Require，缺少独立维护账号时不得启用 Require。不提供 ADE/JIT 或 Authorization Plugin。
 
 使用现有构建 runner 执行 `node scripts/build-platform-sso.mjs --verify-abi`，生成原生 `.appex` 并运行 C/Rust/系统签名 ABI 测试（测试进程不执行系统注册）。默认 ad-hoc 仅用于编译、链接和包结构检查，不证明系统接纳。指定 `RSS_MACOS_DEVELOPMENT_SIGNING_IDENTITY` 时，使用已获批准的开发签名材料；签名团队、profile 的 AppIdentifier、扩展 ID `com.rss.mdmagent.psso`、容器 `com.rss.mdmagent` 及 HTTPS AASA 必须匹配。现有 installer builder 嵌入同一子产物并重签容器；正式公证及安装升级验收由发布流程提供。构建输出 `systemAccepted: false` 不得改读为注册通过。
 
@@ -395,11 +395,23 @@ P6 可由 root 对固定安装的 Agent 调用：
 
 ```sh
 "$Agent" --platform-sso-component inspect
+"$Agent" --platform-sso-component enable
 "$Agent" --platform-sso-component disable
 "$Agent" --platform-sso-component retire
 "$Agent" --platform-sso-component cleanup
 ```
 
-`disable` 持久阻止新注册；`retire` 将已记录的精确 source/version 交给现有服务恢复循环。远端注销使用原子版本条件，回执丢失可回读，不能撤销替换注册。首次注册结果未知且查询尚无 source 时，保留在途坐标，不能把单次未查到视为远端已清理；须等待已注册／已撤销或替换源等确定证据。明确拒绝且未提交的注册会结清对应在途记录。诊断中的 `registrationRecord` 仅区分在途与服务端接受记录，不表示 Apple 已保存配置。`cleanup` 只有在远端撤销与对应原生清理观察均被确认后才移除本机公共元数据，否则返回未完成并保留事实。它不模拟 LoginManager，不删除 OS 账号或私钥。Apple 配置移除及系统材料清理必须通过合法扩展上下文；网络、服务或该上下文不可用时不能报告注销完成。
+`enable` 仅在已核验当前签名组件且没有保留注册／在途记录时解除维护停用；账号仍需有效签名绑定。`disable` 持久阻止新注册；`retire` 将已记录的精确 source/version 交给现有服务恢复循环。远端注销使用原子版本条件，回执丢失可回读，不能撤销替换注册。首次注册结果未知且查询尚无 source 时，保留在途坐标，不能把单次未查到视为远端已清理；须等待已注册／已撤销或替换源等确定证据。明确拒绝且未提交的注册会结清对应在途记录。诊断中的 `registrationRecord` 仅区分在途与服务端接受记录，不表示 Apple 已保存配置。`cleanup` 只有在远端撤销与对应原生清理观察均被确认后才移除本机公共元数据，否则返回未完成并保留事实。它不模拟 LoginManager，不删除 OS 账号或私钥。Apple 配置移除及系统材料清理必须通过合法扩展上下文；网络、服务或该上下文不可用时不能报告注销完成。
 
 正式支持证据必须包含签名嵌入、系统识别、系统发起的设备/用户注册回调、已有账号与受控建号、注册/认证/修复/解绑、锁屏及会话切换、旧代/重放/取消/中断/回执丢失/换钥/撤销，以及 Desktop 或 Agent 停止时的本地登录。构建与协议测试不能替代这些证据；缺受管测试机、有效签名、配置或域关联时保留真实加载/回调阻塞。来源：[Apple 注册设备和用户](https://developer.apple.com/documentation/authenticationservices/registering-devices-and-users)，SDK 26.4 AuthenticationServices 头文件。
+
+
+Password 用户注册不登记用户签名密钥：注册与浏览器证明由当前设备密钥签署，并核对系统实际公钥。首次原生认证不等待 Applied；任务应用仍必须独立证明本地密码与登录钥匙串同步。当前客户端没有可核实的系统同步观察接口，这两项继续为 Unknown，Password 任务不得据此宣称完成，浏览器接入也不得绕过服务端 Applied 门禁。该缺口是产品完成阻塞，不是通过 ABI 或注册成功即可豁免的测试项。
+
+模式或配置切换先禁用原绑定、退休精确用户源，等待原生清理确认后发布新配置；其他用户及共享设备源不由该用户切换清理。网络返回后重新核对当前绑定。未决注册、撤销与清理保留，不能用删除记录恢复“正常”。卸载在停止服务前检查 PSSO 清理；未完成时保留服务和扩展供恢复。
+
+本轮本机格式直接替换，无历史迁移或双读。升级预检拒绝旧绑定／注册记录；已有旧格式安装须用原候选完成原生注销和退管清理，再安装新候选并重新注册。禁止手工删库或改写记录版本。当前格式的升级保留未决恢复和撤销记录；不得通过回退旧候选复活旧凭据。
+
+正式平台预检复用现有候选与旅程入口：`native-candidate.mjs freeze` 可增加 `--platform-sso <扩展可执行文件>` 和 `--installer <公证PKG>`，与 service／backend／desktop 一起冻结。执行 `verify-execution-macos.py --binary <服务> --backend <后端探针> --candidate <固定候选JSON> --output <证据目录> --psso-preflight`，只读核对实际 OS、签名团队及固定安装包公证。预检输出 `psso-preflight.json`，状态保持 blocked、`systemAccepted:false`，不执行安装或注册，也不证明包内映像与独立冻结映像一致；真实安装后须按候选摘要核对实际组件。
+
+受管测试机按同一候选依次验收：匹配 Team／容器／扩展的 MDM profile 与 AASA → 系统设备注册 → 两种用户模式 → 真实登录与指定应用 SSO → 上游改密、本地离线改密、重新联网与冲突 → 登录钥匙串实际访问 → 双用户切换 → 登录窗口、锁屏和 FileVault 冷启动 → Agent／Desktop 停止 → 修复、升级中断与注销卸载。分别记录系统回调、source/version、绑定代际、实际操作及结果；禁止用 `app-sso --messages` 的样本密钥证明硬件持钥，也不将含令牌或密码的原始诊断输出写入证据。没有实际执行的场景保持 notExecuted；真实平台支持与 #2872/#2923 关闭必须等待这些缺口闭合。

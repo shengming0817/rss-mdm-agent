@@ -367,6 +367,8 @@ fn refresh(
         return Err(Error::Identity);
     }
     preserved(&old, &next)?;
+    #[cfg(target_os = "macos")]
+    crate::service::platform_sso::upgrade_preflight(&old)?;
     if current.exists() {
         Deployment::load_persistent(config)?;
     }

@@ -25,6 +25,7 @@ function image(path) {
     assert.equal(display.status, 0, "candidate code identity unavailable");
     const result = display.stderr;
     signature = {
+      teamId: /^TeamIdentifier=([A-Z0-9]{10})$/m.exec(result)?.[1] ?? null,
       cdhash: /CDHash=([0-9a-f]{40})/.exec(result)?.[1],
       mode: result.includes("Signature=adhoc") ? "controlled-ad-hoc" : "signed",
     };
@@ -41,6 +42,7 @@ export function freezeCandidate(
     securityProbe,
     untrustedProbe,
     platformSso,
+    installer,
     windowsLogin,
     runtime,
   },
@@ -83,6 +85,14 @@ export function freezeCandidate(
     architecture: process.arch,
     source,
     binaries,
+    ...(installer
+      ? {
+          installer: {
+            path: realpathSync(installer),
+            sha256: sha256(readFileSync(installer)),
+          },
+        }
+      : {}),
     ...(runtimeRoot
       ? {
           runtime: {
@@ -104,6 +114,12 @@ export function verifyCandidate(path) {
   assert.ok(candidate.binaries.service && candidate.binaries.backend);
   for (const expected of Object.values(candidate.binaries))
     assert.deepEqual(image(expected.path), expected, "candidate image changed");
+  if (candidate.installer)
+    assert.equal(
+      sha256(readFileSync(candidate.installer.path)),
+      candidate.installer.sha256,
+      "candidate installer changed",
+    );
   if (candidate.runtime) {
     verifyRuntimeIntegrity(candidate.runtime.path, candidate.runtime.sha256);
     assert.equal(
@@ -168,6 +184,7 @@ if (
           "security-probe": "securityProbe",
           "untrusted-probe": "untrustedProbe",
           "windows-login": "windowsLogin",
+          "platform-sso": "platformSso",
         }[rawName] ?? rawName;
       assert.ok(
         [
@@ -176,6 +193,8 @@ if (
           "desktop",
           "securityProbe",
           "windowsLogin",
+          "platformSso",
+          "installer",
           "untrustedProbe",
           "runtime",
           "output",

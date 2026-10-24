@@ -18,6 +18,13 @@ pub struct Handle {
     fields: Vec<CString>,
 }
 type Sign = unsafe extern "C" fn(*mut c_void, *const u8, usize, *mut u8) -> i32;
+fn authentication(method: u32) -> Result<w::AuthenticationMode, ()> {
+    match method {
+        1 => Ok(w::AuthenticationMode::Password),
+        2 => Ok(w::AuthenticationMode::SecureEnclave),
+        _ => Err(()),
+    }
+}
 fn now() -> Result<i64, ()> {
     i64::try_from(
         std::time::SystemTime::now()
@@ -36,22 +43,31 @@ fn request(client: &ServiceClient, operation: Operation) -> Result<Response, ()>
         _ => Err(()),
     }
 }
-fn begin(scope: u32, signing: &[u8], encryption: &[u8]) -> Result<Handle, i32> {
+fn begin(scope: u32, method: u32, signing: &[u8], encryption: &[u8]) -> Result<Handle, i32> {
     let kind = match scope {
         0 => w::Kind::Device,
         1 => w::Kind::User,
         _ => return Err(-1),
     };
+    let authentication = authentication(method).map_err(|_| -1)?;
     let client = ServiceClient::installed().map_err(|_| -1)?;
-    let (context, challenge) =
-        match request(&client, Operation::Bootstrap { scope: kind }).map_err(|_| -1)? {
-            Response::Bootstrap { context, challenge } => (context, challenge),
-            Response::NeedsAccount {} => return Err(1),
-            _ => return Err(-1),
-        };
+    let (context, challenge) = match request(
+        &client,
+        Operation::Bootstrap {
+            scope: kind,
+            authentication,
+        },
+    )
+    .map_err(|_| -1)?
+    {
+        Response::Bootstrap { context, challenge } => (context, challenge),
+        Response::NeedsAccount {} => return Err(1),
+        _ => return Err(-1),
+    };
     let registration = Registration::prepare(
         context,
         &challenge,
+        authentication,
         platform_sso::public_key(signing).map_err(|_| -1)?,
         platform_sso::public_key(encryption).map_err(|_| -1)?,
         now().map_err(|_| -1)?,
@@ -86,6 +102,7 @@ fn begin(scope: u32, signing: &[u8], encryption: &[u8]) -> Result<Handle, i32> {
 #[no_mangle]
 pub unsafe extern "C" fn rss_psso_begin(
     scope: u32,
+    method: u32,
     signing: *const u8,
     encryption: *const u8,
     status: *mut i32,
@@ -100,6 +117,7 @@ pub unsafe extern "C" fn rss_psso_begin(
     match catch_unwind(AssertUnwindSafe(|| {
         begin(
             scope,
+            method,
             std::slice::from_raw_parts(signing, 65),
             std::slice::from_raw_parts(encryption, 65),
         )
@@ -134,7 +152,7 @@ pub unsafe extern "C" fn rss_psso_register(
         let proof = platform_sso::signed(&input,&signature).map_err(|_| ())?;
         let result = request(&handle.client, Operation::Register { input: Box::new(w::Registration {
             operation_id: Uuid::new_v4(), challenge_id: handle.challenge.id,
-            signing_key: Some(handle.registration.signing_key.clone()), encryption_key: handle.registration.encryption_key.clone(), proof,
+            signing_key: handle.registration.signing_key.clone(), encryption_key: handle.registration.encryption_key.clone(), proof,
         })});
         if matches!(result, Ok(Response::Registered { ref receipt }) if handle.registration.accepts(receipt)) { return Ok(()); }
         // A transport error is an unknown outcome. Never replay a consumed registration challenge.
@@ -177,6 +195,8 @@ unsafe fn text<'a>(value: *const c_char) -> Result<&'a str, ()> {
 /// All strings are native-owned NUL-terminated UTF-8, live for this call; signer writes 64 bytes.
 #[no_mangle]
 pub unsafe extern "C" fn rss_psso_browser(
+    method: u32,
+    signing: *const u8,
     metadata: *const c_char,
     issuer: *const c_char,
     url: *const c_char,
@@ -187,6 +207,14 @@ pub unsafe extern "C" fn rss_psso_browser(
 ) -> *mut c_char {
     catch_unwind(AssertUnwindSafe(|| -> Result<CString, ()> {
         let registration: Registration = serde_json::from_str(text(metadata)?).map_err(|_| ())?;
+        if signing.is_null()
+            || registration.authentication != authentication(method)?
+            || registration.proof_key
+                != platform_sso::public_key(std::slice::from_raw_parts(signing, 65))
+                    .map_err(|_| ())?
+        {
+            return Err(());
+        }
         let endpoints =
             w::Endpoints::new(&registration.context.origin, registration.context.tenant)
                 .map_err(|_| ())?;

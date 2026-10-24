@@ -1348,6 +1348,39 @@ def verify_candidate(path):
     return json.loads(run('node', str(root/'scripts/native-candidate.mjs'), 'verify', str(path.resolve()), cwd=root).stdout)
 
 
+def psso_preflight(args, frozen):
+    """Read-only admission of a frozen signed candidate; never reports a system journey passed."""
+    receipt = dict(status='blocked', systemAccepted=False, scenarios={}, blockers=[])
+    for scenario in ('deviceRegistration', 'secureEnclaveRegistration', 'passwordRegistration',
+                     'passwordChange', 'offlineConflict', 'keychainAccess', 'multiUser',
+                     'loginWindow', 'screenUnlock', 'fileVaultBoot', 'applicationSso',
+                     'agentStopped', 'desktopStopped', 'repair', 'upgrade', 'uninstall'):
+        receipt['scenarios'][scenario] = dict(status='notExecuted')
+    try:
+        if not frozen: raise RuntimeError('fixed candidate required')
+        receipt['candidate'] = frozen
+        receipt['osVersion'] = run('/usr/bin/sw_vers', '-productVersion').stdout.strip()
+        receipt['osBuild'] = run('/usr/bin/sw_vers', '-buildVersion').stdout.strip()
+        if receipt['osVersion'] != '26.4' or frozen['architecture'] != 'arm64':
+            raise RuntimeError('candidate requires macOS 26.4 and Apple silicon')
+        images = frozen['binaries']
+        if not all(name in images for name in ('service', 'desktop', 'platformSso')):
+            raise RuntimeError('service, desktop and PSSO images required')
+        teams = {images[name]['signature'].get('teamId') for name in ('service','desktop','platformSso')}
+        if len(teams) != 1 or None in teams: raise RuntimeError('matching Apple signing team required')
+        package = frozen.get('installer')
+        if not package: raise RuntimeError('frozen notarized installer required')
+        run('/usr/sbin/spctl', '--assess', '--type', 'install', package['path'])
+        run('/usr/bin/xcrun', 'stapler', 'validate', package['path'])
+        receipt['packageTrustVerified'] = True
+        receipt['blockers'].append('Managed profile/AASA, real IdP and system callback journeys still require controlled platform execution')
+    except Exception as error:
+        receipt['blockers'].append(str(error))
+    args.output.mkdir(parents=True, exist_ok=True)
+    (args.output/'psso-preflight.json').write_text(json.dumps(receipt, indent=2)+'\n')
+    return 1  # Preflight and package trust never certify registration or password synchronization.
+
+
 def candidate_identity(path):
     path = path.resolve()
     run('/usr/bin/codesign', '--verify', '--strict', str(path))
@@ -1385,6 +1418,7 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--desktop', type=Path)
     parser.add_argument('--candidate', type=Path, help='Frozen prebuilt inputs; no rebuilding or resigning')
+    parser.add_argument('--psso-preflight', action='store_true', help='Read-only PSSO candidate admission; no install, registration or login')
     parser.add_argument('--security', action='store_true', help='Run native attacks on this isolated fixed candidate')
     parser.add_argument('--login-phase', choices=['prepare','cross-user','resume','confirm'])
     parser.add_argument('--login-state', type=Path)
@@ -1395,6 +1429,8 @@ def main():
     parser.add_argument('--authorization-password-file', type=Path)
     args = parser.parse_args()
     frozen = verify_candidate(args.candidate) if args.candidate else None
+    if args.psso_preflight:
+        return psso_preflight(args, frozen)
     if args.login_phase:
         return login_security(args,frozen)
     if frozen:

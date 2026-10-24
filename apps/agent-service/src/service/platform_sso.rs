@@ -69,6 +69,7 @@ pub(super) struct State {
     pending: BTreeMap<Uuid, Pending>,
     next_retirement: Option<std::time::Instant>,
     retirement_cursor: Option<String>,
+    retiring: bool,
 }
 /// Root-owned record name; a generated UID cannot introduce path syntax.
 pub(crate) fn binding_name(account: &str) -> Result<String, Error> {
@@ -99,6 +100,8 @@ impl<S: IdentityProvider> DeviceService<S> {
             binding: None,
             binding_generation: None,
             generated_uid: None,
+            binding_revision: 0,
+            configuration: None,
         };
         if kind == w::Kind::User {
             #[cfg(target_os = "macos")]
@@ -126,6 +129,8 @@ impl<S: IdentityProvider> DeviceService<S> {
             context.binding = Some(binding.binding);
             context.binding_generation = Some(binding.binding_generation);
             context.generated_uid = Some(account);
+            context.binding_revision = binding.revision;
+            context.configuration = Some(binding.configuration);
         }
         context.validate().map_err(|_| Error::Identity)?;
         Ok(context)
@@ -146,7 +151,12 @@ impl<S: IdentityProvider> DeviceService<S> {
         if command.reply.is_closed() {
             return Ok(());
         }
-        let result = self.platform_sso(&command, commands).await;
+        let result =
+            if self.core.psso.retiring && !cleanup_operation(command.request.as_operation()) {
+                Err(Error::Denied)
+            } else {
+                self.platform_sso(&command, commands).await
+            };
         let reply = match result {
             Ok(value) => Reply::PlatformSso { value },
             Err(Error::Unavailable | Error::Network | Error::Storage) => Reply::Unavailable,
@@ -164,7 +174,10 @@ impl<S: IdentityProvider> DeviceService<S> {
             return Err(Error::Denied);
         };
         match input {
-            Operation::Bootstrap { scope } => {
+            Operation::Bootstrap {
+                scope,
+                authentication,
+            } => {
                 if self.core.psso.pending.len() >= 16 {
                     return Err(Error::Capacity);
                 }
@@ -174,6 +187,13 @@ impl<S: IdentityProvider> DeviceService<S> {
                     }
                     result => result?,
                 };
+                if context
+                    .configuration
+                    .as_ref()
+                    .is_some_and(|c| c.authentication != *authentication)
+                {
+                    return Err(Error::Unsupported);
+                }
                 let input = w::Bootstrap {
                     operation_id: Uuid::new_v4(),
                     kind: *scope,
@@ -212,7 +232,13 @@ impl<S: IdentityProvider> DeviceService<S> {
                     return Err(Error::Identity);
                 }
                 let current = self.psso_context(command, pending.context.kind, true)?;
-                if current != pending.context {
+                if current != pending.context
+                    || (current.kind == w::Kind::User
+                        && current.configuration.as_ref().is_some_and(|c| {
+                            (c.authentication == w::AuthenticationMode::Password)
+                                != input.signing_key.is_none()
+                        }))
+                {
                     return Err(Error::Identity);
                 }
                 let coordinate = Coordinate {
@@ -245,6 +271,15 @@ impl<S: IdentityProvider> DeviceService<S> {
                 {
                     return Err(Error::Untrusted);
                 }
+                if self
+                    .psso_context(command, pending.context.kind, true)
+                    .ok()
+                    .as_ref()
+                    != Some(&current)
+                {
+                    queue_retirement(&self.core.access.root, coordinate)?;
+                    return Err(Error::Identity);
+                }
                 if !retain_registration(&self.core.access.root, &coordinate)? {
                     return Err(Error::Denied);
                 }
@@ -258,6 +293,9 @@ impl<S: IdentityProvider> DeviceService<S> {
                     commands,
                 )
                 .await?;
+                if self.psso_context(command, *scope, true)? != context {
+                    return Err(Error::Identity);
+                }
                 let source = match scope {
                     w::Kind::Device if value.device_registered => value.device_source.as_ref(),
                     w::Kind::User if value.user_registered => value.user_source.as_ref(),
@@ -335,6 +373,106 @@ impl<S: IdentityProvider> DeviceService<S> {
     }
 }
 
+fn observation_owner(
+    retained: &::platform_sso::Context,
+    current: &::platform_sso::Context,
+) -> bool {
+    let mut retained = retained.clone();
+    if retained.binding_revision > current.binding_revision {
+        return false;
+    }
+    retained.binding_revision = current.binding_revision;
+    retained == *current
+}
+fn cleanup_operation(request: Option<&Request>) -> bool {
+    matches!(
+        request,
+        Some(Request::PlatformSso {
+            input: Operation::Observe { .. } | Operation::Unregister { .. }
+        })
+    )
+}
+impl<S: IdentityProvider> DeviceService<S> {
+    /// Keep authenticated native cleanup alive after business admission is revoked.
+    pub(super) async fn drain_platform_sso(
+        &mut self,
+        commands: &mut tokio::sync::mpsc::Receiver<Command>,
+    ) -> Result<bool, Error> {
+        self.core.psso.retiring = true;
+        self.core.psso.pending.clear();
+        let root = self.core.access.root.clone();
+        if !root.exists() {
+            return Ok(true);
+        }
+        sweep_retirement(&root, self.core.access.installation)?;
+        while let Ok(command) = commands.try_recv() {
+            self.core.handle(command);
+        }
+        self.drive_platform_sso(commands).await?;
+        let complete = sweep_retirement(&root, self.core.access.installation)?;
+        if !complete {
+            // Cleanup may outlive trust/CRL validity. Keep the existing PKI owner's bounded
+            // recovery running without reopening business admission or new registration.
+            // Process native observations first, even when the network is unavailable.
+            network(self.client.drive_pki(), &mut self.core, commands).await?;
+        }
+        Ok(complete)
+    }
+}
+/// The existing owner lock serializes retirement with registering and late completion.
+fn sweep_retirement(root: &std::path::Path, installation: Uuid) -> Result<bool, Error> {
+    let _lock = state::lock(root)?;
+    state::write(root, "platform-sso.disabled", &Disabled { installation })?;
+    let mut complete = true;
+    let mut count = 0;
+    for entry in std::fs::read_dir(root)? {
+        let name = entry?
+            .file_name()
+            .into_string()
+            .map_err(|_| Error::Storage)?;
+        if name.ends_with(".psso-retire") {
+            complete = false;
+            continue;
+        }
+        let in_flight = name.ends_with(".psso-registering");
+        if !in_flight && !name.ends_with(".psso-source") {
+            continue;
+        }
+        count += 1;
+        if count > 256 {
+            return Err(Error::Capacity);
+        }
+        let c: Coordinate = state::read_optional(root, &name)?.ok_or(Error::Storage)?;
+        if c.context.installation != installation
+            || c.file(if in_flight { "registering" } else { "source" })? != name
+        {
+            return Err(Error::Identity);
+        }
+        let retired: Option<Coordinate> = state::read_optional(root, &c.file("retired")?)?;
+        let native: Option<NativeObservation> =
+            state::read_optional(root, &c.file("observation")?)?;
+        if retired.as_ref() == Some(&c) && native_cleared(&c, in_flight, native.as_ref()) {
+            state::remove(root, &name)?;
+        } else {
+            if retired.as_ref() != Some(&c) {
+                state::write(root, &c.file("retire")?, &c)?;
+            }
+            complete = false;
+        }
+    }
+    Ok(complete)
+}
+fn native_cleared(c: &Coordinate, in_flight: bool, native: Option<&NativeObservation>) -> bool {
+    in_flight
+        || native.is_some_and(|n| {
+            n.source == c.source
+                && n.source_version == c.source_version
+                && n.binding_generation == c.context.binding_generation
+                && !n.user_registered
+                && (c.context.kind == w::Kind::User || !n.device_registered)
+        })
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct NativeObservation {
@@ -359,6 +497,8 @@ impl<S: IdentityProvider> DeviceService<S> {
             .is_some_and(|c| c.verify().is_ok());
         let mut result = MacStatus {
             extension_installed: installed,
+            configuration: None,
+            password_exchange: None,
             device_registered: None,
             user_registered: None,
             login_ready: None,
@@ -374,6 +514,7 @@ impl<S: IdentityProvider> DeviceService<S> {
             Err(Error::NotFound) => return Ok(result),
             Err(e) => return Err(e),
         };
+        result.configuration = context.configuration.clone();
         if let Some(account) = context.generated_uid.as_deref() {
             let retained: Option<Coordinate> =
                 state::read_optional(&self.core.access.root, &format!("{account}.psso-source"))?;
@@ -384,7 +525,7 @@ impl<S: IdentityProvider> DeviceService<S> {
             if let Some(o) = observation.filter(|o| {
                 context.binding_generation == o.binding_generation
                     && retained.as_ref().is_some_and(|c| {
-                        c.context == context
+                        observation_owner(&c.context, &context)
                             && c.source == o.source
                             && c.source_version == o.source_version
                     })
@@ -401,6 +542,10 @@ impl<S: IdentityProvider> DeviceService<S> {
         )
         .await
         {
+            if self.psso_context(command, w::Kind::User, false)? != context {
+                return Err(Error::Identity);
+            }
+            result.password_exchange = value.password_exchange;
             result.device_registered = Some(value.device_registered);
             result.user_registered = Some(value.user_registered);
             result.login_ready = Some(value.login_ready);
@@ -423,6 +568,8 @@ impl Coordinate {
             return false;
         }
         owner.binding_generation = current.binding_generation;
+        owner.binding_revision = current.binding_revision;
+        owner.configuration = current.configuration.clone();
         owner == *current
     }
     fn file(&self, suffix: &str) -> Result<String, Error> {
@@ -549,6 +696,141 @@ impl<S: IdentityProvider> DeviceService<S> {
     }
 }
 
+/// Called with the existing access-state lock. A mode change retires the old source before
+/// publishing the replacement policy; pending cleanup never silently becomes a new binding.
+pub(crate) fn save_binding(
+    root: &std::path::Path,
+    next: &::platform_sso::LocalBinding,
+) -> Result<(), Error> {
+    let name = binding_name(&next.generated_uid)?;
+    let previous: Option<::platform_sso::LocalBinding> = state::read_optional(root, &name)?;
+    if let Some(old) = previous.as_ref() {
+        if old.installation != next.installation
+            || old.tenant != next.tenant
+            || old.agent_registration != next.agent_registration
+            || old.registration_generation != next.registration_generation
+            || old.binding_generation > next.binding_generation
+            || old.revision > next.revision
+            || (old.revision == next.revision
+                && (old.configuration != next.configuration || old.enabled != next.enabled))
+        {
+            return Err(Error::Identity);
+        }
+        if !next.enabled
+            || old.configuration != next.configuration
+            || old.binding != next.binding
+            || old.binding_generation != next.binding_generation
+        {
+            let mut disabled = old.clone();
+            disabled.enabled = false;
+            state::write(root, &name, &disabled)?;
+            let prefix = next.generated_uid.clone();
+            let mut complete = true;
+            for entry in std::fs::read_dir(root)? {
+                let file = entry?
+                    .file_name()
+                    .into_string()
+                    .map_err(|_| Error::Storage)?;
+                if !file.starts_with(&prefix)
+                    || !(file.ends_with(".psso-source") || file.ends_with(".psso-registering"))
+                {
+                    continue;
+                }
+                let coordinate: Coordinate =
+                    state::read_optional(root, &file)?.ok_or(Error::Storage)?;
+                if coordinate.context.generated_uid.as_ref() != Some(&next.generated_uid)
+                    || coordinate.context.installation != next.installation
+                {
+                    return Err(Error::Identity);
+                }
+                let retired: Option<Coordinate> =
+                    state::read_optional(root, &coordinate.file("retired")?)?;
+                let observation: Option<NativeObservation> =
+                    state::read_optional(root, &coordinate.file("observation")?)?;
+                let native_done = native_cleared(
+                    &coordinate,
+                    file.ends_with(".psso-registering"),
+                    observation.as_ref(),
+                );
+                if retired.as_ref() == Some(&coordinate) && native_done {
+                    state::remove(root, &file)?;
+                } else {
+                    if retired.as_ref() != Some(&coordinate) {
+                        state::write(root, &coordinate.file("retire")?, &coordinate)?;
+                    }
+                    complete = false;
+                }
+            }
+            if !complete {
+                return Err(Error::Unavailable);
+            }
+        }
+    }
+    state::write(root, &name, next)
+}
+
+/// Read the current format only. An old installation must retire using its original candidate.
+pub(crate) fn upgrade_preflight(deployment: &crate::deployment::Deployment) -> Result<(), Error> {
+    let root = crate::access_worker::root(&deployment.execution);
+    if !root.exists() {
+        return Ok(());
+    }
+    let _lock = state::lock(&root)?;
+    for entry in std::fs::read_dir(&root)? {
+        let name = entry?
+            .file_name()
+            .into_string()
+            .map_err(|_| Error::Storage)?;
+        if name.ends_with(".psso-binding") {
+            let binding: ::platform_sso::LocalBinding =
+                state::read_optional(&root, &name)?.ok_or(Error::Storage)?;
+            binding.configuration.validate()?;
+        } else if [
+            ".psso-source",
+            ".psso-registering",
+            ".psso-retire",
+            ".psso-retired",
+        ]
+        .iter()
+        .any(|suffix| name.ends_with(suffix))
+        {
+            let coordinate: Coordinate =
+                state::read_optional(&root, &name)?.ok_or(Error::Storage)?;
+            coordinate.context.validate().map_err(|_| Error::Identity)?;
+        }
+    }
+    Ok(())
+}
+
+/// Keep the service and extension available until native and remote cleanup has completed.
+pub(crate) fn uninstall_preflight(deployment: &crate::deployment::Deployment) -> Result<(), Error> {
+    let root = crate::access_worker::root(&deployment.execution);
+    if !root.exists() {
+        return Ok(());
+    }
+    let _lock = state::lock(&root)?;
+    state::write(
+        &root,
+        "platform-sso.disabled",
+        &Disabled {
+            installation: deployment.service_id,
+        },
+    )?;
+    for entry in std::fs::read_dir(&root)? {
+        let name = entry?
+            .file_name()
+            .into_string()
+            .map_err(|_| Error::Storage)?;
+        if [".psso-source", ".psso-registering", ".psso-retire"]
+            .iter()
+            .any(|suffix| name.ends_with(suffix))
+        {
+            return Err(Error::Unavailable);
+        }
+    }
+    Ok(())
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Disabled {
@@ -579,7 +861,7 @@ pub(crate) fn component(
         return Err(Error::Configuration);
     };
     let action = action.to_str().ok_or(Error::Configuration)?;
-    if !["inspect", "disable", "retire", "cleanup"].contains(&action) {
+    if !["inspect", "enable", "disable", "retire", "cleanup"].contains(&action) {
         return Err(Error::Configuration);
     }
     deployment
@@ -610,7 +892,18 @@ pub(crate) fn component(
         }
         coordinates.push((coordinate, in_flight));
     }
-    if action != "inspect" {
+    if action == "enable" {
+        if !coordinates.is_empty() {
+            return Err(Error::Unavailable);
+        }
+        deployment
+            .platform_sso
+            .as_ref()
+            .ok_or(Error::Unsupported)?
+            .verify()?;
+        state::remove(&root, "platform-sso.disabled")?;
+    }
+    if action != "inspect" && action != "enable" {
         state::write(
             &root,
             "platform-sso.disabled",
@@ -633,14 +926,7 @@ pub(crate) fn component(
             state::read_optional(&root, &coordinate.file("observation")?)?;
         let remote_done = retired.as_ref().is_some_and(|r| r == coordinate);
         // An in-flight record never authorized saving an Apple login configuration.
-        let native_done = *in_flight
-            || native.is_some_and(|n| {
-                n.source == coordinate.source
-                    && n.source_version == coordinate.source_version
-                    && n.binding_generation == coordinate.context.binding_generation
-                    && !n.user_registered
-                    && (coordinate.context.kind == w::Kind::User || !n.device_registered)
-            });
+        let native_done = native_cleared(coordinate, *in_flight, native.as_ref());
         complete &= remote_done && native_done;
         observations.push(serde_json::json!({"source": coordinate.source, "sourceVersion": coordinate.source_version,
             "scope": coordinate.context.kind, "remoteRetired": remote_done,
@@ -650,9 +936,9 @@ pub(crate) fn component(
     if action == "cleanup" && complete {
         for (coordinate, in_flight) in &coordinates {
             let suffixes: &[&str] = if *in_flight {
-                &["registering", "retire", "retired"]
+                &["registering", "retire"]
             } else {
-                &["source", "retire", "retired", "observation"]
+                &["source", "retire", "observation"]
             };
             for suffix in suffixes {
                 state::remove(&root, &coordinate.file(suffix)?)?;
@@ -781,10 +1067,141 @@ mod tests {
                 binding: Some(Uuid::from_u128(4)),
                 binding_generation: Some(1),
                 generated_uid: Some(Uuid::from_u128(5).to_string()),
+                binding_revision: 1,
+                configuration: Some(w::LoginConfiguration::default()),
             },
             source: Uuid::from_u128(6),
             source_version: 1,
         }
+    }
+    fn binding() -> ::platform_sso::LocalBinding {
+        let c = coordinate().context;
+        ::platform_sso::LocalBinding {
+            installation: c.installation,
+            tenant: c.tenant,
+            agent_registration: c.agent_registration,
+            registration_generation: 1,
+            binding: c.binding.unwrap(),
+            binding_generation: 1,
+            revision: 1,
+            generated_uid: c.generated_uid.unwrap(),
+            enabled: true,
+            configuration: w::LoginConfiguration::default(),
+        }
+    }
+    #[test]
+    fn mode_switch_waits_for_both_retirement_and_native_cleanup_without_touching_other_users() {
+        let root = std::env::temp_dir().join(format!("psso-mode-{}", Uuid::new_v4()));
+        platform_private_storage::directory(&root).unwrap();
+        let old = binding();
+        save_binding(&root, &old).unwrap();
+        let c = coordinate();
+        state::write(&root, &c.file("source").unwrap(), &c).unwrap();
+        let mut other = c.clone();
+        other.context.generated_uid = Some(Uuid::new_v4().to_string());
+        state::write(&root, &other.file("source").unwrap(), &other).unwrap();
+        let mut next = old.clone();
+        next.revision += 1;
+        next.configuration.authentication = w::AuthenticationMode::Password;
+        next.configuration.password_provider = Some(Uuid::new_v4());
+        assert_eq!(save_binding(&root, &next), Err(Error::Unavailable));
+        assert!(
+            state::read_optional::<Coordinate>(&root, &c.file("retire").unwrap())
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            state::read_optional::<Coordinate>(&root, &other.file("retire").unwrap())
+                .unwrap()
+                .is_none()
+        );
+        finish_retirement(&root, &c).unwrap();
+        assert_eq!(save_binding(&root, &next), Err(Error::Unavailable));
+        state::write(
+            &root,
+            &c.file("observation").unwrap(),
+            &serde_json::json!({
+                "source": c.source, "sourceVersion": c.source_version, "bindingGeneration": 1,
+                "observedAt": 10, "deviceRegistered": true, "userRegistered": false
+            }),
+        )
+        .unwrap();
+        save_binding(&root, &next).unwrap();
+        let stored: ::platform_sso::LocalBinding =
+            state::read_optional(&root, &binding_name(&next.generated_uid).unwrap())
+                .unwrap()
+                .unwrap();
+        assert_eq!(stored.configuration, next.configuration);
+        assert!(
+            state::read_optional::<Coordinate>(&root, &c.file("retired").unwrap())
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            state::read_optional::<Coordinate>(&root, &other.file("source").unwrap())
+                .unwrap()
+                .is_some()
+        );
+        assert_eq!(save_binding(&root, &old), Err(Error::Identity));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn revision_only_updates_preserve_observations_but_not_registration_authority() {
+        let old = coordinate().context;
+        let mut current = old.clone();
+        current.binding_revision += 1;
+        assert!(observation_owner(&old, &current));
+        assert!(old != current);
+        current.binding_generation = Some(2);
+        assert!(!observation_owner(&old, &current));
+        current = old.clone();
+        current
+            .configuration
+            .as_mut()
+            .unwrap()
+            .maintenance_accounts
+            .push("recovery".into());
+        assert!(!observation_owner(&old, &current));
+    }
+    #[test]
+    fn retirement_drain_preserves_native_cleanup_and_never_reopens_registration() {
+        let root = std::env::temp_dir().join(format!("psso-drain-{}", Uuid::new_v4()));
+        platform_private_storage::directory(&root).unwrap();
+        let c = coordinate();
+        state::write(&root, &c.file("source").unwrap(), &c).unwrap();
+        assert!(!sweep_retirement(&root, c.context.installation).unwrap());
+        assert_eq!(enabled(&root, c.context.installation), Err(Error::Denied));
+        finish_retirement(&root, &c).unwrap();
+        assert!(!sweep_retirement(&root, c.context.installation).unwrap());
+        state::write(
+            &root,
+            &c.file("observation").unwrap(),
+            &serde_json::json!({
+                "source": c.source, "sourceVersion": c.source_version, "bindingGeneration": 1,
+                "observedAt": 10, "deviceRegistered": true, "userRegistered": false
+            }),
+        )
+        .unwrap();
+        assert!(sweep_retirement(&root, c.context.installation).unwrap());
+        assert!(
+            state::read_optional::<Coordinate>(&root, &c.file("retired").unwrap())
+                .unwrap()
+                .is_some()
+        );
+        assert!(!cleanup_operation(Some(&Request::PlatformSso {
+            input: Operation::Bootstrap {
+                scope: w::Kind::Device,
+                authentication: w::AuthenticationMode::Password
+            }
+        })));
+        assert!(cleanup_operation(Some(&Request::PlatformSso {
+            input: Operation::Unregister {
+                scope: w::Kind::User,
+                source: c.source,
+                source_version: 1
+            }
+        })));
+        std::fs::remove_dir_all(root).unwrap();
     }
     #[test]
     fn configuration_removal_fences_first_registration_and_only_its_version() {
