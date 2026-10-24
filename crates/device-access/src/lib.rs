@@ -636,16 +636,7 @@ impl Store {
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         registration::require(&tx, authority)?;
         if let Some(mut record) = load(&tx, &authority.sid)? {
-            let old = &record.authority;
-            if old.tenant != authority.tenant
-                || old.instance != authority.instance
-                || old.principal != authority.principal
-                || old.source != authority.source
-                || old.join != authority.join
-                || old.registration != authority.registration
-                || old.registration_generation != authority.registration_generation
-                || old.binding != authority.binding
-                || old.binding_generation > authority.binding_generation
+            if record.authority != *authority
                 || record.revision > revision
                 || (record.revision == revision && !record.revoked)
             {

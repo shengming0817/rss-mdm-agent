@@ -21,13 +21,23 @@ const props = withDefaults(
 const mac = computed(() => props.platform === "macos");
 const macStatus = ref<Extract<Result, { kind: "macStatus" }>>();
 const windowsStatus = ref<Extract<Result, { kind: "windowsStatus" }>>();
-const componentText = {
-  ready: "组件检查通过，实际登录仍需验证",
-  rebootRequired: "组件已注册，请重启电脑后重试应用",
-  notInstalled: "组件未安装，请联系管理员",
-  maintenanceDisabled: "组件已由管理员停用，需维修后启用",
-  unavailable: "组件检查失败，请联系管理员维修",
-};
+function componentText(
+  component: Extract<Result, { kind: "windowsStatus" }>["component"],
+) {
+  switch (component) {
+    case "ready":
+      return "组件检查通过，实际登录仍需验证";
+    case "rebootRequired":
+      return "组件已注册，请重启电脑后重试应用";
+    case "notInstalled":
+      return "组件未安装，请联系管理员";
+    case "maintenanceDisabled":
+      return "组件已由管理员停用，需维修后启用";
+    case "unavailable":
+      return "组件检查失败，请联系管理员维修";
+  }
+}
+
 const directory = ref<Directory>(),
   tasks = ref<Task[]>([]),
   selected = ref<Task>();
@@ -205,19 +215,26 @@ function accountText(binding: Directory["bindings"][number]) {
   const account = binding.account;
   if (!account) return "账号待确认";
   if (account.platform === "macos") return "macOS 账号";
-  return {
-    local: "Windows 本地账号",
-    active_directory: "AD 域账号",
-    entra: "Entra joined 账号",
-  }[account.authority.kind];
+  switch (account.authority.kind) {
+    case "local":
+      return "Windows 本地账号";
+    case "active_directory":
+      return "AD 域账号";
+    case "entra":
+      return "Entra joined 账号";
+  }
 }
 function bindingText(binding: Directory["bindings"][number]) {
-  if (binding.effect?.state === "unbound")
-    return {
-      keep: "RSS 关联已移除，系统账号保持原状",
-      disable: "RSS 关联已移除，本机登录已限制",
-      standard: "RSS 关联已移除，本机管理员资格已移除",
-    }[binding.effect.disposition];
+  if (binding.effect?.state === "unbound") {
+    switch (binding.effect.disposition) {
+      case "keep":
+        return "RSS 关联已移除，系统账号保持原状";
+      case "disable":
+        return "RSS 关联已移除，本机登录已限制";
+      case "standard":
+        return "RSS 关联已移除，本机管理员资格已移除";
+    }
+  }
   if (binding.revoked) return "已请求移除，等待本机确认";
   if (
     binding.appliedRevision === binding.revision &&
@@ -277,7 +294,7 @@ onUnmounted(() => {
       <p v-if="!mac" role="status">
         本机当前状态：{{
           windowsStatus
-            ? componentText[windowsStatus.component]
+            ? componentText(windowsStatus.component)
             : "尚未取得本机观察"
         }}。 当前账号因子：{{
           windowsStatus?.factorActive === true

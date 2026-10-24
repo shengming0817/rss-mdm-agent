@@ -228,7 +228,12 @@ pub(super) fn inspect(sid: &str) -> Result<Option<Account>, F> {
     if let Some(object_id) = crate::entra_object_id(sid) {
         let (tenant_id, join) = cloud_join()?;
         let (login, time, groups) = cloud_session(sid)?;
-        let role = cloud_role(sid, &groups)?;
+        // Native session observation is distinct from persistent role mutation readback.
+        let role = if groups.iter().any(|group| group == "S-1-5-32-544") {
+            Role::Administrator
+        } else {
+            Role::Standard
+        };
         if cloud_join()? != (tenant_id, join.clone()) {
             return Err(F::AccountChanged);
         }

@@ -89,7 +89,7 @@ pub enum Response {
         expires_at: i64,
     },
     /// Confirmed desired binding; not evidence of Applied.
-    Binding(w::AccessBindingStatus),
+    Binding(Box<w::AccessBindingStatus>),
     /// Pending signed initialization tasks.
     Tasks {
         /// Tasks for the current person.

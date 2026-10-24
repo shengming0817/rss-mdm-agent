@@ -322,7 +322,7 @@ mod tests {
             id: challenge.source_id,
             version: 1,
             revoked: false,
-            signing_key: key.clone(),
+            signing_key: Some(key.clone()),
             encryption_key: key,
         };
         assert_eq!(
@@ -370,6 +370,7 @@ mod tests {
         let registration =
             Registration::prepare(context, &challenge, key.clone(), key.clone(), 1000).unwrap();
         let mut status = w::Status {
+            password_exchange: None,
             application_observed: true,
             profile_observed: true,
             device_registered: true,
@@ -380,7 +381,7 @@ mod tests {
                 id: registration.source_id,
                 version: 1,
                 revoked: false,
-                signing_key: key.clone(),
+                signing_key: Some(key.clone()),
                 encryption_key: key,
             }),
             registration_trust: w::RegistrationTrust::MdmBootstrapPop,

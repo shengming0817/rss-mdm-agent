@@ -505,7 +505,7 @@ impl<S: agent_client::IdentityProvider> super::DeviceService<S> {
                     commands,
                 )
                 .await?;
-                Out::Binding(status)
+                Out::Binding(Box::new(status))
             }
             Op::Tasks {} => {
                 let mut tasks = vec![];

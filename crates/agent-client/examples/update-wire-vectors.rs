@@ -31,5 +31,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         path,
         format!("{}\n", serde_json::to_string_pretty(&vectors)?),
     )?;
+    for name in ["script", "software", "enrollment"] {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join(format!("tests/fixtures/{name}-task-v1.json"));
+        let mut value: serde_json::Value = serde_json::from_slice(&std::fs::read(&path)?)?;
+        if name == "script" {
+            value["task"]["projection"] =
+                serde_json::to_value(rss_mdm_agent_wire::runtime::ScriptProjection::None)?;
+        }
+        let task: TaskPayload = serde_json::from_value(value)?;
+        std::fs::write(path, serde_json::to_vec(&task)?)?;
+        println!(
+            "{name}: {:x}",
+            Sha256::digest(task.signing_bytes("fixture-key")?)
+        );
+    }
     Ok(())
 }

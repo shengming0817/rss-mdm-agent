@@ -8,7 +8,7 @@ fn preserves_task_signatures_and_step_digest() {
     for (body, expected) in [
         (
             include_bytes!("../fixtures/script-task-v1.json").as_slice(),
-            "6080741b91b8c100415abd7828401dae5e984cef7f1025bd4f89509fd5bbe7db",
+            "a742a501f9d921411fa6410461274dda780dcda4996eb9704dd709ccc9dc108b",
         ),
         (
             include_bytes!("../fixtures/software-task-v1.json").as_slice(),
