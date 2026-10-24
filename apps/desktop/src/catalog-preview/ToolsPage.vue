@@ -265,7 +265,7 @@ emit(
                 <strong>{{ target.name }}</strong>
                 <p v-for="field in target.fields" :key="field.key">
                   {{ labels[field.key] ?? field.key }}：{{
-                    field.value == null ? "未读取" : JSON.stringify(field.value)
+                    field.value == null ? "未读取" : display(field.value)
                   }}
                   · {{ field.quality
                   }}{{ field.reason ? " · " + field.reason : "" }}

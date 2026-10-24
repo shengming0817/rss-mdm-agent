@@ -424,7 +424,9 @@ impl ExecutionHandle {
             Reply::NetworkDefaults { target } => {
                 Ok(execution_app::NetworkCheckResponse::Defaults(target))
             }
-            Reply::NetworkCheck { value } => Ok(execution_app::NetworkCheckResponse::Status(value)),
+            Reply::NetworkCheck { value } => {
+                Ok(execution_app::NetworkCheckResponse::Status(Box::new(value)))
+            }
             Reply::DataFailure { reason } => Err(ui::error(
                 match reason {
                     DataError::InvalidInput => "network_invalid_input",

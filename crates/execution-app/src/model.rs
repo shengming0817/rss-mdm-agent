@@ -211,5 +211,5 @@ pub enum NetworkCheckResponse {
     /// Current configured backend destination, without credentials.
     Defaults(Option<execution_contract::NetworkTarget>),
     /// Status and result of the original request.
-    Status(NetworkCheckStatus),
+    Status(Box<NetworkCheckStatus>),
 }

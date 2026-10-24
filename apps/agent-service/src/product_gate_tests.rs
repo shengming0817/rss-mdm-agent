@@ -5457,17 +5457,17 @@ async fn network_check_defaults_and_invalid_targets_use_the_authenticated_servic
         origin,
         input,
     };
-    assert!(matches!(
-        c.policy_call(call(
+    let expected_port = c._server.url.port_or_known_default().unwrap();
+    let defaults = c
+        .policy_call(call(
             c.context(),
             ClientOrigin::Desktop {},
-            NetworkCheckOperation::Defaults
+            NetworkCheckOperation::Defaults,
         ))
-        .await,
-        Reply::NetworkDefaults {
-            target: Some(NetworkTarget { port: 443, .. })
-        }
-    ));
+        .await;
+    assert!(
+        matches!(defaults,Reply::NetworkDefaults {target:Some(target)} if target.host=="127.0.0.1" && target.port==expected_port)
+    );
     assert!(matches!(
         c.policy_call(call(
             c.context(),
@@ -5515,6 +5515,7 @@ async fn network_check_defaults_and_invalid_targets_use_the_authenticated_servic
 }
 
 #[tokio::test]
+#[ignore = "requires root for production material/OS identity admission; explicitly run the built test binary"]
 async fn network_check_replay_and_cancel_keep_the_original_sqlite_plan_and_login() {
     let _budget = crate::scenario_budget::enter();
     let mut c = Case::new(None).await;
@@ -5524,9 +5525,7 @@ async fn network_check_replay_and_cancel_keep_the_original_sqlite_plan_and_login
         host: "example.com".into(),
         port: 443,
     };
-    let policy =
-        crate::local_permissions::Policy::fixture(&c.service.core.config.local_permissions)
-            .unwrap();
+    c.service.core.config.worker_image_fixture = Some(fixture_worker_image);
     let os_session = OsSessionRef {
         device: c.service.core.host.root.device.clone(),
         account: OsAccountRef {
@@ -5535,47 +5534,26 @@ async fn network_check_replay_and_cancel_keep_the_original_sqlite_plan_and_login
         },
         session: c.selection.binding.clone(),
     };
-    // Seed an undispatched journal record; no physical fixture is claimed as a network check.
-    let (settings, _) = crate::local_settings::compile::prepare(
-        crate::local_settings::Action::Read {
-            section: SettingsSection::Network,
-        },
+    // Stage the actual compiler output without dispatch; System material inspection needs root.
+    let (frozen, artifacts) = crate::network_check::compile::prepare(
+        target.clone(),
         request.clone(),
         &c.service.core.host.root,
         &c.service.core.host.local_actor,
-        Initiator::Human {
-            os_session: os_session.clone(),
-        },
+        Initiator::Human { os_session },
         &c.context(),
-        &policy,
         c.service.core.host.clock.millis().unwrap(),
         &c.service.core.config,
         &mut c.service.core.material_root,
         None,
     )
     .unwrap();
-    let mut input = settings.spec().clone();
-    input.request.operation.action = plan::id(crate::network_check::ACTION).unwrap();
-    input.launch.interpreter.profile = plan::reference(crate::network_check::PROFILE, "1").unwrap();
-    input.launch.argv = vec![
-        LaunchArg::Literal {
-            value: "--network-check-worker".into(),
-        },
-        LaunchArg::ArtifactPath {},
-    ];
-    input.request.parameters.insert(
-        "network-check-context".into(),
-        InputValue::Literal {
-            value: serde_json::to_value(c.context()).unwrap(),
-        },
-    );
-    input.request.parameters.insert(
-        "network-check-target".into(),
-        InputValue::Literal {
-            value: serde_json::to_value(&target).unwrap(),
-        },
-    );
-    let frozen = FrozenExecution::freeze(input, &plan::storage_limits().input).unwrap();
+    c.service
+        .core
+        .host
+        .materials
+        .register(&frozen, artifacts)
+        .unwrap();
     c.service
         .core
         .app

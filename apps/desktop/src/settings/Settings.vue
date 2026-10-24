@@ -324,7 +324,10 @@ emit("navigation", reactive({ openSection, reset, section, sections, path }));
               重新连接
             </button>
           </div>
-          <DiagnosticsPanel :active="active" :port="fixture ? null : undefined" />
+          <DiagnosticsPanel
+            :active="active"
+            :port="fixture ? null : undefined"
+          />
           <p v-if="host.state.busy" role="status">正在处理，请稍候…</p>
           <p v-if="host.state.readError" role="alert">
             {{ host.state.readError }}
