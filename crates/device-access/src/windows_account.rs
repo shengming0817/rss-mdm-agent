@@ -1,7 +1,7 @@
 //! Shared local SAM identity and role checks; no RSS authorization is inferred here.
 use rss_mdm_agent_wire::runtime::{AccessFailure as F, AccessRole as Role};
 use windows::{
-    core::*,
+    core::{PCWSTR, PWSTR},
     Win32::{
         Foundation::*,
         NetworkManagement::NetManagement::*,

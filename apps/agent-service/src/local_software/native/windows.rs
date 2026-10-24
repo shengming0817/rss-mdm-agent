@@ -1,7 +1,7 @@
 //! ref: Microsoft msi.h MsiGetProductInfoExW/MsiConfigureProductExW;
 //! microsoft/windows-rs Windows/{ApplicationModel,Management/Deployment}@0.61.3.
 use super::*;
-use windows::{
+use ::windows::{
     core::HSTRING,
     ApplicationModel::{Package, PackageSignatureKind},
     Management::Deployment::PackageManager,
