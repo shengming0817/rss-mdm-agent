@@ -28,6 +28,11 @@ impl Fixture {
             root,
             id: Uuid::new_v4(),
             authority: Authority {
+                instance: Uuid::new_v4(),
+                principal: Uuid::new_v4(),
+                join: "local-machine".into(),
+                source: rss_mdm_agent_wire::runtime::AccessWindowsAuthority::Local,
+                login: "LOCAL\\test".into(),
                 tenant: Uuid::new_v4(),
                 device: "device".into(),
                 registration: Uuid::new_v4(),
@@ -46,6 +51,9 @@ impl Fixture {
     }
     fn setup(&self) -> (Store, String, Vec<u8>, Uuid, AccessWindowsFacts) {
         let mut store = Store::create(&self.root, self.id).unwrap();
+        store
+            .bind_registration(self.authority.registration())
+            .unwrap();
         let mut candidate = Candidate::generate().unwrap();
         let secret = candidate.totp_secret().to_vec();
         assert!(candidate
@@ -107,7 +115,7 @@ fn consumption_survives_reopen_and_activation_replay() {
     assert_eq!(
         store
             .verify(
-                &f.authority.sid,
+                &f.authority,
                 Factor::Totp(&code(&secret, f.clock.utc)),
                 f.clock,
                 &TestProtector
@@ -123,7 +131,7 @@ fn consumption_survives_reopen_and_activation_replay() {
     assert_eq!(
         store
             .verify(
-                &f.authority.sid,
+                &f.authority,
                 Factor::Totp(&code(&secret, clock.utc)),
                 clock,
                 &TestProtector
@@ -147,7 +155,7 @@ fn consumption_survives_reopen_and_activation_replay() {
     assert_eq!(
         store
             .verify(
-                &f.authority.sid,
+                &f.authority,
                 Factor::Totp(&code(&secret, clock.utc)),
                 clock,
                 &TestProtector
@@ -168,7 +176,7 @@ fn recovery_is_repeatable_and_independent_of_wall_clock_rollback() {
     assert_eq!(
         store
             .verify(
-                &f.authority.sid,
+                &f.authority,
                 Factor::Totp(&code(&secret, clock.utc)),
                 clock,
                 &TestProtector
@@ -180,7 +188,7 @@ fn recovery_is_repeatable_and_independent_of_wall_clock_rollback() {
         assert_eq!(
             store
                 .verify(
-                    &f.authority.sid,
+                    &f.authority,
                     Factor::Recovery(&recovery),
                     clock,
                     &TestProtector
@@ -207,12 +215,7 @@ fn failure_budget_survives_reopen_reboot_and_configuration() {
     for _ in 0..5 {
         assert_eq!(
             store
-                .verify(
-                    &f.authority.sid,
-                    Factor::Totp("wrong"),
-                    f.clock,
-                    &TestProtector
-                )
+                .verify(&f.authority, Factor::Totp("wrong"), f.clock, &TestProtector)
                 .unwrap(),
             Decision::Denied
         );
@@ -228,7 +231,7 @@ fn failure_budget_survives_reopen_reboot_and_configuration() {
     assert_eq!(
         store
             .verify(
-                &f.authority.sid,
+                &f.authority,
                 Factor::Recovery(&recovery),
                 reboot,
                 &TestProtector
@@ -239,7 +242,7 @@ fn failure_budget_survives_reopen_reboot_and_configuration() {
     assert_eq!(
         store
             .verify(
-                &f.authority.sid,
+                &f.authority,
                 Factor::Recovery(&recovery),
                 Clock {
                     monotonic: 35,
@@ -266,14 +269,14 @@ fn concurrent_connections_cannot_reuse_an_otp() {
         .map(|_| {
             let root = f.root.clone();
             let id = f.id;
-            let sid = f.authority.sid.clone();
+            let authority = f.authority.clone();
             let code = code(&secret, clock.utc);
             let barrier = barrier.clone();
             std::thread::spawn(move || {
                 let mut store = Store::open(&root, id).unwrap();
                 barrier.wait();
                 store
-                    .verify(&sid, Factor::Totp(&code), clock, &TestProtector)
+                    .verify(&authority, Factor::Totp(&code), clock, &TestProtector)
                     .unwrap()
             })
         })
@@ -304,11 +307,11 @@ fn unbinding_removes_only_the_exact_factor_authority() {
     let (mut store, recovery, _, _, _) = f.setup();
     let mut other = f.authority.clone();
     other.binding_generation += 1;
-    assert!(store.unbind(&other).is_err());
+    assert!(store.revoke(&other, 2).is_err());
     assert_eq!(
         store
             .verify(
-                &f.authority.sid,
+                &f.authority,
                 Factor::Recovery(&recovery),
                 f.clock,
                 &TestProtector
@@ -316,11 +319,11 @@ fn unbinding_removes_only_the_exact_factor_authority() {
             .unwrap(),
         Decision::Accepted
     );
-    store.unbind(&f.authority).unwrap();
+    store.revoke(&f.authority, 2).unwrap();
     assert_eq!(
         store
             .verify(
-                &f.authority.sid,
+                &f.authority,
                 Factor::Recovery(&recovery),
                 f.clock,
                 &TestProtector
@@ -343,15 +346,220 @@ fn commit_failure_never_accepts_or_consumes_an_otp() {
     };
     let code = code(&secret, clock.utc);
     assert!(store
-        .verify(&f.authority.sid, Factor::Totp(&code), clock, &TestProtector)
+        .verify(&f.authority, Factor::Totp(&code), clock, &TestProtector)
         .is_err());
     connection
         .execute_batch("DROP TRIGGER fail_commit;")
         .unwrap();
     assert_eq!(
         store
-            .verify(&f.authority.sid, Factor::Totp(&code), clock, &TestProtector)
+            .verify(&f.authority, Factor::Totp(&code), clock, &TestProtector)
             .unwrap(),
         Decision::Accepted
+    );
+}
+
+#[test]
+fn revocation_survives_reopen_and_rejects_late_initialization() {
+    let f = Fixture::new();
+    let (mut store, recovery, _, operation, facts) = f.setup();
+    store.revoke(&f.authority, 2).unwrap();
+    store.revoke(&f.authority, 2).unwrap();
+    drop(store);
+    let mut store = Store::open(&f.root, f.id).unwrap();
+    assert!(!store.enabled(&f.authority.sid).unwrap());
+    assert!(store
+        .activate(
+            f.authority.clone(),
+            3,
+            true,
+            operation,
+            facts,
+            f.clock,
+            &TestProtector
+        )
+        .is_err());
+    assert_eq!(
+        store
+            .verify(
+                &f.authority,
+                Factor::Recovery(&recovery),
+                f.clock,
+                &TestProtector
+            )
+            .unwrap(),
+        Decision::Disabled
+    );
+}
+
+#[test]
+fn native_source_and_enterprise_subject_are_part_of_consumption_identity() {
+    let f = Fixture::new();
+    let (mut store, recovery, _, _, _) = f.setup();
+    for changed in 0..4 {
+        let mut authority = f.authority.clone();
+        match changed {
+            0 => {
+                authority.source =
+                    rss_mdm_agent_wire::runtime::AccessWindowsAuthority::ActiveDirectory {
+                        domain_sid: "S-1-5-21-1-2-3".into(),
+                    }
+            }
+            1 => authority.principal = Uuid::new_v4(),
+            2 => authority.instance = Uuid::new_v4(),
+            _ => authority.join = "different-installation".into(),
+        }
+        assert!(store
+            .verify(
+                &authority,
+                Factor::Recovery(&recovery),
+                f.clock,
+                &TestProtector
+            )
+            .is_err());
+    }
+    assert_eq!(
+        store
+            .verify(
+                &f.authority,
+                Factor::Recovery(&recovery),
+                f.clock,
+                &TestProtector
+            )
+            .unwrap(),
+        Decision::Accepted
+    );
+}
+
+#[test]
+fn registration_replacement_retires_old_bindings_and_cannot_roll_back() {
+    let f = Fixture::new();
+    let (mut store, _, _, operation, facts) = f.setup();
+    let original = f.authority.registration();
+    let mut next = original.clone();
+    next.id = Uuid::new_v4();
+    next.generation += 1;
+    store.bind_registration(next.clone()).unwrap();
+    assert!(store.bind_registration(original).is_err());
+    assert!(store.authority(&f.authority.sid).unwrap().is_none());
+    assert!(store
+        .activate(
+            f.authority.clone(),
+            2,
+            true,
+            operation,
+            facts,
+            f.clock,
+            &TestProtector
+        )
+        .is_err());
+    store.retire_registration().unwrap();
+    assert!(store.bind_registration(next).is_err());
+}
+
+#[test]
+fn factor_replacement_preserves_a_locked_accounts_budget() {
+    let f = Fixture::new();
+    let (mut store, _, _, _, _) = f.setup();
+    for _ in 0..5 {
+        store
+            .verify(
+                &f.authority,
+                Factor::Recovery("invalid"),
+                f.clock,
+                &TestProtector,
+            )
+            .unwrap();
+    }
+    let mut candidate = Candidate::generate().unwrap();
+    let secret = candidate.totp_secret().to_vec();
+    assert!(candidate
+        .confirm(&code(&secret, f.clock.utc), f.clock)
+        .unwrap());
+    let recovery = candidate.recovery_secret().to_owned();
+    let operation = Uuid::new_v4();
+    store.stage(operation, &candidate, &TestProtector).unwrap();
+    let mut authority = f.authority.clone();
+    authority.factor_generation += 1;
+    let mut facts = store.facts(&f.authority).unwrap();
+    facts.factor_generation += 1;
+    store
+        .activate(
+            authority.clone(),
+            2,
+            true,
+            operation,
+            facts,
+            f.clock,
+            &TestProtector,
+        )
+        .unwrap();
+    assert_eq!(
+        store
+            .verify(
+                &authority,
+                Factor::Recovery(&recovery),
+                f.clock,
+                &TestProtector
+            )
+            .unwrap(),
+        Decision::Locked
+    );
+    drop(store);
+    let mut store = Store::open(&f.root, f.id).unwrap();
+    assert_eq!(
+        store
+            .verify(
+                &authority,
+                Factor::Recovery(&recovery),
+                f.clock,
+                &TestProtector
+            )
+            .unwrap(),
+        Decision::Locked
+    );
+}
+
+#[test]
+fn join_change_requires_a_fresh_session_without_retiring_local_accounts() {
+    let f = Fixture::new();
+    let (mut store, _, _, _, _) = f.setup();
+    assert!(store.require_join_session("entra:first", 100, 200).is_err());
+    assert!(store.require_join_session("entra:first", 220, 230).is_ok());
+    assert!(store
+        .require_join_session("entra:second", 220, 300)
+        .is_err());
+    assert!(store.enabled(&f.authority.sid).unwrap());
+    drop(store);
+    let mut store = Store::open(&f.root, f.id).unwrap();
+    assert!(store
+        .require_join_session("entra:second", 220, 320)
+        .is_err());
+    assert!(store.require_join_session("entra:second", 310, 320).is_ok());
+    assert!(store
+        .require_join_session("entra:second", 310, 290)
+        .is_err());
+}
+
+#[test]
+fn old_schema_is_rejected_without_reinitializing_material() {
+    let f = Fixture::new();
+    let (store, _, _, _, _) = f.setup();
+    drop(store);
+    let path = f.root.join("device-access.sqlite");
+    let db = rusqlite::Connection::open(&path).unwrap();
+    db.pragma_update(None, "user_version", 1).unwrap();
+    drop(db);
+    assert!(Store::open(&f.root, f.id).is_err());
+    let db = rusqlite::Connection::open(&path).unwrap();
+    assert_eq!(
+        db.query_row("SELECT count(*) FROM bindings", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        db.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
+            .unwrap(),
+        1
     );
 }

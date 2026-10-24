@@ -89,6 +89,7 @@ pub const CONFIG_KEY: &str = "SOFTWARE\\RSS\\DeviceAccess";
 pub struct Installation {
     pub root: std::path::PathBuf,
     pub id: uuid::Uuid,
+    pub installed_boot: uuid::Uuid,
 }
 /// HKLM configuration is written by the independent Agent component command.
 pub fn installation() -> Result<Installation, Error> {
