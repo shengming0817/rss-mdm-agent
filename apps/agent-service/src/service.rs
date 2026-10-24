@@ -28,6 +28,10 @@ use std::{
     },
 };
 
+#[cfg(test)]
+type WorkerImageFixture =
+    fn(&ExecutionConfig) -> Result<execution_contract::SoftwareMaterial, Error>;
+
 /// Explicit local execution resources from the protected deployment configuration.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -35,8 +39,7 @@ pub struct ExecutionConfig {
     // Explicit test worker identity; absent from production binaries and wire.
     #[cfg(test)]
     #[serde(skip)]
-    pub(crate) worker_image_fixture:
-        Option<fn(&ExecutionConfig) -> Result<execution_contract::SoftwareMaterial, Error>>,
+    pub(crate) worker_image_fixture: Option<WorkerImageFixture>,
     pub local_permissions: crate::local_permissions::Config,
     pub work_root: PathBuf,
     pub material_root: PathBuf,
